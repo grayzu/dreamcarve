@@ -6,7 +6,9 @@
 //! (`docs/specs/phase-1/design.md`, "Data model → dc-geometry").
 
 use crate::contour::Contour;
-use crate::point::Point;
+use crate::point::{EPS_MM, Point, Vec2};
+use crate::polyline::{Arc, Segment};
+use std::f64::consts::{PI, TAU};
 
 /// An area to machine: one counter-clockwise outer contour and zero or more
 /// clockwise holes inside it (ADR-0001). Coordinates are millimetres, Y-up.
@@ -40,27 +42,209 @@ impl Region {
 /// Contours are expected not to cross one another. Regions are ordered by
 /// the input position of their outer contour, so the result does not
 /// depend on anything but the input.
+///
+/// A contour counts as inside another when its area is strictly smaller and
+/// a sample point on it (a segment midpoint off the other's boundary) lies
+/// inside. Identical contours therefore do not contain each other and each
+/// becomes its own region.
 #[must_use]
 pub fn nest(contours: Vec<Contour>) -> Vec<Region> {
-    let _ = contours;
-    todo!("nest contours into regions (#6)")
+    let areas_mm2: Vec<f64> = contours.iter().map(|c| c.signed_area_mm2().abs()).collect();
+    let sized: Vec<(&Contour, f64)> = contours.iter().zip(areas_mm2.iter().copied()).collect();
+
+    // For every contour, the indices of the contours that enclose it.
+    let containers: Vec<Vec<usize>> = sized
+        .iter()
+        .enumerate()
+        .map(|(i, &inner)| {
+            sized
+                .iter()
+                .enumerate()
+                .filter(|&(j, &outer)| j != i && encloses(outer, inner))
+                .map(|(j, _)| j)
+                .collect()
+        })
+        .collect();
+    let depths: Vec<usize> = containers.iter().map(Vec::len).collect();
+    let is_outer = |j: usize| depths.get(j).is_some_and(|d| d % 2 == 0);
+
+    let roles: Vec<Role> = containers
+        .iter()
+        .zip(&depths)
+        .map(|(enclosing, depth)| {
+            if depth % 2 == 0 {
+                return Role::Outer;
+            }
+            // A hole belongs to the innermost enclosing outer: the one with
+            // the least area, lowest input index on a tie.
+            enclosing
+                .iter()
+                .copied()
+                .filter(|&j| is_outer(j))
+                .min_by(|&a, &b| {
+                    let area = |k: usize| areas_mm2.get(k).copied().unwrap_or(f64::INFINITY);
+                    area(a).total_cmp(&area(b)).then(a.cmp(&b))
+                })
+                .map_or(Role::Outer, Role::HoleOf)
+        })
+        .collect();
+
+    let mut regions: Vec<(usize, Region)> = Vec::new();
+    let mut holes: Vec<(usize, Contour)> = Vec::new();
+    for ((index, contour), role) in contours.into_iter().enumerate().zip(roles) {
+        match role {
+            Role::Outer => regions.push((
+                index,
+                Region {
+                    outer: with_ccw(contour, true),
+                    holes: Vec::new(),
+                },
+            )),
+            Role::HoleOf(parent) => holes.push((parent, with_ccw(contour, false))),
+        }
+    }
+    for (parent, hole) in holes {
+        if let Some((_, region)) = regions.iter_mut().find(|(index, _)| *index == parent) {
+            region.holes.push(hole);
+        }
+    }
+    regions.into_iter().map(|(_, region)| region).collect()
+}
+
+/// What [`nest`] makes of one input contour.
+#[derive(Debug, Clone, Copy)]
+enum Role {
+    /// Starts a region.
+    Outer,
+    /// A hole of the region whose outer has this input index.
+    HoleOf(usize),
+}
+
+/// `contour` wound counter-clockwise when `ccw`, else clockwise.
+fn with_ccw(contour: Contour, ccw: bool) -> Contour {
+    if contour.is_ccw() == ccw {
+        contour
+    } else {
+        contour.reversed()
+    }
+}
+
+/// True when `outer` (contour, |area| mm²) encloses `inner`. Assumes the two
+/// do not cross: `inner` must be smaller, and its first segment midpoint
+/// that is off `outer`'s boundary must lie inside `outer`.
+fn encloses(outer: (&Contour, f64), inner: (&Contour, f64)) -> bool {
+    let ((outer, outer_mm2), (inner, inner_mm2)) = (outer, inner);
+    if inner_mm2 >= outer_mm2 {
+        return false;
+    }
+    inner
+        .polyline()
+        .segments()
+        .filter_map(|seg| seg.point_at(seg.length_mm() / 2.0).map(|(p, _)| p))
+        .find(|&p| !on_boundary(outer, p))
+        .is_some_and(|p| winding_number(outer, p) != 0)
+}
+
+/// True when `p` is within [`EPS_MM`] of any segment of `contour`.
+fn on_boundary(contour: &Contour, p: Point) -> bool {
+    contour
+        .polyline()
+        .segments()
+        .any(|seg| distance_to_segment(seg, p) <= EPS_MM)
+}
+
+/// Shortest distance from `p` to `seg`, mm, following arcs.
+fn distance_to_segment(seg: Segment, p: Point) -> f64 {
+    let to_ends = || p.distance_to(seg.start).min(p.distance_to(seg.end));
+    match seg.arc() {
+        Some(arc) => {
+            let v = p - arc.centre;
+            if sweep_contains(arc, v.y.atan2(v.x)) {
+                (v.length() - arc.radius_mm).abs()
+            } else {
+                to_ends()
+            }
+        }
+        None => {
+            let d = seg.end - seg.start;
+            let len2 = d.dot(d);
+            if len2 <= EPS_MM * EPS_MM {
+                return to_ends();
+            }
+            let t = ((p - seg.start).dot(d) / len2).clamp(0.0, 1.0);
+            p.distance_to(seg.start + d * t)
+        }
+    }
+}
+
+/// True when the direction `angle_rad` from the arc centre falls within the
+/// arc's sweep.
+fn sweep_contains(arc: Arc, angle_rad: f64) -> bool {
+    let from_start = if arc.sweep_rad > 0.0 {
+        (angle_rad - arc.start_angle_rad).rem_euclid(TAU)
+    } else {
+        (arc.start_angle_rad - angle_rad).rem_euclid(TAU)
+    };
+    from_start <= arc.sweep_rad.abs()
 }
 
 /// The winding number of `contour` about `p`: +1 inside a counter-clockwise
 /// contour, −1 inside a clockwise one, 0 outside. Arc segments count by
 /// their true curve, not their chord. Undefined for `p` on the boundary.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a whole number of turns, bounded by the segment count"
+)]
 fn winding_number(contour: &Contour, p: Point) -> i32 {
-    let _ = (contour, p);
-    todo!("winding number over line and arc segments (#6)")
+    let total_rad: f64 = contour
+        .polyline()
+        .segments()
+        .map(|seg| subtended_angle_rad(seg, p))
+        .sum();
+    (total_rad / TAU).round() as i32
+}
+
+/// Signed angle, radians, that `seg` sweeps as seen from `p` (positive is
+/// counter-clockwise). For an arc this is the chord's angle plus a full
+/// turn when `p` lies in the circular segment between chord and arc, since
+/// arc-then-chord-back is a loop around exactly that area.
+fn subtended_angle_rad(seg: Segment, p: Point) -> f64 {
+    let a = seg.start - p;
+    let b = seg.end - p;
+    let chord_rad = a.cross(b).atan2(a.dot(b));
+    let Some(arc) = seg.arc() else {
+        return chord_rad;
+    };
+    let chord = seg.end - seg.start;
+    let chord_len = chord.length();
+    let side = chord.cross(p - seg.start) / chord_len;
+    if side.abs() <= EPS_MM {
+        // On the chord's line. Between the ends, the arc passes round `p`
+        // by half a turn in its own direction; beyond them `p` is outside
+        // the disc and the chord angle (0) stands.
+        let along = (p - seg.start).dot(chord);
+        return if along > 0.0 && along < chord_len * chord_len {
+            PI.copysign(arc.sweep_rad)
+        } else {
+            chord_rad
+        };
+    }
+    let mid_rad = arc.start_angle_rad + arc.sweep_rad / 2.0;
+    let mid = arc.centre + Vec2::new(mid_rad.cos(), mid_rad.sin()) * arc.radius_mm;
+    let mid_side = chord.cross(mid - seg.start);
+    let in_bow = p.distance_to(arc.centre) < arc.radius_mm && side * mid_side > 0.0;
+    if in_bow {
+        chord_rad + TAU.copysign(arc.sweep_rad)
+    } else {
+        chord_rad
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::assert_approx_eq;
-    use crate::point::EPS_MM;
     use crate::polyline::Polyline;
-    use std::f64::consts::PI;
 
     fn circle(x: f64, y: f64, r: f64) -> Contour {
         Contour::new(Polyline::circle(Point::new(x, y), r)).unwrap()
@@ -216,6 +400,14 @@ mod tests {
     }
 
     #[test]
+    fn hole_touching_outer_edge_is_still_a_hole() {
+        // The inner rect shares part of the outer's left edge.
+        let regions = nest(vec![rect(0.0, 0.0, 10.0, 10.0), rect(0.0, 2.0, 5.0, 2.0)]);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].holes().len(), 1);
+    }
+
+    #[test]
     fn no_contours_give_no_regions() {
         assert!(nest(Vec::new()).is_empty());
     }
@@ -237,6 +429,10 @@ mod tests {
         assert_eq!(winding_number(&c, Point::new(0.0, 4.0)), 1);
         assert_eq!(winding_number(&c, Point::new(0.0, -4.0)), 1);
         assert_eq!(winding_number(&c, Point::new(0.0, 0.5)), 1);
+        // On both half-circle chords at once (the diameter).
+        assert_eq!(winding_number(&c, Point::new(0.0, 0.0)), 1);
+        assert_eq!(winding_number(&c, Point::new(-2.0, 0.0)), 1);
+        assert_eq!(winding_number(&c, Point::new(7.0, 0.0)), 0);
         assert_eq!(winding_number(&c, Point::new(4.0, 4.0)), 0);
         assert_eq!(winding_number(&c, Point::new(-20.0, 0.0)), 0);
         assert_eq!(winding_number(&c.reversed(), Point::new(0.0, 4.0)), -1);
