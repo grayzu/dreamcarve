@@ -57,7 +57,8 @@ simulation's internal grid)
 
 **Operation**:
 A machining strategy applied to one or more feature instances, with a tool,
-depth and feeds. The five kinds are Profile, Pocket, Drill, V-Carve and Engrave.
+depth and feeds. The kinds are Profile, Pocket, Drill, V-Carve and Engrave,
+with Surface Rough and Surface Finish from phase 7.
 _Avoid_: Job, cut, pass (a pass is one depth step inside an operation)
 
 **Profile**:
@@ -97,7 +98,8 @@ _PureCutCNC_: V-Carve
 
 **Engrave**:
 An operation that follows an open or closed path with the tool centre on the
-line at a fixed depth.
+line at a fixed depth. Engraving whose width follows the shape with a V-bit is
+V-Carve, not Engrave.
 _Avoid_: Follow line, trace, scribe
 _PureCutCNC_: Follow Line, Carving
 
