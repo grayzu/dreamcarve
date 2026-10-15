@@ -5,6 +5,8 @@
 //! groups loose contours into regions by even-odd containment
 //! (`docs/specs/phase-1/design.md`, "Data model → dc-geometry").
 
+use crate::GeometryError;
+use crate::GeometryWarning;
 use crate::contour::Contour;
 use crate::point::{EPS_MM, Point, Vec2};
 use crate::polyline::{Arc, Segment};
@@ -47,8 +49,16 @@ impl Region {
 /// a sample point on it (a segment midpoint off the other's boundary) lies
 /// inside. Identical contours therefore do not contain each other and each
 /// becomes its own region.
-#[must_use]
-pub fn nest(contours: Vec<Contour>) -> Vec<Region> {
+///
+/// Shapes that cross each other fail with [`GeometryError::ContoursCross`].
+/// A shape identical to an earlier one is dropped with
+/// [`GeometryWarning::DuplicateContourDropped`].
+pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>), GeometryError> {
+    Ok((nest_unchecked(contours), Vec::new()))
+}
+
+/// Nesting proper, for contours already known not to cross or repeat.
+fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
     let areas_mm2: Vec<f64> = contours.iter().map(|c| c.signed_area_mm2().abs()).collect();
     let sized: Vec<(&Contour, f64)> = contours.iter().zip(areas_mm2.iter().copied()).collect();
 
@@ -254,13 +264,20 @@ mod tests {
         Contour::new(Polyline::rect(Point::new(x, y), w, h)).unwrap()
     }
 
+    /// `nest` on input expected to succeed without warnings.
+    fn nest_ok(contours: Vec<Contour>) -> Vec<Region> {
+        let (regions, warnings) = nest(contours).unwrap();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        regions
+    }
+
     fn area(c: &Contour) -> f64 {
         c.signed_area_mm2()
     }
 
     #[test]
     fn circle_in_circle_becomes_hole() {
-        let regions = nest(vec![circle(0.0, 0.0, 10.0), circle(0.0, 0.0, 5.0)]);
+        let regions = nest_ok(vec![circle(0.0, 0.0, 10.0), circle(0.0, 0.0, 5.0)]);
         assert_eq!(regions.len(), 1);
         let region = &regions[0];
         assert!(region.outer().is_ccw());
@@ -272,7 +289,7 @@ mod tests {
 
     #[test]
     fn disjoint_shapes_are_separate_regions() {
-        let regions = nest(vec![rect(0.0, 0.0, 10.0, 10.0), rect(20.0, 0.0, 10.0, 5.0)]);
+        let regions = nest_ok(vec![rect(0.0, 0.0, 10.0, 10.0), rect(20.0, 0.0, 10.0, 5.0)]);
         assert_eq!(regions.len(), 2);
         assert!(regions.iter().all(|r| r.holes().is_empty()));
         assert!(regions.iter().all(|r| r.outer().is_ccw()));
@@ -282,7 +299,7 @@ mod tests {
 
     #[test]
     fn island_in_hole_becomes_its_own_region() {
-        let regions = nest(vec![
+        let regions = nest_ok(vec![
             circle(0.0, 0.0, 10.0),
             circle(0.0, 0.0, 7.0),
             circle(0.0, 0.0, 3.0),
@@ -298,7 +315,7 @@ mod tests {
 
     #[test]
     fn four_levels_alternate_outer_and_hole() {
-        let regions = nest(vec![
+        let regions = nest_ok(vec![
             rect(0.0, 0.0, 40.0, 40.0),
             rect(5.0, 5.0, 30.0, 30.0),
             rect(10.0, 10.0, 20.0, 20.0),
@@ -316,7 +333,7 @@ mod tests {
         // The outer circle is two half-circle arcs whose chords coincide on
         // the X axis; a chord-only test would see no area at all. The inner
         // circle sits wholly in the upper bulge.
-        let regions = nest(vec![circle(0.0, 0.0, 10.0), circle(0.0, 6.0, 2.0)]);
+        let regions = nest_ok(vec![circle(0.0, 0.0, 10.0), circle(0.0, 6.0, 2.0)]);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].holes().len(), 1);
     }
@@ -324,14 +341,14 @@ mod tests {
     #[test]
     fn circle_outside_arc_bulge_is_separate() {
         // Inside the outer circle's bounding box but outside the curve.
-        let regions = nest(vec![circle(0.0, 0.0, 10.0), circle(9.0, 9.0, 1.0)]);
+        let regions = nest_ok(vec![circle(0.0, 0.0, 10.0), circle(9.0, 9.0, 1.0)]);
         assert_eq!(regions.len(), 2);
         assert!(regions.iter().all(|r| r.holes().is_empty()));
     }
 
     #[test]
     fn several_holes_in_one_outer_keep_input_order() {
-        let regions = nest(vec![
+        let regions = nest_ok(vec![
             rect(0.0, 0.0, 100.0, 50.0),
             circle(20.0, 25.0, 5.0),
             circle(50.0, 25.0, 3.0),
@@ -360,7 +377,7 @@ mod tests {
         ];
         for input in orders {
             // Areas rounded to whole mm², as strings so they compare exactly.
-            let mut summary: Vec<String> = nest(input)
+            let mut summary: Vec<String> = nest_ok(input)
                 .iter()
                 .map(|r| {
                     let holes: Vec<String> = r
@@ -379,7 +396,7 @@ mod tests {
     #[test]
     fn regions_follow_input_order_of_outers() {
         // The hole comes first in the input; region order follows the outers.
-        let regions = nest(vec![
+        let regions = nest_ok(vec![
             circle(50.0, 0.0, 2.0),
             rect(100.0, 0.0, 5.0, 5.0),
             circle(50.0, 0.0, 8.0),
@@ -393,7 +410,7 @@ mod tests {
 
     #[test]
     fn lone_contour_is_one_region_without_holes() {
-        let regions = nest(vec![circle(3.0, 4.0, 2.0)]);
+        let regions = nest_ok(vec![circle(3.0, 4.0, 2.0)]);
         assert_eq!(regions.len(), 1);
         assert!(regions[0].outer().is_ccw());
         assert!(regions[0].holes().is_empty());
@@ -402,19 +419,19 @@ mod tests {
     #[test]
     fn hole_touching_outer_edge_is_still_a_hole() {
         // The inner rect shares part of the outer's left edge.
-        let regions = nest(vec![rect(0.0, 0.0, 10.0, 10.0), rect(0.0, 2.0, 5.0, 2.0)]);
+        let regions = nest_ok(vec![rect(0.0, 0.0, 10.0, 10.0), rect(0.0, 2.0, 5.0, 2.0)]);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].holes().len(), 1);
     }
 
     #[test]
     fn no_contours_give_no_regions() {
-        assert!(nest(Vec::new()).is_empty());
+        assert!(nest_ok(Vec::new()).is_empty());
     }
 
     #[test]
     fn clockwise_input_is_normalised() {
-        let regions = nest(vec![
+        let regions = nest_ok(vec![
             rect(0.0, 0.0, 10.0, 10.0).reversed(),
             rect(2.0, 2.0, 2.0, 2.0),
         ]);
@@ -444,5 +461,119 @@ mod tests {
         assert_eq!(winding_number(&r, Point::new(5.0, 5.0)), 1);
         assert_eq!(winding_number(&r, Point::new(15.0, 5.0)), 0);
         assert_eq!(winding_number(&r, Point::new(5.0, -1.0)), 0);
+    }
+
+    #[test]
+    fn several_parts_each_get_their_own_hole() {
+        // Holes listed before and after their parts, interleaved.
+        let regions = nest_ok(vec![
+            rect(0.0, 0.0, 30.0, 30.0),
+            circle(55.0, 15.0, 8.0),
+            rect(40.0, 0.0, 30.0, 30.0),
+            circle(15.0, 15.0, 8.0),
+        ]);
+        assert_eq!(regions.len(), 2);
+        for (region, centre_x) in regions.iter().zip([15.0, 55.0]) {
+            assert_eq!(region.holes().len(), 1);
+            let b = region.holes()[0].polyline().bounds().unwrap();
+            assert_approx_eq!((b.min.x + b.max.x) / 2.0, centre_x, 1e-9);
+            let o = region.outer().polyline().bounds().unwrap();
+            assert!(
+                o.min.x < b.min.x && b.max.x < o.max.x,
+                "hole lies in its own part"
+            );
+        }
+    }
+
+    #[test]
+    fn crossing_circles_are_an_error() {
+        let result = nest(vec![circle(0.0, 0.0, 10.0), circle(8.0, 0.0, 5.0)]);
+        assert_eq!(
+            result,
+            Err(GeometryError::ContoursCross {
+                first: 0,
+                second: 1
+            })
+        );
+    }
+
+    #[test]
+    fn crossing_rects_are_an_error_whatever_the_order() {
+        // The small rect's first edge midpoint lies inside the large one,
+        // which fooled the sample-point containment test.
+        let big = rect(0.0, 0.0, 30.0, 20.0);
+        let small = rect(10.0, 5.0, 30.0, 10.0);
+        let separate = rect(100.0, 0.0, 5.0, 5.0);
+        assert_eq!(
+            nest(vec![separate.clone(), big.clone(), small.clone()]),
+            Err(GeometryError::ContoursCross {
+                first: 1,
+                second: 2
+            })
+        );
+        assert_eq!(
+            nest(vec![small, separate, big]),
+            Err(GeometryError::ContoursCross {
+                first: 0,
+                second: 2
+            })
+        );
+    }
+
+    #[test]
+    fn shapes_touching_from_outside_do_not_cross() {
+        let regions = nest_ok(vec![
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(10.0, 0.0, 10.0, 10.0),
+        ]);
+        assert_eq!(regions.len(), 2);
+    }
+
+    #[test]
+    fn identical_shapes_keep_the_first_and_warn() {
+        let (regions, warnings) = nest(vec![
+            rect(0.0, 0.0, 20.0, 10.0),
+            circle(50.0, 0.0, 3.0),
+            rect(0.0, 0.0, 20.0, 10.0),
+        ])
+        .unwrap();
+        assert_eq!(regions.len(), 2);
+        assert_eq!(
+            warnings,
+            vec![GeometryWarning::DuplicateContourDropped {
+                index: 2,
+                duplicate_of: 0
+            }]
+        );
+    }
+
+    #[test]
+    fn duplicate_drawn_the_other_way_is_still_a_duplicate() {
+        let (regions, warnings) = nest(vec![
+            circle(0.0, 0.0, 5.0),
+            circle(0.0, 0.0, 5.0).reversed(),
+        ])
+        .unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_hole_is_dropped_and_part_keeps_one_hole() {
+        let (regions, warnings) = nest(vec![
+            circle(0.0, 0.0, 10.0),
+            circle(0.0, 0.0, 4.0),
+            circle(0.0, 0.0, 4.0),
+        ])
+        .unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].holes().len(), 1);
+        assert_eq!(
+            warnings,
+            vec![GeometryWarning::DuplicateContourDropped {
+                index: 2,
+                duplicate_of: 1
+            }]
+        );
     }
 }

@@ -21,6 +21,34 @@ pub use offset::offset;
 pub use point::{EPS_MM, Point, Point3, Rect, Vec2, approx_eq};
 pub use polyline::{Arc, Polyline, Segment, Vertex};
 pub use region::{Region, nest};
+
+/// Something the caller should know about that still gives a usable
+/// result. Indices refer to positions in the caller's input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GeometryWarning {
+    /// Contour `index` is the same shape as contour `duplicate_of` (an
+    /// earlier input) and was dropped, so it is not cut twice.
+    DuplicateContourDropped {
+        /// Input position of the dropped contour.
+        index: usize,
+        /// Input position of the contour that was kept.
+        duplicate_of: usize,
+    },
+}
+
+impl std::fmt::Display for GeometryWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateContourDropped {
+                index,
+                duplicate_of,
+            } => write!(
+                f,
+                "shape {index} duplicates shape {duplicate_of} and was dropped"
+            ),
+        }
+    }
+}
 pub use transform::Transform;
 
 /// Why a polyline cannot be used as a [`Contour`].
@@ -56,6 +84,18 @@ pub enum GeometryError {
     /// The contour crosses itself.
     #[error("contour intersects itself")]
     SelfIntersecting,
+    /// Two closed contours overlap without one containing the other, so
+    /// neither part-and-hole nor separate parts describes them. Indices are
+    /// input positions, `first` < `second`.
+    #[error(
+        "shapes {first} and {second} cross each other; separate them or merge them into one shape"
+    )]
+    ContoursCross {
+        /// Input position of the earlier contour.
+        first: usize,
+        /// Input position of the later contour.
+        second: usize,
+    },
     /// An offset by `delta_mm` consumed the whole contour.
     #[error("offset by {delta_mm} mm leaves nothing of the contour")]
     OffsetVanished {

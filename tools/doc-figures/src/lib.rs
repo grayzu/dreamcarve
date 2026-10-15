@@ -280,7 +280,7 @@ fn winding(c: &Contour) -> &'static str {
 }
 
 fn render_nesting(inputs: &[Contour]) -> String {
-    let regions: Vec<Region> = nest(inputs.to_vec());
+    let (regions, _warnings): (Vec<Region>, _) = nest(inputs.to_vec()).unwrap_or_default();
 
     let bounds = inputs
         .iter()
