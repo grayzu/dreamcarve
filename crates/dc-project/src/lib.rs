@@ -7,6 +7,7 @@
 //! A [`Project`] is saved with [`save`] and read back with [`load`], which
 //! migrates older files to [`CURRENT_VERSION`] and runs [`validate`].
 
+mod history;
 mod ids;
 mod migrate;
 mod model;
@@ -17,6 +18,7 @@ mod validate;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
+pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{DefinitionId, InstanceId, OperationId, ToolId};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{

@@ -1,4 +1,23 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Toolpath generators for DreamCarve. Pure functions from a project and an operation to a toolpath plus warnings. Phase 1 adds Profile.
+//! Toolpath generators for DreamCarve. Pure functions from a project and an
+//! operation to a toolpath plus warnings (`docs/specs/phase-1/design.md`,
+//! "dc-cam"). Phase 1 adds Profile.
+//!
+//! Toolpaths use the project's absolute frame: Y-up, Z-up, millimetres
+//! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.
+
+mod error;
+pub mod passes;
+mod profile;
+mod toolpath;
+mod warning;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
+pub use error::{CamError, FeedField, ShapeRef};
+pub use profile::{Wall, generate_profile, traversal_is_ccw};
+pub use toolpath::{Move, MoveKind, Toolpath};
+pub use warning::{Warning, WarningCode};
