@@ -131,7 +131,7 @@ fn nesting_cases() -> Vec<Case> {
                 rect(2.0, 2.0, 2.0, 2.0)
             ]
         ),
-        // Edge cases without a unit test.
+        // Edge cases: duplicates are dropped, crossings are an error.
         case!(
             "two-parts-two-holes.svg",
             vec![
@@ -157,6 +157,7 @@ const REGION_FILLS: [&str; 4] = ["#cfe3ff", "#ffe2b8", "#d4f2cc", "#f1d3f5"];
 const OUTER_STROKE: &str = "#0b5cd5";
 const HOLE_STROKE: &str = "#c62828";
 const INK: &str = "#1f2328";
+const UNUSED_STROKE: &str = "#6e7781";
 
 const DRAW_W_PX: f64 = 380.0;
 const DRAW_H_MAX_PX: f64 = 240.0;
@@ -279,8 +280,39 @@ fn winding(c: &Contour) -> &'static str {
     if c.is_ccw() { "CCW" } else { "CW" }
 }
 
+/// What sits left of a legend line.
+enum Marker {
+    /// The fill swatch of region `R{k+1}`.
+    Region(usize),
+    /// A warning or error.
+    Alert,
+    /// The wrapped tail of the line above.
+    Continued,
+}
+
+/// Longest legend line, in characters, that fits the figure width.
+const LEGEND_WRAP_CHARS: usize = 58;
+
+/// Adds an alert line, wrapped at word boundaries to fit the figure.
+fn push_alert(legend: &mut Vec<(Marker, String)>, text: &str) {
+    let mut marker = Marker::Alert;
+    let mut line = String::new();
+    for word in text.split(' ') {
+        if !line.is_empty() && line.len() + 1 + word.len() > LEGEND_WRAP_CHARS {
+            legend.push((marker, std::mem::take(&mut line)));
+            marker = Marker::Continued;
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    legend.push((marker, line));
+}
+
 fn render_nesting(inputs: &[Contour]) -> String {
-    let (regions, _warnings): (Vec<Region>, _) = nest(inputs.to_vec()).unwrap_or_default();
+    let result = nest(inputs.to_vec());
+    let regions: &[Region] = result.as_ref().map_or(&[], |(r, _)| r.as_slice());
 
     let bounds = inputs
         .iter()
@@ -294,7 +326,7 @@ fn render_nesting(inputs: &[Contour]) -> String {
     let mut shapes = String::new();
     let mut strokes = String::new();
     let mut labels: Vec<(f64, f64, String)> = Vec::new();
-    let mut legend: Vec<(usize, String)> = Vec::new();
+    let mut legend: Vec<(Marker, String)> = Vec::new();
 
     for (k, region) in regions.iter().enumerate() {
         let fill = REGION_FILLS.get(k % REGION_FILLS.len()).unwrap_or(&"#ddd");
@@ -348,12 +380,51 @@ fn render_nesting(inputs: &[Contour]) -> String {
         } else {
             let _ = write!(line, ", holes {}", holes.join(", "));
         }
-        legend.push((k, line));
+        legend.push((Marker::Region(k), line));
     }
 
+    // Inputs not in any region: a dropped duplicate, or every shape when
+    // nesting failed. Drawn grey and dotted, labelled like the rest.
+    for (i, c) in inputs.iter().enumerate() {
+        if used.get(i).copied().unwrap_or(true) {
+            continue;
+        }
+        let _ = write!(
+            strokes,
+            "<path d=\"{}\" fill=\"none\" stroke=\"{UNUSED_STROKE}\" stroke-width=\"2\" stroke-dasharray=\"2 3\"/>",
+            path_data(c, &view)
+        );
+        if let Some(b) = c.polyline().bounds() {
+            let (x, y) = (view.x((b.min.x + b.max.x) / 2.0), view.y(b.max.y) - 4.0);
+            match labels
+                .iter_mut()
+                .find(|(lx, ly, _)| (lx - x).abs() < 1.0 && (ly - y).abs() < 1.0)
+            {
+                Some((_, _, text)) => {
+                    let _ = write!(text, ", #{i}");
+                }
+                None => labels.push((x, y, format!("#{i}"))),
+            }
+        }
+    }
+    let heading = match &result {
+        Ok((_, warnings)) => {
+            for w in warnings {
+                push_alert(&mut legend, &format!("Warning: {w}"));
+            }
+            let count = regions.len();
+            let plural = if count == 1 { "region" } else { "regions" };
+            format!("nest() result: {count} {plural}")
+        }
+        Err(e) => {
+            push_alert(&mut legend, &format!("Error: {e}"));
+            "nest() result: error, nothing is cut".to_owned()
+        }
+    };
+
     let legend_top = MARGIN_PX + draw_h + 28.0;
-    let count = regions.len();
-    let total_h = legend_top + LINE_PX * (count as f64 + 1.0) + 6.0;
+    let rows = legend.len();
+    let total_h = legend_top + LINE_PX * (rows as f64 + 1.0) + 6.0;
     let total_w = DRAW_W_PX + 2.0 * MARGIN_PX;
 
     let mut svg = String::new();
@@ -377,21 +448,37 @@ fn render_nesting(inputs: &[Contour]) -> String {
             num(*y)
         );
     }
-    let plural = if count == 1 { "region" } else { "regions" };
     let _ = writeln!(
         svg,
-        "<text x=\"{}\" y=\"{}\" font-weight=\"600\" fill=\"{INK}\">nest() result: {count} {plural}</text>",
+        "<text x=\"{}\" y=\"{}\" font-weight=\"600\" fill=\"{INK}\">{heading}</text>",
         num(MARGIN_PX),
         num(legend_top)
     );
-    for (row, (k, line)) in legend.iter().enumerate() {
+    for (row, (swatch, line)) in legend.iter().enumerate() {
         let y = legend_top + LINE_PX * (row as f64 + 1.0);
-        let fill = REGION_FILLS.get(k % REGION_FILLS.len()).unwrap_or(&"#ddd");
+        match swatch {
+            Marker::Region(k) => {
+                let fill = REGION_FILLS.get(k % REGION_FILLS.len()).unwrap_or(&"#ddd");
+                let _ = write!(
+                    svg,
+                    "<rect x=\"{}\" y=\"{}\" width=\"12\" height=\"12\" fill=\"{fill}\" stroke=\"{OUTER_STROKE}\"/>",
+                    num(MARGIN_PX),
+                    num(y - 10.0)
+                );
+            }
+            Marker::Alert => {
+                let _ = write!(
+                    svg,
+                    "<text x=\"{}\" y=\"{}\" font-weight=\"700\" fill=\"{HOLE_STROKE}\">!</text>",
+                    num(MARGIN_PX + 3.0),
+                    num(y)
+                );
+            }
+            Marker::Continued => {}
+        }
         let _ = writeln!(
             svg,
-            "<rect x=\"{}\" y=\"{}\" width=\"12\" height=\"12\" fill=\"{fill}\" stroke=\"{OUTER_STROKE}\"/><text x=\"{}\" y=\"{}\" fill=\"{INK}\">{line}</text>",
-            num(MARGIN_PX),
-            num(y - 10.0),
+            "<text x=\"{}\" y=\"{}\" fill=\"{INK}\">{line}</text>",
             num(MARGIN_PX + 18.0),
             num(y)
         );

@@ -8,8 +8,10 @@
 use crate::GeometryError;
 use crate::GeometryWarning;
 use crate::contour::Contour;
+use crate::offset::to_cavalier;
 use crate::point::{EPS_MM, Point, Vec2};
 use crate::polyline::{Arc, Segment};
+use cavalier_contours::polyline::{BooleanOp, PlineSource};
 use std::f64::consts::{PI, TAU};
 
 /// An area to machine: one counter-clockwise outer contour and zero or more
@@ -41,20 +43,103 @@ impl Region {
 /// depth 2 is an island and starts a new region, and so on. Outers come
 /// back counter-clockwise and holes clockwise, whatever the input winding.
 ///
-/// Contours are expected not to cross one another. Regions are ordered by
-/// the input position of their outer contour, so the result does not
-/// depend on anything but the input.
+/// Regions are ordered by the input position of their outer contour, and
+/// holes by their own input position, so the result depends only on the
+/// input.
 ///
-/// A contour counts as inside another when its area is strictly smaller and
-/// a sample point on it (a segment midpoint off the other's boundary) lies
-/// inside. Identical contours therefore do not contain each other and each
-/// becomes its own region.
-///
-/// Shapes that cross each other fail with [`GeometryError::ContoursCross`].
-/// A shape identical to an earlier one is dropped with
-/// [`GeometryWarning::DuplicateContourDropped`].
+/// Every pair of contours is first compared by the area they share,
+/// computed on the true curves. Contours that cross (share area, but
+/// neither contains the other) fail with [`GeometryError::ContoursCross`];
+/// touching is not crossing. A contour identical to an earlier one,
+/// whatever its winding, is dropped with
+/// [`GeometryWarning::DuplicateContourDropped`]. The rules, with figures,
+/// are in the user guide chapter "Shapes, holes, and islands".
 pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>), GeometryError> {
-    Ok((nest_unchecked(contours), Vec::new()))
+    let mut keep = vec![true; contours.len()];
+    let mut warnings = Vec::new();
+    for (i, first) in contours.iter().enumerate() {
+        for (j, second) in contours.iter().enumerate().skip(i + 1) {
+            let both_kept =
+                keep.get(i).copied().unwrap_or(false) && keep.get(j).copied().unwrap_or(false);
+            if !both_kept {
+                continue;
+            }
+            match overlap(first, second) {
+                Overlap::Same => {
+                    if let Some(flag) = keep.get_mut(j) {
+                        *flag = false;
+                    }
+                    warnings.push(GeometryWarning::DuplicateContourDropped {
+                        index: j,
+                        duplicate_of: i,
+                    });
+                }
+                Overlap::Cross => {
+                    return Err(GeometryError::ContoursCross {
+                        first: i,
+                        second: j,
+                    });
+                }
+                Overlap::Apart | Overlap::Nested => {}
+            }
+        }
+    }
+    let kept = contours
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(contour, kept)| kept.then_some(contour))
+        .collect();
+    Ok((nest_unchecked(kept), warnings))
+}
+
+/// How two closed contours relate, judged by the area they share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Overlap {
+    /// No shared area: separate, or touching from outside.
+    Apart,
+    /// One lies wholly inside the other (edges may touch).
+    Nested,
+    /// The same shape, whatever the winding.
+    Same,
+    /// They share some area but neither contains the other.
+    Cross,
+}
+
+/// Compares the area `a` and `b` share with each one's own area. Exact for
+/// arcs, since the intersection is computed on the curves themselves. The
+/// tolerance is a strip [`EPS_MM`] wide along both boundaries, so shapes
+/// that only touch count as apart or nested, not crossing.
+fn overlap(a: &Contour, b: &Contour) -> Overlap {
+    let (Some(box_a), Some(box_b)) = (a.polyline().bounds(), b.polyline().bounds()) else {
+        return Overlap::Apart;
+    };
+    if box_a.max.x < box_b.min.x
+        || box_b.max.x < box_a.min.x
+        || box_a.max.y < box_b.min.y
+        || box_b.max.y < box_a.min.y
+    {
+        return Overlap::Apart;
+    }
+    let tolerance_mm2 = EPS_MM * (a.polyline().length_mm() + b.polyline().length_mm());
+    let shared_mm2 = shared_area_mm2(a, b);
+    if shared_mm2 <= tolerance_mm2 {
+        return Overlap::Apart;
+    }
+    let all_of = |c: &Contour| (c.signed_area_mm2().abs() - shared_mm2).abs() <= tolerance_mm2;
+    match (all_of(a), all_of(b)) {
+        (true, true) => Overlap::Same,
+        (true, false) | (false, true) => Overlap::Nested,
+        (false, false) => Overlap::Cross,
+    }
+}
+
+/// Area of the intersection of `a` and `b`, mm².
+fn shared_area_mm2(a: &Contour, b: &Contour) -> f64 {
+    let ccw = |c: &Contour| to_cavalier(with_ccw(c.clone(), true).polyline());
+    let result = ccw(a).boolean(&ccw(b), BooleanOp::And);
+    let filled: f64 = result.pos_plines.iter().map(|p| p.pline.area().abs()).sum();
+    let cut_out: f64 = result.neg_plines.iter().map(|p| p.pline.area().abs()).sum();
+    (filled - cut_out).max(0.0)
 }
 
 /// Nesting proper, for contours already known not to cross or repeat.

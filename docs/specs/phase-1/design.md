@@ -74,13 +74,16 @@ pub struct Transform(kurbo::Affine);
 
 pub fn offset(c: &Contour, delta_mm: f64) -> Vec<Contour>;       // cavalier_contours parallel_offset; +delta grows
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline>;
-pub fn nest(contours: Vec<Contour>) -> Vec<Region>;               // even-odd containment → outer/holes
+pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>), GeometryError>;
+    // even-odd containment → outer/holes; crossing shapes are ContoursCross, duplicates dropped with a warning
 pub fn length(p: &Polyline) -> f64;
 pub fn point_at(p: &Polyline, distance: f64) -> (Point, Vec2);    // position and tangent
 pub fn bounds(p: &Polyline) -> Rect;
 ```
 
-Errors: `GeometryError::{Degenerate, SelfIntersecting, OffsetVanished}`.
+Errors: `GeometryError::{Degenerate, SelfIntersecting, OffsetVanished, ArcUnderNonUniformTransform, ContoursCross}`.
+Warnings: `GeometryWarning::DuplicateContourDropped`. The nesting rules, with
+figures, are in the user guide chapter "Shapes, holes, and islands".
 
 ### dc-project
 
@@ -193,7 +196,9 @@ Inputs: project, op. Output: toolpath in project space.
    definition. Closed polylines become `Contour`s (normalised CCW). Open
    polylines raise `Warning::OpenPathSkipped` and are dropped.
 2. `nest` the contours of all targets into `Region`s. Outer contours are
-   CCW, holes CW.
+   CCW, holes CW. Crossing shapes fail the operation with
+   `CamError::Geometry(GeometryError::ContoursCross)`, naming both
+   instances; a dropped duplicate becomes `Warning::DuplicateShapeDropped`.
 3. Tool-centre contours. Let r = diameter / 2.
    - `Outside`: offset outer by +r; offset each hole by −r (the cutter runs
      inside the hole, since the hole's inside is "outside the part").
@@ -321,6 +326,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `flatten::preserves_closed_flag` — closed BezPath → closed polyline.
 - `nest::circle_in_circle_becomes_hole` — one region, one hole, hole is CW.
 - `nest::disjoint_shapes_are_separate_regions`.
+- `nest::several_parts_each_get_their_own_hole`, `nest::shapes_touching_from_outside_do_not_cross`.
+- `nest::crossing_circles_are_an_error`, `nest::crossing_rects_are_an_error_whatever_the_order` — `ContoursCross` with both input indices.
+- `nest::identical_shapes_keep_the_first_and_warn`, `nest::duplicate_drawn_the_other_way_is_still_a_duplicate`, `nest::duplicate_hole_is_dropped_and_part_keeps_one_hole`.
 - `point_at::tangent_is_unit_and_along_segment`.
 
 **dc-project**
