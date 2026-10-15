@@ -1,0 +1,41 @@
+# Rust / Cargo build output
+/target/
+**/target/
+# Cargo.lock is committed: DreamCarve ships binaries.
+
+# rustfmt / editor backups
+**/*.rs.bk
+*.orig
+*.rej
+
+# Debug / profiling artifacts
+*.pdb
+perf.data*
+flamegraph.svg
+*.profraw
+*.profdata
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Generated test output
+/out/
+*.gcode.tmp
+
+# IDEs and editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code: local (per-user) settings are not shared
+.claude/settings.local.json

@@ -1,0 +1,145 @@
+# DreamCarve
+
+The domain language for DreamCarve, a CAD/CAM application for CNC hobbyists.
+Where a term differs from the PureCutCNC reference implementation, the upstream
+name is listed so porting work can map between them.
+
+## Language
+
+### Design
+
+**Project**:
+The single document a user works on: stock, features, tools, operations, and
+machine setup. Saved in DreamCarve's own file format.
+_Avoid_: Document, file, job, .camj
+
+**Stock**:
+The block of material the project is machined from. Defines the material
+bottom below which no cut may go.
+_Avoid_: Workpiece, material block, blank
+
+**Feature Definition**:
+The canonical, untransformed shape shared by one or more feature instances.
+_Avoid_: Shape, definition, template
+_PureCutCNC_: FeatureDefinition
+
+**Feature Instance**:
+A placed copy of a feature definition with its own position, rotation, depth,
+visibility and lock state. Every row in the design tree is one.
+_Avoid_: Copy, object, element
+_PureCutCNC_: FeatureInstance
+
+**Slot**:
+A closed shape made of two parallel lines joined by semicircular ends,
+defined by its two centre points and a width. A drawing primitive in its own
+right, not a rounded rectangle.
+_Avoid_: Obround, stadium, rounded rectangle, keyhole
+_PureCutCNC_: `slotProfile`, creation shape `slot`
+
+**Linked Copy**:
+A second feature instance sharing the same feature definition, so editing the
+shape updates both.
+_Avoid_: Reference copy, clone, component
+
+**Model**:
+Imported 3D surface geometry that surface operations machine: a mesh (STL,
+OBJ) or a heightmap. Positioned by a feature instance like any other shape.
+_Avoid_: STL, mesh (when the source may be a heightmap), relief, 3D object
+_PureCutCNC_: `stl` feature kind, "imported model"
+
+**Heightmap**:
+A model defined by a grayscale image: each pixel's brightness is a height
+between a user-set top and bottom over a user-set footprint. Not a mesh.
+_Avoid_: Depth map, grayscale relief, bump map, height field (that is the
+simulation's internal grid)
+
+### Machining
+
+**Operation**:
+A machining strategy applied to one or more feature instances, with a tool,
+depth and feeds. The five kinds are Profile, Pocket, Drill, V-Carve and Engrave.
+_Avoid_: Job, cut, pass (a pass is one depth step inside an operation)
+
+**Profile**:
+An operation that cuts along a closed shape's outline, inside, outside or on
+the line, optionally leaving holding tabs.
+_Avoid_: Contour, edge route, outline cut
+_PureCutCNC_: Edge Route
+
+**Pocket**:
+An operation that clears all material inside a closed shape to a depth.
+_Avoid_: Clearing, area clear
+_PureCutCNC_: Pocket Rough, Pocket Finish
+
+**Clearance Strategy**:
+How a Pocket removes the material inside its boundary. **Offset** clears with
+concentric passes stepping inward from the wall; **Raster** clears with
+parallel straight passes at a user-set angle. Both finish with a wall pass
+along the boundary.
+_Avoid_: Pattern, fill, clearing mode, parallel (use Raster)
+_PureCutCNC_: pocketPattern `offset`, `parallel` (with `pocketAngle`)
+
+**Stepover**:
+The sideways distance between adjacent clearance passes, expressed as a
+percentage of tool diameter.
+_Avoid_: Step-over distance, overlap, pass width
+
+**Drill**:
+An operation that plunges a tool at one or more points, optionally pecking.
+_Avoid_: Hole, bore
+_PureCutCNC_: Drilling
+
+**V-Carve**:
+An operation that drives a V-bit along the medial lines of a shape so the cut
+width follows the shape width.
+_Avoid_: Carve, vcarve, chamfer
+_PureCutCNC_: V-Carve
+
+**Engrave**:
+An operation that follows an open or closed path with the tool centre on the
+line at a fixed depth.
+_Avoid_: Follow line, trace, scribe
+_PureCutCNC_: Follow Line, Carving
+
+**Toolpath**:
+The ordered tool motion an operation produces, in project coordinates, before
+any post-processor sees it.
+_Avoid_: Path, moves, program
+
+**Tab**:
+A short bridge of material left uncut on a Profile so the part stays attached
+to the stock.
+_Avoid_: Bridge, holding tab, clamp (a clamp is a workholding obstacle)
+
+**Tool**:
+A cutter with geometry (diameter, type, angle, flutes) and feeds for a given
+material. A project embeds copies of the tools it uses.
+_Avoid_: Bit, cutter, end mill (that is one tool type)
+
+**Tool Library**:
+The user's app-level collection of tools, kept outside any project, from which
+tools are picked and copied into a project. Can be populated by importing a
+manufacturer or third-party tool database.
+_Avoid_: Tool database, tool catalogue, tool list
+
+### Output
+
+**Post-processor**:
+The description of how a controller wants its G-code written: header, footer,
+comment style, arc support, tool-change and coolant commands.
+_Avoid_: Machine definition, post, driver
+_PureCutCNC_: MachineDefinition
+
+**Machine Origin**:
+The explicit transform from project coordinates to the controller's
+coordinates, including where XY zero and Z zero sit on the stock.
+_Avoid_: Datum, zero, offset
+
+**Through-cut Allowance**:
+The explicit, per-operation distance a cut may go below the stock bottom, so
+a part can be freed into a spoilboard. Zero unless the user sets it.
+_Avoid_: Overcut, extra depth, cut-through
+
+**Safe Z**:
+The height above the stock at which rapid moves between cuts travel.
+_Avoid_: Clearance height, retract height (retract is the per-move lift)
