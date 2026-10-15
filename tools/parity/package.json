@@ -1,0 +1,13 @@
+{
+  "name": "dreamcarve-parity",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only: captures PureCutCNC outputs into tests/golden/",
+  "license": "Apache-2.0",
+  "scripts": {
+    "capture": "tsx capture.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}

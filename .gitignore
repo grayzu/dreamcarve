@@ -42,3 +42,6 @@ Thumbs.db
 
 # mdBook output
 /docs/book/book/
+
+# Parity tool (dev-only Node script)
+/tools/parity/node_modules/
