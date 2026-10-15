@@ -255,8 +255,7 @@ mod tests {
     fn grbl_and_grblhal_differ_in_dialect() {
         let hal = lookup("grblhal").unwrap();
         let grbl = lookup("grbl").unwrap();
-        assert_eq!(hal.work_coordinates.select_command.as_deref(), Some("G54"));
-        assert_eq!(grbl.work_coordinates.select_command, None);
+        // Both select G54 (S5); they differ in comment syntax and coolant.
         assert_eq!(hal.program.comment_prefix, "(");
         assert_eq!(grbl.program.comment_prefix, ";");
         assert!(hal.coolant.is_some());
