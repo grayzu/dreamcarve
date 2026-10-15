@@ -1,0 +1,42 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+name: Bug
+description: Something produced the wrong result, crashed, or emitted unsafe motion.
+labels: [bug, needs-triage]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: Exact commands or clicks, in order.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: Include the full error text or the offending G-code lines.
+    validations:
+      required: true
+  - type: textarea
+    id: project
+    attributes:
+      label: Project file
+      description: Attach the .dcv (drag it here) or paste a minimal one. Bugs in toolpaths or G-code need it to be reproducible.
+  - type: input
+    id: controller
+    attributes:
+      label: Controller
+      description: Post-processor used and controller firmware version, if the bug involves G-code.
+      placeholder: "grblHAL 1.1f"
+  - type: input
+    id: version
+    attributes:
+      label: DreamCarve version
+      placeholder: "dreamcarve 0.1.0"

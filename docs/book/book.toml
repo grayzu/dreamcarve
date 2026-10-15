@@ -1,0 +1,17 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[book]
+title = "DreamCarve"
+description = "Open source CAD/CAM for CNC hobbyists"
+authors = ["The DreamCarve Contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/grayzu/dreamcarve"
+edit-url-template = "https://github.com/grayzu/dreamcarve/edit/main/docs/book/{path}"
+site-url = "/dreamcarve/"

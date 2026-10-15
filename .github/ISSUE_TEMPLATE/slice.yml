@@ -1,0 +1,46 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+name: Slice
+description: One implementation slice from a phase design spec. Tests are listed before code is written.
+title: "[phase N] "
+labels: [needs-triage]
+body:
+  - type: input
+    id: phase
+    attributes:
+      label: Phase
+      description: Phase number from docs/plan.md.
+      placeholder: "1"
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Design spec section
+      description: Path and heading in docs/specs/phase-N/design.md that defines this slice.
+      placeholder: "docs/specs/phase-1/design.md, Slices 3"
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What this slice delivers, in CONTEXT.md vocabulary.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      description: Test names and the assertion each makes. Name the crate they go in. The first commit of the PR adds these, failing.
+      placeholder: |
+        crates/dc-cam
+        - profile_outside_climb_is_clockwise: tool-centre contour winds CW for Side::Outside + Climb
+        - export_fails_when_tool_has_no_feed: emit returns ExportError::MissingFeed naming the tool
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Issues that must land first, if any.
