@@ -52,3 +52,8 @@ panic = "deny"
 indexing_slicing = "warn"
 cast_possible_truncation = "warn"
 float_cmp = "deny"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

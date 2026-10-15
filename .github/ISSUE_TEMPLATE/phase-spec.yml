@@ -1,0 +1,25 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+name: Phase spec
+description: Tracks the functional and design specs for a phase. Slices open after this merges.
+title: "[phase N] Specs"
+labels: [documentation, needs-triage]
+body:
+  - type: input
+    id: phase
+    attributes:
+      label: Phase
+    validations:
+      required: true
+  - type: input
+    id: pr
+    attributes:
+      label: Spec PR
+      description: Link to the PR adding docs/specs/phase-N/functional.md and design.md.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Open questions
+      description: Anything the spec leaves to decide, copied from its "Open questions" section.
