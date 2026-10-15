@@ -12,11 +12,18 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# `emit` takes `dc_cam::Toolpath`, the generator's output type
+# (`docs/specs/phase-1/design.md`, "dc-gcode"). dc-cam and dc-gcode are
+# siblings above dc-project; this edge follows the data flow, and dc-gcode
+# uses only the toolpath types, never how a toolpath was generated.
+dc-cam.workspace = true
+dc-geometry.workspace = true
 dc-project.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+dc-cam = { workspace = true, features = ["test-support"] }
 dc-project = { workspace = true, features = ["test-support"] }
 
 [lints]
