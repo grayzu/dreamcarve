@@ -12,6 +12,11 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+dc-geometry.workspace = true
+dc-project.workspace = true
+kurbo.workspace = true
+thiserror.workspace = true
+usvg.workspace = true
 
 [lints]
 workspace = true

@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="flat" d="M10,10 L20,10 L30,10 Z M10,50 L20,50 L20,60 Z" fill="none" stroke="black"/>
+  <path id="only-flat" d="M10,80 L40,80 Z" fill="none" stroke="black"/>
+</svg>
