@@ -65,7 +65,7 @@
     "modal_feed_speed": true,
     "spindle_on_dwell": {
       "command": "G4 P{seconds}",
-      "duration_s": 0.0
+      "duration_s": 3.0
     }
   },
   "tool_change": {

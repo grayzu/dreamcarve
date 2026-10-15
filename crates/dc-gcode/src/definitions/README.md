@@ -47,6 +47,7 @@ rules S1–S6. The `post::tests` in `dc-gcode` lock each finding in.
 | Tool change pauses once, `pause_after_change` → `false` | `grbl.json` | The command list already has M0, so `true` made the operator press cycle start twice. GRBL does not support M6. |
 | `{operationDescription}` lines removed | both | `emit` does not fill that placeholder, so it would reach the machine as literal text. |
 | Em-dashes in `description` → `-` | both | Bytes above 0x7F are real-time commands on both controllers (0x94 is a feed override). |
+| `feed_speed.spindle_on_dwell` added: `G4 P{seconds}`, `duration_s` 3.0 | both | Neither controller waits for the spindle to reach speed after M3 (grblHAL `$394` defaults to 0). `G4 P` is seconds on both: `mc_dwell(float seconds)` in `grbl/motion_control.c` and grblHAL `motion_control.c`. DreamCarve field, not in PureCutCNC's schema (#28). |
 
 Rules for the emitter that come from the same check (enforced in `emit`, not
 here): text substituted into comments (`{programName}`, `{toolName}`,
@@ -68,4 +69,5 @@ Sources:
 
 Still needs a check on a real machine: the sender's handling of comments,
 `$32` laser mode off, `$30` at or above the requested RPM, and spindle
-spin-up time (neither controller waits after M3 by default).
+spin-up time: the bundled 3 s dwell may be too short for a large spindle or
+VFD ramp; raise `duration_s` in the project if so.

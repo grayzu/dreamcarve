@@ -350,6 +350,16 @@ impl Validator {
                 self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
             }
         }
+
+        let dwell = &p.post_processor.feed_speed.spindle_on_dwell;
+        let at = "post_processor.feed_speed.spindle_on_dwell";
+        self.non_negative(&format!("{at}.duration_s"), dwell.duration_s);
+        if !dwell.command.contains("{seconds}") {
+            self.problems.push(Problem::MissingPlaceholder {
+                field: format!("{at}.command"),
+                placeholder: "{seconds}",
+            });
+        }
     }
 
     /// Reports `field` if `value` is not finite; returns whether it is.
