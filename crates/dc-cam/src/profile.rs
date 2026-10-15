@@ -7,7 +7,7 @@
 //   src/engine/toolpaths/geometry.ts
 
 //! Profile toolpaths (`docs/specs/phase-1/design.md`, "Algorithms → Profile
-//! contour", steps 1–6 and 8; tabs, step 7, are not applied yet).
+//! contour", steps 1–8; the tabs of step 7 are in [`crate::tabs`]).
 //!
 //! Re-derived for Y-up (ADR-0001) rather than copied: PureCutCNC works in
 //! Y-down screen space, where every winding below is mirrored. Here outer
@@ -16,11 +16,10 @@
 
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::passes::pass_z_mm;
-use crate::toolpath::{Move, MoveKind, Toolpath};
+use crate::tabs::{LapRates, PathTabs, Tabs, cut_range_warnings, emit_lap, overlap_warning};
+use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
-use dc_geometry::{
-    Contour, EPS_MM, GeometryError, GeometryWarning, Point3, Polyline, nest, offset,
-};
+use dc_geometry::{Contour, GeometryError, GeometryWarning, Point3, Polyline, nest, offset};
 use dc_project::{CutDirection, ProfileOp, Project, Side, Tool};
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
@@ -99,24 +98,15 @@ fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
 
 /// The rates every cut of this operation uses, exactly as the user set
 /// them on the tool.
-#[derive(Debug, Clone, Copy)]
-struct Rates {
-    feed_mm_min: f64,
-    plunge_mm_min: f64,
-}
-
-impl Rates {
-    fn of(tool: &Tool) -> Result<Self, CamError> {
-        let missing = |field| CamError::MissingFeed {
-            tool: tool.name.clone(),
-            field,
-        };
-        Ok(Self {
-            feed_mm_min: usable_rate(tool.feed_mm_min).ok_or_else(|| missing(FeedField::Feed))?,
-            plunge_mm_min: usable_rate(tool.plunge_mm_min)
-                .ok_or_else(|| missing(FeedField::Plunge))?,
-        })
-    }
+fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
+    let missing = |field| CamError::MissingFeed {
+        tool: tool.name.clone(),
+        field,
+    };
+    Ok(LapRates {
+        feed_mm_min: usable_rate(tool.feed_mm_min).ok_or_else(|| missing(FeedField::Feed))?,
+        plunge_mm_min: usable_rate(tool.plunge_mm_min).ok_or_else(|| missing(FeedField::Plunge))?,
+    })
 }
 
 /// Generates the Profile toolpath for `op` in `project`, in project space
@@ -130,6 +120,11 @@ impl Rates {
 /// start at safe Z, then per pass a straight descent at the plunge rate and
 /// one lap at the feed rate ending at the start, then a rapid retract to
 /// safe Z. Arc segments stay arcs.
+///
+/// With `op.tabs`, every pass below the tab top rises over each tab span
+/// (`width + diameter` along the tool-centre contour); overlapping spans
+/// merge with [`WarningCode::TabsOverlap`], and a tab top no pass reaches,
+/// or one above the stock top, gives [`WarningCode::TabsOutsideCutRange`].
 ///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
 /// with a [`Warning`]. Fails without a toolpath when a feed, plunge rate, or
@@ -148,7 +143,7 @@ pub fn generate_profile(
             op: op.id.clone(),
             tool: op.tool.clone(),
         })?;
-    let rates = Rates::of(tool)?;
+    let rates = rates_of(tool)?;
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
@@ -178,7 +173,16 @@ pub fn generate_profile(
     )?;
     let safe_z_mm = thickness_mm + op.safe_z_mm;
 
+    let tabs = op
+        .tabs
+        .as_ref()
+        .map(|spec| Tabs::new(&op.id, spec, tool.diameter_mm, project.flatten_tolerance_mm))
+        .transpose()?;
+
     let mut warnings = Vec::new();
+    if let Some(tabs) = &tabs {
+        warnings.extend(cut_range_warnings(&op.id, tabs, &pass_z, thickness_mm));
+    }
     let shapes = resolve_targets(project, op, &mut warnings)?;
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
@@ -235,8 +239,17 @@ pub fn generate_profile(
     }
 
     let mut toolpath = Toolpath::default();
-    for path in &paths {
-        emit_contour(&mut toolpath.moves, path, &pass_z, safe_z_mm, rates);
+    for (index, path) in paths.iter().enumerate() {
+        let layout = tabs.as_ref().map(|tabs| {
+            let length_mm = path.length_mm();
+            let (layout, overlapped) = tabs.layout(length_mm);
+            if overlapped {
+                warnings.push(overlap_warning(&op.id, index, length_mm));
+            }
+            (tabs, layout)
+        });
+        let tabs = layout.as_ref().map(|(tabs, layout)| (*tabs, layout));
+        emit_contour(&mut toolpath.moves, path, &pass_z, safe_z_mm, rates, tabs);
     }
     Ok((toolpath, warnings))
 }
@@ -319,46 +332,26 @@ fn same_contour(input: &Contour, nested: &Contour) -> bool {
     input == nested || &input.reversed() == nested
 }
 
-/// Appends the moves that cut `path` at every pass Z (step 6): a rapid to
-/// its start at safe Z, then per pass a vertical descent at the plunge rate
-/// and one lap at the feed rate back to the start, then a vertical rapid
-/// retract to safe Z. Between passes the tool is already at the start, so
-/// it descends straight to the next pass without retracting.
+/// Appends the moves that cut `path` at every pass Z (steps 6 and 7): a
+/// rapid to its start at safe Z, then per pass a vertical descent at the
+/// plunge rate and one lap at the feed rate back to the start, rising over
+/// `tabs` on passes below the tab top, then a vertical rapid retract to safe
+/// Z. Between passes the tool is already at the start, so it descends
+/// straight to the next pass without retracting.
 fn emit_contour(
     moves: &mut Vec<Move>,
     path: &Polyline,
     pass_z: &[f64],
     safe_z_mm: f64,
-    rates: Rates,
+    rates: LapRates,
+    tabs: Option<(&Tabs, &PathTabs)>,
 ) {
     let Some(start) = path.vertices().first().map(|v| v.point()) else {
         return;
     };
-    let segments: Vec<_> = path
-        .segments()
-        .filter(|s| s.start.distance_to(s.end) > EPS_MM)
-        .collect();
-    moves.reserve(pass_z.len() * (segments.len() + 1) + 2);
     moves.push(Move::rapid(Point3::new(start.x, start.y, safe_z_mm)));
     for &z_mm in pass_z {
-        moves.push(Move::linear(
-            Point3::new(start.x, start.y, z_mm),
-            rates.plunge_mm_min,
-        ));
-        for segment in &segments {
-            // A positive bulge, hence a positive sweep, is counter-clockwise
-            // in Y-up.
-            let kind = match segment.arc() {
-                Some(arc) if arc.sweep_rad > 0.0 => MoveKind::ArcCcw { centre: arc.centre },
-                Some(arc) => MoveKind::ArcCw { centre: arc.centre },
-                None => MoveKind::Linear,
-            };
-            moves.push(Move {
-                kind,
-                to: Point3::new(segment.end.x, segment.end.y, z_mm),
-                feed_mm_min: Some(rates.feed_mm_min),
-            });
-        }
+        emit_lap(moves, path, z_mm, tabs, rates);
     }
     moves.push(Move::rapid(Point3::new(start.x, start.y, safe_z_mm)));
 }

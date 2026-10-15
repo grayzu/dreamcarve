@@ -16,10 +16,15 @@
 //! the tab. World-placed tabs arrive with the GUI in phase 5.
 
 use crate::error::CamError;
-use crate::toolpath::Move;
-use crate::warning::Warning;
-use dc_geometry::Polyline;
+use crate::tab_profile::{smooth_tab_sample_fractions, smooth_tab_z_mm};
+use crate::toolpath::{Move, MoveKind};
+use crate::warning::{Warning, WarningCode};
+use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Polyline, Segment};
 use dc_project::{OperationId, TabPlacement, TabShape, TabSpec};
+
+/// Most chords one arc piece of a smooth ramp is split into. Bounds the
+/// work a tiny chord tolerance can cause.
+const MAX_ARC_CHORDS: u32 = 1024;
 
 /// Distances along a closed path of length `path_length_mm` at which tabs
 /// are centred, each in `[0, path_length_mm)`, in placement order.
@@ -29,11 +34,25 @@ use dc_project::{OperationId, TabPlacement, TabShape, TabSpec};
 /// value modulo `L`. A non-positive `L` gives no tabs.
 #[must_use]
 pub fn tab_centres_mm(placement: &TabPlacement, path_length_mm: f64) -> Vec<f64> {
-    let _ = (placement, path_length_mm);
-    todo!()
+    if path_length_mm.is_nan() || path_length_mm <= EPS_MM {
+        return Vec::new();
+    }
+    match placement {
+        TabPlacement::Count { count } => {
+            let n = f64::from(*count);
+            (0..*count)
+                .map(|k| path_length_mm * (2.0 * f64::from(k) + 1.0) / (2.0 * n))
+                .collect()
+        }
+        TabPlacement::AtDistances { distances_mm } => distances_mm
+            .iter()
+            .map(|d| d.rem_euclid(path_length_mm))
+            .collect(),
+    }
 }
 
-/// The feed rates a lap is cut at.
+/// The feed rates a lap is cut at, exactly as the user set them on the
+/// tool.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct LapRates {
     /// XY cutting feed, mm/min.
@@ -48,6 +67,7 @@ pub(crate) struct Tabs {
     placement: TabPlacement,
     shape: TabShape,
     top_z_mm: f64,
+    /// Length of path one tab raises: tab width plus tool diameter.
     span_mm: f64,
     chord_tolerance_mm: f64,
 }
@@ -55,54 +75,272 @@ pub(crate) struct Tabs {
 impl Tabs {
     /// Checks `spec` for operation `op` cut with a tool `diameter_mm` wide.
     /// `chord_tolerance_mm` bounds how far a smooth ramp's chords stray from
-    /// the raised cosine in Z.
+    /// the path in XY and from the raised cosine in Z; a value that is not
+    /// positive falls back to [`FLATTEN_TOLERANCE_DEFAULT_MM`].
+    ///
+    /// Fails with [`CamError::InvalidTab`] when the width or height is not
+    /// a positive number or a distance is not finite.
     pub(crate) fn new(
         op: &OperationId,
         spec: &TabSpec,
         diameter_mm: f64,
         chord_tolerance_mm: f64,
     ) -> Result<Self, CamError> {
-        let _ = (op, spec, diameter_mm, chord_tolerance_mm);
-        todo!()
-    }
-
-    /// Tab top, mm above the stock bottom.
-    pub(crate) fn top_z_mm(&self) -> f64 {
-        self.top_z_mm
+        let invalid = |field: String, value_mm: f64| CamError::InvalidTab {
+            op: op.clone(),
+            field,
+            value_mm,
+        };
+        for (field, value_mm) in [("width_mm", spec.width_mm), ("height_mm", spec.height_mm)] {
+            if !(value_mm.is_finite() && value_mm > 0.0) {
+                return Err(invalid(field.to_owned(), value_mm));
+            }
+        }
+        if let TabPlacement::AtDistances { distances_mm } = &spec.placement
+            && let Some((i, d)) = distances_mm
+                .iter()
+                .enumerate()
+                .find(|(_, d)| !d.is_finite())
+        {
+            return Err(invalid(format!("distances_mm[{i}]"), *d));
+        }
+        Ok(Self {
+            placement: spec.placement.clone(),
+            shape: spec.shape,
+            top_z_mm: spec.height_mm,
+            span_mm: spec.width_mm + diameter_mm,
+            chord_tolerance_mm: if chord_tolerance_mm > 0.0 {
+                chord_tolerance_mm
+            } else {
+                FLATTEN_TOLERANCE_DEFAULT_MM
+            },
+        })
     }
 
     /// The raised spans on a closed path `path_length_mm` long, and whether
-    /// any two of them overlapped.
+    /// any of them overlapped (or touched, or one alone covers the whole
+    /// path), which merges them.
+    ///
+    /// Each tab raises `width + diameter` of path centred on its distance
+    /// (PureCutCNC grows each tab footprint by the tool radius on every
+    /// side; along the path that is the same length). Spans are circular:
+    /// one may run through the path start.
     pub(crate) fn layout(&self, path_length_mm: f64) -> (PathTabs, bool) {
-        let _ = path_length_mm;
-        todo!()
+        let l = path_length_mm;
+        let mut layout = PathTabs {
+            length_mm: l,
+            spans: Vec::new(),
+            full: false,
+        };
+        let centres = tab_centres_mm(&self.placement, l);
+        if centres.is_empty() {
+            return (layout, false);
+        }
+        let half = self.span_mm / 2.0;
+        let mut starts: Vec<f64> = centres.iter().map(|c| (c - half).rem_euclid(l)).collect();
+        starts.sort_by(f64::total_cmp);
+        let mut overlap = self.span_mm >= l - EPS_MM;
+
+        // (start, end) with end possibly beyond L, merged in order.
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for start in starts {
+            let end = start + self.span_mm;
+            match merged.last_mut() {
+                Some(last) if start <= last.1 + EPS_MM => {
+                    overlap = true;
+                    last.1 = last.1.max(end);
+                }
+                _ => merged.push((start, end)),
+            }
+        }
+        // The last span may run past L into the first.
+        while merged.len() > 1 {
+            let (Some(&first), Some(&last)) = (merged.first(), merged.last()) else {
+                break;
+            };
+            if last.1 - l < first.0 - EPS_MM {
+                break;
+            }
+            overlap = true;
+            merged.remove(0);
+            if let Some(last) = merged.last_mut() {
+                last.1 = last.1.max(first.1 + l);
+            }
+        }
+        layout.full = merged.iter().any(|(s, e)| e - s >= l - EPS_MM);
+        layout.spans = merged
+            .into_iter()
+            .map(|(start_mm, end)| Span {
+                start_mm,
+                length_mm: end - start_mm,
+            })
+            .collect();
+        (layout, overlap)
     }
+
+    /// Half of a single tab's span: the length a smooth ramp rises over.
+    fn ramp_mm(&self) -> f64 {
+        self.span_mm / 2.0
+    }
+}
+
+/// One raised stretch of a closed path, after merging.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Span {
+    /// Distance along the path where the span starts, in `[0, L)`.
+    start_mm: f64,
+    /// Length of the span; `start_mm + length_mm` may exceed `L`.
+    length_mm: f64,
 }
 
 /// The merged tab spans on one closed tool-centre path.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PathTabs {
-    _private: (),
+    length_mm: f64,
+    spans: Vec<Span>,
+    /// The spans cover the whole path.
+    full: bool,
+}
+
+/// Where a point along a tabbed path lies.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Zone {
+    /// Outside every span: the pass Z.
+    Clear,
+    /// On a smooth ramp, at normalised crossing position `u`.
+    Ramp(f64),
+    /// At the tab top.
+    Hold,
+}
+
+impl PathTabs {
+    /// The zone at `distance_mm` along the path.
+    fn zone(&self, tabs: &Tabs, distance_mm: f64) -> Zone {
+        if self.full {
+            return Zone::Hold;
+        }
+        let ramp_mm = tabs.ramp_mm();
+        for span in &self.spans {
+            let t = (distance_mm - span.start_mm).rem_euclid(self.length_mm);
+            if t >= span.length_mm {
+                continue;
+            }
+            return match tabs.shape {
+                TabShape::Rect => Zone::Hold,
+                // A merged smooth span rises over the first half-span and
+                // falls over the last, holding the top between; a single
+                // tab is exactly one raised cosine.
+                TabShape::Smooth if t < ramp_mm => Zone::Ramp(t / (2.0 * ramp_mm)),
+                TabShape::Smooth if t > span.length_mm - ramp_mm => {
+                    Zone::Ramp(1.0 - (span.length_mm - t) / (2.0 * ramp_mm))
+                }
+                TabShape::Smooth => Zone::Hold,
+            };
+        }
+        Zone::Clear
+    }
+
+    /// Z at `distance_mm` along the path for a pass at `base_z_mm`.
+    fn z_at(&self, tabs: &Tabs, distance_mm: f64, base_z_mm: f64) -> f64 {
+        match self.zone(tabs, distance_mm) {
+            Zone::Clear => base_z_mm,
+            Zone::Ramp(u) => smooth_tab_z_mm(u, base_z_mm, tabs.top_z_mm),
+            Zone::Hold => tabs.top_z_mm,
+        }
+    }
+
+    /// Distances where the lap must have a vertex for a pass at
+    /// `base_z_mm`: span boundaries and, for smooth tabs, the ramp samples.
+    fn breakpoints_mm(&self, tabs: &Tabs, base_z_mm: f64) -> Vec<f64> {
+        if self.full {
+            return Vec::new();
+        }
+        let fractions = match tabs.shape {
+            TabShape::Rect => Vec::new(),
+            TabShape::Smooth => {
+                smooth_tab_sample_fractions(tabs.top_z_mm - base_z_mm, tabs.chord_tolerance_mm)
+            }
+        };
+        let ramp_2_mm = 2.0 * tabs.ramp_mm();
+        let mut out = Vec::new();
+        for span in &self.spans {
+            let end = span.start_mm + span.length_mm;
+            out.push(span.start_mm);
+            out.push(end);
+            // The rising half from the start, the falling half back from
+            // the end; 0.5 belongs to both, which meet on a single tab.
+            for &f in &fractions {
+                if f <= 0.5 {
+                    out.push(span.start_mm + f * ramp_2_mm);
+                }
+                if f >= 0.5 {
+                    out.push(end - (1.0 - f) * ramp_2_mm);
+                }
+            }
+        }
+        for d in &mut out {
+            *d = d.rem_euclid(self.length_mm);
+        }
+        out
+    }
 }
 
 /// The warnings about where the tab top lies relative to the cut
-/// (PureCutCNC `applyTabWarnings`): [`crate::WarningCode::TabsOutsideCutRange`]
-/// when no pass of `pass_z_mm` lies below the tab top, or when the tab top is
-/// above the stock top `thickness_mm`.
+/// (PureCutCNC `applyTabWarnings`): [`WarningCode::TabsOutsideCutRange`]
+/// when no pass of `pass_z_mm` lies below the tab top, so the tabs change
+/// nothing, or when the tab top is above the stock top `thickness_mm`.
 pub(crate) fn cut_range_warnings(
     op: &OperationId,
     tabs: &Tabs,
     pass_z_mm: &[f64],
     thickness_mm: f64,
 ) -> Vec<Warning> {
-    let _ = (op, tabs, pass_z_mm, thickness_mm);
-    todo!()
+    let Some(deepest_z_mm) = pass_z_mm.iter().copied().reduce(f64::min) else {
+        return Vec::new();
+    };
+    let warning = |reason: &str| {
+        Warning::new(WarningCode::TabsOutsideCutRange)
+            .with("op", op)
+            .with("reason", reason)
+            .with("tab_top_mm", tabs.top_z_mm)
+            .with("deepest_pass_z_mm", deepest_z_mm)
+            .with("stock_top_mm", thickness_mm)
+    };
+    let mut warnings = Vec::new();
+    if tabs.top_z_mm > thickness_mm + EPS_MM {
+        warnings.push(warning("above_stock_top"));
+    }
+    if deepest_z_mm >= tabs.top_z_mm - EPS_MM {
+        warnings.push(warning("cut_stops_above_tab"));
+    }
+    warnings
 }
 
-/// Appends one lap of `path` at `z_mm`, starting with the descent from the
-/// tool's current position (vertically above the path start) and ending at
-/// the path start. Where `tabs` is given and `z_mm` lies below the tab top,
-/// the lap rises over each tab span.
+/// The warning that tab spans on contour `contour` (0-based, in cut order)
+/// overlapped and were merged.
+pub(crate) fn overlap_warning(op: &OperationId, contour: usize, path_length_mm: f64) -> Warning {
+    Warning::new(WarningCode::TabsOverlap)
+        .with("op", op)
+        .with("contour", contour)
+        .with("path_length_mm", path_length_mm)
+}
+
+/// One move of a lap, before the vertical step that may precede it.
+#[derive(Debug, Clone, Copy)]
+struct Piece {
+    /// Z the move must start at.
+    from_z_mm: f64,
+    kind: MoveKind,
+    to: Point3,
+}
+
+/// Appends one lap of `path` at `z_mm`: a vertical move from the tool's
+/// current position (above the path start) to the lap's start Z, then the
+/// lap back to the path start. Where `tabs` is given and `z_mm` lies below
+/// the tab top, the lap rises over each tab span: rect tabs with a vertical
+/// lift, a traverse at the tab top, and a vertical descent; smooth tabs
+/// along the raised cosine. Every vertical move and every move that lowers
+/// Z is at the plunge rate; every other cutting move is at the feed rate.
 pub(crate) fn emit_lap(
     moves: &mut Vec<Move>,
     path: &Polyline,
@@ -110,8 +348,182 @@ pub(crate) fn emit_lap(
     tabs: Option<(&Tabs, &PathTabs)>,
     rates: LapRates,
 ) {
-    let _ = (moves, path, z_mm, tabs, rates);
-    todo!()
+    let Some(start) = path.vertices().first().map(|v| v.point()) else {
+        return;
+    };
+    let tabs = tabs.filter(|(t, _)| z_mm < t.top_z_mm - EPS_MM);
+    let pieces = lap_pieces(path, z_mm, tabs);
+    let start_z_mm = pieces.first().map_or(z_mm, |p| p.from_z_mm);
+    let Some(mut current) = moves.last().map(|m| m.to) else {
+        // A lap always follows the rapid to its start; without one there
+        // is no safe way in.
+        return;
+    };
+    let vertical_to = |moves: &mut Vec<Move>, current: &mut Point3, z: f64| {
+        if (current.z - z).abs() > EPS_MM {
+            *current = Point3::new(start.x, start.y, z);
+            moves.push(Move::linear(*current, rates.plunge_mm_min));
+        }
+    };
+    vertical_to(moves, &mut current, start_z_mm);
+    for piece in pieces {
+        if (current.z - piece.from_z_mm).abs() > EPS_MM {
+            current = Point3::new(current.x, current.y, piece.from_z_mm);
+            moves.push(Move::linear(current, rates.plunge_mm_min));
+        }
+        let feed_mm_min = if piece.to.z < current.z - EPS_MM {
+            rates.plunge_mm_min
+        } else {
+            rates.feed_mm_min
+        };
+        moves.push(Move {
+            kind: piece.kind,
+            to: piece.to,
+            feed_mm_min: Some(feed_mm_min),
+        });
+        current = piece.to;
+    }
+}
+
+/// The moves of one lap at `z_mm`, split at tab breakpoints.
+fn lap_pieces(path: &Polyline, z_mm: f64, tabs: Option<(&Tabs, &PathTabs)>) -> Vec<Piece> {
+    let segments: Vec<Segment> = path
+        .segments()
+        .filter(|s| s.start.distance_to(s.end) > EPS_MM)
+        .collect();
+    let Some((tabs, layout)) = tabs else {
+        return segments
+            .iter()
+            .map(|s| Piece {
+                from_z_mm: z_mm,
+                kind: segment_kind(s),
+                to: Point3::new(s.end.x, s.end.y, z_mm),
+            })
+            .collect();
+    };
+    let mut breakpoints = layout.breakpoints_mm(tabs, z_mm);
+    breakpoints.sort_by(f64::total_cmp);
+
+    let lap = Lap {
+        tabs,
+        layout,
+        base_z_mm: z_mm,
+    };
+    let mut pieces = Vec::new();
+    let mut segment_start_mm = 0.0;
+    for segment in &segments {
+        let length_mm = segment.length_mm();
+        let mut local: Vec<f64> = vec![0.0];
+        local.extend(
+            breakpoints
+                .iter()
+                .map(|b| b - segment_start_mm)
+                .filter(|d| *d > EPS_MM && *d < length_mm - EPS_MM),
+        );
+        local.push(length_mm);
+        local.dedup_by(|b, a| *b - *a <= EPS_MM);
+        for pair in local.windows(2) {
+            if let &[a, b] = pair {
+                lap.push_piece(&mut pieces, segment, segment_start_mm, a, b);
+            }
+        }
+        segment_start_mm += length_mm;
+    }
+    pieces
+}
+
+/// One tabbed lap being split into pieces.
+struct Lap<'a> {
+    tabs: &'a Tabs,
+    layout: &'a PathTabs,
+    base_z_mm: f64,
+}
+
+impl Lap<'_> {
+    /// Appends the piece of `segment` from local distance `a` to `b`, which
+    /// lies in one zone. `segment_start_mm` is the segment's distance along
+    /// the path.
+    fn push_piece(
+        &self,
+        pieces: &mut Vec<Piece>,
+        segment: &Segment,
+        segment_start_mm: f64,
+        a: f64,
+        b: f64,
+    ) {
+        let mid = segment_start_mm + (a + b) / 2.0;
+        let level_z_mm = match self.layout.zone(self.tabs, mid) {
+            Zone::Clear => Some(self.base_z_mm),
+            Zone::Hold => Some(self.tabs.top_z_mm),
+            Zone::Ramp(_) => None,
+        };
+        if let Some(z) = level_z_mm {
+            let end = point_on(segment, b);
+            pieces.push(Piece {
+                from_z_mm: z,
+                kind: segment_kind(segment),
+                to: Point3::new(end.x, end.y, z),
+            });
+            return;
+        }
+        // A ramp: straight chords, Z from the raised cosine at each end;
+        // arcs split so the chords stay within tolerance in XY too.
+        let chords = match segment.arc() {
+            Some(arc) => {
+                let angle_rad = (b - a) / arc.radius_mm;
+                let tol = self.tabs.chord_tolerance_mm;
+                let max_rad = if tol < arc.radius_mm {
+                    2.0 * (1.0 - tol / arc.radius_mm).acos()
+                } else {
+                    std::f64::consts::PI
+                };
+                (1..MAX_ARC_CHORDS)
+                    .find(|&k| angle_rad / f64::from(k) <= max_rad)
+                    .unwrap_or(MAX_ARC_CHORDS)
+            }
+            None => 1,
+        };
+        let z_at = |d: f64| {
+            self.layout
+                .z_at(self.tabs, segment_start_mm + d, self.base_z_mm)
+        };
+        let at = |k: u32| {
+            if k == chords {
+                b
+            } else {
+                a + (b - a) * f64::from(k) / f64::from(chords)
+            }
+        };
+        for k in 0..chords {
+            let (d0, d1) = (at(k), at(k + 1));
+            let end = point_on(segment, d1);
+            pieces.push(Piece {
+                from_z_mm: z_at(d0),
+                kind: MoveKind::Linear,
+                to: Point3::new(end.x, end.y, z_at(d1)),
+            });
+        }
+    }
+}
+
+/// The point `distance_mm` along `segment`; exactly its end at its length.
+fn point_on(segment: &Segment, distance_mm: f64) -> Point {
+    if distance_mm >= segment.length_mm() - EPS_MM {
+        return segment.end;
+    }
+    segment
+        .point_at(distance_mm)
+        .map_or(segment.end, |(p, _)| p)
+}
+
+/// How a whole segment, or a constant-Z piece of it, is cut. A positive
+/// bulge, hence a positive sweep, is counter-clockwise in Y-up.
+fn segment_kind(segment: &Segment) -> MoveKind {
+    match segment.arc() {
+        Some(arc) if arc.sweep_rad > 0.0 => MoveKind::ArcCcw { centre: arc.centre },
+        Some(arc) => MoveKind::ArcCw { centre: arc.centre },
+        None => MoveKind::Linear,
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +547,10 @@ mod tests {
     use std::f64::consts::TAU;
 
     const TOL: f64 = 1e-6;
+    /// Smooth ramps are cut as chords of the arc, so lengths summed over
+    /// them fall short of the arc length by at most this here (chord
+    /// tolerance 0.01 mm on a 48 mm radius).
+    const CHORD_TOL: f64 = 1e-3;
     const THICKNESS_MM: f64 = 12.0;
     const DIAMETER_MM: f64 = 6.35;
     const TAB_WIDTH_MM: f64 = 8.0;
@@ -321,6 +737,24 @@ mod tests {
 
     fn raised_runs(lap: &[XyMove]) -> Vec<Run> {
         runs(lap, |m| m.at_z(TAB_Z_MM))
+    }
+
+    /// After the descent into it, the final pass never moves Z alone: a
+    /// smooth tab ramps rather than steps.
+    fn assert_no_vertical_step_in_final_pass(tp: &Toolpath) {
+        let final_start = tp
+            .moves
+            .iter()
+            .position(|m| m.to.z < PASS_Z_MM[1] - TOL)
+            .unwrap();
+        for pair in tp.moves[final_start..].windows(2) {
+            let (prev, mv) = (pair[0], pair[1]);
+            let vertical = prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM;
+            assert!(
+                mv.is_rapid() || !vertical || (mv.to.z - prev.to.z).abs() <= TOL,
+                "no vertical step inside the final pass: {prev:?} -> {mv:?}"
+            );
+        }
     }
 
     #[test]
@@ -563,12 +997,17 @@ mod tests {
         assert_eq!(codes(&warnings), vec![WarningCode::TabsOverlap]);
         let lifted = runs(&final_lap(&tp), |m| m.z_max() > TOL);
         assert_eq!(lifted.len(), 1, "{lifted:?}");
-        assert_approx_eq!(lifted[0].length_mm, 8.0 + TAB_WIDTH_MM + DIAMETER_MM, TOL);
+        assert_approx_eq!(
+            lifted[0].length_mm,
+            8.0 + TAB_WIDTH_MM + DIAMETER_MM,
+            CHORD_TOL
+        );
         let held: f64 = raised_runs(&final_lap(&tp))
             .iter()
             .map(|r| r.length_mm)
             .sum();
         assert_approx_eq!(held, 8.0, TOL);
+        assert_no_vertical_step_in_final_pass(&tp);
 
         // Tabs wide enough to cover the whole path merge into one: the
         // final pass rides the tab top all the way round.
@@ -695,7 +1134,7 @@ mod tests {
         assert_eq!(lifted.len(), 4, "{lifted:?}");
         let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
         for run in &lifted {
-            assert_approx_eq!(run.length_mm, span_mm, TOL);
+            assert_approx_eq!(run.length_mm, span_mm, CHORD_TOL);
         }
         let peaks = lap
             .iter()
@@ -718,24 +1157,12 @@ mod tests {
                 continue;
             };
             let u = (at_mm - run.start_mm) / span_mm;
-            assert_approx_eq!(m.mv.to.z, smooth_tab_z_mm(u, 0.0, TAB_Z_MM), 1e-6);
+            assert_approx_eq!(m.mv.to.z, smooth_tab_z_mm(u, 0.0, TAB_Z_MM), CHORD_TOL);
             if m.mv.to.z < m.from.z - EPS_MM {
                 assert_approx_eq!(m.mv.feed_mm_min.unwrap(), PLUNGE_MM_MIN, EPS_MM);
             }
         }
-        let final_start = tp
-            .moves
-            .iter()
-            .position(|m| m.to.z < PASS_Z_MM[1] - TOL)
-            .unwrap();
-        for pair in tp.moves[final_start..].windows(2) {
-            let (prev, mv) = (pair[0], pair[1]);
-            let vertical = prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM;
-            assert!(
-                mv.is_rapid() || !vertical || (mv.to.z - prev.to.z).abs() <= TOL,
-                "no vertical step inside the final pass: {prev:?} -> {mv:?}"
-            );
-        }
+        assert_no_vertical_step_in_final_pass(&tp);
     }
 
     #[test]

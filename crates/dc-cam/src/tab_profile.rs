@@ -32,8 +32,8 @@ pub const MAX_SAMPLE_COUNT: u32 = 512;
 /// it came in at. `u` outside [0, 1] is clamped.
 #[must_use]
 pub fn smooth_tab_height_fraction(u: f64) -> f64 {
-    let _ = u;
-    todo!()
+    let u = u.clamp(0.0, 1.0);
+    (1.0 - (std::f64::consts::TAU * u).cos()) / 2.0
 }
 
 /// Absolute Z, mm, at normalised position `u` across one crossing that
@@ -42,8 +42,10 @@ pub fn smooth_tab_height_fraction(u: f64) -> f64 {
 /// ramp.
 #[must_use]
 pub fn smooth_tab_z_mm(u: f64, base_z_mm: f64, top_z_mm: f64) -> f64 {
-    let _ = (u, base_z_mm, top_z_mm);
-    todo!()
+    if top_z_mm <= base_z_mm {
+        return base_z_mm;
+    }
+    base_z_mm + (top_z_mm - base_z_mm) * smooth_tab_height_fraction(u)
 }
 
 /// Number of equal sub-intervals one crossing must be split into so that
@@ -57,8 +59,16 @@ pub fn smooth_tab_z_mm(u: f64, base_z_mm: f64, top_z_mm: f64) -> f64 {
 /// a non-positive rise or tolerance gives the minimum.
 #[must_use]
 pub fn smooth_tab_sample_count(rise_mm: f64, chord_tolerance_mm: f64) -> u32 {
-    let _ = (rise_mm, chord_tolerance_mm);
-    todo!()
+    if !(rise_mm > 0.0 && chord_tolerance_mm > 0.0) {
+        return MIN_SAMPLE_COUNT;
+    }
+    let required = std::f64::consts::FRAC_PI_2 * (rise_mm / chord_tolerance_mm).sqrt();
+    // The smallest even count that meets the bound, found by search rather
+    // than a float-to-int cast; a NaN or huge requirement ends at the cap.
+    (MIN_SAMPLE_COUNT..MAX_SAMPLE_COUNT)
+        .step_by(2)
+        .find(|&n| f64::from(n) >= required)
+        .unwrap_or(MAX_SAMPLE_COUNT)
 }
 
 /// Normalised sample positions across one crossing, strictly increasing,
@@ -67,6 +77,15 @@ pub fn smooth_tab_sample_count(rise_mm: f64, chord_tolerance_mm: f64) -> u32 {
 /// the path exactly and only Z is approximated.
 #[must_use]
 pub fn smooth_tab_sample_fractions(rise_mm: f64, chord_tolerance_mm: f64) -> Vec<f64> {
-    let _ = (rise_mm, chord_tolerance_mm);
-    todo!()
+    let count = smooth_tab_sample_count(rise_mm, chord_tolerance_mm);
+    let half = count / 2;
+    // Exact 0, 0.5, and 1 by construction rather than by overwriting.
+    (0..=count)
+        .map(|i| match i {
+            0 => 0.0,
+            i if i == half => 0.5,
+            i if i == count => 1.0,
+            i => f64::from(i) / f64::from(count),
+        })
+        .collect()
 }
