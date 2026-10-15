@@ -29,6 +29,11 @@ reverse-engineer VCarve or any other proprietary product.
 - Geometry in PureCutCNC is Y-down; DreamCarve is Y-up (ADR-0001). When
   porting, re-derive every winding, inside/outside, and arc-direction rule
   rather than copying it. The golden corpus in `tests/golden/` is the check.
+- Controller-facing data (post-processor definitions: commands, comment
+  syntax, number formats, header and footer lines) is verified against the
+  controller's official documentation or source, then checked against the
+  safety rules. Cite those sources in the definition's README. PureCutCNC is
+  where such data starts, not proof that it is right.
 
 ## File-format interoperability
 
