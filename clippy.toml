@@ -1,0 +1,9 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Tests may unwrap, expect, panic, and index; library code may not
+# (`docs/rust-guidelines.md`, "Toolchain and workspace").
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

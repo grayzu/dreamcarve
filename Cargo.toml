@@ -1,0 +1,53 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/dc-geometry",
+    "crates/dc-project",
+    "crates/dc-cam",
+    "crates/dc-gcode",
+    "crates/dc-import",
+    "crates/dreamcarve",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+repository = "https://github.com/grayzu/dreamcarve"
+authors = ["The DreamCarve Contributors"]
+
+[workspace.dependencies]
+# Internal crates
+dc-geometry = { path = "crates/dc-geometry", version = "0.0.1" }
+dc-project = { path = "crates/dc-project", version = "0.0.1" }
+dc-cam = { path = "crates/dc-cam", version = "0.0.1" }
+dc-gcode = { path = "crates/dc-gcode", version = "0.0.1" }
+dc-import = { path = "crates/dc-import", version = "0.0.1" }
+
+# External crates. Versions are set here once; crates use `workspace = true`.
+# Geometry crates (cavalier_contours, i_overlay, kurbo, usvg) are added when
+# phase 1 first uses them, so the pins are never stale.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+thiserror = "2.0"
+clap = { version = "4.6", features = ["derive", "cargo"] }
+
+# Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
+# workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic
+# lints at module level with a one-line reason; `clippy.toml` already allows
+# them inside `#[cfg(test)]`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
+cast_possible_truncation = "warn"
+float_cmp = "deny"
