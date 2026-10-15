@@ -6,7 +6,8 @@
 //! dc-geometry"). Importers flatten once; generators keep arcs as bulges
 //! and never re-flatten.
 
-use crate::polyline::Polyline;
+use crate::point::{EPS_MM, Point};
+use crate::polyline::{Polyline, Vertex};
 
 /// Default flattening tolerance, mm: the furthest a flattened polyline may
 /// stray from the source curve. Matches the project's
@@ -31,8 +32,44 @@ pub const DEFAULT_FLATTEN_ARC_STEP_RAD: f64 = std::f64::consts::PI / 36.0;
 /// fewer than two distinct points are dropped.
 #[must_use]
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline> {
-    let _ = (path, tolerance_mm);
-    todo!()
+    let mut out = Vec::new();
+    let mut current: Vec<Point> = Vec::new();
+    kurbo::flatten(path, tolerance_mm, |el| match el {
+        kurbo::PathEl::MoveTo(p) => {
+            finish(&mut out, std::mem::take(&mut current), false);
+            current.push(Point::new(p.x, p.y));
+        }
+        kurbo::PathEl::LineTo(p) => push_distinct(&mut current, Point::new(p.x, p.y)),
+        kurbo::PathEl::ClosePath => finish(&mut out, std::mem::take(&mut current), true),
+        // `flatten` emits only moves, lines, and closes.
+        kurbo::PathEl::QuadTo(..) | kurbo::PathEl::CurveTo(..) => {}
+    });
+    finish(&mut out, current, false);
+    out
+}
+
+fn push_distinct(points: &mut Vec<Point>, p: Point) {
+    if points
+        .last()
+        .is_none_or(|last| last.distance_to(p) > EPS_MM)
+    {
+        points.push(p);
+    }
+}
+
+fn finish(out: &mut Vec<Polyline>, mut points: Vec<Point>, closed: bool) {
+    if closed
+        && points.len() > 1
+        && let (Some(first), Some(last)) = (points.first(), points.last())
+        && first.distance_to(*last) <= EPS_MM
+    {
+        points.pop();
+    }
+    if points.len() < 2 {
+        return;
+    }
+    let vertices = points.into_iter().map(|p| Vertex::line(p.x, p.y)).collect();
+    out.push(Polyline::new(vertices, closed));
 }
 
 #[cfg(test)]

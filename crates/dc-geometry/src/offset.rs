@@ -7,6 +7,10 @@
 //! has no counterpart here.
 
 use crate::contour::Contour;
+use crate::polyline::{Polyline, Vertex};
+use cavalier_contours::polyline::{PlineCreation, PlineSource, PlineSourceMut};
+
+type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 
 /// Offsets `contour` by `delta_mm`. Positive `delta_mm` moves the contour
 /// away from the area it encloses (grows it); negative moves it inward.
@@ -16,8 +20,33 @@ use crate::contour::Contour;
 /// into several or consume it: an empty result means nothing is left.
 #[must_use]
 pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
-    let _ = (contour, delta_mm);
-    todo!()
+    let ccw = contour.is_ccw();
+    let source = to_cavalier(contour.polyline());
+    // cavalier_contours offsets to the left of travel for a positive value:
+    // inward on a CCW contour, outward on a CW one.
+    let cav_delta = if ccw { -delta_mm } else { delta_mm };
+    source
+        .parallel_offset(cav_delta)
+        .iter()
+        .filter_map(|p| Contour::new(from_cavalier(p)).ok())
+        .map(|c| if ccw { c } else { c.reversed() })
+        .collect()
+}
+
+fn to_cavalier(polyline: &Polyline) -> CavPolyline {
+    let mut out = CavPolyline::with_capacity(polyline.vertices().len(), polyline.is_closed());
+    for v in polyline.vertices() {
+        out.add(v.x, v.y, v.bulge);
+    }
+    out
+}
+
+fn from_cavalier(polyline: &CavPolyline) -> Polyline {
+    let vertices = polyline
+        .iter_vertexes()
+        .map(|v| Vertex::new(v.x, v.y, v.bulge))
+        .collect();
+    Polyline::new(vertices, polyline.is_closed())
 }
 
 #[cfg(test)]
