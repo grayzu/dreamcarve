@@ -1,0 +1,8 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fixtures and golden files are compared byte for byte, so they keep LF line
+# endings on every OS. Without this, a Windows checkout (core.autocrlf)
+# rewrites them to CRLF and the comparisons fail.
+*.dcv text eol=lf
+tests/golden/** text eol=lf
