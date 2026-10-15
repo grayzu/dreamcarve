@@ -64,7 +64,22 @@ Any geometry, CAM, G-code, or import behaviour. Those start in phase 1.
 
 ## Exit criteria
 
-- [ ] All acceptance tests pass.
-- [ ] `v0.0.1` tagged with release artifacts.
-- [ ] Docs site live.
-- [ ] Phase 1 spec PR opened.
+- [x] All acceptance tests pass.
+- [x] `v0.0.1` tagged with release artifacts.
+- [x] Docs site live.
+- [x] Phase 1 spec PR opened.
+
+## Results
+
+Phase 0 closed 2026-10-15.
+
+| # | Acceptance test | Evidence |
+| --- | --- | --- |
+| 1 | Fresh clone passes on each OS | PR #2 CI: `check` green on ubuntu, macOS, Windows |
+| 2 | Missing header fails, naming the file | `check-headers` with a header removed from `dc-cam/src/lib.rs` fails and prints that path; CI runs the same command |
+| 3 | `rustfmt` violation fails | `cargo fmt --all -- --check` exits 1 on a misformatted line; CI runs the same command |
+| 4 | Release archives print the version | v0.0.1 release: four archives, checksums verified, each contains `dreamcarve`; macOS arm64 and x86_64 (Rosetta) print `dreamcarve 0.0.1` |
+| 5 | Docs site serves the roadmap | https://grayzu.github.io/dreamcarve/ and `/roadmap.html` return 200 after the merge-to-main deploy |
+| 6 | Parity capture is reproducible | Two captures of `smoke` are byte-identical (`diff -r`) |
+
+The phase 1 specs landed as drafts in PR #1.
