@@ -1,0 +1,386 @@
+// Copyright 2026 The DreamCarve Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+//! Project validation (`docs/specs/phase-1/design.md`, "Data model →
+//! dc-project"). [`validate`] reports every problem it finds rather than
+//! stopping at the first, so the CLI `check` command can print them all.
+//!
+//! Error-class problems make a project unsafe or impossible to machine
+//! (dangling ids, non-positive dimensions, non-finite numbers). Warning-class
+//! problems still allow a correct result but need the user's attention
+//! (disabled operations, tools without feeds or RPM, which export rejects
+//! when such a tool is actually used).
+
+use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
+use crate::model::Project;
+use std::fmt;
+
+/// How serious a [`Problem`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    /// The project cannot be machined safely as it stands.
+    Error,
+    /// The user should know, but the project is still usable.
+    Warning,
+}
+
+/// One finding of [`validate`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Problem {
+    /// A definition's `id` differs from its key in `definitions`.
+    DefinitionKeyMismatch {
+        /// The map key.
+        key: DefinitionId,
+        /// The `id` field inside the definition.
+        id: DefinitionId,
+    },
+    /// Two instances share an id.
+    DuplicateInstanceId {
+        /// The repeated id.
+        id: InstanceId,
+    },
+    /// Two tools share an id.
+    DuplicateToolId {
+        /// The repeated id.
+        id: ToolId,
+    },
+    /// Two operations share an id.
+    DuplicateOperationId {
+        /// The repeated id.
+        id: OperationId,
+    },
+    /// An instance places a definition that does not exist.
+    DanglingDefinition {
+        /// The instance holding the reference.
+        instance: InstanceId,
+        /// The missing definition.
+        definition: DefinitionId,
+    },
+    /// An operation cuts with a tool that does not exist.
+    DanglingTool {
+        /// The operation holding the reference.
+        operation: OperationId,
+        /// The missing tool.
+        tool: ToolId,
+    },
+    /// An operation targets an instance that does not exist.
+    DanglingInstance {
+        /// The operation holding the reference.
+        operation: OperationId,
+        /// The missing instance.
+        instance: InstanceId,
+    },
+    /// A number is outside the range its field allows.
+    OutOfRange {
+        /// Path to the field, such as `tools[t1].diameter_mm`.
+        field: String,
+        /// The value found.
+        value: f64,
+        /// The allowed range, in words.
+        expected: &'static str,
+    },
+    /// A number is NaN or infinite.
+    NonFinite {
+        /// Path to the field.
+        field: String,
+    },
+    /// The embedded post-processor is not a JSON object.
+    PostProcessorNotObject,
+    /// An operation is disabled and will not be exported.
+    OperationDisabled {
+        /// The disabled operation.
+        operation: OperationId,
+    },
+    /// A tool has no value for a field export needs (feed, plunge or RPM).
+    ToolValueUnset {
+        /// The tool.
+        tool: ToolId,
+        /// The unset field, such as `feed_mm_min`.
+        field: &'static str,
+    },
+}
+
+impl Problem {
+    /// Whether this problem is an error or a warning.
+    pub fn severity(&self) -> Severity {
+        match self {
+            Self::OperationDisabled { .. } | Self::ToolValueUnset { .. } => Severity::Warning,
+            Self::DefinitionKeyMismatch { .. }
+            | Self::DuplicateInstanceId { .. }
+            | Self::DuplicateToolId { .. }
+            | Self::DuplicateOperationId { .. }
+            | Self::DanglingDefinition { .. }
+            | Self::DanglingTool { .. }
+            | Self::DanglingInstance { .. }
+            | Self::OutOfRange { .. }
+            | Self::NonFinite { .. }
+            | Self::PostProcessorNotObject => Severity::Error,
+        }
+    }
+
+    /// Whether this problem is error-class.
+    pub fn is_error(&self) -> bool {
+        self.severity() == Severity::Error
+    }
+}
+
+impl fmt::Display for Problem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DefinitionKeyMismatch { key, id } => {
+                write!(f, "definition keyed `{key}` has id `{id}`")
+            }
+            Self::DuplicateInstanceId { id } => write!(f, "instance id `{id}` is used twice"),
+            Self::DuplicateToolId { id } => write!(f, "tool id `{id}` is used twice"),
+            Self::DuplicateOperationId { id } => write!(f, "operation id `{id}` is used twice"),
+            Self::DanglingDefinition {
+                instance,
+                definition,
+            } => write!(
+                f,
+                "instance `{instance}` places definition `{definition}`, which does not exist"
+            ),
+            Self::DanglingTool { operation, tool } => write!(
+                f,
+                "operation `{operation}` uses tool `{tool}`, which does not exist"
+            ),
+            Self::DanglingInstance {
+                operation,
+                instance,
+            } => write!(
+                f,
+                "operation `{operation}` targets instance `{instance}`, which does not exist"
+            ),
+            Self::OutOfRange {
+                field,
+                value,
+                expected,
+            } => write!(f, "{field} is {value}, expected {expected}"),
+            Self::NonFinite { field } => write!(f, "{field} is not a finite number"),
+            Self::PostProcessorNotObject => {
+                write!(f, "post_processor is not a JSON object")
+            }
+            Self::OperationDisabled { operation } => {
+                write!(
+                    f,
+                    "operation `{operation}` is disabled and will not be exported"
+                )
+            }
+            Self::ToolValueUnset { tool, field } => {
+                write!(
+                    f,
+                    "tool `{tool}` has no {field}; export fails until it is set"
+                )
+            }
+        }
+    }
+}
+
+/// Checks `project` and returns every problem found, errors and warnings,
+/// in a deterministic order (project fields in declaration order).
+#[must_use]
+pub fn validate(project: &Project) -> Vec<Problem> {
+    todo!("validate {}", project.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Operation, ToolKind};
+    use crate::test_support::sample_project;
+
+    fn errors(problems: &[Problem]) -> Vec<&Problem> {
+        problems.iter().filter(|p| p.is_error()).collect()
+    }
+
+    #[test]
+    fn sample_project_has_no_problems() {
+        assert_eq!(validate(&sample_project()), vec![]);
+    }
+
+    #[test]
+    fn dangling_tool_id_is_error() {
+        let mut p = sample_project();
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.tool = ToolId::new("missing");
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::DanglingTool {
+                operation: OperationId::new("o1"),
+                tool: ToolId::new("missing"),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+    }
+
+    #[test]
+    fn unset_feed_is_warning_not_error() {
+        let mut p = sample_project();
+        p.tools[0].feed_mm_min = None;
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ToolValueUnset {
+                tool: ToolId::new("t1"),
+                field: "feed_mm_min",
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert!(errors(&problems).is_empty());
+    }
+
+    #[test]
+    fn unset_plunge_and_rpm_are_warnings() {
+        let mut p = sample_project();
+        p.tools[0].plunge_mm_min = None;
+        p.tools[0].rpm = None;
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 2);
+        assert!(errors(&problems).is_empty());
+    }
+
+    #[test]
+    fn dangling_definition_id_is_error() {
+        let mut p = sample_project();
+        p.instances[0].definition = DefinitionId::new("missing");
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::DanglingDefinition {
+                instance: InstanceId::new("i1"),
+                definition: DefinitionId::new("missing"),
+            }]
+        );
+        assert!(problems[0].is_error());
+    }
+
+    #[test]
+    fn dangling_instance_id_is_error() {
+        let mut p = sample_project();
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.targets.push(InstanceId::new("missing"));
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::DanglingInstance {
+                operation: OperationId::new("o1"),
+                instance: InstanceId::new("missing"),
+            }]
+        );
+    }
+
+    #[test]
+    fn non_positive_stock_dimension_is_error() {
+        let mut p = sample_project();
+        p.stock.thickness_mm = 0.0;
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1);
+        assert!(
+            matches!(&problems[0], Problem::OutOfRange { field, .. } if field == "stock.thickness_mm")
+        );
+        assert!(problems[0].is_error());
+    }
+
+    #[test]
+    fn non_positive_tool_diameter_is_error() {
+        let mut p = sample_project();
+        p.tools[0].diameter_mm = -1.0;
+        let problems = validate(&p);
+        assert!(
+            matches!(&problems[..], [Problem::OutOfRange { field, .. }] if field == "tools[t1].diameter_mm"),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn non_positive_depth_is_error() {
+        let mut p = sample_project();
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.depth_mm = 0.0;
+        let problems = validate(&p);
+        assert!(
+            matches!(&problems[..], [Problem::OutOfRange { field, .. }] if field == "operations[o1].depth_mm"),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_operation_is_warning() {
+        let mut p = sample_project();
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.enabled = false;
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::OperationDisabled {
+                operation: OperationId::new("o1"),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+    }
+
+    #[test]
+    fn non_finite_value_is_error() {
+        let mut p = sample_project();
+        p.stock.width_mm = f64::NAN;
+        p.tools[0].kind = ToolKind::VBit {
+            included_angle_deg: f64::INFINITY,
+        };
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![
+                Problem::NonFinite {
+                    field: "stock.width_mm".into()
+                },
+                Problem::NonFinite {
+                    field: "tools[t1].kind.included_angle_deg".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_tool_id_is_error() {
+        let mut p = sample_project();
+        p.tools.push(p.tools[0].clone());
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::DuplicateToolId {
+                id: ToolId::new("t1")
+            }]
+        );
+    }
+
+    #[test]
+    fn definition_key_mismatch_is_error() {
+        let mut p = sample_project();
+        if let Some(def) = p.definitions.values_mut().next() {
+            def.id = DefinitionId::new("other");
+        }
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1);
+        assert!(matches!(problems[0], Problem::DefinitionKeyMismatch { .. }));
+    }
+
+    #[test]
+    fn non_object_post_processor_is_error() {
+        let mut p = sample_project();
+        p.post_processor = crate::EmbeddedPostProcessor(serde_json::json!("grbl"));
+        assert_eq!(validate(&p), vec![Problem::PostProcessorNotObject]);
+    }
+
+    #[test]
+    fn problem_messages_name_the_subject() {
+        let problem = Problem::ToolValueUnset {
+            tool: ToolId::new("t1"),
+            field: "feed_mm_min",
+        };
+        assert_eq!(
+            problem.to_string(),
+            "tool `t1` has no feed_mm_min; export fails until it is set"
+        );
+    }
+}
