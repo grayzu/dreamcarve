@@ -19,8 +19,22 @@
 //! y`, so the page's bottom-left corner is the origin.
 
 use crate::{ImportError, ImportWarning};
-use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Rect};
-use dc_project::{FeatureDefinition, FeatureInstance};
+use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Polyline, Rect, Transform, flatten};
+use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId};
+use kurbo::{Affine, BezPath, PathEl};
+use usvg::tiny_skia_path::PathSegment;
+
+/// Millimetres per CSS pixel. usvg resolves every length to pixels at 96
+/// per inch, so this one factor converts any SVG to millimetres.
+const MM_PER_PX: f64 = 25.4 / 96.0;
+
+/// How close a subpath's last point must be to its start for the subpath
+/// to count as closed without a `Z`, mm. usvg stores coordinates as f32,
+/// whose rounding at workpiece scale is around 1e-5 mm; this sits above
+/// that and far below anything a cutter can resolve.
+const SUBPATH_CLOSE_TOLERANCE_MM: f64 = 1e-4;
+
+const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// The units the root `<svg>` declares for its `width` and `height`.
 /// Informational: usvg converts every unit to CSS pixels, and the importer
@@ -120,8 +134,354 @@ pub fn import_svg(
     bytes: &[u8],
     options: &SvgImportOptions,
 ) -> Result<(SvgImport, Vec<ImportWarning>), ImportError> {
-    let _ = (bytes, options);
-    todo!("#13")
+    let tolerance_mm = options.flatten_tolerance_mm;
+    if !(tolerance_mm.is_finite() && tolerance_mm > 0.0) {
+        return Err(ImportError::InvalidTolerance { tolerance_mm });
+    }
+    let thickness_mm = options.thickness_mm;
+    if !(thickness_mm.is_finite() && thickness_mm > 0.0) {
+        return Err(ImportError::InvalidThickness { thickness_mm });
+    }
+
+    let tree = usvg::Tree::from_data(bytes, &usvg_options())?;
+    let root = inspect_root(bytes)?;
+
+    let size = tree.size();
+    let page_width_mm = f64::from(size.width()) * MM_PER_PX;
+    let page_height_mm = f64::from(size.height()) * MM_PER_PX;
+    if !(page_width_mm.is_finite()
+        && page_height_mm.is_finite()
+        && page_width_mm > 0.0
+        && page_height_mm > 0.0)
+    {
+        return Err(ImportError::InvalidPageSize {
+            width_mm: page_width_mm,
+            height_mm: page_height_mm,
+        });
+    }
+    let mm_per_user_unit = root
+        .view_box_width
+        .map_or(MM_PER_PX, |width| page_width_mm / width);
+
+    let mut warnings = Vec::new();
+    if root.view_box_width.is_none() && root.units != RootUnits::CssPixels {
+        warnings.push(ImportWarning::PhysicalSizeWithoutViewBox { units: root.units });
+    }
+    if root.text_count > 0 {
+        warnings.push(ImportWarning::TextIgnored {
+            count: root.text_count,
+        });
+    }
+    if root.image_count > 0 {
+        warnings.push(ImportWarning::ImagesIgnored {
+            count: root.image_count,
+        });
+    }
+
+    let mut walker = Walker {
+        tolerance_mm,
+        thickness_mm,
+        // Pixels to millimetres, then the Y flip `y' = height − y`.
+        px_to_mm: Affine::new([MM_PER_PX, 0.0, 0.0, -MM_PER_PX, 0.0, page_height_mm]),
+        path_count: 0,
+        definitions: Vec::new(),
+        instances: Vec::new(),
+        bounds: None,
+        warnings,
+    };
+    walker.walk_group(tree.root())?;
+
+    let import = SvgImport {
+        definitions: walker.definitions,
+        instances: walker.instances,
+        bounds: walker.bounds,
+        page_width_mm,
+        page_height_mm,
+        units: root.units,
+        mm_per_user_unit,
+    };
+    Ok((import, walker.warnings))
+}
+
+/// usvg options that keep the importer free of I/O: image references
+/// resolve to nothing instead of being read from disk. Text needs usvg's
+/// `text` feature, which is off, so usvg drops it; [`inspect_root`] counts
+/// it for the warning.
+fn usvg_options() -> usvg::Options<'static> {
+    usvg::Options {
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        },
+        ..usvg::Options::default()
+    }
+}
+
+/// What the raw document says that usvg's tree no longer records.
+struct RootInfo {
+    units: RootUnits,
+    /// The `viewBox` width in user units, when there is a usable one.
+    view_box_width: Option<f64>,
+    text_count: usize,
+    image_count: usize,
+}
+
+/// Reads the root's declared units and `viewBox`, and counts the text and
+/// image elements usvg drops. Uses the same XML parser and options as usvg,
+/// so it accepts exactly what usvg accepted.
+fn inspect_root(bytes: &[u8]) -> Result<RootInfo, ImportError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| usvg::Error::NotAnUtf8Str)?;
+    let xml_options = usvg::roxmltree::ParsingOptions {
+        allow_dtd: true,
+        ..usvg::roxmltree::ParsingOptions::default()
+    };
+    let doc = usvg::roxmltree::Document::parse_with_options(text, xml_options)
+        .map_err(usvg::Error::ParsingFailed)?;
+    let root = doc.root_element();
+
+    let units = [root.attribute("width"), root.attribute("height")]
+        .into_iter()
+        .flatten()
+        .map(length_units)
+        .find(|u| *u != RootUnits::CssPixels)
+        .unwrap_or(RootUnits::CssPixels);
+
+    let view_box_width = root.attribute("viewBox").and_then(|vb| {
+        let numbers: Vec<f64> = vb
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|s| !s.is_empty())
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .ok()?;
+        match numbers.as_slice() {
+            [_, _, width, height]
+                if width.is_finite() && height.is_finite() && *width > 0.0 && *height > 0.0 =>
+            {
+                Some(*width)
+            }
+            _ => None,
+        }
+    });
+
+    let count = |name: &str| {
+        doc.descendants()
+            .filter(|n| {
+                n.is_element()
+                    && n.tag_name().name() == name
+                    && matches!(n.tag_name().namespace(), None | Some(SVG_NS))
+            })
+            .count()
+    };
+
+    Ok(RootInfo {
+        units,
+        view_box_width,
+        text_count: count("text"),
+        image_count: count("image"),
+    })
+}
+
+/// The unit suffix of an SVG length such as `100mm` or `4.5in`.
+fn length_units(length: &str) -> RootUnits {
+    let length = length.trim();
+    let number_len = length
+        .trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%')
+        .len();
+    match length
+        .get(number_len..)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("mm") => RootUnits::Millimetres,
+        Some("cm") => RootUnits::Centimetres,
+        Some("in") => RootUnits::Inches,
+        Some("pt") => RootUnits::Points,
+        Some("pc") => RootUnits::Picas,
+        _ => RootUnits::CssPixels,
+    }
+}
+
+/// Walks usvg's tree in document order, collecting definitions.
+struct Walker {
+    tolerance_mm: f64,
+    thickness_mm: f64,
+    px_to_mm: Affine,
+    /// Paths seen so far, imported or not; numbers unnamed paths.
+    path_count: usize,
+    definitions: Vec<FeatureDefinition>,
+    instances: Vec<FeatureInstance>,
+    bounds: Option<Rect>,
+    warnings: Vec<ImportWarning>,
+}
+
+impl Walker {
+    fn walk_group(&mut self, group: &usvg::Group) -> Result<(), ImportError> {
+        if group.clip_path().is_some() {
+            self.warnings.push(ImportWarning::ClipPathIgnored {
+                group: group.id().to_owned(),
+            });
+        }
+        if group.mask().is_some() {
+            self.warnings.push(ImportWarning::MaskIgnored {
+                group: group.id().to_owned(),
+            });
+        }
+        for child in group.children() {
+            match child {
+                usvg::Node::Group(g) => self.walk_group(g)?,
+                usvg::Node::Path(p) => self.import_path(p)?,
+                // Counted from the raw document by `inspect_root`.
+                usvg::Node::Image(_) | usvg::Node::Text(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn import_path(&mut self, path: &usvg::Path) -> Result<(), ImportError> {
+        self.path_count += 1;
+        let name = if path.id().is_empty() {
+            format!("path-{}", self.path_count)
+        } else {
+            path.id().to_owned()
+        };
+
+        let paints = [
+            path.fill().map(usvg::Fill::paint),
+            path.stroke().map(usvg::Stroke::paint),
+        ];
+        if paints.into_iter().flatten().any(|paint| {
+            matches!(
+                paint,
+                usvg::Paint::LinearGradient(_)
+                    | usvg::Paint::RadialGradient(_)
+                    | usvg::Paint::Pattern(_)
+            )
+        }) {
+            self.warnings
+                .push(ImportWarning::PaintServerIgnored { path: name.clone() });
+        }
+
+        let to_mm = self.px_to_mm * affine(path.abs_transform());
+        let bez = to_bez_path(path.data(), to_mm);
+        if !bez.elements().iter().all(element_is_finite) {
+            return Err(ImportError::NonFinite { path: name });
+        }
+
+        let mut profiles: Vec<Polyline> = Vec::new();
+        for (subpath, polyline) in flatten(&bez, self.tolerance_mm).into_iter().enumerate() {
+            if polyline.is_closed() && polyline.signed_area_mm2().abs() <= EPS_MM * EPS_MM {
+                self.warnings.push(ImportWarning::ZeroAreaDropped {
+                    path: name.clone(),
+                    subpath,
+                });
+                continue;
+            }
+            if let Some(b) = polyline.bounds() {
+                self.bounds = Some(match self.bounds {
+                    Some(acc) => acc.including(b.min).including(b.max),
+                    None => b,
+                });
+            }
+            profiles.push(polyline);
+        }
+        if profiles.is_empty() {
+            self.warnings.push(ImportWarning::EmptyPath { path: name });
+            return Ok(());
+        }
+
+        let n = self.definitions.len() + 1;
+        let definition = DefinitionId::new(format!("d{n}"));
+        self.instances.push(FeatureInstance {
+            id: InstanceId::new(format!("i{n}")),
+            definition: definition.clone(),
+            transform: Transform::IDENTITY,
+            name: name.clone(),
+            visible: true,
+            locked: false,
+            z_top_mm: self.thickness_mm,
+            z_bottom_mm: 0.0,
+        });
+        self.definitions.push(FeatureDefinition {
+            id: definition,
+            name,
+            profiles,
+        });
+        Ok(())
+    }
+}
+
+/// usvg's (tiny-skia's) transform as a kurbo affine. Both use the SVG
+/// `matrix(a b c d e f)` layout.
+fn affine(t: usvg::Transform) -> Affine {
+    Affine::new([t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from))
+}
+
+/// Converts a usvg path to a kurbo path through `to_mm`. A subpath that
+/// ends within [`SUBPATH_CLOSE_TOLERANCE_MM`] of its start without `Z` is
+/// closed, its last point snapped onto the start, as PureCutCNC's
+/// `parsePathProfiles` does.
+fn to_bez_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> BezPath {
+    let pt =
+        |p: usvg::tiny_skia_path::Point| to_mm * kurbo::Point::new(f64::from(p.x), f64::from(p.y));
+    let mut out = BezPath::new();
+    let mut start = kurbo::Point::ZERO;
+    let mut open = false;
+    for segment in data.segments() {
+        match segment {
+            PathSegment::MoveTo(p) => {
+                close_if_returned(&mut out, start, open);
+                start = pt(p);
+                out.move_to(start);
+                open = false;
+            }
+            PathSegment::LineTo(p) => {
+                out.line_to(pt(p));
+                open = true;
+            }
+            PathSegment::QuadTo(c, p) => {
+                out.quad_to(pt(c), pt(p));
+                open = true;
+            }
+            PathSegment::CubicTo(c1, c2, p) => {
+                out.curve_to(pt(c1), pt(c2), pt(p));
+                open = true;
+            }
+            PathSegment::Close => {
+                out.close_path();
+                open = false;
+            }
+        }
+    }
+    close_if_returned(&mut out, start, open);
+    out
+}
+
+/// Closes the open subpath at the end of `out` when its last point is back
+/// at `start`.
+fn close_if_returned(out: &mut BezPath, start: kurbo::Point, open: bool) {
+    if !open {
+        return;
+    }
+    let near = |p: &kurbo::Point| p.distance(start) <= SUBPATH_CLOSE_TOLERANCE_MM;
+    let snapped = match out.elements().last() {
+        Some(PathEl::LineTo(p)) if near(p) => PathEl::LineTo(start),
+        Some(PathEl::QuadTo(c, p)) if near(p) => PathEl::QuadTo(*c, start),
+        Some(PathEl::CurveTo(c1, c2, p)) if near(p) => PathEl::CurveTo(*c1, *c2, start),
+        _ => return,
+    };
+    out.pop();
+    out.push(snapped);
+    out.close_path();
+}
+
+fn element_is_finite(el: &PathEl) -> bool {
+    let finite = |p: &kurbo::Point| p.x.is_finite() && p.y.is_finite();
+    match el {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => finite(p),
+        PathEl::QuadTo(c, p) => finite(c) && finite(p),
+        PathEl::CurveTo(c1, c2, p) => finite(c1) && finite(c2) && finite(p),
+        PathEl::ClosePath => true,
+    }
 }
 
 #[cfg(test)]
@@ -179,7 +539,7 @@ mod tests {
     fn mm_sized_root_uses_declared_units() {
         let (result, warnings) = import(include_bytes!("../tests/fixtures/mm_root.svg"));
         assert_eq!(result.units, RootUnits::Millimetres);
-        assert_approx_eq!(result.mm_per_user_unit, 1.0, 1e-9);
+        assert_approx_eq!(result.mm_per_user_unit, 1.0, 1e-6);
         assert_approx_eq!(result.page_width_mm, 100.0, TOL_MM);
         assert_approx_eq!(result.page_height_mm, 50.0, TOL_MM);
         // SVG y 10..20 on a 50 mm page flips to 30..40.
@@ -195,7 +555,7 @@ mod tests {
     fn unitless_root_assumes_96_dpi() {
         let (result, _) = import(include_bytes!("../tests/fixtures/unitless_root.svg"));
         assert_eq!(result.units, RootUnits::CssPixels);
-        assert_approx_eq!(result.mm_per_user_unit, 25.4 / 96.0, 1e-9);
+        assert_approx_eq!(result.mm_per_user_unit, 25.4 / 96.0, 1e-6);
         assert_approx_eq!(result.page_width_mm, 50.8, TOL_MM);
         assert_approx_eq!(result.page_height_mm, 25.4, TOL_MM);
         // 96 × 48 px is one inch by half an inch, at the page's top-left.
@@ -210,7 +570,7 @@ mod tests {
     fn inch_sized_root() {
         let (result, _) = import(include_bytes!("../tests/fixtures/inch_root.svg"));
         assert_eq!(result.units, RootUnits::Inches);
-        assert_approx_eq!(result.mm_per_user_unit, 0.254, 1e-9);
+        assert_approx_eq!(result.mm_per_user_unit, 0.254, 1e-6);
         assert_approx_eq!(result.page_width_mm, 50.8, TOL_MM);
         assert_approx_eq!(result.page_height_mm, 25.4, TOL_MM);
         assert_rect(
@@ -224,7 +584,7 @@ mod tests {
     fn physical_size_without_viewbox_reads_user_units_as_css_pixels() {
         let (result, warnings) = import(include_bytes!("../tests/fixtures/no_viewbox_mm.svg"));
         assert_eq!(result.units, RootUnits::Millimetres);
-        assert_approx_eq!(result.mm_per_user_unit, 25.4 / 96.0, 1e-9);
+        assert_approx_eq!(result.mm_per_user_unit, 25.4 / 96.0, 1e-6);
         // 96 user units are 96 px, one inch, per the SVG specification.
         assert_rect(
             bounds(&result.definitions[0].profiles),
@@ -494,10 +854,8 @@ mod tests {
     // Upstream checks paint classification (hasFill / hasStroke) and that
     // each snippet yields exactly one shape with the right open/closed
     // state. Only the geometry half is ported: DreamCarve imports geometry
-    // whatever the paint. The snippets gain an `xmlns` (usvg ignores
-    // un-namespaced elements, browsers' DOMParser in upstream's test does
-    // not). Upstream asserts no coordinates, so the Y-up flip changes no
-    // expected value here.
+    // whatever the paint. Upstream asserts no coordinates, so the Y-up flip
+    // changes no expected value here.
 
     fn parse(markup: &str) -> SvgImport {
         let svg = markup.replacen("<svg", r#"<svg xmlns="http://www.w3.org/2000/svg""#, 1);
