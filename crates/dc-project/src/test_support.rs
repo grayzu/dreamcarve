@@ -19,7 +19,7 @@ pub fn tool_6_35_upcut() -> Tool {
     Tool {
         id: ToolId::new("t1"),
         name: "6.35 mm upcut".into(),
-        kind: ToolKind::EndMill,
+        cutter: ToolKind::EndMill,
         diameter_mm: 6.35,
         flutes: 2,
         feed_mm_min: Some(1000.0),

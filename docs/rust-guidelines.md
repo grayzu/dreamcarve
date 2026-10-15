@@ -97,7 +97,7 @@ dc-geometry → dc-project → { dc-cam, dc-gcode, dc-import } → dreamcarve (C
   are `Option` and stay `None` until a user supplies them.
 - IDs are newtypes (`DefinitionId`, `InstanceId`, `ToolId`, `OperationId`),
   never raw `String` or `u32`, so they cannot be mixed up.
-- Two-way choices are enums, not `bool`: `Side::{Inside, Outside, On}`,
+- Two-way choices are enums, not `bool`: `Side::{Inside, Outside, OnLine}`,
   `CutDirection::{Climb, Conventional}`, `TabShape::{Rect, Smooth}`. The call
   site must read without consulting the signature.
 - Geometry is `f64`. `f32` appears only in GPU vertex buffers at the renderer

@@ -70,7 +70,7 @@
     {
       "id": "t1",
       "name": "6.35 mm upcut",
-      "kind": {
+      "cutter": {
         "kind": "end_mill"
       },
       "diameter_mm": 6.35,

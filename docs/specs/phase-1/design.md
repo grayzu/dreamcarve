@@ -118,7 +118,7 @@ pub struct FeatureInstance {
 }
 
 pub struct Tool {
-    pub id: ToolId, pub name: String, pub kind: ToolKind,   // EndMill | BallNose | VBit{included_angle_deg} | Engraver
+    pub id: ToolId, pub name: String, pub cutter: ToolKind, // EndMill | BallNose | VBit{included_angle_deg} | Engraver
     pub diameter_mm: f64, pub flutes: u8,
     pub feed_mm_min: Option<f64>, pub plunge_mm_min: Option<f64>, pub rpm: Option<u32>,
     pub step_down_mm: Option<f64>, pub step_over_fraction: Option<f64>,

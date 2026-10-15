@@ -254,8 +254,8 @@ impl Validator {
                 });
             }
             let at = format!("tools[{}]", tool.id);
-            if let ToolKind::VBit { included_angle_deg } = tool.kind {
-                let field = format!("{at}.kind.included_angle_deg");
+            if let ToolKind::VBit { included_angle_deg } = tool.cutter {
+                let field = format!("{at}.cutter.included_angle_deg");
                 if self.finite(&field, included_angle_deg)
                     && !(included_angle_deg > 0.0 && included_angle_deg < 180.0)
                 {
@@ -535,7 +535,7 @@ mod tests {
     fn non_finite_value_is_error() {
         let mut p = sample_project();
         p.stock.width_mm = f64::NAN;
-        p.tools[0].kind = ToolKind::VBit {
+        p.tools[0].cutter = ToolKind::VBit {
             included_angle_deg: f64::INFINITY,
         };
         let problems = validate(&p);
@@ -546,7 +546,7 @@ mod tests {
                     field: "stock.width_mm".into()
                 },
                 Problem::NonFinite {
-                    field: "tools[t1].kind.included_angle_deg".into()
+                    field: "tools[t1].cutter.included_angle_deg".into()
                 },
             ]
         );

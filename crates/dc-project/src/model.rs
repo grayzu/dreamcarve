@@ -158,8 +158,9 @@ pub struct Tool {
     pub id: ToolId,
     /// Display name.
     pub name: String,
-    /// Cutter geometry.
-    pub kind: ToolKind,
+    /// Cutter geometry. Named `cutter`, not `kind`, so the file does not
+    /// read `"kind": {"kind": ...}` (the variant tag is `kind`).
+    pub cutter: ToolKind,
     /// Cutting diameter, millimetres.
     pub diameter_mm: f64,
     /// Number of flutes.
