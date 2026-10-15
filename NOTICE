@@ -1,0 +1,24 @@
+DreamCarve (https://github.com/grayzu/dreamcarve)
+Copyright 2026 The DreamCarve Contributors
+
+DreamCarve is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+DreamCarve is a derivative work of PureCutCNC. Portions of its design,
+algorithms, and source code are adapted (including translation from TypeScript
+to Rust) from PureCutCNC, which is likewise licensed under the Apache License,
+Version 2.0. The PureCutCNC NOTICE attribution is retained below as required by
+Section 4(d) of that license.
+
+-------------------------------------------------------------------------------
+PureCutCNC (https://github.com/PureCutCNC)
+Copyright 2026 Franja (Frank) Povazanj
+
+This product includes software developed by Franja (Frank) Povazanj
+as part of the PureCutCNC project.
+-------------------------------------------------------------------------------
+
+Third-party software
+--------------------
+
+None bundled yet. When a third-party component is added, list it here with its
+name, version, license, and source URL.
