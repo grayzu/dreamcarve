@@ -107,7 +107,7 @@ impl Block {
     pub fn has(&self, letter: char, value: f64) -> bool {
         self.words
             .iter()
-            .any(|w| w.letter == letter && is(w.value, value))
+            .any(|w| w.letter == letter && is_code(w.value, value))
     }
 
     /// The value of the first `letter` word, if any.
@@ -212,13 +212,13 @@ impl State {
         let mut dwell = false;
         for w in words {
             match w.letter {
-                'G' if is(w.value, 0.0) => self.mode = Some(MotionKind::Rapid),
-                'G' if is(w.value, 1.0) => self.mode = Some(MotionKind::Linear),
-                'G' if is(w.value, 2.0) => self.mode = Some(MotionKind::ArcCw),
-                'G' if is(w.value, 3.0) => self.mode = Some(MotionKind::ArcCcw),
-                'G' if is(w.value, 4.0) => dwell = true,
-                'G' if is(w.value, 20.0) => self.units = Units::Inch,
-                'G' if is(w.value, 21.0) => self.units = Units::Mm,
+                'G' if is_code(w.value, 0.0) => self.mode = Some(MotionKind::Rapid),
+                'G' if is_code(w.value, 1.0) => self.mode = Some(MotionKind::Linear),
+                'G' if is_code(w.value, 2.0) => self.mode = Some(MotionKind::ArcCw),
+                'G' if is_code(w.value, 3.0) => self.mode = Some(MotionKind::ArcCcw),
+                'G' if is_code(w.value, 4.0) => dwell = true,
+                'G' if is_code(w.value, 20.0) => self.units = Units::Inch,
+                'G' if is_code(w.value, 21.0) => self.units = Units::Mm,
                 'F' => self.feed = Some(w.value),
                 _ => {}
             }
@@ -261,7 +261,7 @@ impl State {
 }
 
 /// True if a word's number is the code `code` (`G0` and `G00` alike).
-fn is(value: f64, code: f64) -> bool {
+pub(crate) fn is_code(value: f64, code: f64) -> bool {
     approx_eq(value, code, CODE_TOLERANCE)
 }
 

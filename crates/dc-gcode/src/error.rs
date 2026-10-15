@@ -66,7 +66,7 @@ pub enum ExportError {
     /// The post-processor's axis mapping is not usable: two project axes
     /// share a machine axis, or project Z does not drive machine Z.
     #[error(
-        "post-processor `{post}` maps axes {x}, {y}, {z}; each project axis needs its own machine axis, and Z must stay Z"
+        "post-processor `{post}` maps axes {x}, {y}, {z}; each project axis needs its own machine axis, and Z must stay +Z"
     )]
     InvalidAxisMapping {
         /// The post-processor's id.
@@ -141,8 +141,8 @@ pub enum ExportError {
         /// What is wrong with it.
         reason: &'static str,
     },
-    /// The emitted program contains a word DreamCarve never sends to
-    /// GRBL or grblHAL (`M4`, `M6`, `M7`, `G53`, `G91`, `G93`).
+    /// The emitted program contains a `G` or `M` code outside the set
+    /// DreamCarve emits and its safety pass models.
     #[error("emitted line {line} contains `{word}`, which DreamCarve never sends")]
     ForbiddenWord {
         /// 1-based line number in the program.

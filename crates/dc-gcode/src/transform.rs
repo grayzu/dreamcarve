@@ -94,8 +94,11 @@ impl MachineTransform {
         );
         // Arcs are written in the XY plane (G17) and safe Z is a machine Z
         // height, so project Z must drive machine Z, and X and Y the other
-        // two.
-        if z.axis != MachineAxis::Z || x.axis == y.axis || x.axis == MachineAxis::Z {
+        // two. Machine +Z is up on GRBL and grblHAL; an inverted Z would turn
+        // every retract into a plunge, and the safety pass, which reads the
+        // program back through this same transform, could not tell.
+        if z.axis != MachineAxis::Z || z.sign < 0.0 || x.axis == y.axis || x.axis == MachineAxis::Z
+        {
             return Err(invalid(&project.post_processor.id, axes));
         }
         let stock = &project.stock;

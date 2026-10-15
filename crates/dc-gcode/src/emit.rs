@@ -68,6 +68,12 @@ pub enum ExportWarning {
     },
 }
 
+/// Fewest decimal places accepted in millimetres. The safety pass tolerates
+/// one unit in the last place, so this bounds that tolerance at 0.01 mm.
+pub const MIN_DECIMAL_PLACES_MM: u8 = 2;
+/// Fewest decimal places accepted in inches: one unit is 0.0254 mm.
+pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
+
 /// Emits a program for the enabled operations in `ops`, each with its tool
 /// and its toolpath (project space, mm), using the project's embedded
 /// post-processor, machine origin, and display units. `date` fills the
@@ -131,6 +137,19 @@ pub fn emit(
         &post.id,
         "work_coordinates.select_command",
     )?;
+    let (units_name, min_places) = match transform.output_units() {
+        Units::Mm => ("mm", MIN_DECIMAL_PLACES_MM),
+        Units::Inch => ("inch", MIN_DECIMAL_PLACES_INCH),
+    };
+    let places = decimal_places(&post.number_format, transform.output_units());
+    if places < min_places {
+        return Err(ExportError::TooFewDecimalPlaces {
+            post: post.id.clone(),
+            units: units_name,
+            places,
+            min: min_places,
+        });
+    }
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
     if !(dwell_s.is_finite() && dwell_s >= 0.0) {
         return Err(ExportError::InvalidDwell {

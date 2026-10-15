@@ -19,7 +19,7 @@ use dc_project::{PostProcessor, ProfileOp, Tool, Units};
 
 use crate::ExportError;
 use crate::format::decimal_places;
-use crate::parse::{Block, MachineMove, MotionKind, parse_program};
+use crate::parse::{Block, MachineMove, MotionKind, is_code, parse_program};
 use crate::transform::{MachineTransform, mm_per_unit};
 
 /// The longest line, in characters, DreamCarve emits. grblHAL's line
@@ -138,21 +138,20 @@ pub(crate) fn check(
 /// `G54` to `G59`.
 const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
 
-/// Words DreamCarve never sends to GRBL or grblHAL (`definitions/README.md`,
+/// The only `G` and `M` codes the safety pass accepts: the ones DreamCarve
+/// emits and this module models. Anything else, such as `G92` or `G10`
+/// offsets, `G43.1` tool length, `G38` probing, `G91` or `G93` modes, or
+/// `M8` coolant, could change what the controller does in a way the check
+/// cannot follow, so it is rejected. This also keeps out the words
+/// DreamCarve never sends to GRBL or grblHAL (`definitions/README.md`,
 /// "Verification"): `M4` needs a direction pin or laser mode, `M6` needs a
 /// tool-change protocol the sender may not speak, `M7` is optional on both,
-/// `G53`, `G28`, and `G30` move in machine coordinates, and `G91` and `G93`
-/// change what every later number means.
-const FORBIDDEN: [(char, f64); 8] = [
-    ('M', 4.0),
-    ('M', 6.0),
-    ('M', 7.0),
-    ('G', 28.0),
-    ('G', 30.0),
-    ('G', 53.0),
-    ('G', 91.0),
-    ('G', 93.0),
+/// and `G28`, `G30`, and `G53` move in machine coordinates.
+const ALLOWED_G: [f64; 16] = [
+    0.0, 1.0, 2.0, 3.0, 4.0, 17.0, 20.0, 21.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 90.0, 94.0,
 ];
+/// See [`ALLOWED_G`].
+const ALLOWED_M: [f64; 6] = [0.0, 1.0, 2.0, 3.0, 5.0, 30.0];
 
 /// A dwell shorter than the configured one by less than this still counts:
 /// it absorbs the rounding of the written seconds.
@@ -187,11 +186,16 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 
 fn check_words(blocks: &[Block]) -> Result<(), ExportError> {
     for block in blocks {
-        for &(letter, code) in &FORBIDDEN {
-            if block.has(letter, code) {
+        for word in &block.words {
+            let allowed: &[f64] = match word.letter {
+                'G' => &ALLOWED_G,
+                'M' => &ALLOWED_M,
+                _ => continue,
+            };
+            if !allowed.iter().any(|&code| is_code(word.value, code)) {
                 return Err(ExportError::ForbiddenWord {
                     line: block.line,
-                    word: format!("{letter}{code}"),
+                    word: format!("{}{}", word.letter, word.value),
                 });
             }
         }
@@ -620,19 +624,22 @@ mod tests {
     fn only_codes_dreamcarve_emits_are_accepted() {
         // The safety pass models only these codes; anything else (an offset,
         // a probe, a tool-length or arc-mode change) could move the machine
-        // in a way the check cannot see.
-        for (text, word) in [
-            ("G21\nG54\nG92 Z0\n", "G92"),
-            ("G21\nG54\nG10 L20 P1 Z0\n", "G10"),
-            ("G21\nG54\nG43.1 Z5\n", "G43.1"),
-            ("G21\nG54\nG38.2 Z-10 F100\n", "G38.2"),
-            ("G21\nG54\nG91.1\n", "G91.1"),
-            ("G21\nG54\nM8\n", "M8"),
+        // in a way the check cannot see. A motion mode is already active, so
+        // the parser reads axis words on the same line as a move.
+        for (code, word) in [
+            ("G92 Z0", "G92"),
+            ("G92.1", "G92.1"),
+            ("G10 L20 P1 Z0", "G10"),
+            ("G43.1 Z5", "G43.1"),
+            ("G38.2 Z-10 F100", "G38.2"),
+            ("G91.1", "G91.1"),
+            ("M8", "M8"),
         ] {
-            let err = check_text(text).unwrap_err();
+            let text = format!("G21\nG54\nG0 Z11\n{code}\n");
+            let err = check_text(&text).unwrap_err();
             assert!(
-                matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == word),
-                "{text}: {err:?}"
+                matches!(&err, ExportError::ForbiddenWord { line: 4, word: w } if w == word),
+                "{code}: {err:?}"
             );
         }
         for text in ["G21 G17 G90 G94\nG54\nM0\nM5\nM30\n", "G20\nG59\nM2\n"] {
