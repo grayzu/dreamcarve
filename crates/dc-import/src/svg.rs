@@ -36,6 +36,20 @@ const SUBPATH_CLOSE_TOLERANCE_MM: f64 = 1e-4;
 
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
+/// Largest absolute coordinate, and largest page side, an import accepts,
+/// mm (100 m). Far beyond any hobby machine; it bounds how many segments a
+/// curve can flatten into, so an untrusted file cannot exhaust memory.
+pub const MAX_COORDINATE_MM: f64 = 100_000.0;
+
+/// Finest flattening tolerance an import accepts, mm (1 µm). Below any
+/// machine's resolution; finer would only multiply vertices.
+pub const MIN_FLATTEN_TOLERANCE_MM: f64 = 0.001;
+
+/// Default cap on the total vertices one import may produce. A 90 mm circle
+/// at the default tolerance is about 150 vertices; this leaves room for
+/// very detailed artwork while stopping runaway input.
+pub const MAX_IMPORT_VERTICES: usize = 5_000_000;
+
 /// The units the root `<svg>` declares for its `width` and `height`.
 /// Informational: usvg converts every unit to CSS pixels, and the importer
 /// converts pixels to millimetres at 96 per inch, so geometry is correct
@@ -74,19 +88,25 @@ impl std::fmt::Display for RootUnits {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SvgImportOptions {
     /// Furthest a flattened polyline may stray from the source curve, mm.
+    /// At least [`MIN_FLATTEN_TOLERANCE_MM`].
     pub flatten_tolerance_mm: f64,
     /// Stock thickness, mm: every instance's `z_top_mm`.
     pub thickness_mm: f64,
+    /// Most vertices the whole import may produce before it fails with
+    /// [`ImportError::TooManyVertices`].
+    pub max_vertices: usize,
 }
 
 impl SvgImportOptions {
     /// Options for stock `thickness_mm` thick at the default flattening
-    /// tolerance, [`FLATTEN_TOLERANCE_DEFAULT_MM`].
+    /// tolerance, [`FLATTEN_TOLERANCE_DEFAULT_MM`], and the default vertex
+    /// cap, [`MAX_IMPORT_VERTICES`].
     #[must_use]
     pub const fn new(thickness_mm: f64) -> Self {
         Self {
             flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
             thickness_mm,
+            max_vertices: MAX_IMPORT_VERTICES,
         }
     }
 }
@@ -135,7 +155,7 @@ pub fn import_svg(
     options: &SvgImportOptions,
 ) -> Result<(SvgImport, Vec<ImportWarning>), ImportError> {
     let tolerance_mm = options.flatten_tolerance_mm;
-    if !(tolerance_mm.is_finite() && tolerance_mm > 0.0) {
+    if !(tolerance_mm.is_finite() && tolerance_mm >= MIN_FLATTEN_TOLERANCE_MM) {
         return Err(ImportError::InvalidTolerance { tolerance_mm });
     }
     let thickness_mm = options.thickness_mm;
@@ -152,7 +172,9 @@ pub fn import_svg(
     if !(page_width_mm.is_finite()
         && page_height_mm.is_finite()
         && page_width_mm > 0.0
-        && page_height_mm > 0.0)
+        && page_height_mm > 0.0
+        && page_width_mm <= MAX_COORDINATE_MM
+        && page_height_mm <= MAX_COORDINATE_MM)
     {
         return Err(ImportError::InvalidPageSize {
             width_mm: page_width_mm,
@@ -183,6 +205,8 @@ pub fn import_svg(
         thickness_mm,
         // Pixels to millimetres, then the Y flip `y' = height − y`.
         px_to_mm: Affine::new([MM_PER_PX, 0.0, 0.0, -MM_PER_PX, 0.0, page_height_mm]),
+        max_vertices: options.max_vertices,
+        vertex_count: 0,
         path_count: 0,
         definitions: Vec::new(),
         instances: Vec::new(),
@@ -306,6 +330,9 @@ struct Walker {
     tolerance_mm: f64,
     thickness_mm: f64,
     px_to_mm: Affine,
+    max_vertices: usize,
+    /// Vertices flattened so far, across all paths.
+    vertex_count: usize,
     /// Paths seen so far, imported or not; numbers unnamed paths.
     path_count: usize,
     definitions: Vec<FeatureDefinition>,
@@ -366,9 +393,34 @@ impl Walker {
         if !bez.elements().iter().all(element_is_finite) {
             return Err(ImportError::NonFinite { path: name });
         }
+        // The curve lies inside its control polygon, so checking control
+        // points bounds the whole path.
+        if !bez.elements().iter().all(element_is_within_limit) {
+            return Err(ImportError::CoordinateOutOfRange {
+                path: name,
+                limit_mm: MAX_COORDINATE_MM,
+            });
+        }
+        // Refuse before flattening, so a runaway path is never allocated.
+        let estimate = estimated_vertices(&bez, self.tolerance_mm);
+        if self.vertex_count.saturating_add(estimate) > self.max_vertices {
+            return Err(ImportError::TooManyVertices {
+                limit: self.max_vertices,
+            });
+        }
+        let flattened = flatten(&bez, self.tolerance_mm);
+        // The estimate is conservative; the exact count is what accumulates.
+        for polyline in &flattened {
+            self.vertex_count = self.vertex_count.saturating_add(polyline.vertices().len());
+        }
+        if self.vertex_count > self.max_vertices {
+            return Err(ImportError::TooManyVertices {
+                limit: self.max_vertices,
+            });
+        }
 
         let mut profiles: Vec<Polyline> = Vec::new();
-        for (subpath, polyline) in flatten(&bez, self.tolerance_mm).into_iter().enumerate() {
+        for (subpath, polyline) in flattened.into_iter().enumerate() {
             if polyline.is_closed() && polyline.signed_area_mm2().abs() <= EPS_MM * EPS_MM {
                 self.warnings.push(ImportWarning::ZeroAreaDropped {
                     path: name.clone(),
@@ -472,6 +524,69 @@ fn close_if_returned(out: &mut BezPath, start: kurbo::Point, open: bool) {
     out.pop();
     out.push(snapped);
     out.close_path();
+}
+
+fn element_is_within_limit(el: &PathEl) -> bool {
+    let within =
+        |p: &kurbo::Point| p.x.abs() <= MAX_COORDINATE_MM && p.y.abs() <= MAX_COORDINATE_MM;
+    match el {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => within(p),
+        PathEl::QuadTo(c, p) => within(c) && within(p),
+        PathEl::CurveTo(c1, c2, p) => within(c1) && within(c2) && within(p),
+        PathEl::ClosePath => true,
+    }
+}
+
+/// An upper estimate of the vertices `flatten` makes of `path`: Wang's
+/// formula, the segment count that uniform subdivision needs to stay
+/// within `tolerance_mm`. kurbo's adaptive flattening needs no more in
+/// practice. Coordinates are within [`MAX_COORDINATE_MM`] and the tolerance
+/// at least [`MIN_FLATTEN_TOLERANCE_MM`], so each curve's count is at most
+/// a few tens of thousands.
+fn estimated_vertices(path: &BezPath, tolerance_mm: f64) -> usize {
+    let mut current = kurbo::Point::ZERO;
+    let mut total: usize = 0;
+    for el in path.elements() {
+        let count = match *el {
+            PathEl::MoveTo(p) | PathEl::LineTo(p) => {
+                current = p;
+                1
+            }
+            PathEl::QuadTo(c, p) => {
+                let d = second_difference(current, c, p);
+                current = p;
+                wang_segments(0.25 * d, tolerance_mm)
+            }
+            PathEl::CurveTo(c1, c2, p) => {
+                let d1 = second_difference(current, c1, c2);
+                let d2 = second_difference(c1, c2, p);
+                current = p;
+                wang_segments(0.75 * d1.max(d2), tolerance_mm)
+            }
+            PathEl::ClosePath => 0,
+        };
+        total = total.saturating_add(count);
+    }
+    total
+}
+
+/// Length of the second difference `a − 2b + c` of three control points, mm.
+fn second_difference(a: kurbo::Point, b: kurbo::Point, c: kurbo::Point) -> f64 {
+    (a.to_vec2() - b.to_vec2() * 2.0 + c.to_vec2()).hypot()
+}
+
+/// `ceil(sqrt(scaled_second_difference / tolerance))`, at least 1.
+fn wang_segments(scaled_second_difference_mm: f64, tolerance_mm: f64) -> usize {
+    let segments = (scaled_second_difference_mm / tolerance_mm).sqrt().ceil();
+    // Float-to-int `as` saturates and maps NaN to 0. With coordinates and
+    // tolerance in their checked ranges the value is below 1e5.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "saturating cast of a bounded, non-negative count"
+    )]
+    let segments = segments as usize;
+    segments.max(1)
 }
 
 fn element_is_finite(el: &PathEl) -> bool {
@@ -814,7 +929,7 @@ mod tests {
         for tolerance_mm in [0.0, -0.1, f64::NAN, f64::INFINITY] {
             let options = SvgImportOptions {
                 flatten_tolerance_mm: tolerance_mm,
-                thickness_mm: 12.0,
+                ..SvgImportOptions::new(12.0)
             };
             assert!(matches!(
                 import_svg(bytes, &options),
@@ -827,6 +942,90 @@ mod tests {
                 Err(ImportError::InvalidThickness { .. })
             ));
         }
+    }
+
+    // ── limits ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn tolerance_below_minimum_is_rejected() {
+        let bytes = include_bytes!("../tests/fixtures/mm_root.svg");
+        let too_fine = SvgImportOptions {
+            flatten_tolerance_mm: MIN_FLATTEN_TOLERANCE_MM / 2.0,
+            ..SvgImportOptions::new(12.0)
+        };
+        assert!(matches!(
+            import_svg(bytes, &too_fine),
+            Err(ImportError::InvalidTolerance { .. })
+        ));
+        let finest = SvgImportOptions {
+            flatten_tolerance_mm: MIN_FLATTEN_TOLERANCE_MM,
+            ..SvgImportOptions::new(12.0)
+        };
+        assert!(import_svg(bytes, &finest).is_ok());
+    }
+
+    #[test]
+    fn huge_coordinate_path_is_rejected() {
+        // 2e8 user units at 1 mm each is 200 km, past MAX_COORDINATE_MM.
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+            <rect id="ok" x="0" y="0" width="10" height="10"/>
+            <path id="far" d="M0,0 C200000000,0 200000000,50 0,50" fill="none" stroke="black"/>
+        </svg>"#;
+        let err = import_svg(svg, &SvgImportOptions::new(12.0)).unwrap_err();
+        match err {
+            ImportError::CoordinateOutOfRange { path, limit_mm } => {
+                assert_eq!(path, "far");
+                assert_approx_eq!(limit_mm, MAX_COORDINATE_MM, 0.0);
+            }
+            other => panic!("unexpected error {other:?}"),
+        }
+    }
+
+    #[test]
+    fn huge_page_is_rejected() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="200000000mm" height="100mm" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="10" height="10"/>
+        </svg>"#;
+        assert!(matches!(
+            import_svg(svg, &SvgImportOptions::new(12.0)),
+            Err(ImportError::InvalidPageSize { .. })
+        ));
+    }
+
+    #[test]
+    fn vertex_cap_is_enforced_while_flattening() {
+        // The circle flattens to far more than 10 vertices.
+        let options = SvgImportOptions {
+            max_vertices: 10,
+            ..SvgImportOptions::new(12.0)
+        };
+        let err = import_svg(include_bytes!("../tests/fixtures/circle.svg"), &options).unwrap_err();
+        assert!(
+            matches!(err, ImportError::TooManyVertices { limit: 10 }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn vertex_cap_counts_across_paths() {
+        // Two rectangles, four vertices each.
+        let bytes = include_bytes!("../tests/fixtures/y_flip.svg");
+        let capped = |max_vertices| SvgImportOptions {
+            max_vertices,
+            ..SvgImportOptions::new(12.0)
+        };
+        assert!(import_svg(bytes, &capped(8)).is_ok());
+        assert!(matches!(
+            import_svg(bytes, &capped(7)),
+            Err(ImportError::TooManyVertices { limit: 7 })
+        ));
+    }
+
+    #[test]
+    fn default_options_use_the_documented_limits() {
+        let options = SvgImportOptions::new(12.0);
+        assert_eq!(options.max_vertices, MAX_IMPORT_VERTICES);
+        const { assert!(MIN_FLATTEN_TOLERANCE_MM <= FLATTEN_TOLERANCE_DEFAULT_MM) };
     }
 
     #[test]

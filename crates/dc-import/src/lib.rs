@@ -10,7 +10,10 @@
 
 pub mod svg;
 
-pub use svg::{RootUnits, SvgImport, SvgImportOptions, import_svg};
+pub use svg::{
+    MAX_COORDINATE_MM, MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM, RootUnits, SvgImport,
+    SvgImportOptions, import_svg,
+};
 
 /// Why an import produced no result.
 #[derive(Debug, thiserror::Error)]
@@ -25,16 +28,37 @@ pub enum ImportError {
         /// Name the path would have been imported under.
         path: String,
     },
-    /// The page size is NaN, infinite, or not positive.
-    #[error("SVG page size {width_mm} × {height_mm} mm is not a positive finite size")]
+    /// A path reaches further from the origin than
+    /// [`svg::MAX_COORDINATE_MM`] once converted to millimetres.
+    #[error("path `{path}` reaches beyond {limit_mm} mm from the origin")]
+    CoordinateOutOfRange {
+        /// Name the path would have been imported under.
+        path: String,
+        /// The limit it exceeded, millimetres.
+        limit_mm: f64,
+    },
+    /// Flattening would produce more than `limit` vertices in total.
+    #[error(
+        "the drawing flattens to more than {limit} vertices; simplify it or raise the tolerance"
+    )]
+    TooManyVertices {
+        /// The vertex cap that was exceeded.
+        limit: usize,
+    },
+    /// The page size is NaN, infinite, not positive, or larger than
+    /// [`svg::MAX_COORDINATE_MM`] on a side.
+    #[error(
+        "SVG page size {width_mm} × {height_mm} mm is not a positive finite size within limits"
+    )]
     InvalidPageSize {
         /// Page width, millimetres.
         width_mm: f64,
         /// Page height, millimetres.
         height_mm: f64,
     },
-    /// The flattening tolerance is not a positive finite length.
-    #[error("flatten tolerance {tolerance_mm} mm must be a positive finite length")]
+    /// The flattening tolerance is not finite or is below
+    /// [`svg::MIN_FLATTEN_TOLERANCE_MM`].
+    #[error("flatten tolerance {tolerance_mm} mm must be a finite length of at least 0.001 mm")]
     InvalidTolerance {
         /// The rejected tolerance, millimetres.
         tolerance_mm: f64,
