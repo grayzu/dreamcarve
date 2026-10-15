@@ -30,12 +30,13 @@ dc-gcode = { path = "crates/dc-gcode", version = "0.0.1" }
 dc-import = { path = "crates/dc-import", version = "0.0.1" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.
-# Geometry crates (cavalier_contours, i_overlay, kurbo, usvg) are added when
+# Geometry crates (cavalier_contours, i_overlay, usvg) are added when
 # phase 1 first uses them, so the pins are never stale.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 thiserror = "2.0"
 clap = { version = "4.6", features = ["derive", "cargo"] }
+kurbo = "0.13"
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic
