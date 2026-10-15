@@ -1,6 +1,6 @@
 # Phase 1: Headless MVP — Design Spec
 
-**Status:** draft
+**Status:** accepted
 **Functional spec:** `functional.md`
 
 ## Overview
@@ -421,6 +421,6 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 
 ## Open questions
 
-- Whether `display_units` should live on the project or only on the CLI
-  invocation. Current choice: on the project, because `init --units inch`
-  must survive the user's edit cycle. Revisit if it causes confusion.
+None. Resolved at acceptance (2026-10-15): `display_units` lives on the
+project, because `init --units inch` must survive the user's edit cycle.
+Revisit if it causes confusion.
