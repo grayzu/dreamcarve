@@ -39,8 +39,9 @@ machine origin are applied only in the CLI's `init` defaults and in
 | `dc-cam::profile` | `src/engine/toolpaths/edge.ts` (`generateEdgeRouteToolpath`, `edgeRouteTargetWalls`), `multiFeature.ts` for nesting | Only the plain contour path: no trochoidal, no keep-out holes, no entry policy. Winding re-derived for Y-up. |
 | `dc-cam::tabs` | `src/engine/toolpaths/tabs.ts` (`applyTabsToEdgeRoute`, `toolCentreContours`, `tabLayoutFreeFraction`, `applyTabWarnings`), `tabProfile.ts` (smooth tab cosine), `tabs.test.ts` | Tabs are specified per operation by count or explicit positions along the path; PureCutCNC's world-placed `Tab` rectangles arrive in phase 5 with the GUI. Smooth profile math ported as is. |
 | `dc-cam::passes` | depth stepping inside `edge.ts` | Final pass clamps to depth, never deeper. |
-| `dc-gcode::post` | `src/engine/gcode/types.ts` (`MachineDefinitionSchema`), `postprocessor.ts` (`runPostProcessor`), `utils.ts` (`projectToMachinePoint`, number formatting) | `projectToMachinePoint` loses its Y mirror; axis mapping and inversion kept. Canned cycles and coolant parsed but unused until phase 2. |
-| `dc-gcode/definitions/*.json` | `src/engine/gcode/definitions/grblhal.json`, `grbl.json` | Copied as data. Attribution in `NOTICE` and `definitions/README.md`; `{date}` and generator name placeholders become DreamCarve's. |
+| `dc-project::post_processor` | `src/engine/gcode/types.ts` (`MachineDefinitionSchema`) | Keys snake_case. Every field required (upstream zod defaults dropped) so a saved file shows every setting. Lives in `dc-project` because `Project` embeds it. |
+| `dc-gcode::post` | `postprocessor.ts` (`runPostProcessor`), `utils.ts` (`projectToMachinePoint`, number formatting) | `projectToMachinePoint` loses its Y mirror; axis mapping and inversion kept. Canned cycles and coolant parsed but unused until phase 2. |
+| `dc-gcode/definitions/*.json` | `src/engine/gcode/definitions/grblhal.json`, `grbl.json` | Copied as data, keys converted to snake_case. Attribution in `NOTICE` and `definitions/README.md`; the generator name in the header becomes DreamCarve's (`{date}` stays a placeholder filled at export). |
 | `dc-import::svg` | `src/import/svg.ts`, `normalize.ts`, `svg.test.ts` | Parsing delegated to usvg, which already resolves transforms, `use`, and shapes to paths. The flattening, Y flip, and definition grouping are ours. |
 | `tests/golden/profile-*` | captured via `tools/parity/` | See Test plan. |
 
@@ -98,7 +99,7 @@ pub struct Project {
     pub instances: Vec<FeatureInstance>,
     pub tools: Vec<Tool>,
     pub operations: Vec<Operation>,
-    pub post_processor: PostProcessor,        // embedded copy, see dc-gcode
+    pub post_processor: PostProcessor,        // embedded copy, see dc-project::post_processor
 }
 
 pub struct Stock { pub width_mm: f64, pub height_mm: f64, pub thickness_mm: f64 }
@@ -170,10 +171,15 @@ pub fn generate_profile(project: &Project, op: &ProfileOp) -> Result<(Toolpath, 
 ### dc-gcode
 
 `PostProcessor` is a serde struct mirroring PureCutCNC's `MachineDefinition`
-schema field for field (id, name, description, file_extension,
-coordinate_system, number_format, units, program, work_coordinates, motion,
-feed_speed, tool_change, canned_cycles, coolant, stop). Bundled definitions
-are `include_str!` JSON parsed at first use and validated by a test.
+schema field for field (id, name, description, vendor, builtin,
+file_extension, coordinate_system, number_format, units, program,
+work_coordinates, motion, feed_speed, tool_change, canned_cycles, coolant,
+stop). It lives in `dc-project::post_processor`, not here, because `Project`
+embeds it and the crate direction (`dc-geometry → dc-project → dc-gcode`)
+forbids `dc-project` depending on `dc-gcode`; `dc-gcode` re-exports it.
+`dc-gcode::post` holds the bundled definitions: `include_str!` JSON parsed at
+first use and validated by a test, with `bundled()` and
+`lookup(id) -> Result<PostProcessor, ExportError>`.
 
 ```rust
 pub struct Program { pub text: String, pub extension: String }
@@ -181,7 +187,9 @@ pub fn emit(project: &Project, ops: &[(ProfileOp, Tool, Toolpath)]) -> Result<(P
 pub fn parse_motion(text: &str) -> Vec<MachineMove>;   // test-only helper, re-exported for safety tests
 ```
 
-`ExportError::{MissingFeed{tool, field}, MissingRpm{tool}, BelowMaterialBottom{op, z}, RapidBelowSafeZ, NoEnabledOperations, UnknownPostProcessor}`.
+`ExportError::{MissingFeed{tool, field}, MissingRpm{tool}, BelowMaterialBottom{op, z}, RapidBelowSafeZ, NoEnabledOperations, UnknownPostProcessor{id}, BundledDefinition{file, source}}`.
+`BundledDefinition` means a bundled JSON file failed to parse, which only a
+broken build can cause; it keeps `dc-gcode` free of panics.
 
 ## Algorithms
 
@@ -296,9 +304,9 @@ closed instance, outside, depth 12, step 4, climb, safe Z 5, tabs
 
 ```
 crates/dc-geometry/src/{lib.rs, point.rs, polyline.rs, contour.rs, region.rs, offset.rs, flatten.rs, transform.rs}
-crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, migrate.rs, validate.rs, history.rs}
+crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, migrate.rs, validate.rs, history.rs, post_processor.rs}
 crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, passes.rs, tabs.rs, tab_profile.rs}
-crates/dc-gcode/src/{lib.rs, post.rs, emit.rs, format.rs, transform.rs, parse.rs, definitions/{README.md, grblhal.json, grbl.json}}
+crates/dc-gcode/src/{lib.rs, error.rs, post.rs, emit.rs, format.rs, transform.rs, parse.rs, definitions/{README.md, grblhal.json, grbl.json}}
 crates/dc-import/src/{lib.rs, svg.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs}
 tests/golden/{profile-outside-rect, profile-inside-circle, profile-ring, profile-tabs-circle}/
@@ -330,6 +338,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `migrate::newer_version_is_rejected`.
 - `validate::dangling_tool_id_is_error`.
 - `validate::unset_feed_is_warning_not_error`.
+- `post_processor::post_processor_round_trips_through_json`, `post_processor::unknown_field_is_rejected`.
 - `history::undo_restores_previous_snapshot`, `history::redo_after_undo`, `history::new_edit_truncates_redo`.
 
 **dc-cam**
@@ -358,7 +367,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `tabs::tabs_above_cut_depth_warn` (port: `applyTabWarnings`).
 
 **dc-gcode**
-- `post::bundled_definitions_validate` — grblhal.json and grbl.json parse.
+- `post::bundled_definitions_validate` — grblhal.json and grbl.json parse; ids are `grblhal` and `grbl`.
+- `post::lookup_by_id` — finds both; an unknown id is `UnknownPostProcessor`.
 - `post::grblhal_and_grbl_differ_only_in_dialect` — same toolpath, diff restricted to header/footer/comment/tool-change/WCS lines.
 - `transform::origin_bottom_left_stock_top_translates_only` — no coordinate changes sign.
 - `transform::axis_inversion_from_definition_applies`.

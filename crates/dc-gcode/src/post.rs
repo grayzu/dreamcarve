@@ -28,8 +28,17 @@ static BUNDLED: OnceLock<Vec<PostProcessor>> = OnceLock::new();
 /// [`ExportError::BundledDefinition`] if a bundled file does not parse. A
 /// test proves they do, so this only fires on a broken build.
 pub fn bundled() -> Result<&'static [PostProcessor], ExportError> {
-    let _ = (&BUNDLED, &BUNDLED_SOURCES);
-    todo!()
+    if let Some(posts) = BUNDLED.get() {
+        return Ok(posts);
+    }
+    let parsed = BUNDLED_SOURCES
+        .iter()
+        .map(|&(file, text)| {
+            serde_json::from_str(text)
+                .map_err(|source| ExportError::BundledDefinition { file, source })
+        })
+        .collect::<Result<Vec<PostProcessor>, _>>()?;
+    Ok(BUNDLED.get_or_init(|| parsed))
 }
 
 /// The bundled post-processor with id `id`, as an owned copy for embedding
@@ -40,8 +49,11 @@ pub fn bundled() -> Result<&'static [PostProcessor], ExportError> {
 /// [`ExportError::UnknownPostProcessor`] if no bundled definition has that
 /// id; [`ExportError::BundledDefinition`] as for [`bundled`].
 pub fn lookup(id: &str) -> Result<PostProcessor, ExportError> {
-    let _ = id;
-    todo!()
+    bundled()?
+        .iter()
+        .find(|post| post.id == id)
+        .cloned()
+        .ok_or_else(|| ExportError::UnknownPostProcessor { id: id.to_owned() })
 }
 
 #[cfg(test)]
