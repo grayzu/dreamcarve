@@ -39,3 +39,25 @@ surface strategies for phase 7).
 
 Golden corpus cases to capture: `pocket-offset-rect`, `pocket-offset-island`,
 `pocket-raster-0deg`, `pocket-raster-45deg`, `pocket-rough-then-finish`.
+
+## Multi-tool export
+
+When a project's enabled operations use more than one tool, export writes
+either **one program** with a tool change between tools, or **one program per
+tool**. The user decides:
+
+- A **default** lives in the user config directory (introduced in phase 2
+  for the tool library), so it is set once, not on every export.
+- Each export can **override** the default (for example
+  `dreamcarve export --single-file` or `--file-per-tool`; final flag names
+  are the spec's call).
+- With no user default set, export uses one program per tool, because most
+  hobby routers have no automatic tool changer and stop on a tool change
+  differently per controller. The spec may revisit this built-in default.
+
+One program per tool names files so their order is obvious (operation order,
+tool number, tool name). Every program, either way, starts with its own
+units command, work-coordinate select and safe-Z move, and stays within the
+phase 1 safety rules S1–S6. A single program's tool change uses the
+post-processor's `tool_change` block, retracting to safe Z and stopping the
+spindle first.
