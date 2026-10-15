@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 /// A post-processor definition. Text fields are G-code words or templates
 /// whose `{placeholder}` tokens are filled at export.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostProcessor {
     /// Stable identifier, for example `grblhal`.
@@ -214,7 +214,7 @@ pub struct Motion {
 }
 
 /// Feed and spindle words.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedSpeed {
     /// Feed word, for example `F`.
@@ -231,6 +231,21 @@ pub struct FeedSpeed {
     pub inline_with_motion: bool,
     /// Emit feed and speed only when they change.
     pub modal_feed_speed: bool,
+    /// Pause after every spindle start so the spindle reaches speed before
+    /// it cuts. Neither GRBL nor grblHAL waits on its own.
+    pub spindle_on_dwell: SpindleDwell,
+}
+
+/// A dwell after the spindle starts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpindleDwell {
+    /// Template for the dwell line; `{seconds}` is replaced by
+    /// `duration_s`. `G4 P{seconds}` on GRBL and grblHAL, where P is in
+    /// seconds.
+    pub command: String,
+    /// How long to wait, seconds. `0` emits no dwell.
+    pub duration_s: f64,
 }
 
 /// Tool-change block.
@@ -353,6 +368,10 @@ mod tests {
                 spindle_off: "M5".into(),
                 inline_with_motion: true,
                 modal_feed_speed: true,
+                spindle_on_dwell: SpindleDwell {
+                    command: "G4 P{seconds}".into(),
+                    duration_s: 3.0,
+                },
             },
             tool_change: ToolChange {
                 commands: vec!["M6 T{toolNumber}".into()],
@@ -378,6 +397,18 @@ mod tests {
                 program_end_command: "M30".into(),
             },
         }
+    }
+
+    #[test]
+    fn spindle_dwell_round_trips() {
+        let post = sample();
+        let json = serde_json::to_value(&post).unwrap();
+        assert_eq!(
+            json["feed_speed"]["spindle_on_dwell"],
+            serde_json::json!({ "command": "G4 P{seconds}", "duration_s": 3.0 })
+        );
+        let back: PostProcessor = serde_json::from_value(json).unwrap();
+        assert_eq!(back, post);
     }
 
     #[test]

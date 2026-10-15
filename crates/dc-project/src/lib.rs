@@ -27,8 +27,8 @@ pub use model::{
 };
 pub use post_processor::{
     ArcFormat, Axis, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces, FeedSpeed, Motion,
-    NumberFormat, PostProcessor, ProgramFormat, RetractMode, Stop, ToolChange, UnitCommands,
-    WorkCoordinates,
+    NumberFormat, PostProcessor, ProgramFormat, RetractMode, SpindleDwell, Stop, ToolChange,
+    UnitCommands, WorkCoordinates,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use validate::{Problem, Severity, validate};

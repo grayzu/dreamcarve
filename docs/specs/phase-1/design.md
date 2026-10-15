@@ -259,7 +259,10 @@ Inputs: project, op. Output: toolpath in project space.
    `{wcsCommand}`, then `workCoordinates.selectCommand` if not in the header.
 5. Per operation: `operationHeader` with `{operationIndex}`,
    `{operationName}`, `{toolNumber}`, `{toolName}`; tool change block on the
-   first op or tool change; spindle on with `S{rpm}`; then moves. Rapids use
+   first op or tool change; spindle on with `S{rpm}`; then
+   `feed_speed.spindle_on_dwell.command` with `{seconds}` filled, unless its
+   `duration_s` is 0 (after every spindle start, including after a tool
+   change); then moves. Rapids use
    `rapidCommand`, cuts `linearCommand` with `F` on change (or always, if
    `!modalFeedSpeed`). Arcs: if `motion.arcInterpolation`, emit
    `cwArcCommand`/`ccwArcCommand` with IJ (or R) per `arcFormat`; otherwise
