@@ -1,6 +1,6 @@
 # Phase 1: Headless MVP — Functional Spec
 
-**Status:** draft
+**Status:** accepted
 
 ## Goal
 
