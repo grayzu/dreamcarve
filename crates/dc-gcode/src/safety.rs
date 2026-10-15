@@ -14,10 +14,13 @@
 use std::ops::Range;
 
 use dc_cam::Toolpath;
-use dc_project::{PostProcessor, ProfileOp, Tool};
+use dc_geometry::{EPS_MM, Point3, approx_eq};
+use dc_project::{PostProcessor, ProfileOp, Tool, Units};
 
 use crate::ExportError;
-use crate::transform::MachineTransform;
+use crate::format::decimal_places;
+use crate::parse::{Block, MachineMove, MotionKind, parse_program};
+use crate::transform::{MachineTransform, mm_per_unit};
 
 /// The longest line, in characters, DreamCarve emits. grblHAL's line
 /// buffer holds 256 bytes including the terminator.
@@ -50,7 +53,350 @@ pub(crate) fn check(
     stock_thickness_mm: f64,
     spans: &[OpSpan<'_>],
 ) -> Result<(), ExportError> {
-    let _ = (text, post, transform, stock_thickness_mm, spans);
+    check_characters(text)?;
+    let blocks = parse_program(text)?;
+    check_words(&blocks)?;
+
+    let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
+    let mut units_set = false;
+    let mut wcs_set = false;
+    let mut spindle_on = false;
+    let mut rpm: Option<f64> = None;
+    let mut dwell_pending = false;
+    for block in &blocks {
+        let line = block.line;
+        if block.has('G', 20.0) || block.has('G', 21.0) {
+            units_set = true;
+        }
+        if WCS_CODES.iter().any(|&code| block.has('G', code)) {
+            wcs_set = true;
+        }
+        let starts_spindle = block.has('M', 3.0);
+        // S5: units and work coordinates before anything happens.
+        if block.motion.is_some() || starts_spindle {
+            if !units_set {
+                return Err(ExportError::MissingSetup {
+                    what: "units (G20 or G21)",
+                });
+            }
+            if !wcs_set {
+                return Err(ExportError::MissingSetup {
+                    what: "a work coordinate system (G54 to G59)",
+                });
+            }
+        }
+        // S4: spindle state. DreamCarve never puts a spindle word and a
+        // move on one line, so the order within a line does not matter.
+        if let Some(s) = block.value('S') {
+            rpm = Some(s);
+        }
+        if starts_spindle {
+            spindle_on = true;
+            dwell_pending = dwell_s > 0.0;
+        }
+        if block.has('G', 4.0)
+            && block
+                .value('P')
+                .is_some_and(|p| p >= dwell_s - DWELL_TOLERANCE_S)
+        {
+            dwell_pending = false;
+        }
+        if block.has('M', 5.0) {
+            spindle_on = false;
+        }
+
+        let Some(mv) = &block.motion else {
+            continue;
+        };
+        let limits = Limits::for_line(line, spans, stock_thickness_mm);
+        let tolerance_mm = quantum_mm(post, mv.units);
+        check_depth(mv, &limits, transform, tolerance_mm)?;
+        if mv.kind.is_cut() {
+            if !spindle_on || rpm.is_none_or(|s| s <= 0.0) {
+                return Err(ExportError::SpindleNotRunning { line });
+            }
+            if dwell_pending {
+                return Err(ExportError::SpindleNotUpToSpeed { line });
+            }
+            check_feed(mv, &limits, 2.0 * tolerance_mm)?;
+            check_arc(mv)?;
+        } else {
+            check_rapid(mv, &limits, transform, tolerance_mm)?;
+        }
+    }
+    if spindle_on {
+        return Err(ExportError::SpindleNotStopped);
+    }
+
+    // S6: reading the program back reproduces each toolpath.
+    for span in spans {
+        check_reproduces(span, &blocks, post, transform)?;
+    }
+    Ok(())
+}
+
+/// `G54` to `G59`.
+const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
+
+/// Words DreamCarve never sends to GRBL or grblHAL (`definitions/README.md`,
+/// "Verification"): `M4` needs a direction pin or laser mode, `M6` needs a
+/// tool-change protocol the sender may not speak, `M7` is optional on both,
+/// `G53`, `G28`, and `G30` move in machine coordinates, and `G91` and `G93`
+/// change what every later number means.
+const FORBIDDEN: [(char, f64); 8] = [
+    ('M', 4.0),
+    ('M', 6.0),
+    ('M', 7.0),
+    ('G', 28.0),
+    ('G', 30.0),
+    ('G', 53.0),
+    ('G', 91.0),
+    ('G', 93.0),
+];
+
+/// A dwell shorter than the configured one by less than this still counts:
+/// it absorbs the rounding of the written seconds.
+const DWELL_TOLERANCE_S: f64 = 0.0005;
+
+/// GRBL and grblHAL's arc radius check (`gcode.c`): start and end radii may
+/// differ by 0.005 mm, or by 0.1 % of the radius up to 0.5 mm.
+const ARC_RADIUS_ABSOLUTE_MM: f64 = 0.005;
+/// See [`ARC_RADIUS_ABSOLUTE_MM`].
+const ARC_RADIUS_RELATIVE: f64 = 0.001;
+/// See [`ARC_RADIUS_ABSOLUTE_MM`].
+const ARC_RADIUS_GROSS_MM: f64 = 0.5;
+
+fn check_characters(text: &str) -> Result<(), ExportError> {
+    for (index, content) in text.lines().enumerate() {
+        let line = index + 1;
+        let reason = if content.chars().count() > MAX_LINE_CHARS {
+            Some("it is longer than the controller's 256-byte line buffer")
+        } else if !content.chars().all(|c| (' '..='~').contains(&c)) {
+            Some("it has a control or non-ASCII character, which the controller acts on at once")
+        } else if content.contains(['!', '?', '~']) {
+            Some("it has `!`, `?`, or `~`, which the controller acts on at once, even in a comment")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Err(ExportError::UnsafeLine { line, reason });
+        }
+    }
+    Ok(())
+}
+
+fn check_words(blocks: &[Block]) -> Result<(), ExportError> {
+    for block in blocks {
+        for &(letter, code) in &FORBIDDEN {
+            if block.has(letter, code) {
+                return Err(ExportError::ForbiddenWord {
+                    line: block.line,
+                    word: format!("{letter}{code}"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One output unit in the last written decimal place, in mm.
+fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
+    let places = decimal_places(&post.number_format, units);
+    10f64.powi(-i32::from(places)) * mm_per_unit(units)
+}
+
+/// The rules in force on one line, project space, mm.
+struct Limits<'a> {
+    op: Option<&'a ProfileOp>,
+    tool: Option<&'a Tool>,
+    /// Lowest permitted Z: stock bottom minus through-cut allowance.
+    floor_mm: f64,
+    /// Safe Z.
+    safe_z_mm: f64,
+}
+
+impl<'a> Limits<'a> {
+    /// The limits of the operation that owns `line`; outside every
+    /// operation, the strictest of them all.
+    fn for_line(line: usize, spans: &[OpSpan<'a>], stock_thickness_mm: f64) -> Self {
+        if let Some(span) = spans.iter().find(|s| s.lines.contains(&line)) {
+            return Self {
+                op: Some(span.op),
+                tool: Some(span.tool),
+                floor_mm: -span.op.through_cut_allowance_mm,
+                safe_z_mm: stock_thickness_mm + span.op.safe_z_mm,
+            };
+        }
+        let floor_mm = spans
+            .iter()
+            .map(|s| -s.op.through_cut_allowance_mm)
+            .fold(0.0, f64::max);
+        let safe_z_mm = spans
+            .iter()
+            .map(|s| stock_thickness_mm + s.op.safe_z_mm)
+            .fold(stock_thickness_mm, f64::max);
+        Self {
+            op: None,
+            tool: None,
+            floor_mm,
+            safe_z_mm,
+        }
+    }
+}
+
+/// S1: no move ends below the stock bottom minus the allowance.
+fn check_depth(
+    mv: &MachineMove,
+    limits: &Limits<'_>,
+    transform: &MachineTransform,
+    tolerance_mm: f64,
+) -> Result<(), ExportError> {
+    let Some(z) = mv.to.z else {
+        return Ok(());
+    };
+    let z_mm = transform.project_z(z, mv.units);
+    if z_mm < limits.floor_mm - tolerance_mm {
+        return Err(ExportError::BelowMaterialBottom {
+            op: limits.op.map(|op| op.id.clone()),
+            line: mv.line,
+            z_mm,
+            floor_mm: limits.floor_mm,
+        });
+    }
+    Ok(())
+}
+
+/// S2: a rapid ends at or above safe Z, and one that moves in XY also
+/// starts there.
+fn check_rapid(
+    mv: &MachineMove,
+    limits: &Limits<'_>,
+    transform: &MachineTransform,
+    tolerance_mm: f64,
+) -> Result<(), ExportError> {
+    let below = |z: Option<f64>| -> Option<Option<f64>> {
+        let Some(z) = z else {
+            return Some(None);
+        };
+        let z_mm = transform.project_z(z, mv.units);
+        (z_mm < limits.safe_z_mm - tolerance_mm).then_some(Some(z_mm))
+    };
+    let moves_xy = differs(mv.from.x, mv.to.x) || differs(mv.from.y, mv.to.y);
+    let offending = below(mv.to.z).or_else(|| if moves_xy { below(mv.from.z) } else { None });
+    match offending {
+        Some(z_mm) => Err(ExportError::RapidBelowSafeZ {
+            line: mv.line,
+            z_mm,
+            safe_z_mm: limits.safe_z_mm,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// True unless both are known and equal.
+fn differs(a: Option<f64>, b: Option<f64>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => !approx_eq(a, b, EPS_MM),
+        (None, None) => false,
+        _ => true,
+    }
+}
+
+/// S3: a cut has a positive feed, and it is one of its tool's rates.
+fn check_feed(
+    mv: &MachineMove,
+    limits: &Limits<'_>,
+    tolerance_mm_min: f64,
+) -> Result<(), ExportError> {
+    let line = mv.line;
+    let Some(feed) = mv.feed.filter(|f| *f > 0.0) else {
+        return Err(ExportError::CutWithoutFeed { line });
+    };
+    let feed_mm_min = feed * mm_per_unit(mv.units);
+    if let Some(tool) = limits.tool {
+        let matches = [tool.feed_mm_min, tool.plunge_mm_min]
+            .into_iter()
+            .flatten()
+            .any(|rate| approx_eq(rate, feed_mm_min, tolerance_mm_min));
+        if !matches {
+            return Err(ExportError::FeedNotFromTool { line, feed_mm_min });
+        }
+    }
+    Ok(())
+}
+
+/// An arc the controller will accept: I/J radii agree, or R spans the
+/// chord.
+fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
+    if !matches!(mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw) {
+        return Ok(());
+    }
+    let line = mv.line;
+    let scale = mm_per_unit(mv.units);
+    let (Some(sx), Some(sy), Some(x), Some(y)) = (mv.from.x, mv.from.y, mv.to.x, mv.to.y) else {
+        return Err(ExportError::ArcRejected {
+            line,
+            delta_mm: f64::INFINITY,
+        });
+    };
+    let delta_mm = if let Some(r) = mv.arc.r {
+        let half_chord = (x - sx).hypot(y - sy) / 2.0;
+        ((half_chord - r.abs()) * scale).max(0.0)
+    } else {
+        let (i, j) = (mv.arc.i.unwrap_or(0.0), mv.arc.j.unwrap_or(0.0));
+        let start_r = i.hypot(j) * scale;
+        let end_r = (x - (sx + i)).hypot(y - (sy + j)) * scale;
+        let delta_mm = (end_r - start_r).abs();
+        let accepted = delta_mm <= ARC_RADIUS_ABSOLUTE_MM
+            || (delta_mm <= ARC_RADIUS_GROSS_MM && delta_mm <= ARC_RADIUS_RELATIVE * start_r);
+        if accepted { 0.0 } else { delta_mm }
+    };
+    if delta_mm > 0.0 {
+        return Err(ExportError::ArcRejected { line, delta_mm });
+    }
+    Ok(())
+}
+
+/// S6: every point of the span's toolpath is reached, in order, by the
+/// program's moves read back into project space. A wrong origin, units, or
+/// mirror cannot pass.
+fn check_reproduces(
+    span: &OpSpan<'_>,
+    blocks: &[Block],
+    post: &PostProcessor,
+    transform: &MachineTransform,
+) -> Result<(), ExportError> {
+    let points: Vec<(Point3, f64)> = blocks
+        .iter()
+        .filter(|b| span.lines.contains(&b.line))
+        .filter_map(|b| b.motion.as_ref())
+        .filter_map(|m| {
+            let machine = Point3::new(m.to.x?, m.to.y?, m.to.z?);
+            Some((
+                transform.to_project(machine, m.units),
+                quantum_mm(post, m.units),
+            ))
+        })
+        .collect();
+    let mut cursor = 0;
+    for (index, mv) in span.toolpath.moves.iter().enumerate() {
+        let target = mv.to;
+        let found = points.get(cursor..).and_then(|rest| {
+            rest.iter().position(|(p, quantum)| {
+                let tolerance = *quantum + EPS_MM;
+                approx_eq(p.x, target.x, tolerance)
+                    && approx_eq(p.y, target.y, tolerance)
+                    && approx_eq(p.z, target.z, tolerance)
+            })
+        });
+        let Some(offset) = found else {
+            return Err(ExportError::MotionMismatch {
+                op: span.op.id.clone(),
+                index,
+            });
+        };
+        cursor += offset;
+    }
     Ok(())
 }
 

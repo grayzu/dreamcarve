@@ -21,8 +21,10 @@ use crate::ExportError;
 /// Decimal places `format` gives numbers in `units`.
 #[must_use]
 pub fn decimal_places(format: &NumberFormat, units: Units) -> u8 {
-    let _ = (format, units);
-    0
+    match units {
+        Units::Mm => format.decimal_places.mm,
+        Units::Inch => format.decimal_places.inch,
+    }
 }
 
 /// Writes `value` (already in output `units`) with the post-processor's
@@ -37,8 +39,46 @@ pub fn format_number(
     format: &NumberFormat,
     units: Units,
 ) -> Result<String, ExportError> {
-    let _ = (value, format, units);
-    Ok(String::new())
+    format_fixed(value, decimal_places(format, units), format)
+}
+
+/// Writes `value` with exactly `places` decimals before the
+/// post-processor's trailing-zero and leading-zero rules apply. For
+/// numbers that are not lengths, such as dwell seconds.
+///
+/// # Errors
+///
+/// [`ExportError::NonFiniteNumber`] if `value` is `NaN` or infinite.
+pub fn format_fixed(value: f64, places: u8, format: &NumberFormat) -> Result<String, ExportError> {
+    if !value.is_finite() {
+        return Err(ExportError::NonFiniteNumber { value });
+    }
+    // `{:.N}` on f64 prints every integer digit and never an exponent.
+    let mut s = format!("{:.*}", usize::from(places), value);
+    // A value that rounds to zero from below prints as "-0.000".
+    if let Some(unsigned) = s.strip_prefix('-')
+        && unsigned.chars().all(|c| c == '0' || c == '.')
+    {
+        s = unsigned.to_owned();
+    }
+    if !format.trailing_zeros && s.contains('.') {
+        s = s.trim_end_matches('0').trim_end_matches('.').to_owned();
+    }
+    if !format.leading_zero {
+        if let Some(rest) = s.strip_prefix("0.") {
+            s = format!(".{rest}");
+        } else if let Some(rest) = s.strip_prefix("-0.") {
+            s = format!("-.{rest}");
+        }
+    }
+    Ok(s)
+}
+
+/// The number a controller reads from `text`, a word value this module
+/// wrote. `None` only if `text` is not a number.
+#[must_use]
+pub fn read_back(text: &str) -> Option<f64> {
+    text.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 #[cfg(test)]
@@ -96,6 +136,14 @@ mod tests {
         assert_eq!(mm(-0.0, &fmt(true, true)), "0.000");
         assert_eq!(mm(-0.0001, &fmt(true, true)), "0.000");
         assert_eq!(mm(-0.0001, &fmt(false, true)), "0");
+    }
+
+    #[test]
+    fn read_back_reads_every_written_form() {
+        for (text, value) in [("1.500", 1.5), (".5", 0.5), ("-.5", -0.5), ("2", 2.0)] {
+            assert_eq!(read_back(text), Some(value), "{text}");
+        }
+        assert_eq!(read_back("NaN"), None);
     }
 
     #[test]

@@ -21,7 +21,7 @@
 //! covers both bundled definitions.
 
 use dc_geometry::Point3;
-use dc_project::{CoordinateSystem, Project, Units};
+use dc_project::{Axis, CoordinateSystem, OriginXy, OriginZ, Project, Units};
 
 use crate::ExportError;
 
@@ -33,8 +33,48 @@ pub const MM_PER_INCH: f64 = 25.4;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MachineTransform {
     origin_mm: Point3,
-    axes: CoordinateSystem,
+    x: Signed,
+    y: Signed,
+    z: Signed,
     output_units: Units,
+}
+
+/// A machine axis without sign.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MachineAxis {
+    X,
+    Y,
+    Z,
+}
+
+/// The machine axis a project axis drives, and the sign it drives it with.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Signed {
+    axis: MachineAxis,
+    sign: f64,
+}
+
+impl Signed {
+    const fn of(axis: Axis) -> Self {
+        let (axis, sign) = match axis {
+            Axis::X => (MachineAxis::X, 1.0),
+            Axis::Y => (MachineAxis::Y, 1.0),
+            Axis::Z => (MachineAxis::Z, 1.0),
+            Axis::NegX => (MachineAxis::X, -1.0),
+            Axis::NegY => (MachineAxis::Y, -1.0),
+            Axis::NegZ => (MachineAxis::Z, -1.0),
+        };
+        Self { axis, sign }
+    }
+
+    /// The coordinate of `m` on this machine axis.
+    const fn pick(self, m: Point3) -> f64 {
+        match self.axis {
+            MachineAxis::X => m.x,
+            MachineAxis::Y => m.y,
+            MachineAxis::Z => m.z,
+        }
+    }
 }
 
 impl MachineTransform {
@@ -46,11 +86,37 @@ impl MachineTransform {
     /// [`ExportError::InvalidAxisMapping`] if two project axes map to the
     /// same machine axis or project Z does not map to machine Z.
     pub fn new(project: &Project) -> Result<Self, ExportError> {
-        let _ = project;
+        let axes = project.post_processor.coordinate_system;
+        let (x, y, z) = (
+            Signed::of(axes.x_axis),
+            Signed::of(axes.y_axis),
+            Signed::of(axes.z_axis),
+        );
+        // Arcs are written in the XY plane (G17) and safe Z is a machine Z
+        // height, so project Z must drive machine Z, and X and Y the other
+        // two.
+        if z.axis != MachineAxis::Z || x.axis == y.axis || x.axis == MachineAxis::Z {
+            return Err(invalid(&project.post_processor.id, axes));
+        }
+        let stock = &project.stock;
+        let (ox, oy) = match project.origin.xy {
+            OriginXy::BottomLeft => (0.0, 0.0),
+            OriginXy::BottomRight => (stock.width_mm, 0.0),
+            OriginXy::TopLeft => (0.0, stock.height_mm),
+            OriginXy::TopRight => (stock.width_mm, stock.height_mm),
+            OriginXy::Centre => (stock.width_mm / 2.0, stock.height_mm / 2.0),
+            OriginXy::Custom { x_mm, y_mm } => (x_mm, y_mm),
+        };
+        let oz = match project.origin.z {
+            OriginZ::StockTop => stock.thickness_mm,
+            OriginZ::StockBottom => 0.0,
+        };
         Ok(Self {
-            origin_mm: Point3::new(0.0, 0.0, 0.0),
-            axes: project.post_processor.coordinate_system,
-            output_units: Units::Mm,
+            origin_mm: Point3::new(ox, oy, oz),
+            x,
+            y,
+            z,
+            output_units: project.display_units,
         })
     }
 
@@ -77,28 +143,70 @@ impl MachineTransform {
     /// counter-clockwise one.
     #[must_use]
     pub fn mirrors_xy(&self) -> bool {
-        false
+        // The planar map's determinant is sx·sy, negated by an X/Y swap.
+        let swap = if self.x.axis == MachineAxis::Y {
+            -1.0
+        } else {
+            1.0
+        };
+        self.x.sign * self.y.sign * swap < 0.0
     }
 
     /// `p`, a project point in mm, in machine coordinates and output units.
     #[must_use]
     pub fn to_machine(&self, p: Point3) -> Point3 {
-        p
+        let scale = self.mm_per_unit();
+        let deltas = [
+            (self.x, p.x - self.origin_mm.x),
+            (self.y, p.y - self.origin_mm.y),
+            (self.z, p.z - self.origin_mm.z),
+        ];
+        let on = |axis: MachineAxis| {
+            deltas
+                .iter()
+                .find(|(s, _)| s.axis == axis)
+                .map_or(0.0, |(s, delta)| s.sign * delta / scale)
+        };
+        Point3::new(on(MachineAxis::X), on(MachineAxis::Y), on(MachineAxis::Z))
     }
 
     /// `m`, a machine point in `units`, back in project space, mm.
     #[must_use]
     pub fn to_project(&self, m: Point3, units: Units) -> Point3 {
-        let _ = units;
-        m
+        let scale = mm_per_unit(units);
+        // Each sign is ±1, so it is its own inverse.
+        Point3::new(
+            self.x.sign * self.x.pick(m) * scale + self.origin_mm.x,
+            self.y.sign * self.y.pick(m) * scale + self.origin_mm.y,
+            self.z.sign * self.z.pick(m) * scale + self.origin_mm.z,
+        )
     }
 
     /// Project Z, mm, of machine Z `z` in `units`. Defined because project
     /// Z drives machine Z alone.
     #[must_use]
     pub fn project_z(&self, z: f64, units: Units) -> f64 {
-        let _ = units;
-        z
+        self.z.sign * z * mm_per_unit(units) + self.origin_mm.z
+    }
+}
+
+fn invalid(post: &str, axes: CoordinateSystem) -> ExportError {
+    let name = |a: Axis| {
+        match a {
+            Axis::X => "X",
+            Axis::Y => "Y",
+            Axis::Z => "Z",
+            Axis::NegX => "-X",
+            Axis::NegY => "-Y",
+            Axis::NegZ => "-Z",
+        }
+        .to_owned()
+    };
+    ExportError::InvalidAxisMapping {
+        post: post.to_owned(),
+        x: name(axes.x_axis),
+        y: name(axes.y_axis),
+        z: name(axes.z_axis),
     }
 }
 

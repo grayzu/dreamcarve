@@ -6,12 +6,38 @@
 //   src/engine/gcode/postprocessor.ts
 
 //! G-code emission (`docs/specs/phase-1/design.md`, "Algorithms →
-//! Emission").
+//! Emission"; `docs/specs/phase-1/functional.md`, S1–S6).
+//!
+//! Ported from `runPostProcessor`, without canned cycles, coolant, or arc
+//! fitting (phase 1 has none of them). Re-derived for Y-up: toolpaths are
+//! Y-up and so is the machine, so arc direction carries over unchanged
+//! unless the definition's axis map mirrors the plane. Changes from
+//! upstream, from the controller facts in `definitions/README.md`
+//! ("Verification"):
+//!
+//! - Missing feed, plunge, or RPM is an error; nothing is defaulted.
+//! - Placeholder text is reduced to printable ASCII without comment
+//!   delimiters or real-time command characters, and capped in length.
+//! - Coordinates are scaled to inches when the project's display units are
+//!   inches (upstream stores projects in their display units).
+//! - The spindle starts with `spindle_on_cw` only, followed by the spin-up
+//!   dwell; coolant is never switched on.
+//! - A rapid lowers Z only after its XY move, and after a tool change the
+//!   position is treated as unknown, so Z is raised first.
+//! - I and J are taken from the rounded start the controller holds; an arc
+//!   the controller would reject, or read as a full circle, is flattened.
+//! - The emitted text is parsed and checked by `safety` before return.
 
-use dc_cam::Toolpath;
-use dc_project::{OperationId, ProfileOp, Project, Tool};
+use std::f64::consts::{FRAC_PI_2, TAU};
+
+use dc_cam::{FeedField, MoveKind, Toolpath};
+use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
+use dc_project::{ArcFormat, OperationId, PostProcessor, ProfileOp, Project, Tool, ToolId, Units};
 
 use crate::ExportError;
+use crate::format::{decimal_places, format_fixed, format_number, read_back};
+use crate::safety::{self, OpSpan};
+use crate::transform::MachineTransform;
 
 /// An emitted G-code program.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,8 +87,779 @@ pub fn emit(
     ops: &[(ProfileOp, Tool, Toolpath)],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
-    let _ = (project, ops, date);
-    Err(ExportError::NoEnabledOperations)
+    let post = &project.post_processor;
+    let mut warnings = Vec::new();
+    let mut enabled = Vec::with_capacity(ops.len());
+    for entry in ops {
+        if entry.0.enabled {
+            enabled.push(entry);
+        } else {
+            warnings.push(ExportWarning::DisabledOperationSkipped {
+                op: entry.0.id.clone(),
+            });
+        }
+    }
+    if enabled.is_empty() {
+        return Err(ExportError::NoEnabledOperations);
+    }
+
+    // Step 1: preconditions, all checked before a line is written. The
+    // post-processor is the last line and trusts no caller.
+    let mut planned = Vec::with_capacity(enabled.len());
+    for (op, tool, toolpath) in enabled {
+        let rates = Rates::of(tool)?;
+        let number = project
+            .tools
+            .iter()
+            .position(|t| t.id == tool.id)
+            .map(|i| i + 1)
+            .ok_or_else(|| ExportError::UnknownTool {
+                op: op.id.clone(),
+                tool: tool.id.clone(),
+            })?;
+        planned.push((op, tool, toolpath, rates, number));
+    }
+    // Steps 2 and 3: machine transform and units.
+    let transform = MachineTransform::new(project)?;
+    let (units_command, units_field) = match transform.output_units() {
+        Units::Mm => (post.units.mm_command.as_deref(), "units.mm_command"),
+        Units::Inch => (post.units.inch_command.as_deref(), "units.inch_command"),
+    };
+    let units_command = required(units_command, &post.id, units_field)?;
+    let wcs_command = required(
+        post.work_coordinates.select_command.as_deref(),
+        &post.id,
+        "work_coordinates.select_command",
+    )?;
+    let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
+    if !(dwell_s.is_finite() && dwell_s >= 0.0) {
+        return Err(ExportError::InvalidDwell {
+            post: post.id.clone(),
+            duration_s: dwell_s,
+        });
+    }
+
+    let mut w = Writer::new(project, transform);
+
+    // Step 4: header, then units and WCS if the header does not place them.
+    let common = vec![
+        ("programName", comment_text(&project.name)),
+        ("date", comment_text(date)),
+        ("unitsCommand", units_command.to_owned()),
+        ("wcsCommand", wcs_command.to_owned()),
+    ];
+    for line in &post.program.header {
+        w.template(line, &common);
+    }
+    let header_has = |token: &str| post.program.header.iter().any(|l| l.contains(token));
+    if !header_has("{unitsCommand}") {
+        w.line(units_command);
+    }
+    if !header_has("{wcsCommand}") {
+        w.line(wcs_command);
+    }
+
+    // Step 5: operations.
+    let mut lines = Vec::with_capacity(planned.len());
+    for (index, &(op, tool, toolpath, rates, number)) in planned.iter().enumerate() {
+        let mut context = common.clone();
+        context.extend([
+            ("operationIndex", (index + 1).to_string()),
+            ("operationName", comment_text(&op.name)),
+            ("toolNumber", number.to_string()),
+            ("toolName", comment_text(&tool.name)),
+        ]);
+        if post.program.operation_header.is_empty() {
+            let comment = format!(
+                "{} Operation {}: {} {}",
+                post.program.comment_prefix,
+                index + 1,
+                comment_text(&op.name),
+                post.program.comment_suffix
+            );
+            w.line(comment.trim_end());
+        } else {
+            for line in &post.program.operation_header {
+                w.template(line, &context);
+            }
+        }
+
+        if w.tool.as_ref() != Some(&tool.id) {
+            if post.tool_change.stop_spindle_first && w.spindle_rpm.is_some() {
+                w.line(&post.feed_speed.spindle_off);
+                w.spindle_rpm = None;
+            }
+            for line in &post.tool_change.commands {
+                w.template(line, &context);
+            }
+            if post.tool_change.pause_after_change {
+                w.line(&post.tool_change.pause_command);
+            }
+            w.tool = Some(tool.id.clone());
+            // The operator may jog while the program is paused for the
+            // change, so where the tool is is no longer known.
+            w.forget_position();
+        }
+
+        // S4: start the spindle clockwise at the tool's speed, then dwell
+        // while it spins up. Never M4.
+        if w.spindle_rpm != Some(rates.rpm) {
+            let fs = &post.feed_speed;
+            w.line(&format!(
+                "{} {}{}",
+                fs.spindle_on_cw, fs.rpm_command, rates.rpm
+            ));
+            w.spindle_rpm = Some(rates.rpm);
+            if dwell_s > 0.0 {
+                let seconds = format_fixed(dwell_s, DWELL_DECIMAL_PLACES, &post.number_format)?;
+                w.line(&fs.spindle_on_dwell.command.replace("{seconds}", &seconds));
+            }
+        }
+
+        let first_line = w.next_line();
+        let flattened = w.toolpath(op, toolpath)?;
+        lines.push(first_line..w.next_line());
+        if flattened > 0 {
+            warnings.push(ExportWarning::ArcsFlattened {
+                op: op.id.clone(),
+                count: flattened,
+            });
+        }
+
+        // Stop the spindle before a tool change, and after the last
+        // operation unless the footer does it (S4).
+        let spindle_off = post.feed_speed.spindle_off.trim();
+        let footer_stops = post.program.footer.iter().any(|l| l.trim() == spindle_off);
+        let stop_now = match planned.get(index + 1) {
+            Some(next) => next.1.id != tool.id,
+            None => !footer_stops,
+        };
+        if stop_now {
+            w.line(spindle_off);
+            w.spindle_rpm = None;
+        }
+    }
+
+    // Step 6: footer and program end.
+    for line in &post.program.footer {
+        w.template(line, &common);
+    }
+    w.line(&post.stop.program_end_command);
+    let text = w.finish();
+
+    // Step 7: the safety pass, on the text.
+    let spans: Vec<OpSpan<'_>> = planned
+        .iter()
+        .zip(lines)
+        .map(|(&(op, tool, toolpath, _, _), lines)| OpSpan {
+            op,
+            tool,
+            toolpath,
+            lines,
+        })
+        .collect();
+    safety::check(&text, post, &transform, project.stock.thickness_mm, &spans)?;
+
+    Ok((
+        Program {
+            text,
+            extension: post.file_extension.clone(),
+        },
+        warnings,
+    ))
+}
+
+/// The longest text one placeholder puts into a line, in characters. With
+/// the bundled templates every line stays well under
+/// [`crate::MAX_LINE_CHARS`]; the safety pass rejects any that does not.
+pub const MAX_PLACEHOLDER_CHARS: usize = 64;
+
+/// Dwell seconds are written to the millisecond.
+const DWELL_DECIMAL_PLACES: u8 = 3;
+
+/// Most straight moves one flattened arc becomes.
+const MAX_ARC_SEGMENTS: f64 = 100_000.0;
+
+/// Arcs are written with at most this sweep in R format, where a
+/// half-circle leaves the controller unable to place the centre.
+const MAX_R_ARC_SWEEP_RAD: f64 = FRAC_PI_2;
+
+/// An arc whose sweep or radius is below these is drawn as a straight move.
+const MIN_ARC_SWEEP_RAD: f64 = 1e-9;
+
+/// GRBL and grblHAL (`gcode.c`, arc radius check) accept an I/J arc when
+/// its start and end radii differ by at most 0.005 mm, or by at most
+/// 0.1 % of the radius and 0.5 mm. The controllers compute in 32-bit
+/// floats, so DreamCarve keeps a fifth of each budget in reserve.
+const ARC_RADIUS_ABSOLUTE_MM: f64 = 0.004;
+/// See [`ARC_RADIUS_ABSOLUTE_MM`].
+const ARC_RADIUS_RELATIVE: f64 = 0.0008;
+/// See [`ARC_RADIUS_ABSOLUTE_MM`].
+const ARC_RADIUS_GROSS_MM: f64 = 0.4;
+
+/// A tool whose feed, plunge rate, and spindle speed the user has all set.
+/// The moves carry the feeds; the safety pass checks them against the
+/// tool's.
+#[derive(Debug, Clone, Copy)]
+struct Rates {
+    rpm: u32,
+}
+
+impl Rates {
+    /// The tool's rates, or the first one that is missing. A placeholder 0
+    /// counts as missing.
+    fn of(tool: &Tool) -> Result<Self, ExportError> {
+        for (rate, field) in [
+            (tool.feed_mm_min, FeedField::Feed),
+            (tool.plunge_mm_min, FeedField::Plunge),
+        ] {
+            if !rate.is_some_and(|r| r.is_finite() && r > 0.0) {
+                return Err(ExportError::MissingFeed {
+                    tool: tool.name.clone(),
+                    field,
+                });
+            }
+        }
+        let rpm = tool
+            .rpm
+            .filter(|r| *r > 0)
+            .ok_or_else(|| ExportError::MissingRpm {
+                tool: tool.name.clone(),
+            })?;
+        Ok(Self { rpm })
+    }
+}
+
+/// A non-empty command from the post-processor, or the error naming it.
+fn required<'a>(
+    command: Option<&'a str>,
+    post: &str,
+    field: &'static str,
+) -> Result<&'a str, ExportError> {
+    command
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .ok_or_else(|| ExportError::MissingCommand {
+            post: post.to_owned(),
+            field,
+        })
+}
+
+/// `text` made safe for a comment on GRBL and grblHAL: printable ASCII,
+/// without `( ) ;` (which end a comment early), `! ? ~` (real-time
+/// commands even inside a comment), `{ }` (placeholder syntax) or `%`
+/// (a program delimiter to some senders), whitespace collapsed, and at
+/// most [`MAX_PLACEHOLDER_CHARS`] long.
+fn comment_text(text: &str) -> String {
+    let cleaned: String = text
+        .chars()
+        .map(|c| {
+            let printable = (' '..='~').contains(&c);
+            let special = matches!(c, '(' | ')' | ';' | '!' | '?' | '~' | '{' | '}' | '%');
+            if printable && !special { c } else { ' ' }
+        })
+        .collect();
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let truncated: String = collapsed.chars().take(MAX_PLACEHOLDER_CHARS).collect();
+    truncated.trim_end().to_owned()
+}
+
+/// `template` with each `{name}` in `context` replaced, in one pass, so
+/// substituted text is never read as a placeholder. Unknown names are
+/// left as written.
+fn substitute(template: &str, context: &[(&str, String)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some((before, after)) = rest.split_once('{') {
+        out.push_str(before);
+        if let Some((name, tail)) = after.split_once('}')
+            && let Some((_, value)) = context.iter().find(|(key, _)| *key == name)
+        {
+            out.push_str(value);
+            rest = tail;
+        } else {
+            out.push('{');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A word value as written and as the controller reads it back.
+#[derive(Debug, Clone)]
+struct Emitted {
+    text: String,
+    value: f64,
+}
+
+/// An arc in project space, mm, with a positive sweep.
+#[derive(Debug, Clone, Copy)]
+struct ArcGeometry {
+    start: Point3,
+    end: Point3,
+    centre: Point,
+    radius_mm: f64,
+    start_angle_rad: f64,
+    sweep_rad: f64,
+    clockwise: bool,
+}
+
+impl ArcGeometry {
+    /// The arc from `start` to `end` about `centre`, or `None` if it is
+    /// too small to be an arc.
+    fn new(start: Point3, end: Point3, centre: Point, clockwise: bool) -> Option<Self> {
+        let radius_mm = start.xy().distance_to(centre);
+        let start_angle_rad = (start.y - centre.y).atan2(start.x - centre.x);
+        let end_angle_rad = (end.y - centre.y).atan2(end.x - centre.x);
+        let turn = if clockwise {
+            start_angle_rad - end_angle_rad
+        } else {
+            end_angle_rad - start_angle_rad
+        };
+        let sweep_rad = turn.rem_euclid(TAU);
+        (radius_mm > MIN_ARC_SWEEP_RAD && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
+            start,
+            end,
+            centre,
+            radius_mm,
+            start_angle_rad,
+            sweep_rad,
+            clockwise,
+        })
+    }
+
+    /// The point `fraction` of the way along the arc; Z changes linearly.
+    fn point_at(&self, fraction: f64) -> Point3 {
+        if fraction >= 1.0 {
+            return self.end;
+        }
+        let signed = if self.clockwise { -1.0 } else { 1.0 };
+        let angle = self.start_angle_rad + signed * fraction * self.sweep_rad;
+        Point3::new(
+            self.centre.x + self.radius_mm * angle.cos(),
+            self.centre.y + self.radius_mm * angle.sin(),
+            self.start.z + fraction * (self.end.z - self.start.z),
+        )
+    }
+
+    /// Part `k` (0-based) of the arc split into `n` equal parts.
+    fn part(&self, k: usize, n: usize) -> Self {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "k < n <= MAX_ARC_SEGMENTS, exact in f64"
+        )]
+        let (a, b) = (k as f64 / n as f64, (k + 1) as f64 / n as f64);
+        Self {
+            start: self.point_at(a),
+            end: self.point_at(b),
+            start_angle_rad: self.start_angle_rad
+                + if self.clockwise { -1.0 } else { 1.0 } * a * self.sweep_rad,
+            sweep_rad: (b - a) * self.sweep_rad,
+            ..*self
+        }
+    }
+}
+
+/// `count` rounded up and clamped to `1..=MAX_ARC_SEGMENTS`.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped to 1..=MAX_ARC_SEGMENTS, which usize holds exactly"
+)]
+fn segment_count(count: f64) -> usize {
+    if count.is_nan() {
+        return 1;
+    }
+    count.ceil().clamp(1.0, MAX_ARC_SEGMENTS) as usize
+}
+
+/// Writes lines and tracks the controller's modal state and position.
+struct Writer<'a> {
+    post: &'a PostProcessor,
+    transform: MachineTransform,
+    flatten_tolerance_mm: f64,
+    lines: Vec<String>,
+    line_number: u32,
+    /// The last motion word written.
+    motion: Option<String>,
+    /// The last feed word value written.
+    feed: Option<String>,
+    /// The last X, Y, Z written, as the controller holds them.
+    axes: [Option<Emitted>; 3],
+    /// Where the tool is, project space, if known.
+    position: Option<Point3>,
+    spindle_rpm: Option<u32>,
+    tool: Option<ToolId>,
+}
+
+impl<'a> Writer<'a> {
+    fn new(project: &'a Project, transform: MachineTransform) -> Self {
+        let post = &project.post_processor;
+        let tolerance = project.flatten_tolerance_mm;
+        Self {
+            post,
+            transform,
+            flatten_tolerance_mm: if tolerance.is_finite() && tolerance > 0.0 {
+                tolerance
+            } else {
+                FLATTEN_TOLERANCE_DEFAULT_MM
+            },
+            lines: Vec::new(),
+            line_number: post.program.line_number_increment,
+            motion: None,
+            feed: None,
+            axes: [None, None, None],
+            position: None,
+            spindle_rpm: None,
+            tool: None,
+        }
+    }
+
+    /// The 1-based number of the next line to be written.
+    fn next_line(&self) -> usize {
+        self.lines.len() + 1
+    }
+
+    fn line(&mut self, content: &str) {
+        if self.post.program.line_numbers {
+            self.lines.push(format!("N{} {content}", self.line_number));
+            self.line_number = self
+                .line_number
+                .saturating_add(self.post.program.line_number_increment);
+        } else {
+            self.lines.push(content.to_owned());
+        }
+    }
+
+    /// Writes `template` filled from `context`, skipping lines left empty
+    /// (a `{wcsCommand}` with nothing to select, for example).
+    fn template(&mut self, template: &str, context: &[(&str, String)]) {
+        let filled = substitute(template, context);
+        for line in filled.lines() {
+            let line = line.trim_end();
+            if !line.trim().is_empty() {
+                self.line(line);
+            }
+        }
+    }
+
+    fn forget_position(&mut self) {
+        self.position = None;
+        self.axes = [None, None, None];
+    }
+
+    fn finish(self) -> String {
+        let mut text = self.lines.join("\n");
+        text.push('\n');
+        text
+    }
+
+    fn number(&self, value: f64) -> Result<String, ExportError> {
+        format_number(
+            value,
+            &self.post.number_format,
+            self.transform.output_units(),
+        )
+    }
+
+    /// Writes `toolpath`; returns how many arcs had to be flattened.
+    fn toolpath(&mut self, op: &ProfileOp, toolpath: &Toolpath) -> Result<usize, ExportError> {
+        let mut flattened = 0;
+        for (index, mv) in toolpath.moves.iter().enumerate() {
+            if mv.is_rapid() {
+                self.rapid(mv.to)?;
+                continue;
+            }
+            let feed = mv
+                .feed_mm_min
+                .filter(|f| f.is_finite() && *f > 0.0)
+                .ok_or_else(|| ExportError::MoveWithoutFeed {
+                    op: op.id.clone(),
+                    index,
+                })?;
+            let (centre, clockwise) = match mv.kind {
+                MoveKind::Rapid | MoveKind::Linear => {
+                    self.linear(mv.to, feed)?;
+                    continue;
+                }
+                MoveKind::ArcCw { centre } => (centre, true),
+                MoveKind::ArcCcw { centre } => (centre, false),
+            };
+            let start = self.position.ok_or_else(|| ExportError::ArcWithoutStart {
+                op: op.id.clone(),
+                index,
+            })?;
+            flattened += self.arc(start, mv.to, centre, clockwise, feed)?;
+        }
+        Ok(flattened)
+    }
+
+    /// A rapid to `to`. Raises Z before moving in XY, and moves in XY
+    /// before lowering Z, so a rapid never travels sideways lower than
+    /// either end. With the position unknown, Z goes first.
+    fn rapid(&mut self, to: Point3) -> Result<(), ExportError> {
+        let m = self.transform.to_machine(to);
+        let rising = self.position.is_none_or(|p| to.z >= p.z);
+        let command = self.post.motion.rapid_command.clone();
+        let z_only = [None, None, Some(m.z)];
+        let xy_only = [Some(m.x), Some(m.y), None];
+        let (first, second) = if rising {
+            (z_only, xy_only)
+        } else {
+            (xy_only, z_only)
+        };
+        self.motion_line(&command, first, &[], None, false)?;
+        self.motion_line(&command, second, &[], None, false)?;
+        self.position = Some(to);
+        Ok(())
+    }
+
+    fn linear(&mut self, to: Point3, feed_mm_min: f64) -> Result<(), ExportError> {
+        let m = self.transform.to_machine(to);
+        let command = self.post.motion.linear_command.clone();
+        self.motion_line(
+            &command,
+            [Some(m.x), Some(m.y), Some(m.z)],
+            &[],
+            Some(feed_mm_min),
+            false,
+        )?;
+        self.position = Some(to);
+        Ok(())
+    }
+
+    /// An arc from `start` to `to` about `centre`: as G2/G3 if the
+    /// post-processor allows and the controller would accept the rounded
+    /// numbers, otherwise flattened. Returns how many arcs were flattened
+    /// for the controller's sake.
+    fn arc(
+        &mut self,
+        start: Point3,
+        to: Point3,
+        centre: Point,
+        clockwise: bool,
+        feed_mm_min: f64,
+    ) -> Result<usize, ExportError> {
+        let Some(arc) = ArcGeometry::new(start, to, centre, clockwise) else {
+            self.linear(to, feed_mm_min)?;
+            return Ok(0);
+        };
+        if !self.post.motion.arc_interpolation {
+            self.flatten(&arc, feed_mm_min)?;
+            return Ok(0);
+        }
+        let mut flattened = 0;
+        match self.post.motion.arc_format {
+            ArcFormat::Ij => {
+                if !self.arc_ij(&arc, feed_mm_min)? {
+                    self.flatten(&arc, feed_mm_min)?;
+                    flattened += 1;
+                }
+            }
+            ArcFormat::R => {
+                let parts = segment_count(arc.sweep_rad / MAX_R_ARC_SWEEP_RAD);
+                for k in 0..parts {
+                    let part = arc.part(k, parts);
+                    if !self.arc_r(&part, feed_mm_min)? {
+                        self.flatten(&part, feed_mm_min)?;
+                        flattened += 1;
+                    }
+                }
+            }
+        }
+        self.position = Some(to);
+        Ok(flattened)
+    }
+
+    /// The arc command for `arc` in machine space: a mirroring axis map
+    /// turns clockwise into counter-clockwise.
+    fn arc_command(&self, arc: &ArcGeometry) -> String {
+        let motion = &self.post.motion;
+        if arc.clockwise != self.transform.mirrors_xy() {
+            motion.cw_arc_command.clone()
+        } else {
+            motion.ccw_arc_command.clone()
+        }
+    }
+
+    /// The X and Y the controller holds, if both are known.
+    fn emitted_xy(&self) -> Option<(f64, f64)> {
+        let [x, y, _] = &self.axes;
+        Some((x.as_ref()?.value, y.as_ref()?.value))
+    }
+
+    /// The end point of `arc` as written and as read back, machine units.
+    fn emitted_end(&self, arc: &ArcGeometry) -> Result<Option<(Point3, f64, f64)>, ExportError> {
+        let end = self.transform.to_machine(arc.end);
+        let (Some(x), Some(y)) = (
+            read_back(&self.number(end.x)?),
+            read_back(&self.number(end.y)?),
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some((end, x, y)))
+    }
+
+    /// Writes `arc` with I and J taken from the start the controller holds.
+    /// Returns false, writing nothing, if the controller would reject the
+    /// rounded arc or read it as a full circle.
+    fn arc_ij(&mut self, arc: &ArcGeometry, feed_mm_min: f64) -> Result<bool, ExportError> {
+        let Some((sx, sy)) = self.emitted_xy() else {
+            return Ok(false);
+        };
+        let Some((end, ex, ey)) = self.emitted_end(arc)? else {
+            return Ok(false);
+        };
+        let centre = self
+            .transform
+            .to_machine(Point3::new(arc.centre.x, arc.centre.y, arc.end.z));
+        let (i_text, j_text) = (self.number(centre.x - sx)?, self.number(centre.y - sy)?);
+        let (Some(i), Some(j)) = (read_back(&i_text), read_back(&j_text)) else {
+            return Ok(false);
+        };
+        let quantum = self.quantum();
+        // Same start and end is a full circle to the controller.
+        if (ex - sx).abs() < quantum / 2.0 && (ey - sy).abs() < quantum / 2.0 {
+            return Ok(false);
+        }
+        let scale = self.transform.mm_per_unit();
+        let start_r = i.hypot(j);
+        let delta_mm = ((ex - (sx + i)).hypot(ey - (sy + j)) - start_r).abs() * scale;
+        let accepted = delta_mm <= ARC_RADIUS_ABSOLUTE_MM
+            || (delta_mm <= ARC_RADIUS_GROSS_MM
+                && delta_mm <= ARC_RADIUS_RELATIVE * start_r * scale);
+        if !accepted {
+            return Ok(false);
+        }
+        let command = self.arc_command(arc);
+        self.motion_line(
+            &command,
+            [Some(end.x), Some(end.y), Some(end.z)],
+            &[format!("I{i_text}"), format!("J{j_text}")],
+            Some(feed_mm_min),
+            true,
+        )?;
+        Ok(true)
+    }
+
+    /// Writes `arc`, at most a quarter turn, with R. Returns false, writing
+    /// nothing, if the rounded radius cannot span the rounded chord.
+    fn arc_r(&mut self, arc: &ArcGeometry, feed_mm_min: f64) -> Result<bool, ExportError> {
+        let Some((sx, sy)) = self.emitted_xy() else {
+            return Ok(false);
+        };
+        let Some((end, ex, ey)) = self.emitted_end(arc)? else {
+            return Ok(false);
+        };
+        let r_text = self.number(arc.radius_mm / self.transform.mm_per_unit())?;
+        let Some(r) = read_back(&r_text) else {
+            return Ok(false);
+        };
+        let chord = (ex - sx).hypot(ey - sy);
+        if chord < self.quantum() / 2.0 || chord > 2.0 * r {
+            return Ok(false);
+        }
+        let command = self.arc_command(arc);
+        self.motion_line(
+            &command,
+            [Some(end.x), Some(end.y), Some(end.z)],
+            &[format!("R{r_text}")],
+            Some(feed_mm_min),
+            true,
+        )?;
+        Ok(true)
+    }
+
+    /// `arc` as straight moves within the project's flatten tolerance.
+    fn flatten(&mut self, arc: &ArcGeometry, feed_mm_min: f64) -> Result<(), ExportError> {
+        let tolerance = self.flatten_tolerance_mm;
+        let max_step_rad = if tolerance >= arc.radius_mm {
+            FRAC_PI_2
+        } else {
+            (2.0 * (1.0 - tolerance / arc.radius_mm).acos()).min(FRAC_PI_2)
+        };
+        let n = segment_count(arc.sweep_rad / max_step_rad);
+        for k in 1..=n {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "k <= n <= MAX_ARC_SEGMENTS, exact in f64"
+            )]
+            let fraction = k as f64 / n as f64;
+            self.linear(arc.point_at(fraction), feed_mm_min)?;
+        }
+        Ok(())
+    }
+
+    /// One output unit in the last decimal place.
+    fn quantum(&self) -> f64 {
+        let places = decimal_places(&self.post.number_format, self.transform.output_units());
+        10f64.powi(-i32::from(places))
+    }
+
+    /// Writes one motion line: the command word unless modal and
+    /// unchanged, the axis words whose written value changed (X and Y
+    /// always when `force_xy`), `extra` words, and the feed when it
+    /// changed. Writes nothing if no axis changed and there are no extra
+    /// words.
+    fn motion_line(
+        &mut self,
+        command: &str,
+        axes: [Option<f64>; 3],
+        extra: &[String],
+        feed_mm_min: Option<f64>,
+        force_xy: bool,
+    ) -> Result<(), ExportError> {
+        let format = self.post.number_format;
+        let units = self.transform.output_units();
+        let mut axis_words = Vec::with_capacity(3);
+        let mut updated = self.axes.clone();
+        for (((slot, letter), value), force) in updated
+            .iter_mut()
+            .zip(['X', 'Y', 'Z'])
+            .zip(axes)
+            .zip([force_xy, force_xy, false])
+        {
+            let Some(value) = value else {
+                continue;
+            };
+            let text = format_number(value, &format, units)?;
+            if !force && slot.as_ref().is_some_and(|e| e.text == text) {
+                continue;
+            }
+            let read = read_back(&text).ok_or(ExportError::NonFiniteNumber { value })?;
+            axis_words.push(format!("{letter}{text}"));
+            *slot = Some(Emitted { text, value: read });
+        }
+        if axis_words.is_empty() && extra.is_empty() {
+            return Ok(());
+        }
+        self.axes = updated;
+
+        let mut words = Vec::with_capacity(axis_words.len() + extra.len() + 2);
+        if !self.post.motion.modal_motion || self.motion.as_deref() != Some(command) {
+            words.push(command.to_owned());
+            self.motion = Some(command.to_owned());
+        }
+        words.extend(axis_words);
+        words.extend(extra.iter().cloned());
+        if let Some(feed) = feed_mm_min {
+            let fs = &self.post.feed_speed;
+            let text = format_number(feed / self.transform.mm_per_unit(), &format, units)?;
+            let changed = self.feed.as_deref() != Some(text.as_str());
+            if changed || !fs.modal_feed_speed {
+                let word = format!("{}{text}", fs.feed_command);
+                if fs.inline_with_motion {
+                    words.push(word);
+                } else if changed {
+                    self.line(&word);
+                }
+                self.feed = Some(text);
+            }
+        }
+        self.line(&words.join(" "));
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -270,6 +1067,24 @@ mod tests {
                 .filter(|m| m.kind == MotionKind::ArcCw)
                 .all(|m| m.arc.i.is_some() && m.arc.j.is_some())
         );
+    }
+
+    #[test]
+    fn mirroring_axis_map_reverses_arc_direction() {
+        // With machine X inverted, the clockwise corners of a climb
+        // outside cut are counter-clockwise on the machine.
+        let mut project = project_with("grblhal");
+        project.post_processor.coordinate_system.x_axis = dc_project::Axis::NegX;
+        let moves = parse_motion(&emit_text(&project)).unwrap();
+        assert_eq!(
+            moves
+                .iter()
+                .filter(|m| m.kind == MotionKind::ArcCcw)
+                .count(),
+            12
+        );
+        assert!(moves.iter().all(|m| m.kind != MotionKind::ArcCw));
+        assert!(moves.iter().filter_map(|m| m.to.x).all(|x| x <= 0.0));
     }
 
     #[test]

@@ -13,6 +13,7 @@
 //! not know, or a number it cannot read (an exponent, for example), makes
 //! the line unparseable, which `emit` reports as an error.
 
+use dc_geometry::approx_eq;
 use dc_project::Units;
 
 use crate::ExportError;
@@ -104,15 +105,18 @@ impl Block {
     /// True if the block has word `letter` with value `value`.
     #[must_use]
     pub fn has(&self, letter: char, value: f64) -> bool {
-        let _ = (letter, value);
-        false
+        self.words
+            .iter()
+            .any(|w| w.letter == letter && is(w.value, value))
     }
 
     /// The value of the first `letter` word, if any.
     #[must_use]
     pub fn value(&self, letter: char) -> Option<f64> {
-        let _ = letter;
-        None
+        self.words
+            .iter()
+            .find(|w| w.letter == letter)
+            .map(|w| w.value)
     }
 }
 
@@ -123,9 +127,147 @@ impl Block {
 /// [`ExportError::Unparseable`] naming the first line that is not G-code
 /// GRBL or grblHAL would accept.
 pub fn parse_program(text: &str) -> Result<Vec<Block>, ExportError> {
-    let _ = text;
-    Ok(Vec::new())
+    let mut state = State {
+        mode: None,
+        pos: MachinePosition::default(),
+        feed: None,
+        units: Units::Mm,
+    };
+    let mut blocks = Vec::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line = index + 1;
+        let words = split_words(raw).map_err(|reason| ExportError::Unparseable { line, reason })?;
+        if words.is_empty() {
+            continue;
+        }
+        let motion = state
+            .apply(line, &words)
+            .map_err(|reason| ExportError::Unparseable { line, reason })?;
+        blocks.push(Block {
+            line,
+            words,
+            motion,
+        });
+    }
+    Ok(blocks)
 }
+
+/// Letters GRBL and grblHAL accept as words. `N` is a line number.
+const LETTERS: &str = "GMXYZIJKRFSPTNL";
+
+/// The words of `line` outside comments, upper-cased.
+fn split_words(line: &str) -> Result<Vec<Word>, String> {
+    let mut code = String::new();
+    let mut in_comment = false;
+    for c in line.chars() {
+        if in_comment {
+            in_comment = c != ')';
+            continue;
+        }
+        match c {
+            '(' => in_comment = true,
+            ';' => break,
+            c if c.is_whitespace() => {}
+            c => code.push(c.to_ascii_uppercase()),
+        }
+    }
+    if in_comment {
+        return Err("a `(` comment is not closed".to_owned());
+    }
+    let mut words = Vec::new();
+    let mut chars = code.chars().peekable();
+    while let Some(letter) = chars.next() {
+        if !LETTERS.contains(letter) {
+            return Err(format!("`{letter}` is not a G-code word"));
+        }
+        let mut number = String::new();
+        while let Some(&c) = chars.peek() {
+            if !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+')) {
+                break;
+            }
+            number.push(c);
+            chars.next();
+        }
+        let value = number
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| format!("`{letter}{number}` has no valid number"))?;
+        words.push(Word { letter, value });
+    }
+    Ok(words)
+}
+
+/// The modal state a controller carries from line to line.
+struct State {
+    mode: Option<MotionKind>,
+    pos: MachinePosition,
+    feed: Option<f64>,
+    units: Units,
+}
+
+impl State {
+    /// Applies one block's words; returns its move, if it makes one.
+    fn apply(&mut self, line: usize, words: &[Word]) -> Result<Option<MachineMove>, String> {
+        let mut dwell = false;
+        for w in words {
+            match w.letter {
+                'G' if is(w.value, 0.0) => self.mode = Some(MotionKind::Rapid),
+                'G' if is(w.value, 1.0) => self.mode = Some(MotionKind::Linear),
+                'G' if is(w.value, 2.0) => self.mode = Some(MotionKind::ArcCw),
+                'G' if is(w.value, 3.0) => self.mode = Some(MotionKind::ArcCcw),
+                'G' if is(w.value, 4.0) => dwell = true,
+                'G' if is(w.value, 20.0) => self.units = Units::Inch,
+                'G' if is(w.value, 21.0) => self.units = Units::Mm,
+                'F' => self.feed = Some(w.value),
+                _ => {}
+            }
+        }
+        let first = |letter: char| words.iter().find(|w| w.letter == letter).map(|w| w.value);
+        let (x, y, z) = (first('X'), first('Y'), first('Z'));
+        let arc = ArcWords {
+            i: first('I'),
+            j: first('J'),
+            r: first('R'),
+        };
+        let has_axis = x.is_some() || y.is_some() || z.is_some();
+        let has_centre = arc.i.is_some() || arc.j.is_some() || arc.r.is_some();
+        if dwell || !(has_axis || has_centre) {
+            return Ok(None);
+        }
+        let Some(kind) = self.mode else {
+            return Err("axis words with no motion mode".to_owned());
+        };
+        if has_centre && !matches!(kind, MotionKind::ArcCw | MotionKind::ArcCcw) {
+            return Err("arc words on a straight move".to_owned());
+        }
+        let from = self.pos;
+        let to = MachinePosition {
+            x: x.or(from.x),
+            y: y.or(from.y),
+            z: z.or(from.z),
+        };
+        self.pos = to;
+        Ok(Some(MachineMove {
+            line,
+            kind,
+            from,
+            to,
+            feed: self.feed,
+            units: self.units,
+            arc,
+        }))
+    }
+}
+
+/// True if a word's number is the code `code` (`G0` and `G00` alike).
+fn is(value: f64, code: f64) -> bool {
+    approx_eq(value, code, CODE_TOLERANCE)
+}
+
+/// How close a word's number must be to a code to be that code. Codes are
+/// whole or tenths (`G38.2`), so anything under a tenth works.
+const CODE_TOLERANCE: f64 = 1e-6;
 
 /// The moves of `text`, in order: the parsed program reduced to motion.
 ///
