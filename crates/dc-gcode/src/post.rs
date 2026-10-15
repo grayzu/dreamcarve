@@ -231,6 +231,27 @@ mod tests {
     }
 
     #[test]
+    fn bundled_definitions_dwell_three_seconds_after_spindle_on() {
+        // Neither controller waits for spin-up after M3; G4 P is seconds on
+        // both (`mc_dwell(float seconds)` in each motion_control.c).
+        for post in bundled().unwrap() {
+            let dwell = &post.feed_speed.spindle_on_dwell;
+            assert!(
+                has_word(std::slice::from_ref(&dwell.command), "G4"),
+                "{}",
+                post.id
+            );
+            assert!(dwell.command.contains("{seconds}"), "{}", post.id);
+            assert!(
+                (dwell.duration_s - 3.0).abs() < 1e-12,
+                "{}: {} s",
+                post.id,
+                dwell.duration_s
+            );
+        }
+    }
+
+    #[test]
     fn dc_project_fixture_matches_bundled_grbl() {
         // dc-project's tests embed a copy of grbl.json; it must not drift.
         assert_eq!(

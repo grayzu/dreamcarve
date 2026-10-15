@@ -105,7 +105,8 @@ Clamps. Text. Stock from a shape (stock is rectangular).
 - **S2** Rapid moves occur only at or above safe Z.
 - **S3** Every cutting and plunging move has an explicit, user-supplied feed.
   Export fails if any tool lacks feed, plunge, or RPM.
-- **S4** Spindle is started with the tool's RPM before the first cutting move
+- **S4** Spindle is started with the tool's RPM, then held for the
+  post-processor's spin-up dwell (default 3 s) before the first cutting move,
   and stopped in the footer.
 - **S5** The program begins with the post-processor's units command and
   work-coordinate select, so a controller in the wrong state is corrected.
