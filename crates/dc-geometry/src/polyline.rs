@@ -5,7 +5,7 @@
 //! measurements on them: length, signed area, bounds, and point at distance
 //! (`docs/specs/phase-1/design.md`, "Data model → dc-geometry").
 
-use crate::point::{Point, Rect, Vec2};
+use crate::point::{EPS_MM, Point, Rect, Vec2};
 use serde::{Deserialize, Serialize};
 
 /// Bulges smaller than this are straight segments. Dimensionless: a bulge
@@ -71,6 +71,24 @@ pub struct Arc {
     pub sweep_rad: f64,
 }
 
+impl Arc {
+    /// The points where the arc reaches its extreme X or Y, among the four
+    /// axis directions from the centre that fall inside the sweep.
+    fn axis_extremes(self) -> impl Iterator<Item = Point> {
+        let tau = std::f64::consts::TAU;
+        (0..4u8).filter_map(move |k| {
+            let angle = f64::from(k) * tau / 4.0;
+            let from_start = if self.sweep_rad > 0.0 {
+                (angle - self.start_angle_rad).rem_euclid(tau)
+            } else {
+                (self.start_angle_rad - angle).rem_euclid(tau)
+            };
+            (from_start <= self.sweep_rad.abs())
+                .then(|| self.centre + Vec2::new(angle.cos(), angle.sin()) * self.radius_mm)
+        })
+    }
+}
+
 impl Segment {
     /// True when the segment is a straight line.
     #[must_use]
@@ -81,13 +99,37 @@ impl Segment {
     /// The arc geometry, or `None` for a straight or zero-length segment.
     #[must_use]
     pub fn arc(&self) -> Option<Arc> {
-        todo!()
+        if self.is_line() {
+            return None;
+        }
+        let chord = self.end - self.start;
+        let chord_len = chord.length();
+        if chord_len <= EPS_MM {
+            return None;
+        }
+        let b = self.bulge;
+        // The centre lies on the chord's perpendicular bisector, left of
+        // travel for a CCW arc under a half turn, at (c/2)·(1 − b²)/(2b).
+        let mid = self.start + chord * 0.5;
+        let offset = chord_len * 0.5 * (1.0 - b * b) / (2.0 * b);
+        let centre = mid + chord.perp() * (offset / chord_len);
+        let radius_mm = chord_len * (1.0 + b * b) / (4.0 * b.abs());
+        let to_start = self.start - centre;
+        Some(Arc {
+            centre,
+            radius_mm,
+            start_angle_rad: to_start.y.atan2(to_start.x),
+            sweep_rad: 4.0 * b.atan(),
+        })
     }
 
     /// Length along the segment, mm.
     #[must_use]
     pub fn length_mm(&self) -> f64 {
-        todo!()
+        match self.arc() {
+            Some(arc) => arc.radius_mm * arc.sweep_rad.abs(),
+            None => self.start.distance_to(self.end),
+        }
     }
 
     /// Position and unit tangent (direction of travel) at `distance_mm`
@@ -95,8 +137,20 @@ impl Segment {
     /// segment.
     #[must_use]
     pub fn point_at(&self, distance_mm: f64) -> Option<(Point, Vec2)> {
-        let _ = distance_mm;
-        todo!()
+        let length = self.length_mm();
+        let s = distance_mm.clamp(0.0, length);
+        match self.arc() {
+            Some(arc) => {
+                let dir = arc.sweep_rad.signum();
+                let angle = arc.start_angle_rad + dir * s / arc.radius_mm;
+                let radial = Vec2::new(angle.cos(), angle.sin());
+                Some((arc.centre + radial * arc.radius_mm, radial.perp() * dir))
+            }
+            None => {
+                let tangent = (self.end - self.start).normalized()?;
+                Some((self.start + tangent * s, tangent))
+            }
+        }
     }
 }
 
@@ -183,21 +237,44 @@ impl Polyline {
     /// Total length along all segments, mm.
     #[must_use]
     pub fn length_mm(&self) -> f64 {
-        todo!()
+        self.segments().map(|s| s.length_mm()).sum()
     }
 
     /// Signed enclosed area, mm²: positive when counter-clockwise, negative
     /// when clockwise, 0 for an open polyline.
     #[must_use]
     pub fn signed_area_mm2(&self) -> f64 {
-        todo!()
+        if !self.closed {
+            return 0.0;
+        }
+        self.segments()
+            .map(|seg| {
+                // Shoelace term for the chord, plus the circular segment
+                // between chord and arc, which is signed with the sweep.
+                let chord = (seg.start.x * seg.end.y - seg.end.x * seg.start.y) / 2.0;
+                let bow = seg.arc().map_or(0.0, |a| {
+                    a.radius_mm * a.radius_mm / 2.0 * (a.sweep_rad - a.sweep_rad.sin())
+                });
+                chord + bow
+            })
+            .sum()
     }
 
     /// The tight bounding rectangle, including arc extremes; `None` when
     /// there are no vertices.
     #[must_use]
     pub fn bounds(&self) -> Option<Rect> {
-        todo!()
+        let first = self.vertices.first()?;
+        let mut rect = Rect::from_point(first.point());
+        for seg in self.segments() {
+            rect = rect.including(seg.start).including(seg.end);
+            if let Some(arc) = seg.arc() {
+                for extreme in arc.axis_extremes() {
+                    rect = rect.including(extreme);
+                }
+            }
+        }
+        Some(rect)
     }
 
     /// Position and unit tangent at `distance_mm` along the polyline. A
@@ -205,16 +282,56 @@ impl Polyline {
     /// clamps it. `None` when the polyline has zero length.
     #[must_use]
     pub fn point_at(&self, distance_mm: f64) -> Option<(Point, Vec2)> {
-        let _ = distance_mm;
-        todo!()
+        let length = self.length_mm();
+        if length <= EPS_MM {
+            return None;
+        }
+        let target = if self.closed {
+            distance_mm.rem_euclid(length)
+        } else {
+            distance_mm.clamp(0.0, length)
+        };
+        let mut walked = 0.0;
+        let mut last = None;
+        for seg in self.segments() {
+            let seg_len = seg.length_mm();
+            if seg_len <= EPS_MM {
+                continue;
+            }
+            if target <= walked + seg_len {
+                return seg.point_at(target - walked);
+            }
+            walked += seg_len;
+            last = Some(seg);
+        }
+        // Rounding left `target` a hair past the summed length.
+        last.and_then(|seg| seg.point_at(seg.length_mm()))
     }
 
     /// The same path traversed in the opposite direction, with each arc's
-    /// bulge negated. A closed polyline keeps its first vertex's position
-    /// last-to-first, so the vertex order is fully reversed.
+    /// bulge negated and the vertex order reversed.
     #[must_use]
     pub fn reversed(&self) -> Polyline {
-        todo!()
+        // Segment i (v[i] → v[i+1], bulge b[i]) becomes the segment that
+        // starts at v[i+1]. Reversing the bulges and rotating left by one
+        // lines each negated bulge up with its new start vertex.
+        let mut bulges: Vec<f64> = self.vertices.iter().rev().map(|v| -v.bulge).collect();
+        if !bulges.is_empty() {
+            bulges.rotate_left(1);
+        }
+        if !self.closed
+            && let Some(last) = bulges.last_mut()
+        {
+            *last = 0.0;
+        }
+        let vertices = self
+            .vertices
+            .iter()
+            .rev()
+            .zip(bulges)
+            .map(|(v, bulge)| Vertex::new(v.x, v.y, bulge))
+            .collect();
+        Polyline::new(vertices, self.closed)
     }
 }
 

@@ -20,8 +20,21 @@ impl Contour {
     /// it winds clockwise. Fails when the polyline is open, has fewer than
     /// two vertices, or encloses no area.
     pub fn new(polyline: Polyline) -> Result<Self, GeometryError> {
-        let _ = polyline;
-        todo!()
+        if !polyline.is_closed() {
+            return Err(GeometryError::Degenerate(DegenerateReason::Open));
+        }
+        if polyline.vertices().len() < 2 {
+            return Err(GeometryError::Degenerate(DegenerateReason::TooFewVertices));
+        }
+        let area = polyline.signed_area_mm2();
+        if area.abs() <= EPS_MM * EPS_MM {
+            return Err(GeometryError::Degenerate(DegenerateReason::ZeroArea));
+        }
+        Ok(if area > 0.0 {
+            Self(polyline)
+        } else {
+            Self(polyline.reversed())
+        })
     }
 
     /// The underlying polyline.
@@ -45,7 +58,7 @@ impl Contour {
     /// True when the contour winds counter-clockwise (an outer boundary).
     #[must_use]
     pub fn is_ccw(&self) -> bool {
-        todo!()
+        self.signed_area_mm2() > 0.0
     }
 
     /// The same contour with the opposite orientation.
