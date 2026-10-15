@@ -1376,6 +1376,23 @@ mod tests {
     }
 
     #[test]
+    fn too_few_decimal_places_is_error() {
+        // The safety pass tolerates one unit in the last place; with too few
+        // places that tolerance would hide a real error (1 inch = 25.4 mm).
+        for (mm, inch, units) in [(1, 4, Units::Mm), (3, 2, Units::Inch)] {
+            let mut project = sample_project();
+            project.display_units = units;
+            project.post_processor.number_format.decimal_places.mm = mm;
+            project.post_processor.number_format.decimal_places.inch = inch;
+            let result = emit(&project, &ops_for(&project), DATE);
+            assert!(
+                matches!(result, Err(ExportError::TooFewDecimalPlaces { .. })),
+                "{mm}/{inch} {units:?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn header_placeholders_are_filled() {
         let project = project_with("grblhal");
         let text = emit_text(&project);

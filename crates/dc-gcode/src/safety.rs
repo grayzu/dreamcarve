@@ -617,6 +617,30 @@ mod tests {
     }
 
     #[test]
+    fn only_codes_dreamcarve_emits_are_accepted() {
+        // The safety pass models only these codes; anything else (an offset,
+        // a probe, a tool-length or arc-mode change) could move the machine
+        // in a way the check cannot see.
+        for (text, word) in [
+            ("G21\nG54\nG92 Z0\n", "G92"),
+            ("G21\nG54\nG10 L20 P1 Z0\n", "G10"),
+            ("G21\nG54\nG43.1 Z5\n", "G43.1"),
+            ("G21\nG54\nG38.2 Z-10 F100\n", "G38.2"),
+            ("G21\nG54\nG91.1\n", "G91.1"),
+            ("G21\nG54\nM8\n", "M8"),
+        ] {
+            let err = check_text(text).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == word),
+                "{text}: {err:?}"
+            );
+        }
+        for text in ["G21 G17 G90 G94\nG54\nM0\nM5\nM30\n", "G20\nG59\nM2\n"] {
+            assert!(check_text(text).is_ok(), "{text}");
+        }
+    }
+
+    #[test]
     fn violation_is_error_not_warning() {
         // A hand-built toolpath that plunges through the spoilboard: export
         // fails outright and yields no program to write.

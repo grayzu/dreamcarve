@@ -327,6 +327,9 @@ mod tests {
             (Axis::X, Axis::NegX, Axis::Z),
             (Axis::Z, Axis::Y, Axis::X),
             (Axis::X, Axis::Z, Axis::Y),
+            // Machine +Z is up on GRBL and grblHAL; an inverted Z would
+            // send every retract into the work.
+            (Axis::X, Axis::Y, Axis::NegZ),
         ] {
             project.post_processor.coordinate_system = CoordinateSystem {
                 x_axis: x,

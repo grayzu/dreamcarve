@@ -86,6 +86,21 @@ pub enum ExportError {
         /// The dwell, seconds.
         duration_s: f64,
     },
+    /// The post-processor writes too few decimal places for the output
+    /// units, so rounding could hide a real error from the safety pass.
+    #[error(
+        "post-processor `{post}` writes {places} decimal places in {units}; at least {min} are needed"
+    )]
+    TooFewDecimalPlaces {
+        /// The post-processor's id.
+        post: String,
+        /// `mm` or `inch`.
+        units: &'static str,
+        /// Decimal places the definition asks for.
+        places: u8,
+        /// The minimum DreamCarve accepts.
+        min: u8,
+    },
     /// A value to be written is not a finite number.
     #[error("cannot write {value} as a G-code number")]
     NonFiniteNumber {
