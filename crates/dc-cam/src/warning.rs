@@ -22,6 +22,16 @@ pub enum WarningCode {
     /// not cut twice. Params: `instance`, `instance_name`, `profile`,
     /// `duplicate_of_instance`, `duplicate_of_profile`.
     DuplicateShapeDropped,
+    /// Two or more tab spans on one tool-centre contour overlap, so they
+    /// were merged into one raised span. Params: `op`, `contour` (0-based,
+    /// in cut order), `path_length_mm`.
+    TabsOverlap,
+    /// The tab top lies outside the range the cut passes through: no pass
+    /// goes below it (`reason` `cut_stops_above_tab`; the tabs change
+    /// nothing), or it is above the stock top (`reason`
+    /// `above_stock_top`; the tabs still apply). Params: `op`, `reason`,
+    /// `tab_top_mm`, `deepest_pass_z_mm`, `stock_top_mm`.
+    TabsOutsideCutRange,
 }
 
 impl WarningCode {
@@ -32,6 +42,8 @@ impl WarningCode {
             Self::OpenPathSkipped => "open_path_skipped",
             Self::ToolTooLarge => "tool_too_large",
             Self::DuplicateShapeDropped => "duplicate_shape_dropped",
+            Self::TabsOverlap => "tabs_overlap",
+            Self::TabsOutsideCutRange => "tabs_outside_cut_range",
         }
     }
 }
