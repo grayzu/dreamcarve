@@ -10,6 +10,7 @@
 # User guide
 
 - [Overview](user-guide/overview.md)
+- [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
 
 # Contributing
 
