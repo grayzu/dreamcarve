@@ -14,16 +14,6 @@ use crate::polyline::{Polyline, Vertex};
 /// `flatten_tolerance_mm` default.
 pub const FLATTEN_TOLERANCE_DEFAULT_MM: f64 = 0.01;
 
-/// PureCutCNC's samples per Bézier curve (`DEFAULT_FLATTEN_CURVE_SAMPLES` in
-/// `src/engine/toolpaths/geometry.ts`). Not used for flattening here, which
-/// is tolerance-based. Kept for golden-corpus comparison against PureCutCNC
-/// output.
-pub const DEFAULT_FLATTEN_CURVE_SAMPLES: u32 = 24;
-
-/// PureCutCNC's arc sampling step, radians (`DEFAULT_FLATTEN_ARC_STEP`,
-/// π/36). Kept for the same reason as [`DEFAULT_FLATTEN_CURVE_SAMPLES`].
-pub const DEFAULT_FLATTEN_ARC_STEP_RAD: f64 = std::f64::consts::PI / 36.0;
-
 /// Flattens `path` into one polyline per subpath, with no vertex or
 /// segment further than `tolerance_mm` from the curve. Coordinates pass
 /// through unchanged: the caller has already transformed, scaled, and

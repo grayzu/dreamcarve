@@ -33,7 +33,7 @@ machine origin are applied only in the CLI's `init` defaults and in
 
 | DreamCarve | PureCutCNC | Port notes |
 | --- | --- | --- |
-| `dc-geometry::polyline` | `src/geometry/`, `src/store/helpers/clipping.ts` (profile↔path), `src/engine/toolpaths/geometry.ts` (`DEFAULT_FLATTEN_*`) | Clipper integer scaling disappears; cavalier_contours works in f64 with bulge arcs. Flatten constants kept. |
+| `dc-geometry::polyline` | `src/geometry/`, `src/store/helpers/clipping.ts` (profile↔path), `src/engine/toolpaths/geometry.ts` | Clipper integer scaling disappears; cavalier_contours works in f64 with bulge arcs. PureCutCNC's fixed-density `DEFAULT_FLATTEN_*` constants are not ported: they exist to map Clipper output back to source arcs, and DreamCarve flattens by `flatten_tolerance_mm` instead. |
 | `dc-project::model` | `src/types/project.ts` (`Project`, `Stock`, `MachineOrigin`, `Tool`, `FeatureDefinition`, `FeatureInstance`, `Tab`, `Operation`) | Only the fields phase 1 needs. `z_top`/`z_bottom` kept on instances. Tool feeds become `Option` so "unset" is representable. |
 | `dc-project::history` | `src/store/projectStore.ts` undo/redo | Snapshot list, no UI. |
 | `dc-cam::profile` | `src/engine/toolpaths/edge.ts` (`generateEdgeRouteToolpath`, `edgeRouteTargetWalls`), `multiFeature.ts` for nesting | Only the plain contour path: no trochoidal, no keep-out holes, no entry policy. Winding re-derived for Y-up. |
