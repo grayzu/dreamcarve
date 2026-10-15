@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad">
+      <stop offset="0" stop-color="red"/>
+      <stop offset="1" stop-color="blue"/>
+    </linearGradient>
+    <clipPath id="clip">
+      <rect x="0" y="0" width="15" height="15"/>
+    </clipPath>
+  </defs>
+  <rect id="graded" x="10" y="10" width="20" height="20" fill="url(#grad)"/>
+  <g id="clipped" clip-path="url(#clip)">
+    <rect id="inside-clip" x="50" y="50" width="30" height="30"/>
+  </g>
+</svg>

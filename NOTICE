@@ -20,5 +20,25 @@ as part of the PureCutCNC project.
 Third-party software
 --------------------
 
-None bundled yet. When a third-party component is added, list it here with its
-name, version, license, and source URL.
+Components dual-licensed under Apache-2.0 (usvg, roxmltree, svgtypes,
+simplecss, kurbo, and others) are used under Apache-2.0. The components below
+are available only under a license that requires its copyright notice to be
+reproduced; each is used unmodified. Their full license texts are in each
+crate's source and must accompany binary distributions.
+
+- tiny-skia-path 0.12 (BSD-3-Clause), https://github.com/linebender/tiny-skia
+  Copyright (c) 2011 Google Inc. All rights reserved.
+  Copyright (c) 2020 Yevhenii Reizner All rights reserved.
+- arrayref 0.3 (BSD-2-Clause), https://github.com/droundy/arrayref
+  Copyright (c) 2015 David Roundy
+- strict-num 0.1 (MIT), https://github.com/RazrFalcon/strict-num
+  Copyright (c) 2022 Yevhenii Reizner
+- pico-args 0.5 (MIT), https://github.com/RazrFalcon/pico-args
+  Copyright (c) 2019 Yevhenii Reizner
+- float-cmp 0.9 (MIT), https://github.com/mikedilger/float-cmp
+  Copyright (c) 2014-2020 Optimal Computing (NZ) Ltd
+- imagesize 0.15 (MIT), https://github.com/Roughsketch/imagesize
+  Copyright (c) 2017 Maiddog
+
+When a third-party component is added, list it here with its name, version,
+license, and source URL if its license requires attribution.
