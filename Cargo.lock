@@ -172,6 +172,13 @@ name = "dc-project"
 version = "0.0.1"
 
 [[package]]
+name = "doc-figures"
+version = "0.0.1"
+dependencies = [
+ "dc-geometry",
+]
+
+[[package]]
 name = "dreamcarve"
 version = "0.0.1"
 dependencies = [

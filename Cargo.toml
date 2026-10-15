@@ -11,6 +11,7 @@ members = [
     "crates/dc-import",
     "crates/dreamcarve",
     "tools/check-headers",
+    "tools/doc-figures",
 ]
 
 [workspace.package]
