@@ -204,6 +204,14 @@ mod tests {
     }
 
     #[test]
+    fn crlf_line_endings_load() {
+        // A file edited on Windows may come back with CRLF line endings.
+        let crlf = V1_FIXTURE.replace('\n', "\r\n");
+        let loaded = load(crlf.as_bytes()).unwrap();
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    #[test]
     fn committed_v1_fixture_loads() {
         let loaded = load(V1_FIXTURE.as_bytes()).unwrap();
         assert_eq!(loaded.project, sample_project());
