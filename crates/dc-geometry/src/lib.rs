@@ -12,6 +12,7 @@ mod flatten;
 mod offset;
 mod point;
 mod polyline;
+mod region;
 mod transform;
 
 pub use contour::Contour;
@@ -19,6 +20,7 @@ pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, flatten};
 pub use offset::offset;
 pub use point::{EPS_MM, Point, Point3, Rect, Vec2, approx_eq};
 pub use polyline::{Arc, Polyline, Segment, Vertex};
+pub use region::{Region, nest};
 pub use transform::Transform;
 
 /// Why a polyline cannot be used as a [`Contour`].
