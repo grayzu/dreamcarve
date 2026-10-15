@@ -39,3 +39,6 @@ Thumbs.db
 
 # Claude Code: local (per-user) settings are not shared
 .claude/settings.local.json
+
+# mdBook output
+/docs/book/book/
