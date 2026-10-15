@@ -37,44 +37,56 @@ pub struct History {
 impl History {
     /// Starts a history whose only snapshot is `initial`.
     pub fn new(initial: Project) -> Self {
-        let _ = initial;
-        todo!()
+        Self {
+            past: Vec::new(),
+            current: initial,
+            future: Vec::new(),
+        }
     }
 
     /// The current snapshot.
     pub fn current(&self) -> &Project {
-        todo!()
+        &self.current
     }
 
     /// Makes `next` the current snapshot. The previous current snapshot
     /// becomes undoable, every redo snapshot is discarded, and the oldest
     /// snapshot is dropped once more than [`MAX_UNDO_STEPS`] are kept.
     pub fn push(&mut self, next: Project) {
-        let _ = next;
-        todo!()
+        let previous = std::mem::replace(&mut self.current, next);
+        self.past.push(previous);
+        let excess = self.past.len().saturating_sub(MAX_UNDO_STEPS);
+        self.past.drain(..excess);
+        self.future.clear();
     }
 
     /// Steps back one snapshot and returns the new current snapshot, or
     /// `None` (leaving the history unchanged) when there is nothing to undo.
     pub fn undo(&mut self) -> Option<&Project> {
-        todo!()
+        let previous = self.past.pop()?;
+        let undone = std::mem::replace(&mut self.current, previous);
+        self.future.push(undone);
+        Some(&self.current)
     }
 
     /// Steps forward one undone snapshot and returns the new current
     /// snapshot, or `None` (leaving the history unchanged) when there is
     /// nothing to redo.
     pub fn redo(&mut self) -> Option<&Project> {
-        todo!()
+        let next = self.future.pop()?;
+        let redone = std::mem::replace(&mut self.current, next);
+        self.past.push(redone);
+        Some(&self.current)
     }
 
     /// Whether [`undo`](Self::undo) would change the current snapshot.
     pub fn can_undo(&self) -> bool {
-        todo!()
+        !self.past.is_empty()
     }
 
     /// Whether [`redo`](Self::redo) would change the current snapshot.
     pub fn can_redo(&self) -> bool {
-        todo!()
+        !self.future.is_empty()
     }
 }
 
