@@ -11,7 +11,17 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+# Exposes `test_support::assert_safe` to other crates' tests.
+test-support = []
+
 [dependencies]
+dc-geometry.workspace = true
+dc-project.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+dc-project = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
