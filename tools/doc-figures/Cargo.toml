@@ -1,0 +1,27 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "doc-figures"
+description = "Generates the user guide's geometry figures from the real engine output"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "doc_figures"
+path = "src/lib.rs"
+
+[[bin]]
+name = "doc-figures"
+path = "src/main.rs"
+
+[dependencies]
+dc-geometry.workspace = true
+
+[lints]
+workspace = true

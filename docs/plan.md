@@ -45,13 +45,42 @@ reference implementation except where this plan says otherwise.
 | Feature model | Definition/instance split from day one; snapshot undo history in the model | phase 1 design spec |
 | Tools and post-processors | Projects embed copies. App-level library in user config dir from phase 2 | phase 1 and 2 design specs |
 | Controllers | grblHAL primary and validated on hardware. GRBL alongside in phase 1. LinuxCNC, Mach3, UCCNC, generic in phase 2 | phase 1 functional spec |
-| Operation names | Profile, Pocket, Drill, V-Carve, Engrave | `CONTEXT.md` |
+| Operation names | Profile, Pocket, Drill, V-Carve, Engrave; Surface Rough and Surface Finish from phase 7 | `CONTEXT.md` |
+| Multi-tool export | One program with tool changes, or one program per tool. The user sets a default once; each export can override it | phase 2 functional spec |
+| Toolpath coverage | Every carving toolpath common in hobby CAM is planned or explicitly excluded; see "Toolpath coverage" below | this file |
 | Tool import | Fusion `.tools`/`.json` only, following Autodesk's published schema. Other vendor formats post-1.0 | phase 2 functional spec |
 | Platforms | Windows, macOS, Linux desktop. No tablet, no phone, no web | this file |
 | Localization | Strings keyed from the first GUI phase. English only until phase 8 | phase 4 design spec |
 | Fonts | Bundled OFL fonts plus user font files. No system font enumeration | phase 5 design spec |
 | STEP import | Post-1.0, pending a permissively licensed Rust reader | this file |
 | Versioning | `0.N.0` tags the end of phase N. 1.0.0 is phase 9 | this file |
+
+## Toolpath coverage
+
+The carving toolpaths common in hobby CAM, compared against VCarve Pro's
+published toolpath list at the level of what each is for (laser toolpaths
+excluded). Each one is either planned or deliberately left out. A toolpath
+PureCutCNC lacks has nothing to port, so it would be designed from scratch;
+those wait until after 1.0.
+
+| Toolpath | Where | Note |
+| --- | --- | --- |
+| Profile | Phase 1 | Tabs in phase 1; lead-in/out and ramp entry in phase 2 |
+| Pocket | Phase 2 | Offset and Raster clearance |
+| Drill | Phase 2 | V-bit countersinking in phase 3 |
+| Engrave | Phase 2 | Fixed-depth cut along the line. V-bit engraving whose width follows the shape is V-Carve |
+| V-Carve | Phase 3 | With flat-bottom clearing |
+| Surface Rough, Surface Finish | Phase 7 | From a mesh or a grayscale heightmap |
+| Inlay | Post-1.0 | No PureCutCNC reference. Builds on V-Carve |
+| Fluting | Post-1.0 | No PureCutCNC reference |
+| Texture | Post-1.0 | No PureCutCNC reference |
+| Prism carving | Post-1.0 | No PureCutCNC reference |
+| Moulding | Post-1.0 | No PureCutCNC reference; also needs a swept 3D model, which the CAD side doesn't create |
+| Quick (V-bit) engrave | Not planned | Covered by Engrave for fixed depth and V-Carve for V-bit work |
+
+Toolpath management with no PureCutCNC reference (toolpath templates,
+merging toolpaths, array-copying a toolpath, tiling oversize jobs) is also
+post-1.0.
 
 ## Phases
 
@@ -117,12 +146,16 @@ passes) and **Raster** (parallel lines at a user-set angle), each followed by
 a wall finish pass, with climb/conventional direction and a user-set stepover
 as a percentage of tool diameter. Rough and finish pockets. Drill (simple,
 peck, dwell, chip-break, canned cycles where the post supports them), Engrave
-(open and closed paths). Multiple operations per project with ordering. Tool
-library in the user config directory with import from Fusion `.tools`/`.json`
-and export to DreamCarve JSON. DXF import. LinuxCNC, Mach3, UCCNC, and generic
-post-processors. Arc fitting at export. Ramp and helical entry for pockets.
-Toolpath warnings as structured codes. A `dreamcarve check` command that
-reports warnings without exporting.
+(open and closed paths, at a fixed depth). Multiple operations per project
+with ordering. Multi-tool export: one program with tool changes or one program
+per tool, with a user default and a per-export override (see
+`docs/specs/phase-2/NOTES.md`). Tool library in the user config directory with
+import from Fusion `.tools`/`.json` and export to DreamCarve JSON. DXF import.
+LinuxCNC, Mach3, UCCNC, and generic post-processors. Arc fitting at export.
+Ramp and helical entry for pockets and profiles, and arc lead-in/out for
+profiles (PureCutCNC `entry.ts`, `xyLead.ts`). Corner relief (dogbone, T-bone)
+for pockets and profiles (`cornerRelief.ts`). Toolpath warnings as structured
+codes. A `dreamcarve check` command that reports warnings without exporting.
 
 **Out:** V-Carve, GUI, simulation, text.
 
@@ -173,8 +206,8 @@ Phase 5 adds CAD so the SVG step becomes optional.
 an open project. Design tree showing feature instances with visibility and
 lock; select, move, rotate, scale, mirror, and delete instances (placement
 only, no shape editing). Stock and origin setup. Tool library browser and
-picker, including Fusion import. Create, edit, reorder, enable/disable
-operations of every kind from phases 1–3. 2D toolpath preview with direction
+picker, including Fusion import. Create, edit, duplicate, delete, reorder,
+and enable/disable operations of every kind from phases 1–3. 2D toolpath preview with direction
 and depth colouring and per-operation visibility. Warnings panel. Export
 dialog. Undo/redo wired to the snapshot history. Strings keyed for
 localization.
@@ -239,7 +272,8 @@ to within the tool-radius tolerance stated in the spec; `v0.6.0`.
 **grayscale heightmap import** (PNG, JPEG, TIFF) where pixel brightness maps
 to Z over a user-set footprint and depth range, so a lake-depth chart or a
 terrain tile carves without a 3D model; Surface Rough and Surface Finish
-(parallel, waterline, constant scallop) driven by either source; retained
+(parallel, waterline, constant scallop) and PureCutCNC's surface cleanup
+passes, driven by either source; retained
 2.5D material around a model. Re-examine ADR-0003 here: if retained-material
 math needs CSG, add a crate and amend the ADR.
 
@@ -263,7 +297,8 @@ feed directly), `retainedMaterial.ts`, `src/import/stl.ts`, `obj.ts`.
 
 **Goal:** the long tail PureCutCNC ships.
 
-**In:** sheet nesting, operation booklet PDF, post-processor converter CLI,
+**In:** sheet nesting, operation booklet PDF with machining time estimates,
+post-processor converter CLI,
 `.camj` import, German and Chinese localizations, design printing and SVG
 export, CAM Plan assistance, clamps as obstacles, trochoidal strategies if not
 already ported, tabs on open shapes.
@@ -289,7 +324,10 @@ full user manual.
 
 Not rejected, just after 1.0: STEP import, Vectric/Carveco/MillMage/Carbide
 Create tool-library import, rotary and 4th-axis, parametrics, cloud sync,
-system font enumeration, an agent-facing API.
+system font enumeration, an agent-facing API. The toolpaths and toolpath
+management features marked post-1.0 in "Toolpath coverage": Inlay, Fluting,
+Texture, Prism carving, Moulding, toolpath templates, merge, array copy, and
+tiling.
 
 ## How work flows
 

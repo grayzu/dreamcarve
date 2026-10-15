@@ -86,6 +86,15 @@ mod tests {
     }
 
     #[test]
+    fn dc_project_fixture_matches_bundled_grbl() {
+        // dc-project's tests embed a copy of grbl.json; it must not drift.
+        assert_eq!(
+            lookup("grbl").unwrap(),
+            dc_project::test_support::grbl_post_processor()
+        );
+    }
+
+    #[test]
     fn lookup_by_id() {
         assert_eq!(lookup("grblhal").unwrap().name, "grblHAL");
         assert_eq!(lookup("grbl").unwrap().name, "GRBL 1.1");

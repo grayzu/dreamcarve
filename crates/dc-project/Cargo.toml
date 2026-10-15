@@ -11,7 +11,12 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+# Exposes `test_support` fixture builders to other crates' tests.
+test-support = []
+
 [dependencies]
+dc-geometry.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

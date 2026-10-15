@@ -16,6 +16,7 @@ bottom of this list to the top.
 Outside the workspace crates:
 
 - `tools/check-headers`: the license header checker CI runs.
+- `tools/doc-figures`: draws the user guide's geometry figures from real engine output (`cargo run -p doc-figures`); a test fails when a committed figure is stale.
 - `tools/parity/`: a Node script that drives a local PureCutCNC checkout to
   capture golden outputs. Not needed to build or test DreamCarve.
 - `tests/golden/`: the captured PureCutCNC outputs that `cargo test` compares

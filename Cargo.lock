@@ -176,9 +176,17 @@ version = "0.0.1"
 name = "dc-project"
 version = "0.0.1"
 dependencies = [
+ "dc-geometry",
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "doc-figures"
+version = "0.0.1"
+dependencies = [
+ "dc-geometry",
 ]
 
 [[package]]

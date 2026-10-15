@@ -42,7 +42,7 @@ pub struct PostProcessor {
     /// How numbers are printed.
     pub number_format: NumberFormat,
     /// Unit-selection commands.
-    pub units: Units,
+    pub units: UnitCommands,
     /// Program header, footer, and comment syntax.
     pub program: ProgramFormat,
     /// Work-coordinate-system selection.
@@ -148,7 +148,7 @@ impl From<DecimalPlacesRepr> for DecimalPlaces {
 /// Unit-selection commands; `None` emits nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Units {
+pub struct UnitCommands {
     /// Command selecting millimetres, for example `G21`.
     pub mm_command: Option<String>,
     /// Command selecting inches, for example `G20`.
@@ -320,7 +320,7 @@ mod tests {
                 trailing_zeros: false,
                 leading_zero: true,
             },
-            units: Units {
+            units: UnitCommands {
                 mm_command: Some("G21".into()),
                 inch_command: None,
             },

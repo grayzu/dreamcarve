@@ -10,7 +10,7 @@ use crate::contour::Contour;
 use crate::polyline::{Polyline, Vertex};
 use cavalier_contours::polyline::{PlineCreation, PlineSource, PlineSourceMut};
 
-type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
+pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 
 /// Offsets `contour` by `delta_mm`. Positive `delta_mm` moves the contour
 /// away from the area it encloses (grows it); negative moves it inward.
@@ -33,7 +33,7 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         .collect()
 }
 
-fn to_cavalier(polyline: &Polyline) -> CavPolyline {
+pub(crate) fn to_cavalier(polyline: &Polyline) -> CavPolyline {
     let mut out = CavPolyline::with_capacity(polyline.vertices().len(), polyline.is_closed());
     for v in polyline.vertices() {
         out.add(v.x, v.y, v.bulge);
