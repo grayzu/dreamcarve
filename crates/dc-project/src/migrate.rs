@@ -16,10 +16,25 @@
 //!   [`dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM`] by the migration.
 
 use crate::serialize::LoadError;
-use serde_json::Value;
+use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
+use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
 pub const CURRENT_VERSION: u32 = 1;
+
+/// One migration step: rewrites a root object of version `from` into
+/// version `from + 1`.
+type Step = fn(Map<String, Value>) -> Result<Map<String, Value>, String>;
+
+/// The step that migrates from version `from`, if there is one.
+fn step(from: u32) -> Option<Step> {
+    match from {
+        0 => Some(v0_to_v1),
+        _ => None,
+    }
+}
+
+const FLATTEN_TOLERANCE_KEY: &str = "flatten_tolerance_mm";
 
 /// Migrates the raw JSON root of a `.dcv` file from `from_version` to
 /// [`CURRENT_VERSION`] and sets its `version` field accordingly.
@@ -28,7 +43,56 @@ pub const CURRENT_VERSION: u32 = 1;
 /// this build, [`LoadError::NotAnObject`] when the root is not an object, and
 /// [`LoadError::Migration`] when a step cannot rewrite the file.
 pub fn migrate(root: Value, from_version: u32) -> Result<Value, LoadError> {
-    todo!("migrate {root} from version {from_version}")
+    if from_version > CURRENT_VERSION {
+        return Err(LoadError::NewerVersion {
+            found: from_version,
+            supported: CURRENT_VERSION,
+        });
+    }
+    let Value::Object(mut obj) = root else {
+        return Err(LoadError::NotAnObject);
+    };
+    for from in from_version..CURRENT_VERSION {
+        let to = from + 1;
+        let step = step(from).ok_or_else(|| LoadError::Migration {
+            from,
+            to,
+            message: "no migration step is defined".into(),
+        })?;
+        obj = step(obj).map_err(|message| LoadError::Migration { from, to, message })?;
+    }
+    obj.insert("version".into(), Value::from(CURRENT_VERSION));
+    Ok(Value::Object(obj))
+}
+
+/// Version 0 → 1: adds `flatten_tolerance_mm` after `display_units`.
+fn v0_to_v1(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    if root.contains_key(FLATTEN_TOLERANCE_KEY) {
+        return Err(format!(
+            "a version 0 file has no `{FLATTEN_TOLERANCE_KEY}`, but this one does"
+        ));
+    }
+    // Rebuild the map so the new key lands where version 1 declares it.
+    let mut out = Map::with_capacity(root.len() + 1);
+    let mut inserted = false;
+    for (key, value) in root {
+        let after_this = key == "display_units";
+        out.insert(key, value);
+        if after_this {
+            out.insert(
+                FLATTEN_TOLERANCE_KEY.into(),
+                Value::from(FLATTEN_TOLERANCE_DEFAULT_MM),
+            );
+            inserted = true;
+        }
+    }
+    if !inserted {
+        out.insert(
+            FLATTEN_TOLERANCE_KEY.into(),
+            Value::from(FLATTEN_TOLERANCE_DEFAULT_MM),
+        );
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

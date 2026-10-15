@@ -12,7 +12,8 @@
 //! when such a tool is actually used).
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
-use crate::model::Project;
+use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
+use std::collections::BTreeSet;
 use std::fmt;
 
 /// How serious a [`Problem`] is.
@@ -180,7 +181,217 @@ impl fmt::Display for Problem {
 /// in a deterministic order (project fields in declaration order).
 #[must_use]
 pub fn validate(project: &Project) -> Vec<Problem> {
-    todo!("validate {}", project.name)
+    let mut v = Validator::default();
+    v.project(project);
+    v.problems
+}
+
+const POSITIVE: &str = "a value greater than 0";
+const NON_NEGATIVE: &str = "a value of 0 or more";
+const FRACTION: &str = "a value greater than 0 and at most 1";
+const ANGLE: &str = "an angle greater than 0 and less than 180 degrees";
+
+#[derive(Default)]
+struct Validator {
+    problems: Vec<Problem>,
+}
+
+impl Validator {
+    fn project(&mut self, p: &Project) {
+        self.positive("flatten_tolerance_mm", p.flatten_tolerance_mm);
+        self.positive("stock.width_mm", p.stock.width_mm);
+        self.positive("stock.height_mm", p.stock.height_mm);
+        self.positive("stock.thickness_mm", p.stock.thickness_mm);
+        if let OriginXy::Custom { x_mm, y_mm } = p.origin.xy {
+            self.finite("origin.xy.x_mm", x_mm);
+            self.finite("origin.xy.y_mm", y_mm);
+        }
+
+        for (key, def) in &p.definitions {
+            if *key != def.id {
+                self.problems.push(Problem::DefinitionKeyMismatch {
+                    key: key.clone(),
+                    id: def.id.clone(),
+                });
+            }
+            for (i, profile) in def.profiles.iter().enumerate() {
+                for (j, vertex) in profile.vertices().iter().enumerate() {
+                    let at = format!("definitions[{key}].profiles[{i}].vertices[{j}]");
+                    self.finite(&format!("{at}.x"), vertex.x);
+                    self.finite(&format!("{at}.y"), vertex.y);
+                    self.finite(&format!("{at}.bulge"), vertex.bulge);
+                }
+            }
+        }
+
+        let mut seen = BTreeSet::new();
+        for inst in &p.instances {
+            if !seen.insert(&inst.id) {
+                self.problems.push(Problem::DuplicateInstanceId {
+                    id: inst.id.clone(),
+                });
+            }
+            if !p.definitions.contains_key(&inst.definition) {
+                self.problems.push(Problem::DanglingDefinition {
+                    instance: inst.id.clone(),
+                    definition: inst.definition.clone(),
+                });
+            }
+            let at = format!("instances[{}]", inst.id);
+            let coeffs = inst.transform.as_kurbo().as_coeffs();
+            for (i, c) in coeffs.iter().enumerate() {
+                self.finite(&format!("{at}.transform[{i}]"), *c);
+            }
+            self.finite(&format!("{at}.z_top_mm"), inst.z_top_mm);
+            self.finite(&format!("{at}.z_bottom_mm"), inst.z_bottom_mm);
+        }
+
+        let mut seen = BTreeSet::new();
+        for tool in &p.tools {
+            if !seen.insert(&tool.id) {
+                self.problems.push(Problem::DuplicateToolId {
+                    id: tool.id.clone(),
+                });
+            }
+            let at = format!("tools[{}]", tool.id);
+            if let ToolKind::VBit { included_angle_deg } = tool.kind {
+                let field = format!("{at}.kind.included_angle_deg");
+                if self.finite(&field, included_angle_deg)
+                    && !(included_angle_deg > 0.0 && included_angle_deg < 180.0)
+                {
+                    self.out_of_range(field, included_angle_deg, ANGLE);
+                }
+            }
+            self.positive(&format!("{at}.diameter_mm"), tool.diameter_mm);
+            if tool.flutes == 0 {
+                self.out_of_range(format!("{at}.flutes"), 0.0, POSITIVE);
+            }
+            self.required_positive(tool, "feed_mm_min", tool.feed_mm_min);
+            self.required_positive(tool, "plunge_mm_min", tool.plunge_mm_min);
+            match tool.rpm {
+                None => self.problems.push(Problem::ToolValueUnset {
+                    tool: tool.id.clone(),
+                    field: "rpm",
+                }),
+                Some(0) => self.out_of_range(format!("{at}.rpm"), 0.0, POSITIVE),
+                Some(_) => {}
+            }
+            if let Some(step) = tool.step_down_mm {
+                self.positive(&format!("{at}.step_down_mm"), step);
+            }
+            if let Some(fraction) = tool.step_over_fraction {
+                let field = format!("{at}.step_over_fraction");
+                if self.finite(&field, fraction) && !(fraction > 0.0 && fraction <= 1.0) {
+                    self.out_of_range(field, fraction, FRACTION);
+                }
+            }
+        }
+
+        let tool_ids: BTreeSet<_> = p.tools.iter().map(|t| &t.id).collect();
+        let instance_ids: BTreeSet<_> = p.instances.iter().map(|i| &i.id).collect();
+        let mut seen = BTreeSet::new();
+        for op in &p.operations {
+            let Operation::Profile(op) = op;
+            if !seen.insert(&op.id) {
+                self.problems
+                    .push(Problem::DuplicateOperationId { id: op.id.clone() });
+            }
+            if !op.enabled {
+                self.problems.push(Problem::OperationDisabled {
+                    operation: op.id.clone(),
+                });
+            }
+            if !tool_ids.contains(&op.tool) {
+                self.problems.push(Problem::DanglingTool {
+                    operation: op.id.clone(),
+                    tool: op.tool.clone(),
+                });
+            }
+            for target in &op.targets {
+                if !instance_ids.contains(target) {
+                    self.problems.push(Problem::DanglingInstance {
+                        operation: op.id.clone(),
+                        instance: target.clone(),
+                    });
+                }
+            }
+            let at = format!("operations[{}]", op.id);
+            self.positive(&format!("{at}.depth_mm"), op.depth_mm);
+            if let Some(step) = op.step_down_mm {
+                self.positive(&format!("{at}.step_down_mm"), step);
+            }
+            self.non_negative(
+                &format!("{at}.through_cut_allowance_mm"),
+                op.through_cut_allowance_mm,
+            );
+            self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+            if let Some(tabs) = &op.tabs {
+                match &tabs.placement {
+                    TabPlacement::Count { count } => {
+                        if *count == 0 {
+                            self.out_of_range(format!("{at}.tabs.placement.count"), 0.0, POSITIVE);
+                        }
+                    }
+                    TabPlacement::AtDistances { distances_mm } => {
+                        for (i, d) in distances_mm.iter().enumerate() {
+                            self.non_negative(
+                                &format!("{at}.tabs.placement.distances_mm[{i}]"),
+                                *d,
+                            );
+                        }
+                    }
+                }
+                self.positive(&format!("{at}.tabs.width_mm"), tabs.width_mm);
+                self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
+            }
+        }
+
+        if !p.post_processor.0.is_object() {
+            self.problems.push(Problem::PostProcessorNotObject);
+        }
+    }
+
+    /// Reports `field` if `value` is not finite; returns whether it is.
+    fn finite(&mut self, field: &str, value: f64) -> bool {
+        let ok = value.is_finite();
+        if !ok {
+            self.problems.push(Problem::NonFinite {
+                field: field.to_owned(),
+            });
+        }
+        ok
+    }
+
+    fn positive(&mut self, field: &str, value: f64) {
+        if self.finite(field, value) && value <= 0.0 {
+            self.out_of_range(field.to_owned(), value, POSITIVE);
+        }
+    }
+
+    fn non_negative(&mut self, field: &str, value: f64) {
+        if self.finite(field, value) && value < 0.0 {
+            self.out_of_range(field.to_owned(), value, NON_NEGATIVE);
+        }
+    }
+
+    /// A tool value export needs: unset is a warning, set must be positive.
+    fn required_positive(&mut self, tool: &Tool, field: &'static str, value: Option<f64>) {
+        match value {
+            None => self.problems.push(Problem::ToolValueUnset {
+                tool: tool.id.clone(),
+                field,
+            }),
+            Some(v) => self.positive(&format!("tools[{}].{field}", tool.id), v),
+        }
+    }
+
+    fn out_of_range(&mut self, field: String, value: f64, expected: &'static str) {
+        self.problems.push(Problem::OutOfRange {
+            field,
+            value,
+            expected,
+        });
+    }
 }
 
 #[cfg(test)]

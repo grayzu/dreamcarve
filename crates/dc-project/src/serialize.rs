@@ -14,8 +14,10 @@
 //! a caller such as the CLI `check` command can report all of them; callers
 //! that machine the project must refuse it when [`Loaded::has_errors`].
 
+use crate::migrate::migrate;
 use crate::model::Project;
-use crate::validate::Problem;
+use crate::validate::{Problem, validate};
+use serde_json::Value;
 
 /// Why bytes could not be loaded as a project.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -116,14 +118,56 @@ impl Loaded {
 /// Fails with [`SaveError::NonFinite`] rather than writing a NaN or
 /// infinity, which serde_json would silently turn into `null`.
 pub fn save(project: &Project) -> Result<String, SaveError> {
-    todo!("save {}", project.name)
+    if let Some(field) = first_non_finite(&validate(project)) {
+        return Err(SaveError::NonFinite { field });
+    }
+    let mut text = serde_json::to_string_pretty(project).map_err(|e| SaveError::Serialize {
+        message: e.to_string(),
+    })?;
+    text.push('\n');
+    Ok(text)
 }
 
 /// Parses `.dcv` bytes into a project, migrating older versions and then
 /// validating. See the module docs for which failures are errors here and
 /// which are returned as [`Loaded::problems`].
 pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
-    todo!("load {} bytes", bytes.len())
+    let root: Value = serde_json::from_slice(bytes).map_err(|e| LoadError::Json {
+        line: e.line(),
+        column: e.column(),
+        message: e.to_string(),
+    })?;
+    let version = read_version(&root)?;
+    let root = migrate(root, version)?;
+    let project: Project = serde_json::from_value(root).map_err(|e| LoadError::Schema {
+        message: e.to_string(),
+    })?;
+    let problems = validate(&project);
+    // serde_json rejects NaN and out-of-range numbers while parsing, so this
+    // is a backstop for the "reject non-finite at the boundary" rule.
+    if let Some(field) = first_non_finite(&problems) {
+        return Err(LoadError::NonFinite { field });
+    }
+    Ok(Loaded { project, problems })
+}
+
+/// Reads the root object's `version` without interpreting anything else.
+fn read_version(root: &Value) -> Result<u32, LoadError> {
+    let obj = root.as_object().ok_or(LoadError::NotAnObject)?;
+    let value = obj.get("version").ok_or(LoadError::MissingVersion)?;
+    value
+        .as_u64()
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(|| LoadError::InvalidVersion {
+            found: value.to_string(),
+        })
+}
+
+fn first_non_finite(problems: &[Problem]) -> Option<String> {
+    problems.iter().find_map(|p| match p {
+        Problem::NonFinite { field } => Some(field.clone()),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
