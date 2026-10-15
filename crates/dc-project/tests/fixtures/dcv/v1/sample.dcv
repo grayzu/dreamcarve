@@ -173,7 +173,11 @@
       "spindle_on_ccw": "M4",
       "spindle_off": "M5",
       "inline_with_motion": true,
-      "modal_feed_speed": true
+      "modal_feed_speed": true,
+      "spindle_on_dwell": {
+        "command": "G4 P{seconds}",
+        "duration_s": 0.0
+      }
     },
     "tool_change": {
       "commands": [

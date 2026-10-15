@@ -85,6 +85,13 @@ pub enum Problem {
         /// Path to the field.
         field: String,
     },
+    /// A template line lacks a placeholder it must contain.
+    MissingPlaceholder {
+        /// Path to the field.
+        field: String,
+        /// The placeholder, such as `{seconds}`.
+        placeholder: &'static str,
+    },
     /// An operation is disabled and will not be exported.
     OperationDisabled {
         /// The disabled operation.
@@ -112,7 +119,8 @@ impl Problem {
             | Self::DanglingTool { .. }
             | Self::DanglingInstance { .. }
             | Self::OutOfRange { .. }
-            | Self::NonFinite { .. } => Severity::Error,
+            | Self::NonFinite { .. }
+            | Self::MissingPlaceholder { .. } => Severity::Error,
         }
     }
 
@@ -155,6 +163,9 @@ impl fmt::Display for Problem {
                 expected,
             } => write!(f, "{field} is {value}, expected {expected}"),
             Self::NonFinite { field } => write!(f, "{field} is not a finite number"),
+            Self::MissingPlaceholder { field, placeholder } => {
+                write!(f, "{field} must contain {placeholder}")
+            }
             Self::OperationDisabled { operation } => {
                 write!(
                     f,
@@ -576,5 +587,47 @@ mod tests {
             problem.to_string(),
             "tool `t1` has no feed_mm_min; export fails until it is set"
         );
+    }
+
+    const DWELL: &str = "post_processor.feed_speed.spindle_on_dwell";
+
+    #[test]
+    fn negative_spindle_dwell_is_error() {
+        let mut p = sample_project();
+        p.post_processor.feed_speed.spindle_on_dwell.duration_s = -1.0;
+        let problems = validate(&p);
+        let field = format!("{DWELL}.duration_s");
+        assert!(
+            matches!(&problems[..], [Problem::OutOfRange { field: f, .. }] if *f == field),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn non_finite_spindle_dwell_is_error() {
+        let mut p = sample_project();
+        p.post_processor.feed_speed.spindle_on_dwell.duration_s = f64::NAN;
+        let field = format!("{DWELL}.duration_s");
+        assert_eq!(validate(&p), vec![Problem::NonFinite { field }]);
+    }
+
+    #[test]
+    fn dwell_command_without_seconds_placeholder_is_error() {
+        let mut p = sample_project();
+        p.post_processor.feed_speed.spindle_on_dwell.command = "G4 P3".into();
+        assert_eq!(
+            validate(&p),
+            vec![Problem::MissingPlaceholder {
+                field: format!("{DWELL}.command"),
+                placeholder: "{seconds}",
+            }]
+        );
+    }
+
+    #[test]
+    fn zero_spindle_dwell_is_allowed() {
+        let mut p = sample_project();
+        p.post_processor.feed_speed.spindle_on_dwell.duration_s = 0.0;
+        assert!(validate(&p).is_empty());
     }
 }
