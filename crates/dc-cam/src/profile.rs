@@ -14,10 +14,14 @@
 //! contours are counter-clockwise, holes clockwise, a positive bulge is a
 //! counter-clockwise arc, and the direction rule is [`traversal_is_ccw`].
 
-use crate::error::CamError;
-use crate::toolpath::Toolpath;
-use crate::warning::Warning;
-use dc_project::{CutDirection, ProfileOp, Project};
+use crate::error::{CamError, FeedField, ShapeRef};
+use crate::passes::pass_z_mm;
+use crate::toolpath::{Move, MoveKind, Toolpath};
+use crate::warning::{Warning, WarningCode};
+use dc_geometry::{
+    Contour, EPS_MM, GeometryError, GeometryWarning, Point3, Polyline, nest, offset,
+};
+use dc_project::{CutDirection, ProfileOp, Project, Side, Tool};
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,8 +46,77 @@ pub enum Wall {
 /// is the reverse of climb.
 #[must_use]
 pub fn traversal_is_ccw(wall: Wall, direction: CutDirection) -> bool {
-    let _ = (wall, direction);
-    todo!("#10")
+    let climb_is_ccw = match wall {
+        Wall::Outside => false,
+        Wall::Inside => true,
+    };
+    match direction {
+        CutDirection::Climb => climb_is_ccw,
+        CutDirection::Conventional => !climb_is_ccw,
+    }
+}
+
+/// A contour's place in its region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    /// A region's counter-clockwise outer boundary.
+    Outer,
+    /// A clockwise hole inside a region.
+    Hole,
+}
+
+/// Which way to offset a contour of `role` for `side`, and which wall the
+/// tool then cuts. `Grow` moves away from the area the contour encloses,
+/// as `dc_geometry::offset` does for a positive delta; for a hole that area
+/// is the hole itself.
+///
+/// Inside and Outside are relative to the part (the region's area), so a
+/// hole is offset the opposite way to its outer.
+fn placement(side: Side, role: Role) -> (Offset, Wall) {
+    match (side, role) {
+        (Side::Outside, Role::Outer) | (Side::Inside, Role::Hole) => (Offset::Grow, Wall::Outside),
+        (Side::Outside, Role::Hole) | (Side::Inside, Role::Outer) => (Offset::Shrink, Wall::Inside),
+        (Side::OnLine, Role::Outer) => (Offset::None, Wall::Outside),
+        (Side::OnLine, Role::Hole) => (Offset::None, Wall::Inside),
+    }
+}
+
+/// Which way a contour moves to become the tool-centre path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Offset {
+    /// By `+r`, away from the enclosed area.
+    Grow,
+    /// By `−r`, into the enclosed area.
+    Shrink,
+    /// Not at all: the tool centre follows the line.
+    None,
+}
+
+/// A rate the user set to a positive number, or `None`.
+fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
+    rate_mm_min.filter(|r| r.is_finite() && *r > 0.0)
+}
+
+/// The rates every cut of this operation uses, exactly as the user set
+/// them on the tool.
+#[derive(Debug, Clone, Copy)]
+struct Rates {
+    feed_mm_min: f64,
+    plunge_mm_min: f64,
+}
+
+impl Rates {
+    fn of(tool: &Tool) -> Result<Self, CamError> {
+        let missing = |field| CamError::MissingFeed {
+            tool: tool.name.clone(),
+            field,
+        };
+        Ok(Self {
+            feed_mm_min: usable_rate(tool.feed_mm_min).ok_or_else(|| missing(FeedField::Feed))?,
+            plunge_mm_min: usable_rate(tool.plunge_mm_min)
+                .ok_or_else(|| missing(FeedField::Plunge))?,
+        })
+    }
 }
 
 /// Generates the Profile toolpath for `op` in `project`, in project space
@@ -67,8 +140,227 @@ pub fn generate_profile(
     project: &Project,
     op: &ProfileOp,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
-    let _ = (project, op);
-    todo!("#10")
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: op.id.clone(),
+            tool: op.tool.clone(),
+        })?;
+    let rates = Rates::of(tool)?;
+    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+        return Err(CamError::InvalidToolDiameter {
+            tool: tool.name.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
+    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
+        return Err(CamError::InvalidSafeZ {
+            op: op.id.clone(),
+            safe_z_mm: op.safe_z_mm,
+        });
+    }
+    let step_down_mm =
+        op.step_down_mm
+            .or(tool.step_down_mm)
+            .ok_or_else(|| CamError::MissingStepDown {
+                op: op.id.clone(),
+                tool: tool.name.clone(),
+            })?;
+    let thickness_mm = project.stock.thickness_mm;
+    let pass_z = pass_z_mm(
+        &op.id,
+        thickness_mm,
+        op.depth_mm,
+        step_down_mm,
+        op.through_cut_allowance_mm,
+    )?;
+    let safe_z_mm = thickness_mm + op.safe_z_mm;
+
+    let mut warnings = Vec::new();
+    let shapes = resolve_targets(project, op, &mut warnings)?;
+    let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
+    let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
+    for warning in nest_warnings {
+        let GeometryWarning::DuplicateContourDropped {
+            index,
+            duplicate_of,
+        } = warning;
+        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
+        {
+            warnings.push(
+                shape_warning(WarningCode::DuplicateShapeDropped, dropped)
+                    .with("duplicate_of_instance", &kept.instance)
+                    .with("duplicate_of_profile", kept.profile),
+            );
+        }
+    }
+
+    let radius_mm = tool.diameter_mm / 2.0;
+    let mut paths: Vec<Polyline> = Vec::new();
+    for region in &regions {
+        // Holes first, so a through-cut part is freed only by its last contour.
+        let ordered = region
+            .holes()
+            .iter()
+            .map(|h| (h, Role::Hole))
+            .chain(std::iter::once((region.outer(), Role::Outer)));
+        for (contour, role) in ordered {
+            let (how, wall) = placement(op.side, role);
+            let centres = match how {
+                Offset::Grow => offset(contour, radius_mm),
+                Offset::Shrink => offset(contour, -radius_mm),
+                Offset::None => vec![contour.clone()],
+            };
+            if centres.is_empty() {
+                if let Some((shape, _)) = shapes.iter().find(|(_, c)| same_contour(c, contour)) {
+                    warnings.push(
+                        shape_warning(WarningCode::ToolTooLarge, shape)
+                            .with("tool", &tool.name)
+                            .with("diameter_mm", tool.diameter_mm),
+                    );
+                }
+                continue;
+            }
+            let ccw = traversal_is_ccw(wall, op.direction);
+            paths.extend(centres.into_iter().map(|c| {
+                if c.is_ccw() == ccw {
+                    c.into_polyline()
+                } else {
+                    c.reversed().into_polyline()
+                }
+            }));
+        }
+    }
+
+    let mut toolpath = Toolpath::default();
+    for path in &paths {
+        emit_contour(&mut toolpath.moves, path, &pass_z, safe_z_mm, rates);
+    }
+    Ok((toolpath, warnings))
+}
+
+/// Places every profile of every target instance, in target then profile
+/// order. Open paths are skipped with a warning.
+fn resolve_targets(
+    project: &Project,
+    op: &ProfileOp,
+    warnings: &mut Vec<Warning>,
+) -> Result<Vec<(ShapeRef, Contour)>, CamError> {
+    let mut shapes = Vec::new();
+    for instance_id in &op.targets {
+        let instance = project
+            .instances
+            .iter()
+            .find(|i| &i.id == instance_id)
+            .ok_or_else(|| CamError::UnknownInstance {
+                op: op.id.clone(),
+                instance: instance_id.clone(),
+            })?;
+        let definition = project
+            .definitions
+            .get(&instance.definition)
+            .ok_or_else(|| CamError::UnknownDefinition {
+                instance: instance.id.clone(),
+                definition: instance.definition.clone(),
+            })?;
+        for (profile, polyline) in definition.profiles.iter().enumerate() {
+            let shape = ShapeRef {
+                instance: instance.id.clone(),
+                instance_name: instance.name.clone(),
+                profile,
+            };
+            if !polyline.is_closed() {
+                warnings.push(shape_warning(WarningCode::OpenPathSkipped, &shape));
+                continue;
+            }
+            let contour = instance
+                .transform
+                .apply_polyline(polyline)
+                .and_then(Contour::new)
+                .map_err(|source| CamError::InvalidTarget {
+                    shape: shape.clone(),
+                    source,
+                })?;
+            shapes.push((shape, contour));
+        }
+    }
+    Ok(shapes)
+}
+
+/// Maps `nest`'s input indices for crossing contours back to the shapes the
+/// user drew.
+fn crossing_error(error: GeometryError, shapes: &[(ShapeRef, Contour)]) -> CamError {
+    if let GeometryError::ContoursCross { first, second } = error
+        && let (Some((a, _)), Some((b, _))) = (shapes.get(first), shapes.get(second))
+    {
+        return CamError::TargetsCross {
+            first: a.clone(),
+            second: b.clone(),
+        };
+    }
+    CamError::Geometry(error)
+}
+
+/// A warning about `shape`, with its `instance`, `instance_name`, and
+/// `profile` params set.
+fn shape_warning(code: WarningCode, shape: &ShapeRef) -> Warning {
+    Warning::new(code)
+        .with("instance", &shape.instance)
+        .with("instance_name", &shape.instance_name)
+        .with("profile", shape.profile)
+}
+
+/// True when `nested` is `input` as `nest` returns it: unchanged, or
+/// reversed to fix its winding. Both are exact copies of the same vertices,
+/// so exact equality is the right test.
+fn same_contour(input: &Contour, nested: &Contour) -> bool {
+    input == nested || &input.reversed() == nested
+}
+
+/// Appends the moves that cut `path` at every pass Z (step 6): a rapid to
+/// its start at safe Z, then per pass a vertical descent at the plunge rate
+/// and one lap at the feed rate back to the start, then a vertical rapid
+/// retract to safe Z. Between passes the tool is already at the start, so
+/// it descends straight to the next pass without retracting.
+fn emit_contour(
+    moves: &mut Vec<Move>,
+    path: &Polyline,
+    pass_z: &[f64],
+    safe_z_mm: f64,
+    rates: Rates,
+) {
+    let Some(start) = path.vertices().first().map(|v| v.point()) else {
+        return;
+    };
+    let segments: Vec<_> = path
+        .segments()
+        .filter(|s| s.start.distance_to(s.end) > EPS_MM)
+        .collect();
+    moves.reserve(pass_z.len() * (segments.len() + 1) + 2);
+    moves.push(Move::rapid(Point3::new(start.x, start.y, safe_z_mm)));
+    for &z_mm in pass_z {
+        moves.push(Move::linear(
+            Point3::new(start.x, start.y, z_mm),
+            rates.plunge_mm_min,
+        ));
+        for segment in &segments {
+            // A positive bulge, hence a positive sweep, is counter-clockwise
+            // in Y-up.
+            let kind = match segment.arc() {
+                Some(arc) if arc.sweep_rad > 0.0 => MoveKind::ArcCcw { centre: arc.centre },
+                Some(arc) => MoveKind::ArcCw { centre: arc.centre },
+                None => MoveKind::Linear,
+            };
+            moves.push(Move {
+                kind,
+                to: Point3::new(segment.end.x, segment.end.y, z_mm),
+                feed_mm_min: Some(rates.feed_mm_min),
+            });
+        }
+    }
+    moves.push(Move::rapid(Point3::new(start.x, start.y, safe_z_mm)));
 }
 
 #[cfg(test)]

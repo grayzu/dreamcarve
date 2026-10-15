@@ -5,7 +5,12 @@
 //! contour", step 5): the Z levels an operation cuts at, top to bottom.
 
 use crate::error::CamError;
+use dc_geometry::EPS_MM;
 use dc_project::OperationId;
+
+/// Most depth passes one operation may have. Bounds the work a mistyped
+/// step-down (0.0001 mm for 0.1 mm) can cause; a real job needs far fewer.
+pub const MAX_PASSES: u32 = 10_000;
 
 /// Absolute Z of each depth pass, mm, shallowest first, for a cut
 /// `depth_mm` below the top of stock `thickness_mm` thick (stock bottom at
@@ -20,7 +25,7 @@ use dc_project::OperationId;
 /// `thickness_mm + through_cut_allowance_mm` by more than
 /// [`dc_geometry::EPS_MM`], and with [`CamError::InvalidDepth`] or
 /// [`CamError::InvalidStepDown`] when either is not a positive finite
-/// number. `op` names the operation in the error.
+/// number or the depth would need more than [`MAX_PASSES`] passes. `op` names the operation in the error.
 pub fn pass_z_mm(
     op: &OperationId,
     thickness_mm: f64,
@@ -28,14 +33,42 @@ pub fn pass_z_mm(
     step_down_mm: f64,
     through_cut_allowance_mm: f64,
 ) -> Result<Vec<f64>, CamError> {
-    let _ = (
-        op,
-        thickness_mm,
-        depth_mm,
+    if !(depth_mm.is_finite() && depth_mm > 0.0) {
+        return Err(CamError::InvalidDepth {
+            op: op.clone(),
+            depth_mm,
+        });
+    }
+    let invalid_step = || CamError::InvalidStepDown {
+        op: op.clone(),
         step_down_mm,
-        through_cut_allowance_mm,
-    );
-    todo!("#10")
+    };
+    let max_passes = f64::from(MAX_PASSES);
+    if !(step_down_mm.is_finite() && step_down_mm > 0.0)
+        || (depth_mm - EPS_MM) / step_down_mm >= max_passes
+    {
+        return Err(invalid_step());
+    }
+    let limit_mm = thickness_mm + through_cut_allowance_mm;
+    if depth_mm > limit_mm + EPS_MM {
+        return Err(CamError::BelowMaterialBottom {
+            op: op.clone(),
+            depth_mm,
+            limit_mm,
+        });
+    }
+    let mut z_mm = Vec::new();
+    // k · step rather than a running sum, so rounding does not accumulate.
+    for k in 1..=MAX_PASSES {
+        let d_mm = (f64::from(k) * step_down_mm).min(depth_mm);
+        if depth_mm - d_mm <= EPS_MM {
+            z_mm.push(thickness_mm - depth_mm);
+            return Ok(z_mm);
+        }
+        z_mm.push(thickness_mm - d_mm);
+    }
+    // Unreachable: the pass count was checked against MAX_PASSES above.
+    Err(invalid_step())
 }
 
 #[cfg(test)]
@@ -94,6 +127,12 @@ mod tests {
             let err = pass_z_mm(&op(), 12.0, 6.0, step, 0.0).unwrap_err();
             assert!(matches!(err, CamError::InvalidStepDown { .. }), "{err:?}");
         }
+    }
+
+    #[test]
+    fn step_down_needing_too_many_passes_is_error() {
+        let err = pass_z_mm(&op(), 12.0, 12.0, 1e-6, 0.0).unwrap_err();
+        assert!(matches!(err, CamError::InvalidStepDown { .. }), "{err:?}");
     }
 
     #[test]

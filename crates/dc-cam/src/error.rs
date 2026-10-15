@@ -93,8 +93,13 @@ pub enum CamError {
         /// The tool's name.
         tool: String,
     },
-    /// The step-down in effect is not a positive number.
-    #[error("operation `{op}` has step-down {step_down_mm} mm; it must be more than 0")]
+    /// The step-down in effect is not a positive number, or is so small
+    /// that the depth would need more than
+    /// [`crate::passes::MAX_PASSES`] passes.
+    #[error(
+        "operation `{op}` has step-down {step_down_mm} mm; it must be more than 0 and give at most {max} passes",
+        max = crate::passes::MAX_PASSES
+    )]
     InvalidStepDown {
         /// The operation.
         op: OperationId,

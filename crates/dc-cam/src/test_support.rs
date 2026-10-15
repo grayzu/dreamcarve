@@ -106,3 +106,95 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dc_geometry::Point3;
+    use dc_project::Operation;
+    use dc_project::test_support::sample_project;
+
+    /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
+    /// plunge 300) and its profile operation.
+    fn fixture() -> (Project, ProfileOp) {
+        let project = sample_project();
+        let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
+            panic!("sample project has a profile operation");
+        };
+        (project, op)
+    }
+
+    /// Rapid in, plunge to `z`, one cut, retract: safe when `z` ≥ 0.
+    fn one_cut(z: f64) -> Vec<Move> {
+        vec![
+            Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+            Move::linear(Point3::new(0.0, 0.0, z), 300.0),
+            Move::linear(Point3::new(10.0, 0.0, z), 1000.0),
+            Move::rapid(Point3::new(10.0, 0.0, 11.0)),
+        ]
+    }
+
+    fn check(moves: Vec<Move>) {
+        let (project, op) = fixture();
+        assert_safe(&Toolpath { moves }, &project, &op);
+    }
+
+    #[test]
+    fn accepts_a_safe_cut() {
+        check(one_cut(0.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "below stock bottom")]
+    fn rejects_cut_below_bottom() {
+        check(one_cut(-0.1));
+    }
+
+    #[test]
+    #[should_panic(expected = "must be a rapid at safe Z")]
+    fn rejects_first_move_below_safe_z() {
+        let mut moves = one_cut(0.0);
+        moves[0].to.z = 10.0;
+        check(moves);
+    }
+
+    #[test]
+    #[should_panic(expected = "moves in XY from below safe Z")]
+    fn rejects_rapid_across_from_depth() {
+        let mut moves = one_cut(0.0);
+        moves[3].to.x = 20.0;
+        check(moves);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no feed")]
+    fn rejects_cut_without_feed() {
+        let mut moves = one_cut(0.0);
+        moves[2].feed_mm_min = None;
+        check(moves);
+    }
+
+    #[test]
+    #[should_panic(expected = "not plunge")]
+    fn rejects_descent_at_cutting_feed() {
+        let mut moves = one_cut(0.0);
+        moves[1].feed_mm_min = Some(1000.0);
+        check(moves);
+    }
+
+    #[test]
+    #[should_panic(expected = "carries a feed")]
+    fn rejects_rapid_with_feed() {
+        let mut moves = one_cut(0.0);
+        moves[3].feed_mm_min = Some(1000.0);
+        check(moves);
+    }
+
+    #[test]
+    #[should_panic(expected = "ends below safe Z")]
+    fn rejects_ending_in_the_stock() {
+        let mut moves = one_cut(0.0);
+        moves.pop();
+        check(moves);
+    }
+}
