@@ -85,6 +85,151 @@ mod tests {
         }
     }
 
+    /// G-code words on a line, outside `( )` and `;` comments, upper-cased.
+    fn words(line: &str) -> Vec<String> {
+        let code = line.split(';').next().unwrap_or("");
+        let mut out = String::new();
+        let mut depth = 0u32;
+        for c in code.chars() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                _ if depth == 0 => out.push(c),
+                _ => {}
+            }
+        }
+        out.split_whitespace().map(str::to_uppercase).collect()
+    }
+
+    fn has_word(lines: &[String], word: &str) -> bool {
+        lines.iter().any(|l| words(l).iter().any(|w| w == word))
+    }
+
+    // Each check below was verified against the controllers' own source and
+    // docs; see definitions/README.md, "Verification".
+
+    #[test]
+    fn bundled_definitions_select_a_work_coordinate_system() {
+        // S5: a controller left in another WCS is corrected.
+        for post in bundled().unwrap() {
+            let wcs = post
+                .work_coordinates
+                .select_command
+                .as_deref()
+                .unwrap_or("");
+            assert_eq!(wcs, "G54", "{}", post.id);
+        }
+    }
+
+    #[test]
+    fn bundled_headers_set_modal_state() {
+        // S5 in spirit: absolute, XY plane, units-per-minute feed (not G93
+        // inverse time, which changes what F means), and the units command.
+        for post in bundled().unwrap() {
+            let h = &post.program.header;
+            for word in ["G90", "G17", "G94"] {
+                assert!(has_word(h, word), "{} header lacks {word}", post.id);
+            }
+            assert!(h.iter().any(|l| l == "{unitsCommand}"), "{}", post.id);
+        }
+    }
+
+    #[test]
+    fn bundled_footers_stop_the_spindle() {
+        // S4: stopped in the footer, not left to M30's side effect.
+        for post in bundled().unwrap() {
+            let off = post.feed_speed.spindle_off.to_uppercase();
+            assert!(has_word(&post.program.footer, &off), "{}", post.id);
+        }
+    }
+
+    #[test]
+    fn bundled_footers_make_no_machine_coordinate_moves() {
+        // G53 Z0 trips grblHAL soft limits when homed, and on an unhomed
+        // machine machine Z0 is wherever Z was at power-on.
+        for post in bundled().unwrap() {
+            assert!(!has_word(&post.program.footer, "G53"), "{}", post.id);
+        }
+    }
+
+    #[test]
+    fn bundled_tool_changes_stop_the_spindle_and_pause_once() {
+        // GRBL rejects M6; grblHAL ignores M6 without T and otherwise needs
+        // a sender that speaks its tool-change protocol. A single M0 after
+        // M5 works on both; M0 is a feed hold that leaves the spindle on.
+        for post in bundled().unwrap() {
+            let tc = &post.tool_change;
+            assert!(tc.stop_spindle_first, "{}", post.id);
+            assert!(!has_word(&tc.commands, "M6"), "{}", post.id);
+            let off = post.feed_speed.spindle_off.to_uppercase();
+            let first_off = tc.commands.iter().position(|l| words(l).contains(&off));
+            let first_pause = tc
+                .commands
+                .iter()
+                .position(|l| words(l).iter().any(|w| w == "M0"));
+            assert!(
+                matches!((first_off, first_pause), (Some(o), Some(p)) if o < p),
+                "{}: spindle must stop before the pause",
+                post.id
+            );
+            let pauses = tc
+                .commands
+                .iter()
+                .filter(|l| words(l).iter().any(|w| w == "M0"))
+                .count()
+                + usize::from(tc.pause_after_change);
+            assert_eq!(pauses, 1, "{}: one cycle start per tool change", post.id);
+        }
+    }
+
+    #[test]
+    fn bundled_templates_use_only_known_placeholders() {
+        // The placeholders `emit` fills (docs/specs/phase-1/design.md,
+        // "Emission"); anything else would reach the machine as literal text.
+        const KNOWN: [&str; 8] = [
+            "programName",
+            "date",
+            "unitsCommand",
+            "wcsCommand",
+            "operationIndex",
+            "operationName",
+            "toolNumber",
+            "toolName",
+        ];
+        for post in bundled().unwrap() {
+            let p = &post.program;
+            let lines = p
+                .header
+                .iter()
+                .chain(&p.operation_header)
+                .chain(&p.footer)
+                .chain(&post.tool_change.commands);
+            for line in lines {
+                let mut rest = line.as_str();
+                while let Some(start) = rest.find('{') {
+                    let after = &rest[start + 1..];
+                    let end = after.find('}').unwrap();
+                    let name = &after[..end];
+                    assert!(KNOWN.contains(&name), "{}: unknown {{{name}}}", post.id);
+                    rest = &after[end + 1..];
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_text_has_no_real_time_command_bytes() {
+        // GRBL and grblHAL act on '!', '~', '?' and every byte above 0x7F
+        // the moment they arrive, even inside a comment.
+        for (file, text) in BUNDLED_SOURCES {
+            let bad: Vec<char> = text
+                .chars()
+                .filter(|c| !c.is_ascii() || matches!(c, '!' | '~' | '?'))
+                .collect();
+            assert!(bad.is_empty(), "{file} contains {bad:?}");
+        }
+    }
+
     #[test]
     fn dc_project_fixture_matches_bundled_grbl() {
         // dc-project's tests embed a copy of grbl.json; it must not drift.
