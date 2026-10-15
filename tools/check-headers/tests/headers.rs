@@ -4,6 +4,9 @@
 //! Tests for the license header checker (`docs/specs/phase-0/design.md`,
 //! "Test plan").
 
+// Test helpers may panic on setup failure (docs/rust-guidelines.md, "Toolchain").
+#![allow(clippy::expect_used)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

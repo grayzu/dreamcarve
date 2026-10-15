@@ -10,6 +10,7 @@ members = [
     "crates/dc-gcode",
     "crates/dc-import",
     "crates/dreamcarve",
+    "tools/check-headers",
 ]
 
 [workspace.package]
