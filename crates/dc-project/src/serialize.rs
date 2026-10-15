@@ -345,14 +345,25 @@ mod tests {
     }
 
     #[test]
-    fn post_processor_round_trips_unchanged() {
+    fn edited_post_processor_round_trips() {
         let mut p = sample_project();
-        p.post_processor = crate::EmbeddedPostProcessor(serde_json::json!({
-            "id": "custom",
-            "motion": { "rapidCommand": "G0", "linearCommand": "G1" },
-            "number_format": { "decimals": 3 }
-        }));
+        p.post_processor.id = "my-router".into();
+        p.post_processor.file_extension = "gcode".into();
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert_eq!(loaded.project, p);
+    }
+
+    #[test]
+    fn unknown_post_processor_field_is_rejected() {
+        let text = V1_FIXTURE.replacen(
+            "  \"post_processor\": {\n",
+            "  \"post_processor\": {\n    \"colour\": \"red\",\n",
+            1,
+        );
+        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        assert!(matches!(
+            load(text.as_bytes()),
+            Err(LoadError::Schema { .. })
+        ));
     }
 }

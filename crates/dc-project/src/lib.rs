@@ -10,6 +10,7 @@
 mod ids;
 mod migrate;
 mod model;
+mod post_processor;
 mod serialize;
 mod validate;
 
@@ -19,9 +20,13 @@ pub mod test_support;
 pub use ids::{DefinitionId, InstanceId, OperationId, ToolId};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
-    CutDirection, EmbeddedPostProcessor, FeatureDefinition, FeatureInstance, MachineOrigin,
-    Operation, OriginXy, OriginZ, ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec,
-    Tool, ToolKind, Units,
+    CutDirection, FeatureDefinition, FeatureInstance, MachineOrigin, Operation, OriginXy, OriginZ,
+    ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
+};
+pub use post_processor::{
+    ArcFormat, Axis, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces, FeedSpeed, Motion,
+    NumberFormat, PostProcessor, ProgramFormat, RetractMode, Stop, ToolChange, UnitCommands,
+    WorkCoordinates,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use validate::{Problem, Severity, validate};

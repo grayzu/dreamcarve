@@ -13,6 +13,7 @@
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
+use crate::post_processor::PostProcessor;
 use dc_geometry::{Polyline, Transform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -46,7 +47,7 @@ pub struct Project {
     /// Machining operations, in cutting order.
     pub operations: Vec<Operation>,
     /// Embedded copy of the post-processor definition (ADR-0002).
-    pub post_processor: EmbeddedPostProcessor,
+    pub post_processor: PostProcessor,
 }
 
 /// Display units for the CLI and new projects.
@@ -338,13 +339,3 @@ pub enum TabShape {
     /// Raised-cosine ramp.
     Smooth,
 }
-
-/// The project's embedded post-processor definition, held as raw JSON.
-///
-/// Temporary placeholder: the typed `PostProcessor` struct moves into
-/// `dc-project` in a separate change (#9) and replaces this type. Until
-/// then the definition round-trips unchanged and [`crate::validate`] only
-/// checks that it is a JSON object.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct EmbeddedPostProcessor(pub serde_json::Value);

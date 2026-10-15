@@ -85,8 +85,6 @@ pub enum Problem {
         /// Path to the field.
         field: String,
     },
-    /// The embedded post-processor is not a JSON object.
-    PostProcessorNotObject,
     /// An operation is disabled and will not be exported.
     OperationDisabled {
         /// The disabled operation.
@@ -114,8 +112,7 @@ impl Problem {
             | Self::DanglingTool { .. }
             | Self::DanglingInstance { .. }
             | Self::OutOfRange { .. }
-            | Self::NonFinite { .. }
-            | Self::PostProcessorNotObject => Severity::Error,
+            | Self::NonFinite { .. } => Severity::Error,
         }
     }
 
@@ -158,9 +155,6 @@ impl fmt::Display for Problem {
                 expected,
             } => write!(f, "{field} is {value}, expected {expected}"),
             Self::NonFinite { field } => write!(f, "{field} is not a finite number"),
-            Self::PostProcessorNotObject => {
-                write!(f, "post_processor is not a JSON object")
-            }
             Self::OperationDisabled { operation } => {
                 write!(
                     f,
@@ -344,10 +338,6 @@ impl Validator {
                 self.positive(&format!("{at}.tabs.width_mm"), tabs.width_mm);
                 self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
             }
-        }
-
-        if !p.post_processor.0.is_object() {
-            self.problems.push(Problem::PostProcessorNotObject);
         }
     }
 
@@ -574,13 +564,6 @@ mod tests {
         let problems = validate(&p);
         assert_eq!(problems.len(), 1);
         assert!(matches!(problems[0], Problem::DefinitionKeyMismatch { .. }));
-    }
-
-    #[test]
-    fn non_object_post_processor_is_error() {
-        let mut p = sample_project();
-        p.post_processor = crate::EmbeddedPostProcessor(serde_json::json!("grbl"));
-        assert_eq!(validate(&p), vec![Problem::PostProcessorNotObject]);
     }
 
     #[test]

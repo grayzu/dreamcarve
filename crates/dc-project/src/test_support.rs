@@ -7,12 +7,23 @@
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
-    CutDirection, EmbeddedPostProcessor, FeatureDefinition, FeatureInstance, MachineOrigin,
-    Operation, OriginXy, OriginZ, ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec,
-    Tool, ToolKind, Units,
+    CutDirection, FeatureDefinition, FeatureInstance, MachineOrigin, Operation, OriginXy, OriginZ,
+    ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
 };
+use crate::post_processor::PostProcessor;
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
 use std::collections::BTreeMap;
+
+/// The GRBL post-processor: a copy of `dc-gcode`'s bundled `grbl.json`,
+/// kept identical by a test in `dc-gcode`.
+#[allow(
+    clippy::expect_used,
+    reason = "fixed fixture file; a parse failure is a broken test setup"
+)]
+pub fn grbl_post_processor() -> PostProcessor {
+    serde_json::from_str(include_str!("../tests/fixtures/post/grbl.json"))
+        .expect("tests/fixtures/post/grbl.json is a valid post-processor")
+}
 
 /// A 6.35 mm two-flute up-cut end mill with every value set.
 pub fn tool_6_35_upcut() -> Tool {
@@ -85,9 +96,6 @@ pub fn sample_project() -> Project {
                 shape: TabShape::Rect,
             }),
         })],
-        post_processor: EmbeddedPostProcessor(serde_json::json!({
-            "id": "grbl",
-            "name": "GRBL"
-        })),
+        post_processor: grbl_post_processor(),
     }
 }
