@@ -5,12 +5,18 @@
 
 # Quick start
 
-- [Build DreamCarve from source](quick-start/build-from-source.md)
+- [Installing](quick-start/installing.md)
+- [Your first cut from an SVG](quick-start/first-cut.md)
 
 # User guide
 
 - [Overview](user-guide/overview.md)
+- [The project file](user-guide/project-file.md)
 - [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
+- [Profile operation](user-guide/profile.md)
+- [Tabs](user-guide/tabs.md)
+- [Post-processors](user-guide/post-processors.md)
+- [Safety](user-guide/safety.md)
 
 # Contributing
 
@@ -18,4 +24,5 @@
 - [Crate map](contributing/crate-map.md)
 - [How work flows](contributing/how-work-flows.md)
 - [Porting from PureCutCNC](contributing/porting.md)
+- [Golden corpus](contributing/golden-corpus.md)
 - [Licensing](contributing/licensing.md)

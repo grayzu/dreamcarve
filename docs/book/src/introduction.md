@@ -14,10 +14,12 @@ and its outputs form the golden corpus our tests compare against.
 ## Where the project is
 
 Development runs in phases, each ending in a working product. The
-[Roadmap](roadmap.md) lists them. Phase 0 is the scaffold: a Cargo workspace,
-continuous integration on Windows, macOS, and Linux, releases, and this site.
-Nothing cuts anything yet. Phase 1 brings the first G-code: a command line
-tool that imports an SVG and writes a Profile toolpath for a grblHAL machine.
+[Roadmap](roadmap.md) lists them. Phase 0 built the scaffold: a Cargo
+workspace, continuous integration on Windows, macOS, and Linux, releases,
+and this site. Phase 1 brings the first G-code: a command line tool that
+imports an SVG and writes a Profile toolpath, with holding tabs, for a
+grblHAL or GRBL machine. Start with
+[Your first cut from an SVG](quick-start/first-cut.md).
 
 ## Who this site is for
 
