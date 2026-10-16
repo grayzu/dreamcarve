@@ -270,10 +270,14 @@ Inputs: project, op. Output: toolpath in project space.
    change); then moves. After the last op of a tool, `spindle_off` before a
    tool change, and at the end unless the footer has it.
    With manual spindle control: no spindle words and no dwell. Lines of the
-   tool-change block and footer that only stop the spindle are left out.
-   Before the first move of each tool, retract to safe Z, then
-   `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
-   leaving out the speed when the tool has none. After the last op of a tool
+   tool-change block and footer that only stop the spindle are left out, and
+   so are tool-change lines that only pause (`M0`, `M1`) and
+   `pause_after_change`. Before the first move of each tool, retract to safe
+   Z, then one pause for the tool change and the router:
+   `M0 (MSG, Fit T{n} {name}. Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
+   leaving out the speed when the tool has none and the `Fit` part when the
+   tool-change block had no pause; the name is shortened so the message
+   stays within 96 characters. After the last op of a tool
    (before a tool change, and at the end), retract to safe Z, then
    `M0 (MSG, Turn the router OFF.)`. The message is always a `( )` comment,
    whatever the dialect's comment syntax, passes the comment sanitizer, and

@@ -113,8 +113,9 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   post-processor's spin-up dwell (default 3 s) before the first cutting move,
   and stopped in the footer. With manual spindle control the program sends
   no `M3`, `M5` or `S` word and no dwell. Before the first cutting move of
-  each tool it retracts to safe Z and pauses with `M0` and a message to turn
-  the router on (with the tool's RPM as a hint, if set); before each tool
+  each tool it retracts to safe Z and pauses with `M0` and a message to fit
+  the tool and turn the router on (with the tool's RPM as a hint, if set),
+  one stop in place of the tool-change pause; before each tool
   change and at the end it retracts to safe Z and pauses with `M0` and a
   message to turn the router off. The safety pass checks that each tool's
   first cutting move follows an `M0` issued at safe Z after the last retract
