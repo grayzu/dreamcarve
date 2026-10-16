@@ -409,6 +409,7 @@ impl Validator {
 mod tests {
     use super::*;
     use crate::model::{Operation, ToolKind};
+    use crate::post_processor::SpindleControl;
     use crate::test_support::sample_project;
 
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
@@ -460,6 +461,25 @@ mod tests {
         let problems = validate(&p);
         assert_eq!(problems.len(), 2);
         assert!(errors(&problems).is_empty());
+    }
+
+    /// #34, S3 (manual): with the router switched by hand, the speed is
+    /// only a hint in the pause message, so an unset one is not reported.
+    /// Feed and plunge still are.
+    #[test]
+    fn unset_rpm_is_not_reported_with_manual_spindle_control() {
+        let mut p = sample_project();
+        p.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+        p.tools[0].rpm = None;
+        assert_eq!(validate(&p), vec![]);
+        p.tools[0].plunge_mm_min = None;
+        assert_eq!(
+            validate(&p),
+            vec![Problem::ToolValueUnset {
+                tool: ToolId::new("t1"),
+                field: "plunge_mm_min",
+            }]
+        );
     }
 
     #[test]

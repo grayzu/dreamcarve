@@ -215,6 +215,18 @@ pub enum ExportError {
     /// S4: the program ends without stopping the spindle after its last move.
     #[error("the program does not stop the spindle after its last move")]
     SpindleNotStopped,
+    /// S4 (manual spindle control): a tool's first cut is not preceded by
+    /// an `M0`, at safe Z and after the previous cut, for the user to turn
+    /// the router on.
+    #[error("emitted line {line} cuts before a pause, at safe Z, to turn the router on")]
+    RouterNotStarted {
+        /// 1-based line number of the cut.
+        line: usize,
+    },
+    /// S4 (manual spindle control): the program has no `M0` at safe Z after
+    /// its last cut for the user to turn the router off.
+    #[error("the program does not pause, at safe Z, to turn the router off after its last cut")]
+    RouterNotStopped,
     /// A G2/G3 line whose start and end radii differ by more than GRBL and
     /// grblHAL accept (0.005 mm and 0.1 % of the radius).
     #[error(

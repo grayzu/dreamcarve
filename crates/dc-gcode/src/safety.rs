@@ -411,7 +411,7 @@ mod tests {
     use dc_cam::{Move, generate_profile};
     use dc_geometry::Point3;
     use dc_project::test_support::sample_project;
-    use dc_project::{Operation, Project};
+    use dc_project::{Operation, Project, SpindleControl};
 
     /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
     /// plunge 300, 18000 rpm, GRBL), its operation, and its tool.
@@ -448,7 +448,13 @@ mod tests {
     /// Runs the safety pass on hand-written `text` as if it were the whole
     /// of the fixture's operation.
     fn check_text(text: &str) -> Result<(), ExportError> {
-        let (project, op, tool) = fixture();
+        check_text_as(text, SpindleControl::Automatic)
+    }
+
+    /// [`check_text`] with spindle control set to `control`.
+    fn check_text_as(text: &str, control: SpindleControl) -> Result<(), ExportError> {
+        let (mut project, op, tool) = fixture();
+        project.post_processor.feed_speed.spindle_control = control;
         let transform = MachineTransform::new(&project).unwrap();
         let toolpath = Toolpath::default();
         let lines = text.lines().count() + 1;
@@ -657,5 +663,77 @@ mod tests {
             matches!(result, Err(ExportError::BelowMaterialBottom { .. })),
             "{result:?}"
         );
+    }
+
+    /// Runs the safety pass on `text` as [`check_text`] does, with the
+    /// router switched by hand.
+    fn check_manual(text: &str) -> Result<(), ExportError> {
+        check_text_as(text, SpindleControl::Manual)
+    }
+
+    /// S4 (manual), #34: a tool's first cut must follow an `M0` issued at
+    /// safe Z after the last cut, and the program must pause again at safe
+    /// Z after its last cut. Safe Z is machine Z5 in the fixture.
+    #[test]
+    fn manual_cut_without_on_pause_is_rejected() {
+        let ok = "G21\nG54\nG0 Z5\nM0 (MSG, Turn the router ON.)\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM0 (MSG, Turn the router OFF.)\n";
+        check_manual(ok).unwrap();
+
+        let no_pause = "G21\nG54\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_manual(no_pause).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RouterNotStarted { line: 5 }),
+            "{err:?}"
+        );
+
+        // A pause before the retract, with Z unknown, does not count.
+        let before_retract = "G21\nG54\nM0\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_manual(before_retract).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RouterNotStarted { line: 6 }),
+            "{err:?}"
+        );
+
+        let no_off = "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
+        let err = check_manual(no_off).unwrap_err();
+        assert!(matches!(err, ExportError::RouterNotStopped), "{err:?}");
+
+        // No spindle word reaches a router the user switches by hand.
+        for (text, word) in [
+            ("G21\nG54\nM3\n", "M3"),
+            ("G21\nG54\nM5\n", "M5"),
+            ("G21\nG54\nS18000\n", "S18000"),
+        ] {
+            let err = check_manual(text).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == word),
+                "{text}: {err:?}"
+            );
+        }
+    }
+
+    /// S4, #34: the automatic rules stand. The fixture is automatic, a
+    /// program that starts the spindle and dwells passes, and one that
+    /// relies on an `M0` instead of `M3` is rejected.
+    #[test]
+    fn automatic_rules_unchanged() {
+        let (project, _, _) = fixture();
+        assert_eq!(
+            project.post_processor.feed_speed.spindle_control,
+            SpindleControl::Automatic
+        );
+        let ok = "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        check_text_as(ok, SpindleControl::Automatic).unwrap();
+        let manual_style = "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_text_as(manual_style, SpindleControl::Automatic).unwrap_err();
+        assert!(
+            matches!(err, ExportError::SpindleNotRunning { line: 6 }),
+            "{err:?}"
+        );
+        let no_dwell = "G21\nG54\nM3 S18000\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        assert!(matches!(
+            check_text_as(no_dwell, SpindleControl::Automatic),
+            Err(ExportError::SpindleNotUpToSpeed { line: 6 })
+        ));
     }
 }

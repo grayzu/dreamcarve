@@ -234,6 +234,24 @@ pub struct FeedSpeed {
     /// Pause after every spindle start so the spindle reaches speed before
     /// it cuts. Neither GRBL nor grblHAL waits on its own.
     pub spindle_on_dwell: SpindleDwell,
+    /// Whether the program switches the spindle, or pauses for the user to
+    /// switch the router by hand.
+    pub spindle_control: SpindleControl,
+}
+
+/// Who switches the spindle on and off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpindleControl {
+    /// The program starts the spindle with `spindle_on_cw` and the tool's
+    /// speed, dwells for spin-up, and stops it with `spindle_off`.
+    #[default]
+    Automatic,
+    /// The spindle is a router the user switches by hand. The program sends
+    /// no spindle words; it retracts to safe Z and pauses with `M0` before
+    /// each tool's first cut and after its last, with a message saying what
+    /// to do. The tool's speed, if set, appears only in the message.
+    Manual,
 }
 
 /// A dwell after the spindle starts.
@@ -372,6 +390,7 @@ mod tests {
                     command: "G4 P{seconds}".into(),
                     duration_s: 3.0,
                 },
+                spindle_control: SpindleControl::Automatic,
             },
             tool_change: ToolChange {
                 commands: vec!["M6 T{toolNumber}".into()],
@@ -409,6 +428,21 @@ mod tests {
         );
         let back: PostProcessor = serde_json::from_value(json).unwrap();
         assert_eq!(back, post);
+    }
+
+    #[test]
+    fn spindle_control_round_trips_as_snake_case() {
+        let mut post = sample();
+        for (control, text) in [
+            (SpindleControl::Automatic, "automatic"),
+            (SpindleControl::Manual, "manual"),
+        ] {
+            post.feed_speed.spindle_control = control;
+            let json = serde_json::to_value(&post).unwrap();
+            assert_eq!(json["feed_speed"]["spindle_control"], text, "{control:?}");
+            let back: PostProcessor = serde_json::from_value(json).unwrap();
+            assert_eq!(back, post, "{control:?}");
+        }
     }
 
     #[test]

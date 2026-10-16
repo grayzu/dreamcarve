@@ -67,7 +67,8 @@
     "spindle_on_dwell": {
       "command": "G4 P{seconds}",
       "duration_s": 3.0
-    }
+    },
+    "spindle_control": "automatic"
   },
   "tool_change": {
     "commands": [

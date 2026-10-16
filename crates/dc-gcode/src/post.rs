@@ -251,6 +251,28 @@ mod tests {
         }
     }
 
+    /// #34: the bundled definitions switch the spindle with M3/M5, and a
+    /// project saved before `spindle_control` existed migrates to the same.
+    #[test]
+    fn spindle_control_defaults_to_automatic() {
+        use dc_project::SpindleControl;
+        for post in bundled().unwrap() {
+            assert_eq!(
+                post.feed_speed.spindle_control,
+                SpindleControl::Automatic,
+                "{}",
+                post.id
+            );
+        }
+        let v1 = include_bytes!("../../dc-project/tests/fixtures/dcv/v1/sample.dcv");
+        let loaded = dc_project::load(v1).unwrap();
+        assert_eq!(loaded.project.version, dc_project::CURRENT_VERSION);
+        assert_eq!(
+            loaded.project.post_processor.feed_speed.spindle_control,
+            SpindleControl::Automatic
+        );
+    }
+
     #[test]
     fn dc_project_fixture_matches_bundled_grbl() {
         // dc-project's tests embed a copy of grbl.json; it must not drift.
