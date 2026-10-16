@@ -34,7 +34,9 @@ dc-import = { path = "crates/dc-import", version = "0.0.1" }
 # Geometry crates (i_overlay) are added when
 # phase 1 first uses them, so the pins are never stale.
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+# `float_roundtrip`: parse floats exactly, so a saved .dcv loads back
+# bit-identical (acceptance test 1); the default parser can be off by 1 ulp.
+serde_json = { version = "1.0", features = ["preserve_order", "float_roundtrip"] }
 thiserror = "2.0"
 clap = { version = "4.6", features = ["derive", "cargo"] }
 kurbo = "0.13"
