@@ -39,14 +39,19 @@ the GUI both call, so **pure core, thin shell**.
 Dependency direction is one way:
 
 ```
-dc-geometry → dc-project → { dc-cam, dc-gcode, dc-import } → dreamcarve (CLI, later GUI)
+dc-geometry → dc-project → { dc-cam, dc-import } → dreamcarve (CLI, later GUI)
+dc-project → dc-cam → dc-gcode → dreamcarve
 ```
+
+`dc-gcode` depends on `dc-cam` for the `Toolpath` type it writes out, and for
+nothing else.
 
 **Must**
 
 - A lower crate never imports a higher one. `dc-geometry` knows nothing about
-  tools or stock; `dc-cam` knows nothing about G-code text; `dc-gcode` knows
-  nothing about how a toolpath was generated.
+  tools or stock; `dc-cam` knows nothing about G-code text; `dc-gcode` uses
+  only `dc-cam`'s toolpath data types, never its generators, and knows nothing
+  about how a toolpath was generated.
 - Library crates do no file, terminal, clock, or network I/O. They take
   `&str` or `&[u8]` and return values. `dreamcarve` owns `std::fs`, `std::env`,
   exit codes, and all printing. (`dc-project::load` parses bytes; the binary
