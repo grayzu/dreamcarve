@@ -154,10 +154,16 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         )));
     };
 
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| args.dcv.with_extension(&program.extension));
+    let output = match &args.output {
+        Some(path) => path.clone(),
+        None => args.dcv.with_extension(safe_extension(&program.extension)?),
+    };
+    if same_file(&output, &args.dcv) {
+        return Err(Failure::error(format!(
+            "refusing to write the program over the project file {}",
+            args.dcv.display()
+        )));
+    }
     // Stage everything before moving anything into place.
     let staged_program = StagedFile::write(&output, program.text.as_bytes())?;
     let staged_project = match &args.post {
@@ -174,6 +180,35 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
 
     report(&loaded, &program, &output, args);
     Ok(ExitCode::SUCCESS)
+}
+
+/// Longest output file extension accepted.
+const MAX_EXTENSION_CHARS: usize = 8;
+
+/// The post-processor's output extension, if it is safe to append to the
+/// project's file name. A `.dcv` embeds its post-processor, so a shared
+/// project chooses this value: it must be 1 to 8 ASCII letters or digits
+/// (never a path) and must not be `dcv`, which would replace the project.
+fn safe_extension(extension: &str) -> Result<&str, Failure> {
+    let plain = !extension.is_empty()
+        && extension.len() <= MAX_EXTENSION_CHARS
+        && extension.chars().all(|c| c.is_ascii_alphanumeric());
+    if plain && !extension.eq_ignore_ascii_case("dcv") {
+        Ok(extension)
+    } else {
+        Err(Failure::error(format!(
+            "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_EXTENSION_CHARS} letters or digits and not `dcv`",
+            extension.escape_default()
+        )))
+    }
+}
+
+/// True if `a` and `b` name the same existing file.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Prints the export summary: the file written, then one line per
