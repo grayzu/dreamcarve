@@ -189,6 +189,13 @@ dc-geometry → dc-project → { dc-cam, dc-gcode, dc-import } → dreamcarve (C
 - Test names state the behaviour, not the function:
   `profile_outside_climb_is_clockwise`, `export_fails_when_tool_has_no_feed`,
   `offset_of_ccw_contour_stays_ccw`.
+- A test whose name does not explain it fully carries a `///` comment above
+  `#[test]` saying what it shows and why the expected value is right, citing
+  its source: a spec rule (`S4`), a ported PureCutCNC test, or a controller
+  fact (grblHAL `gcode.c`). Comments in the body explain single steps.
+- Assertions in loops, and any whose failure would not name the case, carry
+  a message with the case and the offending value:
+  `assert!(z >= floor, "move {i} cuts below the floor: {mv:?}")`.
 - Float assertions use `assert_approx_eq!(a, b, tol)` from the shared test
   helper with an explicit tolerance. `assert_eq!` on `f64` is a lint error.
 - Every emitted-motion test checks at least: no Z below
