@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -105,6 +105,11 @@ async function main(): Promise<void> {
     `${e.canonicalize(emitted.map(({ operation, toolpath }) => ({ operationId: operation.id, toolpath })))}\n`,
   )
 
+  // Case notes (`cases/<name>.notes.md`) are README bullets the script
+  // cannot derive: the tolerance, the equivalent DreamCarve project, and
+  // intentional differences. They are copied in as written.
+  const notesPath = join(here, 'cases', `${caseName}.notes.md`)
+  const notes = existsSync(notesPath) ? readFileSync(notesPath, 'utf8').trimEnd().split('\n') : []
   const meta = project.meta as Json
   const readme = [
     `# Golden case: ${caseName}`,
@@ -116,8 +121,7 @@ async function main(): Promise<void> {
     `- Post-processor: PureCutCNC builtin \`${postId}\``,
     `- Operations: ${operations.map((op) => `\`${String(op.id)}\` (${String(op.kind)})`).join(', ')}`,
     `- Header date frozen to ${FROZEN_DATE} by the capture script.`,
-    '- Tolerance: coordinates compare to 0.001 mm after DreamCarve maps its Y-up',
-    '  frame to the machine frame; PureCutCNC G-code is already machine-frame.',
+    ...notes,
     '',
     'Files: `program.nc` is the emitted G-code; `toolpath.json` is the',
     'key-sorted toolpath per operation in PureCutCNC\'s internal (Y-down) frame.',
