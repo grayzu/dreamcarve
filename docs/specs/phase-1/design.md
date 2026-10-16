@@ -155,7 +155,9 @@ Serialization: serde + serde_json, pretty-printed, keys in declaration order.
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
-disabled operations, unset feeds as warnings). A file with a newer version
+an unsafe post-processor `file_extension`; disabled operations, unset tool
+feeds and open profiles as warnings). Tool problems name the tool by name
+and id. A file with a newer version
 fails with `LoadError::NewerVersion`.
 
 ### dc-cam
@@ -185,7 +187,8 @@ first use and validated by a test, with `bundled()` and
 `lookup(id) -> Result<PostProcessor, ExportError>`.
 
 ```rust
-pub struct Program { pub text: String, pub extension: String }
+pub struct Program { pub text: String, pub extension: String, pub pauses: Vec<Pause> }
+pub struct Pause { pub line: usize, pub message: String }
 pub fn emit(project: &Project, ops: &[(ProfileOp, Tool, Toolpath)]) -> Result<(Program, Vec<Warning>), ExportError>;
 pub fn parse_motion(text: &str) -> Vec<MachineMove>;   // test-only helper, re-exported for safety tests
 ```
@@ -429,7 +432,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::export_refuses_zero_feed_and_writes_nothing`.
 - `cli::check_reports_open_paths`.
 - `cli::posts_lists_grblhal_and_grbl`.
-- `golden::profile_outside_rect` (golden), `golden::profile_inside_circle` (golden), `golden::profile_ring` (golden), `golden::profile_tabs_circle` (golden) — per-Z-level cutting move sets match within 0.01 mm after start-point alignment; feeds equal.
+
+**dc-gcode (integration, `tests/golden.rs`)**
+- `golden::profile_outside_rect` (golden), `golden::profile_inside_circle` (golden), `golden::profile_ring` (golden), `golden::profile_tabs_circle` (golden) — per-Z-level cutting move sets match within 0.01 mm after start-point alignment; feeds equal, except the differences each case's README lists.
 
 ## Slices
 

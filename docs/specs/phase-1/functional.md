@@ -27,8 +27,9 @@ as G-code they can trust.
    containing the SVG's shapes as feature definitions and instances, a
    default stock sized to the drawing's bounds, a default origin, one
    placeholder tool, one Profile operation targeting all closed shapes, and
-   the grblHAL post-processor embedded. Placeholder values that must be set
-   by the user are obviously invalid (feeds of 0).
+   the grblHAL post-processor embedded. The placeholder tool's feed, plunge
+   rate and spindle speed are unset (`null`): `check` reports them and
+   `export` refuses until the user sets them.
 2. The user can edit the `.dcv` by hand: stock dimensions, origin, tool
    geometry and feeds, Profile side (inside, outside, on line), total depth,
    depth per pass, cut direction (climb or conventional), tabs (count, width,

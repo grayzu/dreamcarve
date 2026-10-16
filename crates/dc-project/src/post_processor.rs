@@ -20,6 +20,21 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Longest [`PostProcessor::file_extension`] accepted.
+pub const MAX_FILE_EXTENSION_CHARS: usize = 8;
+
+/// Whether `extension` is safe to append to a project's file name. A `.dcv`
+/// embeds its post-processor, so a shared project chooses this value: it
+/// must be 1 to [`MAX_FILE_EXTENSION_CHARS`] ASCII letters or digits (never
+/// a path) and not `dcv` in any case, which would replace the project.
+#[must_use]
+pub fn is_safe_file_extension(extension: &str) -> bool {
+    !extension.is_empty()
+        && extension.len() <= MAX_FILE_EXTENSION_CHARS
+        && extension.chars().all(|c| c.is_ascii_alphanumeric())
+        && !extension.eq_ignore_ascii_case("dcv")
+}
+
 /// A post-processor definition. Text fields are G-code words or templates
 /// whose `{placeholder}` tokens are filled at export.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -35,7 +50,8 @@ pub struct PostProcessor {
     pub vendor: Option<String>,
     /// True for definitions shipped with DreamCarve.
     pub builtin: bool,
-    /// Output file extension without the dot, for example `nc`.
+    /// Output file extension without the dot, for example `nc`. See
+    /// [`is_safe_file_extension`].
     pub file_extension: String,
     /// Mapping from project axes to machine axes.
     pub coordinate_system: CoordinateSystem,
