@@ -6,7 +6,7 @@
 //!
 //! Generation is `cargo about generate` with the workspace's `about.toml` and
 //! `about.hbs`. The check is independent of cargo-about: it resolves the
-//! shipped crates with `cargo metadata --filter-platform` for each dist target
+//! shipped crates with `cargo tree -e normal --target` for each dist target
 //! and requires each one to appear in the generated file under a non-empty
 //! license text.
 //!
@@ -17,8 +17,6 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use serde_json::Value;
 
 /// The generated file's name, at the workspace root and in every archive.
 pub const LICENSES_FILE: &str = "THIRD-PARTY-LICENSES";
@@ -128,63 +126,49 @@ pub fn dist_targets(dist_toml: &str) -> Result<Vec<String>, Error> {
     Ok(targets)
 }
 
-/// The third-party crates linked into `package`, from `cargo metadata` JSON:
-/// every package reachable from `package` through normal (not dev or build)
-/// dependencies, minus workspace members.
-pub fn shipped_crates(metadata_json: &str, package: &str) -> Result<BTreeSet<CrateId>, Error> {
-    let bad = |what: &str| Error::Format(format!("cargo metadata output: {what}"));
-    let meta: Value =
-        serde_json::from_str(metadata_json).map_err(|e| bad(&format!("not JSON ({e})")))?;
-    let packages = field(&meta, "packages")
-        .as_array()
-        .ok_or_else(|| bad("no `packages`"))?;
-    let nodes = field(field(&meta, "resolve"), "nodes")
-        .as_array()
-        .ok_or_else(|| bad("no `resolve.nodes`"))?;
-
-    let find_package = |id: &str| {
-        packages
-            .iter()
-            .find(|p| field(p, "id").as_str() == Some(id))
-    };
-    let root = packages
-        .iter()
-        .find(|p| field(p, "name").as_str() == Some(package) && field(p, "source").is_null())
-        .and_then(|p| field(p, "id").as_str())
-        .ok_or_else(|| bad(&format!("no workspace package `{package}`")))?;
-
-    let mut seen: BTreeSet<&str> = BTreeSet::from([root]);
-    let mut stack = vec![root];
+/// The third-party crates in `cargo tree -e normal --prefix none --format {p}`
+/// output: one `NAME vVERSION [(SOURCE)] [(proc-macro)] [(*)]` line per crate.
+///
+/// `cargo tree` resolves features the way the build does, so an optional
+/// dependency whose feature is off is absent. (`cargo metadata` lists it
+/// anyway, which is why this does not read metadata.) A line with a path
+/// source is a workspace member, DreamCarve's own code. Any other source
+/// (git, an alternate registry) is an error rather than a silent skip.
+pub fn shipped_crates(tree_output: &str) -> Result<BTreeSet<CrateId>, Error> {
+    let bad = |line: &str, why: &str| Error::Format(format!("cargo tree output: `{line}`: {why}"));
     let mut shipped = BTreeSet::new();
-    while let Some(id) = stack.pop() {
-        let node = nodes
-            .iter()
-            .find(|n| field(n, "id").as_str() == Some(id))
-            .ok_or_else(|| bad(&format!("no resolve node for `{id}`")))?;
-        for dep in field(node, "deps").as_array().into_iter().flatten() {
-            let is_normal = field(dep, "dep_kinds")
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|k| field(k, "kind").is_null());
-            let Some(dep_id) = field(dep, "pkg").as_str() else {
-                return Err(bad("a dependency without `pkg`"));
-            };
-            if !is_normal || !seen.insert(dep_id) {
-                continue;
+    let mut any = false;
+    for line in tree_output.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        any = true;
+        let mut rest = line.strip_suffix(" (*)").unwrap_or(line);
+        rest = rest.strip_suffix(" (proc-macro)").unwrap_or(rest);
+        let mut parts = rest.splitn(3, ' ');
+        let (Some(name), Some(version), source) = (parts.next(), parts.next(), parts.next()) else {
+            return Err(bad(line, "expected `NAME vVERSION`"));
+        };
+        let Some(version) = version.strip_prefix('v') else {
+            return Err(bad(line, "version does not start with `v`"));
+        };
+        match source {
+            None => {
+                shipped.insert(CrateId::new(name, version));
             }
-            stack.push(dep_id);
-            let pkg = find_package(dep_id).ok_or_else(|| bad(&format!("no package `{dep_id}`")))?;
-            if field(pkg, "source").is_null() {
-                continue; // a workspace member: DreamCarve's own code
+            Some(source) => {
+                let Some(source) = source.strip_prefix('(').and_then(|s| s.strip_suffix(')'))
+                else {
+                    return Err(bad(line, "expected `(SOURCE)` after the version"));
+                };
+                if source.contains("://") || source.starts_with("registry ") {
+                    return Err(bad(
+                        line,
+                        "git and alternate-registry crates are not supported",
+                    ));
+                }
             }
-            let (Some(name), Some(version)) =
-                (field(pkg, "name").as_str(), field(pkg, "version").as_str())
-            else {
-                return Err(bad(&format!("package `{dep_id}` has no name or version")));
-            };
-            shipped.insert(CrateId::new(name, version));
         }
+    }
+    if !any {
+        return Err(Error::Format("cargo tree printed no crates".into()));
     }
     Ok(shipped)
 }
@@ -276,23 +260,25 @@ pub fn generate(root: &Path, output: &Path) -> Result<(), Error> {
 }
 
 /// The third-party crates linked into the `dreamcarve` binary on any dist
-/// target, from `cargo metadata --filter-platform`.
+/// target, from `cargo tree -e normal --target TARGET`.
 pub fn shipped_crates_for_release(root: &Path) -> Result<BTreeSet<CrateId>, Error> {
     let targets = dist_targets(&read(&root.join("dist-workspace.toml"))?)?;
     let mut shipped = BTreeSet::new();
     for target in targets {
         let mut cmd = Command::new(cargo());
         cmd.current_dir(root)
-            .args(["metadata", "--format-version", "1", "--locked"])
-            .args(["--filter-platform", &target])
+            .args(["tree", "--locked", "--color", "never"])
+            .args(["-p", SHIPPED_PACKAGE, "-e", "normal"])
+            .args(["--prefix", "none", "--format", "{p}"])
+            .args(["--target", &target])
             .arg("--manifest-path")
             .arg(root.join("Cargo.toml"));
-        shipped.extend(shipped_crates(&run(&mut cmd)?, SHIPPED_PACKAGE)?);
+        shipped.extend(shipped_crates(&run(&mut cmd)?)?);
     }
     Ok(shipped)
 }
 
-/// Checks `licenses_file` against the crates `cargo metadata` resolves into
+/// Checks `licenses_file` against the crates `cargo tree` resolves into
 /// the shipped binary on any dist target.
 pub fn check(root: &Path, licenses_file: &Path) -> Result<Coverage, Error> {
     let shipped = shipped_crates_for_release(root)?;
@@ -335,11 +321,6 @@ pub fn dist_build_archive(root: &Path, target: &str) -> Result<PathBuf, Error> {
 pub fn archive_entries(archive: &Path) -> Result<Vec<String>, Error> {
     let out = run(Command::new("tar").arg("-tf").arg(archive))?;
     Ok(out.lines().map(str::to_owned).collect())
-}
-
-/// `value[key]` without indexing: `Null` when absent.
-fn field<'a>(value: &'a Value, key: &str) -> &'a Value {
-    value.get(key).unwrap_or(&Value::Null)
 }
 
 fn cargo() -> std::ffi::OsString {
@@ -397,56 +378,71 @@ mod tests {
         );
     }
 
-    /// root -> a (normal) -> b (normal); root -> c (build only);
-    /// root -> d (dev only); root -> ws (workspace member, normal) -> e.
-    /// Shipped: a, b and e; c and d never link into the binary, ws is ours.
-    const METADATA: &str = r#"{
-      "packages": [
-        {"id": "root", "name": "dreamcarve", "version": "0.0.1", "source": null},
-        {"id": "a", "name": "a", "version": "1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "b", "name": "b", "version": "2.1.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "c", "name": "c", "version": "0.3.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "d", "name": "d", "version": "0.4.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "ws", "name": "dc-geometry", "version": "0.0.1", "source": null},
-        {"id": "e", "name": "e", "version": "5.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index"}
-      ],
-      "resolve": {
-        "root": null,
-        "nodes": [
-          {"id": "root", "deps": [
-            {"name": "a", "pkg": "a", "dep_kinds": [{"kind": null, "target": null}]},
-            {"name": "c", "pkg": "c", "dep_kinds": [{"kind": "build", "target": null}]},
-            {"name": "d", "pkg": "d", "dep_kinds": [{"kind": "dev", "target": null}]},
-            {"name": "dc_geometry", "pkg": "ws", "dep_kinds": [{"kind": null, "target": null}]}
-          ]},
-          {"id": "a", "deps": [
-            {"name": "b", "pkg": "b", "dep_kinds": [{"kind": null, "target": null}]}
-          ]},
-          {"id": "b", "deps": []},
-          {"id": "c", "deps": []},
-          {"id": "d", "deps": []},
-          {"id": "ws", "deps": [
-            {"name": "e", "pkg": "e", "dep_kinds": [{"kind": "dev", "target": null}, {"kind": null, "target": null}]}
-          ]},
-          {"id": "e", "deps": []}
-        ]
-      }
-    }"#;
+    /// `cargo tree -e normal --prefix none --format {p}` for a binary that
+    /// links clap (with its proc-macro and that macro's dependency) and a
+    /// workspace member that links kurbo. Repeats end in `(*)`; workspace
+    /// members carry their path. Only the real feature resolver's output is
+    /// read, so an optional dependency left off (kurbo's `euclid`) never
+    /// appears and is never demanded a license.
+    const TREE: &str = "\
+dreamcarve v0.0.1 (/work/crates/dreamcarve)
+clap v4.6.7
+clap_derive v4.6.7 (proc-macro)
+heck v0.5.0
+dc-geometry v0.0.1 (/work/crates/dc-geometry)
+kurbo v0.13.1
+dc-cam v0.0.1 (D:\\a\\dreamcarve\\crates\\dc-cam)
+dc-geometry v0.0.1 (/work/crates/dc-geometry) (*)
+kurbo v0.13.1 (*)
+clap_derive v4.6.7 (proc-macro) (*)
+
+";
 
     #[test]
-    fn shipped_crates_follow_normal_dependencies_only() {
+    fn shipped_crates_are_the_third_party_lines_of_cargo_tree() {
         assert_eq!(
-            shipped_crates(METADATA, "dreamcarve").expect("metadata parses"),
-            set(&[("a", "1.0.0"), ("b", "2.1.0"), ("e", "5.0.0")]),
+            shipped_crates(TREE).expect("cargo tree output parses"),
+            set(&[
+                ("clap", "4.6.7"),
+                ("clap_derive", "4.6.7"),
+                ("heck", "0.5.0"),
+                ("kurbo", "0.13.1"),
+            ]),
         );
     }
 
     #[test]
-    fn shipped_crates_fails_for_an_unknown_package() {
+    fn shipped_crates_fails_on_empty_output() {
         assert!(
-            shipped_crates(METADATA, "nope").is_err(),
-            "an unknown root must not read as 'ships nothing'"
+            shipped_crates("\n").is_err(),
+            "no output must not read as 'ships nothing'"
         );
+    }
+
+    #[test]
+    fn shipped_crates_fails_on_an_unreadable_line() {
+        for line in ["clap", "clap 4.6.7", "clap v4.6.7 extra"] {
+            assert!(
+                shipped_crates(line).is_err(),
+                "`{line}` is not `NAME vVERSION [(SOURCE)]`"
+            );
+        }
+    }
+
+    /// Git and alternate-registry crates print a source too. Treating them
+    /// as workspace members would drop them from the check, so they fail
+    /// instead until the checker is taught about them.
+    #[test]
+    fn shipped_crates_fails_on_a_non_path_source() {
+        for line in [
+            "foo v1.0.0 (https://github.com/x/foo#0123abcd)",
+            "foo v1.0.0 (registry `mirror`)",
+        ] {
+            assert!(
+                shipped_crates(line).is_err(),
+                "`{line}` must not be read as a workspace member"
+            );
+        }
     }
 
     fn section(name: &str, crates: &[&str], text: &str) -> String {

@@ -226,6 +226,11 @@ name = "dreamcarve"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "dc-cam",
+ "dc-gcode",
+ "dc-geometry",
+ "dc-import",
+ "dc-project",
 ]
 
 [[package]]
@@ -508,7 +513,6 @@ dependencies = [
 name = "third-party-licenses"
 version = "0.0.1"
 dependencies = [
- "serde_json",
  "thiserror",
 ]
 

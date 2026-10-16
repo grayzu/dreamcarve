@@ -6,3 +6,4 @@
 # rewrites them to CRLF and the comparisons fail.
 *.dcv text eol=lf
 tests/golden/** text eol=lf
+*.nc text eol=lf
