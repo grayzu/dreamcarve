@@ -253,3 +253,73 @@ fn posts_lists_grblhal_and_grbl() {
         .collect();
     assert_eq!(ids, ["grblhal", "grbl"], "stdout was: {stdout}");
 }
+
+/// A `.dcv` embeds its post-processor, so a shared project chooses the
+/// output extension. An extension that is a path (`../x`) or names the
+/// project file itself (`dcv`) must not let `export` write outside the
+/// project's folder or overwrite the project: export fails and writes
+/// nothing.
+#[test]
+fn export_refuses_unsafe_file_extension() {
+    for (case, extension) in [
+        ("dcv", "dcv"),
+        ("traversal", "/../../escaped"),
+        ("empty", ""),
+    ] {
+        let dir = work_dir(&format!("export_refuses_extension_{case}"));
+        let dcv = init_coaster(&dir);
+        set_rates(&dcv, 1500.0, 500.0, 18000);
+        let mut project = load_file(&dcv).project;
+        project.post_processor.file_extension = extension.into();
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let before = std::fs::read(&dcv).expect("dcv readable");
+
+        let out = run(&dir, &["export", "coaster.dcv"]);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{case}: exits 1: {}",
+            stderr(&out)
+        );
+        assert!(
+            stderr(&out).contains("file extension"),
+            "{case}: stderr names the extension: {}",
+            stderr(&out)
+        );
+        assert_eq!(
+            std::fs::read(&dcv).expect("dcv readable"),
+            before,
+            "{case}: .dcv untouched"
+        );
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .map(|e| e.expect("dir entry").file_name())
+            .collect();
+        assert_eq!(names.len(), 2, "{case}: nothing new written: {names:?}");
+        assert!(
+            !dir.parent().unwrap().join("escaped").exists(),
+            "{case}: nothing escaped"
+        );
+    }
+}
+
+/// `--output` naming the project file would replace the project with
+/// G-code; export refuses it.
+#[test]
+fn export_refuses_to_overwrite_the_project() {
+    let dir = work_dir("export_refuses_overwrite_project");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+
+    let out = run(
+        &dir,
+        &["export", "coaster.dcv", "--output", "./coaster.dcv"],
+    );
+    assert_eq!(out.status.code(), Some(1), "exits 1: {}", stderr(&out));
+    assert_eq!(
+        std::fs::read(&dcv).expect("dcv readable"),
+        before,
+        ".dcv untouched"
+    );
+}
