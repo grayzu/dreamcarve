@@ -13,6 +13,7 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
+use crate::post_processor::SpindleControl;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -273,13 +274,17 @@ impl Validator {
             }
             self.required_positive(tool, "feed_mm_min", tool.feed_mm_min);
             self.required_positive(tool, "plunge_mm_min", tool.plunge_mm_min);
+            // With the router switched by hand the speed is only a hint in
+            // the pause message (#34), so it may be unset.
+            let rpm_required =
+                p.post_processor.feed_speed.spindle_control == SpindleControl::Automatic;
             match tool.rpm {
-                None => self.problems.push(Problem::ToolValueUnset {
+                None if rpm_required => self.problems.push(Problem::ToolValueUnset {
                     tool: tool.id.clone(),
                     field: "rpm",
                 }),
                 Some(0) => self.out_of_range(format!("{at}.rpm"), 0.0, POSITIVE),
-                Some(_) => {}
+                None | Some(_) => {}
             }
             if let Some(step) = tool.step_down_mm {
                 self.positive(&format!("{at}.step_down_mm"), step);
@@ -460,6 +465,25 @@ mod tests {
         let problems = validate(&p);
         assert_eq!(problems.len(), 2);
         assert!(errors(&problems).is_empty());
+    }
+
+    /// #34, S3 (manual): with the router switched by hand, the speed is
+    /// only a hint in the pause message, so an unset one is not reported.
+    /// Feed and plunge still are.
+    #[test]
+    fn unset_rpm_is_not_reported_with_manual_spindle_control() {
+        let mut p = sample_project();
+        p.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+        p.tools[0].rpm = None;
+        assert_eq!(validate(&p), vec![]);
+        p.tools[0].plunge_mm_min = None;
+        assert_eq!(
+            validate(&p),
+            vec![Problem::ToolValueUnset {
+                tool: ToolId::new("t1"),
+                field: "plunge_mm_min",
+            }]
+        );
     }
 
     #[test]

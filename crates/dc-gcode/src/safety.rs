@@ -15,7 +15,7 @@ use std::ops::Range;
 
 use dc_cam::Toolpath;
 use dc_geometry::{EPS_MM, Point3, approx_eq};
-use dc_project::{PostProcessor, ProfileOp, Tool, Units};
+use dc_project::{PostProcessor, ProfileOp, SpindleControl, Tool, ToolId, Units};
 
 use crate::ExportError;
 use crate::format::decimal_places;
@@ -58,6 +58,8 @@ pub(crate) fn check(
     check_words(&blocks)?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
+    let manual = post.feed_speed.spindle_control == SpindleControl::Manual;
+    let mut router = RouterPauses::default();
     let mut units_set = false;
     let mut wcs_set = false;
     let mut spindle_on = false;
@@ -70,6 +72,22 @@ pub(crate) fn check(
         }
         if WCS_CODES.iter().any(|&code| block.has('G', code)) {
             wcs_set = true;
+        }
+        if manual {
+            // S4 (manual): the program never touches the spindle.
+            if let Some(word) = block.words.iter().find(|w| {
+                w.letter == 'S'
+                    || (w.letter == 'M' && (is_code(w.value, 3.0) || is_code(w.value, 5.0)))
+            }) {
+                return Err(ExportError::ForbiddenWord {
+                    line,
+                    word: format!("{}{}", word.letter, word.value),
+                });
+            }
+            if block.has('M', 0.0) {
+                let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
+                router.pause(safe_z_mm);
+            }
         }
         let starts_spindle = block.has('M', 3.0);
         // S5: units and work coordinates before anything happens.
@@ -112,20 +130,35 @@ pub(crate) fn check(
         let tolerance_mm = quantum_mm(post, mv.units);
         check_depth(mv, &limits, transform, tolerance_mm)?;
         if mv.kind.is_cut() {
-            if !spindle_on || rpm.is_none_or(|s| s <= 0.0) {
-                return Err(ExportError::SpindleNotRunning { line });
-            }
-            if dwell_pending {
-                return Err(ExportError::SpindleNotUpToSpeed { line });
+            if manual {
+                router.cut(line, limits.tool.map(|t| &t.id))?;
+            } else {
+                if !spindle_on || rpm.is_none_or(|s| s <= 0.0) {
+                    return Err(ExportError::SpindleNotRunning { line });
+                }
+                if dwell_pending {
+                    return Err(ExportError::SpindleNotUpToSpeed { line });
+                }
             }
             check_feed(mv, &limits, 2.0 * tolerance_mm)?;
             check_arc(mv)?;
         } else {
             check_rapid(mv, &limits, transform, tolerance_mm)?;
         }
+        if manual && is_retract(mv) {
+            router.retracted();
+        }
+        router.moved(
+            mv.to
+                .z
+                .map(|z| (transform.project_z(z, mv.units), tolerance_mm)),
+        );
     }
     if spindle_on {
         return Err(ExportError::SpindleNotStopped);
+    }
+    if manual && router.cut_since_pause {
+        return Err(ExportError::RouterNotStopped);
     }
 
     // S6: reading the program back reproduces each toolpath.
@@ -133,6 +166,74 @@ pub(crate) fn check(
         check_reproduces(span, &blocks, post, transform)?;
     }
     Ok(())
+}
+
+/// S4 with manual spindle control: what the program has done since its
+/// last cut. A pause counts only at a known Z at or above safe Z, so the
+/// user switches the router with the bit clear of the work, and a tool's
+/// first cut needs one after the last retract, so a tool-change pause
+/// followed by the retract to safe Z does not count as the pause to turn
+/// the router on.
+#[derive(Debug, Default)]
+struct RouterPauses<'a> {
+    /// Z above stock bottom, mm, and its rounding tolerance, if known.
+    z_mm: Option<(f64, f64)>,
+    /// An `M0` at safe Z has come after the last cut and the last retract.
+    paused_at_safe_z: bool,
+    /// A cut has come after the last `M0` at safe Z.
+    cut_since_pause: bool,
+    /// The tool of the last cut.
+    tool: Option<&'a ToolId>,
+}
+
+impl<'a> RouterPauses<'a> {
+    /// The tool is now at `z_mm`, if known.
+    fn moved(&mut self, z_mm: Option<(f64, f64)>) {
+        if z_mm.is_some() {
+            self.z_mm = z_mm;
+        }
+    }
+
+    /// A retract: a pause before it does not count for the next cut.
+    fn retracted(&mut self) {
+        self.paused_at_safe_z = false;
+    }
+
+    /// An `M0` where safe Z is `safe_z_mm`.
+    fn pause(&mut self, safe_z_mm: f64) {
+        if self
+            .z_mm
+            .is_some_and(|(z, tolerance)| z >= safe_z_mm - tolerance)
+        {
+            self.paused_at_safe_z = true;
+            self.cut_since_pause = false;
+        }
+    }
+
+    /// A cut on `line` with `tool`. A tool's first cut needs a pause at
+    /// safe Z since the previous cut, for the user to switch the router on.
+    fn cut(&mut self, line: usize, tool: Option<&'a ToolId>) -> Result<(), ExportError> {
+        let first_of_tool = self.tool.is_none() || self.tool != tool;
+        if first_of_tool && !self.paused_at_safe_z {
+            return Err(ExportError::RouterNotStarted { line });
+        }
+        self.tool = tool.or(self.tool);
+        self.paused_at_safe_z = false;
+        self.cut_since_pause = true;
+        Ok(())
+    }
+}
+
+/// A retract as `emit` writes one: a rapid in Z alone that does not
+/// descend.
+fn is_retract(mv: &MachineMove) -> bool {
+    let z_only = !differs(mv.from.x, mv.to.x) && !differs(mv.from.y, mv.to.y);
+    let rises = match (mv.from.z, mv.to.z) {
+        (_, None) => false,
+        (None, Some(_)) => true,
+        (Some(from), Some(to)) => to >= from - EPS_MM,
+    };
+    mv.kind == MotionKind::Rapid && z_only && rises
 }
 
 /// `G54` to `G59`.
@@ -411,7 +512,7 @@ mod tests {
     use dc_cam::{Move, generate_profile};
     use dc_geometry::Point3;
     use dc_project::test_support::sample_project;
-    use dc_project::{Operation, Project};
+    use dc_project::{Operation, Project, SpindleControl};
 
     /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
     /// plunge 300, 18000 rpm, GRBL), its operation, and its tool.
@@ -448,7 +549,13 @@ mod tests {
     /// Runs the safety pass on hand-written `text` as if it were the whole
     /// of the fixture's operation.
     fn check_text(text: &str) -> Result<(), ExportError> {
-        let (project, op, tool) = fixture();
+        check_text_as(text, SpindleControl::Automatic)
+    }
+
+    /// [`check_text`] with spindle control set to `control`.
+    fn check_text_as(text: &str, control: SpindleControl) -> Result<(), ExportError> {
+        let (mut project, op, tool) = fixture();
+        project.post_processor.feed_speed.spindle_control = control;
         let transform = MachineTransform::new(&project).unwrap();
         let toolpath = Toolpath::default();
         let lines = text.lines().count() + 1;
@@ -657,5 +764,77 @@ mod tests {
             matches!(result, Err(ExportError::BelowMaterialBottom { .. })),
             "{result:?}"
         );
+    }
+
+    /// Runs the safety pass on `text` as [`check_text`] does, with the
+    /// router switched by hand.
+    fn check_manual(text: &str) -> Result<(), ExportError> {
+        check_text_as(text, SpindleControl::Manual)
+    }
+
+    /// S4 (manual), #34: a tool's first cut must follow an `M0` issued at
+    /// safe Z after the last cut, and the program must pause again at safe
+    /// Z after its last cut. Safe Z is machine Z5 in the fixture.
+    #[test]
+    fn manual_cut_without_on_pause_is_rejected() {
+        let ok = "G21\nG54\nG0 Z5\nM0 (MSG, Turn the router ON.)\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM0 (MSG, Turn the router OFF.)\n";
+        check_manual(ok).unwrap();
+
+        let no_pause = "G21\nG54\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_manual(no_pause).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RouterNotStarted { line: 5 }),
+            "{err:?}"
+        );
+
+        // A pause before the retract, with Z unknown, does not count.
+        let before_retract = "G21\nG54\nM0\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_manual(before_retract).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RouterNotStarted { line: 6 }),
+            "{err:?}"
+        );
+
+        let no_off = "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
+        let err = check_manual(no_off).unwrap_err();
+        assert!(matches!(err, ExportError::RouterNotStopped), "{err:?}");
+
+        // No spindle word reaches a router the user switches by hand.
+        for (text, word) in [
+            ("G21\nG54\nM3\n", "M3"),
+            ("G21\nG54\nM5\n", "M5"),
+            ("G21\nG54\nS18000\n", "S18000"),
+        ] {
+            let err = check_manual(text).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == word),
+                "{text}: {err:?}"
+            );
+        }
+    }
+
+    /// S4, #34: the automatic rules stand. The fixture is automatic, a
+    /// program that starts the spindle and dwells passes, and one that
+    /// relies on an `M0` instead of `M3` is rejected.
+    #[test]
+    fn automatic_rules_unchanged() {
+        let (project, _, _) = fixture();
+        assert_eq!(
+            project.post_processor.feed_speed.spindle_control,
+            SpindleControl::Automatic
+        );
+        let ok = "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        check_text_as(ok, SpindleControl::Automatic).unwrap();
+        let manual_style = "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_text_as(manual_style, SpindleControl::Automatic).unwrap_err();
+        assert!(
+            matches!(err, ExportError::SpindleNotRunning { line: 6 }),
+            "{err:?}"
+        );
+        let no_dwell = "G21\nG54\nM3 S18000\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        assert!(matches!(
+            check_text_as(no_dwell, SpindleControl::Automatic),
+            Err(ExportError::SpindleNotUpToSpeed { line: 6 })
+        ));
     }
 }
