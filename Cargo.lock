@@ -175,6 +175,8 @@ dependencies = [
 name = "dc-gcode"
 version = "0.0.1"
 dependencies = [
+ "dc-cam",
+ "dc-geometry",
  "dc-project",
  "serde_json",
  "thiserror",

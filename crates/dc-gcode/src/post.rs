@@ -273,6 +273,40 @@ mod tests {
     }
 
     #[test]
+    fn grblhal_and_grbl_differ_only_in_dialect() {
+        // Functional acceptance test 13: the same toolpath exported for
+        // both differs only in header, footer, comment, tool-change, and
+        // WCS lines. Strip comments and drop WCS lines; the rest, motion
+        // included, must match line for line.
+        let mut project = dc_project::test_support::sample_project();
+        let Some(dc_project::Operation::Profile(op)) = project.operations.first().cloned() else {
+            panic!("sample project has a profile operation");
+        };
+        let tool = project.tools[0].clone();
+        let (toolpath, _) = dc_cam::generate_profile(&project, &op).unwrap();
+        let ops = [(op, tool, toolpath)];
+        let mut texts = Vec::new();
+        for id in ["grblhal", "grbl"] {
+            project.post_processor = lookup(id).unwrap();
+            let (program, _) = crate::emit(&project, &ops, "2026-10-15").unwrap();
+            texts.push(program.text);
+        }
+        let strip = |text: &str| -> Vec<String> {
+            text.lines()
+                .map(|l| words(l).join(" "))
+                .filter(|l| !l.is_empty() && l != "G54")
+                .collect()
+        };
+        let (hal, grbl) = (strip(&texts[0]), strip(&texts[1]));
+        assert!(
+            hal.iter()
+                .any(|l| l.starts_with("G1") || l.starts_with("G2"))
+        );
+        assert_eq!(hal, grbl);
+        assert_ne!(texts[0], texts[1], "the comment syntax differs");
+    }
+
+    #[test]
     fn grbl_and_grblhal_differ_in_dialect() {
         let hal = lookup("grblhal").unwrap();
         let grbl = lookup("grbl").unwrap();

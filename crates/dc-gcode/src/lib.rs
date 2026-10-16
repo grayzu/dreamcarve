@@ -5,9 +5,19 @@
 //!
 //! The [`PostProcessor`] type itself lives in `dc-project`, which embeds it in
 //! every project; this crate bundles the definitions and emits G-code.
+//! [`emit`] writes a program from toolpaths, then parses it back and checks
+//! the safety rules on the text (`docs/specs/phase-1/design.md`, "Emission").
 
+pub mod emit;
 mod error;
+pub mod format;
+pub mod parse;
 pub mod post;
+mod safety;
+pub mod transform;
 
 pub use dc_project::PostProcessor;
+pub use emit::{ExportWarning, Program, emit};
 pub use error::ExportError;
+pub use parse::{MachineMove, parse_motion};
+pub use safety::MAX_LINE_CHARS;
