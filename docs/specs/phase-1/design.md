@@ -238,8 +238,8 @@ Inputs: project, op. Output: toolpath in project space.
    `width + diameter` centred on it, since the cutter's full width must clear
    the tab (ported from `toolCentreContours`). Rect tabs: split the path at
    span boundaries, lift to tab Z with a vertical linear move at plunge
-   feed, traverse at feed, descend at plunge feed. Smooth tabs: ramp
-   following `smoothTabZAt` (raised cosine), sampled per
+   feed, traverse at feed, descend at plunge feed. Smooth tabs: ramp up
+   and down at feed following `smoothTabZAt` (raised cosine), sampled per
    `smoothTabSampleFractions` at `flatten_tolerance_mm`. Tab spans that
    overlap merge. Warnings: `TabsOverlap`, `TabsOutsideCutRange`
    (ported from `applyTabWarnings`).

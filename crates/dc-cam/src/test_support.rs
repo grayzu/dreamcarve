@@ -29,8 +29,9 @@ use dc_project::{ProfileOp, Project};
 ///    (The first move's start is wherever the machine is; the
 ///    post-processor raises Z before moving in XY.)
 /// 4. **Feeds (S3).** Every linear and arc move carries `Some` positive
-///    feed. A move that lowers Z carries the tool's plunge rate; a move that
-///    changes XY without lowering Z carries the tool's feed rate.
+///    feed. A straight plunge (Z falls, XY stays) carries the tool's plunge
+///    rate; any move that changes XY, including a ramp down, carries the
+///    tool's feed rate.
 ///
 /// Panics with the offending move index on the first violation.
 pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
@@ -83,10 +84,10 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
                 let descends = mv.to.z < prev.to.z - EPS_MM;
                 let moves_xy = prev.to.xy().distance_to(mv.to.xy()) > EPS_MM
                     || !matches!(mv.kind, MoveKind::Linear);
-                if descends {
+                if descends && !moves_xy {
                     assert!(
                         approx_eq(f, plunge, EPS_MM),
-                        "descending move {i} feeds at {f}, not plunge {plunge}: {mv:?}"
+                        "plunge {i} feeds at {f}, not plunge {plunge}: {mv:?}"
                     );
                 } else if moves_xy {
                     assert!(

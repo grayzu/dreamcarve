@@ -339,8 +339,8 @@ struct Piece {
 /// lap back to the path start. Where `tabs` is given and `z_mm` lies below
 /// the tab top, the lap rises over each tab span: rect tabs with a vertical
 /// lift, a traverse at the tab top, and a vertical descent; smooth tabs
-/// along the raised cosine. Every vertical move and every move that lowers
-/// Z is at the plunge rate; every other cutting move is at the feed rate.
+/// along the raised cosine. Every vertical move is at the plunge rate; every
+/// move along the path, smooth ramps down included, is at the feed rate.
 pub(crate) fn emit_lap(
     moves: &mut Vec<Move>,
     path: &Polyline,
@@ -371,15 +371,10 @@ pub(crate) fn emit_lap(
             current = Point3::new(current.x, current.y, piece.from_z_mm);
             moves.push(Move::linear(current, rates.plunge_mm_min));
         }
-        let feed_mm_min = if piece.to.z < current.z - EPS_MM {
-            rates.plunge_mm_min
-        } else {
-            rates.feed_mm_min
-        };
         moves.push(Move {
             kind: piece.kind,
             to: piece.to,
-            feed_mm_min: Some(feed_mm_min),
+            feed_mm_min: Some(rates.feed_mm_min),
         });
         current = piece.to;
     }

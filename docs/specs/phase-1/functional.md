@@ -73,8 +73,9 @@ Clamps. Text. Stock from a shape (stock is rectangular).
    explicit through-cut allowance) fails export with an error.
 6. **Safe Z.** Every rapid move in the program is at or above safe Z in
    machine coordinates. The first motion is a rapid to safe Z.
-7. **Plunge feed.** Every move that decreases Z carries the plunge rate.
-   Every XY cutting move carries the feed rate.
+7. **Plunge feed.** Every straight plunge (Z decreases, XY stays) carries
+   the plunge rate. Every cutting move that changes XY carries the feed
+   rate, including a ramp that descends along the path.
 8. **Outside offset.** An outside Profile of a 100×50 mm rectangle with a
    6.35 mm tool traces a path whose bounding box is 106.35×56.35 mm.
 9. **Inside offset.** Same rectangle, inside, yields 93.65×43.65 mm.
