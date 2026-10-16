@@ -415,6 +415,7 @@ mod tests {
     use super::*;
     use crate::model::{Operation, ToolKind};
     use crate::test_support::sample_project;
+    use dc_geometry::{Polyline, Vertex};
 
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
         problems.iter().filter(|p| p.is_error()).collect()
@@ -450,6 +451,7 @@ mod tests {
             problems,
             vec![Problem::ToolValueUnset {
                 tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
                 field: "feed_mm_min",
             }]
         );
@@ -481,6 +483,7 @@ mod tests {
             validate(&p),
             vec![Problem::ToolValueUnset {
                 tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
                 field: "plunge_mm_min",
             }]
         );
@@ -534,7 +537,7 @@ mod tests {
         p.tools[0].diameter_mm = -1.0;
         let problems = validate(&p);
         assert!(
-            matches!(&problems[..], [Problem::OutOfRange { field, .. }] if field == "tools[t1].diameter_mm"),
+            matches!(&problems[..], [Problem::ToolOutOfRange { tool, field, .. }] if tool.as_str() == "t1" && *field == "diameter_mm"),
             "{problems:?}"
         );
     }
@@ -615,11 +618,12 @@ mod tests {
     fn problem_messages_name_the_subject() {
         let problem = Problem::ToolValueUnset {
             tool: ToolId::new("t1"),
+            name: "Set me".into(),
             field: "feed_mm_min",
         };
         assert_eq!(
             problem.to_string(),
-            "tool `t1` has no feed_mm_min; export fails until it is set"
+            "tool `Set me` (`t1`) has no feed_mm_min; export fails until it is set"
         );
     }
 
@@ -663,5 +667,82 @@ mod tests {
         let mut p = sample_project();
         p.post_processor.feed_speed.spindle_on_dwell.duration_s = 0.0;
         assert!(validate(&p).is_empty());
+    }
+
+    /// Functional spec acceptance test 2 (#40): a tool problem names the
+    /// tool as the user sees it, not only by id.
+    #[test]
+    fn tool_problems_name_the_tool() {
+        let mut p = sample_project();
+        p.tools[0].name = "Set me".into();
+        p.tools[0].feed_mm_min = Some(0.0);
+        p.tools[0].plunge_mm_min = None;
+        let messages: Vec<String> = validate(&p).iter().map(ToString::to_string).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        for (message, field) in messages.iter().zip(["feed_mm_min", "plunge_mm_min"]) {
+            for part in ["Set me", "t1", field] {
+                assert!(message.contains(part), "`{message}` names {part}");
+            }
+        }
+    }
+
+    /// Functional spec capability 8 (#40): open paths are imported but
+    /// Profile never cuts them, and `check` reports each one.
+    #[test]
+    fn open_profile_is_warning_naming_the_definition() {
+        let mut p = sample_project();
+        assert!(
+            !validate(&p)
+                .iter()
+                .any(|q| matches!(q, Problem::OpenProfile { .. })),
+            "the sample's closed rectangle is not reported"
+        );
+        let def = p
+            .definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1");
+        def.profiles.push(Polyline::new(
+            vec![Vertex::new(0.0, 40.0, 0.0), Vertex::new(50.0, 40.0, 0.0)],
+            false,
+        ));
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::OpenProfile {
+                definition: DefinitionId::new("d1"),
+                name: "Rectangle".into(),
+                profile: 1,
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("Rectangle") && message.contains("open"),
+            "{message}"
+        );
+    }
+
+    /// #36 security review (#40): a shared `.dcv` chooses its output
+    /// extension, so it must not name the project file or a path.
+    #[test]
+    fn unsafe_file_extension_is_error() {
+        for extension in ["dcv", "DCV", "", "/../x", "n c", "toolong12"] {
+            let mut p = sample_project();
+            p.post_processor.file_extension = extension.into();
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::UnsafeFileExtension {
+                    extension: extension.into()
+                }],
+                "`{extension}` is refused"
+            );
+            assert!(problems[0].is_error(), "`{extension}` is an error");
+        }
+        for extension in ["nc", "gcode", "tap", "NGC"] {
+            let mut p = sample_project();
+            p.post_processor.file_extension = extension.into();
+            assert_eq!(validate(&p), vec![], "`{extension}` is allowed");
+        }
     }
 }
