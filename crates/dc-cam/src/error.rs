@@ -165,6 +165,17 @@ pub enum CamError {
         /// What is wrong with it.
         source: GeometryError,
     },
+    /// The operation's tab settings cannot be cut: a width or height that
+    /// is not a positive number, or a distance that is not finite.
+    #[error("operation `{op}` has tab {field} {value_mm} mm; it must be a positive number")]
+    InvalidTab {
+        /// The operation.
+        op: OperationId,
+        /// Which setting: `width_mm`, `height_mm`, or `distances_mm[i]`.
+        field: String,
+        /// The value, mm.
+        value_mm: f64,
+    },
     /// Any other geometry failure.
     #[error(transparent)]
     Geometry(#[from] GeometryError),

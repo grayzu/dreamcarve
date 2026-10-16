@@ -29,8 +29,9 @@ use dc_project::{ProfileOp, Project};
 ///    (The first move's start is wherever the machine is; the
 ///    post-processor raises Z before moving in XY.)
 /// 4. **Feeds (S3).** Every linear and arc move carries `Some` positive
-///    feed. A move that lowers Z carries the tool's plunge rate; a move that
-///    changes XY without lowering Z carries the tool's feed rate.
+///    feed. A straight plunge (Z falls, XY stays) carries the tool's plunge
+///    rate; any move that changes XY, including a ramp down, carries the
+///    tool's feed rate.
 ///
 /// Panics with the offending move index on the first violation.
 pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
@@ -83,10 +84,10 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
                 let descends = mv.to.z < prev.to.z - EPS_MM;
                 let moves_xy = prev.to.xy().distance_to(mv.to.xy()) > EPS_MM
                     || !matches!(mv.kind, MoveKind::Linear);
-                if descends {
+                if descends && !moves_xy {
                     assert!(
                         approx_eq(f, plunge, EPS_MM),
-                        "descending move {i} feeds at {f}, not plunge {plunge}: {mv:?}"
+                        "plunge {i} feeds at {f}, not plunge {plunge}: {mv:?}"
                     );
                 } else if moves_xy {
                     assert!(
@@ -180,6 +181,28 @@ mod tests {
         let mut moves = one_cut(0.0);
         moves[1].feed_mm_min = Some(1000.0);
         check(moves);
+    }
+
+    /// Rapid in, plunge to 2, ramp down to 0 over 5 mm of X, cut, retract.
+    fn ramp_cut(ramp_feed: f64) -> Vec<Move> {
+        vec![
+            Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+            Move::linear(Point3::new(0.0, 0.0, 2.0), 300.0),
+            Move::linear(Point3::new(5.0, 0.0, 0.0), ramp_feed),
+            Move::linear(Point3::new(10.0, 0.0, 0.0), 1000.0),
+            Move::rapid(Point3::new(10.0, 0.0, 11.0)),
+        ]
+    }
+
+    #[test]
+    fn accepts_ramp_down_at_cutting_feed() {
+        check(ramp_cut(1000.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "not feed")]
+    fn rejects_ramp_down_at_plunge_rate() {
+        check(ramp_cut(300.0));
     }
 
     #[test]
