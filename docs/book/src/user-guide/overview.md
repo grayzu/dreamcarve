@@ -66,14 +66,19 @@ Generates the toolpaths and writes the program.
 | `--post <ID>` | Switch the project to another post-processor, save the project with it, then export. |
 
 Export writes nothing unless every step succeeds. It refuses a project with
-any error, including a tool with no feed rate, plunge rate or spindle speed.
-After the file is written it lists each operation, then every pause in the
-program:
+any error, including a tool with no feed rate, plunge rate or spindle speed
+(the speed is optional when the router is switched by hand). After the file
+is written it lists each operation, then every pause in the program. For
+the coaster with the default automatic spindle control:
 
 ```text
 Pauses (M0); resume each with cycle start:
   line 11: Tool change: T1 Set me
 ```
+
+With [manual spindle control](post-processors.md#manual-spindle-control)
+the list shows the "Fit T1 … Turn the router ON" and "Turn the router OFF"
+pauses instead.
 
 ### `dreamcarve check <dcv>`
 

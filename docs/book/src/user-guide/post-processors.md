@@ -38,10 +38,12 @@ For the coaster, with grblHAL:
 | Motion | `G0`, `G1`, `G2`, `G3` | The toolpath. Rapids (`G0`) only at or above safe Z. |
 | Footer | `M5`, `M30` | Stop the spindle; end the program. |
 
-The program pauses with `M0` for every tool change, the first one included,
-because neither controller changes a tool by itself: GRBL does not support
+With automatic spindle control the program pauses with `M0` for every tool
+change, the first one included, because neither controller changes a tool by itself: GRBL does not support
 `M6`, and grblHAL's `M6` needs a sender that speaks its tool-change
-protocol. Every pause is listed by `export`.
+protocol. Every pause is listed by `export`. With
+[manual spindle control](#manual-spindle-control) the tool-change pause is
+folded into the pause that asks you to turn the router on.
 
 ## grblHAL and GRBL compared
 
@@ -87,35 +89,41 @@ rather than a spindle the controller starts. For those, set:
 ```
 
 in `post_processor.feed_speed`. The program then sends no `M3`, `M5` or `S`
-word and no spin-up wait. Instead:
+word, no spin-up wait, and no separate tool-change pause. Instead it stops
+once per tool before it cuts, and once after:
 
 - Before each tool's first cut, it rises to safe Z and pauses:
 
   ```text
-  M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)
+  G0 Z5.000
+  M0 (MSG, Fit T1 Set me. Turn the router ON. Speed 18000 RPM. Resume to start cutting.)
   ```
 
-  Switch the router on, set its dial to the speed shown, wait until it is
-  at speed, then resume with cycle start. Without an `rpm` on the tool the
-  message leaves out the speed. With manual control `rpm` is optional; the
-  feed and plunge rates are still required.
+  Fit the tool, switch the router on, set its dial to the speed shown, wait
+  until it is at speed, then resume with cycle start. Without an `rpm` on
+  the tool the message leaves out the speed. With manual control `rpm` is
+  optional; the feed and plunge rates are still required. The `Fit …` part
+  appears when the post-processor's tool change has a pause, as both
+  bundled ones do. A long tool name is shortened so the message stays
+  within 96 characters; the router instruction is never cut.
 - After the tool's last cut, it rises to safe Z and pauses:
 
   ```text
   M0 (MSG, Turn the router OFF.)
   ```
 
-  Switch the router off and resume. The program then ends.
+  Switch the router off and resume. After the last tool the program then
+  ends. Before a second tool, the program rises to safe Z again and stops
+  with `Fit T2 … Turn the router ON. …` for the next tool.
 
-For the coaster, the program pauses three times: at the tool change, to turn
-the router on, and to turn it off. `export` lists each pause with its line
+For the coaster, the program pauses twice: to fit the bit and turn the
+router on, and to turn it off. `export` lists each pause with its line
 number:
 
 ```text
 Pauses (M0); resume each with cycle start:
-  line 10: Tool change: T1 Set me
-  line 12: Turn the router ON. Speed 18000 RPM. Resume to start cutting.
-  line 994: Turn the router OFF.
+  line 11: Fit T1 Set me. Turn the router ON. Speed 18000 RPM. Resume to start cutting.
+  line 993: Turn the router OFF.
 ```
 
 ### What the controller does with the pause
