@@ -1,0 +1,35 @@
+{{!--
+Copyright 2026 The DreamCarve Contributors
+SPDX-License-Identifier: Apache-2.0
+
+cargo-about template for THIRD-PARTY-LICENSES (see about.toml). The section
+layout (rule, "License:", "Used by:", "- NAME VERSION" lines, blank line, text)
+is parsed by tools/third-party-licenses; change both together.
+Workspace crates (no `source`) are DreamCarve itself and are left out.
+--}}
+THIRD-PARTY SOFTWARE LICENSES
+
+The dreamcarve program includes the open source Rust crates listed below.
+Each section gives a license text and the crates used under it. DreamCarve's
+own license is in LICENSE, and its attribution notices are in NOTICE.
+
+This file is generated from Cargo.lock with cargo-about
+(`cargo run -p third-party-licenses -- generate`). Do not edit it by hand.
+
+Overview:
+{{#each overview}}
+  {{{name}}} ({{{id}}}): {{count}}
+{{/each}}
+{{#each licenses}}
+
+================================================================================
+License: {{{name}}} ({{{id}}})
+Used by:
+{{#each used_by}}
+{{#if crate.source}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

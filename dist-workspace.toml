@@ -20,3 +20,9 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
+# Extra files copied into the root of every archive. LICENSE is auto-included.
+# THIRD-PARTY-LICENSES is generated before `dist build` by the steps in
+# .github/build-setup.yml (`cargo run -p third-party-licenses -- generate`).
+include = ["NOTICE", "THIRD-PARTY-LICENSES"]
+# Steps run before `dist build` on every build runner.
+github-build-setup = "../build-setup.yml"

@@ -28,8 +28,9 @@ Third-party software
 Components dual-licensed under Apache-2.0 (usvg, roxmltree, svgtypes,
 simplecss, kurbo, and others) are used under Apache-2.0. The components below
 are available only under a license that requires its copyright notice to be
-reproduced; each is used unmodified. Their full license texts are in each
-crate's source and must accompany binary distributions.
+reproduced; each is used unmodified. Release archives carry the full license
+text of every crate in the dreamcarve binary in THIRD-PARTY-LICENSES, which is
+generated from Cargo.lock at release time.
 
 - tiny-skia-path 0.12 (BSD-3-Clause), https://github.com/linebender/tiny-skia
   Copyright (c) 2011 Google Inc. All rights reserved.

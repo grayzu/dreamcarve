@@ -49,6 +49,21 @@ jobs:
         with:
           command: check licenses advisories
 
+  third-party-licenses:
+    name: third-party licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+      # Generates THIRD-PARTY-LICENSES from Cargo.lock and fails when a crate
+      # shipped in the dreamcarve binary has no license text (issue #31).
+      - name: License texts cover the shipped crates
+        run: cargo test --locked -p third-party-licenses --test ci -- --ignored --exact third_party_licenses_cover_lockfile
+
   docs:
     name: docs
     runs-on: ubuntu-latest
