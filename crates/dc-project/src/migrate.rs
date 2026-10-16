@@ -39,6 +39,7 @@ fn step(from: u32) -> Option<Step> {
 }
 
 const FLATTEN_TOLERANCE_KEY: &str = "flatten_tolerance_mm";
+const SPINDLE_CONTROL_KEY: &str = "spindle_control";
 
 /// Migrates the raw JSON root of a `.dcv` file from `from_version` to
 /// [`CURRENT_VERSION`] and sets its `version` field accordingly.
@@ -101,8 +102,19 @@ fn v0_to_v1(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
 
 /// Version 1 → 2: adds `spindle_control: "automatic"` at the end of
 /// `post_processor.feed_speed`.
-fn v1_to_v2(_root: Map<String, Value>) -> Result<Map<String, Value>, String> {
-    Err("not implemented".into())
+fn v1_to_v2(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let feed_speed = root
+        .get_mut("post_processor")
+        .and_then(|post| post.get_mut("feed_speed"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "`post_processor.feed_speed` is missing or not an object".to_owned())?;
+    if feed_speed.contains_key(SPINDLE_CONTROL_KEY) {
+        return Err(format!(
+            "a version 1 file has no `{SPINDLE_CONTROL_KEY}`, but this one does"
+        ));
+    }
+    feed_speed.insert(SPINDLE_CONTROL_KEY.into(), Value::from("automatic"));
+    Ok(root)
 }
 
 #[cfg(test)]

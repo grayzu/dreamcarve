@@ -248,7 +248,9 @@ Inputs: project, op. Output: toolpath in project space.
 ### Emission (dc-gcode::emit)
 
 1. Preconditions: every referenced tool has `feed`, `plunge`, `rpm`, else
-   `ExportError::MissingFeed`/`MissingRpm`. At least one enabled op.
+   `ExportError::MissingFeed`/`MissingRpm`. With
+   `feed_speed.spindle_control: manual`, `rpm` is optional. At least one
+   enabled op.
 2. Compute machine transform from `origin`: translation `(−ox, −oy, −oz)`
    with `oz = thickness` for `StockTop`, 0 for `StockBottom`; then axis
    mapping and sign from `coordinate_system`. No mirror of Y.
@@ -262,7 +264,17 @@ Inputs: project, op. Output: toolpath in project space.
    first op or tool change; spindle on with `S{rpm}`; then
    `feed_speed.spindle_on_dwell.command` with `{seconds}` filled, unless its
    `duration_s` is 0 (after every spindle start, including after a tool
-   change); then moves. Rapids use
+   change); then moves. After the last op of a tool, `spindle_off` before a
+   tool change, and at the end unless the footer has it.
+   With manual spindle control: no spindle words and no dwell. Lines of the
+   tool-change block and footer that only stop the spindle are left out.
+   Before the first move of each tool, retract to safe Z, then
+   `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
+   leaving out the speed when the tool has none. After the last op of a tool
+   (before a tool change, and at the end), retract to safe Z, then
+   `M0 (MSG, Turn the router OFF.)`. The message is always a `( )` comment,
+   whatever the dialect's comment syntax, passes the comment sanitizer, and
+   the pause is always `M0`, never `pause_command`. Rapids use
    `rapidCommand`, cuts `linearCommand` with `F` on change (or always, if
    `!modalFeedSpeed`). Arcs: if `motion.arcInterpolation`, emit
    `cwArcCommand`/`ccwArcCommand` with IJ (or R) per `arcFormat`; otherwise
@@ -271,7 +283,13 @@ Inputs: project, op. Output: toolpath in project space.
 6. Footer, `programEndCommand`.
 7. Safety pass over the emitted text using `parse_motion`: S1 (Z ≥ machine
    bottom − allowance), S2 (rapids at or above machine safe Z), S3 (every
-   G1/G2/G3 has an active F). A violation is `ExportError`, never a warning.
+   G1/G2/G3 has an active F), S4 (spindle running and dwelled before a cut,
+   or with manual control an `M0` at safe Z after the last retract before
+   each tool's first cut, and no `M3`, `M5` or `S` word). A violation is
+   `ExportError`, never a warning.
+8. `Program.pauses` lists every `M0` line with its 1-based line number and
+   its comment text, so the CLI can tell the user what each stop is for when
+   the sender does not show the message.
 
 ### SVG import (dc-import::svg)
 

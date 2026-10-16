@@ -13,6 +13,7 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
+use crate::post_processor::SpindleControl;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -273,13 +274,17 @@ impl Validator {
             }
             self.required_positive(tool, "feed_mm_min", tool.feed_mm_min);
             self.required_positive(tool, "plunge_mm_min", tool.plunge_mm_min);
+            // With the router switched by hand the speed is only a hint in
+            // the pause message (#34), so it may be unset.
+            let rpm_required =
+                p.post_processor.feed_speed.spindle_control == SpindleControl::Automatic;
             match tool.rpm {
-                None => self.problems.push(Problem::ToolValueUnset {
+                None if rpm_required => self.problems.push(Problem::ToolValueUnset {
                     tool: tool.id.clone(),
                     field: "rpm",
                 }),
                 Some(0) => self.out_of_range(format!("{at}.rpm"), 0.0, POSITIVE),
-                Some(_) => {}
+                None | Some(_) => {}
             }
             if let Some(step) = tool.step_down_mm {
                 self.positive(&format!("{at}.step_down_mm"), step);
@@ -409,7 +414,6 @@ impl Validator {
 mod tests {
     use super::*;
     use crate::model::{Operation, ToolKind};
-    use crate::post_processor::SpindleControl;
     use crate::test_support::sample_project;
 
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
