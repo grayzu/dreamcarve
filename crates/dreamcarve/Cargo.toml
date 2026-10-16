@@ -17,6 +17,11 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+dc-cam.workspace = true
+dc-gcode.workspace = true
+dc-geometry.workspace = true
+dc-import.workspace = true
+dc-project.workspace = true
 
 [lints]
 workspace = true
