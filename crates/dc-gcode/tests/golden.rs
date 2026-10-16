@@ -208,11 +208,16 @@ fn profile_ring() {
 /// - **Tabs are placed along the path.** DreamCarve raises
 ///   `width + diameter` = 14.35 mm of tool-centre path per tab. PureCutCNC
 ///   raises the part of the path inside a world rectangle grown by the tool
-///   radius, which on a curve is a different length. The `.camj` tabs are
+///   radius, which on this curve is 0.054 mm longer. The `.camj` tabs are
 ///   7.947 mm wide so that PureCutCNC's raised span on this 48.175 mm
 ///   radius path is also 14.35 mm long, and they sit where DreamCarve's
-///   `Count(4)` puts its tabs: the outline starts 45° round from +X, so the
-///   first tab centre, an eighth of the path later, is at +X.
+///   `Count(4)` puts its tabs: the circle is placed rotated 45°, so its
+///   path starts on a diagonal and the tab centres, an eighth of the path
+///   from the start and a quarter apart, fall on the axes.
+///
+/// The `.camj` outline is a 360-sided polygon on the circle rather than a
+/// PureCutCNC `circle`, which is sampled every 10°: where tabs split that
+/// coarser path, the split points sit up to 0.034 mm inside the circle.
 /// - **Rect tab steps run at the plunge rate.** DreamCarve lifts onto and
 ///   drops off a rect tab with vertical moves at the plunge rate
 ///   (`docs/specs/phase-1/design.md`, "Profile contour", step 7; a straight
