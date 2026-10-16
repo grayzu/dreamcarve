@@ -29,7 +29,7 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The generated file names every non-workspace crate that `cargo metadata`
+/// The generated file names every non-workspace crate that `cargo tree`
 /// resolves into the `dreamcarve` binary on any dist target, each under a
 /// non-empty license text. `generate` itself fails (`cargo about --fail`) when
 /// a license cannot be resolved to a text.
@@ -40,7 +40,7 @@ fn third_party_licenses_cover_lockfile() {
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(LICENSES_FILE);
 
     generate(&root, &out).expect("cargo about generates THIRD-PARTY-LICENSES");
-    let coverage = check(&root, &out).expect("cargo metadata resolves the shipped crates");
+    let coverage = check(&root, &out).expect("cargo tree resolves the shipped crates");
 
     assert!(
         !coverage.shipped.is_empty(),
