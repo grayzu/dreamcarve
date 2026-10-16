@@ -48,14 +48,48 @@ rules S1–S6. The `post::tests` in `dc-gcode` lock each finding in.
 | `{operationDescription}` lines removed | both | `emit` does not fill that placeholder, so it would reach the machine as literal text. |
 | Em-dashes in `description` → `-` | both | Bytes above 0x7F are real-time commands on both controllers (0x94 is a feed override). |
 | `feed_speed.spindle_on_dwell` added: `G4 P{seconds}`, `duration_s` 3.0 | both | Neither controller waits for the spindle to reach speed after M3 (grblHAL `$394` defaults to 0). `G4 P` is seconds on both: `mc_dwell(float seconds)` in `grbl/motion_control.c` and grblHAL `motion_control.c`. DreamCarve field, not in PureCutCNC's schema (#28). |
+| `feed_speed.spindle_control` added: `"automatic"` | both | The bundled definitions switch the spindle with `M3`/`M5`. `"manual"` is for a router switched by hand; see "Manual spindle control" below. DreamCarve field, not in PureCutCNC's schema (#34). |
 
 Rules for the emitter that come from the same check (enforced in `emit`, not
 here): text substituted into comments (`{programName}`, `{toolName}`,
 `{operationName}`) is reduced to printable ASCII without `( ) ; ! ? ~`,
 since both controllers act on `!`, `~`, `?` and bytes above 0x7F even inside
-comments, and `)` ends a comment early. Never emit M4 (needs a direction pin
+comments, and `)` ends a comment early. On grblHAL, `!`, `?` and `~` inside a
+comment act only while `legacy_rt_commands` (`$39`) is on, which is the
+default (`DEFAULT_LEGACY_RTCOMMANDS On` in `config.h`; checked in
+`protocol.c`), so they are still removed. Never emit M4 (needs a direction pin
 or laser capability) or M7 (optional on both). Numbers never use exponent
 notation. Arc IJ offsets are taken from the rounded start point emitted.
+
+## Manual spindle control
+
+With `feed_speed.spindle_control: "manual"` the program sends no `M3`, `M5`
+or `S` word. It retracts to safe Z and pauses with
+`M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`
+before each tool's first cut, and with `M0 (MSG, Turn the router OFF.)`
+before a tool change and at the end. Checked on 2026-10-16 against each
+controller's source:
+
+- **The pause is reliable on both.** `M0` syncs the planner
+  (`protocol_buffer_synchronize`), then enters feed hold, and resumes only on
+  cycle start (`~` or the sender's Resume button). GRBL `grbl/gcode.c`,
+  "[21. Program flow]" (`EXEC_FEED_HOLD`); grblHAL `gcode.c`, the same
+  section (`ProgramFlow_Paused`). So the pause is always `M0`, never the
+  definition's `pause_command`: `M1` is an optional stop the controller may
+  skip.
+- **The message is not.** GRBL has no message support: its `gcode.c` says
+  "[1. Comments ]: MSG's NOT SUPPORTED. Comment handling performed by
+  protocol.", and the comment is stripped before parsing. The user sees the
+  text only if the sender shows the line it paused on. grblHAL turns a
+  `(MSG, text)` comment into a `[MSG:text]` report to the sender
+  (`gcode.c`, `gc_output_message`), unless the driver disables message
+  handling. So the message is written as a `( )` comment in both dialects,
+  even where the definition's comments are `;`: grblHAL reports it, and GRBL
+  ignores it harmlessly.
+- How each sender (gSender, UGS, CNCjs, ioSender) shows an `M0` pause and
+  its message is not verified; #17 checks it on a real machine. Because the
+  message may not be shown, `Program::pauses` lists every pause with its line
+  and message for the CLI to print.
 
 Sources:
 

@@ -1,0 +1,25 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# cargo-about configuration for THIRD-PARTY-LICENSES, the license texts that
+# ship in every release archive (issue #31). Generate it with
+# `cargo run -p third-party-licenses -- generate`; the targets come from
+# dist-workspace.toml.
+
+# Same licenses as deny.toml's `allow`, in order of preference: a crate offered
+# under several (`MIT OR Apache-2.0`) is listed under the first one it matches.
+# NOTICE says dual-licensed components are used under Apache-2.0.
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "ISC",
+    "Unicode-3.0",
+]
+
+# Only crates linked into the binary need their texts shipped.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

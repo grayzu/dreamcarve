@@ -105,10 +105,20 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   tests by parsing the emitted G-code, not by trusting the generator.
 - **S2** Rapid moves occur only at or above safe Z.
 - **S3** Every cutting and plunging move has an explicit, user-supplied feed.
-  Export fails if any tool lacks feed, plunge, or RPM.
+  Export fails if any tool lacks feed, plunge, or RPM. With manual spindle
+  control (`feed_speed.spindle_control: manual`) RPM is optional; feed and
+  plunge are still required.
 - **S4** Spindle is started with the tool's RPM, then held for the
   post-processor's spin-up dwell (default 3 s) before the first cutting move,
-  and stopped in the footer.
+  and stopped in the footer. With manual spindle control the program sends
+  no `M3`, `M5` or `S` word and no dwell. Before the first cutting move of
+  each tool it retracts to safe Z and pauses with `M0` and a message to turn
+  the router on (with the tool's RPM as a hint, if set); before each tool
+  change and at the end it retracts to safe Z and pauses with `M0` and a
+  message to turn the router off. The safety pass checks that each tool's
+  first cutting move follows an `M0` issued at safe Z after the last retract
+  and after the previous cut, and that an `M0` at safe Z follows the last
+  cut.
 - **S5** The program begins with the post-processor's units command and
   work-coordinate select, so a controller in the wrong state is corrected.
 - **S6** Machine origin is applied as a translation and axis mapping only.

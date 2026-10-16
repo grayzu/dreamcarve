@@ -15,13 +15,19 @@
 //! upstream, from the controller facts in `definitions/README.md`
 //! ("Verification"):
 //!
-//! - Missing feed, plunge, or RPM is an error; nothing is defaulted.
+//! - Missing feed, plunge, or RPM is an error; nothing is defaulted. With
+//!   manual spindle control the RPM is optional: it is only a hint in the
+//!   message of the pause before each tool's first cut.
 //! - Placeholder text is reduced to printable ASCII without comment
 //!   delimiters or real-time command characters, and capped in length.
 //! - Coordinates are scaled to inches when the project's display units are
 //!   inches (upstream stores projects in their display units).
 //! - The spindle starts with `spindle_on_cw` only, followed by the spin-up
-//!   dwell; coolant is never switched on.
+//!   dwell; coolant is never switched on. With manual spindle control there
+//!   are no spindle words: the program retracts to safe Z and pauses with
+//!   `M0` and a `(MSG, ...)` comment for the user to switch the router on
+//!   before each tool's first cut, and off before a tool change and at the
+//!   end.
 //! - A rapid lowers Z only after its XY move, and after a tool change the
 //!   position is treated as unknown, so Z is raised first.
 //! - I and J are taken from the rounded start the controller holds; an arc
@@ -32,10 +38,13 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 
 use dc_cam::{FeedField, MoveKind, Toolpath};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
-use dc_project::{ArcFormat, OperationId, PostProcessor, ProfileOp, Project, Tool, ToolId, Units};
+use dc_project::{
+    ArcFormat, OperationId, PostProcessor, ProfileOp, Project, SpindleControl, Tool, ToolId, Units,
+};
 
 use crate::ExportError;
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
+use crate::parse::parse_program;
 use crate::safety::{self, OpSpan};
 use crate::transform::MachineTransform;
 
@@ -47,6 +56,20 @@ pub struct Program {
     pub text: String,
     /// File extension without the dot, from the post-processor.
     pub extension: String,
+    /// Every `M0` in the program, in order. The controller may not show a
+    /// pause's message (GRBL drops comments), so a caller lists these for
+    /// the user.
+    pub pauses: Vec<Pause>,
+}
+
+/// A point where the program stops until the user resumes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pause {
+    /// 1-based line number in [`Program::text`] (not an `N` number).
+    pub line: usize,
+    /// What the user should do, from the line's comment without a leading
+    /// `MSG,`; empty if the line has no comment.
+    pub message: String,
 }
 
 /// Something the user should know about an export that still yields a safe
@@ -85,8 +108,8 @@ pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 ///
 /// # Errors
 ///
-/// A missing feed, plunge rate, or spindle speed names the tool and field;
-/// any safety violation in the emitted program is an error, never a
+/// A missing feed, plunge rate, or (with automatic spindle control)
+/// spindle speed names the tool and field; any safety violation in the emitted program is an error, never a
 /// warning. See [`ExportError`].
 pub fn emit(
     project: &Project,
@@ -94,6 +117,8 @@ pub fn emit(
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     let post = &project.post_processor;
+    let control = post.feed_speed.spindle_control;
+    let manual = control == SpindleControl::Manual;
     let mut warnings = Vec::new();
     let mut enabled = Vec::with_capacity(ops.len());
     for entry in ops {
@@ -113,7 +138,7 @@ pub fn emit(
     // post-processor is the last line and trusts no caller.
     let mut planned = Vec::with_capacity(enabled.len());
     for (op, tool, toolpath) in enabled {
-        let rates = Rates::of(tool)?;
+        let rates = Rates::of(tool, control)?;
         let number = project
             .tools
             .iter()
@@ -180,6 +205,7 @@ pub fn emit(
 
     // Step 5: operations.
     let mut lines = Vec::with_capacity(planned.len());
+    let mut router_on = false;
     for (index, &(op, tool, toolpath, rates, number)) in planned.iter().enumerate() {
         let mut context = common.clone();
         context.extend([
@@ -203,13 +229,18 @@ pub fn emit(
             }
         }
 
+        let spindle_off = post.feed_speed.spindle_off.trim();
         if w.tool.as_ref() != Some(&tool.id) {
             if post.tool_change.stop_spindle_first && w.spindle_rpm.is_some() {
-                w.line(&post.feed_speed.spindle_off);
+                w.line(spindle_off);
                 w.spindle_rpm = None;
             }
             for line in &post.tool_change.commands {
-                w.template(line, &context);
+                // Manual: the router is already off, and no spindle word
+                // is sent (S4).
+                if !(manual && only_stops_spindle(line, spindle_off)) {
+                    w.template(line, &context);
+                }
             }
             if post.tool_change.pause_after_change {
                 w.line(&post.tool_change.pause_command);
@@ -220,24 +251,32 @@ pub fn emit(
             w.forget_position();
         }
 
-        // S4: start the spindle clockwise at the tool's speed, then dwell
-        // while it spins up. Never M4.
-        if w.spindle_rpm != Some(rates.rpm) {
+        let safe_z_mm = project.stock.thickness_mm + op.safe_z_mm;
+        let first_line = w.next_line();
+        if manual {
+            // S4 (manual): retract, then pause for the user to switch the
+            // router on. Resuming is the confirmation, so there is no
+            // dwell, and the speed is only a hint.
+            if !router_on {
+                w.retract(safe_z_mm)?;
+                w.pause(&router_on_message(rates.rpm));
+                router_on = true;
+            }
+        } else if let Some(rpm) = rates.rpm
+            && w.spindle_rpm != Some(rpm)
+        {
+            // S4: start the spindle clockwise at the tool's speed, then
+            // dwell while it spins up. Never M4.
             let fs = &post.feed_speed;
-            w.line(&format!(
-                "{} {}{}",
-                fs.spindle_on_cw, fs.rpm_command, rates.rpm
-            ));
-            w.spindle_rpm = Some(rates.rpm);
+            w.line(&format!("{} {}{rpm}", fs.spindle_on_cw, fs.rpm_command));
+            w.spindle_rpm = Some(rpm);
             if dwell_s > 0.0 {
                 let seconds = format_fixed(dwell_s, DWELL_DECIMAL_PLACES, &post.number_format)?;
                 w.line(&fs.spindle_on_dwell.command.replace("{seconds}", &seconds));
             }
         }
 
-        let first_line = w.next_line();
         let flattened = w.toolpath(op, toolpath)?;
-        lines.push(first_line..w.next_line());
         if flattened > 0 {
             warnings.push(ExportWarning::ArcsFlattened {
                 op: op.id.clone(),
@@ -246,22 +285,31 @@ pub fn emit(
         }
 
         // Stop the spindle before a tool change, and after the last
-        // operation unless the footer does it (S4).
-        let spindle_off = post.feed_speed.spindle_off.trim();
-        let footer_stops = post.program.footer.iter().any(|l| l.trim() == spindle_off);
-        let stop_now = match planned.get(index + 1) {
-            Some(next) => next.1.id != tool.id,
-            None => !footer_stops,
-        };
-        if stop_now {
-            w.line(spindle_off);
-            w.spindle_rpm = None;
+        // operation unless the footer does it (S4). With manual control,
+        // retract and pause for the user to switch the router off.
+        let tool_changes_next = planned.get(index + 1).map(|next| next.1.id != tool.id);
+        if manual {
+            if tool_changes_next.unwrap_or(true) {
+                w.retract(safe_z_mm)?;
+                w.pause(ROUTER_OFF_MESSAGE);
+                router_on = false;
+            }
+        } else {
+            let footer_stops = post.program.footer.iter().any(|l| l.trim() == spindle_off);
+            if tool_changes_next.unwrap_or(!footer_stops) {
+                w.line(spindle_off);
+                w.spindle_rpm = None;
+            }
         }
+        lines.push(first_line..w.next_line());
     }
 
     // Step 6: footer and program end.
+    let spindle_off = post.feed_speed.spindle_off.trim();
     for line in &post.program.footer {
-        w.template(line, &common);
+        if !(manual && only_stops_spindle(line, spindle_off)) {
+            w.template(line, &common);
+        }
     }
     w.line(&post.stop.program_end_command);
     let text = w.finish();
@@ -278,11 +326,13 @@ pub fn emit(
         })
         .collect();
     safety::check(&text, post, &transform, project.stock.thickness_mm, &spans)?;
+    let pauses = pauses(&text)?;
 
     Ok((
         Program {
             text,
             extension: post.file_extension.clone(),
+            pauses,
         },
         warnings,
     ))
@@ -292,6 +342,10 @@ pub fn emit(
 /// the bundled templates every line stays well under
 /// [`crate::MAX_LINE_CHARS`]; the safety pass rejects any that does not.
 pub const MAX_PLACEHOLDER_CHARS: usize = 64;
+
+/// The longest pause message, in characters. The longest DreamCarve writes
+/// is the router-on message with a ten-digit speed, 67 characters.
+pub const MAX_MESSAGE_CHARS: usize = 96;
 
 /// Dwell seconds are written to the millisecond.
 const DWELL_DECIMAL_PLACES: u8 = 3;
@@ -316,18 +370,19 @@ const ARC_RADIUS_RELATIVE: f64 = 0.0008;
 /// See [`ARC_RADIUS_ABSOLUTE_MM`].
 const ARC_RADIUS_GROSS_MM: f64 = 0.4;
 
-/// A tool whose feed, plunge rate, and spindle speed the user has all set.
+/// A tool whose feed and plunge rate the user has set, and its spindle
+/// speed: always set with automatic spindle control, optional with manual.
 /// The moves carry the feeds; the safety pass checks them against the
 /// tool's.
 #[derive(Debug, Clone, Copy)]
 struct Rates {
-    rpm: u32,
+    rpm: Option<u32>,
 }
 
 impl Rates {
     /// The tool's rates, or the first one that is missing. A placeholder 0
     /// counts as missing.
-    fn of(tool: &Tool) -> Result<Self, ExportError> {
+    fn of(tool: &Tool, control: SpindleControl) -> Result<Self, ExportError> {
         for (rate, field) in [
             (tool.feed_mm_min, FeedField::Feed),
             (tool.plunge_mm_min, FeedField::Plunge),
@@ -339,14 +394,92 @@ impl Rates {
                 });
             }
         }
-        let rpm = tool
-            .rpm
-            .filter(|r| *r > 0)
-            .ok_or_else(|| ExportError::MissingRpm {
+        let rpm = tool.rpm.filter(|r| *r > 0);
+        if rpm.is_none() && control == SpindleControl::Automatic {
+            return Err(ExportError::MissingRpm {
                 tool: tool.name.clone(),
-            })?;
+            });
+        }
         Ok(Self { rpm })
     }
+}
+
+/// The pause DreamCarve writes for the router. Always `M0`, never the
+/// definition's `pause_command`: `M1` is skipped unless the controller's
+/// optional-stop switch is on, and then the bit would plunge without
+/// spinning. GRBL and grblHAL sync the planner on `M0`, enter feed hold,
+/// and resume only on cycle start (`gcode.c`, "[21. Program flow]").
+const PAUSE_COMMAND: &str = "M0";
+
+/// The message of the pause before a tool's last cut is followed by a
+/// tool change or the end of the program.
+const ROUTER_OFF_MESSAGE: &str = "Turn the router OFF.";
+
+/// The message of the pause before a tool's first cut, with the tool's
+/// speed as a hint when it has one.
+fn router_on_message(rpm: Option<u32>) -> String {
+    match rpm {
+        Some(rpm) => format!("Turn the router ON. Speed {rpm} RPM. Resume to start cutting."),
+        None => "Turn the router ON. Resume to start cutting.".to_owned(),
+    }
+}
+
+/// The code words of `line`, outside `( )` and `;` comments, upper-cased.
+fn code_words(line: &str) -> Vec<String> {
+    let mut code = String::new();
+    let mut in_comment = false;
+    for c in line.chars() {
+        match c {
+            ';' if !in_comment => break,
+            '(' => in_comment = true,
+            ')' => in_comment = false,
+            c if !in_comment => code.push(c),
+            _ => {}
+        }
+    }
+    code.split_whitespace().map(str::to_uppercase).collect()
+}
+
+/// Whether template `line` does nothing but stop the spindle: its code
+/// words are exactly `spindle_off`.
+fn only_stops_spindle(line: &str, spindle_off: &str) -> bool {
+    let off = code_words(spindle_off);
+    !off.is_empty() && code_words(line) == off
+}
+
+/// The text of `line`'s comment, trimmed and without a leading `MSG,`; empty
+/// if it has none.
+fn comment_of(line: &str) -> String {
+    let paren = line
+        .split_once('(')
+        .map(|(_, rest)| rest.split_once(')').map_or(rest, |(inner, _)| inner));
+    let text = paren
+        .or_else(|| line.split_once(';').map(|(_, rest)| rest))
+        .unwrap_or("")
+        .trim();
+    let text = match text.get(..4) {
+        Some(head) if head.eq_ignore_ascii_case("MSG,") => text.get(4..).unwrap_or(""),
+        _ => text,
+    };
+    text.trim().to_owned()
+}
+
+/// Every `M0` line of `text`, with its message.
+fn pauses(text: &str) -> Result<Vec<Pause>, ExportError> {
+    let blocks = parse_program(text)?;
+    let mut raw = text.lines().enumerate();
+    let mut out = Vec::new();
+    for block in blocks.iter().filter(|b| b.has('M', 0.0)) {
+        let message = raw
+            .find(|(index, _)| index + 1 == block.line)
+            .map(|(_, line)| comment_of(line))
+            .unwrap_or_default();
+        out.push(Pause {
+            line: block.line,
+            message,
+        });
+    }
+    Ok(out)
 }
 
 /// A non-empty command from the post-processor, or the error naming it.
@@ -364,12 +497,18 @@ fn required<'a>(
         })
 }
 
+/// [`sanitize_comment`] capped at [`MAX_PLACEHOLDER_CHARS`], for text
+/// substituted into a template.
+fn comment_text(text: &str) -> String {
+    sanitize_comment(text, MAX_PLACEHOLDER_CHARS)
+}
+
 /// `text` made safe for a comment on GRBL and grblHAL: printable ASCII,
 /// without `( ) ;` (which end a comment early), `! ? ~` (real-time
 /// commands even inside a comment), `{ }` (placeholder syntax) or `%`
 /// (a program delimiter to some senders), whitespace collapsed, and at
-/// most [`MAX_PLACEHOLDER_CHARS`] long.
-fn comment_text(text: &str) -> String {
+/// most `max_chars` long.
+fn sanitize_comment(text: &str, max_chars: usize) -> String {
     let cleaned: String = text
         .chars()
         .map(|c| {
@@ -379,7 +518,7 @@ fn comment_text(text: &str) -> String {
         })
         .collect();
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    let truncated: String = collapsed.chars().take(MAX_PLACEHOLDER_CHARS).collect();
+    let truncated: String = collapsed.chars().take(max_chars).collect();
     truncated.trim_end().to_owned()
 }
 
@@ -561,6 +700,29 @@ impl<'a> Writer<'a> {
                 self.line(line);
             }
         }
+    }
+
+    /// Writes an `M0` with `message`, sanitized, as a `(MSG, ...)` comment.
+    /// grblHAL reports it to the sender as `[MSG:...]`; GRBL ignores the
+    /// comment (`definitions/README.md`, "Manual spindle control").
+    fn pause(&mut self, message: &str) {
+        let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
+        self.line(&format!("{PAUSE_COMMAND} (MSG, {message})"));
+    }
+
+    /// Raises the tool to `safe_z_mm` (project space) unless it is known to
+    /// be there or higher. XY does not change.
+    fn retract(&mut self, safe_z_mm: f64) -> Result<(), ExportError> {
+        let to = self.position.map_or(Point3::new(0.0, 0.0, safe_z_mm), |p| {
+            Point3::new(p.x, p.y, p.z.max(safe_z_mm))
+        });
+        let z = self.transform.to_machine(to).z;
+        let command = self.post.motion.rapid_command.clone();
+        self.motion_line(&command, [None, None, Some(z)], &[], None, false)?;
+        if let Some(position) = &mut self.position {
+            position.z = to.z;
+        }
+        Ok(())
     }
 
     fn forget_position(&mut self) {
@@ -890,7 +1052,7 @@ mod tests {
     use dc_cam::{FeedField, Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3, assert_approx_eq};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
-    use dc_project::{Operation, OperationId, ToolId, Units};
+    use dc_project::{Operation, OperationId, SpindleControl, ToolId, Units};
 
     const DATE: &str = "2026-10-15";
 
@@ -1443,5 +1605,256 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines[0].starts_with("N10 "), "{}", lines[0]);
         assert!(lines[1].starts_with("N20 "), "{}", lines[1]);
+    }
+
+    /// The sample project on the bundled post-processor `post_id`, with the
+    /// router switched on and off by hand.
+    fn manual_project(post_id: &str) -> Project {
+        let mut project = project_with(post_id);
+        project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+        project
+    }
+
+    /// Machine Z of safe Z in the sample project: origin at stock top, safe
+    /// Z 5 mm above it.
+    const SAFE_Z_MACHINE: f64 = 5.0;
+
+    /// The machine Z the program holds when it reaches 0-based line `index`.
+    fn z_before(text: &str, index: usize) -> Option<f64> {
+        parse_motion(text)
+            .unwrap()
+            .iter()
+            .rfind(|m| m.line <= index)
+            .and_then(|m| m.to.z)
+    }
+
+    /// #34, S3 (manual): a router's speed is set on its dial, so a tool
+    /// with no RPM exports in manual mode. In automatic mode it is still an
+    /// error, and feed and plunge stay required in both.
+    #[test]
+    fn manual_spindle_allows_missing_rpm() {
+        for post in ["grblhal", "grbl"] {
+            let mut project = manual_project(post);
+            let mut ops = ops_for(&project);
+            project.tools[0].rpm = None;
+            ops[0].1.rpm = None;
+            if let Err(err) = emit(&project, &ops, DATE) {
+                panic!("{post}: manual export without RPM failed: {err:?}");
+            }
+
+            project.post_processor.feed_speed.spindle_control = SpindleControl::Automatic;
+            let err = emit(&project, &ops, DATE).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::MissingRpm { .. }),
+                "{post}: {err:?}"
+            );
+
+            project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+            ops[0].1.plunge_mm_min = None;
+            let err = emit(&project, &ops, DATE).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::MissingFeed {
+                        field: FeedField::Plunge,
+                        ..
+                    }
+                ),
+                "{post}: {err:?}"
+            );
+        }
+    }
+
+    /// #34, Behaviour 2 and 5: in manual mode the program sends no spindle
+    /// words and no spin-up dwell. Before the first cut it retracts to safe
+    /// Z and pauses with a message to turn the router on; resuming is the
+    /// user's confirmation that it is running.
+    #[test]
+    fn manual_spindle_pauses_before_first_cut() {
+        for post in ["grblhal", "grbl"] {
+            let text = emit_text(&manual_project(post));
+            let lines: Vec<&str> = text.lines().collect();
+            for line in &lines {
+                for word in ["M3", "M4", "M5", "G4"] {
+                    assert!(!has_word(line, word), "{post}: {word} in {line:?}");
+                }
+                assert!(
+                    !code(line).split_whitespace().any(|w| w.starts_with('S')),
+                    "{post}: speed word in {line:?}"
+                );
+            }
+            let cut = first_index(&lines, is_cut).unwrap();
+            let pause = lines[..cut]
+                .iter()
+                .rposition(|l| has_word(l, "M0"))
+                .unwrap_or_else(|| panic!("{post}: no M0 before the first cut"));
+            assert!(
+                lines[pause].contains("(MSG, Turn the router ON."),
+                "{post}: {}",
+                lines[pause]
+            );
+            let z = z_before(&text, pause).unwrap_or_else(|| panic!("{post}: Z unknown"));
+            assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
+        }
+    }
+
+    /// #34, Behaviour 1: the tool's speed is a hint in the message, and the
+    /// speed part is left out when the tool has none.
+    #[test]
+    fn manual_spindle_message_includes_rpm_hint() {
+        let project = manual_project("grblhal");
+        let mut ops = ops_for(&project);
+        let on_line = |ops: &[(ProfileOp, Tool, Toolpath)]| -> String {
+            let text = emit(&project, ops, DATE).unwrap().0.text;
+            text.lines()
+                .find(|l| l.contains("Turn the router ON"))
+                .unwrap()
+                .to_owned()
+        };
+        let with_rpm = on_line(&ops);
+        assert_eq!(
+            with_rpm,
+            "M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)"
+        );
+        ops[0].1.rpm = None;
+        let without = on_line(&ops);
+        assert_eq!(
+            without,
+            "M0 (MSG, Turn the router ON. Resume to start cutting.)"
+        );
+    }
+
+    /// #34, Behaviour 3 and 4: with two tools the program pauses to turn
+    /// the router off before each tool change and at the end, each time at
+    /// safe Z. The first tool also gets the definition's tool-change pause,
+    /// as in automatic mode.
+    #[test]
+    fn manual_spindle_pauses_off_at_tool_change_and_end() {
+        for post in ["grblhal", "grbl"] {
+            let mut project = manual_project(post);
+            let ops = two_tool_ops(&mut project);
+            let text = emit(&project, &ops, DATE).unwrap().0.text;
+            let lines: Vec<&str> = text.lines().collect();
+            let mut events: Vec<&str> = lines
+                .iter()
+                .filter_map(|l| {
+                    if l.contains("Turn the router ON") {
+                        Some("on")
+                    } else if l.contains("Turn the router OFF") {
+                        Some("off")
+                    } else if has_word(l, "M0") {
+                        Some("tool change")
+                    } else if is_cut(l) {
+                        Some("cut")
+                    } else if has_word(l, "M30") {
+                        Some("end")
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            events.dedup();
+            assert_eq!(
+                events,
+                [
+                    "tool change",
+                    "on",
+                    "cut",
+                    "off",
+                    "tool change",
+                    "on",
+                    "cut",
+                    "off",
+                    "end"
+                ],
+                "{post}"
+            );
+            for (index, line) in lines.iter().enumerate() {
+                if line.contains("Turn the router") {
+                    let z = z_before(&text, index);
+                    assert!(
+                        z.is_some_and(|z| (z - SAFE_Z_MACHINE).abs() < 1e-9),
+                        "{post}: line {} pauses at Z {z:?}",
+                        index + 1
+                    );
+                }
+            }
+        }
+    }
+
+    /// #34: the program lists every `M0` with its line and message, so the
+    /// CLI can tell the user what each stop is for when the controller does
+    /// not show the message (GRBL drops comments).
+    #[test]
+    fn program_lists_every_pause_with_its_message() {
+        let on_18000 = "Turn the router ON. Speed 18000 RPM. Resume to start cutting.";
+        let on_12000 = "Turn the router ON. Speed 12000 RPM. Resume to start cutting.";
+        let off = "Turn the router OFF.";
+        let (tc1, tc2) = (
+            "Tool change: T1 6.35 mm upcut",
+            "Tool change: T2 3 mm downcut",
+        );
+        for (control, expected) in [
+            (SpindleControl::Automatic, vec![tc1, tc2]),
+            (
+                SpindleControl::Manual,
+                vec![tc1, on_18000, off, tc2, on_12000, off],
+            ),
+        ] {
+            for post in ["grblhal", "grbl"] {
+                let mut project = project_with(post);
+                project.post_processor.feed_speed.spindle_control = control;
+                let ops = two_tool_ops(&mut project);
+                let program = emit(&project, &ops, DATE).unwrap().0;
+                let messages: Vec<&str> =
+                    program.pauses.iter().map(|p| p.message.as_str()).collect();
+                assert_eq!(messages, expected, "{post} {control:?}");
+                let lines: Vec<&str> = program.text.lines().collect();
+                let m0_lines: Vec<usize> = (0..lines.len())
+                    .filter(|&i| has_word(lines[i], "M0"))
+                    .map(|i| i + 1)
+                    .collect();
+                let pause_lines: Vec<usize> = program.pauses.iter().map(|p| p.line).collect();
+                assert_eq!(pause_lines, m0_lines, "{post} {control:?}");
+            }
+        }
+    }
+
+    /// #34: pause messages go through the comment sanitizer and fit the
+    /// controller's line buffer, even with the longest speed and line
+    /// number a project can hold. The message is not cut short.
+    #[test]
+    fn manual_messages_are_sanitized() {
+        for post in ["grblhal", "grbl"] {
+            let mut project = manual_project(post);
+            project.post_processor.program.line_numbers = true;
+            project.post_processor.program.line_number_increment = 1_000_000_000;
+            let mut ops = ops_for(&project);
+            ops[0].1.rpm = Some(u32::MAX);
+            let program = emit(&project, &ops, DATE).unwrap().0;
+            assert!(!program.pauses.is_empty(), "{post}");
+            for pause in &program.pauses {
+                assert_eq!(
+                    sanitize_comment(&pause.message, MAX_MESSAGE_CHARS),
+                    pause.message,
+                    "{post}: line {}",
+                    pause.line
+                );
+            }
+            let on = program
+                .pauses
+                .iter()
+                .find(|p| p.message.starts_with("Turn the router ON"))
+                .unwrap();
+            assert!(
+                on.message
+                    .ends_with(&format!("Speed {} RPM. Resume to start cutting.", u32::MAX)),
+                "{post}: {}",
+                on.message
+            );
+            for line in program.text.lines() {
+                assert!(line.len() <= MAX_LINE_CHARS, "{post}: {} chars", line.len());
+            }
+        }
     }
 }

@@ -1,0 +1,14 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Steps dist runs before `dist build` on every release build runner
+# (dist-workspace.toml, `github-build-setup`). They generate
+# THIRD-PARTY-LICENSES, which `include` copies into every archive, and fail
+# the release when a shipped crate's license has no text (issue #31).
+
+- name: Install cargo-about
+  uses: taiki-e/install-action@v2
+  with:
+    tool: cargo-about@0.9.2
+- name: Generate THIRD-PARTY-LICENSES
+  run: cargo run --locked -p third-party-licenses -- generate

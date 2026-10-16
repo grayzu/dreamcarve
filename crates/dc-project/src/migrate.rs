@@ -14,13 +14,16 @@
 //!   no `flatten_tolerance_mm`; curves were flattened at a fixed 0.01 mm.
 //! - **1**: adds `flatten_tolerance_mm`, set to
 //!   [`dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM`] by the migration.
+//! - **2**: adds `post_processor.feed_speed.spindle_control`, set to
+//!   `"automatic"` by the migration, which is how every earlier file was
+//!   exported.
 
 use crate::serialize::LoadError;
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -30,11 +33,13 @@ type Step = fn(Map<String, Value>) -> Result<Map<String, Value>, String>;
 fn step(from: u32) -> Option<Step> {
     match from {
         0 => Some(v0_to_v1),
+        1 => Some(v1_to_v2),
         _ => None,
     }
 }
 
 const FLATTEN_TOLERANCE_KEY: &str = "flatten_tolerance_mm";
+const SPINDLE_CONTROL_KEY: &str = "spindle_control";
 
 /// Migrates the raw JSON root of a `.dcv` file from `from_version` to
 /// [`CURRENT_VERSION`] and sets its `version` field accordingly.
@@ -95,14 +100,49 @@ fn v0_to_v1(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(out)
 }
 
+/// Version 1 → 2: adds `spindle_control: "automatic"` at the end of
+/// `post_processor.feed_speed`.
+fn v1_to_v2(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let feed_speed = root
+        .get_mut("post_processor")
+        .and_then(|post| post.get_mut("feed_speed"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "`post_processor.feed_speed` is missing or not an object".to_owned())?;
+    if feed_speed.contains_key(SPINDLE_CONTROL_KEY) {
+        return Err(format!(
+            "a version 1 file has no `{SPINDLE_CONTROL_KEY}`, but this one does"
+        ));
+    }
+    feed_speed.insert(SPINDLE_CONTROL_KEY.into(), Value::from("automatic"));
+    Ok(root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::sample_project;
-    use crate::{load, save};
+    use crate::{SpindleControl, load, save};
     use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 
     const V0_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v0/sample.dcv");
+    const V1_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v1/sample.dcv");
+
+    /// The sample project as raw JSON of `version`, without the fields
+    /// added after it.
+    fn sample_root_at(version: u32) -> Value {
+        let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 2 {
+            root["post_processor"]["feed_speed"]
+                .as_object_mut()
+                .unwrap()
+                .remove("spindle_control");
+        }
+        if version < 1 {
+            root.as_object_mut().unwrap().remove("flatten_tolerance_mm");
+        }
+        root["version"] = Value::from(version);
+        root
+    }
 
     #[test]
     fn version_0_fixture_loads() {
@@ -122,15 +162,42 @@ mod tests {
     }
 
     #[test]
+    fn version_1_fixture_loads() {
+        let loaded = load(V1_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// Every file before version 2 was exported with the spindle switched by
+    /// the program, so the migration keeps that (#34).
+    #[test]
+    fn version_1_fixture_gets_automatic_spindle_control() {
+        let loaded = load(V1_FIXTURE).unwrap();
+        assert_eq!(
+            loaded.project.post_processor.feed_speed.spindle_control,
+            SpindleControl::Automatic
+        );
+        let migrated = migrate(sample_root_at(1), 1).unwrap();
+        assert_eq!(
+            migrated,
+            sample_root_at(CURRENT_VERSION),
+            "the key lands at the end of feed_speed, where version 2 declares it"
+        );
+    }
+
+    #[test]
     fn newer_version_is_rejected() {
-        let text = save(&sample_project())
-            .unwrap()
-            .replacen("\"version\": 1", "\"version\": 2", 1);
+        let newer = CURRENT_VERSION + 1;
+        let text = save(&sample_project()).unwrap().replacen(
+            &format!("\"version\": {CURRENT_VERSION}"),
+            &format!("\"version\": {newer}"),
+            1,
+        );
         let err = load(text.as_bytes()).unwrap_err();
         assert_eq!(
             err,
             LoadError::NewerVersion {
-                found: 2,
+                found: newer,
                 supported: CURRENT_VERSION
             }
         );
@@ -138,17 +205,24 @@ mod tests {
 
     #[test]
     fn migrate_sets_current_version() {
-        let mut root = serde_json::to_value(sample_project()).unwrap();
-        let obj = root.as_object_mut().unwrap();
-        obj.remove("flatten_tolerance_mm");
-        obj.insert("version".into(), Value::from(0));
-        let migrated = migrate(root, 0).unwrap();
+        let migrated = migrate(sample_root_at(0), 0).unwrap();
         assert_eq!(migrated["version"], Value::from(CURRENT_VERSION));
     }
 
     #[test]
+    fn v1_with_spindle_control_already_present_fails() {
+        let mut root = sample_root_at(CURRENT_VERSION);
+        root["version"] = Value::from(1);
+        let err = migrate(root, 1).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 1, to: 2, .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
     fn v0_with_flatten_tolerance_already_present_fails() {
-        let mut root = serde_json::to_value(sample_project()).unwrap();
+        let mut root = sample_root_at(1);
         root["version"] = Value::from(0);
         let err = migrate(root, 0).unwrap_err();
         assert!(

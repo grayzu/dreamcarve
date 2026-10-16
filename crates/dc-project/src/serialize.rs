@@ -177,6 +177,8 @@ mod tests {
     use crate::test_support::sample_project;
     use crate::validate::validate;
 
+    /// The sample project as this build saves it.
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v2/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
 
     #[test]
@@ -200,13 +202,13 @@ mod tests {
 
     #[test]
     fn keys_are_stable() {
-        assert_eq!(save(&sample_project()).unwrap(), V1_FIXTURE);
+        assert_eq!(save(&sample_project()).unwrap(), CURRENT_FIXTURE);
     }
 
     #[test]
     fn crlf_line_endings_load() {
         // A file edited on Windows may come back with CRLF line endings.
-        let crlf = V1_FIXTURE.replace('\n', "\r\n");
+        let crlf = CURRENT_FIXTURE.replace('\n', "\r\n");
         let loaded = load(crlf.as_bytes()).unwrap();
         assert_eq!(loaded.project, sample_project());
     }
@@ -214,6 +216,12 @@ mod tests {
     #[test]
     fn committed_v1_fixture_loads() {
         let loaded = load(V1_FIXTURE.as_bytes()).unwrap();
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    #[test]
+    fn committed_current_fixture_loads() {
+        let loaded = load(CURRENT_FIXTURE.as_bytes()).unwrap();
         assert_eq!(loaded.project, sample_project());
     }
 
@@ -233,8 +241,8 @@ mod tests {
 
     #[test]
     fn missing_option_field_is_rejected() {
-        let text = V1_FIXTURE.replacen("      \"feed_mm_min\": 1000.0,\n", "", 1);
-        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        let text = CURRENT_FIXTURE.replacen("      \"feed_mm_min\": 1000.0,\n", "", 1);
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
             matches!(&err, LoadError::Schema { message } if message.contains("feed_mm_min")),
@@ -244,7 +252,7 @@ mod tests {
 
     #[test]
     fn unknown_top_level_field_is_rejected() {
-        let text = V1_FIXTURE.replacen("{\n", "{\n  \"colour\": \"red\",\n", 1);
+        let text = CURRENT_FIXTURE.replacen("{\n", "{\n  \"colour\": \"red\",\n", 1);
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
             matches!(&err, LoadError::Schema { message } if message.contains("colour")),
@@ -254,12 +262,12 @@ mod tests {
 
     #[test]
     fn unknown_nested_field_is_rejected() {
-        let text = V1_FIXTURE.replacen(
+        let text = CURRENT_FIXTURE.replacen(
             "\"thickness_mm\": 6.0",
             "\"thickness_mm\": 6.0,\n    \"grain\": \"oak\"",
             1,
         );
-        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
             matches!(&err, LoadError::Schema { message } if message.contains("grain")),
@@ -269,12 +277,12 @@ mod tests {
 
     #[test]
     fn unknown_operation_field_is_rejected() {
-        let text = V1_FIXTURE.replacen(
+        let text = CURRENT_FIXTURE.replacen(
             "\"safe_z_mm\": 5.0",
             "\"safe_z_mm\": 5.0,\n      \"ramp\": true",
             1,
         );
-        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
             matches!(&err, LoadError::Schema { message } if message.contains("ramp")),
@@ -284,15 +292,15 @@ mod tests {
 
     #[test]
     fn nan_literal_is_rejected() {
-        let text = V1_FIXTURE.replacen("\"width_mm\": 100.0", "\"width_mm\": NaN", 1);
-        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        let text = CURRENT_FIXTURE.replacen("\"width_mm\": 100.0", "\"width_mm\": NaN", 1);
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         assert!(matches!(load(text.as_bytes()), Err(LoadError::Json { .. })));
     }
 
     #[test]
     fn infinite_number_is_rejected() {
-        let text = V1_FIXTURE.replacen("\"width_mm\": 100.0", "\"width_mm\": 1e999", 1);
-        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        let text = CURRENT_FIXTURE.replacen("\"width_mm\": 100.0", "\"width_mm\": 1e999", 1);
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         assert!(matches!(load(text.as_bytes()), Err(LoadError::Json { .. })));
     }
 
@@ -310,8 +318,8 @@ mod tests {
 
     #[test]
     fn missing_version_is_rejected() {
-        let text = V1_FIXTURE.replacen("  \"version\": 1,\n", "", 1);
-        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        let text = CURRENT_FIXTURE.replacen("  \"version\": 2,\n", "", 1);
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         assert_eq!(load(text.as_bytes()), Err(LoadError::MissingVersion));
     }
 
@@ -355,12 +363,12 @@ mod tests {
 
     #[test]
     fn unknown_post_processor_field_is_rejected() {
-        let text = V1_FIXTURE.replacen(
+        let text = CURRENT_FIXTURE.replacen(
             "  \"post_processor\": {\n",
             "  \"post_processor\": {\n    \"colour\": \"red\",\n",
             1,
         );
-        assert_ne!(text, V1_FIXTURE, "fixture layout changed");
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         assert!(matches!(
             load(text.as_bytes()),
             Err(LoadError::Schema { .. })

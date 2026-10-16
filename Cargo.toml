@@ -12,6 +12,7 @@ members = [
     "crates/dreamcarve",
     "tools/check-headers",
     "tools/doc-figures",
+    "tools/third-party-licenses",
 ]
 
 [workspace.package]
