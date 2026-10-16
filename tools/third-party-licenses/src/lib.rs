@@ -267,7 +267,8 @@ pub fn shipped_crates_for_release(root: &Path) -> Result<BTreeSet<CrateId>, Erro
     for target in targets {
         let mut cmd = Command::new(cargo());
         cmd.current_dir(root)
-            .args(["tree", "--locked", "-p", SHIPPED_PACKAGE, "-e", "normal"])
+            .args(["tree", "--locked", "--color", "never"])
+            .args(["-p", SHIPPED_PACKAGE, "-e", "normal"])
             .args(["--prefix", "none", "--format", "{p}"])
             .args(["--target", &target])
             .arg("--manifest-path")
