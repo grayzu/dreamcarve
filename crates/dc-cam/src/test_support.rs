@@ -182,6 +182,28 @@ mod tests {
         check(moves);
     }
 
+    /// Rapid in, plunge to 2, ramp down to 0 over 5 mm of X, cut, retract.
+    fn ramp_cut(ramp_feed: f64) -> Vec<Move> {
+        vec![
+            Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+            Move::linear(Point3::new(0.0, 0.0, 2.0), 300.0),
+            Move::linear(Point3::new(5.0, 0.0, 0.0), ramp_feed),
+            Move::linear(Point3::new(10.0, 0.0, 0.0), 1000.0),
+            Move::rapid(Point3::new(10.0, 0.0, 11.0)),
+        ]
+    }
+
+    #[test]
+    fn accepts_ramp_down_at_cutting_feed() {
+        check(ramp_cut(1000.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "not feed")]
+    fn rejects_ramp_down_at_plunge_rate() {
+        check(ramp_cut(300.0));
+    }
+
     #[test]
     #[should_panic(expected = "carries a feed")]
     fn rejects_rapid_with_feed() {

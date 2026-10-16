@@ -555,6 +555,7 @@ mod tests {
     const DIAMETER_MM: f64 = 6.35;
     const TAB_WIDTH_MM: f64 = 8.0;
     const TAB_Z_MM: f64 = 3.0;
+    const FEED_MM_MIN: f64 = 1000.0;
     const PLUNGE_MM_MIN: f64 = 300.0;
     /// Passes of the coaster: 12 mm deep in 4 mm steps.
     const PASS_Z_MM: [f64; 3] = [8.0, 4.0, 0.0];
@@ -1158,9 +1159,9 @@ mod tests {
             };
             let u = (at_mm - run.start_mm) / span_mm;
             assert_approx_eq!(m.mv.to.z, smooth_tab_z_mm(u, 0.0, TAB_Z_MM), CHORD_TOL);
-            if m.mv.to.z < m.from.z - EPS_MM {
-                assert_approx_eq!(m.mv.feed_mm_min.unwrap(), PLUNGE_MM_MIN, EPS_MM);
-            }
+            // A ramp moves in XY, so it is a cut, not a plunge: down as
+            // well as up, it runs at the feed rate.
+            assert_approx_eq!(m.mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
         }
         assert_no_vertical_step_in_final_pass(&tp);
     }
