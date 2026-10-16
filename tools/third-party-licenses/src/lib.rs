@@ -397,56 +397,71 @@ mod tests {
         );
     }
 
-    /// root -> a (normal) -> b (normal); root -> c (build only);
-    /// root -> d (dev only); root -> ws (workspace member, normal) -> e.
-    /// Shipped: a, b and e; c and d never link into the binary, ws is ours.
-    const METADATA: &str = r#"{
-      "packages": [
-        {"id": "root", "name": "dreamcarve", "version": "0.0.1", "source": null},
-        {"id": "a", "name": "a", "version": "1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "b", "name": "b", "version": "2.1.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "c", "name": "c", "version": "0.3.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "d", "name": "d", "version": "0.4.0", "source": "registry+https://github.com/rust-lang/crates.io-index"},
-        {"id": "ws", "name": "dc-geometry", "version": "0.0.1", "source": null},
-        {"id": "e", "name": "e", "version": "5.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index"}
-      ],
-      "resolve": {
-        "root": null,
-        "nodes": [
-          {"id": "root", "deps": [
-            {"name": "a", "pkg": "a", "dep_kinds": [{"kind": null, "target": null}]},
-            {"name": "c", "pkg": "c", "dep_kinds": [{"kind": "build", "target": null}]},
-            {"name": "d", "pkg": "d", "dep_kinds": [{"kind": "dev", "target": null}]},
-            {"name": "dc_geometry", "pkg": "ws", "dep_kinds": [{"kind": null, "target": null}]}
-          ]},
-          {"id": "a", "deps": [
-            {"name": "b", "pkg": "b", "dep_kinds": [{"kind": null, "target": null}]}
-          ]},
-          {"id": "b", "deps": []},
-          {"id": "c", "deps": []},
-          {"id": "d", "deps": []},
-          {"id": "ws", "deps": [
-            {"name": "e", "pkg": "e", "dep_kinds": [{"kind": "dev", "target": null}, {"kind": null, "target": null}]}
-          ]},
-          {"id": "e", "deps": []}
-        ]
-      }
-    }"#;
+    /// `cargo tree -e normal --prefix none --format {p}` for a binary that
+    /// links clap (with its proc-macro and that macro's dependency) and a
+    /// workspace member that links kurbo. Repeats end in `(*)`; workspace
+    /// members carry their path. Only the real feature resolver's output is
+    /// read, so an optional dependency left off (kurbo's `euclid`) never
+    /// appears and is never demanded a license.
+    const TREE: &str = "\
+dreamcarve v0.0.1 (/work/crates/dreamcarve)
+clap v4.6.7
+clap_derive v4.6.7 (proc-macro)
+heck v0.5.0
+dc-geometry v0.0.1 (/work/crates/dc-geometry)
+kurbo v0.13.1
+dc-cam v0.0.1 (D:\\a\\dreamcarve\\crates\\dc-cam)
+dc-geometry v0.0.1 (/work/crates/dc-geometry) (*)
+kurbo v0.13.1 (*)
+clap_derive v4.6.7 (proc-macro) (*)
+
+";
 
     #[test]
-    fn shipped_crates_follow_normal_dependencies_only() {
+    fn shipped_crates_are_the_third_party_lines_of_cargo_tree() {
         assert_eq!(
-            shipped_crates(METADATA, "dreamcarve").expect("metadata parses"),
-            set(&[("a", "1.0.0"), ("b", "2.1.0"), ("e", "5.0.0")]),
+            shipped_crates(TREE).expect("cargo tree output parses"),
+            set(&[
+                ("clap", "4.6.7"),
+                ("clap_derive", "4.6.7"),
+                ("heck", "0.5.0"),
+                ("kurbo", "0.13.1"),
+            ]),
         );
     }
 
     #[test]
-    fn shipped_crates_fails_for_an_unknown_package() {
+    fn shipped_crates_fails_on_empty_output() {
         assert!(
-            shipped_crates(METADATA, "nope").is_err(),
-            "an unknown root must not read as 'ships nothing'"
+            shipped_crates("\n").is_err(),
+            "no output must not read as 'ships nothing'"
         );
+    }
+
+    #[test]
+    fn shipped_crates_fails_on_an_unreadable_line() {
+        for line in ["clap", "clap 4.6.7", "clap v4.6.7 extra"] {
+            assert!(
+                shipped_crates(line).is_err(),
+                "`{line}` is not `NAME vVERSION [(SOURCE)]`"
+            );
+        }
+    }
+
+    /// Git and alternate-registry crates print a source too. Treating them
+    /// as workspace members would drop them from the check, so they fail
+    /// instead until the checker is taught about them.
+    #[test]
+    fn shipped_crates_fails_on_a_non_path_source() {
+        for line in [
+            "foo v1.0.0 (https://github.com/x/foo#0123abcd)",
+            "foo v1.0.0 (registry `mirror`)",
+        ] {
+            assert!(
+                shipped_crates(line).is_err(),
+                "`{line}` must not be read as a workspace member"
+            );
+        }
     }
 
     fn section(name: &str, crates: &[&str], text: &str) -> String {
