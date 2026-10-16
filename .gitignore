@@ -22,6 +22,9 @@ flamegraph.svg
 
 # Generated test output
 /out/
+
+# Generated at release time (`cargo run -p third-party-licenses -- generate`)
+/THIRD-PARTY-LICENSES
 *.gcode.tmp
 
 # IDEs and editors
