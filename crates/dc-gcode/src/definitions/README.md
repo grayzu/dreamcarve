@@ -67,8 +67,13 @@ With `feed_speed.spindle_control: "manual"` the program sends no `M3`, `M5`
 or `S` word. It retracts to safe Z and pauses with
 `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`
 before each tool's first cut, and with `M0 (MSG, Turn the router OFF.)`
-before a tool change and at the end. Checked on 2026-10-16 against each
-controller's source:
+before a tool change and at the end. A tool-change line that only pauses
+(`M0` or `M1`), and `pause_after_change`, are not written; the router-on
+pause asks for the tool instead
+(`M0 (MSG, Fit T{n} {name}. Turn the router ON. ...)`), so the user stops
+once per tool, at safe Z. The name is shortened if the message would
+exceed 96 characters; the router instruction is never cut. Checked on
+2026-10-16 against each controller's source:
 
 - **The pause is reliable on both.** `M0` syncs the planner
   (`protocol_buffer_synchronize`), then enters feed hold, and resumes only on

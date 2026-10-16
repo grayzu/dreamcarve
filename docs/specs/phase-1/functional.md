@@ -27,8 +27,9 @@ as G-code they can trust.
    containing the SVG's shapes as feature definitions and instances, a
    default stock sized to the drawing's bounds, a default origin, one
    placeholder tool, one Profile operation targeting all closed shapes, and
-   the grblHAL post-processor embedded. Placeholder values that must be set
-   by the user are obviously invalid (feeds of 0).
+   the grblHAL post-processor embedded. The placeholder tool's feed, plunge
+   rate and spindle speed are unset (`null`): `check` reports them and
+   `export` refuses until the user sets them.
 2. The user can edit the `.dcv` by hand: stock dimensions, origin, tool
    geometry and feeds, Profile side (inside, outside, on line), total depth,
    depth per pass, cut direction (climb or conventional), tabs (count, width,
@@ -112,8 +113,9 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   post-processor's spin-up dwell (default 3 s) before the first cutting move,
   and stopped in the footer. With manual spindle control the program sends
   no `M3`, `M5` or `S` word and no dwell. Before the first cutting move of
-  each tool it retracts to safe Z and pauses with `M0` and a message to turn
-  the router on (with the tool's RPM as a hint, if set); before each tool
+  each tool it retracts to safe Z and pauses with `M0` and a message to fit
+  the tool and turn the router on (with the tool's RPM as a hint, if set),
+  one stop in place of the tool-change pause; before each tool
   change and at the end it retracts to safe Z and pauses with `M0` and a
   message to turn the router off. The safety pass checks that each tool's
   first cutting move follows an `M0` issued at safe Z after the last retract

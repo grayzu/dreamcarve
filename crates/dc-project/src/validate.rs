@@ -13,7 +13,7 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
-use crate::post_processor::SpindleControl;
+use crate::post_processor::{MAX_FILE_EXTENSION_CHARS, SpindleControl, is_safe_file_extension};
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -102,8 +102,39 @@ pub enum Problem {
     ToolValueUnset {
         /// The tool.
         tool: ToolId,
+        /// The tool's display name.
+        name: String,
         /// The unset field, such as `feed_mm_min`.
         field: &'static str,
+    },
+    /// A tool's number is outside the range its field allows.
+    ToolOutOfRange {
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        name: String,
+        /// The field within the tool, such as `feed_mm_min`.
+        field: &'static str,
+        /// The value found.
+        value: f64,
+        /// The allowed range, in words.
+        expected: &'static str,
+    },
+    /// A definition's profile is open. Profile cuts only closed shapes, so
+    /// it is never cut (functional spec, capability 8).
+    OpenProfile {
+        /// The definition.
+        definition: DefinitionId,
+        /// The definition's display name.
+        name: String,
+        /// Index of the profile within the definition.
+        profile: usize,
+    },
+    /// The post-processor's file extension could name the project file or a
+    /// path (see [`is_safe_file_extension`]).
+    UnsafeFileExtension {
+        /// The extension found.
+        extension: String,
     },
 }
 
@@ -111,7 +142,9 @@ impl Problem {
     /// Whether this problem is an error or a warning.
     pub fn severity(&self) -> Severity {
         match self {
-            Self::OperationDisabled { .. } | Self::ToolValueUnset { .. } => Severity::Warning,
+            Self::OperationDisabled { .. }
+            | Self::ToolValueUnset { .. }
+            | Self::OpenProfile { .. } => Severity::Warning,
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -121,7 +154,9 @@ impl Problem {
             | Self::DanglingInstance { .. }
             | Self::OutOfRange { .. }
             | Self::NonFinite { .. }
-            | Self::MissingPlaceholder { .. } => Severity::Error,
+            | Self::MissingPlaceholder { .. }
+            | Self::ToolOutOfRange { .. }
+            | Self::UnsafeFileExtension { .. } => Severity::Error,
         }
     }
 
@@ -173,12 +208,35 @@ impl fmt::Display for Problem {
                     "operation `{operation}` is disabled and will not be exported"
                 )
             }
-            Self::ToolValueUnset { tool, field } => {
+            Self::ToolValueUnset { tool, name, field } => {
                 write!(
                     f,
-                    "tool `{tool}` has no {field}; export fails until it is set"
+                    "tool `{name}` (`{tool}`) has no {field}; export fails until it is set"
                 )
             }
+            Self::ToolOutOfRange {
+                tool,
+                name,
+                field,
+                value,
+                expected,
+            } => write!(
+                f,
+                "tool `{name}` (`{tool}`): {field} is {value}, expected {expected}"
+            ),
+            Self::OpenProfile {
+                definition,
+                name,
+                profile,
+            } => write!(
+                f,
+                "`{name}` (definition `{definition}`, profile {profile}) is an open path; Profile cuts only closed shapes, so it is not cut"
+            ),
+            Self::UnsafeFileExtension { extension } => write!(
+                f,
+                "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_FILE_EXTENSION_CHARS} letters or digits and not `dcv`",
+                extension.escape_default()
+            ),
         }
     }
 }
@@ -221,6 +279,13 @@ impl Validator {
                 });
             }
             for (i, profile) in def.profiles.iter().enumerate() {
+                if !profile.is_closed() {
+                    self.problems.push(Problem::OpenProfile {
+                        definition: def.id.clone(),
+                        name: def.name.clone(),
+                        profile: i,
+                    });
+                }
                 for (j, vertex) in profile.vertices().iter().enumerate() {
                     let at = format!("definitions[{key}].profiles[{i}].vertices[{j}]");
                     self.finite(&format!("{at}.x"), vertex.x);
@@ -261,16 +326,16 @@ impl Validator {
             }
             let at = format!("tools[{}]", tool.id);
             if let ToolKind::VBit { included_angle_deg } = tool.cutter {
-                let field = format!("{at}.cutter.included_angle_deg");
-                if self.finite(&field, included_angle_deg)
+                let field = "cutter.included_angle_deg";
+                if self.finite(&format!("{at}.{field}"), included_angle_deg)
                     && !(included_angle_deg > 0.0 && included_angle_deg < 180.0)
                 {
-                    self.out_of_range(field, included_angle_deg, ANGLE);
+                    self.tool_out_of_range(tool, field, included_angle_deg, ANGLE);
                 }
             }
-            self.positive(&format!("{at}.diameter_mm"), tool.diameter_mm);
+            self.tool_positive(tool, "diameter_mm", tool.diameter_mm);
             if tool.flutes == 0 {
-                self.out_of_range(format!("{at}.flutes"), 0.0, POSITIVE);
+                self.tool_out_of_range(tool, "flutes", 0.0, POSITIVE);
             }
             self.required_positive(tool, "feed_mm_min", tool.feed_mm_min);
             self.required_positive(tool, "plunge_mm_min", tool.plunge_mm_min);
@@ -281,18 +346,21 @@ impl Validator {
             match tool.rpm {
                 None if rpm_required => self.problems.push(Problem::ToolValueUnset {
                     tool: tool.id.clone(),
+                    name: tool.name.clone(),
                     field: "rpm",
                 }),
-                Some(0) => self.out_of_range(format!("{at}.rpm"), 0.0, POSITIVE),
+                Some(0) => self.tool_out_of_range(tool, "rpm", 0.0, POSITIVE),
                 None | Some(_) => {}
             }
             if let Some(step) = tool.step_down_mm {
-                self.positive(&format!("{at}.step_down_mm"), step);
+                self.tool_positive(tool, "step_down_mm", step);
             }
             if let Some(fraction) = tool.step_over_fraction {
-                let field = format!("{at}.step_over_fraction");
-                if self.finite(&field, fraction) && !(fraction > 0.0 && fraction <= 1.0) {
-                    self.out_of_range(field, fraction, FRACTION);
+                let field = "step_over_fraction";
+                if self.finite(&format!("{at}.{field}"), fraction)
+                    && !(fraction > 0.0 && fraction <= 1.0)
+                {
+                    self.tool_out_of_range(tool, field, fraction, FRACTION);
                 }
             }
         }
@@ -356,6 +424,12 @@ impl Validator {
             }
         }
 
+        if !is_safe_file_extension(&p.post_processor.file_extension) {
+            self.problems.push(Problem::UnsafeFileExtension {
+                extension: p.post_processor.file_extension.clone(),
+            });
+        }
+
         let dwell = &p.post_processor.feed_speed.spindle_on_dwell;
         let at = "post_processor.feed_speed.spindle_on_dwell";
         self.non_negative(&format!("{at}.duration_s"), dwell.duration_s);
@@ -395,10 +469,34 @@ impl Validator {
         match value {
             None => self.problems.push(Problem::ToolValueUnset {
                 tool: tool.id.clone(),
+                name: tool.name.clone(),
                 field,
             }),
-            Some(v) => self.positive(&format!("tools[{}].{field}", tool.id), v),
+            Some(v) => self.tool_positive(tool, field, v),
         }
+    }
+
+    /// [`Self::positive`] for a tool's field, naming the tool.
+    fn tool_positive(&mut self, tool: &Tool, field: &'static str, value: f64) {
+        if self.finite(&format!("tools[{}].{field}", tool.id), value) && value <= 0.0 {
+            self.tool_out_of_range(tool, field, value, POSITIVE);
+        }
+    }
+
+    fn tool_out_of_range(
+        &mut self,
+        tool: &Tool,
+        field: &'static str,
+        value: f64,
+        expected: &'static str,
+    ) {
+        self.problems.push(Problem::ToolOutOfRange {
+            tool: tool.id.clone(),
+            name: tool.name.clone(),
+            field,
+            value,
+            expected,
+        });
     }
 
     fn out_of_range(&mut self, field: String, value: f64, expected: &'static str) {
@@ -415,6 +513,7 @@ mod tests {
     use super::*;
     use crate::model::{Operation, ToolKind};
     use crate::test_support::sample_project;
+    use dc_geometry::{Polyline, Vertex};
 
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
         problems.iter().filter(|p| p.is_error()).collect()
@@ -450,6 +549,7 @@ mod tests {
             problems,
             vec![Problem::ToolValueUnset {
                 tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
                 field: "feed_mm_min",
             }]
         );
@@ -481,6 +581,7 @@ mod tests {
             validate(&p),
             vec![Problem::ToolValueUnset {
                 tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
                 field: "plunge_mm_min",
             }]
         );
@@ -534,7 +635,7 @@ mod tests {
         p.tools[0].diameter_mm = -1.0;
         let problems = validate(&p);
         assert!(
-            matches!(&problems[..], [Problem::OutOfRange { field, .. }] if field == "tools[t1].diameter_mm"),
+            matches!(&problems[..], [Problem::ToolOutOfRange { tool, field, .. }] if tool.as_str() == "t1" && *field == "diameter_mm"),
             "{problems:?}"
         );
     }
@@ -615,11 +716,12 @@ mod tests {
     fn problem_messages_name_the_subject() {
         let problem = Problem::ToolValueUnset {
             tool: ToolId::new("t1"),
+            name: "Set me".into(),
             field: "feed_mm_min",
         };
         assert_eq!(
             problem.to_string(),
-            "tool `t1` has no feed_mm_min; export fails until it is set"
+            "tool `Set me` (`t1`) has no feed_mm_min; export fails until it is set"
         );
     }
 
@@ -663,5 +765,82 @@ mod tests {
         let mut p = sample_project();
         p.post_processor.feed_speed.spindle_on_dwell.duration_s = 0.0;
         assert!(validate(&p).is_empty());
+    }
+
+    /// Functional spec acceptance test 2 (#40): a tool problem names the
+    /// tool as the user sees it, not only by id.
+    #[test]
+    fn tool_problems_name_the_tool() {
+        let mut p = sample_project();
+        p.tools[0].name = "Set me".into();
+        p.tools[0].feed_mm_min = Some(0.0);
+        p.tools[0].plunge_mm_min = None;
+        let messages: Vec<String> = validate(&p).iter().map(ToString::to_string).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        for (message, field) in messages.iter().zip(["feed_mm_min", "plunge_mm_min"]) {
+            for part in ["Set me", "t1", field] {
+                assert!(message.contains(part), "`{message}` names {part}");
+            }
+        }
+    }
+
+    /// Functional spec capability 8 (#40): open paths are imported but
+    /// Profile never cuts them, and `check` reports each one.
+    #[test]
+    fn open_profile_is_warning_naming_the_definition() {
+        let mut p = sample_project();
+        assert!(
+            !validate(&p)
+                .iter()
+                .any(|q| matches!(q, Problem::OpenProfile { .. })),
+            "the sample's closed rectangle is not reported"
+        );
+        let def = p
+            .definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1");
+        def.profiles.push(Polyline::new(
+            vec![Vertex::new(0.0, 40.0, 0.0), Vertex::new(50.0, 40.0, 0.0)],
+            false,
+        ));
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::OpenProfile {
+                definition: DefinitionId::new("d1"),
+                name: "Rectangle".into(),
+                profile: 1,
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("Rectangle") && message.contains("open"),
+            "{message}"
+        );
+    }
+
+    /// #36 security review (#40): a shared `.dcv` chooses its output
+    /// extension, so it must not name the project file or a path.
+    #[test]
+    fn unsafe_file_extension_is_error() {
+        for extension in ["dcv", "DCV", "", "/../x", "n c", "toolong12"] {
+            let mut p = sample_project();
+            p.post_processor.file_extension = extension.into();
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::UnsafeFileExtension {
+                    extension: extension.into()
+                }],
+                "`{extension}` is refused"
+            );
+            assert!(problems[0].is_error(), "`{extension}` is an error");
+        }
+        for extension in ["nc", "gcode", "tap", "NGC"] {
+            let mut p = sample_project();
+            p.post_processor.file_extension = extension.into();
+            assert_eq!(validate(&p), vec![], "`{extension}` is allowed");
+        }
     }
 }

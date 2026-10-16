@@ -155,7 +155,9 @@ Serialization: serde + serde_json, pretty-printed, keys in declaration order.
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
-disabled operations, unset feeds as warnings). A file with a newer version
+an unsafe post-processor `file_extension`; disabled operations, unset tool
+feeds and open profiles as warnings). Tool problems name the tool by name
+and id. A file with a newer version
 fails with `LoadError::NewerVersion`.
 
 ### dc-cam
@@ -185,7 +187,8 @@ first use and validated by a test, with `bundled()` and
 `lookup(id) -> Result<PostProcessor, ExportError>`.
 
 ```rust
-pub struct Program { pub text: String, pub extension: String }
+pub struct Program { pub text: String, pub extension: String, pub pauses: Vec<Pause> }
+pub struct Pause { pub line: usize, pub message: String }
 pub fn emit(project: &Project, ops: &[(ProfileOp, Tool, Toolpath)]) -> Result<(Program, Vec<Warning>), ExportError>;
 pub fn parse_motion(text: &str) -> Vec<MachineMove>;   // test-only helper, re-exported for safety tests
 ```
@@ -267,10 +270,14 @@ Inputs: project, op. Output: toolpath in project space.
    change); then moves. After the last op of a tool, `spindle_off` before a
    tool change, and at the end unless the footer has it.
    With manual spindle control: no spindle words and no dwell. Lines of the
-   tool-change block and footer that only stop the spindle are left out.
-   Before the first move of each tool, retract to safe Z, then
-   `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
-   leaving out the speed when the tool has none. After the last op of a tool
+   tool-change block and footer that only stop the spindle are left out, and
+   so are tool-change lines that only pause (`M0`, `M1`) and
+   `pause_after_change`. Before the first move of each tool, retract to safe
+   Z, then one pause for the tool change and the router:
+   `M0 (MSG, Fit T{n} {name}. Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
+   leaving out the speed when the tool has none and the `Fit` part when the
+   tool-change block had no pause; the name is shortened so the message
+   stays within 96 characters. After the last op of a tool
    (before a tool change, and at the end), retract to safe Z, then
    `M0 (MSG, Turn the router OFF.)`. The message is always a `( )` comment,
    whatever the dialect's comment syntax, passes the comment sanitizer, and
@@ -429,7 +436,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::export_refuses_zero_feed_and_writes_nothing`.
 - `cli::check_reports_open_paths`.
 - `cli::posts_lists_grblhal_and_grbl`.
-- `golden::profile_outside_rect` (golden), `golden::profile_inside_circle` (golden), `golden::profile_ring` (golden), `golden::profile_tabs_circle` (golden) — per-Z-level cutting move sets match within 0.01 mm after start-point alignment; feeds equal.
+
+**dc-gcode (integration, `tests/golden.rs`)**
+- `golden::profile_outside_rect` (golden), `golden::profile_inside_circle` (golden), `golden::profile_ring` (golden), `golden::profile_tabs_circle` (golden) — per-Z-level cutting move sets match within 0.01 mm after start-point alignment; feeds equal, except the differences each case's README lists.
 
 ## Slices
 

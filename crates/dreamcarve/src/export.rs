@@ -15,7 +15,7 @@ use std::process::ExitCode;
 
 use dc_cam::generate_profile;
 use dc_gcode::{ExportWarning, Program, emit};
-use dc_project::{Loaded, Operation, Severity};
+use dc_project::{Loaded, Operation, Problem, Severity, is_safe_file_extension};
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
 
@@ -182,24 +182,20 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Longest output file extension accepted.
-const MAX_EXTENSION_CHARS: usize = 8;
-
 /// The post-processor's output extension, if it is safe to append to the
-/// project's file name. A `.dcv` embeds its post-processor, so a shared
-/// project chooses this value: it must be 1 to 8 ASCII letters or digits
-/// (never a path) and must not be `dcv`, which would replace the project.
+/// project's file name ([`is_safe_file_extension`]). Validation already
+/// refuses an unsafe one; this guards the post-processor `--post` swapped in
+/// after validation ran.
 fn safe_extension(extension: &str) -> Result<&str, Failure> {
-    let plain = !extension.is_empty()
-        && extension.len() <= MAX_EXTENSION_CHARS
-        && extension.chars().all(|c| c.is_ascii_alphanumeric());
-    if plain && !extension.eq_ignore_ascii_case("dcv") {
+    if is_safe_file_extension(extension) {
         Ok(extension)
     } else {
-        Err(Failure::error(format!(
-            "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_EXTENSION_CHARS} letters or digits and not `dcv`",
-            extension.escape_default()
-        )))
+        Err(Failure::error(
+            Problem::UnsafeFileExtension {
+                extension: extension.to_owned(),
+            }
+            .to_string(),
+        ))
     }
 }
 
@@ -211,8 +207,9 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Prints the export summary: the file written, then one line per
-/// exported operation.
+/// Prints the export summary: the file written, one line per exported
+/// operation, then every pause with its line number and message, because
+/// the controller or sender may not show the message (design step 8).
 fn report(loaded: &Loaded, program: &Program, output: &Path, args: &ExportArgs) {
     let project = &loaded.project;
     println!(
@@ -243,6 +240,15 @@ fn report(loaded: &Loaded, program: &Program, output: &Path, args: &ExportArgs) 
             op.depth_mm
         );
     }
-    // Per-program notes for the operator (such as the pauses of manual
-    // spindle control) are printed here, after the operation lines.
+    if !program.pauses.is_empty() {
+        println!("Pauses (M0); resume each with cycle start:");
+        for pause in &program.pauses {
+            let message = if pause.message.is_empty() {
+                "(no message)"
+            } else {
+                pause.message.as_str()
+            };
+            println!("  line {}: {message}", pause.line);
+        }
+    }
 }

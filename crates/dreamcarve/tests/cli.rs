@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use dc_geometry::assert_approx_eq;
-use dc_project::{Loaded, load, save};
+use dc_project::{Loaded, SpindleControl, load, save};
 
 /// The date every compared program is exported with.
 const FIXED_DATE: &str = "2026-10-15";
@@ -184,7 +184,10 @@ fn export_refuses_zero_feed_and_writes_nothing() {
     let out = run(&dir, &["export", "coaster.dcv"]);
     assert_eq!(out.status.code(), Some(1), "a validation error exits 1");
     let stderr = stderr(&out);
-    assert!(stderr.contains("t1"), "stderr names the tool: {stderr}");
+    assert!(
+        stderr.contains("Set me") && stderr.contains("t1"),
+        "stderr names the tool by name and id: {stderr}"
+    );
     assert!(
         stderr.contains("feed_mm_min"),
         "stderr names the field: {stderr}"
@@ -321,5 +324,96 @@ fn export_refuses_to_overwrite_the_project() {
         std::fs::read(&dcv).expect("dcv readable"),
         before,
         ".dcv untouched"
+    );
+}
+
+/// #40: the extension rule is part of validation, so `check` reports an
+/// unsafe extension as an error before any export is tried.
+#[test]
+fn check_reports_unsafe_file_extension() {
+    let dir = work_dir("check_reports_unsafe_file_extension");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor.file_extension = "dcv".into();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(1), "check output: {report}");
+    assert!(
+        report.contains("file extension"),
+        "check names the file extension: {report}"
+    );
+}
+
+/// The text of `line`'s comment without a leading `MSG,`: what the user is
+/// asked to do at a pause.
+fn pause_message(line: &str) -> String {
+    let comment = match (line.find('('), line.rfind(')')) {
+        (Some(open), Some(close)) if open < close => &line[open + 1..close],
+        _ => "",
+    };
+    let comment = comment.trim();
+    comment
+        .strip_prefix("MSG,")
+        .unwrap_or(comment)
+        .trim()
+        .to_owned()
+}
+
+/// Asserts that `summary` lists every `M0` of `program` by its 1-based line
+/// number together with its message.
+fn assert_lists_pauses(program: &str, summary: &str) {
+    let pauses: Vec<(usize, &str)> = program
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.starts_with("M0"))
+        .map(|(i, l)| (i + 1, l))
+        .collect();
+    assert!(!pauses.is_empty(), "the program pauses at least once");
+    for (number, line) in pauses {
+        let tag = format!("line {number}:");
+        let listed = summary
+            .lines()
+            .find(|l| l.contains(&tag))
+            .unwrap_or_else(|| panic!("summary lists the M0 on line {number}: {summary}"));
+        let message = pause_message(line);
+        assert!(
+            listed.contains(&message),
+            "line {number} is listed with `{message}`: {listed}"
+        );
+    }
+}
+
+/// Design step 8 (#40): the controller or sender may not show a pause's
+/// message (GRBL drops comments), so `export` lists every `M0` with its line
+/// number and what it is for.
+#[test]
+fn export_lists_each_pause() {
+    let dir = work_dir("export_lists_each_pause");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert_lists_pauses(&program, &stdout(&out));
+
+    let mut project = load_file(&dcv).project;
+    project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "manual export: {}",
+        stderr(&out)
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    let summary = stdout(&out);
+    assert_lists_pauses(&program, &summary);
+    assert!(
+        summary.contains("Turn the router ON"),
+        "the manual pause is listed: {summary}"
     );
 }

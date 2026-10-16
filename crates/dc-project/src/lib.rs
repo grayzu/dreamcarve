@@ -26,9 +26,10 @@ pub use model::{
     ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
 };
 pub use post_processor::{
-    ArcFormat, Axis, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces, FeedSpeed, Motion,
-    NumberFormat, PostProcessor, ProgramFormat, RetractMode, SpindleControl, SpindleDwell, Stop,
-    ToolChange, UnitCommands, WorkCoordinates,
+    ArcFormat, Axis, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces, FeedSpeed,
+    MAX_FILE_EXTENSION_CHARS, Motion, NumberFormat, PostProcessor, ProgramFormat, RetractMode,
+    SpindleControl, SpindleDwell, Stop, ToolChange, UnitCommands, WorkCoordinates,
+    is_safe_file_extension,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use validate::{Problem, Severity, validate};
