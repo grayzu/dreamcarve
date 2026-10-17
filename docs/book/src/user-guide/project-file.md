@@ -69,12 +69,12 @@ Work zero: the point you set as X0 Y0 Z0 on the machine.
 
 ```json
 "origin": {
-  "xy": { "kind": "bottom_left" },
+  "xy": "bottom_left",
   "z": "stock_top"
 }
 ```
 
-`xy.kind` is one of:
+`xy` is one of:
 
 | Value | Work zero in X and Y |
 | --- | --- |
@@ -83,7 +83,7 @@ Work zero: the point you set as X0 Y0 Z0 on the machine.
 | `top_left` | Back left. |
 | `top_right` | Back right. |
 | `centre` | The centre of the stock. |
-| `custom` | Any point: add `"x_mm"` and `"y_mm"`, as in `{ "kind": "custom", "x_mm": 20.0, "y_mm": 5.0 }`. |
+| `custom` | Any point, written as an object: `{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`. |
 
 `z` is `"stock_top"` (the default) or `"stock_bottom"`. With
 `"stock_top"`, cutting moves have negative Z.
@@ -138,7 +138,7 @@ To move a shape on the stock, change `e` and `f`.
 {
   "id": "t1",
   "name": "Set me",
-  "cutter": { "kind": "end_mill" },
+  "cutter": "end_mill",
   "diameter_mm": 6.35,
   "flutes": 2,
   "feed_mm_min": 1500.0,
@@ -153,7 +153,7 @@ To move a shape on the stock, change `e` and `f`.
 | --- | --- |
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
-| `cutter` | `{ "kind": "end_mill" }`. Also accepted: `ball_nose`, `engraver`, and `{ "kind": "v_bit", "included_angle_deg": 60.0 }`; Profile uses only the diameter. |
+| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`; Profile uses only the diameter. |
 | `diameter_mm` | Cutting diameter. Profile offsets the path by half of it. |
 | `flutes` | Number of flutes. Not used in phase 1. |
 | `feed_mm_min` | Feed rate while cutting. **Required.** |
