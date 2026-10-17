@@ -27,10 +27,14 @@
 //!   are no spindle words: the program retracts to safe Z and pauses with
 //!   `M0` and a `(MSG, ...)` comment for the user to switch the router on
 //!   before each tool's first cut, and off before a tool change and at the
-//!   end. The definition's tool-change pause is folded into the router-on
-//!   pause, so each tool has one stop, at safe Z, before it cuts.
-//! - A rapid lowers Z only after its XY move, and after a tool change the
-//!   position is treated as unknown, so Z is raised first.
+//!   end.
+//! - A tool change, the first one included, retracts to safe Z first. Its
+//!   pause is DreamCarve's own `M0 (MSG, Fit T<n> <name>. Set Z zero, then
+//!   resume.)`, written in place of the definition's pause-only line or
+//!   `pause_after_change`. The user may jog or set Z zero there, so the
+//!   position is then unknown and the program retracts to safe Z again
+//!   before the spindle starts or the router-on pause (#43).
+//! - A rapid lowers Z only after its XY move.
 //! - I and J are taken from the rounded start the controller holds; an arc
 //!   the controller would reject, or read as a full circle, is flattened.
 //! - The emitted text is parsed and checked by `safety` before return.
@@ -231,46 +235,53 @@ pub fn emit(
         }
 
         let spindle_off = post.feed_speed.spindle_off.trim();
-        // Manual: the tool-change pause is folded into the router-on pause,
-        // so the user stops once, at safe Z, to fit the tool and switch on.
-        let mut fit_tool = false;
+        let safe_z_mm = project.stock.thickness_mm + op.safe_z_mm;
+        // The tool change belongs to the operation, so the safety pass
+        // checks its pause against this operation's safe Z.
+        let first_line = w.next_line();
         if w.tool.as_ref() != Some(&tool.id) {
+            // S4, #43: the user fits the tool with the bit clear of the
+            // work. At program start Z is wherever the user left it, and
+            // after a router-off pause the user may have jogged, so the
+            // retract is always written.
+            w.forget_position();
+            w.retract(safe_z_mm)?;
             if post.tool_change.stop_spindle_first && w.spindle_rpm.is_some() {
                 w.line(spindle_off);
                 w.spindle_rpm = None;
             }
+            let fit = tool_change_message(number, &tool.name);
+            let mut paused = false;
             for line in &post.tool_change.commands {
-                if manual && only_pauses(line) {
-                    fit_tool = true;
+                if only_pauses(line) {
+                    if !paused {
+                        w.pause(&fit);
+                        paused = true;
+                    }
                 } else if !(manual && only_stops_spindle(line, spindle_off)) {
                     // Manual: the router is already off, and no spindle
                     // word is sent (S4).
                     w.template(line, &context);
                 }
             }
-            if post.tool_change.pause_after_change {
-                if manual {
-                    fit_tool = true;
-                } else {
-                    w.line(&post.tool_change.pause_command);
-                }
+            if post.tool_change.pause_after_change && !paused {
+                w.pause(&fit);
             }
             w.tool = Some(tool.id.clone());
-            // The operator may jog while the program is paused for the
-            // change, so where the tool is is no longer known.
+            // A definition with no pause may still move the tool, so where
+            // it is is no longer known either way. Lift to safe Z, relative
+            // to any new zero, before the spindle starts.
             w.forget_position();
+            w.retract(safe_z_mm)?;
         }
 
-        let safe_z_mm = project.stock.thickness_mm + op.safe_z_mm;
-        let first_line = w.next_line();
         if manual {
             // S4 (manual): retract, then pause for the user to switch the
             // router on. Resuming is the confirmation, so there is no
             // dwell, and the speed is only a hint.
             if !router_on {
                 w.retract(safe_z_mm)?;
-                let fit = fit_tool.then_some((number, tool.name.as_str()));
-                w.pause(&router_on_message(rates.rpm, fit));
+                w.pause(&router_on_message(rates.rpm));
                 router_on = true;
             }
         } else if let Some(rpm) = rates.rpm
@@ -427,26 +438,29 @@ const PAUSE_COMMAND: &str = "M0";
 const ROUTER_OFF_MESSAGE: &str = "Turn the router OFF.";
 
 /// The message of the pause before a tool's first cut, with the tool's
-/// speed as a hint when it has one. With `fit` (tool number and name) the
-/// pause also stands in for the tool change: the name is shortened so the
-/// router instruction always fits [`MAX_MESSAGE_CHARS`] whole.
-fn router_on_message(rpm: Option<u32>, fit: Option<(usize, &str)>) -> String {
-    let on = match rpm {
+/// speed as a hint when it has one.
+fn router_on_message(rpm: Option<u32>) -> String {
+    match rpm {
         Some(rpm) => format!("Turn the router ON. Speed {rpm} RPM. Resume to start cutting."),
         None => "Turn the router ON. Resume to start cutting.".to_owned(),
-    };
-    match fit {
-        Some((number, name)) => {
-            let head = format!("Fit T{number}");
-            let room = MAX_MESSAGE_CHARS.saturating_sub(head.len() + on.len() + 3);
-            let name = sanitize_comment(name, room);
-            if name.is_empty() {
-                format!("{head}. {on}")
-            } else {
-                format!("{head} {name}. {on}")
-            }
-        }
-        None => on,
+    }
+}
+
+/// What the user does at a tool-change pause, after the tool's number and
+/// name (#43): a new tool has a new length, so Z zero is set with it.
+const SET_Z_ZERO: &str = "Set Z zero, then resume.";
+
+/// The message of the tool-change pause for tool `number` named `name`.
+/// The name is shortened so the instruction always fits
+/// [`MAX_MESSAGE_CHARS`] whole.
+fn tool_change_message(number: usize, name: &str) -> String {
+    let head = format!("Fit T{number}");
+    let room = MAX_MESSAGE_CHARS.saturating_sub(head.len() + SET_Z_ZERO.len() + 3);
+    let name = sanitize_comment(name, room);
+    if name.is_empty() {
+        format!("{head}. {SET_Z_ZERO}")
+    } else {
+        format!("{head} {name}. {SET_Z_ZERO}")
     }
 }
 
@@ -740,9 +754,16 @@ impl<'a> Writer<'a> {
     /// Writes an `M0` with `message`, sanitized, as a `(MSG, ...)` comment.
     /// grblHAL reports it to the sender as `[MSG:...]`; GRBL ignores the
     /// comment (`definitions/README.md`, "Manual spindle control").
+    ///
+    /// The user may send commands while the program is paused, such as a
+    /// probe (`G38.2`) or a `G1` with its own feed to set Z zero, so the
+    /// next move writes its motion and feed words again instead of relying
+    /// on the modal ones (#43).
     fn pause(&mut self, message: &str) {
         let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
         self.line(&format!("{PAUSE_COMMAND} (MSG, {message})"));
+        self.motion = None;
+        self.feed = None;
     }
 
     /// Raises the tool to `safe_z_mm` (project space) unless it is known to
@@ -1415,11 +1436,18 @@ mod tests {
             );
             for line in named {
                 // The text inside the comment has no comment delimiters.
-                let start = line.find(prefix.as_str()).unwrap() + prefix.len();
+                // Pauses are always `M0 (MSG, ...)`, whatever the post's
+                // comment style (#43).
+                let (prefix, suffix) = if has_word(line, "M0") {
+                    ("(MSG,", ")")
+                } else {
+                    (prefix.as_str(), suffix.as_str())
+                };
+                let start = line.find(prefix).unwrap() + prefix.len();
                 let inner = if suffix.is_empty() {
                     &line[start..]
                 } else {
-                    &line[start..line.rfind(suffix.as_str()).unwrap()]
+                    &line[start..line.rfind(suffix).unwrap()]
                 };
                 assert!(!inner.contains(['(', ')', ';']), "{post}: {line:?}");
                 assert!(inner.contains("Bad name next line"), "{post}: {line:?}");
@@ -1703,8 +1731,9 @@ mod tests {
     /// #34, Behaviour 2 and 5: in manual mode the program sends no spindle
     /// words and no spin-up dwell. Before the first cut it retracts to safe
     /// Z and pauses with a message to turn the router on; resuming is the
-    /// user's confirmation that it is running. #41: the definition's
-    /// tool-change pause is folded into that one stop.
+    /// user's confirmation that it is running. #43: the tool-change pause,
+    /// asking for the tool and Z zero, comes first, then a retract, then
+    /// the router-on pause, both at safe Z.
     #[test]
     fn manual_spindle_pauses_before_first_cut() {
         for post in ["grblhal", "grbl"] {
@@ -1721,17 +1750,23 @@ mod tests {
             }
             let cut = first_index(&lines, is_cut).unwrap();
             let pauses: Vec<usize> = (0..cut).filter(|&i| has_word(lines[i], "M0")).collect();
-            let [pause] = pauses[..] else {
-                panic!("{post}: one M0 before the first cut, not {pauses:?}");
+            let [fit, on] = pauses[..] else {
+                panic!("{post}: two M0 before the first cut, not {pauses:?}");
             };
             assert!(
-                lines[pause].contains("(MSG, Fit T1 ")
-                    && lines[pause].contains(". Turn the router ON."),
-                "{post}: the tool change and the router share one stop: {}",
-                lines[pause]
+                lines[fit].contains("(MSG, Fit T1 ") && lines[fit].contains("Set Z zero"),
+                "{post}: {}",
+                lines[fit]
             );
-            let z = z_before(&text, pause).unwrap_or_else(|| panic!("{post}: Z unknown"));
-            assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
+            assert!(
+                lines[on].contains("(MSG, Turn the router ON."),
+                "{post}: {}",
+                lines[on]
+            );
+            for pause in [fit, on] {
+                let z = z_before(&text, pause).unwrap_or_else(|| panic!("{post}: Z unknown"));
+                assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
+            }
         }
     }
 
@@ -1751,21 +1786,20 @@ mod tests {
         let with_rpm = on_line(&ops);
         assert_eq!(
             with_rpm,
-            "M0 (MSG, Fit T1 6.35 mm upcut. Turn the router ON. Speed 18000 RPM. Resume to start cutting.)"
+            "M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)"
         );
         ops[0].1.rpm = None;
         let without = on_line(&ops);
         assert_eq!(
             without,
-            "M0 (MSG, Fit T1 6.35 mm upcut. Turn the router ON. Resume to start cutting.)"
+            "M0 (MSG, Turn the router ON. Resume to start cutting.)"
         );
     }
 
     /// #34, Behaviour 3 and 4: with two tools the program pauses to turn
     /// the router off before each tool change and at the end, each time at
-    /// safe Z. #41: the definition's tool-change pause is not written; the
-    /// router-on pause asks for the tool instead, so each tool has one stop
-    /// before it cuts.
+    /// safe Z. #43: each tool has two stops before it cuts, one to fit it
+    /// and set Z zero and one, after a retract, to turn the router on.
     #[test]
     fn manual_spindle_pauses_off_at_tool_change_and_end() {
         for post in ["grblhal", "grbl"] {
@@ -1780,8 +1814,8 @@ mod tests {
                         Some("on")
                     } else if l.contains("Turn the router OFF") {
                         Some("off")
-                    } else if has_word(l, "M0") {
-                        Some("tool change")
+                    } else if l.contains("Set Z zero") {
+                        Some("fit")
                     } else if is_cut(l) {
                         Some("cut")
                     } else if has_word(l, "M30") {
@@ -1794,7 +1828,7 @@ mod tests {
             events.dedup();
             assert_eq!(
                 events,
-                ["on", "cut", "off", "on", "cut", "off", "end"],
+                ["fit", "on", "cut", "off", "fit", "on", "cut", "off", "end"],
                 "{post}"
             );
             for (index, line) in lines.iter().enumerate() {
@@ -1815,18 +1849,19 @@ mod tests {
     /// not show the message (GRBL drops comments).
     #[test]
     fn program_lists_every_pause_with_its_message() {
-        let on_18000 =
-            "Fit T1 6.35 mm upcut. Turn the router ON. Speed 18000 RPM. Resume to start cutting.";
-        let on_12000 =
-            "Fit T2 3 mm downcut. Turn the router ON. Speed 12000 RPM. Resume to start cutting.";
+        let on_18000 = "Turn the router ON. Speed 18000 RPM. Resume to start cutting.";
+        let on_12000 = "Turn the router ON. Speed 12000 RPM. Resume to start cutting.";
         let off = "Turn the router OFF.";
         let (tc1, tc2) = (
-            "Tool change: T1 6.35 mm upcut",
-            "Tool change: T2 3 mm downcut",
+            "Fit T1 6.35 mm upcut. Set Z zero, then resume.",
+            "Fit T2 3 mm downcut. Set Z zero, then resume.",
         );
         for (control, expected) in [
             (SpindleControl::Automatic, vec![tc1, tc2]),
-            (SpindleControl::Manual, vec![on_18000, off, on_12000, off]),
+            (
+                SpindleControl::Manual,
+                vec![tc1, on_18000, off, tc2, on_12000, off],
+            ),
         ] {
             for post in ["grblhal", "grbl"] {
                 let mut project = project_with(post);
@@ -1885,26 +1920,149 @@ mod tests {
         }
     }
 
-    /// #41: a long tool name is shortened so the merged message fits
-    /// [`MAX_MESSAGE_CHARS`]; the router instruction is never cut.
-    #[test]
-    fn merged_pause_keeps_the_router_instruction_whole() {
+    /// Every spindle mode, for each bundled post-processor, with one and
+    /// with two tools.
+    fn every_program() -> Vec<(String, String)> {
+        let mut out = Vec::new();
         for post in ["grblhal", "grbl"] {
-            let project = manual_project(post);
-            let mut ops = ops_for(&project);
-            ops[0].1.name = "a very long tool name ".repeat(4);
-            ops[0].1.rpm = Some(u32::MAX);
-            let program = emit(&project, &ops, DATE).unwrap().0;
-            let on = &program.pauses[0].message;
-            assert!(on.starts_with("Fit T1 a very long"), "{post}: {on}");
-            assert!(
-                on.ends_with(&format!(
-                    ". Turn the router ON. Speed {} RPM. Resume to start cutting.",
-                    u32::MAX
-                )),
-                "{post}: {on}"
-            );
-            assert!(on.len() <= MAX_MESSAGE_CHARS, "{post}: {} chars", on.len());
+            for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+                for tools in [1, 2] {
+                    let mut project = project_with(post);
+                    project.post_processor.feed_speed.spindle_control = control;
+                    let ops = if tools == 1 {
+                        ops_for(&project)
+                    } else {
+                        two_tool_ops(&mut project)
+                    };
+                    let text = emit(&project, &ops, DATE).unwrap().0.text;
+                    out.push((format!("{post} {control:?} {tools} tool(s)"), text));
+                }
+            }
+        }
+        out
+    }
+
+    /// S4, #43: the user fits the tool and switches the router at a pause,
+    /// so every `M0` comes at a known Z at or above safe Z. At program start
+    /// Z is unknown, so a `G0 Z` comes before the first pause.
+    #[test]
+    fn tool_change_pause_is_at_safe_z() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let pauses: Vec<usize> = (0..lines.len())
+                .filter(|&i| has_word(lines[i], "M0"))
+                .collect();
+            assert!(!pauses.is_empty(), "{case}");
+            for i in pauses {
+                let z = z_before(&text, i);
+                assert!(
+                    z.is_some_and(|z| z >= SAFE_Z_MACHINE - 1e-9),
+                    "{case}: line {} pauses at Z {z:?}",
+                    i + 1
+                );
+            }
+        }
+    }
+
+    /// #43: the user may set Z zero at the tool-change pause, so the
+    /// program lifts to safe Z again before the spindle starts (automatic)
+    /// or before the router-on pause (manual).
+    #[test]
+    fn retracts_after_tool_change_pause() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let fits: Vec<usize> = (0..lines.len())
+                .filter(|&i| lines[i].contains("Set Z zero"))
+                .collect();
+            assert!(!fits.is_empty(), "{case}");
+            for i in fits {
+                let start = (i + 1..lines.len())
+                    .find(|&k| has_word(lines[k], "M3") || lines[k].contains("Turn the router ON"))
+                    .unwrap_or_else(|| panic!("{case}: nothing starts after line {}", i + 1));
+                let lift = (i + 1..start)
+                    .find(|&k| has_word(lines[k], "G0") && code(lines[k]).contains('Z'));
+                assert!(
+                    lift.is_some(),
+                    "{case}: no retract between lines {} and {}",
+                    i + 1,
+                    start + 1
+                );
+                let z = z_before(&text, start);
+                assert!(
+                    z.is_some_and(|z| z >= SAFE_Z_MACHINE - 1e-9),
+                    "{case}: line {} starts at Z {z:?}",
+                    start + 1
+                );
+            }
+        }
+    }
+
+    /// #43, option C: every tool-change pause asks for the tool and for Z
+    /// zero to be set with it. A long tool name is shortened so the message
+    /// fits [`MAX_MESSAGE_CHARS`]; the instruction is never cut.
+    #[test]
+    fn tool_change_message_asks_to_set_z_zero() {
+        for (case, text) in every_program() {
+            let tools = if case.contains("2 tool") { 2 } else { 1 };
+            let fits: Vec<&str> = text.lines().filter(|l| l.contains("(MSG, Fit T")).collect();
+            assert_eq!(fits.len(), tools, "{case}: {fits:?}");
+            for line in fits {
+                assert!(
+                    line.ends_with(". Set Z zero, then resume.)"),
+                    "{case}: {line}"
+                );
+            }
+        }
+        for post in ["grblhal", "grbl"] {
+            for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+                let mut project = project_with(post);
+                project.post_processor.feed_speed.spindle_control = control;
+                let mut ops = ops_for(&project);
+                ops[0].1.name = "a very long tool name ".repeat(6);
+                let program = emit(&project, &ops, DATE).unwrap().0;
+                let fit = &program.pauses[0].message;
+                assert!(fit.starts_with("Fit T1 a very long"), "{post}: {fit}");
+                assert!(fit.ends_with(". Set Z zero, then resume."), "{post}: {fit}");
+                assert!(
+                    fit.len() <= MAX_MESSAGE_CHARS,
+                    "{post}: {} chars",
+                    fit.len()
+                );
+            }
+        }
+    }
+
+    /// #43: at a pause the user may probe or move by hand to set Z zero,
+    /// which changes the controller's motion mode and feed. The first move
+    /// after every pause states its motion word, and the first cut its feed.
+    #[test]
+    fn moves_after_a_pause_restate_motion_and_feed() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            for i in (0..lines.len()).filter(|&i| has_word(lines[i], "M0")) {
+                let Some(next) = (i + 1..lines.len()).find(|&k| {
+                    let c = code(lines[k]);
+                    c.contains('X') || c.contains('Y') || c.contains('Z')
+                }) else {
+                    continue;
+                };
+                assert!(
+                    ["G0", "G1", "G2", "G3"]
+                        .iter()
+                        .any(|w| has_word(lines[next], w)),
+                    "{case}: line {} after the pause on line {} has no motion word",
+                    next + 1,
+                    i + 1
+                );
+                if let Some(cut) = (i + 1..lines.len()).find(|&k| is_cut(lines[k])) {
+                    assert!(
+                        code(lines[cut]).contains('F'),
+                        "{case}: the first cut after line {}, line {}, has no feed",
+                        i + 1,
+                        cut + 1
+                    );
+                }
+            }
         }
     }
 }

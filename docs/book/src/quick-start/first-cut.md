@@ -144,10 +144,10 @@ dreamcarve export coaster.dcv
 ```
 
 ```text
-Wrote coaster.nc (997 lines, post-processor grblhal).
+Wrote coaster.nc (998 lines, post-processor grblhal).
   op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
 Pauses (M0); resume each with cycle start:
-  line 11: Tool change: T1 Set me
+  line 12: Fit T1 Set me. Set Z zero, then resume.
 ```
 
 `coaster.nc` is the G-code program. The last lines list every place where
@@ -169,11 +169,12 @@ G21
 G54
 ( Operation 1: Profile )
 ( Tool 1: Set me )
+G0 Z5.000
 M5
-M0 ( Tool change: T1 Set me )
+M0 (MSG, Fit T1 Set me. Set Z zero, then resume.)
+G0 Z5.000
 M3 S18000
 G4 P3.000
-G0 Z5.000
 X103.139 Y56.863
 G1 Z-4.000 F500.000
 X103.174 Y55.063 F1500.000
@@ -182,9 +183,10 @@ X103.174 Y55.063 F1500.000
 | Lines | What they do |
 | --- | --- |
 | `G90 G17 G94 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
-| `M5`, `M0 ( Tool change … )` | Stop the spindle and pause, so you can fit the bit. |
-| `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) happen only at or above this height. |
+| `M5`, `M0 (MSG, Fit T1 …)` | Stop the spindle and pause at safe Z, so you can fit the bit and set Z zero with it. |
+| `G0 Z5.000` | Rapid to safe Z again, measured from the Z zero you just set. |
+| `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `X103.139 Y56.863` | Rapid to the start of the cut, still at safe Z. |
 | `G1 Z-4.000 F500.000` | Plunge to the first pass, 4 mm deep, at the plunge rate. |
 | `X103.174 Y55.063 F1500.000` | Cut along the outline at the feed rate. |
@@ -204,19 +206,23 @@ job:
 2. **Use a spoilboard.** The cut goes right down to the bottom of the
    plywood.
 3. **Set work zero.** X and Y at the front-left corner of the square (the
-   corner nearest you on the left). Z at the top of the plywood.
-4. **Do an air cut.** Set Z zero 20 mm above the plywood instead of on it,
-   and run the whole program. The deepest move, Z −12, then stays 8 mm
+   corner nearest you on the left). Z at the top of the plywood, with the
+   bit you will cut with. The program also stops for you to set Z zero once
+   the bit is in.
+4. **Do an air cut.** At that stop, set Z zero 20 mm above the plywood
+   instead of on it, and run the whole program. The deepest move, Z −12, then stays 8 mm
    above the wood. Watch that the path is where you expect and nothing hits
    a clamp. Then set Z zero back on the plywood.
 
 ## 9. Cut
 
 1. Load `coaster.nc` in your sender and start it.
-2. The program stops at line 11 for the tool change. Fit the 6.35 mm bit,
-   then resume with cycle start (the Resume or Start button in most
-   senders).
-3. The spindle starts, waits 3 seconds, and the cut begins. Stay at the
+2. The program lifts to safe Z and stops at line 12 for the tool change.
+   Fit the 6.35 mm bit if it is not already in, and set Z zero with it on
+   the top of the plywood. Then resume with cycle start (the Resume or
+   Start button in most senders).
+3. The program lifts to safe Z again. The spindle starts, waits 3 seconds,
+   and the cut begins. Stay at the
    machine with the stop button in reach.
 4. When it ends, cut the four tabs with a knife or a flush-cut saw, and sand
    the stubs.

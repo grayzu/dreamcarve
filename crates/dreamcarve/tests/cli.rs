@@ -471,7 +471,13 @@ fn export_lists_each_pause() {
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
     let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
-    assert_lists_pauses(&program, &stdout(&out));
+    let summary = stdout(&out);
+    assert_lists_pauses(&program, &summary);
+    // #43: the tool-change pause asks for Z zero in both modes.
+    assert!(
+        summary.contains("Fit T1 Set me. Set Z zero, then resume."),
+        "the tool-change pause is listed: {summary}"
+    );
 
     let mut project = load_file(&dcv).project;
     project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
@@ -487,7 +493,8 @@ fn export_lists_each_pause() {
     let summary = stdout(&out);
     assert_lists_pauses(&program, &summary);
     assert!(
-        summary.contains("Turn the router ON"),
-        "the manual pause is listed: {summary}"
+        summary.contains("Fit T1 Set me. Set Z zero, then resume.")
+            && summary.contains("Turn the router ON"),
+        "both manual pauses are listed: {summary}"
     );
 }

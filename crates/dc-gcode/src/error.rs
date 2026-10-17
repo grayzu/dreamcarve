@@ -223,6 +223,24 @@ pub enum ExportError {
         /// 1-based line number of the cut.
         line: usize,
     },
+    /// S4: an `M0` where Z is unknown or below safe Z. The user fits tools
+    /// and switches the router at a pause, so the bit must be clear of the
+    /// work.
+    #[error("emitted line {line} pauses below safe Z, or where Z is not known")]
+    PauseNotAtSafeZ {
+        /// 1-based line number of the pause.
+        line: usize,
+    },
+    /// S4: the spindle starts with no retract to safe Z since the last
+    /// pause. The user may have fitted a tool and set Z zero at the pause,
+    /// so Z is not known until the program moves to it again.
+    #[error(
+        "emitted line {line} starts the spindle without a retract to safe Z after the last pause"
+    )]
+    SpindleStartNotAtSafeZ {
+        /// 1-based line number of the spindle start.
+        line: usize,
+    },
     /// S4 (manual spindle control): the program has no `M0` at safe Z after
     /// its last cut for the user to turn the router off.
     #[error("the program does not pause, at safe Z, to turn the router off after its last cut")]

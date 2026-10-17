@@ -61,18 +61,32 @@ default (`DEFAULT_LEGACY_RTCOMMANDS On` in `config.h`; checked in
 or laser capability) or M7 (optional on both). Numbers never use exponent
 notation. Arc IJ offsets are taken from the rounded start point emitted.
 
+## Tool-change pause
+
+In both spindle modes `emit` writes its own tool-change pause in place of a
+definition line that only pauses (`M0` or `M1`), or of
+`pause_after_change`: `M0 (MSG, Fit T{n} {name}. Set Z zero, then
+resume.)`. A new bit has a new length, so Z zero must be set with it
+(#43). The tool change starts with a retract to safe Z, also at program
+start where Z is unknown, and ends with another, measured from the new
+zero, before the spindle starts or the router-on pause. The next move
+writes its motion and feed words again, because the user may probe
+(`G38.2`) or move with their own feed to set Z zero, which changes the
+controller's modal state. The bundled definitions keep their
+`M0 ( Tool change: ... )` lines for comparison with PureCutCNC; that text is
+not written.
+
 ## Manual spindle control
 
 With `feed_speed.spindle_control: "manual"` the program sends no `M3`, `M5`
-or `S` word. It retracts to safe Z and pauses with
+or `S` word. After the tool change (see "Tool-change pause" below) it
+pauses with
 `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`
-before each tool's first cut, and with `M0 (MSG, Turn the router OFF.)`
-before a tool change and at the end. A tool-change line that only pauses
-(`M0` or `M1`), and `pause_after_change`, are not written; the router-on
-pause asks for the tool instead
-(`M0 (MSG, Fit T{n} {name}. Turn the router ON. ...)`), so the user stops
-once per tool, at safe Z. The name is shortened if the message would
-exceed 96 characters; the router instruction is never cut. Checked on
+before each tool's first cut, and retracts to safe Z and pauses with
+`M0 (MSG, Turn the router OFF.)` before a tool change and at the end. So a
+tool has two stops before it cuts, with a retract between them: the router
+starts only after the bit has been lifted from the Z zero the user set.
+Checked on
 2026-10-16 against each controller's source:
 
 - **The pause is reliable on both.** `M0` syncs the planner
