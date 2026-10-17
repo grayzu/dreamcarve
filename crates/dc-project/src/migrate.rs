@@ -121,16 +121,22 @@ fn v1_to_v2(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
 mod tests {
     use super::*;
     use crate::test_support::sample_project;
-    use crate::{SpindleControl, load, save};
+    use crate::{OriginXy, SpindleControl, ToolKind, load, save};
     use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
+    use serde_json::json;
 
     const V0_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v0/sample.dcv");
     const V1_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v1/sample.dcv");
+    const V2_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v2/sample.dcv");
 
     /// The sample project as raw JSON of `version`, without the fields
     /// added after it.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 3 {
+            root["origin"]["xy"] = json!({ "kind": "bottom_left" });
+            root["tools"][0]["cutter"] = json!({ "kind": "end_mill" });
+        }
         if version < 2 {
             root["post_processor"]["feed_speed"]
                 .as_object_mut()
@@ -182,6 +188,61 @@ mod tests {
             migrated,
             sample_root_at(CURRENT_VERSION),
             "the key lands at the end of feed_speed, where version 2 declares it"
+        );
+    }
+
+    #[test]
+    fn version_2_fixture_loads() {
+        let loaded = load(V2_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// Unit variants become strings; a variant with data becomes a one-key
+    /// object (#46).
+    #[test]
+    fn v2_to_v3_rewrites_origin_and_cutters() {
+        let mut root = sample_root_at(2);
+        root["origin"]["xy"] = json!({ "kind": "custom", "x_mm": 20.0, "y_mm": 5.0 });
+        let mut v_bit = root["tools"][0].clone();
+        v_bit["id"] = json!("t2");
+        v_bit["cutter"] = json!({ "kind": "v_bit", "included_angle_deg": 60.0 });
+        root["tools"].as_array_mut().unwrap().push(v_bit);
+
+        let migrated = migrate(root, 2).unwrap();
+        assert_eq!(
+            migrated["origin"]["xy"],
+            json!({ "custom": { "x_mm": 20.0, "y_mm": 5.0 } })
+        );
+        assert_eq!(migrated["tools"][0]["cutter"], json!("end_mill"));
+        assert_eq!(
+            migrated["tools"][1]["cutter"],
+            json!({ "v_bit": { "included_angle_deg": 60.0 } })
+        );
+        let project: crate::Project = serde_json::from_value(migrated).unwrap();
+        assert_eq!(
+            project.origin.xy,
+            OriginXy::Custom {
+                x_mm: 20.0,
+                y_mm: 5.0
+            }
+        );
+        assert_eq!(
+            project.tools[1].cutter,
+            ToolKind::VBit {
+                included_angle_deg: 60.0
+            }
+        );
+    }
+
+    #[test]
+    fn v2_with_malformed_origin_fails() {
+        let mut root = sample_root_at(2);
+        root["origin"]["xy"] = json!({ "x_mm": 20.0 });
+        let err = migrate(root, 2).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 2, to: 3, .. }),
+            "{err:?}"
         );
     }
 
