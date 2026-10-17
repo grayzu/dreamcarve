@@ -18,7 +18,7 @@ This chapter is for anyone, human or AI agent, who wants to change DreamCarve.
 
 ## Set up
 
-Follow [Build from source](../quick-start/build-from-source.md). Then install
+Follow [Installing: Build from source](../quick-start/installing.md#build-from-source). Then install
 the two extra tools the build gate uses:
 
 ```sh
@@ -38,10 +38,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 cargo run -p check-headers
 cargo deny check licenses advisories
+mdbook build docs/book
 ```
 
 CI runs the same commands on Windows, macOS, and Linux for every pull
-request, and builds this book.
+request. `cargo test` includes `quick_start_runs_as_written`, which runs the
+[quick start](../quick-start/first-cut.md) as written; if you change a
+command's behaviour or output file, update that chapter in the same pull
+request.
 
 ## Picking up work
 
