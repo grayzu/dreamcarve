@@ -150,11 +150,26 @@ pub enum ExportError {
         /// The word.
         word: String,
     },
-    /// S5: the program does not select units and a work-coordinate system
-    /// before its first motion or spindle start.
+    /// S5: the program does not select units, a work-coordinate system, and
+    /// absolute distance mode before its first motion or spindle start.
     #[error("the program does not set {what} before it moves")]
     MissingSetup {
-        /// What is missing: units or work coordinates.
+        /// What is missing: units, work coordinates, or absolute distance
+        /// mode.
+        what: &'static str,
+    },
+    /// S5: after a pause the program moves, or starts the spindle, before
+    /// it sets units, work coordinates, and absolute distance mode again.
+    /// The user may change any of them at the controller during a pause.
+    #[error(
+        "emitted line {line} moves before the program sets {what} again after the pause on line {pause_line}"
+    )]
+    MissingSetupAfterPause {
+        /// 1-based line number of the move or spindle start.
+        line: usize,
+        /// 1-based line number of the pause.
+        pause_line: usize,
+        /// What is missing.
         what: &'static str,
     },
     /// S1: a move ends below the stock bottom minus the operation's

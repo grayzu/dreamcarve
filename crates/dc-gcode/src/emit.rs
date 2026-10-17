@@ -2065,4 +2065,99 @@ mod tests {
             }
         }
     }
+
+    /// For each `M0` in `text` that is followed by motion or a spindle
+    /// start: the lines between the pause and that line, inclusive.
+    fn after_pauses(text: &str) -> Vec<(usize, Vec<&str>)> {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut out = Vec::new();
+        for i in (0..lines.len()).filter(|&i| has_word(lines[i], "M0")) {
+            let next = (i + 1..lines.len()).find(|&k| {
+                let c = code(lines[k]);
+                has_word(lines[k], "M0")
+                    || has_word(lines[k], "M3")
+                    || c.contains('X')
+                    || c.contains('Y')
+                    || c.contains('Z')
+            });
+            if let Some(next) = next.filter(|&k| !has_word(lines[k], "M0")) {
+                out.push((i + 1, lines[i + 1..=next].to_vec()));
+            }
+        }
+        out
+    }
+
+    /// S5, #55: at a pause the user may leave the controller in another
+    /// state, so after every pause the program sets units, work
+    /// coordinates, distance mode, plane, and feed mode again before it
+    /// moves or starts the spindle.
+    #[test]
+    fn setup_is_resent_after_every_pause_before_motion() {
+        for (case, text) in every_program() {
+            let pauses = after_pauses(&text);
+            assert!(!pauses.is_empty(), "{case}");
+            for (line, between) in pauses {
+                for word in ["G21", "G54", "G90", "G17", "G94"] {
+                    assert!(
+                        between.iter().any(|l| has_word(l, word)),
+                        "{case}: no {word} after the pause on line {line}: {between:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// #55: an inch project sets inches again after a pause, never
+    /// millimetres.
+    #[test]
+    fn inch_project_resends_g20() {
+        for post in ["grblhal", "grbl"] {
+            let mut project = project_with(post);
+            project.display_units = Units::Inch;
+            let ops = ops_for(&project);
+            let text = emit(&project, &ops, DATE).unwrap().0.text;
+            let pauses = after_pauses(&text);
+            assert!(!pauses.is_empty(), "{post}");
+            for (line, between) in pauses {
+                assert!(
+                    between.iter().any(|l| has_word(l, "G20")),
+                    "{post}: no G20 after the pause on line {line}"
+                );
+                assert!(
+                    !between.iter().any(|l| has_word(l, "G21")),
+                    "{post}: G21 after the pause on line {line}"
+                );
+            }
+        }
+    }
+
+    /// #55: a definition whose header leaves out `G90` still gets it, at
+    /// the start and after every pause, because S5 requires it.
+    #[test]
+    fn header_without_g90_still_sets_absolute_mode() {
+        for post in ["grblhal", "grbl"] {
+            let mut project = project_with(post);
+            project
+                .post_processor
+                .program
+                .header
+                .retain(|l| l.trim() != "G90");
+            let ops = ops_for(&project);
+            let text = emit(&project, &ops, DATE).unwrap().0.text;
+            let lines: Vec<&str> = text.lines().collect();
+            let first_move = (0..lines.len())
+                .find(|&k| code(lines[k]).contains('Z'))
+                .unwrap();
+            assert!(
+                lines[..first_move].iter().any(|l| has_word(l, "G90")),
+                "{post}: no G90 before the first move"
+            );
+            for (line, between) in after_pauses(&text) {
+                assert!(
+                    between.iter().any(|l| has_word(l, "G90")),
+                    "{post}: no G90 after the pause on line {line}"
+                );
+            }
+        }
+    }
 }
