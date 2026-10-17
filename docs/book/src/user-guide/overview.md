@@ -73,12 +73,12 @@ the coaster with the default automatic spindle control:
 
 ```text
 Pauses (M0); resume each with cycle start:
-  line 11: Tool change: T1 Set me
+  line 12: Fit T1 Set me. Set Z zero, then resume.
 ```
 
 With [manual spindle control](post-processors.md#manual-spindle-control)
-the list shows the "Fit T1 … Turn the router ON" and "Turn the router OFF"
-pauses instead.
+the list also shows the "Turn the router ON" and "Turn the router OFF"
+pauses.
 
 ### `dreamcarve check <dcv>`
 

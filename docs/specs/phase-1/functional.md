@@ -113,14 +113,18 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   post-processor's spin-up dwell (default 3 s) before the first cutting move,
   and stopped in the footer. With manual spindle control the program sends
   no `M3`, `M5` or `S` word and no dwell. Before the first cutting move of
-  each tool it retracts to safe Z and pauses with `M0` and a message to fit
-  the tool and turn the router on (with the tool's RPM as a hint, if set),
-  one stop in place of the tool-change pause; before each tool
-  change and at the end it retracts to safe Z and pauses with `M0` and a
-  message to turn the router off. The safety pass checks that each tool's
+  each tool, after the tool change, it pauses with `M0` and a message to
+  turn the router on (with the tool's RPM as a hint, if set); before each
+  tool change and at the end it retracts to safe Z and pauses with `M0` and
+  a message to turn the router off. The safety pass checks that each tool's
   first cutting move follows an `M0` issued at safe Z after the last retract
   and after the previous cut, and that an `M0` at safe Z follows the last
-  cut.
+  cut. In both modes every tool change, the first included, retracts to
+  safe Z, pauses with `M0` and a message to fit the tool and set Z zero,
+  then retracts to safe Z again, from the new zero, before the spindle or
+  router starts. Every `M0` is at safe Z, and the safety pass treats Z as
+  unknown after it, so a spindle start needs a retract after the last
+  pause (#43).
 - **S5** The program begins with the post-processor's units command and
   work-coordinate select, so a controller in the wrong state is corrected.
 - **S6** Machine origin is applied as a translation and axis mapping only.

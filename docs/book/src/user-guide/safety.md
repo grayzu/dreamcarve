@@ -26,12 +26,17 @@ written. There are no safety warnings, only errors.
    spindle starts at the tool's RPM and the program waits for it to reach
    speed before the first cut, and stops it at the end. With
    [manual spindle control](post-processors.md#manual-spindle-control), the
-   program pauses at safe Z before each tool's first cut for you to fit the
-   tool and turn the router on, and pauses again for you to turn it off
-   after the tool's last cut.
-5. **The controller starts in a known state.** The program sets units and
+   program pauses at safe Z before each tool's first cut for you to turn
+   the router on, and pauses again for you to turn it off after the tool's
+   last cut.
+5. **Pauses happen at safe Z, and the program lifts again after them.**
+   Every pause, including the tool change at the start of the program,
+   comes with the bit at safe Z. You may set Z zero at a pause, so after it
+   the program rises to safe Z again before the spindle or router starts,
+   and writes its next motion and feed words in full.
+6. **The controller starts in a known state.** The program sets units and
    the work coordinate system before it moves.
-6. **No mirroring.** The program's coordinates are the project's, moved to
+7. **No mirroring.** The program's coordinates are the project's, moved to
    your work zero. Nothing is flipped.
 
 It also checks that:

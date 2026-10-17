@@ -84,10 +84,19 @@ pub(crate) fn check(
                     word: format!("{}{}", word.letter, word.value),
                 });
             }
-            if block.has('M', 0.0) {
-                let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
+        }
+        // S4, #43: the user fits tools and switches the router at a pause,
+        // so it comes with the bit at safe Z. Afterwards Z is unknown: the
+        // user may have jogged or set Z zero.
+        if block.has('M', 0.0) || block.has('M', 1.0) {
+            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
+            if !router.at_or_above(safe_z_mm) {
+                return Err(ExportError::PauseNotAtSafeZ { line });
+            }
+            if manual {
                 router.pause(safe_z_mm);
             }
+            router.z_mm = None;
         }
         let starts_spindle = block.has('M', 3.0);
         // S5: units and work coordinates before anything happens.
@@ -109,6 +118,12 @@ pub(crate) fn check(
             rpm = Some(s);
         }
         if starts_spindle {
+            // #43: Z is known again only after a retract since the last
+            // pause, where the user may have set Z zero.
+            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
+            if !router.at_or_above(safe_z_mm) {
+                return Err(ExportError::SpindleStartNotAtSafeZ { line });
+            }
             spindle_on = true;
             dwell_pending = dwell_s > 0.0;
         }
@@ -168,10 +183,9 @@ pub(crate) fn check(
     Ok(())
 }
 
-/// S4 with manual spindle control: what the program has done since its
-/// last cut. A pause counts only at a known Z at or above safe Z, so the
-/// user switches the router with the bit clear of the work, and a tool's
-/// first cut needs one after the last retract, so a tool-change pause
+/// Where Z is, for the S4 checks in both spindle modes, and, with manual
+/// spindle control, what the program has done since its last cut. A tool's
+/// first cut needs a pause after the last retract, so a tool-change pause
 /// followed by the retract to safe Z does not count as the pause to turn
 /// the router on.
 #[derive(Debug, Default)]
@@ -194,6 +208,12 @@ impl<'a> RouterPauses<'a> {
         }
     }
 
+    /// Whether Z is known to be at or above `safe_z_mm`.
+    fn at_or_above(&self, safe_z_mm: f64) -> bool {
+        self.z_mm
+            .is_some_and(|(z, tolerance)| z >= safe_z_mm - tolerance)
+    }
+
     /// A retract: a pause before it does not count for the next cut.
     fn retracted(&mut self) {
         self.paused_at_safe_z = false;
@@ -201,10 +221,7 @@ impl<'a> RouterPauses<'a> {
 
     /// An `M0` where safe Z is `safe_z_mm`.
     fn pause(&mut self, safe_z_mm: f64) {
-        if self
-            .z_mm
-            .is_some_and(|(z, tolerance)| z >= safe_z_mm - tolerance)
-        {
+        if self.at_or_above(safe_z_mm) {
             self.paused_at_safe_z = true;
             self.cut_since_pause = false;
         }
@@ -639,22 +656,22 @@ mod tests {
 
     #[test]
     fn every_cut_has_active_feed() {
-        let ok = "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM5\n";
+        let ok = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM5\n";
         check_text(ok).unwrap();
-        let no_feed = "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1\nX10\nG0 Z5\nM5\n";
+        let no_feed = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1\nX10\nG0 Z5\nM5\n";
         let err = check_text(no_feed).unwrap_err();
         assert!(
             matches!(err, ExportError::CutWithoutFeed { line: 7 }),
             "{err:?}"
         );
         let invented =
-            "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nX10 F2500\nG0 Z5\nM5\n";
+            "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F2500\nG0 Z5\nM5\n";
         let err = check_text(invented).unwrap_err();
         assert!(
             matches!(err, ExportError::FeedNotFromTool { line: 8, .. }),
             "{err:?}"
         );
-        let zero = "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1 F0\nG0 Z5\nM5\n";
+        let zero = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F0\nG0 Z5\nM5\n";
         let err = check_text(zero).unwrap_err();
         assert!(
             matches!(err, ExportError::CutWithoutFeed { line: 7 }),
@@ -684,7 +701,7 @@ mod tests {
             check_text(no_dwell),
             Err(ExportError::SpindleNotUpToSpeed { line: 6 })
         ));
-        let left_on = "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
+        let left_on = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
         assert!(matches!(
             check_text(left_on),
             Err(ExportError::SpindleNotStopped)
@@ -749,7 +766,10 @@ mod tests {
                 "{code}: {err:?}"
             );
         }
-        for text in ["G21 G17 G90 G94\nG54\nM0\nM5\nM30\n", "G20\nG59\nM2\n"] {
+        for text in [
+            "G21 G17 G90 G94\nG54\nG0 Z5\nM0\nM5\nM30\n",
+            "G20\nG59\nM2\n",
+        ] {
             assert!(check_text(text).is_ok(), "{text}");
         }
     }
@@ -832,7 +852,7 @@ mod tests {
             matches!(err, ExportError::SpindleNotRunning { line: 6 }),
             "{err:?}"
         );
-        let no_dwell = "G21\nG54\nM3 S18000\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        let no_dwell = "G21\nG54\nG0 Z5\nM3 S18000\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         assert!(matches!(
             check_text_as(no_dwell, SpindleControl::Automatic),
             Err(ExportError::SpindleNotUpToSpeed { line: 6 })
@@ -845,11 +865,18 @@ mod tests {
     #[test]
     fn pause_must_be_at_safe_z() {
         for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            let below = match control {
+                SpindleControl::Automatic => {
+                    "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nM0\n"
+                }
+                SpindleControl::Manual => "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nM0\n",
+            };
+            let below_line = below.lines().count();
             for (text, line) in [
                 // Z never set: the program-start case.
                 ("G21\nG54\nM0\n", 3),
-                // Below safe Z.
-                ("G21\nG54\nG0 Z2\nM0\n", 4),
+                // Below safe Z, after a cut.
+                (below, below_line),
             ] {
                 let err = check_text_as(text, control).unwrap_err();
                 assert!(

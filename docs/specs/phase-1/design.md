@@ -268,20 +268,25 @@ Inputs: project, op. Output: toolpath in project space.
    `{wcsCommand}`, then `workCoordinates.selectCommand` if not in the header.
 5. Per operation: `operationHeader` with `{operationIndex}`,
    `{operationName}`, `{toolNumber}`, `{toolName}`; tool change block on the
-   first op or tool change; spindle on with `S{rpm}`; then
+   first op or tool change. The block always starts with a retract to safe
+   Z (written even at program start, where Z is unknown). A line of the
+   block that only pauses (`M0`, `M1`), or `pause_after_change`, becomes
+   one DreamCarve pause, `M0 (MSG, Fit T{n} {name}. Set Z zero, then
+   resume.)`, with the name shortened to keep the message within 96
+   characters. After the block, the position is unknown (the user may jog,
+   probe or set Z zero), so the program retracts to safe Z again, and the
+   next move writes its motion and feed words in full (#43). Then spindle
+   on with `S{rpm}`; then
    `feed_speed.spindle_on_dwell.command` with `{seconds}` filled, unless its
    `duration_s` is 0 (after every spindle start, including after a tool
    change); then moves. After the last op of a tool, `spindle_off` before a
    tool change, and at the end unless the footer has it.
    With manual spindle control: no spindle words and no dwell. Lines of the
-   tool-change block and footer that only stop the spindle are left out, and
-   so are tool-change lines that only pause (`M0`, `M1`) and
-   `pause_after_change`. Before the first move of each tool, retract to safe
-   Z, then one pause for the tool change and the router:
-   `M0 (MSG, Fit T{n} {name}. Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
-   leaving out the speed when the tool has none and the `Fit` part when the
-   tool-change block had no pause; the name is shortened so the message
-   stays within 96 characters. After the last op of a tool
+   tool-change block and footer that only stop the spindle are left out.
+   After the tool change and its second retract, before the first move of
+   each tool, pause for the router:
+   `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
+   leaving out the speed when the tool has none. After the last op of a tool
    (before a tool change, and at the end), retract to safe Z, then
    `M0 (MSG, Turn the router OFF.)`. The message is always a `( )` comment,
    whatever the dialect's comment syntax, passes the comment sanitizer, and
@@ -296,7 +301,10 @@ Inputs: project, op. Output: toolpath in project space.
    bottom − allowance), S2 (rapids at or above machine safe Z), S3 (every
    G1/G2/G3 has an active F), S4 (spindle running and dwelled before a cut,
    or with manual control an `M0` at safe Z after the last retract before
-   each tool's first cut, and no `M3`, `M5` or `S` word). A violation is
+   each tool's first cut, and no `M3`, `M5` or `S` word; in both modes every
+   `M0` or `M1` at a known Z at or above safe Z, Z unknown after it, and an
+   `M3` only at a known Z at or above safe Z, so a retract follows every
+   pause before the spindle starts). A violation is
    `ExportError`, never a warning.
 8. `Program.pauses` lists every `M0` line with its 1-based line number and
    its comment text, so the CLI can tell the user what each stop is for when
