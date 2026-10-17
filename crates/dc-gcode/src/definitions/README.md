@@ -72,7 +72,11 @@ start where Z is unknown, and ends with another, measured from the new
 zero, before the spindle starts or the router-on pause. The next move
 writes its motion and feed words again, because the user may probe
 (`G38.2`) or move with their own feed to set Z zero, which changes the
-controller's modal state. The bundled definitions keep their
+controller's modal state. After every pause that more motion follows, the
+program also writes the setup again: the header's lines that only set
+modal state, plus `G90`, units and work coordinates if the header leaves
+them out (#55). The user may have left the controller in `G91`, `G20` or
+another work coordinate system. The bundled definitions keep their
 `M0 ( Tool change: ... )` lines for comparison with PureCutCNC; that text is
 not written.
 

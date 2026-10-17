@@ -265,7 +265,11 @@ Inputs: project, op. Output: toolpath in project space.
    `display_units`, which `init` and `--post` keep aligned), scale by 1/25.4
    after the transform, and emit `inchCommand`; otherwise `mmCommand`.
 4. Header lines with placeholders `{programName}`, `{date}`, `{unitsCommand}`,
-   `{wcsCommand}`, then `workCoordinates.selectCommand` if not in the header.
+   `{wcsCommand}`, then `G90`, the units command and
+   `workCoordinates.selectCommand`, each only if not in the header. The
+   header's lines that only set modal state (`G17`, `G20`/`G21`, `G54`–`G59`,
+   `G90`, `G94`), plus any of those three added, form the setup that is
+   written again after every pause that more motion follows (#55).
 5. Per operation: `operationHeader` with `{operationIndex}`,
    `{operationName}`, `{toolNumber}`, `{toolName}`; tool change block on the
    first op or tool change. The block always starts with a retract to safe
@@ -304,7 +308,8 @@ Inputs: project, op. Output: toolpath in project space.
    each tool's first cut, and no `M3`, `M5` or `S` word; in both modes every
    `M0` or `M1` at a known Z at or above safe Z, Z unknown after it, and an
    `M3` only at a known Z at or above safe Z, so a retract follows every
-   pause before the spindle starts). A violation is
+   pause before the spindle starts), S5 (units, WCS and `G90` before the
+   first move or spindle start, and again after every pause). A violation is
    `ExportError`, never a warning.
 8. `Program.pauses` lists every `M0` line with its 1-based line number and
    its comment text, so the CLI can tell the user what each stop is for when

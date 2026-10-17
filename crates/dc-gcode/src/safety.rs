@@ -62,6 +62,10 @@ pub(crate) fn check(
     let mut router = RouterPauses::default();
     let mut units_set = false;
     let mut wcs_set = false;
+    let mut absolute_set = false;
+    // The last pause: the controller's modal state must be set again after
+    // it, because the user may change it at the controller (#55).
+    let mut last_pause: Option<usize> = None;
     let mut spindle_on = false;
     let mut rpm: Option<f64> = None;
     let mut dwell_pending = false;
@@ -72,6 +76,9 @@ pub(crate) fn check(
         }
         if WCS_CODES.iter().any(|&code| block.has('G', code)) {
             wcs_set = true;
+        }
+        if block.has('G', 90.0) {
+            absolute_set = true;
         }
         if manual {
             // S4 (manual): the program never touches the spindle.
@@ -97,18 +104,30 @@ pub(crate) fn check(
                 router.pause(safe_z_mm);
             }
             router.z_mm = None;
+            last_pause = Some(line);
+            units_set = false;
+            wcs_set = false;
+            absolute_set = false;
         }
         let starts_spindle = block.has('M', 3.0);
-        // S5: units and work coordinates before anything happens.
+        // S5: units, work coordinates, and absolute distance mode before
+        // anything happens, and again after every pause.
         if block.motion.is_some() || starts_spindle {
-            if !units_set {
-                return Err(ExportError::MissingSetup {
-                    what: "units (G20 or G21)",
-                });
-            }
-            if !wcs_set {
-                return Err(ExportError::MissingSetup {
-                    what: "a work coordinate system (G54 to G59)",
+            let missing = [
+                (units_set, "units (G20 or G21)"),
+                (wcs_set, "a work coordinate system (G54 to G59)"),
+                (absolute_set, "absolute distance mode (G90)"),
+            ]
+            .into_iter()
+            .find_map(|(set, what)| (!set).then_some(what));
+            if let Some(what) = missing {
+                return Err(match last_pause {
+                    Some(pause_line) => ExportError::MissingSetupAfterPause {
+                        line,
+                        pause_line,
+                        what,
+                    },
+                    None => ExportError::MissingSetup { what },
                 });
             }
         }
@@ -640,7 +659,7 @@ mod tests {
             "{err:?}"
         );
         // Hand-written: an XY rapid before any Z is known.
-        let err = check_text("G21\nG54\nG0 X1 Y1\n").unwrap_err();
+        let err = check_text("G21 G90\nG54\nG0 X1 Y1\n").unwrap_err();
         assert!(
             matches!(
                 err,
@@ -656,22 +675,23 @@ mod tests {
 
     #[test]
     fn every_cut_has_active_feed() {
-        let ok = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM5\n";
+        let ok =
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM5\n";
         check_text(ok).unwrap();
-        let no_feed = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1\nX10\nG0 Z5\nM5\n";
+        let no_feed = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1\nX10\nG0 Z5\nM5\n";
         let err = check_text(no_feed).unwrap_err();
         assert!(
             matches!(err, ExportError::CutWithoutFeed { line: 7 }),
             "{err:?}"
         );
         let invented =
-            "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F2500\nG0 Z5\nM5\n";
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F2500\nG0 Z5\nM5\n";
         let err = check_text(invented).unwrap_err();
         assert!(
             matches!(err, ExportError::FeedNotFromTool { line: 8, .. }),
             "{err:?}"
         );
-        let zero = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F0\nG0 Z5\nM5\n";
+        let zero = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F0\nG0 Z5\nM5\n";
         let err = check_text(zero).unwrap_err();
         assert!(
             matches!(err, ExportError::CutWithoutFeed { line: 7 }),
@@ -691,17 +711,17 @@ mod tests {
             check_text(no_wcs),
             Err(ExportError::MissingSetup { .. })
         ));
-        let off = "G21\nG54\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
+        let off = "G21 G90\nG54\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
         assert!(matches!(
             check_text(off),
             Err(ExportError::SpindleNotRunning { line: 5 })
         ));
-        let no_dwell = "G21\nG54\nG0 Z5\nM3 S18000\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        let no_dwell = "G21 G90\nG54\nG0 Z5\nM3 S18000\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         assert!(matches!(
             check_text(no_dwell),
             Err(ExportError::SpindleNotUpToSpeed { line: 6 })
         ));
-        let left_on = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
+        let left_on = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
         assert!(matches!(
             check_text(left_on),
             Err(ExportError::SpindleNotStopped)
@@ -711,11 +731,11 @@ mod tests {
     #[test]
     fn forbidden_words_and_unsafe_characters_are_rejected() {
         for (text, word) in [
-            ("G21\nG54\nM4 S1000\n", "M4"),
-            ("G21\nG54\nM7\n", "M7"),
-            ("G21\nG54\nM6 T1\n", "M6"),
-            ("G21\nG54\nG53 G0 Z0\n", "G53"),
-            ("G21\nG54\nG91\n", "G91"),
+            ("G21 G90\nG54\nM4 S1000\n", "M4"),
+            ("G21 G90\nG54\nM7\n", "M7"),
+            ("G21 G90\nG54\nM6 T1\n", "M6"),
+            ("G21 G90\nG54\nG53 G0 Z0\n", "G53"),
+            ("G21 G90\nG54\nG91\n", "G91"),
         ] {
             let err = check_text(text).unwrap_err();
             assert!(
@@ -759,7 +779,7 @@ mod tests {
             ("G91.1", "G91.1"),
             ("M8", "M8"),
         ] {
-            let text = format!("G21\nG54\nG0 Z11\n{code}\n");
+            let text = format!("G21 G90\nG54\nG0 Z11\n{code}\n");
             let err = check_text(&text).unwrap_err();
             assert!(
                 matches!(&err, ExportError::ForbiddenWord { line: 4, word: w } if w == word),
@@ -797,10 +817,10 @@ mod tests {
     /// Z after its last cut. Safe Z is machine Z5 in the fixture.
     #[test]
     fn manual_cut_without_on_pause_is_rejected() {
-        let ok = "G21\nG54\nG0 Z5\nM0 (MSG, Turn the router ON.)\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM0 (MSG, Turn the router OFF.)\n";
+        let ok = "G21 G90\nG54\nG0 Z5\nM0 (MSG, Turn the router ON.)\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM0 (MSG, Turn the router OFF.)\n";
         check_manual(ok).unwrap();
 
-        let no_pause = "G21\nG54\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let no_pause = "G21 G90\nG54\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         let err = check_manual(no_pause).unwrap_err();
         assert!(
             matches!(err, ExportError::RouterNotStarted { line: 5 }),
@@ -809,22 +829,23 @@ mod tests {
 
         // A tool-change pause, then the retract that must follow it: the
         // router still needs its own pause after the retract.
-        let no_on_after_retract = "G21\nG54\nG0 Z5\nM0\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let no_on_after_retract =
+            "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         let err = check_manual(no_on_after_retract).unwrap_err();
         assert!(
             matches!(err, ExportError::RouterNotStarted { line: 7 }),
             "{err:?}"
         );
 
-        let no_off = "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
+        let no_off = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nG0 Z5\n";
         let err = check_manual(no_off).unwrap_err();
         assert!(matches!(err, ExportError::RouterNotStopped), "{err:?}");
 
         // No spindle word reaches a router the user switches by hand.
         for (text, word) in [
-            ("G21\nG54\nM3\n", "M3"),
-            ("G21\nG54\nM5\n", "M5"),
-            ("G21\nG54\nS18000\n", "S18000"),
+            ("G21 G90\nG54\nM3\n", "M3"),
+            ("G21 G90\nG54\nM5\n", "M5"),
+            ("G21 G90\nG54\nS18000\n", "S18000"),
         ] {
             let err = check_manual(text).unwrap_err();
             assert!(
@@ -844,15 +865,15 @@ mod tests {
             project.post_processor.feed_speed.spindle_control,
             SpindleControl::Automatic
         );
-        let ok = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        let ok = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         check_text_as(ok, SpindleControl::Automatic).unwrap();
-        let manual_style = "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let manual_style = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         let err = check_text_as(manual_style, SpindleControl::Automatic).unwrap_err();
         assert!(
             matches!(err, ExportError::SpindleNotRunning { line: 6 }),
             "{err:?}"
         );
-        let no_dwell = "G21\nG54\nG0 Z5\nM3 S18000\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        let no_dwell = "G21 G90\nG54\nG0 Z5\nM3 S18000\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         assert!(matches!(
             check_text_as(no_dwell, SpindleControl::Automatic),
             Err(ExportError::SpindleNotUpToSpeed { line: 6 })
@@ -867,14 +888,16 @@ mod tests {
         for control in [SpindleControl::Automatic, SpindleControl::Manual] {
             let below = match control {
                 SpindleControl::Automatic => {
-                    "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nM0\n"
+                    "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nM0\n"
                 }
-                SpindleControl::Manual => "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nM0\n",
+                SpindleControl::Manual => {
+                    "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nM0\n"
+                }
             };
             let below_line = below.lines().count();
             for (text, line) in [
                 // Z never set: the program-start case.
-                ("G21\nG54\nM0\n", 3),
+                ("G21 G90\nG54\nM0\n", 3),
                 // Below safe Z, after a cut.
                 (below, below_line),
             ] {
@@ -885,7 +908,11 @@ mod tests {
                 );
             }
         }
-        check_text_as("G21\nG54\nG0 Z5\nM0\nG0 Z5\n", SpindleControl::Automatic).unwrap();
+        check_text_as(
+            "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\n",
+            SpindleControl::Automatic,
+        )
+        .unwrap();
     }
 
     /// S4, #43: Z is not known after a pause, because the user may have
@@ -893,23 +920,88 @@ mod tests {
     /// pause comes, only after a retract to safe Z.
     #[test]
     fn spindle_start_needs_a_retract_after_a_pause() {
-        let no_lift = "G21\nG54\nG0 Z5\nM5\nM0\nM3 S18000\nG4 P3\nG0 Z5\nM5\n";
+        let no_lift = "G21 G90\nG54\nG0 Z5\nM5\nM0\nG21 G90 G54 M3 S18000\nG4 P3\nG0 Z5\nM5\n";
         let err = check_text_as(no_lift, SpindleControl::Automatic).unwrap_err();
         assert!(
             matches!(err, ExportError::SpindleStartNotAtSafeZ { line: 6 }),
             "{err:?}"
         );
-        let lifted =
-            "G21\nG54\nG0 Z5\nM5\nM0\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        let lifted = "G21 G90\nG54\nG0 Z5\nM5\nM0\nG21 G90 G54 G0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         check_text_as(lifted, SpindleControl::Automatic).unwrap();
 
-        let manual_no_lift = "G21\nG54\nG0 Z5\nM0\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let manual_no_lift =
+            "G21 G90\nG54\nG0 Z5\nM0\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         let err = check_manual(manual_no_lift).unwrap_err();
         assert!(
             matches!(err, ExportError::PauseNotAtSafeZ { line: 5 }),
             "{err:?}"
         );
-        let manual_lifted = "G21\nG54\nG0 Z5\nM0\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let manual_lifted = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         check_manual(manual_lifted).unwrap();
+    }
+
+    /// S5, #55: the controller is in a known state before the program
+    /// moves: units, work coordinates, and absolute distance mode. A
+    /// controller left in `G91` by an earlier job reads every coordinate as
+    /// an offset.
+    #[test]
+    fn absolute_mode_is_required_before_motion() {
+        let err = check_text("G21\nG54\nG0 Z5\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MissingSetup {
+                    what: "absolute distance mode (G90)"
+                }
+            ),
+            "{err:?}"
+        );
+        check_text("G21 G90\nG54\nG0 Z5\n").unwrap();
+    }
+
+    /// S5, #55: at a pause the user may leave the controller in another
+    /// state (`G91` to jog, `G20`, another work coordinate system), so
+    /// units, work coordinates, and `G90` are set again after every pause
+    /// before the program moves.
+    #[test]
+    fn motion_after_a_pause_needs_setup_again() {
+        let ok = "G21 G90\nG54\nG0 Z5\nM0\nG21\nG54\nG90\nG0 Z5\n";
+        check_text(ok).unwrap();
+        for (missing, what) in [
+            ("G21\n", "units (G20 or G21)"),
+            ("G54\n", "a work coordinate system (G54 to G59)"),
+            ("G90\n", "absolute distance mode (G90)"),
+        ] {
+            let (before, after) = ok.split_once("M0\n").unwrap();
+            let text = format!("{before}M0\n{}", after.replacen(missing, "", 1));
+            let err = check_text(&text).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::MissingSetupAfterPause { line: 7, pause_line: 4, what: w } if *w == what
+                ),
+                "without {missing:?}: {err:?}"
+            );
+        }
+    }
+
+    /// #55: the same rule holds for a spindle start after a pause.
+    #[test]
+    fn spindle_start_after_a_pause_needs_setup_again() {
+        let text = "G21 G90\nG54\nG0 Z5\nM0\nG0 Z5\nM3 S18000\nG4 P3\nG0 Z5\nM5\n";
+        let err = check_text(text).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MissingSetupAfterPause {
+                    line: 5,
+                    pause_line: 4,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let text = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54\nG0 Z5\nM3 S18000\nG4 P3\nG0 Z5\nM5\n";
+        check_text(text).unwrap();
     }
 }
