@@ -42,7 +42,7 @@ dreamcarve init coaster.svg
 ```text
 Imported 1 shape(s) from coaster.svg: page units mm, 1 user unit = 1.0000 mm.
 Wrote coaster.dcv: stock 110.00 × 110.00 × 12.00 mm, post-processor grblhal, 1 shape(s) targeted by Profile.
-Next: edit coaster.dcv to set the stock thickness and tool `t1` (Set me): feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.
+Next: edit coaster.dcv to set the stock thickness and the Profile depth (`operations[op1].depth_mm`) to match your material, and tool `t1` (Set me): feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.
 ```
 
 The project holds everything about the job: the shapes, the **stock** (the

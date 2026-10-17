@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use dc_geometry::assert_approx_eq;
+use dc_geometry::{Rect, assert_approx_eq};
 use dc_project::{Loaded, SpindleControl, load, save};
 
 /// The date every compared program is exported with.
@@ -169,6 +169,80 @@ fn init_round_trip() {
     assert_approx_eq!(project.stock.width_mm, 110.0, tol);
     assert_approx_eq!(project.stock.height_mm, 110.0, tol);
     assert_approx_eq!(project.stock.thickness_mm, 12.0, 0.0);
+}
+
+/// Issue #44: changing the stock thickness without the Profile depth either
+/// fails export or leaves a skin, so `init`'s hint names both.
+#[test]
+fn init_hint_names_thickness_and_depth() {
+    let dir = work_dir("init_hint_names_thickness_and_depth");
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    let out = run(&dir, &["init", "coaster.svg"]);
+    assert_eq!(out.status.code(), Some(0), "stderr was {}", stderr(&out));
+    let stdout = stdout(&out);
+    assert!(stdout.contains("thickness"), "stdout was: {stdout}");
+    assert!(stdout.contains("depth_mm"), "stdout was: {stdout}");
+}
+
+/// True when `value_mm` is a multiple of 0.01 mm, within 1e-9.
+fn is_hundredth(value_mm: f64) -> bool {
+    ((value_mm * 100.0).round() / 100.0 - value_mm).abs() <= 1e-9
+}
+
+/// Issue #44: the imported outline's bounds carry float noise, so `init`
+/// rounds the stock size up and the instance offset to 0.01 mm, keeping
+/// the drawing at least the 10 mm margin in from every stock edge. The
+/// margin is checked to 0.001 mm, the resolution programs are written with:
+/// noise below that (the coaster's circle reaches 4.9999981 mm) is not worth
+/// a 0.01 mm larger stock or a shifted drawing.
+#[test]
+fn init_writes_round_numbers() {
+    let dir = work_dir("init_writes_round_numbers");
+    let project = load_file(&init_coaster(&dir)).project;
+
+    let stock = &project.stock;
+    assert!(is_hundredth(stock.width_mm), "width {}", stock.width_mm);
+    assert!(is_hundredth(stock.height_mm), "height {}", stock.height_mm);
+
+    let mut drawing: Option<Rect> = None;
+    for instance in &project.instances {
+        let [_, _, _, _, e, f]: [f64; 6] = instance.transform.into();
+        assert!(is_hundredth(e), "instance offset x {e}");
+        assert!(is_hundredth(f), "instance offset y {f}");
+        let definition = project
+            .definitions
+            .get(&instance.definition)
+            .expect("instance's definition exists");
+        for profile in &definition.profiles {
+            let placed = instance
+                .transform
+                .apply_polyline(profile)
+                .expect("transform applies");
+            let bounds = placed.bounds().expect("profile has vertices");
+            drawing = Some(match drawing {
+                None => bounds,
+                Some(r) => r.including(bounds.min).including(bounds.max),
+            });
+        }
+    }
+    let drawing = drawing.expect("the coaster has a profile");
+    let margin_mm = 10.0 - 0.001;
+    assert!(drawing.min.x >= margin_mm, "left margin {}", drawing.min.x);
+    assert!(
+        drawing.min.y >= margin_mm,
+        "bottom margin {}",
+        drawing.min.y
+    );
+    assert!(
+        stock.width_mm - drawing.max.x >= margin_mm,
+        "right margin {}",
+        stock.width_mm - drawing.max.x
+    );
+    assert!(
+        stock.height_mm - drawing.max.y >= margin_mm,
+        "top margin {}",
+        stock.height_mm - drawing.max.y
+    );
 }
 
 /// Acceptance test 2 and S3: a tool with `feed_mm_min: 0` is refused. The
