@@ -62,6 +62,10 @@ pub(crate) fn check(
     let mut router = RouterPauses::default();
     let mut units_set = false;
     let mut wcs_set = false;
+    let mut absolute_set = false;
+    // The last pause: the controller's modal state must be set again after
+    // it, because the user may change it at the controller (#55).
+    let mut last_pause: Option<usize> = None;
     let mut spindle_on = false;
     let mut rpm: Option<f64> = None;
     let mut dwell_pending = false;
@@ -72,6 +76,9 @@ pub(crate) fn check(
         }
         if WCS_CODES.iter().any(|&code| block.has('G', code)) {
             wcs_set = true;
+        }
+        if block.has('G', 90.0) {
+            absolute_set = true;
         }
         if manual {
             // S4 (manual): the program never touches the spindle.
@@ -97,18 +104,30 @@ pub(crate) fn check(
                 router.pause(safe_z_mm);
             }
             router.z_mm = None;
+            last_pause = Some(line);
+            units_set = false;
+            wcs_set = false;
+            absolute_set = false;
         }
         let starts_spindle = block.has('M', 3.0);
-        // S5: units and work coordinates before anything happens.
+        // S5: units, work coordinates, and absolute distance mode before
+        // anything happens, and again after every pause.
         if block.motion.is_some() || starts_spindle {
-            if !units_set {
-                return Err(ExportError::MissingSetup {
-                    what: "units (G20 or G21)",
-                });
-            }
-            if !wcs_set {
-                return Err(ExportError::MissingSetup {
-                    what: "a work coordinate system (G54 to G59)",
+            let missing = [
+                (units_set, "units (G20 or G21)"),
+                (wcs_set, "a work coordinate system (G54 to G59)"),
+                (absolute_set, "absolute distance mode (G90)"),
+            ]
+            .into_iter()
+            .find_map(|(set, what)| (!set).then_some(what));
+            if let Some(what) = missing {
+                return Err(match last_pause {
+                    Some(pause_line) => ExportError::MissingSetupAfterPause {
+                        line,
+                        pause_line,
+                        what,
+                    },
+                    None => ExportError::MissingSetup { what },
                 });
             }
         }

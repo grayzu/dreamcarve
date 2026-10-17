@@ -34,6 +34,11 @@
 //!   `pause_after_change`. The user may jog or set Z zero there, so the
 //!   position is then unknown and the program retracts to safe Z again
 //!   before the spindle starts or the router-on pause (#43).
+//! - Before the first move the program sets absolute distance mode (`G90`)
+//!   as well as units and work coordinates, adding any the header leaves
+//!   out. After every pause that more motion follows, it sets them again,
+//!   with the header's other lines that only set modal state (`G17`,
+//!   `G94`): the user may change any of them at the controller (#55).
 //! - A rapid lowers Z only after its XY move.
 //! - I and J are taken from the rounded start the controller holds; an arc
 //!   the controller would reject, or read as a full circle, is flattened.
@@ -190,7 +195,8 @@ pub fn emit(
 
     let mut w = Writer::new(project, transform);
 
-    // Step 4: header, then units and WCS if the header does not place them.
+    // Step 4: header, then G90, units and WCS if the header does not place
+    // them. The same setup is written again after every pause (#55).
     let common = vec![
         ("programName", comment_text(&project.name)),
         ("date", comment_text(date)),
@@ -200,13 +206,36 @@ pub fn emit(
     for line in &post.program.header {
         w.template(line, &common);
     }
+    let mut setup: Vec<String> = post
+        .program
+        .header
+        .iter()
+        .flat_map(|line| {
+            substitute(line, &common)
+                .lines()
+                .map(str::trim)
+                .filter(|l| only_sets_modal_state(l))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if !setup
+        .iter()
+        .any(|l| code_words(l).iter().any(|w| w == "G90"))
+    {
+        w.line(ABSOLUTE_COMMAND);
+        setup.push(ABSOLUTE_COMMAND.to_owned());
+    }
     let header_has = |token: &str| post.program.header.iter().any(|l| l.contains(token));
     if !header_has("{unitsCommand}") {
         w.line(units_command);
+        setup.push(units_command.to_owned());
     }
     if !header_has("{wcsCommand}") {
         w.line(wcs_command);
+        setup.push(wcs_command.to_owned());
     }
+    w.setup = setup;
 
     // Step 5: operations.
     let mut lines = Vec::with_capacity(planned.len());
@@ -255,7 +284,7 @@ pub fn emit(
             for line in &post.tool_change.commands {
                 if only_pauses(line) {
                     if !paused {
-                        w.pause(&fit);
+                        w.pause(&fit, true);
                         paused = true;
                     }
                 } else if !(manual && only_stops_spindle(line, spindle_off)) {
@@ -265,7 +294,7 @@ pub fn emit(
                 }
             }
             if post.tool_change.pause_after_change && !paused {
-                w.pause(&fit);
+                w.pause(&fit, true);
             }
             w.tool = Some(tool.id.clone());
             // A definition with no pause may still move the tool, so where
@@ -281,7 +310,7 @@ pub fn emit(
             // dwell, and the speed is only a hint.
             if !router_on {
                 w.retract(safe_z_mm)?;
-                w.pause(&router_on_message(rates.rpm));
+                w.pause(&router_on_message(rates.rpm), true);
                 router_on = true;
             }
         } else if let Some(rpm) = rates.rpm
@@ -313,7 +342,8 @@ pub fn emit(
         if manual {
             if tool_changes_next.unwrap_or(true) {
                 w.retract(safe_z_mm)?;
-                w.pause(ROUTER_OFF_MESSAGE);
+                // After the last tool the program only ends.
+                w.pause(ROUTER_OFF_MESSAGE, index + 1 < planned.len());
                 router_on = false;
             }
         } else {
@@ -462,6 +492,26 @@ fn tool_change_message(number: usize, name: &str) -> String {
     } else {
         format!("{head} {name}. {SET_Z_ZERO}")
     }
+}
+
+/// Absolute distance mode. S5 requires it before the first move and after
+/// every pause.
+const ABSOLUTE_COMMAND: &str = "G90";
+
+/// The codes a header line may hold and still be written again after a
+/// pause: they set modal state and nothing else (S5).
+const MODAL_SETUP_CODES: [&str; 11] = [
+    "G17", "G20", "G21", "G54", "G55", "G56", "G57", "G58", "G59", "G90", "G94",
+];
+
+/// Whether `line` sets modal state and does nothing else: it has code
+/// words, and each is in [`MODAL_SETUP_CODES`].
+fn only_sets_modal_state(line: &str) -> bool {
+    let words = code_words(line);
+    !words.is_empty()
+        && words
+            .iter()
+            .all(|w| MODAL_SETUP_CODES.contains(&w.as_str()))
 }
 
 /// Whether template `line` does nothing but pause: its only code word is
@@ -698,6 +748,9 @@ struct Writer<'a> {
     position: Option<Point3>,
     spindle_rpm: Option<u32>,
     tool: Option<ToolId>,
+    /// The lines that set the controller's modal state, written again after
+    /// a pause.
+    setup: Vec<String>,
 }
 
 impl<'a> Writer<'a> {
@@ -720,6 +773,7 @@ impl<'a> Writer<'a> {
             position: None,
             spindle_rpm: None,
             tool: None,
+            setup: Vec::new(),
         }
     }
 
@@ -759,11 +813,20 @@ impl<'a> Writer<'a> {
     /// probe (`G38.2`) or a `G1` with its own feed to set Z zero, so the
     /// next move writes its motion and feed words again instead of relying
     /// on the modal ones (#43).
-    fn pause(&mut self, message: &str) {
+    ///
+    /// For the same reason, when the program moves again after the pause
+    /// (`moves_after`), the setup is written again: units, work coordinates,
+    /// `G90` and the header's other modal lines (#55).
+    fn pause(&mut self, message: &str, moves_after: bool) {
         let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
         self.line(&format!("{PAUSE_COMMAND} (MSG, {message})"));
         self.motion = None;
         self.feed = None;
+        if moves_after {
+            for line in self.setup.clone() {
+                self.line(&line);
+            }
+        }
     }
 
     /// Raises the tool to `safe_z_mm` (project space) unless it is known to

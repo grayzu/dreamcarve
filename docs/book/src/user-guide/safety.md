@@ -34,8 +34,9 @@ written. There are no safety warnings, only errors.
    comes with the bit at safe Z. You may set Z zero at a pause, so after it
    the program rises to safe Z again before the spindle or router starts,
    and writes its next motion and feed words in full.
-6. **The controller starts in a known state.** The program sets units and
-   the work coordinate system before it moves.
+6. **The controller is in a known state.** The program sets units, the
+   work coordinate system and absolute coordinates (`G90`) before it moves,
+   and again after every pause, where you may have changed them.
 7. **No mirroring.** The program's coordinates are the project's, moved to
    your work zero. Nothing is flipped.
 

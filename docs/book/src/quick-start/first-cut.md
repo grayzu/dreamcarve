@@ -144,7 +144,7 @@ dreamcarve export coaster.dcv
 ```
 
 ```text
-Wrote coaster.nc (998 lines, post-processor grblhal).
+Wrote coaster.nc (1003 lines, post-processor grblhal).
   op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
 Pauses (M0); resume each with cycle start:
   line 12: Fit T1 Set me. Set Z zero, then resume.
@@ -172,6 +172,11 @@ G54
 G0 Z5.000
 M5
 M0 (MSG, Fit T1 Set me. Set Z zero, then resume.)
+G90
+G17
+G94
+G21
+G54
 G0 Z5.000
 M3 S18000
 G4 P3.000
@@ -185,6 +190,7 @@ X103.174 Y55.063 F1500.000
 | `G90 G17 G94 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
 | `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) happen only at or above this height. |
 | `M5`, `M0 (MSG, Fit T1 …)` | Stop the spindle and pause at safe Z, so you can fit the bit and set Z zero with it. |
+| `G90` … `G54` | Set the controller's state again, in case it was changed while the program was paused. |
 | `G0 Z5.000` | Rapid to safe Z again, measured from the Z zero you just set. |
 | `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `X103.139 Y56.863` | Rapid to the start of the cut, still at safe Z. |

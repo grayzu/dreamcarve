@@ -125,8 +125,12 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   router starts. Every `M0` is at safe Z, and the safety pass treats Z as
   unknown after it, so a spindle start needs a retract after the last
   pause (#43).
-- **S5** The program begins with the post-processor's units command and
-  work-coordinate select, so a controller in the wrong state is corrected.
+- **S5** The program begins with the post-processor's units command,
+  work-coordinate select and absolute distance mode (`G90`), so a
+  controller in the wrong state is corrected. After every pause that more
+  motion follows, it sets them again, with the header's other modal lines,
+  because the user may change them at the controller during the pause
+  (#55).
 - **S6** Machine origin is applied as a translation and axis mapping only.
   No mirroring occurs in export (ADR-0001).
 
