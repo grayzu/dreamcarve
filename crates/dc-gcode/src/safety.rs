@@ -679,7 +679,7 @@ mod tests {
             check_text(off),
             Err(ExportError::SpindleNotRunning { line: 5 })
         ));
-        let no_dwell = "G21\nG54\nM3 S18000\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        let no_dwell = "G21\nG54\nG0 Z5\nM3 S18000\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         assert!(matches!(
             check_text(no_dwell),
             Err(ExportError::SpindleNotUpToSpeed { line: 6 })
@@ -787,11 +787,12 @@ mod tests {
             "{err:?}"
         );
 
-        // A pause before the retract, with Z unknown, does not count.
-        let before_retract = "G21\nG54\nM0\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
-        let err = check_manual(before_retract).unwrap_err();
+        // A tool-change pause, then the retract that must follow it: the
+        // router still needs its own pause after the retract.
+        let no_on_after_retract = "G21\nG54\nG0 Z5\nM0\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_manual(no_on_after_retract).unwrap_err();
         assert!(
-            matches!(err, ExportError::RouterNotStarted { line: 6 }),
+            matches!(err, ExportError::RouterNotStarted { line: 7 }),
             "{err:?}"
         );
 
@@ -823,7 +824,7 @@ mod tests {
             project.post_processor.feed_speed.spindle_control,
             SpindleControl::Automatic
         );
-        let ok = "G21\nG54\nM3 S18000\nG4 P3\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        let ok = "G21\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         check_text_as(ok, SpindleControl::Automatic).unwrap();
         let manual_style = "G21\nG54\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         let err = check_text_as(manual_style, SpindleControl::Automatic).unwrap_err();
@@ -836,5 +837,52 @@ mod tests {
             check_text_as(no_dwell, SpindleControl::Automatic),
             Err(ExportError::SpindleNotUpToSpeed { line: 6 })
         ));
+    }
+
+    /// S4, #43: the user fits tools and switches the router at a pause, so
+    /// every `M0` comes where Z is known to be at or above safe Z (machine
+    /// Z5 in the fixture), in both spindle modes.
+    #[test]
+    fn pause_must_be_at_safe_z() {
+        for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            for (text, line) in [
+                // Z never set: the program-start case.
+                ("G21\nG54\nM0\n", 3),
+                // Below safe Z.
+                ("G21\nG54\nG0 Z2\nM0\n", 4),
+            ] {
+                let err = check_text_as(text, control).unwrap_err();
+                assert!(
+                    matches!(err, ExportError::PauseNotAtSafeZ { line: l } if l == line),
+                    "{control:?} {text:?}: {err:?}"
+                );
+            }
+        }
+        check_text_as("G21\nG54\nG0 Z5\nM0\nG0 Z5\n", SpindleControl::Automatic).unwrap();
+    }
+
+    /// S4, #43: Z is not known after a pause, because the user may have
+    /// fitted a tool and set Z zero. The spindle starts, and the router-on
+    /// pause comes, only after a retract to safe Z.
+    #[test]
+    fn spindle_start_needs_a_retract_after_a_pause() {
+        let no_lift = "G21\nG54\nG0 Z5\nM5\nM0\nM3 S18000\nG4 P3\nG0 Z5\nM5\n";
+        let err = check_text_as(no_lift, SpindleControl::Automatic).unwrap_err();
+        assert!(
+            matches!(err, ExportError::SpindleStartNotAtSafeZ { line: 6 }),
+            "{err:?}"
+        );
+        let lifted =
+            "G21\nG54\nG0 Z5\nM5\nM0\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        check_text_as(lifted, SpindleControl::Automatic).unwrap();
+
+        let manual_no_lift = "G21\nG54\nG0 Z5\nM0\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let err = check_manual(manual_no_lift).unwrap_err();
+        assert!(
+            matches!(err, ExportError::PauseNotAtSafeZ { line: 5 }),
+            "{err:?}"
+        );
+        let manual_lifted = "G21\nG54\nG0 Z5\nM0\nG0 Z5\nM0\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        check_manual(manual_lifted).unwrap();
     }
 }

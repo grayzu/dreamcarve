@@ -1703,8 +1703,9 @@ mod tests {
     /// #34, Behaviour 2 and 5: in manual mode the program sends no spindle
     /// words and no spin-up dwell. Before the first cut it retracts to safe
     /// Z and pauses with a message to turn the router on; resuming is the
-    /// user's confirmation that it is running. #41: the definition's
-    /// tool-change pause is folded into that one stop.
+    /// user's confirmation that it is running. #43: the tool-change pause,
+    /// asking for the tool and Z zero, comes first, then a retract, then
+    /// the router-on pause, both at safe Z.
     #[test]
     fn manual_spindle_pauses_before_first_cut() {
         for post in ["grblhal", "grbl"] {
@@ -1721,17 +1722,23 @@ mod tests {
             }
             let cut = first_index(&lines, is_cut).unwrap();
             let pauses: Vec<usize> = (0..cut).filter(|&i| has_word(lines[i], "M0")).collect();
-            let [pause] = pauses[..] else {
-                panic!("{post}: one M0 before the first cut, not {pauses:?}");
+            let [fit, on] = pauses[..] else {
+                panic!("{post}: two M0 before the first cut, not {pauses:?}");
             };
             assert!(
-                lines[pause].contains("(MSG, Fit T1 ")
-                    && lines[pause].contains(". Turn the router ON."),
-                "{post}: the tool change and the router share one stop: {}",
-                lines[pause]
+                lines[fit].contains("(MSG, Fit T1 ") && lines[fit].contains("Set Z zero"),
+                "{post}: {}",
+                lines[fit]
             );
-            let z = z_before(&text, pause).unwrap_or_else(|| panic!("{post}: Z unknown"));
-            assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
+            assert!(
+                lines[on].contains("(MSG, Turn the router ON."),
+                "{post}: {}",
+                lines[on]
+            );
+            for pause in [fit, on] {
+                let z = z_before(&text, pause).unwrap_or_else(|| panic!("{post}: Z unknown"));
+                assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
+            }
         }
     }
 
@@ -1751,21 +1758,20 @@ mod tests {
         let with_rpm = on_line(&ops);
         assert_eq!(
             with_rpm,
-            "M0 (MSG, Fit T1 6.35 mm upcut. Turn the router ON. Speed 18000 RPM. Resume to start cutting.)"
+            "M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)"
         );
         ops[0].1.rpm = None;
         let without = on_line(&ops);
         assert_eq!(
             without,
-            "M0 (MSG, Fit T1 6.35 mm upcut. Turn the router ON. Resume to start cutting.)"
+            "M0 (MSG, Turn the router ON. Resume to start cutting.)"
         );
     }
 
     /// #34, Behaviour 3 and 4: with two tools the program pauses to turn
     /// the router off before each tool change and at the end, each time at
-    /// safe Z. #41: the definition's tool-change pause is not written; the
-    /// router-on pause asks for the tool instead, so each tool has one stop
-    /// before it cuts.
+    /// safe Z. #43: each tool has two stops before it cuts, one to fit it
+    /// and set Z zero and one, after a retract, to turn the router on.
     #[test]
     fn manual_spindle_pauses_off_at_tool_change_and_end() {
         for post in ["grblhal", "grbl"] {
@@ -1780,8 +1786,8 @@ mod tests {
                         Some("on")
                     } else if l.contains("Turn the router OFF") {
                         Some("off")
-                    } else if has_word(l, "M0") {
-                        Some("tool change")
+                    } else if l.contains("Set Z zero") {
+                        Some("fit")
                     } else if is_cut(l) {
                         Some("cut")
                     } else if has_word(l, "M30") {
@@ -1794,7 +1800,7 @@ mod tests {
             events.dedup();
             assert_eq!(
                 events,
-                ["on", "cut", "off", "on", "cut", "off", "end"],
+                ["fit", "on", "cut", "off", "fit", "on", "cut", "off", "end"],
                 "{post}"
             );
             for (index, line) in lines.iter().enumerate() {
@@ -1815,18 +1821,19 @@ mod tests {
     /// not show the message (GRBL drops comments).
     #[test]
     fn program_lists_every_pause_with_its_message() {
-        let on_18000 =
-            "Fit T1 6.35 mm upcut. Turn the router ON. Speed 18000 RPM. Resume to start cutting.";
-        let on_12000 =
-            "Fit T2 3 mm downcut. Turn the router ON. Speed 12000 RPM. Resume to start cutting.";
+        let on_18000 = "Turn the router ON. Speed 18000 RPM. Resume to start cutting.";
+        let on_12000 = "Turn the router ON. Speed 12000 RPM. Resume to start cutting.";
         let off = "Turn the router OFF.";
         let (tc1, tc2) = (
-            "Tool change: T1 6.35 mm upcut",
-            "Tool change: T2 3 mm downcut",
+            "Fit T1 6.35 mm upcut. Set Z zero, then resume.",
+            "Fit T2 3 mm downcut. Set Z zero, then resume.",
         );
         for (control, expected) in [
             (SpindleControl::Automatic, vec![tc1, tc2]),
-            (SpindleControl::Manual, vec![on_18000, off, on_12000, off]),
+            (
+                SpindleControl::Manual,
+                vec![tc1, on_18000, off, tc2, on_12000, off],
+            ),
         ] {
             for post in ["grblhal", "grbl"] {
                 let mut project = project_with(post);
@@ -1885,26 +1892,115 @@ mod tests {
         }
     }
 
-    /// #41: a long tool name is shortened so the merged message fits
-    /// [`MAX_MESSAGE_CHARS`]; the router instruction is never cut.
-    #[test]
-    fn merged_pause_keeps_the_router_instruction_whole() {
+    /// Every spindle mode, for each bundled post-processor, with one and
+    /// with two tools.
+    fn every_program() -> Vec<(String, String)> {
+        let mut out = Vec::new();
         for post in ["grblhal", "grbl"] {
-            let project = manual_project(post);
-            let mut ops = ops_for(&project);
-            ops[0].1.name = "a very long tool name ".repeat(4);
-            ops[0].1.rpm = Some(u32::MAX);
-            let program = emit(&project, &ops, DATE).unwrap().0;
-            let on = &program.pauses[0].message;
-            assert!(on.starts_with("Fit T1 a very long"), "{post}: {on}");
-            assert!(
-                on.ends_with(&format!(
-                    ". Turn the router ON. Speed {} RPM. Resume to start cutting.",
-                    u32::MAX
-                )),
-                "{post}: {on}"
-            );
-            assert!(on.len() <= MAX_MESSAGE_CHARS, "{post}: {} chars", on.len());
+            for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+                for tools in [1, 2] {
+                    let mut project = project_with(post);
+                    project.post_processor.feed_speed.spindle_control = control;
+                    let ops = if tools == 1 {
+                        ops_for(&project)
+                    } else {
+                        two_tool_ops(&mut project)
+                    };
+                    let text = emit(&project, &ops, DATE).unwrap().0.text;
+                    out.push((format!("{post} {control:?} {tools} tool(s)"), text));
+                }
+            }
+        }
+        out
+    }
+
+    /// S4, #43: the user fits the tool and switches the router at a pause,
+    /// so every `M0` comes at a known Z at or above safe Z. At program start
+    /// Z is unknown, so a `G0 Z` comes before the first pause.
+    #[test]
+    fn tool_change_pause_is_at_safe_z() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let pauses: Vec<usize> = (0..lines.len())
+                .filter(|&i| has_word(lines[i], "M0"))
+                .collect();
+            assert!(!pauses.is_empty(), "{case}");
+            for i in pauses {
+                let z = z_before(&text, i);
+                assert!(
+                    z.is_some_and(|z| z >= SAFE_Z_MACHINE - 1e-9),
+                    "{case}: line {} pauses at Z {z:?}",
+                    i + 1
+                );
+            }
+        }
+    }
+
+    /// #43: the user may set Z zero at the tool-change pause, so the
+    /// program lifts to safe Z again before the spindle starts (automatic)
+    /// or before the router-on pause (manual).
+    #[test]
+    fn retracts_after_tool_change_pause() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let fits: Vec<usize> = (0..lines.len())
+                .filter(|&i| lines[i].contains("Set Z zero"))
+                .collect();
+            assert!(!fits.is_empty(), "{case}");
+            for i in fits {
+                let start = (i + 1..lines.len())
+                    .find(|&k| has_word(lines[k], "M3") || lines[k].contains("Turn the router ON"))
+                    .unwrap_or_else(|| panic!("{case}: nothing starts after line {}", i + 1));
+                let lift = (i + 1..start)
+                    .find(|&k| has_word(lines[k], "G0") && code(lines[k]).contains('Z'));
+                assert!(
+                    lift.is_some(),
+                    "{case}: no retract between lines {} and {}",
+                    i + 1,
+                    start + 1
+                );
+                let z = z_before(&text, start);
+                assert!(
+                    z.is_some_and(|z| z >= SAFE_Z_MACHINE - 1e-9),
+                    "{case}: line {} starts at Z {z:?}",
+                    start + 1
+                );
+            }
+        }
+    }
+
+    /// #43, option C: every tool-change pause asks for the tool and for Z
+    /// zero to be set with it. A long tool name is shortened so the message
+    /// fits [`MAX_MESSAGE_CHARS`]; the instruction is never cut.
+    #[test]
+    fn tool_change_message_asks_to_set_z_zero() {
+        for (case, text) in every_program() {
+            let tools = if case.contains("2 tool") { 2 } else { 1 };
+            let fits: Vec<&str> = text.lines().filter(|l| l.contains("(MSG, Fit T")).collect();
+            assert_eq!(fits.len(), tools, "{case}: {fits:?}");
+            for line in fits {
+                assert!(
+                    line.ends_with(". Set Z zero, then resume.)"),
+                    "{case}: {line}"
+                );
+            }
+        }
+        for post in ["grblhal", "grbl"] {
+            for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+                let mut project = project_with(post);
+                project.post_processor.feed_speed.spindle_control = control;
+                let mut ops = ops_for(&project);
+                ops[0].1.name = "a very long tool name ".repeat(6);
+                let program = emit(&project, &ops, DATE).unwrap().0;
+                let fit = &program.pauses[0].message;
+                assert!(fit.starts_with("Fit T1 a very long"), "{post}: {fit}");
+                assert!(fit.ends_with(". Set Z zero, then resume."), "{post}: {fit}");
+                assert!(
+                    fit.len() <= MAX_MESSAGE_CHARS,
+                    "{post}: {} chars",
+                    fit.len()
+                );
+            }
         }
     }
 }
