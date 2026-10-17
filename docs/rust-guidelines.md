@@ -172,8 +172,11 @@ nothing else.
 
 - `serde` + `serde_json`, pretty-printed, keys in declaration order
   (`preserve_order` feature). Field names are `snake_case` in JSON; enums use
-  `#[serde(rename_all = "snake_case")]`; internally tagged where a variant
-  carries data (`#[serde(tag = "kind")]`).
+  `#[serde(rename_all = "snake_case")]`. An enum with any unit variant keeps
+  serde's default external tagging, so a unit variant reads as a plain string
+  (`"bottom_left"`) and a variant with data as a one-key object
+  (`{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`). An enum whose every
+  variant carries data is internally tagged (`#[serde(tag = "kind")]`).
 - `#[serde(deny_unknown_fields)]` on every persisted struct, so a typo in a
   hand-edited file fails loudly instead of silently reverting to a default.
 - `Option` fields serialize as `null`, never omitted, so a saved file shows

@@ -83,9 +83,10 @@ pub struct MachineOrigin {
     pub z: OriginZ,
 }
 
-/// XY work zero, relative to the stock footprint (Y-up).
+/// XY work zero, relative to the stock footprint (Y-up). Saved as a plain
+/// string, except `Custom`, which is `{ "custom": { "x_mm": …, "y_mm": … } }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum OriginXy {
     /// The stock corner at (0, 0).
     BottomLeft,
@@ -183,9 +184,10 @@ pub struct Tool {
     pub step_over_fraction: Option<f64>,
 }
 
-/// Cutter geometry.
+/// Cutter geometry. Saved as a plain string, except `VBit`, which is
+/// `{ "v_bit": { "included_angle_deg": … } }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolKind {
     /// Flat end mill.
     EndMill,

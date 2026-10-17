@@ -173,12 +173,12 @@ fn first_non_finite(problems: &[Problem]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Operation;
+    use crate::model::{Operation, OriginXy, ToolKind};
     use crate::test_support::sample_project;
     use crate::validate::validate;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v2/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v3/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
 
     #[test]
@@ -318,7 +318,8 @@ mod tests {
 
     #[test]
     fn missing_version_is_rejected() {
-        let text = CURRENT_FIXTURE.replacen("  \"version\": 2,\n", "", 1);
+        let line = format!("  \"version\": {},\n", crate::CURRENT_VERSION);
+        let text = CURRENT_FIXTURE.replacen(&line, "", 1);
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         assert_eq!(load(text.as_bytes()), Err(LoadError::MissingVersion));
     }
@@ -366,6 +367,64 @@ mod tests {
         let text = CURRENT_FIXTURE.replacen(
             "  \"post_processor\": {\n",
             "  \"post_processor\": {\n    \"colour\": \"red\",\n",
+            1,
+        );
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
+        assert!(matches!(
+            load(text.as_bytes()),
+            Err(LoadError::Schema { .. })
+        ));
+    }
+
+    #[test]
+    fn named_origin_saves_as_a_string() {
+        let text = save(&sample_project()).unwrap();
+        assert!(text.contains("\"xy\": \"bottom_left\","), "{text}");
+    }
+
+    #[test]
+    fn custom_origin_round_trips_as_a_keyed_object() {
+        let mut p = sample_project();
+        p.origin.xy = OriginXy::Custom {
+            x_mm: 20.0,
+            y_mm: 5.0,
+        };
+        let value = serde_json::to_value(&p).unwrap();
+        assert_eq!(
+            value["origin"]["xy"],
+            serde_json::json!({ "custom": { "x_mm": 20.0, "y_mm": 5.0 } })
+        );
+        let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+    }
+
+    #[test]
+    fn plain_cutter_saves_as_a_string() {
+        let text = save(&sample_project()).unwrap();
+        assert!(text.contains("\"cutter\": \"end_mill\","), "{text}");
+    }
+
+    #[test]
+    fn v_bit_cutter_round_trips_as_a_keyed_object() {
+        let mut p = sample_project();
+        p.tools[0].cutter = ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        let value = serde_json::to_value(&p).unwrap();
+        assert_eq!(
+            value["tools"][0]["cutter"],
+            serde_json::json!({ "v_bit": { "included_angle_deg": 60.0 } })
+        );
+        let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+    }
+
+    /// The version 2 form is read only through the migration.
+    #[test]
+    fn kind_object_is_rejected_at_current_version() {
+        let text = CURRENT_FIXTURE.replacen(
+            "\"xy\": \"bottom_left\",",
+            "\"xy\": { \"kind\": \"bottom_left\" },",
             1,
         );
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
