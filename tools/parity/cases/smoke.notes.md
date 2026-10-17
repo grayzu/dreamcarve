@@ -1,2 +1,3 @@
-- Tolerance: coordinates compare to 0.001 mm after DreamCarve maps its Y-up
-  frame to the machine frame; PureCutCNC G-code is already machine-frame.
+- Capture check only: the phase 0 test that the capture runs and is
+  repeatable (two captures are byte-identical). No test compares DreamCarve
+  against this case.

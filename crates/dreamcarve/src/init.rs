@@ -28,6 +28,16 @@ use crate::cli::{Failure, InitArgs, StagedFile, lookup_post, read_file};
 
 /// Margin between the drawing's bounds and each stock edge, mm.
 const STOCK_MARGIN_MM: f64 = 10.0;
+/// Stock sizes and instance offsets are rounded up to this many steps per
+/// millimetre (0.01 mm), so the file reads cleanly.
+const ROUND_STEPS_PER_MM: f64 = 100.0;
+/// How far a value may sit above a 0.01 mm step and still round down to it.
+/// The imported bounds come from flattened curves and carry noise of a few
+/// micrometres (the coaster's circle spans 4.9999981..95.0000026 mm), which
+/// would otherwise push a 110 mm stock to 110.01 and shift the drawing by
+/// 0.01 mm. The margin can fall short by less than this, which is below the
+/// 0.001 mm resolution programs are written with.
+const ROUND_SLACK_MM: f64 = 0.001;
 /// Default stock thickness, mm; also the Profile depth (cut through).
 const STOCK_THICKNESS_MM: f64 = 12.0;
 /// The placeholder tool: a 1/4" two-flute end mill.
@@ -35,7 +45,8 @@ const TOOL_ID: &str = "t1";
 const TOOL_NAME: &str = "Set me";
 const TOOL_DIAMETER_MM: f64 = 6.35;
 const TOOL_FLUTES: u8 = 2;
-/// Profile defaults.
+/// The one operation `init` writes, a Profile, and its defaults.
+const OPERATION_ID: &str = "op1";
 const STEP_DOWN_MM: f64 = 4.0;
 const SAFE_Z_MM: f64 = 5.0;
 const TAB_COUNT: u8 = 4;
@@ -94,9 +105,19 @@ fn project_name(svg: &Path) -> String {
     )
 }
 
+/// `value_mm` rounded up to the next multiple of 0.01 mm, ignoring up to
+/// `ROUND_SLACK_MM` of noise above a multiple.
+fn round_up_mm(value_mm: f64) -> f64 {
+    ((value_mm - ROUND_SLACK_MM) * ROUND_STEPS_PER_MM).ceil() / ROUND_STEPS_PER_MM
+}
+
 /// Builds the project with the `init` defaults. Instances are moved so the
-/// drawing's bounds sit `STOCK_MARGIN_MM` in from the stock's bottom-left
-/// corner; definitions keep the imported coordinates.
+/// drawing's bounds sit at least `STOCK_MARGIN_MM` in from the stock's
+/// bottom-left corner; definitions keep the imported coordinates. The
+/// imported bounds carry float noise from flattening, so the offset and the
+/// stock size are rounded up to 0.01 mm: the drawing stays at least
+/// `STOCK_MARGIN_MM` (less under `ROUND_SLACK_MM`) from every edge, and the
+/// file reads cleanly.
 fn default_project(
     name: String,
     import: SvgImport,
@@ -104,10 +125,9 @@ fn default_project(
     post_processor: PostProcessor,
     display_units: Units,
 ) -> Project {
-    let shift = Transform::translate(
-        STOCK_MARGIN_MM - bounds.min.x,
-        STOCK_MARGIN_MM - bounds.min.y,
-    );
+    let dx_mm = round_up_mm(STOCK_MARGIN_MM - bounds.min.x);
+    let dy_mm = round_up_mm(STOCK_MARGIN_MM - bounds.min.y);
+    let shift = Transform::translate(dx_mm, dy_mm);
     let mut instances = import.instances;
     for instance in &mut instances {
         instance.transform = instance.transform.then(shift);
@@ -141,7 +161,7 @@ fn default_project(
         step_over_fraction: None,
     };
     let profile = ProfileOp {
-        id: OperationId::new("op1"),
+        id: OperationId::new(OPERATION_ID),
         name: "Profile".into(),
         enabled: true,
         targets,
@@ -165,8 +185,8 @@ fn default_project(
         display_units,
         flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
         stock: Stock {
-            width_mm: bounds.width_mm() + 2.0 * STOCK_MARGIN_MM,
-            height_mm: bounds.height_mm() + 2.0 * STOCK_MARGIN_MM,
+            width_mm: round_up_mm(bounds.max.x + dx_mm + STOCK_MARGIN_MM),
+            height_mm: round_up_mm(bounds.max.y + dy_mm + STOCK_MARGIN_MM),
             thickness_mm: STOCK_THICKNESS_MM,
         },
         origin: MachineOrigin {
@@ -204,8 +224,9 @@ fn report(project: &Project, output: &Path) {
         );
     }
     println!(
-        "Next: edit {} to set the stock thickness and tool `{TOOL_ID}` ({TOOL_NAME}): \
-         feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.",
+        "Next: edit {} to set the stock thickness and the Profile depth \
+         (`operations[{OPERATION_ID}].depth_mm`) to match your material, and tool `{TOOL_ID}` \
+         ({TOOL_NAME}): feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.",
         output.display()
     );
 }

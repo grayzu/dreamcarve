@@ -331,7 +331,10 @@ dreamcarve posts
 ```
 
 `init` builds a project: stock = drawing bounds plus 10 mm margin each side,
-thickness 12 mm, origin BottomLeft/StockTop, one tool "Set me" with
+thickness 12 mm. The instance offset and the stock size are rounded up to
+0.01 mm, ignoring up to 0.001 mm of flattening noise above a multiple, so
+the margin holds to the program's 0.001 mm resolution and the file reads
+cleanly. Origin BottomLeft/StockTop, one tool "Set me" with
 `diameter 6.35`, flutes 2, feeds `None`, one Profile op targeting every
 closed instance, outside, depth 12, step 4, climb, safe Z 5, tabs
 `Count(4)` 8×3 rect. Exit codes: 0 ok, 1 validation/export error, 2 usage.

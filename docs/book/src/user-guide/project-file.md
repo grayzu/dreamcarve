@@ -61,6 +61,8 @@ Depths are measured down from the stock top.
 | `thickness_mm` | Size along Z. Measure your material and enter the real value. |
 
 `init` sizes the stock to the drawing plus 10 mm on each side, 12 mm thick.
+It rounds the size and the shapes' placement up to 0.01 mm, so the file
+holds `110.0`, not `110.0000025`.
 If you change `thickness_mm`, change the operation's `depth_mm` to match.
 
 ## `origin`
