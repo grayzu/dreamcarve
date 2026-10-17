@@ -318,7 +318,8 @@ mod tests {
 
     #[test]
     fn missing_version_is_rejected() {
-        let text = CURRENT_FIXTURE.replacen("  \"version\": 2,\n", "", 1);
+        let line = format!("  \"version\": {},\n", crate::CURRENT_VERSION);
+        let text = CURRENT_FIXTURE.replacen(&line, "", 1);
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         assert_eq!(load(text.as_bytes()), Err(LoadError::MissingVersion));
     }

@@ -17,13 +17,17 @@
 //! - **2**: adds `post_processor.feed_speed.spindle_control`, set to
 //!   `"automatic"` by the migration, which is how every earlier file was
 //!   exported.
+//! - **3**: `origin.xy` and each `tools[].cutter` change from an object
+//!   tagged by `kind` to serde's external tagging: a choice without data is
+//!   a plain string (`"bottom_left"`), one with data is a one-key object
+//!   (`{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`) (#46).
 
 use crate::serialize::LoadError;
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -34,6 +38,7 @@ fn step(from: u32) -> Option<Step> {
     match from {
         0 => Some(v0_to_v1),
         1 => Some(v1_to_v2),
+        2 => Some(v2_to_v3),
         _ => None,
     }
 }
@@ -115,6 +120,46 @@ fn v1_to_v2(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
     }
     feed_speed.insert(SPINDLE_CONTROL_KEY.into(), Value::from("automatic"));
     Ok(root)
+}
+
+/// Version 2 → 3: rewrites `origin.xy` and every `tools[].cutter` from
+/// `{ "kind": k, ..data }` to `k` or `{ k: { ..data } }`.
+fn v2_to_v3(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let xy = root
+        .get_mut("origin")
+        .and_then(|origin| origin.get_mut("xy"))
+        .ok_or_else(|| "`origin.xy` is missing".to_owned())?;
+    *xy = untag(xy.take(), "origin.xy")?;
+    let tools = root
+        .get_mut("tools")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "`tools` is missing or not an array".to_owned())?;
+    for (i, tool) in tools.iter_mut().enumerate() {
+        let path = format!("tools[{i}].cutter");
+        let cutter = tool
+            .get_mut("cutter")
+            .ok_or_else(|| format!("`{path}` is missing"))?;
+        *cutter = untag(cutter.take(), &path)?;
+    }
+    Ok(root)
+}
+
+/// Rewrites one `{ "kind": k, ..data }` object as `k` when there is no
+/// data, else as `{ k: { ..data } }`. `path` names the value in errors.
+fn untag(value: Value, path: &str) -> Result<Value, String> {
+    let Value::Object(mut fields) = value else {
+        return Err(format!("`{path}` is not an object"));
+    };
+    let Some(Value::String(kind)) = fields.remove("kind") else {
+        return Err(format!("`{path}` has no string `kind`"));
+    };
+    if fields.is_empty() {
+        Ok(Value::String(kind))
+    } else {
+        let mut keyed = Map::with_capacity(1);
+        keyed.insert(kind, Value::Object(fields));
+        Ok(Value::Object(keyed))
+    }
 }
 
 #[cfg(test)]

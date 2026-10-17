@@ -89,7 +89,7 @@ figures, are in the user guide chapter "Shapes, holes, and islands".
 ### dc-project
 
 ```rust
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 3;
 
 pub struct Project {
     pub version: u32,
@@ -152,6 +152,10 @@ pub struct History { snapshots: Vec<Project>, cursor: usize }  // push/undo/redo
 ```
 
 Serialization: serde + serde_json, pretty-printed, keys in declaration order.
+`OriginXy` and `ToolKind` save a choice without data as a plain string
+(`"xy": "bottom_left"`) and one with data as a one-key object
+(`"xy": { "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`); version 3 made this
+change (#46).
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
