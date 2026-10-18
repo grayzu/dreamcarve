@@ -192,7 +192,8 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Prints the export summary: the file written, one line per exported
-/// operation, then every pause with its line number and message, because
+/// operation, the tool to fit and set work zero with before starting (#57),
+/// then every pause and tool change with its line number and message, because
 /// the controller or sender may not show the message (design step 8).
 fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs) {
     println!(
@@ -223,8 +224,19 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
             op.depth_mm
         );
     }
+    // #57: the program does not stop for the first tool.
+    let first = &program.first_tool;
+    let name = if first.name.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", first.name)
+    };
+    println!(
+        "Before you start: fit T{}{name} and set work zero with it.",
+        first.number
+    );
     if !program.pauses.is_empty() {
-        println!("Pauses (M0); resume each with cycle start:");
+        println!("Pauses and tool changes; resume each with cycle start:");
         for pause in &program.pauses {
             let message = if pause.message.is_empty() {
                 "(no message)"

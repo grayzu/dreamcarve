@@ -74,17 +74,20 @@ Generates the toolpaths and writes the program.
 Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed
 (the speed is optional when the router is switched by hand). After the file
-is written it lists each operation, then every pause in the program. For
-the coaster with the default automatic spindle control:
+is written it lists each operation, names the bit to fit and set work zero
+with before you start, then lists every place the program stops. The
+coaster, with one bit and the default automatic spindle control, does not
+stop:
 
 ```text
-Pauses (M0); resume each with cycle start:
-  line 12: Fit T1 Set me. Set Z zero, then resume.
+Before you start: fit T1 Set me and set work zero with it.
 ```
 
 With [manual spindle control](post-processors.md#manual-spindle-control)
-the list also shows the "Turn the router ON" and "Turn the router OFF"
-pauses.
+the list shows the "Turn the router ON" and "Turn the router OFF"
+pauses, under "Pauses and tool changes". A grblHAL program with more than
+one bit also lists each tool change there, such as
+`Fit T2 3 mm downcut. Set Z zero, then resume.`
 
 ### `dreamcarve check <dcv>`
 

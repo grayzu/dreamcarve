@@ -29,14 +29,19 @@ written. There are no safety warnings, only errors.
    program pauses at safe Z before each tool's first cut for you to turn
    the router on, and pauses again for you to turn it off after the tool's
    last cut.
-5. **Pauses happen at safe Z, and the program lifts again after them.**
-   Every pause, including the tool change at the start of the program,
-   comes with the bit at safe Z. You may set Z zero at a pause, so after it
-   the program rises to safe Z again before the spindle or router starts,
-   and writes its next motion and feed words in full.
+5. **Stops happen at safe Z, and the program lifts again after them.**
+   The program does not stop for its first bit: you fit it and set work
+   zero with it before you start. Every later stop, a pause (`M0`) or a
+   tool change (`M6`, grblHAL only), comes with the bit at safe Z. You may
+   jog and set Z zero at a tool change, so after any stop the program
+   rises to safe Z again before the spindle or router starts, and writes
+   its next motion and feed words in full. GRBL cannot stop for a tool
+   change where you can jog, so DreamCarve refuses a GRBL program that
+   needs a second bit.
 6. **The controller is in a known state.** The program sets units, the
    work coordinate system and absolute coordinates (`G90`) before it moves,
-   and again after every pause, where you may have changed them.
+   and again after every pause and tool change, where you may have changed
+   them.
 7. **No mirroring, and nothing else.** The program's coordinates are the
    project's, moved to your work zero. Nothing is flipped. Read back, each
    operation's moves are its toolpath, move for move: every straight move
@@ -70,7 +75,7 @@ It also checks that:
   A Z zero set at the spoilboard instead of the stock top puts every pass
   12 mm deeper than intended.
 - **The tool.** It trusts that the bit in the spindle is the one in the
-  project, with that diameter.
+  project, with that diameter, and that you set Z zero with that bit.
 - **Whether the feeds suit the job.** It uses your values exactly. It cannot
   tell whether they suit your machine, bit, and material.
 - **Safe Z height.** It keeps rapids at safe Z, but cannot tell whether safe
@@ -94,7 +99,9 @@ It also checks that:
 4. **Use a spoilboard** under any cut that goes through.
 5. **Check the bit.** It matches `diameter_mm`, and it is tight in the
    collet.
-6. **Set work zero** where `origin` says, and check it by jogging there.
+6. **Fit the first bit, then set work zero** with it where `origin` says,
+   and check it by jogging there. `export` names the first bit
+   ("Before you start: fit T1 ...").
 7. **Do an air cut.** Set Z zero well above the stock: more than the cut
    depth plus a margin, for example 20 mm for a 12 mm cut. Run the whole
    program and watch where the bit goes. Then set Z zero back on the stock.

@@ -152,8 +152,10 @@ pub fn parse_program(text: &str) -> Result<Vec<Block>, ExportError> {
     Ok(blocks)
 }
 
-/// Letters GRBL and grblHAL accept as words. `N` is a line number.
-const LETTERS: &str = "GMXYZIJKRFSPTNL";
+/// Letters GRBL and grblHAL accept as words. `N` is a line number. `Q`
+/// is grblHAL's, for `M61 Q<n>`, which the safety pass accepts only from a
+/// definition that changes tools with `M6`.
+const LETTERS: &str = "GMXYZIJKRFSPTNLQ";
 
 /// The words of `line` outside comments, upper-cased.
 fn split_words(line: &str) -> Result<Vec<Word>, String> {

@@ -54,6 +54,20 @@ pub enum ExportError {
         /// The tool's name.
         tool: String,
     },
+    /// The enabled operations use more than one tool, but the
+    /// post-processor's tool change has no `M6`, so the program cannot stop
+    /// for the user to change the bit (#57). GRBL 1.1 has no `M6`, and its
+    /// `M0` pause is a feed hold, in which it refuses to jog.
+    #[error(
+        "post-processor `{post}` cannot change tools within a program, but the enabled operations use {}; disable the operations of all but one tool, or use a post-processor with M6 (grblhal)",
+        .tools.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", ")
+    )]
+    ToolChangeNotSupported {
+        /// The post-processor's id.
+        post: String,
+        /// The tools' names, in the order the program would use them.
+        tools: Vec<String>,
+    },
     /// The post-processor lacks a command the safety rules need (S5): the
     /// units command for the output units, or the work-coordinate select.
     #[error("post-processor `{post}` has no `{field}`, which every program must start with")]
