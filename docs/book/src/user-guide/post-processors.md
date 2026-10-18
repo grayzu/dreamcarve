@@ -22,6 +22,11 @@ DreamCarve upgrade never changes what an existing project exports.
 - `dreamcarve export part.dcv --post grbl` switches an existing project to
   GRBL, saves the project with it, and exports. Your edits to the old copy,
   such as a longer spindle dwell, are replaced by the bundled values.
+  The project is checked against the new post-processor, so the result
+  can differ from what `check` reported. For example, a tool with no
+  `rpm` passes with manual spindle control but fails after switching to a
+  bundled post-processor, which sets the speed itself. If export fails,
+  nothing is written and the project keeps its old post-processor.
 
 An unknown id is a usage error (exit code 2) that lists the known ones.
 
