@@ -108,6 +108,21 @@ The ordered tool motion an operation produces, in project coordinates, before
 any post-processor sees it.
 _Avoid_: Path, moves, program
 
+**Machining Order**:
+Within one operation, whether each closed outline (with its holes) or open
+path is cut to full depth before the next (**Full Depth First**), or each pass
+is cut across all of them before the next, deeper pass (**Pass First**). It
+changes the order of the cuts, never which cuts are made.
+_Avoid_: Cut order, depth first, level first, optimisation
+_PureCutCNC_: `machiningOrder`; `feature_first` is Full Depth First,
+`level_first` is Pass First
+
+**Link**:
+The tool motion inside an operation between the end of one cut and the start
+of the next: a retract to Safe Z, a rapid and a plunge, or a move that stays
+down in material the operation has already cut.
+_Avoid_: Transition, traverse, keep-tool-down
+
 **Tab**:
 A short bridge of material left uncut on a Profile so the part stays attached
 to the stock.
