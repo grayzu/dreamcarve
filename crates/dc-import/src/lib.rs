@@ -11,8 +11,8 @@
 pub mod svg;
 
 pub use svg::{
-    MAX_COORDINATE_MM, MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM, RootUnits, SvgImport,
-    SvgImportOptions, import_svg,
+    MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM, RootUnits, SvgImport, SvgImportOptions,
+    import_svg,
 };
 
 /// Why an import produced no result.
@@ -29,7 +29,7 @@ pub enum ImportError {
         path: String,
     },
     /// A path reaches further from the origin than
-    /// [`svg::MAX_COORDINATE_MM`] once converted to millimetres.
+    /// [`dc_geometry::MAX_COORDINATE_MM`] once converted to millimetres.
     #[error("path `{path}` reaches beyond {limit_mm} mm from the origin")]
     CoordinateOutOfRange {
         /// Name the path would have been imported under.
@@ -46,7 +46,7 @@ pub enum ImportError {
         limit: usize,
     },
     /// The page size is NaN, infinite, not positive, or larger than
-    /// [`svg::MAX_COORDINATE_MM`] on a side.
+    /// [`dc_geometry::MAX_COORDINATE_MM`] on a side.
     #[error(
         "SVG page size {width_mm} × {height_mm} mm is not a positive finite size within limits"
     )]

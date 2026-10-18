@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Transform};
+use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Rect, Transform};
 use dc_import::{SvgImport, SvgImportOptions, import_svg};
 use dc_project::{
     CURRENT_VERSION, CutDirection, MachineOrigin, Operation, OperationId, OriginXy, OriginZ,
@@ -90,6 +90,18 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
 
     let name = project_name(&args.svg);
     let project = default_project(name, import, bounds, post, args.units.into());
+    // The drawing imported within the limit, but the margin can push the
+    // stock past it; refuse rather than write a project `check` rejects.
+    let stock = &project.stock;
+    if stock.width_mm > MAX_COORDINATE_MM || stock.height_mm > MAX_COORDINATE_MM {
+        return Err(Failure::error(format!(
+            "{} with a {STOCK_MARGIN_MM} mm margin needs a {:.2} × {:.2} mm stock, \
+             larger than the {MAX_COORDINATE_MM} mm limit; make the drawing smaller",
+            args.svg.display(),
+            stock.width_mm,
+            stock.height_mm,
+        )));
+    }
     let text = dc_project::save(&project).map_err(Failure::error)?;
     StagedFile::write(&output, text.as_bytes())?.commit()?;
 

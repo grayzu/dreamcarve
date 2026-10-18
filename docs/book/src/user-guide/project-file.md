@@ -28,6 +28,14 @@ away from you, Z up. The stock occupies X from 0 to `width_mm`, Y from 0 to
 top). Heights such as a tab's height are measured up from the stock bottom.
 Depths are measured down from the stock top.
 
+No coordinate may lie more than 6000 mm (6 m) from the origin, after an
+instance's transform is applied, and no stock side may be longer than
+6000 mm. Each of the six transform numbers must also be between −6000 and
+6000. The limit is there to catch typing mistakes, such as `1e12` for `12`,
+and to keep the arithmetic exact; it is far larger than any hobby machine.
+It is not your machine's travel: set that with soft limits on the
+controller.
+
 ## Top level
 
 | Field | Meaning |
@@ -226,6 +234,7 @@ Errors stop export. Warnings do not.
 | An id that refers to nothing | A tool has no feed rate, plunge rate or spindle speed (export still fails if the tool is used) |
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | An open path, which Profile does not cut |
 | A value that is not a number | A shape too small for the tool, a duplicate shape, or tabs that overlap or do nothing |
+| A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |

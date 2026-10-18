@@ -136,6 +136,9 @@ nothing else.
   `ARC_FIT_TOLERANCE_MM`).
 - Reject non-finite numbers at the boundary: `dc-project::load` and every
   importer fail on `NaN` or `±inf`; after that, code may assume finiteness.
+  Bound magnitudes there too, by `dc_geometry::MAX_COORDINATE_MM` (6 m):
+  finite but huge input overflows or loses precision deeper in, and
+  `cavalier_contours` panics on it.
 - Generators and post-processors are pure functions of their inputs: no
   `HashMap` iteration order, no system time, no randomness, no thread-count
   dependence in results. Two runs on two machines produce identical G-code.

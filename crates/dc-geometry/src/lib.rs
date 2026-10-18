@@ -18,7 +18,7 @@ mod transform;
 pub use contour::Contour;
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, flatten};
 pub use offset::offset;
-pub use point::{EPS_MM, Point, Point3, Rect, Vec2, approx_eq};
+pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq};
 pub use polyline::{Arc, Polyline, Segment, Vertex};
 pub use region::{Region, nest};
 
@@ -115,4 +115,14 @@ pub enum GeometryError {
     /// which a bulge cannot represent.
     #[error("transform does not preserve circular arcs (non-uniform scale or shear)")]
     ArcUnderNonUniformTransform,
+    /// A result reaches `reach_mm` from the origin on X or Y, beyond
+    /// `limit_mm` ([`MAX_COORDINATE_MM`]), or is not a finite number.
+    #[error("geometry reaches {reach_mm} mm from the origin, beyond the {limit_mm} mm limit")]
+    CoordinateOutOfRange {
+        /// The largest absolute X or Y reached, millimetres; infinite when
+        /// a coordinate is not a finite number.
+        reach_mm: f64,
+        /// The limit it exceeded, millimetres.
+        limit_mm: f64,
+    },
 }

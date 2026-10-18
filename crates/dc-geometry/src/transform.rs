@@ -5,7 +5,7 @@
 //! "Data model → dc-geometry"). Feature instances place their definition's
 //! profiles with one of these.
 
-use crate::point::{EPS_MM, Point};
+use crate::point::{EPS_MM, MAX_COORDINATE_MM, Point};
 use crate::polyline::{Polyline, Vertex};
 use crate::{DegenerateReason, GeometryError};
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,8 @@ impl Transform {
     /// The transformed polyline. Arcs stay arcs under rotation, uniform
     /// scale, translation, and mirroring; a mirror negates every bulge.
     /// Fails when the transform is singular, or when the polyline has arcs
-    /// and the transform scales non-uniformly or shears.
+    /// and the transform scales non-uniformly or shears, or when the result
+    /// reaches past [`MAX_COORDINATE_MM`] or is not finite.
     pub fn apply_polyline(self, polyline: &Polyline) -> Result<Polyline, GeometryError> {
         let [a, b, c, d, _, _] = self.0.as_coeffs();
         let det = a * d - b * c;
@@ -109,7 +110,15 @@ impl Transform {
                 Vertex::new(p.x, p.y, v.bulge * bulge_sign)
             })
             .collect();
-        Ok(Polyline::new(vertices, polyline.is_closed()))
+        let out = Polyline::new(vertices, polyline.is_closed());
+        let reach_mm = out.reach_mm();
+        if reach_mm > MAX_COORDINATE_MM {
+            return Err(GeometryError::CoordinateOutOfRange {
+                reach_mm,
+                limit_mm: MAX_COORDINATE_MM,
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -117,6 +126,7 @@ impl Transform {
 mod tests {
     use super::*;
     use crate::assert_approx_eq;
+
     use std::f64::consts::PI;
 
     #[test]
@@ -149,6 +159,46 @@ mod tests {
         let r = Polyline::rect(Point::new(0.0, 0.0), 10.0, 10.0);
         let s = Transform::scale(2.0, 1.0).apply_polyline(&r).unwrap();
         assert_approx_eq!(s.signed_area_mm2(), 200.0, 1e-9);
+    }
+
+    /// #59: a scale that overflows to infinity is an error, not a polyline
+    /// that panics an offset later.
+    #[test]
+    fn transform_overflow_is_an_error() {
+        let r = Polyline::rect(Point::new(0.0, 0.0), 10.0, 10.0);
+        assert!(matches!(
+            Transform::scale(1e308, 1e308).apply_polyline(&r),
+            Err(GeometryError::CoordinateOutOfRange { .. })
+        ));
+    }
+
+    /// #59: a result exactly at [`MAX_COORDINATE_MM`] is accepted; one
+    /// just past it is an error that names the reach and the limit.
+    #[test]
+    fn transform_past_coordinate_limit_is_an_error() {
+        let r = Polyline::rect(Point::new(0.0, 0.0), 1.0, 1.0);
+        let at_limit = Transform::translate(MAX_COORDINATE_MM - 1.0, 0.0);
+        assert!(at_limit.apply_polyline(&r).is_ok());
+        let past = Transform::translate(MAX_COORDINATE_MM - 0.5, 0.0);
+        match past.apply_polyline(&r) {
+            Err(GeometryError::CoordinateOutOfRange { reach_mm, limit_mm }) => {
+                assert_approx_eq!(reach_mm, MAX_COORDINATE_MM + 0.5, 1e-9);
+                assert_approx_eq!(limit_mm, MAX_COORDINATE_MM, 0.0);
+            }
+            other => panic!("expected CoordinateOutOfRange, got {other:?}"),
+        }
+    }
+
+    /// #59: an arc can bulge past the limit while its vertices stay
+    /// inside; the check covers arc extremes too.
+    #[test]
+    fn arc_bulging_past_coordinate_limit_is_an_error() {
+        let c = Polyline::circle(Point::new(0.0, 0.0), 1.0);
+        let up = Transform::translate(0.0, MAX_COORDINATE_MM - 0.5);
+        assert!(matches!(
+            up.apply_polyline(&c),
+            Err(GeometryError::CoordinateOutOfRange { .. })
+        ));
     }
 
     #[test]

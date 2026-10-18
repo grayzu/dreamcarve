@@ -160,7 +160,8 @@ change (#46).
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
-an unsafe post-processor `file_extension`; disabled operations, unset tool
+magnitudes beyond `dc_geometry::MAX_COORDINATE_MM`, an unsafe post-processor
+`file_extension`; disabled operations, unset tool
 feeds and open profiles as warnings). Tool problems name the tool by name
 and id. A file with a newer version
 fails with `LoadError::NewerVersion`.
@@ -337,6 +338,21 @@ Inputs: project, op. Output: toolpath in project space.
 
 Text, images, gradients, and clip paths are ignored with a warning. usvg
 must be ≥ 0.45 (Apache/MIT; earlier versions are MPL-2.0).
+
+**Coordinate limit (#59).** `dc_geometry::MAX_COORDINATE_MM` is 6000 mm
+(6 m), larger than any hobby CNC table. It bounds numeric range and catches
+typos; the machine envelope is the controller's soft limits. One constant
+serves every check, so a drawing that imports never fails validation on
+size:
+
+- The importer refuses a page side or any path control point beyond it.
+- `validate` reports every vertex coordinate, transform coefficient, stock
+  side, profile reach (arc extremes included) and transformed instance
+  reach beyond it, naming the field (`instances[i1].transform`).
+- `Transform::apply_polyline` returns `GeometryError::CoordinateOutOfRange`
+  when a result is non-finite or beyond it, so `dc-geometry` is safe on its
+  own: `cavalier_contours` panics on overflowed input.
+- `init` refuses a drawing whose stock, with its margin, would exceed it.
 
 ### CLI (dreamcarve)
 
