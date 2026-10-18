@@ -61,3 +61,43 @@ units command, work-coordinate select and safe-Z move, and stays within the
 phase 1 safety rules S1–S6. A single program's tool change uses the
 post-processor's `tool_change` block, retracting to safe Z and stopping the
 spindle first.
+
+## Cut order within and between operations
+
+Research and sources: `docs/research/toolpath-ordering.md` (decisions D1–D10
+in section 7, invariants O1–O10 in section 6). Terms: **Machining Order** and
+**Link** in `CONTEXT.md`.
+
+- **Machining order** is a per-operation setting on Profile, Pocket and
+  Engrave: `full_depth_first` (default) or `pass_first`. Drill ignores it;
+  V-Carve decides in phase 3. A missing field means `full_depth_first`, so
+  phase 1 files load unchanged (a serde default, not a migration). There is
+  no project, export or user-config default, so a `.dcv` cuts the same on
+  every machine. The default matches PureCutCNC's default for new operations
+  (`feature_first`).
+- **Containment order** is a fixed rule with no setting: within an operation,
+  a contour's freeing pass comes after the last pass of every contour it
+  encloses, at every nesting depth. (Phase 1 fixes the island case.)
+- **Nearest-neighbour order** of shapes, drill points and pocket regions,
+  with no setting, constrained by containment order, starting from the first
+  shape in drawing order, ties broken by drawing order. Output is
+  deterministic. The changelog notes that multi-part projects change cut
+  order (not moves).
+- **Operation order** is the user's list. DreamCarve never reorders
+  operations or groups them by tool. `dreamcarve check` and export warn
+  `CutInsideFreedPart` when an operation cuts inside a shape an earlier
+  operation freed, and hint when the same tool is used in non-adjacent
+  operations.
+- **Links** between shapes retract to Safe Z. A link stays down only where
+  its whole path lies in material the operation has already cut at that
+  depth. No lower retract height and no keep-tool-down option.
+- **Architecture**: generators produce cut blocks (one contour, open path or
+  drill point at one pass depth); one pure `dc_cam::sequence` step orders
+  them and writes the links. `dc-gcode` never reorders (S6).
+  `generate_profile` moves onto `sequence` early in the phase.
+- Direction alternation on open paths is the Engrave spec's call, off by
+  default. Merging the outlines of close shapes per level (PureCutCNC's
+  `edgeLevelRuns`) is deferred; phase 1's overlap warning covers the risk.
+- Golden cases: one multi-part case per machining order, compared in order,
+  not only as per-level sets.
+
