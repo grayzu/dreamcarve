@@ -10,9 +10,11 @@
 //! transforms and stock sides beyond [`MAX_COORDINATE_MM`], and every value
 //! the user must supply that is unset: the stock thickness, each operation's
 //! depth, each tool's feed, plunge rate and, under automatic spindle control,
-//! RPM; nothing may default them, #64, #76). Warning-class problems still
-//! allow a correct result but need the user's attention (disabled operations,
-//! open paths).
+//! RPM; nothing may default them, #64, #76). A tool's rates count only when
+//! an enabled operation uses it: an unused tool is one warning instead, and
+//! its unset rates come back as errors once an operation that uses it is
+//! enabled. Warning-class problems still allow a correct result but need the
+//! user's attention (disabled operations, unused tools, open paths).
 //!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
@@ -115,6 +117,14 @@ pub enum Problem {
         /// The unset field, such as `feed_mm_min`.
         field: &'static str,
     },
+    /// A tool no enabled operation uses. Its unset rates are not reported
+    /// (#84): nothing cuts with it, and they are never defaulted.
+    UnusedTool {
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        name: String,
+    },
     /// The stock thickness is unset. It sets depth, tab heights and, with
     /// Z zero at the stock bottom, safe Z, so it is never defaulted (#64).
     StockThicknessUnset,
@@ -162,7 +172,9 @@ impl Problem {
     /// Whether this problem is an error or a warning.
     pub fn severity(&self) -> Severity {
         match self {
-            Self::OperationDisabled { .. } | Self::OpenProfile { .. } => Severity::Warning,
+            Self::OperationDisabled { .. } | Self::UnusedTool { .. } | Self::OpenProfile { .. } => {
+                Severity::Warning
+            }
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -224,6 +236,7 @@ impl Problem {
             Self::ToolValueUnset { tool, field, .. } | Self::ToolOutOfRange { tool, field, .. } => {
                 Some(format!("tools[{tool}].{field}"))
             }
+            Self::UnusedTool { tool, .. } => Some(format!("tools[{tool}]")),
             Self::StockThicknessUnset => Some(STOCK_THICKNESS.to_owned()),
             Self::OperationValueUnset {
                 operation, field, ..
@@ -295,6 +308,10 @@ impl fmt::Display for Problem {
                 f,
                 "tools[{tool}].{field} is not set ({}) for tool `{name}`",
                 unset_unit(field)
+            ),
+            Self::UnusedTool { tool, name } => write!(
+                f,
+                "tool `{tool}` (`{name}`) is defined but not used by any enabled operation"
             ),
             Self::StockThicknessUnset => write!(f, "{STOCK_THICKNESS} is not set (mm)"),
             Self::OperationValueUnset {
@@ -373,8 +390,22 @@ impl Validator {
         }
 
         // In the order the file holds them (#76): settings, then geometry.
+        // Tools an enabled operation cuts with; only their rates are required.
+        let used: BTreeSet<&ToolId> = p
+            .operations
+            .iter()
+            .filter(|op| op.enabled())
+            .map(Operation::tool)
+            .collect();
         let mut seen = BTreeSet::new();
         for tool in &p.tools {
+            let in_use = used.contains(&tool.id);
+            if !in_use {
+                self.problems.push(Problem::UnusedTool {
+                    tool: tool.id.clone(),
+                    name: tool.name.clone(),
+                });
+            }
             if !seen.insert(&tool.id) {
                 self.problems.push(Problem::DuplicateToolId {
                     id: tool.id.clone(),
@@ -393,12 +424,12 @@ impl Validator {
             if tool.flutes == 0 {
                 self.tool_out_of_range(tool, "flutes", 0.0, POSITIVE);
             }
-            self.required_positive(tool, "feed_mm_min", tool.feed_mm_min);
-            self.required_positive(tool, "plunge_mm_min", tool.plunge_mm_min);
+            self.required_positive(tool, in_use, "feed_mm_min", tool.feed_mm_min);
+            self.required_positive(tool, in_use, "plunge_mm_min", tool.plunge_mm_min);
             // With the router switched by hand the speed is only a hint in
             // the pause message (#34), so it may be unset.
             let rpm_required =
-                p.post_processor.feed_speed.spindle_control == SpindleControl::Automatic;
+                in_use && p.post_processor.feed_speed.spindle_control == SpindleControl::Automatic;
             match tool.rpm {
                 None if rpm_required => self.problems.push(Problem::ToolValueUnset {
                     tool: tool.id.clone(),
@@ -630,9 +661,17 @@ impl Validator {
         }
     }
 
-    /// A tool value export needs: unset is a warning, set must be positive.
-    fn required_positive(&mut self, tool: &Tool, field: &'static str, value: Option<f64>) {
+    /// A tool value export needs: unset is an error when the tool is
+    /// `in_use`, and a set one must be positive either way.
+    fn required_positive(
+        &mut self,
+        tool: &Tool,
+        in_use: bool,
+        field: &'static str,
+        value: Option<f64>,
+    ) {
         match value {
+            None if !in_use => {}
             None => self.problems.push(Problem::ToolValueUnset {
                 tool: tool.id.clone(),
                 name: tool.name.clone(),
@@ -696,14 +735,21 @@ mod tests {
         let Operation::Profile(op) = &mut p.operations[0];
         op.tool = ToolId::new("missing");
         let problems = validate(&p);
+        // t1 is now used by nothing, which is a warning of its own.
         assert_eq!(
             problems,
-            vec![Problem::DanglingTool {
-                operation: OperationId::new("o1"),
-                tool: ToolId::new("missing"),
-            }]
+            vec![
+                Problem::UnusedTool {
+                    tool: ToolId::new("t1"),
+                    name: "6.35 mm upcut".into(),
+                },
+                Problem::DanglingTool {
+                    operation: OperationId::new("o1"),
+                    tool: ToolId::new("missing"),
+                },
+            ]
         );
-        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[1].severity(), Severity::Error);
     }
 
     /// #76: an unset feed is an error, so `check` lists it with the other
@@ -903,7 +949,7 @@ mod tests {
         op.safe_z_mm = 0.0;
         op.enabled = false;
         let problems = validate(&p);
-        assert_eq!(problems.len(), 6, "{problems:?}");
+        assert_eq!(problems.len(), 7, "{problems:?}");
         let text = crate::save(&p).unwrap();
         let map = crate::SourceMap::parse(&text).unwrap();
         for problem in &problems {
@@ -918,6 +964,111 @@ mod tests {
             .is_none()
         );
         assert!(!problems.iter().any(Problem::is_unset_value));
+    }
+
+    /// A second tool with no rates set.
+    fn unset_tool(id: &str) -> Tool {
+        Tool {
+            id: ToolId::new(id),
+            name: "3 mm downcut".into(),
+            feed_mm_min: None,
+            plunge_mm_min: None,
+            rpm: None,
+            ..crate::test_support::tool_6_35_upcut()
+        }
+    }
+
+    /// PR #84: a tool nothing cuts with is one warning, located at the
+    /// tool; its unset rates are not errors, and nothing defaults them.
+    #[test]
+    fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
+        let mut p = sample_project();
+        p.tools.push(unset_tool("t2"));
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::UnusedTool {
+                tool: ToolId::new("t2"),
+                name: "3 mm downcut".into(),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(
+            problems[0].to_string(),
+            "tool `t2` (`3 mm downcut`) is defined but not used by any enabled operation"
+        );
+        let text = crate::save(&p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        let at = map.locate(&problems[0].field().unwrap()).unwrap();
+        let line = text.lines().nth(at.line - 1).unwrap();
+        assert_eq!(line.trim(), "{", "points at the tool object: {line}");
+        let next = text.lines().nth(at.line).unwrap();
+        assert_eq!(next.trim(), "\"id\": \"t2\",");
+    }
+
+    /// PR #84: a tool only disabled operations use is unused, like the
+    /// operations themselves; enabling one brings its errors back.
+    #[test]
+    fn tool_used_only_by_disabled_operation_is_unused() {
+        let mut p = sample_project();
+        p.tools[0].feed_mm_min = None;
+        p.tools[0].rpm = None;
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.enabled = false;
+        let problems = validate(&p);
+        assert!(errors(&problems).is_empty(), "{problems:?}");
+        assert!(problems.contains(&Problem::UnusedTool {
+            tool: ToolId::new("t1"),
+            name: "6.35 mm upcut".into(),
+        }));
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.enabled = true;
+        let problems = validate(&p);
+        assert_eq!(errors(&problems).len(), 2, "{problems:?}");
+        assert!(
+            !problems
+                .iter()
+                .any(|p| matches!(p, Problem::UnusedTool { .. }))
+        );
+    }
+
+    /// PR #84: a tool an enabled operation uses still reports every unset
+    /// rate as an error, beside an unused tool's warning.
+    #[test]
+    fn used_tool_with_unset_values_is_still_an_error() {
+        let mut p = sample_project();
+        p.tools[0].feed_mm_min = None;
+        p.tools[0].plunge_mm_min = None;
+        p.tools[0].rpm = None;
+        p.tools.push(unset_tool("t2"));
+        let problems = validate(&p);
+        let fields: Vec<_> = errors(&problems)
+            .into_iter()
+            .filter_map(Problem::field)
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                "tools[t1].feed_mm_min",
+                "tools[t1].plunge_mm_min",
+                "tools[t1].rpm"
+            ]
+        );
+        assert_eq!(problems.len(), 4, "one warning for t2: {problems:?}");
+    }
+
+    /// A zero feed is wrong even on an unused tool.
+    #[test]
+    fn unused_tool_still_rejects_bad_values() {
+        let mut p = sample_project();
+        let mut t2 = unset_tool("t2");
+        t2.feed_mm_min = Some(0.0);
+        p.tools.push(t2);
+        let problems = validate(&p);
+        assert!(
+            problems.iter().any(|p| matches!(p, Problem::ToolOutOfRange { tool, field, .. } if tool.as_str() == "t2" && *field == "feed_mm_min")),
+            "{problems:?}"
+        );
     }
 
     #[test]
@@ -951,9 +1102,15 @@ mod tests {
         let problems = validate(&p);
         assert_eq!(
             problems,
-            vec![Problem::OperationDisabled {
-                operation: OperationId::new("o1"),
-            }]
+            vec![
+                Problem::UnusedTool {
+                    tool: ToolId::new("t1"),
+                    name: "6.35 mm upcut".into(),
+                },
+                Problem::OperationDisabled {
+                    operation: OperationId::new("o1"),
+                },
+            ]
         );
         assert_eq!(problems[0].severity(), Severity::Warning);
     }

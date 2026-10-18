@@ -847,6 +847,45 @@ fn export_tells_user_to_zero_before_start() {
     }
 }
 
+/// PR #84: a second tool that no enabled operation uses, with every rate
+/// `null`, is one located warning, not an error, and the project still
+/// exports, cutting only with the tool in use.
+#[test]
+fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
+    let dir = work_dir("unused_tool_with_unset_values_is_a_warning_not_an_error");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut spare = project.tools[0].clone();
+    spare.id = dc_project::ToolId::new("t2");
+    spare.name = "Spare bit".into();
+    spare.feed_mm_min = None;
+    spare.plunge_mm_min = None;
+    spare.rpm = None;
+    project.tools.push(spare);
+    let text = save(&project).expect("project saves");
+    std::fs::write(&dcv, &text).expect("dcv written");
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let stdout = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "check passes: {stdout}");
+    let located = located_lines(&stdout, "coaster.dcv");
+    assert_eq!(located.len(), 1, "{stdout}");
+    let (line, _, message) = located[0];
+    assert_eq!(
+        message,
+        "warning: tool `t2` (`Spare bit`) is defined but not used by any enabled operation"
+    );
+    let next = text.lines().nth(line).expect("line after the tool");
+    assert_eq!(next.trim(), "\"id\": \"t2\",", "located at the tool");
+    assert!(stdout.contains("0 error(s), 1 warning(s)"), "{stdout}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "exports: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    assert!(!program.contains("T2"), "the unused tool is never fitted");
+}
+
 /// #61: `--post` replaces the post-processor, and the checks that depend
 /// on it run again against the new one. A tool with no spindle speed is
 /// fine while the router is switched by hand; switching to grblHAL, which

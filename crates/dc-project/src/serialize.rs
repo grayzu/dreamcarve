@@ -373,7 +373,8 @@ mod tests {
         op.enabled = false;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert!(!loaded.has_errors());
-        assert_eq!(loaded.problems.len(), 1);
+        // The disabled operation, and its tool, which nothing else uses.
+        assert_eq!(loaded.problems.len(), 2);
     }
 
     #[test]

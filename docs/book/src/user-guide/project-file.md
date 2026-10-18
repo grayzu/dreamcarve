@@ -210,9 +210,12 @@ To move a shape on the stock, change `e` and `f`.
 | `step_down_mm` | Default depth per pass, used when the operation sets none. |
 | `step_over_fraction` | For future operations. Phase 1 ignores it. |
 
-DreamCarve has no default feeds. A tool with an unset feed rate, plunge
-rate or (with automatic spindle control) spindle speed is an error in
-`check`, and `export` refuses until it is set.
+DreamCarve has no default feeds. A tool that an enabled operation uses and
+that has an unset feed rate, plunge rate or (with automatic spindle control)
+spindle speed is an error in `check`, and `export` refuses until it is set.
+A tool no enabled operation uses is a warning instead, and its unset values
+are not reported; enable an operation that uses it and they are errors
+again.
 
 ## `operations`
 
@@ -274,7 +277,7 @@ Errors stop export. Warnings do not.
 | --- | --- |
 | Two tools, instances or operations with the same id | An operation is disabled |
 | An id that refers to nothing | An open path, which Profile does not cut |
-| A value you must set that is `null`: the stock's `thickness_mm`, an operation's `depth_mm`, a tool's `feed_mm_min` and `plunge_mm_min`, and its `rpm` unless spindle control is manual | |
+| A value you must set that is `null`: the stock's `thickness_mm`, an operation's `depth_mm`, and for a tool an enabled operation uses, its `feed_mm_min` and `plunge_mm_min`, and its `rpm` unless spindle control is manual | A tool no enabled operation uses (its unset values are not reported) |
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
 | A value that is not a number | A shape too small for the tool, a duplicate shape, or tabs that overlap or do nothing |
 | A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |

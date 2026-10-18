@@ -175,9 +175,11 @@ migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
 magnitudes beyond `dc_geometry::MAX_COORDINATE_MM`, an unsafe post-processor
 `file_extension`, and every value the user must supply that is unset: the
-stock thickness, an operation's depth, a tool's feed and plunge rate, and its
-RPM under automatic spindle control (#64, #76); disabled operations and open
-profiles as warnings). Problems come in file order. Tool problems name the
+stock thickness, an operation's depth, and, for a tool an enabled operation
+uses, its feed and plunge rate and its RPM under automatic spindle control
+(#64, #76); disabled operations, open profiles, and tools no enabled
+operation uses (`Problem::UnusedTool`, located at the tool, with its unset
+rates not reported) as warnings). Problems come in file order. Tool problems name the
 tool by name and id. A file with a newer version
 fails with `LoadError::NewerVersion`.
 
@@ -519,7 +521,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `migrate::version_0_fixture_loads` — a committed v0 file migrates (placeholder for the first real migration; v0 is the pre-release shape).
 - `migrate::newer_version_is_rejected`.
 - `validate::dangling_tool_id_is_error`.
-- `validate::unset_feed_is_an_error` (a warning before #76).
+- `validate::unset_feed_is_an_error` (a warning before #76), `validate::unused_tool_with_unset_values_is_a_warning_not_an_error`, `validate::tool_used_only_by_disabled_operation_is_unused`, `validate::used_tool_with_unset_values_is_still_an_error`.
 - `post_processor::post_processor_round_trips_through_json`, `post_processor::unknown_field_is_rejected`.
 - `history::undo_restores_previous_snapshot`, `history::redo_after_undo`, `history::new_edit_truncates_redo`.
 
