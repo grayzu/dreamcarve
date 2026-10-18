@@ -138,7 +138,7 @@ impl Segment {
     #[must_use]
     pub fn point_at(&self, distance_mm: f64) -> Option<(Point, Vec2)> {
         let length = self.length_mm();
-        let s = distance_mm.clamp(0.0, length);
+        let s = clamp_nan_safe(distance_mm, length);
         match self.arc() {
             Some(arc) => {
                 let dir = arc.sweep_rad.signum();
@@ -152,6 +152,13 @@ impl Segment {
             }
         }
     }
+}
+
+/// `value` limited to `[0, max]`. Unlike `f64::clamp`, it does not panic
+/// when `max` is NaN, which an overflowing transform can produce; the
+/// result is then `value` limited below by 0.
+fn clamp_nan_safe(value: f64, max: f64) -> f64 {
+    value.min(max).max(0.0)
 }
 
 /// An open or closed sequence of line and arc segments, millimetres, Y-up.
@@ -244,14 +251,18 @@ impl Polyline {
     /// when clockwise, 0 for an open polyline.
     #[must_use]
     pub fn signed_area_mm2(&self) -> f64 {
-        if !self.closed {
+        let Some(origin) = self.vertices.first().filter(|_| self.closed) else {
             return 0.0;
-        }
+        };
+        let origin = origin.point();
         self.segments()
             .map(|seg| {
                 // Shoelace term for the chord, plus the circular segment
                 // between chord and arc, which is signed with the sweep.
-                let chord = (seg.start.x * seg.end.y - seg.end.x * seg.start.y) / 2.0;
+                // Taken about the first vertex, not the origin: far from
+                // the origin, products of absolute coordinates cancel
+                // catastrophically.
+                let chord = (seg.start - origin).cross(seg.end - origin) / 2.0;
                 let bow = seg.arc().map_or(0.0, |a| {
                     a.radius_mm * a.radius_mm / 2.0 * (a.sweep_rad - a.sweep_rad.sin())
                 });
@@ -277,6 +288,35 @@ impl Polyline {
         Some(rect)
     }
 
+    /// The largest absolute X or Y the polyline reaches, arc extremes
+    /// included, mm; 0 with no vertices, and infinite when any coordinate
+    /// is not a finite number. Compare it with [`crate::MAX_COORDINATE_MM`].
+    #[must_use]
+    pub fn reach_mm(&self) -> f64 {
+        let mut reach: f64 = 0.0;
+        let mut include = |p: Point| {
+            for v in [p.x, p.y] {
+                reach = if v.is_finite() {
+                    reach.max(v.abs())
+                } else {
+                    f64::INFINITY
+                };
+            }
+        };
+        for v in &self.vertices {
+            include(v.point());
+        }
+        for seg in self.segments() {
+            if let Some(arc) = seg.arc() {
+                if !arc.radius_mm.is_finite() {
+                    return f64::INFINITY;
+                }
+                arc.axis_extremes().for_each(&mut include);
+            }
+        }
+        reach
+    }
+
     /// Position and unit tangent at `distance_mm` along the polyline. A
     /// closed polyline wraps the distance modulo its length; an open one
     /// clamps it. `None` when the polyline has zero length.
@@ -289,7 +329,7 @@ impl Polyline {
         let target = if self.closed {
             distance_mm.rem_euclid(length)
         } else {
-            distance_mm.clamp(0.0, length)
+            clamp_nan_safe(distance_mm, length)
         };
         let mut walked = 0.0;
         let mut last = None;

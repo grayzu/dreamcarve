@@ -6,7 +6,8 @@
 //! stopping at the first, so the CLI `check` command can print them all.
 //!
 //! Error-class problems make a project unsafe or impossible to machine
-//! (dangling ids, non-positive dimensions, non-finite numbers). Warning-class
+//! (dangling ids, non-positive dimensions, non-finite numbers, coordinates,
+//! transforms and stock sides beyond [`MAX_COORDINATE_MM`]). Warning-class
 //! problems still allow a correct result but need the user's attention
 //! (disabled operations, tools without feeds or RPM, which export rejects
 //! when such a tool is actually used).
@@ -14,6 +15,7 @@
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
 use crate::post_processor::{MAX_FILE_EXTENSION_CHARS, SpindleControl, is_safe_file_extension};
+use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -254,6 +256,11 @@ const POSITIVE: &str = "a value greater than 0";
 const NON_NEGATIVE: &str = "a value of 0 or more";
 const FRACTION: &str = "a value greater than 0 and at most 1";
 const ANGLE: &str = "an angle greater than 0 and less than 180 degrees";
+// The limits below spell out `MAX_COORDINATE_MM`; a test checks they agree.
+const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
+const COORDINATE: &str = "a value from -6000 to 6000 mm";
+const COEFFICIENT: &str = "a value from -6000 to 6000";
+const REACH: &str = "a shape that stays within 6000 mm of the origin";
 
 #[derive(Default)]
 struct Validator {
@@ -263,14 +270,17 @@ struct Validator {
 impl Validator {
     fn project(&mut self, p: &Project) {
         self.positive("flatten_tolerance_mm", p.flatten_tolerance_mm);
-        self.positive("stock.width_mm", p.stock.width_mm);
-        self.positive("stock.height_mm", p.stock.height_mm);
-        self.positive("stock.thickness_mm", p.stock.thickness_mm);
+        self.stock_side("stock.width_mm", p.stock.width_mm);
+        self.stock_side("stock.height_mm", p.stock.height_mm);
+        self.stock_side("stock.thickness_mm", p.stock.thickness_mm);
         if let OriginXy::Custom { x_mm, y_mm } = p.origin.xy {
             self.finite("origin.xy.x_mm", x_mm);
             self.finite("origin.xy.y_mm", y_mm);
         }
 
+        // Definitions with a coordinate out of range; their instances are
+        // not checked again, so each mistake is reported once.
+        let mut out_of_range = BTreeSet::new();
         for (key, def) in &p.definitions {
             if *key != def.id {
                 self.problems.push(Problem::DefinitionKeyMismatch {
@@ -286,11 +296,21 @@ impl Validator {
                         profile: i,
                     });
                 }
+                let mut ok = true;
                 for (j, vertex) in profile.vertices().iter().enumerate() {
                     let at = format!("definitions[{key}].profiles[{i}].vertices[{j}]");
-                    self.finite(&format!("{at}.x"), vertex.x);
-                    self.finite(&format!("{at}.y"), vertex.y);
-                    self.finite(&format!("{at}.bulge"), vertex.bulge);
+                    ok &= self.coordinate(&format!("{at}.x"), vertex.x);
+                    ok &= self.coordinate(&format!("{at}.y"), vertex.y);
+                    ok &= self.finite(&format!("{at}.bulge"), vertex.bulge);
+                }
+                // An arc can bow past the limit between vertices inside it.
+                let reach_mm = profile.reach_mm();
+                if ok && reach_mm > MAX_COORDINATE_MM {
+                    self.out_of_range(format!("definitions[{key}].profiles[{i}]"), reach_mm, REACH);
+                    ok = false;
+                }
+                if !ok {
+                    out_of_range.insert(key);
                 }
             }
         }
@@ -310,8 +330,32 @@ impl Validator {
             }
             let at = format!("instances[{}]", inst.id);
             let coeffs = inst.transform.as_kurbo().as_coeffs();
+            let mut ok = true;
             for (i, c) in coeffs.iter().enumerate() {
-                self.finite(&format!("{at}.transform[{i}]"), *c);
+                let field = format!("{at}.transform[{i}]");
+                if !self.finite(&field, *c) {
+                    ok = false;
+                } else if c.abs() > MAX_COORDINATE_MM {
+                    self.out_of_range(field, *c, COEFFICIENT);
+                    ok = false;
+                }
+            }
+            // Each coefficient can be in range and still carry a shape past
+            // the limit. Other transform errors (singular, arcs under a
+            // non-uniform scale) are the generators' to report.
+            let def = p.definitions.get(&inst.definition);
+            if let Some(def) = def.filter(|_| ok && !out_of_range.contains(&inst.definition)) {
+                let reach_mm = def
+                    .profiles
+                    .iter()
+                    .filter_map(|profile| match inst.transform.apply_polyline(profile) {
+                        Err(GeometryError::CoordinateOutOfRange { reach_mm, .. }) => Some(reach_mm),
+                        _ => None,
+                    })
+                    .reduce(f64::max);
+                if let Some(reach_mm) = reach_mm {
+                    self.out_of_range(format!("{at}.transform"), reach_mm, REACH);
+                }
             }
             self.finite(&format!("{at}.z_top_mm"), inst.z_top_mm);
             self.finite(&format!("{at}.z_bottom_mm"), inst.z_bottom_mm);
@@ -450,6 +494,26 @@ impl Validator {
             });
         }
         ok
+    }
+
+    /// Reports `field` if `value` is not finite or its magnitude exceeds
+    /// [`MAX_COORDINATE_MM`]; returns whether it is in range.
+    fn coordinate(&mut self, field: &str, value: f64) -> bool {
+        if !self.finite(field, value) {
+            return false;
+        }
+        let ok = value.abs() <= MAX_COORDINATE_MM;
+        if !ok {
+            self.out_of_range(field.to_owned(), value, COORDINATE);
+        }
+        ok
+    }
+
+    /// A stock side: positive and at most [`MAX_COORDINATE_MM`].
+    fn stock_side(&mut self, field: &str, value: f64) {
+        if self.finite(field, value) && (value <= 0.0 || value > MAX_COORDINATE_MM) {
+            self.out_of_range(field.to_owned(), value, STOCK_SIDE);
+        }
     }
 
     fn positive(&mut self, field: &str, value: f64) {
@@ -949,6 +1013,15 @@ mod tests {
             error_fields(&validate(&p)),
             vec!["stock.width_mm", "stock.height_mm", "stock.thickness_mm"]
         );
+    }
+
+    /// The limit phrases spell out `MAX_COORDINATE_MM` by hand.
+    #[test]
+    fn limit_phrases_match_the_constant() {
+        let limit = format!("{MAX_COORDINATE_MM}");
+        for phrase in [STOCK_SIDE, COORDINATE, COEFFICIENT, REACH] {
+            assert!(phrase.contains(&limit), "`{phrase}` states {limit}");
+        }
     }
 
     /// #59: the message states the limit, so the user knows what to aim for.

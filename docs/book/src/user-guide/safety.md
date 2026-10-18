@@ -66,7 +66,8 @@ It also checks that:
 - **Safe Z height.** It keeps rapids at safe Z, but cannot tell whether safe
   Z clears your clamps.
 - **Machine limits.** It does not know your machine's travel. Use homing and
-  soft limits on the controller.
+  soft limits on the controller. The 6000 mm limit on project coordinates
+  only catches typing mistakes; it is not your machine's size.
 - **The router, in manual mode.** It cannot tell whether you switched it on.
 - **Pause messages.** Your sender may not show why the program paused. Use
   the pause list `export` prints.

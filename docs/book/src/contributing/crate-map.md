@@ -34,7 +34,7 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 
 | Module | Contents |
 | --- | --- |
-| `point.rs` | `Point`, `Point3`, `Vec2`, `Rect`; `EPS_MM` and `approx_eq`, used instead of `==` on floats. |
+| `point.rs` | `Point`, `Point3`, `Vec2`, `Rect`; `EPS_MM` and `approx_eq`, used instead of `==` on floats; `MAX_COORDINATE_MM`, the 6 m bound the importer and validation share. |
 | `polyline.rs` | `Polyline`, `Vertex`, `Segment`, `Arc`: lines and DXF-style bulge arcs; length, signed area, bounds, point at distance. |
 | `contour.rs` | `Contour`: a closed polyline with known orientation (outer CCW, hole CW). |
 | `transform.rs` | `Transform`: 2D affine, serialized as `[a, b, c, d, e, f]`. |

@@ -5,7 +5,7 @@
 //! "Data model → dc-geometry"). Feature instances place their definition's
 //! profiles with one of these.
 
-use crate::point::{EPS_MM, Point};
+use crate::point::{EPS_MM, MAX_COORDINATE_MM, Point};
 use crate::polyline::{Polyline, Vertex};
 use crate::{DegenerateReason, GeometryError};
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,8 @@ impl Transform {
     /// The transformed polyline. Arcs stay arcs under rotation, uniform
     /// scale, translation, and mirroring; a mirror negates every bulge.
     /// Fails when the transform is singular, or when the polyline has arcs
-    /// and the transform scales non-uniformly or shears.
+    /// and the transform scales non-uniformly or shears, or when the result
+    /// reaches past [`MAX_COORDINATE_MM`] or is not finite.
     pub fn apply_polyline(self, polyline: &Polyline) -> Result<Polyline, GeometryError> {
         let [a, b, c, d, _, _] = self.0.as_coeffs();
         let det = a * d - b * c;
@@ -109,7 +110,15 @@ impl Transform {
                 Vertex::new(p.x, p.y, v.bulge * bulge_sign)
             })
             .collect();
-        Ok(Polyline::new(vertices, polyline.is_closed()))
+        let out = Polyline::new(vertices, polyline.is_closed());
+        let reach_mm = out.reach_mm();
+        if reach_mm > MAX_COORDINATE_MM {
+            return Err(GeometryError::CoordinateOutOfRange {
+                reach_mm,
+                limit_mm: MAX_COORDINATE_MM,
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -117,7 +126,7 @@ impl Transform {
 mod tests {
     use super::*;
     use crate::assert_approx_eq;
-    use crate::point::MAX_COORDINATE_MM;
+
     use std::f64::consts::PI;
 
     #[test]
