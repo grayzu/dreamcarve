@@ -178,7 +178,7 @@ mod tests {
     use crate::validate::validate;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v3/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v4/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
 
     #[test]
@@ -194,8 +194,10 @@ mod tests {
         let mut p = sample_project();
         p.tools[0].feed_mm_min = None;
         p.tools[0].rpm = None;
+        p.stock.thickness_mm = None;
         let Operation::Profile(op) = &mut p.operations[0];
         op.tabs = None;
+        op.depth_mm = None;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert_eq!(loaded.project, p);
     }
@@ -230,9 +232,13 @@ mod tests {
         let mut p = sample_project();
         p.tools[0].feed_mm_min = None;
         p.tools[0].step_over_fraction = None;
+        p.stock.thickness_mm = None;
         let Operation::Profile(op) = &mut p.operations[0];
         op.tabs = None;
+        op.depth_mm = None;
         let text = save(&p).unwrap();
+        assert!(text.contains("\"thickness_mm\": null"), "{text}");
+        assert!(text.contains("\"depth_mm\": null"), "{text}");
         assert!(text.contains("\"feed_mm_min\": null"), "{text}");
         assert!(text.contains("\"step_over_fraction\": null"), "{text}");
         assert!(text.contains("\"step_down_mm\": null"), "{text}");
@@ -338,7 +344,7 @@ mod tests {
     #[test]
     fn load_returns_validation_errors_with_project() {
         let mut p = sample_project();
-        p.stock.thickness_mm = 0.0;
+        p.stock.thickness_mm = Some(0.0);
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert!(loaded.has_errors());
         assert_eq!(loaded.problems, validate(&p));

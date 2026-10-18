@@ -111,7 +111,7 @@ impl MachineTransform {
             OriginXy::Custom { x_mm, y_mm } => (x_mm, y_mm),
         };
         let oz = match project.origin.z {
-            OriginZ::StockTop => stock.thickness_mm,
+            OriginZ::StockTop => stock.thickness_mm.ok_or(ExportError::MissingThickness)?,
             OriginZ::StockBottom => 0.0,
         };
         Ok(Self {
@@ -344,6 +344,18 @@ mod tests {
                 Err(ExportError::InvalidAxisMapping { .. })
             ));
         }
+    }
+
+    /// #64: with Z zero at the stock top, the origin is the thickness, so an
+    /// unset one is refused rather than defaulted.
+    #[test]
+    fn stock_top_origin_without_thickness_is_rejected() {
+        let mut project = sample_project();
+        project.stock.thickness_mm = None;
+        assert!(matches!(
+            MachineTransform::new(&project),
+            Err(ExportError::MissingThickness)
+        ));
     }
 
     #[test]

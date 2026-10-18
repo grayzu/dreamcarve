@@ -4,13 +4,13 @@
 //! `dreamcarve init <svg>`: imports the drawing with `dc-import` and writes
 //! a `.dcv` project with the defaults of `docs/specs/phase-1/design.md`,
 //! "CLI (dreamcarve)": stock = drawing bounds plus a 10 mm margin on each
-//! side, 12 mm thick; origin bottom-left at the stock top; one placeholder
-//! tool "Set me" (6.35 mm, 2 flutes, no feeds); one outside climb Profile
-//! of every closed shape, 12 mm deep in 4 mm passes, safe Z 5 mm, four
-//! 8 × 3 mm rectangular tabs.
+//! side; origin bottom-left at the stock top; one placeholder tool "Set me"
+//! (6.35 mm, 2 flutes, no feeds); one outside climb Profile of every closed
+//! shape in 4 mm passes, safe Z 5 mm, four 8 × 3 mm rectangular tabs.
 //!
-//! Feeds and spindle speed are left unset (`null`), so `export` refuses the
-//! project until the user fills them in (S3).
+//! The stock thickness, the Profile depth, the feeds and the spindle speed
+//! are left unset (`null`), so `export` refuses the project until the user
+//! fills them in (S3, #64): `init` cannot know the material or the machine.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -38,8 +38,10 @@ const ROUND_STEPS_PER_MM: f64 = 100.0;
 /// 0.01 mm. The margin can fall short by less than this, which is below the
 /// 0.001 mm resolution programs are written with.
 const ROUND_SLACK_MM: f64 = 0.001;
-/// Default stock thickness, mm; also the Profile depth (cut through).
-const STOCK_THICKNESS_MM: f64 = 12.0;
+/// The instances' `z_top_mm`, which the importer needs. Nothing in phase 1
+/// reads it: depth and tab heights come from the stock thickness and the
+/// operation, which `init` leaves unset (#64).
+const FEATURE_TOP_MM: f64 = 12.0;
 /// The placeholder tool: a 1/4" two-flute end mill.
 const TOOL_ID: &str = "t1";
 const TOOL_NAME: &str = "Set me";
@@ -69,7 +71,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     }
 
     let bytes = read_file(&args.svg)?;
-    let (import, warnings) = import_svg(&bytes, &SvgImportOptions::new(STOCK_THICKNESS_MM))
+    let (import, warnings) = import_svg(&bytes, &SvgImportOptions::new(FEATURE_TOP_MM))
         .map_err(|e| Failure::error(format!("cannot import {}: {e}", args.svg.display())))?;
     for warning in &warnings {
         eprintln!("warning: {warning}");
@@ -179,7 +181,7 @@ fn default_project(
         targets,
         tool: tool.id.clone(),
         side: Side::Outside,
-        depth_mm: STOCK_THICKNESS_MM,
+        depth_mm: None,
         step_down_mm: Some(STEP_DOWN_MM),
         direction: CutDirection::Climb,
         through_cut_allowance_mm: 0.0,
@@ -199,7 +201,7 @@ fn default_project(
         stock: Stock {
             width_mm: round_up_mm(bounds.max.x + dx_mm + STOCK_MARGIN_MM),
             height_mm: round_up_mm(bounds.max.y + dy_mm + STOCK_MARGIN_MM),
-            thickness_mm: STOCK_THICKNESS_MM,
+            thickness_mm: None,
         },
         origin: MachineOrigin {
             xy: OriginXy::BottomLeft,
@@ -222,11 +224,10 @@ fn report(project: &Project, output: &Path) {
         .sum::<usize>();
     let untargeted = project.instances.len() - targets.min(project.instances.len());
     println!(
-        "Wrote {}: stock {:.2} × {:.2} × {:.2} mm, post-processor {}, {} shape(s) targeted by Profile.",
+        "Wrote {}: stock {:.2} × {:.2} mm, post-processor {}, {} shape(s) targeted by Profile.",
         output.display(),
         project.stock.width_mm,
         project.stock.height_mm,
-        project.stock.thickness_mm,
         project.post_processor.id,
         targets,
     );
@@ -236,9 +237,10 @@ fn report(project: &Project, output: &Path) {
         );
     }
     println!(
-        "Next: edit {} to set the stock thickness and the Profile depth \
-         (`operations[{OPERATION_ID}].depth_mm`) to match your material, and tool `{TOOL_ID}` \
-         ({TOOL_NAME}): feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.",
+        "Next: edit {} to set `stock.thickness_mm` to your material's measured thickness, \
+         the Profile depth `operations[{OPERATION_ID}].depth_mm` (to cut through: the thickness \
+         plus `through_cut_allowance_mm`), and tool `{TOOL_ID}` ({TOOL_NAME}): feed_mm_min, \
+         plunge_mm_min and rpm. Export refuses until they are set.",
         output.display()
     );
 }

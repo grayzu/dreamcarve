@@ -48,6 +48,11 @@ pub enum ExportError {
         /// Which rate is missing.
         field: FeedField,
     },
+    /// The stock thickness is unset, so neither safe Z nor, with Z zero at
+    /// the stock top, the work origin is known. It is never defaulted
+    /// (#64).
+    #[error("the stock has no thickness_mm; export fails until it is set")]
+    MissingThickness,
     /// A tool lacks a spindle speed, or it is 0. Speeds are never invented.
     #[error("tool `{tool}` has no spindle speed (rpm)")]
     MissingRpm {

@@ -205,6 +205,12 @@ pub fn emit(
             name: comment_text(&tool.name),
         })
         .ok_or(ExportError::NoEnabledOperations)?;
+    // Safe Z is measured from the stock bottom, so it needs the thickness
+    // whatever the Z origin (#64).
+    let thickness_mm = project
+        .stock
+        .thickness_mm
+        .ok_or(ExportError::MissingThickness)?;
     // Steps 2 and 3: machine transform and units.
     let transform = MachineTransform::new(project)?;
     let (units_command, units_field) = match transform.output_units() {
@@ -315,7 +321,7 @@ pub fn emit(
         }
 
         let spindle_off = post.feed_speed.spindle_off.trim();
-        let safe_z_mm = project.stock.thickness_mm + op.safe_z_mm;
+        let safe_z_mm = thickness_mm + op.safe_z_mm;
         // The tool change belongs to the operation, so the safety pass
         // checks its stop against this operation's safe Z.
         let first_line = w.next_line();
@@ -440,7 +446,7 @@ pub fn emit(
         &text,
         post,
         &transform,
-        project.stock.thickness_mm,
+        thickness_mm,
         flatten_tolerance_mm,
         &spans,
     )?;
@@ -1288,7 +1294,7 @@ mod tests {
     use dc_cam::{FeedField, Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3, assert_approx_eq};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
-    use dc_project::{Operation, OperationId, SpindleControl, ToolId, Units};
+    use dc_project::{Operation, OperationId, OriginZ, SpindleControl, ToolId, Units};
 
     const DATE: &str = "2026-10-15";
 
@@ -1385,6 +1391,24 @@ mod tests {
             "{err:?}"
         );
         assert!(err.to_string().contains("plunge_mm_min"));
+    }
+
+    /// #64: safe Z is the thickness plus the operation's safe Z, so an
+    /// unset thickness fails emission, whichever Z origin is in use; it is
+    /// never defaulted.
+    #[test]
+    fn missing_thickness_is_error() {
+        for z in [OriginZ::StockTop, OriginZ::StockBottom] {
+            let mut project = sample_project();
+            project.origin.z = z;
+            let ops = ops_for(&project);
+            project.stock.thickness_mm = None;
+            let err = emit(&project, &ops, DATE).unwrap_err();
+            assert!(
+                matches!(err, ExportError::MissingThickness),
+                "{z:?}: {err:?}"
+            );
+        }
     }
 
     #[test]

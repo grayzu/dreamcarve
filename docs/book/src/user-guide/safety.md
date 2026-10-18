@@ -15,6 +15,8 @@ written. There are no safety warnings, only errors.
 1. **Never below the stock bottom.** No move goes lower than the stock
    bottom, minus the operation's `through_cut_allowance_mm` (0 unless you
    set it). A depth deeper than that is refused before any toolpath is made.
+   So is a stock without `thickness_mm` or an operation without
+   `depth_mm`: DreamCarve has no defaults for them.
 2. **Rapids only at safe Z.** Every rapid (`G0`) move is at or above safe Z.
    The first move of the program is a rapid straight up to safe Z.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
@@ -63,9 +65,13 @@ It also checks that:
 
 - **Clamps and fixtures.** DreamCarve has no idea where they are. The bit
   will cut through anything in its path, at any height below safe Z.
-- **The stock.** It trusts the size and thickness in the project. With the
-  default `origin.z: "stock_top"`, if your stock is thinner than `thickness_mm`, the cut goes deeper into the
-  spoilboard than you planned. If it is thicker, the part is not cut free.
+- **The stock.** It trusts the size and thickness in the project. It has no
+  default thickness: `init` leaves `thickness_mm` and the operation's
+  `depth_mm` unset, and export refuses until you enter them, but it cannot
+  tell whether what you entered is right. With the default
+  `origin.z: "stock_top"`, if your stock is thinner than `thickness_mm`,
+  the cut goes deeper into the spoilboard than you planned. If it is
+  thicker, the part is not cut free.
   With `origin.z: "stock_bottom"`, a `thickness_mm` entered too thin is
   worse: safe Z is `thickness_mm` plus `safe_z_mm` above the spoilboard,
   not above the real stock top. If the stock is thicker than that, every

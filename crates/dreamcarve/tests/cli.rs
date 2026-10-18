@@ -80,14 +80,25 @@ fn load_file(path: &Path) -> Loaded {
     load(&std::fs::read(path).expect("dcv readable")).expect("dcv loads")
 }
 
-/// Edits the `.dcv` at `path` as a user would: every tool gets `feed`,
-/// `plunge`, and `rpm`.
-fn set_rates(path: &Path, feed_mm_min: f64, plunge_mm_min: f64, rpm: u32) {
+/// The quick start's measured plywood thickness, mm.
+const MEASURED_THICKNESS_MM: f64 = 11.8;
+/// The functional spec's test-part through-cut allowance, mm.
+const THROUGH_CUT_ALLOWANCE_MM: f64 = 0.2;
+
+/// Edits the `.dcv` at `path` as the quick start does: every tool gets
+/// `feed`, `plunge`, and `rpm`; the stock gets the measured thickness; and
+/// every Profile cuts through it by the test part's 0.2 mm allowance.
+fn fill_in(path: &Path, feed_mm_min: f64, plunge_mm_min: f64, rpm: u32) {
     let mut project = load_file(path).project;
     for tool in &mut project.tools {
         tool.feed_mm_min = Some(feed_mm_min);
         tool.plunge_mm_min = Some(plunge_mm_min);
         tool.rpm = Some(rpm);
+    }
+    project.stock.thickness_mm = Some(MEASURED_THICKNESS_MM);
+    for dc_project::Operation::Profile(op) in &mut project.operations {
+        op.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
+        op.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
     }
     std::fs::write(path, save(&project).expect("project saves")).expect("dcv written");
 }
@@ -112,14 +123,15 @@ fn no_arguments_prints_usage_and_fails() {
 
 /// End to end on the phase 1 test part: `init` on `fixtures/coaster.svg`,
 /// the feeds from the functional spec's "Test part" table filled in (1500,
-/// 500, 18000), then `export`. The program must match the committed
+/// 500, 18000), the quick start's measured 11.8 mm thickness, and a depth
+/// through it by the table's 0.2 mm allowance, then `export`. The program must match the committed
 /// `tests/expected/coaster-grblhal.nc` byte for byte. Regenerate that file
 /// only when the change to it is intended, and say why in the commit.
 #[test]
 fn init_then_export_coaster_matches_committed_program() {
     let dir = work_dir("init_then_export_coaster");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
 
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(
@@ -139,7 +151,7 @@ fn init_then_export_coaster_matches_committed_program() {
 /// Acceptance test 1. The coaster is a 90 mm circle centred on a 100 mm
 /// page, so its one profile spans 5..95 mm on both axes in SVG page space
 /// (Y flipped, which a centred circle does not change). The stock is that
-/// span plus the 10 mm `init` margin on each side: 110 × 110 × 12 mm.
+/// span plus the 10 mm `init` margin on each side: 110 × 110 mm.
 #[test]
 fn init_round_trip() {
     let dir = work_dir("init_round_trip");
@@ -168,11 +180,28 @@ fn init_round_trip() {
     assert_approx_eq!(bounds.max.y, 95.0, tol);
     assert_approx_eq!(project.stock.width_mm, 110.0, tol);
     assert_approx_eq!(project.stock.height_mm, 110.0, tol);
-    assert_approx_eq!(project.stock.thickness_mm, 12.0, 0.0);
 }
 
-/// Issue #44: changing the stock thickness without the Profile depth either
-/// fails export or leaves a skin, so `init`'s hint names both.
+/// #64: `init` cannot know the material, so like the feeds it leaves the
+/// stock thickness and the Profile depth unset (`null` in the file) rather
+/// than default them. A default thickness that is wrong moves every pass
+/// and, with Z zero at the stock bottom, safe Z itself.
+#[test]
+fn init_project_has_no_thickness_or_depth() {
+    let dir = work_dir("init_project_has_no_thickness_or_depth");
+    let dcv = init_coaster(&dir);
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    assert!(text.contains("\"thickness_mm\": null"), "{text}");
+    assert!(text.contains("\"depth_mm\": null"), "{text}");
+    let project = load_file(&dcv).project;
+    assert!(project.stock.thickness_mm.is_none(), "thickness is unset");
+    for dc_project::Operation::Profile(op) in &project.operations {
+        assert!(op.depth_mm.is_none(), "{} depth is unset", op.id);
+    }
+}
+
+/// Issues #44 and #64: `init`'s "Next:" line lists every value the user
+/// must set, by its field name, thickness and depth with the feeds.
 #[test]
 fn init_hint_names_thickness_and_depth() {
     let dir = work_dir("init_hint_names_thickness_and_depth");
@@ -180,8 +209,41 @@ fn init_hint_names_thickness_and_depth() {
     let out = run(&dir, &["init", "coaster.svg"]);
     assert_eq!(out.status.code(), Some(0), "stderr was {}", stderr(&out));
     let stdout = stdout(&out);
-    assert!(stdout.contains("thickness"), "stdout was: {stdout}");
-    assert!(stdout.contains("depth_mm"), "stdout was: {stdout}");
+    let next = stdout
+        .lines()
+        .find(|l| l.starts_with("Next:"))
+        .unwrap_or_else(|| panic!("init prints a Next: line: {stdout}"));
+    for field in [
+        "stock.thickness_mm",
+        "operations[op1].depth_mm",
+        "feed_mm_min",
+        "plunge_mm_min",
+        "rpm",
+    ] {
+        assert!(next.contains(field), "Next: names {field}: {next}");
+    }
+}
+
+/// #64: exporting a fresh project reports the unset thickness and depth as
+/// errors and the unset feeds in the same run, so one edit fixes them all.
+/// Nothing is written.
+#[test]
+fn export_of_fresh_project_reports_thickness_depth_and_feeds() {
+    let dir = work_dir("export_of_fresh_project_reports_all_unset");
+    init_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv"]);
+    let stderr = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "exits 1: {stderr}");
+    for needle in [
+        "error: the stock has no thickness_mm; export fails until it is set",
+        "error: operation `Profile` (`op1`) has no depth_mm; export fails until it is set",
+        "has no feed_mm_min",
+        "has no plunge_mm_min",
+        "has no rpm",
+    ] {
+        assert!(stderr.contains(needle), "reports {needle:?}: {stderr}");
+    }
+    assert!(!dir.join("coaster.nc").exists(), "no program is written");
 }
 
 /// True when `value_mm` is a multiple of 0.01 mm, within 1e-9.
@@ -252,7 +314,7 @@ fn init_writes_round_numbers() {
 fn export_refuses_zero_feed_and_writes_nothing() {
     let dir = work_dir("export_refuses_zero_feed");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 0.0, 500.0, 18000);
+    fill_in(&dcv, 0.0, 500.0, 18000);
     let before = std::fs::read(&dcv).expect("dcv readable");
 
     let out = run(&dir, &["export", "coaster.dcv"]);
@@ -300,7 +362,7 @@ fn check_reports_open_paths() {
     .expect("svg written");
     let out = run(&dir, &["init", "part.svg"]);
     assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
-    set_rates(&dir.join("part.dcv"), 1500.0, 500.0, 18000);
+    fill_in(&dir.join("part.dcv"), 1500.0, 500.0, 18000);
 
     let out = run(&dir, &["check", "part.dcv"]);
     let report = format!("{}{}", stdout(&out), stderr(&out));
@@ -333,7 +395,7 @@ fn self_intersecting_target_fails_check() {
     .expect("svg written");
     let out = run(&dir, &["init", "part.svg"]);
     assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
-    set_rates(&dir.join("part.dcv"), 1500.0, 500.0, 18000);
+    fill_in(&dir.join("part.dcv"), 1500.0, 500.0, 18000);
 
     let out = run(&dir, &["check", "part.dcv"]);
     let report = format!("{}{}", stdout(&out), stderr(&out));
@@ -383,7 +445,7 @@ fn export_refuses_unsafe_file_extension() {
     ] {
         let dir = work_dir(&format!("export_refuses_extension_{case}"));
         let dcv = init_coaster(&dir);
-        set_rates(&dcv, 1500.0, 500.0, 18000);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
         let mut project = load_file(&dcv).project;
         project.post_processor.file_extension = extension.into();
         std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
@@ -424,7 +486,7 @@ fn export_refuses_unsafe_file_extension() {
 fn export_refuses_to_overwrite_the_project() {
     let dir = work_dir("export_refuses_overwrite_project");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     let before = std::fs::read(&dcv).expect("dcv readable");
 
     let out = run(
@@ -445,7 +507,7 @@ fn export_refuses_to_overwrite_the_project() {
 fn check_reports_unsafe_file_extension() {
     let dir = work_dir("check_reports_unsafe_file_extension");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
     project.post_processor.file_extension = "dcv".into();
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
@@ -501,9 +563,9 @@ fn warnings_are_readable() {
     let out = run(&dir, &["init", "part.svg"]);
     assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
     let dcv = dir.join("part.dcv");
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
-    let thickness_mm = project.stock.thickness_mm;
+    let thickness_mm = project.stock.thickness_mm.expect("fill_in sets it");
     for dc_project::Operation::Profile(op) in &mut project.operations {
         if let Some(tabs) = &mut op.tabs {
             tabs.height_mm = thickness_mm + 1.0;
@@ -546,7 +608,7 @@ fn warnings_are_readable() {
 fn check_rejects_huge_transform_without_panic() {
     let dir = work_dir("check_rejects_huge_transform");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     let pristine = load_file(&dcv).project;
     for transform in [
         [1e15, 0.0, 0.0, 1e15, 0.0, 0.0],
@@ -636,7 +698,7 @@ fn assert_lists_pauses(program: &str, summary: &str) {
 fn export_lists_each_pause() {
     let dir = work_dir("export_lists_each_pause");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
     let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
@@ -673,7 +735,7 @@ fn export_lists_each_pause() {
 fn export_tells_user_to_zero_before_start() {
     let dir = work_dir("export_tells_user_to_zero_before_start");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     for control in [SpindleControl::Automatic, SpindleControl::Manual] {
         let mut project = load_file(&dcv).project;
         project.post_processor.feed_speed.spindle_control = control;
@@ -702,7 +764,7 @@ fn export_tells_user_to_zero_before_start() {
 fn post_override_revalidates() {
     let dir = work_dir("post_override_revalidates");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
     project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
     for tool in &mut project.tools {
@@ -737,7 +799,7 @@ fn post_override_revalidates() {
 fn post_override_to_valid_post_succeeds() {
     let dir = work_dir("post_override_to_valid_post_succeeds");
     let dcv = init_coaster(&dir);
-    set_rates(&dcv, 1500.0, 500.0, 18000);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
     project.post_processor.file_extension = "dcv".into();
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
