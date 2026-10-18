@@ -40,6 +40,12 @@ as G-code they can trust.
    embedded post-processor before export and updates the file.
 4. `dreamcarve check <file.dcv>` validates the project and prints the
    warnings and errors that export would raise, without writing G-code.
+   `export`, and `check` when the program could be built, print the
+   program's extents in machine coordinates and the program's units, as
+   the program writes numbers: `X min..max, Y min..max, Z min..max` of the
+   tool centre (Z min is the deepest cut; arcs count to their bulge), then
+   X and Y widened by the largest exported tool's radius, where the
+   cutter's edge reaches. Users place clamps from them (#62).
 5. `dreamcarve posts` lists the available post-processors.
 6. The exported program cuts each Profile target in depth passes from the
    stock top to the configured depth, retracts to safe Z between targets and
@@ -99,6 +105,11 @@ Clamps. Text. Stock from a shape (stock is rectangular).
 15. **Inch project.** A `.dcv` in inch display units exports G20 and inch
     coordinates when the post-processor is set to inches, and G21 with
     millimetres otherwise. Internal geometry never changes.
+16. **Stays on the stock.** The coaster with its instance moved to
+    `e` = 80 fails `check`, naming `op1` and the overhang past the +X edge;
+    the default coaster passes. `export` prints extents whose Z range is
+    that of the program's Z words and whose X and Y ranges contain those of
+    its X and Y words (#62).
 
 ## Safety requirements
 
@@ -151,6 +162,14 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   be written as nothing. The only other motion in an operation is a
   retract straight up before its first move or after its last. Points
   compare within one unit in the last written decimal place (#60).
+- **S7** The cut stays on the stock (#62). Each operation's swept XY
+  extent, its cutting moves (arcs to their bulge) widened by its tool's
+  radius, lies inside the stock rectangle `[0, width] × [0, height]`. A
+  cut exactly along an edge is allowed. `dc-cam` checks this after
+  generating each toolpath, an error naming the operation and the
+  overhang in mm past each edge it crosses; the safety pass checks it
+  again on the parsed program, within one unit in the last written
+  decimal place. There is no setting that allows an overhang.
 
 ## Test part
 

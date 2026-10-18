@@ -68,6 +68,7 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | --- | --- |
 | `profile.rs` | `generate_profile`; the direction rule `traversal_is_ccw`. |
 | `passes.rs` | `pass_z_mm`: depth pass levels; refuses cuts below the stock bottom plus allowance. |
+| `stock.rs` | `swept_bounds`, `stock_overhang`: does the cutter stay on the stock (#62). |
 | `tabs.rs` | Tab placement along the tool-centre path, rect and smooth laps. |
 | `tab_profile.rs` | The raised-cosine Z profile of a smooth tab. |
 | `toolpath.rs` | `Toolpath`, `Move`, `MoveKind`: project-space output. |
@@ -84,7 +85,7 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | `transform.rs` | `MachineTransform`: project space to machine numbers; origin, axis map, units. |
 | `format.rs` | Number formatting, the one place numbers become text. |
 | `parse.rs` | Reads a program back as a controller would. |
-| `safety.rs` | Checks S1–S6 on the parsed program. Every violation is an error. |
+| `safety.rs` | Checks S1–S7 on the parsed program and measures its extents. Every violation is an error. |
 | `error.rs` | `ExportError`. |
 
 ### `dreamcarve` (`crates/dreamcarve/src/`)

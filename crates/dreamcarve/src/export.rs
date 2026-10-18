@@ -16,8 +16,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use dc_cam::generate_profile;
-use dc_gcode::{ExportWarning, Program, emit};
-use dc_project::{Operation, Project, Severity, validate};
+use dc_gcode::format::format_number;
+use dc_gcode::transform::mm_per_unit;
+use dc_gcode::{AxisRange, ExportWarning, Program, emit};
+use dc_project::{Operation, Project, Severity, Units, validate};
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
 
@@ -192,7 +194,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Prints the export summary: the file written, one line per exported
-/// operation, the tool to fit and set work zero with before starting (#57),
+/// operation, the program's extents (#62), the tool to fit and set work zero with before starting (#57),
 /// then every pause and tool change with its line number and message, because
 /// the controller or sender may not show the message (design step 8).
 fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs) {
@@ -227,6 +229,9 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
             op.targets.len(),
         );
     }
+    for line in describe_extents(project, program) {
+        println!("{line}");
+    }
     // #57: the program does not stop for the first tool.
     let first = &program.first_tool;
     let name = if first.name.is_empty() {
@@ -249,4 +254,60 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
             println!("  line {}: {message}", pause.line);
         }
     }
+}
+
+/// The program's extents in machine coordinates (#62), written as the
+/// program writes numbers: first the tool centre's, every axis, then in X
+/// and Y widened by the largest exported tool's radius, which is where the
+/// cutter's edge reaches. Users place clamps from them. Empty for a
+/// program that never moves.
+pub fn describe_extents(project: &Project, program: &Program) -> Vec<String> {
+    let extents = &program.extents;
+    let units = extents.units;
+    let format = &project.post_processor.number_format;
+    let number =
+        |value: f64| format_number(value, format, units).unwrap_or_else(|_| value.to_string());
+    let ranges = |widen: f64, axes: &[(&str, Option<AxisRange>)]| -> Vec<String> {
+        axes.iter()
+            .filter_map(|(axis, range)| {
+                range.map(|r| {
+                    format!(
+                        "{axis} {}..{}",
+                        number(r.min - widen),
+                        number(r.max + widen)
+                    )
+                })
+            })
+            .collect()
+    };
+    let centre = ranges(0.0, &[("X", extents.x), ("Y", extents.y), ("Z", extents.z)]);
+    if centre.is_empty() {
+        return Vec::new();
+    }
+    let unit = match units {
+        Units::Mm => "mm",
+        Units::Inch => "in",
+    };
+    let mut lines = vec![format!(
+        "Extents (machine coordinates, {unit}, tool centre): {}",
+        centre.join(", ")
+    )];
+    let radius_mm = project
+        .operations
+        .iter()
+        .filter(|op| op.enabled())
+        .filter_map(|op| project.tools.iter().find(|t| &t.id == op.tool()))
+        .map(|t| t.diameter_mm / 2.0)
+        .fold(0.0, f64::max);
+    let edge = ranges(
+        radius_mm / mm_per_unit(units),
+        &[("X", extents.x), ("Y", extents.y)],
+    );
+    if radius_mm > 0.0 && !edge.is_empty() {
+        lines.push(format!(
+            "  The cutter's edge reaches {}; keep clamps outside that.",
+            edge.join(", ")
+        ));
+    }
+    lines
 }

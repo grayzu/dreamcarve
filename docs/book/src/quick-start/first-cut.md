@@ -164,8 +164,15 @@ dreamcarve check coaster.dcv
 it found:
 
 ```text
+Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
 coaster.dcv: 0 error(s), 0 warning(s)
 ```
+
+One of the things it checks is that the cut stays on the stock. If you move
+or scale the circle so that the bit would leave the 110 × 110 mm square,
+`check` reports an error naming the operation and how far past which edge
+it goes, and `export` writes nothing.
 
 ## 6. Export the program
 
@@ -177,12 +184,20 @@ dreamcarve export coaster.dcv
 ```text
 Wrote coaster.nc (995 lines, post-processor grblhal).
   op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
+Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
-`coaster.nc` is the G-code program. The program does not stop for its
-first bit: you fit it and set work zero with it before you start, as the
-last line says. A program that stops, for a second bit or for a router you
+`coaster.nc` is the G-code program. The **extents** are where it takes the
+bit, in the coordinates your controller shows once work zero is set: the
+centre of the bit stays between X 6.825 and 103.175 mm, and its edge, half
+the 6.35 mm diameter further out, between X 3.65 and 106.35 mm (Y the
+same). Z runs from −12, the deepest cut, up to 5, safe Z. You place clamps
+from these numbers in step 8.
+
+The program does not stop for its first bit: you fit it and set work zero
+with it before you start, as the last line says. A program that stops, for a second bit or for a router you
 switch by hand, also lists every place where it stops and waits for you.
 Your sender may not show why it stopped, so note them.
 
@@ -229,8 +244,11 @@ Read [Safety](../user-guide/safety.md) once before your first cut. For this
 job:
 
 1. **Fix the stock.** The program uses the 110 × 110 mm square that starts
-   at your XY zero. The bit comes within 3.7 mm of its edges. Keep clamps and
-   screws outside that square. Your board can be bigger.
+   at your XY zero. Use the extents `export` printed (step 6) to place
+   clamps: the bit's edge reaches X 3.65 to 106.35 mm and Y 3.65 to
+   106.35 mm from your XY zero, so keep clamps and screws outside that area,
+   with room to spare for the collet nut. Your board can be bigger. If you
+   change the project, export again and use the new extents.
 2. **Use a spoilboard.** The last pass goes 0.2 mm below the plywood,
    into the board under it.
 3. **Fit the bit and set work zero with it.** Fit the 6.35 mm bit first: a
