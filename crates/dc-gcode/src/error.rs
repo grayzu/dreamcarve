@@ -201,6 +201,19 @@ pub enum ExportError {
         /// The lowest permitted Z above stock bottom, mm.
         floor_mm: f64,
     },
+    /// S7: a cut, widened by its tool's radius, leaves the stock
+    /// rectangle (#62).
+    #[error("emitted line {line} cuts {overhang_mm:.3} mm past the stock's {side} edge")]
+    OffStock {
+        /// The operation the line belongs to, if any.
+        op: Option<OperationId>,
+        /// 1-based line number in the program.
+        line: usize,
+        /// The edge, in project axes: `-X`, `+X`, `-Y`, or `+Y`.
+        side: &'static str,
+        /// How far past it the cutter's edge reaches, mm.
+        overhang_mm: f64,
+    },
     /// S2: a rapid ends below safe Z, or travels in XY from below safe Z
     /// or from an unknown height.
     #[error("emitted line {line} is a rapid below safe Z ({safe_z_mm:.4} mm above stock bottom)")]

@@ -9,6 +9,8 @@ use dc_geometry::GeometryError;
 use dc_project::{DefinitionId, InstanceId, OperationId, ToolId};
 use std::fmt;
 
+use crate::Overhang;
+
 /// Which rate a tool is missing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedField {
@@ -142,6 +144,15 @@ pub enum CamError {
         depth_mm: f64,
         /// Stock thickness plus through-cut allowance, mm.
         limit_mm: f64,
+    },
+    /// The cutter would leave the stock: the operation's swept extent,
+    /// toolpath plus tool radius, runs past a stock edge (#62).
+    #[error("operation `{op}` cuts off the stock: {overhang}")]
+    OffStock {
+        /// The operation.
+        op: OperationId,
+        /// How far past each edge, mm.
+        overhang: Overhang,
     },
     /// Two target shapes cross: they overlap without one containing the
     /// other, so neither part-and-hole nor separate parts describes them.

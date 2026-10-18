@@ -11,6 +11,7 @@
 mod error;
 pub mod passes;
 mod profile;
+mod stock;
 pub mod tab_profile;
 mod tabs;
 mod toolpath;
@@ -21,6 +22,7 @@ pub mod test_support;
 
 pub use error::{CamError, FeedField, ShapeRef};
 pub use profile::{Wall, generate_profile, traversal_is_ccw};
+pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
 pub use tabs::tab_centres_mm;
 pub use toolpath::{Move, MoveKind, Toolpath};
 pub use warning::{Warning, WarningCode};

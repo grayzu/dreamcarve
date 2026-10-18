@@ -3,7 +3,7 @@
 
 //! The safety pass: parse the emitted program and check the phase 1 safety
 //! rules on what the controller will read (`docs/specs/phase-1/design.md`,
-//! "Emission", step 7; `docs/specs/phase-1/functional.md`, S1–S6). Every
+//! "Emission", step 7; `docs/specs/phase-1/functional.md`, S1–S7). Every
 //! violation is an [`ExportError`]; there are no safety warnings.
 //!
 //! Checks run in project space: each parsed point is mapped back through
@@ -17,8 +17,8 @@ use std::f64::consts::TAU;
 use std::ops::Range;
 
 use dc_cam::{MoveKind, Toolpath};
-use dc_geometry::{EPS_MM, Point, Point3, approx_eq};
-use dc_project::{PostProcessor, ProfileOp, SpindleControl, Tool, ToolId, Units};
+use dc_geometry::{Arc, EPS_MM, Point, Point3, approx_eq};
+use dc_project::{PostProcessor, ProfileOp, SpindleControl, Stock, Tool, ToolId, Units};
 
 use crate::ExportError;
 use crate::emit::uses_m6;
@@ -45,8 +45,9 @@ pub(crate) struct OpSpan<'a> {
 }
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S6. `flatten_tolerance_mm` is the most a
-/// straight move written for an arc may cut inside it.
+/// in `spans`, against S1–S7, and returns the program's extents.
+/// `flatten_tolerance_mm` is the most a straight move written for an arc
+/// may cut inside it.
 ///
 /// # Errors
 ///
@@ -55,14 +56,167 @@ pub(crate) fn check(
     text: &str,
     post: &PostProcessor,
     transform: &MachineTransform,
-    stock_thickness_mm: f64,
+    stock: &Stock,
     flatten_tolerance_mm: f64,
     spans: &[OpSpan<'_>],
-) -> Result<(), ExportError> {
-    let blocks = check_rules(text, post, transform, stock_thickness_mm, spans)?;
+) -> Result<Extents, ExportError> {
+    let blocks = check_rules(text, post, transform, stock.thickness_mm, spans)?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
         check_reproduces(span, &blocks, post, transform, flatten_tolerance_mm)?;
+    }
+    // S7: every cut stays on the stock.
+    check_on_stock(&blocks, post, transform, stock, spans)?;
+    Ok(extents(&blocks, transform.output_units()))
+}
+
+/// The lowest and highest value a program reaches on one machine axis,
+/// in the program's units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AxisRange {
+    /// The lowest value.
+    pub min: f64,
+    /// The highest value.
+    pub max: f64,
+}
+
+impl AxisRange {
+    fn including(range: Option<Self>, value: f64) -> Option<Self> {
+        Some(match range {
+            Some(r) => Self {
+                min: r.min.min(value),
+                max: r.max.max(value),
+            },
+            None => Self {
+                min: value,
+                max: value,
+            },
+        })
+    }
+}
+
+/// Where a program takes the tool centre, in machine coordinates: every
+/// position it moves through, arcs' bulges included (#62). Z min is the
+/// deepest cut. An axis the program never sets is `None`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Extents {
+    /// The units of every range: the program's.
+    pub units: Units,
+    /// Machine X.
+    pub x: Option<AxisRange>,
+    /// Machine Y.
+    pub y: Option<AxisRange>,
+    /// Machine Z.
+    pub z: Option<AxisRange>,
+}
+
+/// The extents of `blocks`, a program written in `units`.
+fn extents(blocks: &[Block], units: Units) -> Extents {
+    let mut extents = Extents {
+        units,
+        x: None,
+        y: None,
+        z: None,
+    };
+    for mv in blocks.iter().filter_map(|b| b.motion.as_ref()) {
+        for p in [mv.from, mv.to] {
+            if let Some(x) = p.x {
+                extents.x = AxisRange::including(extents.x, x);
+            }
+            if let Some(y) = p.y {
+                extents.y = AxisRange::including(extents.y, y);
+            }
+            if let Some(z) = p.z {
+                extents.z = AxisRange::including(extents.z, z);
+            }
+        }
+        for p in arc_extremes(mv) {
+            extents.x = AxisRange::including(extents.x, p.x);
+            extents.y = AxisRange::including(extents.y, p.y);
+        }
+    }
+    extents
+}
+
+/// The machine XY points, program units, where arc move `mv` reaches its
+/// extreme X or Y between its ends; none for a straight move or an arc
+/// whose ends are not known.
+fn arc_extremes(mv: &MachineMove) -> Vec<Point> {
+    let machine_cw = match mv.kind {
+        MotionKind::ArcCw => true,
+        MotionKind::ArcCcw => false,
+        MotionKind::Rapid | MotionKind::Linear => return Vec::new(),
+    };
+    let (Some(sx), Some(sy), Some(ex), Some(ey)) = (mv.from.x, mv.from.y, mv.to.x, mv.to.y) else {
+        return Vec::new();
+    };
+    let centre = match mv.arc.r {
+        Some(r) => r_centre(sx, sy, ex, ey, r, machine_cw),
+        None => Point::new(sx + mv.arc.i.unwrap_or(0.0), sy + mv.arc.j.unwrap_or(0.0)),
+    };
+    Arc::from_ends(Point::new(sx, sy), Point::new(ex, ey), centre, !machine_cw)
+        .axis_extremes()
+        .collect()
+}
+
+/// The centre GRBL and grblHAL compute for an R-format arc from
+/// (`sx`, `sy`) to (`ex`, `ey`) (`gcode.c`, radius format): on the right
+/// of the chord for G2 and the left for G3, the other side for a negative
+/// R.
+fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: bool) -> Point {
+    let (dx, dy) = (ex - sx, ey - sy);
+    let chord = dx.hypot(dy);
+    if chord <= 0.0 {
+        return Point::new(sx, sy);
+    }
+    let h = (r * r - chord * chord / 4.0).max(0.0).sqrt();
+    let side = if machine_cw { 1.0 } else { -1.0 } * r.signum();
+    Point::new(
+        (sx + ex) / 2.0 + side * h * dy / chord,
+        (sy + ey) / 2.0 - side * h * dx / chord,
+    )
+}
+
+/// S7 (#62): every cutting move, widened by its operation's tool radius,
+/// stays inside the stock rectangle `[0, width] × [0, height]`, within one
+/// unit in the last written place. Arcs count to their bulge. A cut
+/// outside every operation is checked as a point.
+fn check_on_stock(
+    blocks: &[Block],
+    post: &PostProcessor,
+    transform: &MachineTransform,
+    stock: &Stock,
+    spans: &[OpSpan<'_>],
+) -> Result<(), ExportError> {
+    for mv in blocks.iter().filter_map(|b| b.motion.as_ref()) {
+        if !mv.kind.is_cut() {
+            continue;
+        }
+        let limits = Limits::for_line(mv.line, spans, stock.thickness_mm);
+        let radius_mm = limits.tool.map_or(0.0, |t| t.diameter_mm / 2.0);
+        let tolerance_mm = quantum_mm(post, mv.units) + EPS_MM;
+        let ends = [mv.from, mv.to]
+            .into_iter()
+            .filter_map(|p| Some(Point::new(p.x?, p.y?)));
+        for m in ends.chain(arc_extremes(mv)) {
+            let p = transform
+                .to_project(Point3::new(m.x, m.y, 0.0), mv.units)
+                .xy();
+            let sides = [
+                ("-X", -(p.x - radius_mm)),
+                ("+X", p.x + radius_mm - stock.width_mm),
+                ("-Y", -(p.y - radius_mm)),
+                ("+Y", p.y + radius_mm - stock.height_mm),
+            ];
+            if let Some((side, overhang_mm)) = sides.into_iter().find(|(_, o)| *o > tolerance_mm) {
+                return Err(ExportError::OffStock {
+                    op: limits.op.map(|op| op.id.clone()),
+                    line: mv.line,
+                    side,
+                    overhang_mm,
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -778,17 +932,7 @@ fn arc_follows(
         return approx_eq(centre.x, arc.centre.x, tolerance)
             && approx_eq(centre.y, arc.centre.y, tolerance);
     };
-    // The centre GRBL and grblHAL compute from R (`gcode.c`, radius
-    // format): on the right of the chord for G2 and the left for G3, the
-    // other side for a negative R.
-    let (dx, dy) = (ex - sx, ey - sy);
-    let chord = dx.hypot(dy);
-    let h = (r * r - chord * chord / 4.0).max(0.0).sqrt();
-    let side = if machine_cw { 1.0 } else { -1.0 } * r.signum();
-    let (cx, cy) = (
-        (sx + ex) / 2.0 + side * h * dy / chord,
-        (sy + ey) / 2.0 - side * h * dx / chord,
-    );
+    let Point { x: cx, y: cy } = r_centre(sx, sy, ex, ey, r, machine_cw);
     let start_rad = (sy - cy).atan2(sx - cx);
     let end_rad = (ey - cy).atan2(ex - cx);
     let sweep_rad = if machine_cw {
@@ -883,15 +1027,125 @@ mod tests {
     use dc_project::test_support::sample_project;
     use dc_project::{ArcFormat, Axis, Operation, Project, SpindleControl};
 
-    /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
-    /// plunge 300, 18000 rpm, GRBL), its operation, and its tool.
+    /// The sample project (100 × 100 × 6 mm stock, safe Z 11 absolute,
+    /// feed 1000, plunge 300, 18000 rpm, GRBL), its operation, and its
+    /// tool as a point: the hand-written toolpaths below run along the
+    /// stock's left and front edges (X = 0, Y = 0), which S7 allows only
+    /// for a tool of no width. The S7 tests set a diameter.
     fn fixture() -> (Project, ProfileOp, Tool) {
         let project = sample_project();
         let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
             panic!("sample project has a profile operation");
         };
-        let tool = project.tools[0].clone();
+        let mut tool = project.tools[0].clone();
+        tool.diameter_mm = 0.0;
         (project, op, tool)
+    }
+
+    /// A cut from (`x0`, `y0`) to (`x1`, `y1`) at Z 3, then a clockwise
+    /// half circle about (`x1` + 10, `y1`), which bulges 10 mm past both
+    /// its ends in +Y.
+    fn cut_then_half_circle(x0: f64, y0: f64, x1: f64, y1: f64) -> Toolpath {
+        Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(x0, y0, 11.0)),
+                Move::linear(Point3::new(x0, y0, 3.0), 300.0),
+                Move::linear(Point3::new(x1, y1, 3.0), 1000.0),
+                Move {
+                    kind: MoveKind::ArcCw {
+                        centre: Point::new(x1 + 10.0, y1),
+                    },
+                    to: Point3::new(x1 + 20.0, y1, 3.0),
+                    feed_mm_min: Some(1000.0),
+                },
+                Move::rapid(Point3::new(x1 + 20.0, y1, 11.0)),
+            ],
+        }
+    }
+
+    /// S7 (#62): the cutter's edge must stay on the stock. With a 6 mm
+    /// tool a cut 3 mm in from every edge passes; one along the left edge
+    /// overhangs it by the radius; a half circle whose ends are 7 mm in
+    /// from the back edge, with the radius, but which bulges 10 mm past
+    /// them fails at +Y by 3 mm.
+    #[test]
+    fn cut_off_stock_fails_s7() {
+        let (project, op, mut tool) = fixture();
+        tool.diameter_mm = 6.0;
+        emit_one(
+            &project,
+            &op,
+            &tool,
+            cut_then_half_circle(3.0, 3.0, 50.0, 3.0),
+        )
+        .unwrap();
+
+        let err = emit_one(
+            &project,
+            &op,
+            &tool,
+            cut_then_half_circle(0.0, 10.0, 50.0, 10.0),
+        )
+        .unwrap_err();
+        let ExportError::OffStock {
+            op: Some(at),
+            side,
+            overhang_mm,
+            ..
+        } = &err
+        else {
+            panic!("expected OffStock, got {err:?}");
+        };
+        assert_eq!(at, &op.id);
+        assert_eq!(*side, "-X");
+        assert!((overhang_mm - 3.0).abs() < 1e-6, "{err}");
+
+        let err = emit_one(
+            &project,
+            &op,
+            &tool,
+            cut_then_half_circle(20.0, 90.0, 50.0, 90.0),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffStock { side: "+Y", overhang_mm, .. }
+                if (overhang_mm - 3.0).abs() < 1e-3),
+            "{err}"
+        );
+    }
+
+    /// #62: a program's extents are its machine coordinates' range, arc
+    /// bulges included. The sample project's origin is the stock's
+    /// bottom-left corner and top face, so machine X and Y are project X
+    /// and Y and machine Z is project Z minus 6.
+    #[test]
+    fn extents_include_arc_bulges() {
+        let (project, op, mut tool) = fixture();
+        tool.diameter_mm = 6.0;
+        let program = emit(
+            &project,
+            &[(op, tool, cut_then_half_circle(10.0, 20.0, 40.0, 20.0))],
+            "2026-10-15",
+        )
+        .unwrap()
+        .0;
+        let extents = program.extents;
+        assert_eq!(extents.units, Units::Mm);
+        let (x, y, z) = (extents.x.unwrap(), extents.y.unwrap(), extents.z.unwrap());
+        assert!(
+            (x.min - 10.0).abs() < 1e-9 && (x.max - 60.0).abs() < 1e-9,
+            "{x:?}"
+        );
+        // The arc's ends are at Y 20; it reaches Y 30.
+        assert!(
+            (y.min - 20.0).abs() < 1e-9 && (y.max - 30.0).abs() < 1e-9,
+            "{y:?}"
+        );
+        // Deepest cut 3 - 6; safe Z 11 - 6.
+        assert!(
+            (z.min + 3.0).abs() < 1e-9 && (z.max - 5.0).abs() < 1e-9,
+            "{z:?}"
+        );
     }
 
     /// Rapid in, plunge to `z`, one cut, retract.
@@ -1452,10 +1706,11 @@ mod tests {
             text,
             &project.post_processor,
             &transform,
-            project.stock.thickness_mm,
+            &project.stock,
             project.flatten_tolerance_mm,
             &spans,
         )
+        .map(|_| ())
     }
 
     fn is_mismatch_at(result: &Result<(), ExportError>, at: usize) -> bool {

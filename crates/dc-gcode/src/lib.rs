@@ -20,4 +20,4 @@ pub use dc_project::PostProcessor;
 pub use emit::{ExportWarning, FirstTool, Pause, Program, emit};
 pub use error::ExportError;
 pub use parse::{MachineMove, parse_motion};
-pub use safety::MAX_LINE_CHARS;
+pub use safety::{AxisRange, Extents, MAX_LINE_CHARS};

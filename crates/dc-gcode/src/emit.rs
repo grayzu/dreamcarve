@@ -6,7 +6,7 @@
 //   src/engine/gcode/postprocessor.ts
 
 //! G-code emission (`docs/specs/phase-1/design.md`, "Algorithms →
-//! Emission"; `docs/specs/phase-1/functional.md`, S1–S6).
+//! Emission"; `docs/specs/phase-1/functional.md`, S1–S7).
 //!
 //! Ported from `runPostProcessor`, without canned cycles, coolant, or arc
 //! fitting (phase 1 has none of them). Re-derived for Y-up: toolpaths are
@@ -61,11 +61,11 @@ use dc_project::{
 use crate::ExportError;
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
 use crate::parse::parse_program;
-use crate::safety::{self, OpSpan};
+use crate::safety::{self, Extents, OpSpan};
 use crate::transform::MachineTransform;
 
 /// An emitted G-code program.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     /// The program text, one block per line, `\n` line endings, ending in
     /// a newline.
@@ -79,6 +79,10 @@ pub struct Program {
     /// The tool the program starts with. It does not stop for it: the user
     /// fits it and sets work zero with it before starting (#57).
     pub first_tool: FirstTool,
+    /// Where the program takes the tool centre, in machine coordinates
+    /// and the program's units, read back from [`Program::text`]. Users
+    /// place clamps from it (#62).
+    pub extents: Extents,
 }
 
 /// The tool a program starts with.
@@ -132,7 +136,7 @@ pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 /// `{date}` placeholder; the caller supplies it so output is
 /// deterministic.
 ///
-/// The emitted text is parsed back and checked against safety rules S1–S6
+/// The emitted text is parsed back and checked against safety rules S1–S7
 /// before it is returned.
 ///
 /// # Errors
@@ -436,11 +440,11 @@ pub fn emit(
             lines,
         })
         .collect();
-    safety::check(
+    let extents = safety::check(
         &text,
         post,
         &transform,
-        project.stock.thickness_mm,
+        &project.stock,
         flatten_tolerance_mm,
         &spans,
     )?;
@@ -452,6 +456,7 @@ pub fn emit(
             extension: post.file_extension.clone(),
             pauses,
             first_tool,
+            extents,
         },
         warnings,
     ))
@@ -1667,9 +1672,12 @@ mod tests {
 
     #[test]
     fn numbers_never_use_exponent_notation() {
-        let project = project_with("grblhal");
+        let mut project = project_with("grblhal");
         let mut ops = ops_for(&project);
-        // A tiny coordinate and a huge-but-safe one.
+        // A tiny coordinate and a huge-but-safe one, on stock wide enough
+        // for it, cut by a point so the cut at X ≈ 0 stays on it (S7).
+        project.stock.width_mm = 20_000_000.0;
+        ops[0].1.diameter_mm = 0.0;
         ops[0].2 = Toolpath {
             moves: vec![
                 Move::rapid(Point3::new(1e-9, 1e-12, 11.0)),

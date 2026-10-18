@@ -4,8 +4,9 @@
 //! `dreamcarve check <dcv>`: runs the export pipeline ([`export::build`])
 //! without writing anything and prints every error and warning it finds,
 //! including each open path, which validation reports because Profile never
-//! cuts it (functional spec, capabilities 4 and 8). Exits 1 when any error
-//! was found.
+//! cuts it (functional spec, capabilities 4 and 8), then, when the program
+//! could be built, its extents as `export` prints them (#62). Exits 1 when
+//! any error was found.
 
 use std::process::ExitCode;
 
@@ -18,13 +19,19 @@ const CHECK_DATE: &str = "check";
 /// Runs `check`.
 pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     let project = export::load_project(&args.dcv)?;
-    let findings = export::build(&project, CHECK_DATE).findings;
+    let export::Built { program, findings } = export::build(&project, CHECK_DATE);
 
     for error in &findings.errors {
         println!("error: {error}");
     }
     for warning in &findings.warnings {
         println!("warning: {warning}");
+    }
+    // #62: where the program would take the tool, as `export` prints it.
+    if let Some(program) = &program {
+        for line in export::describe_extents(&project, program) {
+            println!("{line}");
+        }
     }
     println!(
         "{}: {} error(s), {} warning(s)",

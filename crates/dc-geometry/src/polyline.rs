@@ -72,9 +72,32 @@ pub struct Arc {
 }
 
 impl Arc {
+    /// The arc about `centre` from `start` to `end`, counter-clockwise if
+    /// `ccw`, as a G2/G3 move describes it: the radius is `start`'s
+    /// distance from `centre`, and the sweep is less than a full turn, so a
+    /// move that ends where it starts sweeps nothing.
+    #[must_use]
+    pub fn from_ends(start: Point, end: Point, centre: Point, ccw: bool) -> Self {
+        let tau = std::f64::consts::TAU;
+        let start_angle_rad = (start.y - centre.y).atan2(start.x - centre.x);
+        let end_angle_rad = (end.y - centre.y).atan2(end.x - centre.x);
+        let sweep_rad = if ccw {
+            (end_angle_rad - start_angle_rad).rem_euclid(tau)
+        } else {
+            -(start_angle_rad - end_angle_rad).rem_euclid(tau)
+        };
+        Self {
+            centre,
+            radius_mm: start.distance_to(centre),
+            start_angle_rad,
+            sweep_rad,
+        }
+    }
+
     /// The points where the arc reaches its extreme X or Y, among the four
-    /// axis directions from the centre that fall inside the sweep.
-    fn axis_extremes(self) -> impl Iterator<Item = Point> {
+    /// axis directions from the centre that fall inside the sweep. With
+    /// the arc's two end points they bound it.
+    pub fn axis_extremes(self) -> impl Iterator<Item = Point> {
         let tau = std::f64::consts::TAU;
         (0..4u8).filter_map(move |k| {
             let angle = f64::from(k) * tau / 4.0;
@@ -412,6 +435,32 @@ mod tests {
         assert_approx_eq!(b.min.y, -5.0, TOL);
         assert_approx_eq!(b.max.x, 15.0, TOL);
         assert_approx_eq!(b.max.y, 15.0, TOL);
+    }
+
+    #[test]
+    fn arc_from_ends_sweeps_the_given_way() {
+        let (start, end, centre) = (
+            Point::new(0.0, 0.0),
+            Point::new(20.0, 0.0),
+            Point::new(10.0, 0.0),
+        );
+        // Clockwise from the left goes over the top.
+        let cw = Arc::from_ends(start, end, centre, false);
+        assert_approx_eq!(cw.radius_mm, 10.0, TOL);
+        assert_approx_eq!(cw.sweep_rad, -PI, TOL);
+        let top = cw.axis_extremes().map(|p| p.y).fold(f64::MIN, f64::max);
+        assert_approx_eq!(top, 10.0, TOL);
+        // Counter-clockwise goes under.
+        let ccw = Arc::from_ends(start, end, centre, true);
+        assert_approx_eq!(ccw.sweep_rad, PI, TOL);
+        let bottom = ccw.axis_extremes().map(|p| p.y).fold(f64::MAX, f64::min);
+        assert_approx_eq!(bottom, -10.0, TOL);
+        // Ending where it starts sweeps nothing.
+        assert_approx_eq!(
+            Arc::from_ends(start, start, centre, true).sweep_rad,
+            0.0,
+            TOL
+        );
     }
 
     #[test]

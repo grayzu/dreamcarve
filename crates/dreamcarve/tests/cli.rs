@@ -794,25 +794,28 @@ fn project_file_chapter_names_current_version() {
     );
 }
 
-/// Writes the coaster at `dcv` back with its one instance moved `dx_mm`
-/// along X, as the project-file chapter suggests for moving shapes.
-fn move_coaster(dcv: &Path, dx_mm: f64) {
+/// Writes the coaster at `dcv` back with its one instance's X translation,
+/// transform component `e`, set to `e_mm`, as the project-file chapter
+/// suggests for moving shapes. `init` sets it to 5.
+fn set_coaster_e(dcv: &Path, e_mm: f64) {
     let mut project = load_file(dcv).project;
-    project.instances[0].transform = [1.0, 0.0, 0.0, 1.0, dx_mm, 0.0].into();
+    let instance = project.instances.first_mut().expect("the coaster");
+    let [a, b, c, d, _, f] = instance.transform.as_kurbo().as_coeffs();
+    instance.transform = [a, b, c, d, e_mm, f].into();
     std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
 }
 
 /// #62: the coaster's swept cut spans 3.65..106.35 mm on 110 mm stock.
-/// Moved 80 mm right it runs 76.35 mm past the right (+X) edge; `check`
-/// fails, naming the operation and the overhang, and `export` writes
-/// nothing. So does a move just past the 3.65 mm margin.
+/// With `e` = 80 (75 mm right) it runs 71.35 mm past the right (+X) edge;
+/// `check` fails, naming the operation and the overhang, and `export`
+/// writes nothing. So does a move just past the 3.65 mm margin.
 #[test]
 fn toolpath_off_stock_is_an_error() {
     let dir = work_dir("toolpath_off_stock_is_an_error");
     let dcv = init_coaster(&dir);
     set_rates(&dcv, 1500.0, 500.0, 18000);
 
-    move_coaster(&dcv, 80.0);
+    set_coaster_e(&dcv, 80.0);
     let out = run(&dir, &["check", "coaster.dcv"]);
     let report = format!("{}{}", stdout(&out), stderr(&out));
     assert_eq!(out.status.code(), Some(1), "check fails: {report}");
@@ -822,7 +825,7 @@ fn toolpath_off_stock_is_an_error() {
         .unwrap_or_else(|| panic!("an error is reported: {report}"));
     assert!(error.contains("`op1`"), "names the operation: {error}");
     assert!(
-        error.contains("76.35") && error.contains("+X"),
+        error.contains("71.35") && error.contains("+X"),
         "names the overhang and the side: {error}"
     );
     assert!(!error.contains("-X"), "only the right edge: {error}");
@@ -831,7 +834,7 @@ fn toolpath_off_stock_is_an_error() {
     assert_eq!(out.status.code(), Some(1), "export fails: {}", stderr(&out));
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
 
-    move_coaster(&dcv, 3.8);
+    set_coaster_e(&dcv, 5.0 + 3.8);
     let out = run(&dir, &["check", "coaster.dcv"]);
     let report = format!("{}{}", stdout(&out), stderr(&out));
     assert_eq!(out.status.code(), Some(1), "0.15 mm over fails: {report}");
@@ -846,7 +849,7 @@ fn toolpath_just_inside_stock_passes() {
     let dcv = init_coaster(&dir);
     set_rates(&dcv, 1500.0, 500.0, 18000);
     for dx_mm in [0.0, 3.5, -3.5] {
-        move_coaster(&dcv, dx_mm);
+        set_coaster_e(&dcv, 5.0 + dx_mm);
         let out = run(&dir, &["check", "coaster.dcv"]);
         let report = format!("{}{}", stdout(&out), stderr(&out));
         assert_eq!(out.status.code(), Some(0), "moved {dx_mm} mm: {report}");

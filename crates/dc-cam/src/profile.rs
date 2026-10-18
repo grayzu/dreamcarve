@@ -16,6 +16,7 @@
 
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::passes::pass_z_mm;
+use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
     LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, emit_lap, overlap_warning,
 };
@@ -133,7 +134,8 @@ fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
 /// with a [`Warning`]. Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
-/// allowance, when targets cross, or when an id does not resolve.
+/// allowance, when targets cross, when an id does not resolve, or when the
+/// cutter would leave the stock ([`CamError::OffStock`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_profile(
     project: &Project,
@@ -261,6 +263,15 @@ pub fn generate_profile(
         });
         let tabs = layout.as_ref().map(|(tabs, layout)| (*tabs, layout));
         emit_contour(&mut toolpath.moves, path, &pass_z, safe_z_mm, rates, tabs);
+    }
+    // #62: the cutter must stay on the stock.
+    if let Some(overhang) =
+        swept_bounds(&toolpath, radius_mm).and_then(|swept| stock_overhang(&project.stock, swept))
+    {
+        return Err(CamError::OffStock {
+            op: op.id.clone(),
+            overhang,
+        });
     }
     Ok((toolpath, warnings))
 }
@@ -613,6 +624,29 @@ mod tests {
             assert_approx_eq!(lap.y_extent_mm(), 50.0, TOL);
             assert!(lap.area_mm2 < 0.0, "outer on the line, climb: clockwise");
         }
+    }
+
+    /// #62: the outside cut of the rect at (20, 20) sweeps X 13.65..126.35
+    /// with the 6.35 mm tool. On 120 mm wide stock that is 6.35 mm past
+    /// the right edge; the inside cut, which sweeps to 120 exactly, fits.
+    #[test]
+    fn toolpath_off_stock_is_an_error() {
+        let mut p = rect_project();
+        p.stock.width_mm = 120.0;
+        let err =
+            generate_profile(&p, &profile_op(&p, Side::Outside, CutDirection::Climb)).unwrap_err();
+        let CamError::OffStock { op, overhang } = &err else {
+            panic!("expected OffStock, got {err:?}");
+        };
+        assert_eq!(op.as_str(), "o1");
+        assert_approx_eq!(overhang.max_x_mm, 6.35, TOL);
+        assert_approx_eq!(overhang.min_x_mm, 0.0, TOL);
+        assert_approx_eq!(overhang.max_y_mm, 0.0, TOL);
+        assert_eq!(
+            err.to_string(),
+            "operation `o1` cuts off the stock: 6.350 mm past the +X (right) edge"
+        );
+        generate(&p, &profile_op(&p, Side::Inside, CutDirection::Climb));
     }
 
     #[test]
