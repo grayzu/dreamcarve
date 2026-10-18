@@ -32,6 +32,15 @@ pub enum WarningCode {
     /// `above_stock_top`; the tabs still apply). Params: `op`, `reason`,
     /// `tab_top_mm`, `deepest_pass_z_mm`, `stock_top_mm`.
     TabsOutsideCutRange,
+    /// The tab spans on one tool-centre contour cover more than half of its
+    /// length, so the part or hole may not cut free. The tabs are cut as
+    /// set. Params: `op`, `contour` (0-based, in cut order), `instance`,
+    /// `instance_name`, `profile`, `path_length_mm`, `tab_count`,
+    /// `tab_span_mm` (one tab's length of path: width plus tool diameter),
+    /// `tab_total_mm` (count times span), `max_count` (most tabs of this
+    /// width that cover at most half), and `max_width_mm` (widest tab at
+    /// this count that covers at most half; absent when none fits).
+    TabsCoverMostOfContour,
 }
 
 impl WarningCode {
@@ -44,6 +53,7 @@ impl WarningCode {
             Self::DuplicateShapeDropped => "duplicate_shape_dropped",
             Self::TabsOverlap => "tabs_overlap",
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
+            Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
         }
     }
 }
@@ -86,5 +96,16 @@ impl Warning {
     #[must_use]
     pub fn param(&self, key: &str) -> Option<&str> {
         self.params.get(key).map(String::as_str)
+    }
+}
+
+impl fmt::Display for Warning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let params: Vec<String> = self
+            .params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        write!(f, "{} ({})", self.code, params.join(", "))
     }
 }

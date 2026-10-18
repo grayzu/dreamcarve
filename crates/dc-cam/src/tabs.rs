@@ -564,6 +564,36 @@ mod tests {
     }
 
     fn circle_job(radius_mm: f64, side: Side, tabs: Option<TabSpec>) -> (Project, ProfileOp) {
+        job(
+            "Coaster",
+            vec![Polyline::circle(Point::new(0.0, 0.0), radius_mm)],
+            side,
+            tabs,
+        )
+    }
+
+    /// A 60 mm square part with a centred square hole `hole_mm` wide, cut
+    /// outside (so the hole is cut inside), hole first.
+    fn square_with_hole(hole_mm: f64, tabs: Option<TabSpec>) -> (Project, ProfileOp) {
+        let square = |side_mm: f64| {
+            Polyline::rect(Point::new(-side_mm / 2.0, -side_mm / 2.0), side_mm, side_mm)
+        };
+        job(
+            "Square",
+            vec![square(60.0), square(hole_mm)],
+            Side::Outside,
+            tabs,
+        )
+    }
+
+    /// One definition named `name` holding `profiles`, placed once at
+    /// (60, 60) as instance `i1` named "`name` 1", cut by Profile `o1`.
+    fn job(
+        name: &str,
+        profiles: Vec<Polyline>,
+        side: Side,
+        tabs: Option<TabSpec>,
+    ) -> (Project, ProfileOp) {
         let mut p = sample_project();
         p.stock = Stock {
             width_mm: 120.0,
@@ -572,15 +602,15 @@ mod tests {
         };
         let def = FeatureDefinition {
             id: DefinitionId::new("d1"),
-            name: "Coaster".into(),
-            profiles: vec![Polyline::circle(Point::new(0.0, 0.0), radius_mm)],
+            name: name.into(),
+            profiles,
         };
         p.definitions = BTreeMap::from([(def.id.clone(), def)]);
         p.instances = vec![FeatureInstance {
             id: InstanceId::new("i1"),
             definition: DefinitionId::new("d1"),
             transform: Transform::translate(60.0, 60.0),
-            name: "Coaster 1".into(),
+            name: format!("{name} 1"),
             visible: true,
             locked: false,
             z_top_mm: THICKNESS_MM,
@@ -818,10 +848,15 @@ mod tests {
         }
 
         // Four tabs all but cover it (port of "four tabs cover a circle"),
-        // yet leave a gap to cut through, so nothing overlaps.
+        // yet leave a gap to cut through, so nothing overlaps. They cover
+        // most of the path, which warns but changes nothing.
         let (p, op) = small(4);
         let (tp, warnings) = generate(&p, &op);
-        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            codes(&warnings),
+            vec![WarningCode::TabsCoverMostOfContour],
+            "{warnings:?}"
+        );
         let lap = final_lap(&tp);
         let free: f64 = runs(&lap, |m| m.at_z(0.0))
             .iter()
@@ -1011,7 +1046,13 @@ mod tests {
         spec.width_mm = 80.0;
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
-        assert_eq!(codes(&warnings), vec![WarningCode::TabsOverlap]);
+        assert_eq!(
+            codes(&warnings),
+            vec![
+                WarningCode::TabsOverlap,
+                WarningCode::TabsCoverMostOfContour
+            ]
+        );
         let lap = final_lap(&tp);
         assert!(lap.iter().all(|m| m.at_z(TAB_Z_MM)), "{lap:?}");
 
@@ -1019,6 +1060,204 @@ mod tests {
         let (p, op) = coaster(Some(four_rect_tabs()));
         let (_, warnings) = generate(&p, &op);
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// The XY moves of each contour's final pass, in cut order: a contour
+    /// runs from one rapid to the next.
+    fn final_laps_by_contour(toolpath: &Toolpath) -> Vec<Vec<XyMove>> {
+        let mut out: Vec<Vec<XyMove>> = Vec::new();
+        let mut current: Vec<XyMove> = Vec::new();
+        let Some(first) = toolpath.moves.first() else {
+            return out;
+        };
+        let mut pos = first.to;
+        for mv in &toolpath.moves {
+            if mv.is_rapid() {
+                if !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                }
+            } else if pos.xy().distance_to(mv.to.xy()) > EPS_MM {
+                let m = XyMove {
+                    from: pos,
+                    mv: *mv,
+                    length_mm: 0.0,
+                };
+                if m.z_max() < PASS_Z_MM[1] - TOL {
+                    current.push(m);
+                }
+            }
+            pos = mv.to;
+        }
+        if !current.is_empty() {
+            out.push(current);
+        }
+        out
+    }
+
+    fn coverage_warnings(warnings: &[Warning]) -> Vec<&Warning> {
+        warnings
+            .iter()
+            .filter(|w| w.code == WarningCode::TabsCoverMostOfContour)
+            .collect()
+    }
+
+    fn param_mm(warning: &Warning, key: &str) -> f64 {
+        warning
+            .param(key)
+            .unwrap_or_else(|| panic!("{key} is set: {warning:?}"))
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn tabs_covering_most_of_contour_warn() {
+        // Default tabs (4 × 8 mm, 6.35 mm bit) on a 20 mm square hole:
+        // 57.4 mm of tab on a 54.6 mm tool path.
+        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs()));
+        let (_, warnings) = generate(&p, &op);
+        let cover = coverage_warnings(&warnings);
+        assert_eq!(cover.len(), 1, "only the hole: {warnings:?}");
+        let w = cover[0];
+        assert_eq!(w.param("op"), Some("o1"));
+        assert_eq!(w.param("contour"), Some("0"), "the hole is cut first");
+        assert_eq!(w.param("instance"), Some("i1"));
+        assert_eq!(w.param("instance_name"), Some("Square 1"));
+        assert_eq!(w.param("profile"), Some("1"));
+        assert_eq!(w.param("tab_count"), Some("4"));
+        let path_mm = 4.0 * (20.0 - DIAMETER_MM);
+        let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
+        assert_approx_eq!(param_mm(w, "path_length_mm"), path_mm, TOL);
+        assert_approx_eq!(param_mm(w, "tab_span_mm"), span_mm, TOL);
+        assert_approx_eq!(param_mm(w, "tab_total_mm"), 4.0 * span_mm, TOL);
+        // One 14.35 mm tab covers at most half of 54.6 mm; four tabs fit
+        // in half only if each is at most 27.3 / 4 − 6.35 = 0.475 mm wide.
+        assert_eq!(w.param("max_count"), Some("1"));
+        assert!(param_mm(w, "max_width_mm") <= path_mm / 2.0 / 4.0 - DIAMETER_MM);
+
+        // The text names the shape, the path, the tab total and the share,
+        // says what may happen, and suggests changes, in rounded values.
+        let text = w.to_string();
+        for needle in [
+            "`Square 1`",
+            "54.6 mm",
+            "57.4 mm",
+            "105.1%",
+            "may not cut free",
+            "at most 1 tab",
+            "0.47 mm",
+        ] {
+            assert!(text.contains(needle), "{needle:?} in {text:?}");
+        }
+        assert!(!text.contains('='), "{text}");
+
+        // The outer contour's tabs cover a fifth of it: no warning. A
+        // larger hole is fine too.
+        let (p, op) = square_with_hole(40.0, Some(four_rect_tabs()));
+        let (_, warnings) = generate(&p, &op);
+        assert!(coverage_warnings(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn tabs_are_not_changed_when_they_warn() {
+        // Eleven 14.35 mm spans on the 302.7 mm coaster path cover 52%:
+        // a warning, and still eleven tabs exactly as set.
+        let spec = tab_spec(TabPlacement::Count { count: 11 }, TabShape::Rect);
+        let (p, op) = coaster(Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!(
+            codes(&warnings),
+            vec![WarningCode::TabsCoverMostOfContour],
+            "{warnings:?}"
+        );
+        let raised = raised_runs(&final_lap(&tp));
+        assert_eq!(raised.len(), 11, "{raised:?}");
+        for run in &raised {
+            assert_approx_eq!(run.length_mm, TAB_WIDTH_MM + DIAMETER_MM, TOL);
+        }
+
+        // Tabs that cover a whole hole are kept too: its final lap rides
+        // the tab top all the way round.
+        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs()));
+        let (tp, _) = generate(&p, &op);
+        let laps = final_laps_by_contour(&tp);
+        assert_eq!(laps.len(), 2);
+        assert!(laps[0].iter().all(|m| m.at_z(TAB_Z_MM)), "{:?}", laps[0]);
+    }
+
+    #[test]
+    fn tabs_covering_more_than_half_warn() {
+        // The boundary is more than half: exactly half does not warn.
+        let l = coaster_path_mm();
+        let one_tab = |span_mm: f64| {
+            let mut spec = tab_spec(
+                TabPlacement::AtDistances {
+                    distances_mm: vec![100.0],
+                },
+                TabShape::Rect,
+            );
+            spec.width_mm = span_mm - DIAMETER_MM;
+            coaster(Some(spec))
+        };
+        let (p, op) = one_tab(l / 2.0);
+        let (_, warnings) = generate(&p, &op);
+        assert!(coverage_warnings(&warnings).is_empty(), "{warnings:?}");
+        let (p, op) = one_tab(l / 2.0 + 0.01);
+        let (_, warnings) = generate(&p, &op);
+        assert_eq!(coverage_warnings(&warnings).len(), 1, "{warnings:?}");
+
+        // By count: 10 spans (47%) do not warn, 11 (52%) do.
+        for (count, warns) in [(10, false), (11, true)] {
+            let spec = tab_spec(TabPlacement::Count { count }, TabShape::Rect);
+            let (p, op) = coaster(Some(spec));
+            let (_, warnings) = generate(&p, &op);
+            assert_eq!(!coverage_warnings(&warnings).is_empty(), warns, "{count}");
+        }
+    }
+
+    #[test]
+    fn final_pass_reaches_full_depth_between_tabs() {
+        // Every contour's last lap reaches the cut depth somewhere, unless
+        // its tabs cover most of it and say so.
+        let mut wide = four_rect_tabs();
+        wide.width_mm = 80.0;
+        let jobs = [
+            coaster(Some(four_rect_tabs())),
+            coaster(Some(tab_spec(
+                TabPlacement::Count { count: 4 },
+                TabShape::Smooth,
+            ))),
+            coaster(Some(tab_spec(
+                TabPlacement::Count { count: 11 },
+                TabShape::Rect,
+            ))),
+            coaster(Some(tab_spec(
+                TabPlacement::AtDistances {
+                    distances_mm: vec![0.0],
+                },
+                TabShape::Rect,
+            ))),
+            coaster(Some(wide)),
+            circle_job(12.7, Side::Inside, Some(four_rect_tabs())),
+            square_with_hole(20.0, Some(four_rect_tabs())),
+            square_with_hole(40.0, Some(four_rect_tabs())),
+        ];
+        for (p, op) in &jobs {
+            let (tp, warnings) = generate(p, op);
+            let laps = final_laps_by_contour(&tp);
+            assert!(!laps.is_empty());
+            for (i, lap) in laps.iter().enumerate() {
+                if lap.iter().any(|m| m.at_z(0.0)) {
+                    continue;
+                }
+                let index = i.to_string();
+                assert!(
+                    coverage_warnings(&warnings)
+                        .iter()
+                        .any(|w| w.param("contour") == Some(index.as_str())),
+                    "contour {i} never reaches depth and nothing says so: {warnings:?}"
+                );
+            }
+        }
     }
 
     #[test]
