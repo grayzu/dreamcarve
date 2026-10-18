@@ -402,7 +402,7 @@ mod tests {
         p.stock = Stock {
             width_mm: 300.0,
             height_mm: 200.0,
-            thickness_mm: THICKNESS_MM,
+            thickness_mm: Some(THICKNESS_MM),
         };
         let def = FeatureDefinition {
             id: DefinitionId::new("d1"),
@@ -456,7 +456,7 @@ mod tests {
             targets: project.instances.iter().map(|i| i.id.clone()).collect(),
             tool: ToolId::new("t1"),
             side,
-            depth_mm: THICKNESS_MM,
+            depth_mm: Some(THICKNESS_MM),
             step_down_mm: None,
             direction,
             through_cut_allowance_mm: 0.0,
@@ -956,7 +956,7 @@ mod tests {
     fn through_cut_goes_exactly_to_the_allowance() {
         let p = rect_project();
         let mut op = profile_op(&p, Side::Outside, CutDirection::Climb);
-        op.depth_mm = THICKNESS_MM + 0.5;
+        op.depth_mm = Some(THICKNESS_MM + 0.5);
         op.through_cut_allowance_mm = 0.5;
         let (tp, _) = generate(&p, &op);
         let lowest = tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min);
@@ -967,6 +967,30 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::BelowMaterialBottom { .. }
         ));
+    }
+
+    /// #64: an unset thickness or depth fails generation; neither is
+    /// defaulted. Validation reports both first, so this is the generator
+    /// protecting itself.
+    #[test]
+    fn missing_thickness_or_depth_is_an_error() {
+        let mut p = rect_project();
+        let op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        p.stock.thickness_mm = None;
+        assert_eq!(
+            generate_profile(&p, &op).unwrap_err(),
+            CamError::MissingThickness
+        );
+
+        let p = rect_project();
+        let mut op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        op.depth_mm = None;
+        assert_eq!(
+            generate_profile(&p, &op).unwrap_err(),
+            CamError::MissingDepth {
+                op: OperationId::new("o1")
+            }
+        );
     }
 
     #[test]

@@ -950,7 +950,7 @@ mod tests {
             text,
             &project.post_processor,
             &transform,
-            project.stock.thickness_mm,
+            project.stock.thickness_mm.unwrap(),
             &spans,
         )
         .map(|_| ())
@@ -1452,7 +1452,7 @@ mod tests {
             text,
             &project.post_processor,
             &transform,
-            project.stock.thickness_mm,
+            project.stock.thickness_mm.unwrap(),
             project.flatten_tolerance_mm,
             &spans,
         )

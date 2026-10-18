@@ -662,7 +662,7 @@ mod tests {
         p.stock = Stock {
             width_mm: 120.0,
             height_mm: 120.0,
-            thickness_mm: THICKNESS_MM,
+            thickness_mm: Some(THICKNESS_MM),
         };
         let def = FeatureDefinition {
             id: DefinitionId::new("d1"),
@@ -687,7 +687,7 @@ mod tests {
             targets: vec![InstanceId::new("i1")],
             tool: ToolId::new("t1"),
             side,
-            depth_mm: THICKNESS_MM,
+            depth_mm: Some(THICKNESS_MM),
             step_down_mm: Some(4.0),
             direction: CutDirection::Climb,
             through_cut_allowance_mm: 0.0,
@@ -1468,7 +1468,7 @@ mod tests {
     fn tabs_above_cut_depth_warn() {
         // The cut stops at Z 6, above a 3 mm tab: the tabs never apply.
         let (p, mut op) = coaster(Some(four_rect_tabs()));
-        op.depth_mm = 6.0;
+        op.depth_mm = Some(6.0);
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(codes(&warnings), vec![WarningCode::TabsOutsideCutRange]);
         assert_eq!(warnings[0].param("op"), Some("o1"));

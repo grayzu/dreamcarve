@@ -346,6 +346,18 @@ mod tests {
         }
     }
 
+    /// #64: with Z zero at the stock top, the origin is the thickness, so an
+    /// unset one is refused rather than defaulted.
+    #[test]
+    fn stock_top_origin_without_thickness_is_rejected() {
+        let mut project = sample_project();
+        project.stock.thickness_mm = None;
+        assert!(matches!(
+            MachineTransform::new(&project),
+            Err(ExportError::MissingThickness)
+        ));
+    }
+
     #[test]
     fn inch_output_scales_after_the_transform() {
         let mut project = sample_project();

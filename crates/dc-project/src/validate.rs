@@ -684,13 +684,75 @@ mod tests {
     #[test]
     fn non_positive_stock_dimension_is_error() {
         let mut p = sample_project();
-        p.stock.thickness_mm = 0.0;
+        p.stock.thickness_mm = Some(0.0);
         let problems = validate(&p);
         assert_eq!(problems.len(), 1);
         assert!(
             matches!(&problems[0], Problem::OutOfRange { field, .. } if field == "stock.thickness_mm")
         );
         assert!(problems[0].is_error());
+    }
+
+    /// #64: thickness drives depth, tab Z and, with the origin at the stock
+    /// bottom, safe Z itself, so an unset one is an error like a missing
+    /// feed is at export, never a default. The message says export refuses.
+    #[test]
+    fn missing_thickness_is_an_error() {
+        let mut p = sample_project();
+        p.stock.thickness_mm = None;
+        let problems = validate(&p);
+        assert_eq!(problems, vec![Problem::StockThicknessUnset]);
+        assert!(problems[0].is_error());
+        assert_eq!(
+            problems[0].to_string(),
+            "the stock has no thickness_mm; export fails until it is set"
+        );
+    }
+
+    /// #64: an unset Profile depth is an error naming the operation.
+    #[test]
+    fn missing_depth_is_an_error() {
+        let mut p = sample_project();
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.depth_mm = None;
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::OperationValueUnset {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                field: "depth_mm",
+            }]
+        );
+        assert!(problems[0].is_error());
+        assert_eq!(
+            problems[0].to_string(),
+            "operation `Cut out` (`o1`) has no depth_mm; export fails until it is set"
+        );
+    }
+
+    /// #64: one run reports the unset thickness, depth and tool rates
+    /// together, so the user fixes them in one edit.
+    #[test]
+    fn missing_thickness_depth_and_feeds_are_reported_together() {
+        let mut p = sample_project();
+        p.stock.thickness_mm = None;
+        p.tools[0].feed_mm_min = None;
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.depth_mm = None;
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(problems.contains(&Problem::StockThicknessUnset));
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::OperationValueUnset { field, .. } if *field == "depth_mm"))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::ToolValueUnset { field, .. } if *field == "feed_mm_min"))
+        );
     }
 
     #[test]
@@ -708,7 +770,7 @@ mod tests {
     fn non_positive_depth_is_error() {
         let mut p = sample_project();
         let Operation::Profile(op) = &mut p.operations[0];
-        op.depth_mm = 0.0;
+        op.depth_mm = Some(0.0);
         let problems = validate(&p);
         assert!(
             matches!(&problems[..], [Problem::OutOfRange { field, .. }] if field == "operations[o1].depth_mm"),
@@ -1004,11 +1066,11 @@ mod tests {
         let mut p = sample_project();
         p.stock.width_mm = MAX_COORDINATE_MM;
         p.stock.height_mm = MAX_COORDINATE_MM;
-        p.stock.thickness_mm = MAX_COORDINATE_MM;
+        p.stock.thickness_mm = Some(MAX_COORDINATE_MM);
         assert_eq!(validate(&p), vec![], "the limit is accepted");
         p.stock.width_mm = MAX_COORDINATE_MM + 0.5;
         p.stock.height_mm = 1e15;
-        p.stock.thickness_mm = 1e300;
+        p.stock.thickness_mm = Some(1e300);
         assert_eq!(
             error_fields(&validate(&p)),
             vec!["stock.width_mm", "stock.height_mm", "stock.thickness_mm"]

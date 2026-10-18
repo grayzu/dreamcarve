@@ -42,7 +42,7 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
         .expect("operation's tool is in the project");
     let feed = tool.feed_mm_min.expect("tool has a feed");
     let plunge = tool.plunge_mm_min.expect("tool has a plunge rate");
-    let safe_z = project.stock.thickness_mm + op.safe_z_mm;
+    let safe_z = project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm;
     let floor_z = -op.through_cut_allowance_mm;
     let at_or_above = |z: f64, limit: f64| z >= limit - EPS_MM;
 

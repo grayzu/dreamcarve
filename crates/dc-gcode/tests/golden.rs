@@ -81,7 +81,7 @@ fn project(
     project.stock = Stock {
         width_mm,
         height_mm,
-        thickness_mm: THICKNESS_MM,
+        thickness_mm: Some(THICKNESS_MM),
     };
     project.origin = MachineOrigin {
         xy: OriginXy::BottomLeft,
@@ -125,7 +125,7 @@ fn project(
     };
     op.targets = targets;
     op.side = side;
-    op.depth_mm = depth_mm;
+    op.depth_mm = Some(depth_mm);
     op.step_down_mm = Some(4.0);
     op.direction = CutDirection::Climb;
     op.through_cut_allowance_mm = 0.0;
