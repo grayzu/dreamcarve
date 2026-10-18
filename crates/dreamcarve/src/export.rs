@@ -215,13 +215,16 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
             .iter()
             .find(|t| t.id == op.tool)
             .map_or("?", |t| t.name.as_str());
+        // Validation refuses an unset depth, so an exported one is set.
+        let depth = op
+            .depth_mm
+            .map_or_else(|| "?".to_owned(), |d| d.to_string());
         println!(
-            "  {} `{}`: tool `{}` ({tool}), {} target(s), {} mm deep",
+            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} mm deep",
             op.id,
             op.name,
             op.tool,
             op.targets.len(),
-            op.depth_mm
         );
     }
     // #57: the program does not stop for the first tool.

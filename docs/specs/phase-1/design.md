@@ -90,7 +90,7 @@ figures, are in the user guide chapter "Shapes, holes, and islands".
 ### dc-project
 
 ```rust
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 
 pub struct Project {
     pub version: u32,
@@ -106,7 +106,8 @@ pub struct Project {
     pub post_processor: PostProcessor,        // embedded copy, see dc-project::post_processor
 }
 
-pub struct Stock { pub width_mm: f64, pub height_mm: f64, pub thickness_mm: f64 }
+pub struct Stock { pub width_mm: f64, pub height_mm: f64, pub thickness_mm: Option<f64> }
+// thickness_mm is None until the user sets it (#64); validation errors, nothing defaults it.
 // Stock occupies [0,width]×[0,height]×[0,thickness] in project space.
 
 pub struct MachineOrigin {
@@ -135,7 +136,7 @@ pub struct ProfileOp {
     pub id: OperationId, pub name: String, pub enabled: bool,
     pub targets: Vec<InstanceId>, pub tool: ToolId,
     pub side: Side,                         // Inside | Outside | OnLine
-    pub depth_mm: f64,                      // from stock top
+    pub depth_mm: Option<f64>,              // from stock top; None until set (#64), a validation error
     pub step_down_mm: Option<f64>,          // overrides tool.step_down_mm
     pub direction: CutDirection,            // Climb | Conventional
     pub through_cut_allowance_mm: f64,      // default 0; explicit permission to go below stock bottom
@@ -156,12 +157,14 @@ Serialization: serde + serde_json, pretty-printed, keys in declaration order.
 `OriginXy` and `ToolKind` save a choice without data as a plain string
 (`"xy": "bottom_left"`) and one with data as a one-key object
 (`"xy": { "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`); version 3 made this
-change (#46).
+change (#46). Version 4 made `stock.thickness_mm` and each Profile's
+`depth_mm` nullable, so `init` can leave them unset (#64); the migration
+carries every version 3 number over unchanged.
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
 magnitudes beyond `dc_geometry::MAX_COORDINATE_MM`, an unsafe post-processor
-`file_extension`; disabled operations, unset tool
+`file_extension`, an unset stock thickness or operation depth; disabled operations, unset tool
 feeds and open profiles as warnings). Tool problems name the tool by name
 and id. A file with a newer version
 fails with `LoadError::NewerVersion`.
@@ -386,12 +389,13 @@ dreamcarve posts
 ```
 
 `init` builds a project: stock = drawing bounds plus 10 mm margin each side,
-thickness 12 mm. The instance offset and the stock size are rounded up to
+thickness `None` (the importer's instance `z_top` is a nominal 12 mm,
+which phase 1 never reads). The instance offset and the stock size are rounded up to
 0.01 mm, ignoring up to 0.001 mm of flattening noise above a multiple, so
 the margin holds to the program's 0.001 mm resolution and the file reads
 cleanly. Origin BottomLeft/StockTop, one tool "Set me" with
 `diameter 6.35`, flutes 2, feeds `None`, one Profile op targeting every
-closed instance, outside, depth 12, step 4, climb, safe Z 5, tabs
+closed instance, outside, depth `None`, step 4, climb, safe Z 5, tabs
 `Count(4)` 8×3 rect. Exit codes: 0 ok, 1 validation/export error, 2 usage.
 `check` prints problems and warnings and exits 1 on any error-class problem.
 

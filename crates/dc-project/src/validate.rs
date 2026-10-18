@@ -7,7 +7,9 @@
 //!
 //! Error-class problems make a project unsafe or impossible to machine
 //! (dangling ids, non-positive dimensions, non-finite numbers, coordinates,
-//! transforms and stock sides beyond [`MAX_COORDINATE_MM`]). Warning-class
+//! transforms and stock sides beyond [`MAX_COORDINATE_MM`], and an unset
+//! stock thickness or operation depth, which nothing may default; #64).
+//! Warning-class
 //! problems still allow a correct result but need the user's attention
 //! (disabled operations, tools without feeds or RPM, which export rejects
 //! when such a tool is actually used).
@@ -109,6 +111,18 @@ pub enum Problem {
         /// The unset field, such as `feed_mm_min`.
         field: &'static str,
     },
+    /// The stock thickness is unset. It sets depth, tab heights and, with
+    /// Z zero at the stock bottom, safe Z, so it is never defaulted (#64).
+    StockThicknessUnset,
+    /// An operation has no value for a field export needs (its depth).
+    OperationValueUnset {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+        /// The unset field, such as `depth_mm`.
+        field: &'static str,
+    },
     /// A tool's number is outside the range its field allows.
     ToolOutOfRange {
         /// The tool.
@@ -157,6 +171,8 @@ impl Problem {
             | Self::OutOfRange { .. }
             | Self::NonFinite { .. }
             | Self::MissingPlaceholder { .. }
+            | Self::StockThicknessUnset
+            | Self::OperationValueUnset { .. }
             | Self::ToolOutOfRange { .. }
             | Self::UnsafeFileExtension { .. } => Severity::Error,
         }
@@ -216,6 +232,17 @@ impl fmt::Display for Problem {
                     "tool `{name}` (`{tool}`) has no {field}; export fails until it is set"
                 )
             }
+            Self::StockThicknessUnset => {
+                f.write_str("the stock has no thickness_mm; export fails until it is set")
+            }
+            Self::OperationValueUnset {
+                operation,
+                name,
+                field,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has no {field}; export fails until it is set"
+            ),
             Self::ToolOutOfRange {
                 tool,
                 name,
@@ -272,7 +299,10 @@ impl Validator {
         self.positive("flatten_tolerance_mm", p.flatten_tolerance_mm);
         self.stock_side("stock.width_mm", p.stock.width_mm);
         self.stock_side("stock.height_mm", p.stock.height_mm);
-        self.stock_side("stock.thickness_mm", p.stock.thickness_mm);
+        match p.stock.thickness_mm {
+            Some(thickness_mm) => self.stock_side("stock.thickness_mm", thickness_mm),
+            None => self.problems.push(Problem::StockThicknessUnset),
+        }
         if let OriginXy::Custom { x_mm, y_mm } = p.origin.xy {
             self.finite("origin.xy.x_mm", x_mm);
             self.finite("origin.xy.y_mm", y_mm);
@@ -438,7 +468,14 @@ impl Validator {
                 }
             }
             let at = format!("operations[{}]", op.id);
-            self.positive(&format!("{at}.depth_mm"), op.depth_mm);
+            match op.depth_mm {
+                Some(depth_mm) => self.positive(&format!("{at}.depth_mm"), depth_mm),
+                None => self.problems.push(Problem::OperationValueUnset {
+                    operation: op.id.clone(),
+                    name: op.name.clone(),
+                    field: "depth_mm",
+                }),
+            }
             if let Some(step) = op.step_down_mm {
                 self.positive(&format!("{at}.step_down_mm"), step);
             }
@@ -743,16 +780,12 @@ mod tests {
         let problems = validate(&p);
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems.contains(&Problem::StockThicknessUnset));
-        assert!(
-            problems
-                .iter()
-                .any(|p| matches!(p, Problem::OperationValueUnset { field, .. } if *field == "depth_mm"))
-        );
-        assert!(
-            problems
-                .iter()
-                .any(|p| matches!(p, Problem::ToolValueUnset { field, .. } if *field == "feed_mm_min"))
-        );
+        assert!(problems.iter().any(
+            |p| matches!(p, Problem::OperationValueUnset { field, .. } if *field == "depth_mm")
+        ));
+        assert!(problems.iter().any(
+            |p| matches!(p, Problem::ToolValueUnset { field, .. } if *field == "feed_mm_min")
+        ));
     }
 
     #[test]

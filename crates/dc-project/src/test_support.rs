@@ -59,7 +59,7 @@ pub fn sample_project() -> Project {
         stock: Stock {
             width_mm: 100.0,
             height_mm: 100.0,
-            thickness_mm: 6.0,
+            thickness_mm: Some(6.0),
         },
         origin: MachineOrigin {
             xy: OriginXy::BottomLeft,
@@ -84,7 +84,7 @@ pub fn sample_project() -> Project {
             targets: vec![InstanceId::new("i1")],
             tool: ToolId::new("t1"),
             side: Side::Outside,
-            depth_mm: 6.0,
+            depth_mm: Some(6.0),
             step_down_mm: None,
             direction: CutDirection::Climb,
             through_cut_allowance_mm: 0.0,

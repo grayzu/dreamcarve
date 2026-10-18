@@ -16,7 +16,7 @@ phase 1.
   "depth_mm": 12.0,
   "step_down_mm": 4.0,
   "direction": "climb",
-  "through_cut_allowance_mm": 0.0,
+  "through_cut_allowance_mm": 0.2,
   "safe_z_mm": 5.0,
   "tabs": { … }
 }
@@ -32,7 +32,7 @@ phase 1.
 | `targets` | The ids of the instances to cut. `init` lists every instance with a closed outline. |
 | `tool` | The id of the tool to cut with. |
 | `side` | `"outside"`, `"inside"`, or `"on_line"`. See [Side](#side). |
-| `depth_mm` | How deep to cut, measured down from the stock top. |
+| `depth_mm` | How deep to cut, measured down from the stock top. **Required:** `init` leaves it `null`, and export refuses until you set it. To cut through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
 | `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, export fails. |
 | `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. 0 by default. See [Cutting through](#cutting-through). |

@@ -111,7 +111,7 @@ impl MachineTransform {
             OriginXy::Custom { x_mm, y_mm } => (x_mm, y_mm),
         };
         let oz = match project.origin.z {
-            OriginZ::StockTop => stock.thickness_mm,
+            OriginZ::StockTop => stock.thickness_mm.ok_or(ExportError::MissingThickness)?,
             OriginZ::StockBottom => 0.0,
         };
         Ok(Self {

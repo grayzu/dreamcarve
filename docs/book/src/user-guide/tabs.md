@@ -28,9 +28,10 @@ Set `"tabs": null` for no tabs.
 | `height_mm` | Height of the tab top above the stock bottom: how thick the bridge is. |
 | `shape` | `"rect"` (square shoulders) or `"smooth"` (a gentle ramp up and down). |
 
-The coaster's tabs are 8 mm wide and 3 mm tall, in 12 mm stock: each pass
-deeper than 3 mm above the stock bottom rises to Z 3 mm over each tab. With
-work zero at the stock top, that is Z −9 in the program.
+The coaster's tabs are 8 mm wide and 3 mm tall, in the quick start's
+11.8 mm plywood: each pass deeper than 3 mm above the stock bottom rises to
+Z 3 mm over each tab. With work zero at the stock top, that is Z −8.8 in
+the program.
 
 ## Placement
 

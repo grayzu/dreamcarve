@@ -106,6 +106,17 @@ pub enum CamError {
         /// The step-down in effect, mm.
         step_down_mm: f64,
     },
+    /// The stock thickness is unset. Validation reports this first; it is
+    /// never defaulted (#64).
+    #[error("the stock has no thickness_mm; export fails until it is set")]
+    MissingThickness,
+    /// The operation's depth is unset. Validation reports this first; it is
+    /// never defaulted (#64).
+    #[error("operation `{op}` has no depth_mm; export fails until it is set")]
+    MissingDepth {
+        /// The operation.
+        op: OperationId,
+    },
     /// The cut depth is not a positive number.
     #[error("operation `{op}` has depth {depth_mm} mm; it must be more than 0")]
     InvalidDepth {

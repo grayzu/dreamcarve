@@ -167,11 +167,17 @@ pub fn generate_profile(
                 op: op.id.clone(),
                 tool: tool.name.clone(),
             })?;
-    let thickness_mm = project.stock.thickness_mm;
+    let thickness_mm = project
+        .stock
+        .thickness_mm
+        .ok_or(CamError::MissingThickness)?;
+    let depth_mm = op
+        .depth_mm
+        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
     let pass_z = pass_z_mm(
         &op.id,
         thickness_mm,
-        op.depth_mm,
+        depth_mm,
         step_down_mm,
         op.through_cut_allowance_mm,
     )?;

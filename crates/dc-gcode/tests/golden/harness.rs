@@ -167,7 +167,10 @@ fn emit_program(project: &Project) -> String {
 
 /// The stock thickness; every case sets it.
 fn thickness(project: &Project) -> f64 {
-    project.stock.thickness_mm.expect("every case sets the stock thickness")
+    project
+        .stock
+        .thickness_mm
+        .expect("every case sets the stock thickness")
 }
 
 /// The machine Z of the tab top, if the operation has tabs. Machine Z zero
