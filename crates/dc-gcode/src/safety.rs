@@ -545,10 +545,12 @@ fn check_reproduces(
 mod tests {
     use super::*;
     use crate::emit::emit;
-    use dc_cam::{Move, generate_profile};
-    use dc_geometry::Point3;
+    use std::f64::consts::FRAC_PI_2;
+
+    use dc_cam::{Move, MoveKind, generate_profile};
+    use dc_geometry::{Point, Point3};
     use dc_project::test_support::sample_project;
-    use dc_project::{Operation, Project, SpindleControl};
+    use dc_project::{ArcFormat, Axis, Operation, Project, SpindleControl};
 
     /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
     /// plunge 300, 18000 rpm, GRBL), its operation, and its tool.
@@ -1003,5 +1005,156 @@ mod tests {
         );
         let text = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54\nG0 Z5\nM3 S18000\nG4 P3\nG0 Z5\nM5\n";
         check_text(text).unwrap();
+    }
+
+    /// Rapid in, plunge, a straight cut to (10, 0), a quarter circle
+    /// counter-clockwise about (10, 10) to (20, 10), retract. Project Z is
+    /// machine Z + 6 in the fixture.
+    fn line_then_arc() -> Toolpath {
+        Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+                Move::linear(Point3::new(0.0, 0.0, 5.0), 300.0),
+                Move::linear(Point3::new(10.0, 0.0, 5.0), 1000.0),
+                Move {
+                    kind: MoveKind::ArcCcw {
+                        centre: Point::new(10.0, 10.0),
+                    },
+                    to: Point3::new(20.0, 10.0, 5.0),
+                    feed_mm_min: Some(1000.0),
+                },
+                Move::rapid(Point3::new(20.0, 10.0, 11.0)),
+            ],
+        }
+    }
+
+    /// The program for [`line_then_arc`], with `arc` as the arc's lines.
+    fn line_then_arc_text(arc: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F1000\n{arc}G0 Z5\nM5\n"
+        )
+    }
+
+    /// Runs the whole safety pass, S6 included, on `text` as the fixture's
+    /// operation with `toolpath`.
+    fn check_against(text: &str, toolpath: &Toolpath) -> Result<(), ExportError> {
+        let (project, op, tool) = fixture();
+        let transform = MachineTransform::new(&project).unwrap();
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath,
+            lines: 1..text.lines().count() + 1,
+        }];
+        check(
+            text,
+            &project.post_processor,
+            &transform,
+            project.stock.thickness_mm,
+            &spans,
+        )
+    }
+
+    fn is_mismatch_at(result: &Result<(), ExportError>, at: usize) -> bool {
+        matches!(result, Err(ExportError::MotionMismatch { index, .. }) if *index == at)
+    }
+
+    /// The arc, written as it should be, passes; the test programs below
+    /// differ from it in one line.
+    #[test]
+    fn arc_as_written_passes() {
+        let text = line_then_arc_text("G3 X20 Y10 I0 J10\n");
+        check_against(&text, &line_then_arc()).unwrap();
+    }
+
+    /// S6, #60: G2 and G3 have the same radius check, so only S6 sees an
+    /// arc that runs the other way round.
+    #[test]
+    fn reversed_arc_fails_reproduction() {
+        let text = line_then_arc_text("G2 X20 Y10 I0 J10\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 3), "{result:?}");
+    }
+
+    /// S6, #60: the same end points about a centre on the other side of the
+    /// chord.
+    #[test]
+    fn wrong_arc_centre_fails() {
+        let text = line_then_arc_text("G3 X20 Y10 I10 J0\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 3), "{result:?}");
+    }
+
+    /// S6, #60: a move between two toolpath points that the toolpath does
+    /// not have.
+    #[test]
+    fn extra_move_between_points_fails() {
+        let text = line_then_arc_text("G3 X20 Y10 I0 J10\n")
+            .replace("X10 F1000\n", "X5 Y3 F1000\nX10 Y0\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 2), "{result:?}");
+        // After the toolpath's last move, only a retract may follow.
+        let text = line_then_arc_text("G3 X20 Y10 I0 J10\n").replace("M5\n", "X30\nM5\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 5), "{result:?}");
+    }
+
+    /// The arc of [`line_then_arc`] as `n` straight moves, counter-clockwise
+    /// (`ccw`) as in the toolpath, or the long way round clockwise.
+    fn flattened(n: u32, ccw: bool) -> String {
+        let sweep = if ccw { FRAC_PI_2 } else { -3.0 * FRAC_PI_2 };
+        let mut text = String::new();
+        for k in 1..=n {
+            let angle = -FRAC_PI_2 + sweep * f64::from(k) / f64::from(n);
+            let (x, y) = (10.0 + 10.0 * angle.cos(), 10.0 + 10.0 * angle.sin());
+            text.push_str(&format!("G1 X{x:.3} Y{y:.3}\n"));
+        }
+        text
+    }
+
+    /// S6, #60: an arc written as short straight moves, as with
+    /// `arc_interpolation: false` or when the controller would reject the
+    /// rounded arc, still reproduces the toolpath. The same end point
+    /// reached the long way round does not.
+    #[test]
+    fn flattened_arc_passes() {
+        let text = line_then_arc_text(&flattened(64, true));
+        check_against(&text, &line_then_arc()).unwrap();
+        let text = line_then_arc_text(&flattened(192, false));
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 3), "{result:?}");
+
+        // Through the emitter: flattened, IJ, and R, mirrored or not.
+        let (mut project, op, tool) = fixture();
+        for (interpolate, format, x_axis) in [
+            (false, ArcFormat::Ij, Axis::X),
+            (true, ArcFormat::Ij, Axis::X),
+            (true, ArcFormat::R, Axis::X),
+            (true, ArcFormat::Ij, Axis::NegX),
+            (true, ArcFormat::R, Axis::NegX),
+        ] {
+            let motion = &mut project.post_processor.motion;
+            motion.arc_interpolation = interpolate;
+            motion.arc_format = format;
+            project.post_processor.coordinate_system.x_axis = x_axis;
+            let (toolpath, _) = generate_profile(&project, &op).unwrap();
+            emit_one(&project, &op, &tool, toolpath).unwrap();
+            emit_one(&project, &op, &tool, line_then_arc()).unwrap();
+        }
+    }
+
+    /// Mutation guard, #60: an emitter that writes every arc the other way
+    /// round fails its own safety pass.
+    #[test]
+    fn flipped_arcs_fail_emit() {
+        let (project, op, tool) = fixture();
+        crate::emit::FLIP_ARCS.set(true);
+        let result = emit_one(&project, &op, &tool, line_then_arc());
+        crate::emit::FLIP_ARCS.set(false);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { index: 3, .. })),
+            "{result:?}"
+        );
+        emit_one(&project, &op, &tool, line_then_arc()).unwrap();
     }
 }

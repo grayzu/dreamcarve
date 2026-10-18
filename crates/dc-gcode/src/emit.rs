@@ -402,6 +402,13 @@ pub const MAX_MESSAGE_CHARS: usize = 96;
 /// Dwell seconds are written to the millisecond.
 const DWELL_DECIMAL_PLACES: u8 = 3;
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only mutation: when set, every arc is written the other way
+    /// round, so a test can show the safety pass rejects it (#60).
+    pub(crate) static FLIP_ARCS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Most straight moves one flattened arc becomes.
 const MAX_ARC_SEGMENTS: f64 = 100_000.0;
 
@@ -976,7 +983,10 @@ impl<'a> Writer<'a> {
     /// turns clockwise into counter-clockwise.
     fn arc_command(&self, arc: &ArcGeometry) -> String {
         let motion = &self.post.motion;
-        if arc.clockwise != self.transform.mirrors_xy() {
+        let clockwise = arc.clockwise != self.transform.mirrors_xy();
+        #[cfg(test)]
+        let clockwise = clockwise != FLIP_ARCS.get();
+        if clockwise {
             motion.cw_arc_command.clone()
         } else {
             motion.ccw_arc_command.clone()
