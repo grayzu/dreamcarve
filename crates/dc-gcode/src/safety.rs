@@ -590,7 +590,19 @@ mod tests {
 
     /// [`check_text`] with spindle control set to `control`.
     fn check_text_as(text: &str, control: SpindleControl) -> Result<(), ExportError> {
+        let (project, _, _) = fixture();
+        check_text_on(text, project.post_processor, control)
+    }
+
+    /// [`check_text_as`] with the post-processor `post` in place of the
+    /// fixture's.
+    fn check_text_on(
+        text: &str,
+        post: PostProcessor,
+        control: SpindleControl,
+    ) -> Result<(), ExportError> {
         let (mut project, op, tool) = fixture();
+        project.post_processor = post;
         project.post_processor.feed_speed.spindle_control = control;
         let transform = MachineTransform::new(&project).unwrap();
         let toolpath = Toolpath::default();
@@ -1003,5 +1015,63 @@ mod tests {
         );
         let text = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54\nG0 Z5\nM3 S18000\nG4 P3\nG0 Z5\nM5\n";
         check_text(text).unwrap();
+    }
+
+    /// #57: grblHAL's `M6` stops the program like `M0`, and the user fits
+    /// the bit and sets Z zero there. So it must come at safe Z, Z is
+    /// unknown after it, and the setup is written again before the program
+    /// moves or starts the spindle.
+    #[test]
+    fn m6_counts_as_a_pause() {
+        let check = |text: &str| {
+            let grblhal = crate::post::lookup("grblhal").unwrap();
+            check_text_on(text, grblhal, SpindleControl::Automatic)
+        };
+        let ok = "G21 G90\nG54\nG0 Z5\nM5\nT2 M6\nG21 G90 G54 G0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        check(ok).unwrap();
+
+        // No retract after the change: Z is unknown.
+        let no_lift = "G21 G90\nG54\nG0 Z5\nM5\nT2 M6\nG21 G90 G54 M3 S18000\nG4 P3\nG0 Z5\nM5\n";
+        let err = check(no_lift).unwrap_err();
+        assert!(
+            matches!(err, ExportError::SpindleStartNotAtSafeZ { line: 6 }),
+            "{err:?}"
+        );
+
+        // No setup after the change.
+        let err = check("G21 G90\nG54\nG0 Z5\nM5\nT2 M6\nG0 Z5\n").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MissingSetupAfterPause {
+                    line: 6,
+                    pause_line: 5,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+
+        // Below safe Z after a cut, and at program start where Z is unknown.
+        for (text, line) in [
+            (
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nM5\nT2 M6\n",
+                9,
+            ),
+            ("G21 G90\nG54\nT2 M6\n", 3),
+        ] {
+            let err = check(text).unwrap_err();
+            assert!(
+                matches!(err, ExportError::PauseNotAtSafeZ { line: l } if l == line),
+                "{text:?}: {err:?}"
+            );
+        }
+
+        // GRBL has no M6: the word is refused outright.
+        let err = check_text(ok).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::ForbiddenWord { line: 5, word } if word == "M6"),
+            "{err:?}"
+        );
     }
 }

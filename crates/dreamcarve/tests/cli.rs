@@ -498,3 +498,30 @@ fn export_lists_each_pause() {
         "both manual pauses are listed: {summary}"
     );
 }
+
+/// #57: the program does not stop for the first tool. The user fits it and
+/// sets work zero with it before starting, so `export` says so, with the
+/// tool's number and name, in both spindle modes.
+#[test]
+fn export_tells_user_to_zero_before_start() {
+    let dir = work_dir("export_tells_user_to_zero_before_start");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+        let mut project = load_file(&dcv).project;
+        project.post_processor.feed_speed.spindle_control = control;
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{control:?} export: {}",
+            stderr(&out)
+        );
+        let summary = stdout(&out);
+        assert!(
+            summary.contains("Before you start: fit T1 Set me and set work zero with it."),
+            "{control:?}: {summary}"
+        );
+    }
+}

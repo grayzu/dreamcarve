@@ -2223,4 +2223,155 @@ mod tests {
             }
         }
     }
+
+    /// #57: the user fits the first tool and sets work zero before starting
+    /// the program, so nothing stops the program before its first cut but,
+    /// with manual spindle control, the pause to turn the router on.
+    #[test]
+    fn first_tool_has_no_tool_change_pause() {
+        for (post, tools) in [("grblhal", 1), ("grblhal", 2), ("grbl", 1)] {
+            for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+                let mut project = project_with(post);
+                project.post_processor.feed_speed.spindle_control = control;
+                let ops = if tools == 1 {
+                    ops_for(&project)
+                } else {
+                    two_tool_ops(&mut project)
+                };
+                let text = emit(&project, &ops, DATE).unwrap().0.text;
+                let lines: Vec<&str> = text.lines().collect();
+                let cut = first_index(&lines, is_cut).unwrap();
+                let stops: Vec<&str> = lines[..cut]
+                    .iter()
+                    .filter(|l| has_word(l, "M0") || has_word(l, "M6"))
+                    .copied()
+                    .collect();
+                let expected: &[&str] = match control {
+                    SpindleControl::Automatic => &[],
+                    SpindleControl::Manual => {
+                        &["M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)"]
+                    }
+                };
+                assert_eq!(stops, expected, "{post} {control:?} {tools} tool(s)");
+                assert!(
+                    !text.contains("Fit T1"),
+                    "{post} {control:?} {tools} tool(s)"
+                );
+            }
+        }
+    }
+
+    /// #57: on grblHAL a later tool is changed with `T<n> M6`, which stops
+    /// the program in a state where the user may jog to set Z zero. Before
+    /// it the program retracts to safe Z and stops the spindle; after it,
+    /// it writes the setup again, retracts from the new zero, and starts
+    /// the spindle with its dwell. There is no `M0` in the change.
+    #[test]
+    fn grblhal_later_tool_uses_m6() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let text = emit(&project, &ops, DATE).unwrap().0.text;
+        let lines: Vec<&str> = text.lines().collect();
+        let changes: Vec<usize> = (0..lines.len())
+            .filter(|&i| has_word(lines[i], "M6"))
+            .collect();
+        let [change] = changes[..] else {
+            panic!("one M6, not {changes:?}: {text}");
+        };
+        assert_eq!(code(lines[change]), "T2 M6", "{}", lines[change]);
+        assert!(
+            lines[change].contains("(MSG, Fit T2 3 mm downcut. Set Z zero, then resume.)"),
+            "{}",
+            lines[change]
+        );
+
+        let last_cut = (0..change).rev().find(|&k| is_cut(lines[k])).unwrap();
+        let next_cut = (change..lines.len()).find(|&k| is_cut(lines[k])).unwrap();
+        assert!(
+            (last_cut..change).any(|k| has_word(lines[k], "M5")),
+            "the spindle stops before the change: {text}"
+        );
+        let z = z_before(&text, change);
+        assert!(
+            z.is_some_and(|z| z >= SAFE_Z_MACHINE - 1e-9),
+            "the change is at safe Z, not {z:?}"
+        );
+        assert!(
+            !(last_cut..next_cut).any(|k| has_word(lines[k], "M0")),
+            "no M0 in the change: {text}"
+        );
+
+        let start = (change..next_cut)
+            .find(|&k| has_word(lines[k], "M3"))
+            .unwrap();
+        let after = &lines[change + 1..start];
+        for word in ["G21", "G54", "G90", "G17", "G94"] {
+            assert!(
+                after.iter().any(|l| has_word(l, word)),
+                "no {word} after the change: {after:?}"
+            );
+        }
+        assert!(
+            after
+                .iter()
+                .any(|l| has_word(l, "G0") && code(l).contains('Z')),
+            "no retract after the change: {after:?}"
+        );
+        assert_eq!(code(lines[start]), "M3 S12000");
+        assert_eq!(lines[start + 1], "G4 P3.000");
+        let z = z_before(&text, start);
+        assert!(z.is_some_and(|z| z >= SAFE_Z_MACHINE - 1e-9), "{z:?}");
+    }
+
+    /// #57: grblHAL skips `M6` for the tool it already holds, and that
+    /// number survives from the previous job. A program that changes tools
+    /// first tells grblHAL which tool the user fitted, with `M61`, so a
+    /// later `M6` is never skipped. A one-tool program has no `M6` and so
+    /// no `M61`.
+    #[test]
+    fn grblhal_sets_current_tool_before_a_tool_change() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let text = emit(&project, &ops, DATE).unwrap().0.text;
+        let lines: Vec<&str> = text.lines().collect();
+        let set = first_index(&lines, |l| has_word(l, "M61")).unwrap();
+        assert_eq!(code(lines[set]), "M61 Q1");
+        let first_move = first_index(&lines, |l| code(l).contains('Z')).unwrap();
+        assert!(set < first_move, "{text}");
+        assert_eq!(lines.iter().filter(|l| has_word(l, "M61")).count(), 1);
+
+        let text = emit_text(&project_with("grblhal"));
+        assert!(!text.lines().any(|l| has_word(l, "M61")), "{text}");
+    }
+
+    /// #57: GRBL has no `M6`, and in its `M0` feed hold it refuses to jog,
+    /// so the user cannot set Z zero for a new bit. A GRBL program that
+    /// needs a second tool is refused, naming the tools. Several operations
+    /// with one tool still export.
+    #[test]
+    fn grbl_multi_tool_export_fails() {
+        for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            let mut project = project_with("grbl");
+            project.post_processor.feed_speed.spindle_control = control;
+            let mut ops = two_tool_ops(&mut project);
+            let err = emit(&project, &ops, DATE).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::ToolChangeNotSupported { post, tools }
+                        if post == "grbl" && tools == &["6.35 mm upcut", "3 mm downcut"]
+                ),
+                "{control:?}: {err:?}"
+            );
+            let message = err.to_string();
+            assert!(
+                message.contains("6.35 mm upcut") && message.contains("3 mm downcut"),
+                "{message}"
+            );
+
+            ops[1].1 = ops[0].1.clone();
+            ops[1].0.tool = ops[0].1.id.clone();
+            emit(&project, &ops, DATE).unwrap();
+        }
+    }
 }
