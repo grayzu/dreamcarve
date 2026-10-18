@@ -317,6 +317,44 @@ fn check_reports_open_paths() {
     );
 }
 
+/// Issue #58: a closed outline that crosses itself (the bowtie (0,0)
+/// (60,40) (60,0) (0,30)) has no clear inside, so `check` reports it as an
+/// error naming its instance and exits 1, and `export` writes nothing.
+#[test]
+fn self_intersecting_target_fails_check() {
+    let dir = work_dir("self_intersecting_target_fails_check");
+    std::fs::write(
+        dir.join("part.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="bowtie" d="M 10 10 L 70 50 L 70 10 L 10 40 Z"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "part.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    set_rates(&dir.join("part.dcv"), 1500.0, 500.0, 18000);
+
+    let out = run(&dir, &["check", "part.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(1), "check output: {report}");
+    let line = report
+        .lines()
+        .find(|l| l.contains("bowtie"))
+        .unwrap_or_else(|| panic!("check names the instance: {report}"));
+    assert!(line.contains("error"), "reported as an error: {line}");
+    assert!(line.contains("crosses itself"), "says why: {line}");
+
+    let out = run(&dir, &["export", "part.dcv"]);
+    assert_eq!(out.status.code(), Some(1), "export: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("bowtie"),
+        "export names the instance: {}",
+        stderr(&out)
+    );
+    assert!(!dir.join("part.nc").exists(), "no program is written");
+}
+
 /// Capability 5: both bundled post-processors are listed by id, grblHAL
 /// first, as `dc_gcode::post::bundled` orders them.
 #[test]

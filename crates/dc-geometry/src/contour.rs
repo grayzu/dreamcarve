@@ -138,6 +138,104 @@ mod tests {
         );
     }
 
+    /// The bowtie from issue #58. Edges (0,0)-(60,40) and (60,0)-(0,30)
+    /// cross where y = 2x/3 meets y = 30 - x/2: x = 180/7, y = 120/7. The
+    /// lobes wind opposite ways but differ in area, so the net area is not
+    /// zero and only the crossing check can reject it.
+    #[test]
+    fn bowtie_is_rejected_as_self_intersecting() {
+        let bowtie = Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(60.0, 40.0),
+                Vertex::line(60.0, 0.0),
+                Vertex::line(0.0, 30.0),
+            ],
+            true,
+        );
+        let Err(GeometryError::SelfIntersecting { at }) = Contour::new(bowtie) else {
+            panic!("bowtie must be rejected as self-intersecting");
+        };
+        assert_approx_eq!(at.x, 180.0 / 7.0, 1e-6);
+        assert_approx_eq!(at.y, 120.0 / 7.0, 1e-6);
+    }
+
+    /// A figure-8 whose two crossing strokes are bulge arcs, A→B and C→D,
+    /// mirror images of each other across the Y axis, so they cross once,
+    /// at x = 0. The right loop (bulge 2, about 253°) is bigger than the
+    /// left (a semicircle), so the net area is not zero.
+    #[test]
+    fn figure_eight_with_arcs_is_rejected() {
+        let figure_eight = Polyline::new(
+            vec![
+                Vertex::new(-5.0, 5.0, 0.25),
+                Vertex::new(5.0, -5.0, 2.0),
+                Vertex::new(5.0, 5.0, -0.25),
+                Vertex::new(-5.0, -5.0, -1.0),
+            ],
+            true,
+        );
+        assert!(figure_eight.signed_area_mm2().abs() > 1.0);
+        let Err(GeometryError::SelfIntersecting { at }) = Contour::new(figure_eight) else {
+            panic!("figure-8 must be rejected as self-intersecting");
+        };
+        assert_approx_eq!(at.x, 0.0, 1e-6);
+        assert!(at.y.abs() < 5.0, "crossing between the lobes: {at:?}");
+    }
+
+    /// Outlines that touch themselves only where neighbouring segments
+    /// share a vertex still construct: a square, a concave star, a square
+    /// with an extra vertex in the middle of an edge, one with a vertex
+    /// repeated, and a circle made of two arcs.
+    #[test]
+    fn simple_polygons_are_accepted() {
+        let star: Vec<Vertex> = (0..10)
+            .map(|k| {
+                let angle = f64::from(k) * std::f64::consts::PI / 5.0;
+                let r = if k % 2 == 0 { 10.0 } else { 4.0 };
+                Vertex::line(r * angle.cos(), r * angle.sin())
+            })
+            .collect();
+        let cases = [
+            ("square", Polyline::rect(Point::new(0.0, 0.0), 10.0, 10.0)),
+            ("star", Polyline::new(star, true)),
+            (
+                "collinear vertex",
+                Polyline::new(
+                    vec![
+                        Vertex::line(0.0, 0.0),
+                        Vertex::line(5.0, 0.0),
+                        Vertex::line(10.0, 0.0),
+                        Vertex::line(10.0, 10.0),
+                        Vertex::line(0.0, 10.0),
+                    ],
+                    true,
+                ),
+            ),
+            (
+                "repeated vertex",
+                Polyline::new(
+                    vec![
+                        Vertex::line(0.0, 0.0),
+                        Vertex::line(10.0, 0.0),
+                        Vertex::line(10.0, 0.0),
+                        Vertex::line(10.0, 10.0),
+                        Vertex::line(0.0, 10.0),
+                        Vertex::line(0.0, 0.0),
+                    ],
+                    true,
+                ),
+            ),
+            ("circle", Polyline::circle(Point::new(0.0, 0.0), 5.0)),
+        ];
+        for (name, polyline) in cases {
+            assert!(
+                Contour::new(polyline).is_ok(),
+                "{name} must construct as a contour"
+            );
+        }
+    }
+
     #[test]
     fn single_vertex_is_rejected() {
         let one = Polyline::new(vec![Vertex::line(1.0, 1.0)], true);

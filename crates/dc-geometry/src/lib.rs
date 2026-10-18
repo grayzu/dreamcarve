@@ -81,9 +81,18 @@ pub enum GeometryError {
     /// The shape is degenerate and cannot be used.
     #[error("degenerate geometry: {0}")]
     Degenerate(DegenerateReason),
-    /// The contour crosses itself.
-    #[error("contour intersects itself")]
-    SelfIntersecting,
+    /// The outline crosses or touches itself: two segments that are not
+    /// neighbours meet, or neighbours overlap beyond their shared vertex.
+    /// Which area is material is then ambiguous, so it cannot be cut.
+    #[error(
+        "the outline crosses itself at ({x:.3}, {y:.3}) mm; redraw it so no edge crosses another (in Inkscape, Path → Break Apart separates joined shapes)",
+        x = .at.x,
+        y = .at.y
+    )]
+    SelfIntersecting {
+        /// Where the first crossing is, mm in the polyline's coordinates.
+        at: Point,
+    },
     /// Two closed contours overlap without one containing the other, so
     /// neither part-and-hole nor separate parts describes them. Indices are
     /// input positions, `first` < `second`.
