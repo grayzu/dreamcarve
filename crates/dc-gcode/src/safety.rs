@@ -154,9 +154,13 @@ fn arc_extremes(mv: &MachineMove) -> Vec<Point> {
         Some(r) => r_centre(sx, sy, ex, ey, r, machine_cw),
         None => Point::new(sx + mv.arc.i.unwrap_or(0.0), sy + mv.arc.j.unwrap_or(0.0)),
     };
-    Arc::from_ends(Point::new(sx, sy), Point::new(ex, ey), centre, !machine_cw)
-        .axis_extremes()
-        .collect()
+    let mut arc = Arc::from_ends(Point::new(sx, sy), Point::new(ex, ey), centre, !machine_cw);
+    // Fail-closed: an arc that ends where it starts is a full circle to
+    // the controller, though `check_not_full_circle` rejects it first.
+    if arc.sweep_rad.abs() < MIN_ARC_SWEEP_RAD {
+        arc.sweep_rad = TAU;
+    }
+    arc.axis_extremes().collect()
 }
 
 /// The centre GRBL and grblHAL compute for an R-format arc from
@@ -352,6 +356,7 @@ fn check_rules(
             }
             check_feed(mv, &limits, 2.0 * tolerance_mm)?;
             check_arc(mv)?;
+            check_not_full_circle(mv, post)?;
         } else {
             check_rapid(mv, &limits, transform, tolerance_mm)?;
         }
@@ -649,6 +654,29 @@ fn check_feed(
         }
     }
     Ok(())
+}
+
+/// An arc move whose end is its start within half a unit in the last
+/// written place is a full circle to the controller. Rejected anywhere in
+/// the program, fail-closed: S6 rejects it inside an operation, and this
+/// covers every other line, so S7 and the extents never see one.
+fn check_not_full_circle(mv: &MachineMove, post: &PostProcessor) -> Result<(), ExportError> {
+    if is_full_circle(mv, post) {
+        return Err(ExportError::FullCircleArc { line: mv.line });
+    }
+    Ok(())
+}
+
+/// Whether arc move `mv` ends where it starts, as the controller reads it.
+fn is_full_circle(mv: &MachineMove, post: &PostProcessor) -> bool {
+    if !matches!(mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw) {
+        return false;
+    }
+    let (Some(sx), Some(sy), Some(ex), Some(ey)) = (mv.from.x, mv.from.y, mv.to.x, mv.to.y) else {
+        return false;
+    };
+    let half_quantum = quantum_mm(post, mv.units) / mm_per_unit(mv.units) / 2.0;
+    (ex - sx).abs() < half_quantum && (ey - sy).abs() < half_quantum
 }
 
 /// An arc the controller will accept: I/J radii agree, or R spans the
@@ -1715,6 +1743,36 @@ mod tests {
 
     fn is_mismatch_at(result: &Result<(), ExportError>, at: usize) -> bool {
         matches!(result, Err(ExportError::MotionMismatch { index, .. }) if *index == at)
+    }
+
+    /// Security review of #62: a G2 that ends where it starts is a full
+    /// circle to the controller. This one, radius 10 about (105, 50), leaves
+    /// the 100 mm stock. It fails the check wherever it is, and the extents
+    /// count all of it, not zero sweep.
+    #[test]
+    fn full_circle_arc_fails_and_counts_whole() {
+        let text = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX95 Y50\nG1 Z-1 F300\nG2 X95 Y50 I10 J0 F1000\nG0 Z5\nM5\n";
+        let err = check_text(text).unwrap_err();
+        assert!(
+            matches!(err, ExportError::FullCircleArc { line: 8 }),
+            "{err:?}"
+        );
+        // Within half a unit in the last place is still the same point.
+        let near = text.replace("G2 X95 Y50", "G2 X95.0004 Y49.9996");
+        assert!(matches!(
+            check_text(&near),
+            Err(ExportError::FullCircleArc { line: 8 })
+        ));
+
+        let blocks = parse_program(text).unwrap();
+        let extents = extents(&blocks, Units::Mm);
+        let x = extents.x.unwrap();
+        let y = extents.y.unwrap();
+        assert!((x.max - 115.0).abs() < 1e-9, "{x:?}");
+        assert!(
+            (y.min - 40.0).abs() < 1e-9 && (y.max - 60.0).abs() < 1e-9,
+            "{y:?}"
+        );
     }
 
     /// The arc, written as it should be, passes; the test programs below

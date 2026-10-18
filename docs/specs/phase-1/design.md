@@ -356,7 +356,10 @@ Inputs: project, op. Output: toolpath in project space.
    S7 (every cutting move, mapped back to project space with its arc
    extremes and widened by its operation's tool radius, stays in the stock
    rectangle within one unit in the last written place:
-   `ExportError::OffStock { op, line, side, overhang_mm }`, #62).
+   `ExportError::OffStock { op, line, side, overhang_mm }`, #62). An arc
+   anywhere in the program whose end is its start within half a unit in
+   the last written place is a full circle to the controller and fails
+   as `ExportError::FullCircleArc`, so S7 and the extents never see one.
    `M6` and `M61` are accepted only from a definition whose tool change has
    `M6`. A violation is `ExportError`, never a warning.
 8. `Program.pauses` lists every `M0` and `M6` line with its 1-based line

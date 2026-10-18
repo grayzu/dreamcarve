@@ -298,6 +298,16 @@ pub enum ExportError {
         /// Difference between start and end radius, mm.
         delta_mm: f64,
     },
+    /// A G2/G3 line whose end is its start within the written precision.
+    /// The controller cuts a full circle, which DreamCarve never emits on
+    /// purpose, and whose reach S7 and the extents would have to guess.
+    #[error(
+        "emitted line {line} is an arc that ends where it starts, which the controller cuts as a full circle"
+    )]
+    FullCircleArc {
+        /// 1-based line number in the program.
+        line: usize,
+    },
     /// S6: reading the program back does not reproduce the toolpath: a
     /// move is missing, ends elsewhere, is the wrong kind, turns the wrong
     /// way, has the wrong centre, or has moves the toolpath does not.
