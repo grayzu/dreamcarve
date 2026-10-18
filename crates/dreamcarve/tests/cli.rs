@@ -793,3 +793,137 @@ fn project_file_chapter_names_current_version() {
         "the Versions table must have a row for version {version}"
     );
 }
+
+/// Writes the coaster at `dcv` back with its one instance moved `dx_mm`
+/// along X, as the project-file chapter suggests for moving shapes.
+fn move_coaster(dcv: &Path, dx_mm: f64) {
+    let mut project = load_file(dcv).project;
+    project.instances[0].transform = [1.0, 0.0, 0.0, 1.0, dx_mm, 0.0].into();
+    std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
+}
+
+/// #62: the coaster's swept cut spans 3.65..106.35 mm on 110 mm stock.
+/// Moved 80 mm right it runs 76.35 mm past the right (+X) edge; `check`
+/// fails, naming the operation and the overhang, and `export` writes
+/// nothing. So does a move just past the 3.65 mm margin.
+#[test]
+fn toolpath_off_stock_is_an_error() {
+    let dir = work_dir("toolpath_off_stock_is_an_error");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+
+    move_coaster(&dcv, 80.0);
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(1), "check fails: {report}");
+    let error = report
+        .lines()
+        .find(|l| l.starts_with("error:"))
+        .unwrap_or_else(|| panic!("an error is reported: {report}"));
+    assert!(error.contains("`op1`"), "names the operation: {error}");
+    assert!(
+        error.contains("76.35") && error.contains("+X"),
+        "names the overhang and the side: {error}"
+    );
+    assert!(!error.contains("-X"), "only the right edge: {error}");
+
+    let out = run(&dir, &["export", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(1), "export fails: {}", stderr(&out));
+    assert!(!dir.join("coaster.nc").exists(), "no program is written");
+
+    move_coaster(&dcv, 3.8);
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(1), "0.15 mm over fails: {report}");
+    assert!(report.contains("`op1`"), "{report}");
+}
+
+/// #62: the default coaster, and the coaster moved to within 0.15 mm of
+/// either stock edge, stay on the stock.
+#[test]
+fn toolpath_just_inside_stock_passes() {
+    let dir = work_dir("toolpath_just_inside_stock_passes");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    for dx_mm in [0.0, 3.5, -3.5] {
+        move_coaster(&dcv, dx_mm);
+        let out = run(&dir, &["check", "coaster.dcv"]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(0), "moved {dx_mm} mm: {report}");
+        assert!(report.contains("0 error(s)"), "moved {dx_mm} mm: {report}");
+    }
+}
+
+/// The lowest and highest value of axis word `letter` in `program`,
+/// comments skipped.
+fn word_range(program: &str, letter: char) -> (f64, f64) {
+    let mut range = (f64::INFINITY, f64::NEG_INFINITY);
+    for line in program.lines() {
+        let code = line.split('(').next().unwrap_or_default();
+        for word in code.split_whitespace() {
+            if let Some(value) = word.strip_prefix(letter) {
+                let value: f64 = value.parse().expect("axis word is a number");
+                range = (range.0.min(value), range.1.max(value));
+            }
+        }
+    }
+    range
+}
+
+/// The `min..max` pair `summary` prints after `label` (`X`, `Y`, `Z`) on
+/// its extents line.
+fn printed_range(summary: &str, label: char) -> (f64, f64) {
+    let line = summary
+        .lines()
+        .find(|l| l.contains("Extents"))
+        .unwrap_or_else(|| panic!("an extents line is printed: {summary}"));
+    let after = line
+        .split(&format!("{label} "))
+        .nth(1)
+        .unwrap_or_else(|| panic!("{label} is printed: {line}"));
+    let pair = after.split([',', ' ']).next().unwrap_or_default();
+    let (min, max) = pair
+        .split_once("..")
+        .unwrap_or_else(|| panic!("{label} is min..max: {line}"));
+    (
+        min.parse().expect("min is a number"),
+        max.parse().expect("max is a number"),
+    )
+}
+
+/// #62: `export` and `check` print the program's extents in machine
+/// coordinates, rounded as the program is. Z is exactly the range of the Z
+/// words (Z min is the deepest cut). X and Y are the range of the X and Y
+/// words, except that an arc may bulge past both its end words, so they may
+/// reach further, by under 0.005 mm on the coaster.
+#[test]
+fn export_prints_extents() {
+    let expected = include_str!("expected/coaster-grblhal.nc");
+    let dir = work_dir("export_prints_extents");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let export = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(export.status.code(), Some(0), "export: {}", stderr(&export));
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "check: {}", stdout(&check));
+    for (command, out) in [("export", &export), ("check", &check)] {
+        let summary = stdout(out);
+        let (z_min, z_max) = printed_range(&summary, 'Z');
+        let (word_min, word_max) = word_range(expected, 'Z');
+        assert_approx_eq!(z_min, word_min, 0.0);
+        assert_approx_eq!(z_max, word_max, 0.0);
+        assert!(z_min < 0.0, "{command}: Z min is the deepest cut");
+        for axis in ['X', 'Y'] {
+            let (min, max) = printed_range(&summary, axis);
+            let (word_min, word_max) = word_range(expected, axis);
+            assert!(
+                min <= word_min && min >= word_min - 0.005,
+                "{command}: {axis} min {min} vs words {word_min}: {summary}"
+            );
+            assert!(
+                max >= word_max && max <= word_max + 0.005,
+                "{command}: {axis} max {max} vs words {word_max}: {summary}"
+            );
+        }
+    }
+}
