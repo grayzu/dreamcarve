@@ -131,5 +131,6 @@ These still give a safe program. `check` and `export` print them.
 | `duplicate_shape_dropped` | Two shapes are the same outline in the same place; the second is not cut. |
 | `tabs_overlap`, `tabs_outside_cut_range` | See [Tabs](tabs.md). |
 
-Shapes that cross each other are an error: DreamCarve cannot tell which side
-is material, so it cuts nothing.
+Shapes that cross each other, or a shape that crosses itself, are an error:
+DreamCarve cannot tell which side is material, so it cuts nothing. See
+[Shapes, holes, and islands](shapes-and-holes.md), rules 10 and 11.

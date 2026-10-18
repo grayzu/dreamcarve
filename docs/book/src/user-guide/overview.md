@@ -56,6 +56,12 @@ inch). Curves are converted to short straight lines within 0.01 mm of the
 drawing. Text, images, clip paths and masks are ignored with a warning:
 convert text to paths before you save.
 
+A drawing is refused if its page is larger than 6000 mm (6 m) on a side or
+any path reaches more than 6000 mm from the page's bottom-left corner.
+`init` also refuses a drawing whose stock, with the 10 mm margin, would be
+larger than 6000 mm on a side. See
+[the project file](project-file.md#coordinates) for why the limit exists.
+
 ### `dreamcarve export <dcv>`
 
 Generates the toolpaths and writes the program.
