@@ -11,6 +11,15 @@ use std::ops::{Add, Mul, Neg, Sub};
 /// any machine's resolution, far above f64 rounding at workpiece scale.
 pub const EPS_MM: f64 = 1e-6;
 
+/// Largest absolute X or Y coordinate, and largest stock side, DreamCarve
+/// accepts, mm (6 m). It bounds the numeric range so offsets, areas and
+/// spatial indexes stay far inside f64 precision and never overflow, and it
+/// catches typos such as a stray exponent. It is not the machine envelope:
+/// that is the controller's soft limits. The SVG importer and `.dcv`
+/// validation share it, so a drawing that imports never fails validation
+/// on size.
+pub const MAX_COORDINATE_MM: f64 = 6_000.0;
+
 /// True when `a` and `b` differ by at most `tolerance`.
 #[must_use]
 pub fn approx_eq(a: f64, b: f64, tolerance: f64) -> bool {

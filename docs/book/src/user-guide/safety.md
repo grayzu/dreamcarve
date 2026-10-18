@@ -58,9 +58,14 @@ It also checks that:
 
 - **Clamps and fixtures.** DreamCarve has no idea where they are. The bit
   will cut through anything in its path, at any height below safe Z.
-- **The stock.** It trusts the size and thickness in the project. If your
-  stock is thinner than `thickness_mm`, the cut goes deeper into the
+- **The stock.** It trusts the size and thickness in the project. With the
+  default `origin.z: "stock_top"`, if your stock is thinner than `thickness_mm`, the cut goes deeper into the
   spoilboard than you planned. If it is thicker, the part is not cut free.
+  With `origin.z: "stock_bottom"`, a `thickness_mm` entered too thin is
+  worse: safe Z is `thickness_mm` plus `safe_z_mm` above the spoilboard,
+  not above the real stock top. If the stock is thicker than that, every
+  rapid at safe Z drives the bit sideways through the stock; if it is
+  thicker by less, the bit clears the stock by less than `safe_z_mm`.
 - **Work zero.** It trusts that you set X, Y and Z zero where `origin` says.
   A Z zero set at the spoilboard instead of the stock top puts every pass
   12 mm deeper than intended.
@@ -71,7 +76,8 @@ It also checks that:
 - **Safe Z height.** It keeps rapids at safe Z, but cannot tell whether safe
   Z clears your clamps.
 - **Machine limits.** It does not know your machine's travel. Use homing and
-  soft limits on the controller.
+  soft limits on the controller. The 6000 mm limit on project coordinates
+  only catches typing mistakes; it is not your machine's size.
 - **The router, in manual mode.** It cannot tell whether you switched it on.
 - **Pause messages.** Your sender may not show why the program paused. Use
   the pause list `export` prints.

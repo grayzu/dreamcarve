@@ -317,6 +317,44 @@ fn check_reports_open_paths() {
     );
 }
 
+/// Issue #58: a closed outline that crosses itself (the bowtie (0,0)
+/// (60,40) (60,0) (0,30)) has no clear inside, so `check` reports it as an
+/// error naming its instance and exits 1, and `export` writes nothing.
+#[test]
+fn self_intersecting_target_fails_check() {
+    let dir = work_dir("self_intersecting_target_fails_check");
+    std::fs::write(
+        dir.join("part.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="bowtie" d="M 10 10 L 70 50 L 70 10 L 10 40 Z"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "part.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    set_rates(&dir.join("part.dcv"), 1500.0, 500.0, 18000);
+
+    let out = run(&dir, &["check", "part.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(1), "check output: {report}");
+    let line = report
+        .lines()
+        .find(|l| l.contains("bowtie"))
+        .unwrap_or_else(|| panic!("check names the instance: {report}"));
+    assert!(line.contains("error"), "reported as an error: {line}");
+    assert!(line.contains("crosses itself"), "says why: {line}");
+
+    let out = run(&dir, &["export", "part.dcv"]);
+    assert_eq!(out.status.code(), Some(1), "export: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("bowtie"),
+        "export names the instance: {}",
+        stderr(&out)
+    );
+    assert!(!dir.join("part.nc").exists(), "no program is written");
+}
+
 /// Capability 5: both bundled post-processors are listed by id, grblHAL
 /// first, as `dc_gcode::post::bundled` orders them.
 #[test]
@@ -421,6 +459,136 @@ fn check_reports_unsafe_file_extension() {
     );
 }
 
+/// The longest run of digits after a decimal point in `text`.
+fn most_decimals(text: &str) -> usize {
+    let mut most = 0;
+    let mut run: Option<usize> = None;
+    let mut prev_digit = false;
+    for c in text.chars() {
+        match (c, run) {
+            ('.', _) if prev_digit => run = Some(0),
+            (d, Some(n)) if d.is_ascii_digit() => {
+                run = Some(n + 1);
+                most = most.max(n + 1);
+            }
+            _ => run = None,
+        }
+        prev_digit = c.is_ascii_digit();
+    }
+    most
+}
+
+/// Every warning `check` and `export` print is a plain sentence: no
+/// `key=value` pairs, and no value with more than 3 decimals. The project
+/// raises every toolpath warning: an open path, a duplicate shape, a hole
+/// the bit does not fit, tabs that overlap and cover most of a hole, and a
+/// tab top above the stock top.
+#[test]
+fn warnings_are_readable() {
+    let dir = work_dir("warnings_are_readable");
+    std::fs::write(
+        dir.join("part.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <rect id="outline" x="10" y="10" width="60" height="40"/>
+  <rect id="outline-copy" x="10" y="10" width="60" height="40"/>
+  <rect id="small-hole" x="15" y="15" width="20" height="20"/>
+  <circle id="pin-hole" cx="55" cy="30" r="2"/>
+  <path id="guide-line" d="M 20 80 L 80 80"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "part.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("part.dcv");
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let thickness_mm = project.stock.thickness_mm;
+    for dc_project::Operation::Profile(op) in &mut project.operations {
+        if let Some(tabs) = &mut op.tabs {
+            tabs.height_mm = thickness_mm + 1.0;
+        }
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "part.dcv"]);
+    let export = run(&dir, &["export", "part.dcv", "--date", FIXED_DATE]);
+    assert_eq!(export.status.code(), Some(0), "export: {}", stderr(&export));
+    let report = format!("{}{}{}", stdout(&check), stderr(&check), stderr(&export));
+    let warnings: Vec<&str> = report
+        .lines()
+        .filter(|l| l.starts_with("warning:"))
+        .collect();
+    for needle in [
+        "open path",
+        "same outline",
+        "does not fit",
+        "overlap",
+        "may not cut free",
+        "stock top",
+    ] {
+        assert!(
+            warnings.iter().any(|w| w.contains(needle)),
+            "a warning says {needle:?}: {report}"
+        );
+    }
+    for line in warnings {
+        assert!(!line.contains('='), "no key=value: {line}");
+        assert!(most_decimals(line) <= 3, "rounded: {line}");
+    }
+}
+
+/// #59: a finite but huge transform used to pass validation and panic
+/// inside the offset library. `check` now reports it as an error naming the
+/// instance's transform and exits 1, for a huge scale and a huge
+/// translation alike.
+#[test]
+fn check_rejects_huge_transform_without_panic() {
+    let dir = work_dir("check_rejects_huge_transform");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let pristine = load_file(&dcv).project;
+    for transform in [
+        [1e15, 0.0, 0.0, 1e15, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 1.0, 1e12, 0.0],
+    ] {
+        let mut project = pristine.clone();
+        project.instances[0].transform = transform.into();
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+        let out = run(&dir, &["check", "coaster.dcv"]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(1), "{transform:?}: {report}");
+        let id = &project.instances[0].id;
+        assert!(
+            report.contains(&format!("instances[{id}].transform")),
+            "{transform:?}: check names the transform: {report}"
+        );
+    }
+}
+
+/// #59: `init` adds a 10 mm margin around the drawing, so a drawing that
+/// imports within the 6000 mm limit can still need a larger stock. `init`
+/// refuses it and names the limit rather than write a project that `check`
+/// would reject.
+#[test]
+fn init_refuses_drawing_too_large_for_stock_limit() {
+    let dir = work_dir("init_refuses_drawing_too_large");
+    std::fs::write(
+        dir.join("big.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="5990mm" height="100mm" viewBox="0 0 5990 100">
+  <rect id="long" x="0" y="10" width="5990" height="40"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "big.svg"]);
+    let report = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "init: {report}");
+    assert!(report.contains("6000"), "names the limit: {report}");
+    assert!(!dir.join("big.dcv").exists(), "no project is written");
+}
+
 /// The text of `line`'s comment without a leading `MSG,`: what the user is
 /// asked to do at a pause.
 fn pause_message(line: &str) -> String {
@@ -523,4 +691,30 @@ fn export_tells_user_to_zero_before_start() {
             "{control:?}: {summary}"
         );
     }
+}
+
+/// The project-file chapter names the `.dcv` version this build writes and
+/// lists that version in its Versions table, so the chapter cannot drift
+/// from `dc_project::CURRENT_VERSION` again (issue #69).
+#[test]
+fn project_file_chapter_names_current_version() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/book/src/user-guide/project-file.md");
+    let chapter = std::fs::read_to_string(&path).expect("project-file chapter reads");
+    let version = dc_project::CURRENT_VERSION;
+
+    let field_row = chapter
+        .lines()
+        .find(|line| line.starts_with("| `version` |"))
+        .expect("the Top level table has a `version` row");
+    assert!(
+        field_row.contains(&format!("This build writes `{version}`.")),
+        "the `version` row must say this build writes `{version}`: {field_row}"
+    );
+
+    let versions_row = format!("| {version} |");
+    assert!(
+        chapter.lines().any(|line| line.starts_with(&versions_row)),
+        "the Versions table must have a row for version {version}"
+    );
 }

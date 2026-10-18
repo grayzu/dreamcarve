@@ -122,14 +122,16 @@ through is freed only at the end. For each outline:
 
 ## Warnings
 
-These still give a safe program. `check` and `export` print them.
+These still give a safe program. `check` and `export` print each one as a
+sentence, after the operation's id, with lengths rounded to 0.01 mm.
 
-| Warning | Meaning |
+| Warning says | Meaning |
 | --- | --- |
-| `open_path_skipped` | A target is not a closed outline; it is not cut. |
-| `tool_too_large` | The bit does not fit inside the shape; that shape is not cut. |
-| `duplicate_shape_dropped` | Two shapes are the same outline in the same place; the second is not cut. |
-| `tabs_overlap`, `tabs_outside_cut_range` | See [Tabs](tabs.md). |
+| "... is an open path" | A target is not a closed outline; it is not cut. |
+| "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
+| "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
+| "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
 
-Shapes that cross each other are an error: DreamCarve cannot tell which side
-is material, so it cuts nothing.
+Shapes that cross each other, or a shape that crosses itself, are an error:
+DreamCarve cannot tell which side is material, so it cuts nothing. See
+[Shapes, holes, and islands](shapes-and-holes.md), rules 10 and 11.

@@ -18,7 +18,7 @@ mod transform;
 pub use contour::Contour;
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, flatten};
 pub use offset::offset;
-pub use point::{EPS_MM, Point, Point3, Rect, Vec2, approx_eq};
+pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq};
 pub use polyline::{Arc, Polyline, Segment, Vertex};
 pub use region::{Region, nest};
 
@@ -81,9 +81,18 @@ pub enum GeometryError {
     /// The shape is degenerate and cannot be used.
     #[error("degenerate geometry: {0}")]
     Degenerate(DegenerateReason),
-    /// The contour crosses itself.
-    #[error("contour intersects itself")]
-    SelfIntersecting,
+    /// The outline crosses or touches itself: two segments that are not
+    /// neighbours meet, or neighbours overlap beyond their shared vertex.
+    /// Which area is material is then ambiguous, so it cannot be cut.
+    #[error(
+        "the outline crosses itself at ({x:.3}, {y:.3}) mm; redraw it so no edge crosses another (in Inkscape, Path → Break Apart separates joined shapes)",
+        x = .at.x,
+        y = .at.y
+    )]
+    SelfIntersecting {
+        /// Where the first crossing is, mm in the polyline's coordinates.
+        at: Point,
+    },
     /// Two closed contours overlap without one containing the other, so
     /// neither part-and-hole nor separate parts describes them. Indices are
     /// input positions, `first` < `second`.
@@ -106,4 +115,14 @@ pub enum GeometryError {
     /// which a bulge cannot represent.
     #[error("transform does not preserve circular arcs (non-uniform scale or shear)")]
     ArcUnderNonUniformTransform,
+    /// A result reaches `reach_mm` from the origin on X or Y, beyond
+    /// `limit_mm` ([`MAX_COORDINATE_MM`]), or is not a finite number.
+    #[error("geometry reaches {reach_mm} mm from the origin, beyond the {limit_mm} mm limit")]
+    CoordinateOutOfRange {
+        /// The largest absolute X or Y reached, millimetres; infinite when
+        /// a coordinate is not a finite number.
+        reach_mm: f64,
+        /// The limit it exceeded, millimetres.
+        limit_mm: f64,
+    },
 }

@@ -19,7 +19,9 @@
 //! y`, so the page's bottom-left corner is the origin.
 
 use crate::{ImportError, ImportWarning};
-use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Polyline, Rect, Transform, flatten};
+use dc_geometry::{
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Polyline, Rect, Transform, flatten,
+};
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId};
 use kurbo::{Affine, BezPath, PathEl};
 use usvg::tiny_skia_path::PathSegment;
@@ -35,11 +37,6 @@ const MM_PER_PX: f64 = 25.4 / 96.0;
 const SUBPATH_CLOSE_TOLERANCE_MM: f64 = 1e-4;
 
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
-
-/// Largest absolute coordinate, and largest page side, an import accepts,
-/// mm (100 m). Far beyond any hobby machine; it bounds how many segments a
-/// curve can flatten into, so an untrusted file cannot exhaust memory.
-pub const MAX_COORDINATE_MM: f64 = 100_000.0;
 
 /// Finest flattening tolerance an import accepts, mm (1 µm). Below any
 /// machine's resolution; finer would only multiply vertices.
@@ -526,6 +523,10 @@ fn close_if_returned(out: &mut BezPath, start: kurbo::Point, open: bool) {
     out.close_path();
 }
 
+/// Whether every point of `el` lies within [`MAX_COORDINATE_MM`] of the
+/// origin on each axis. Besides matching what `.dcv` validation accepts,
+/// the bound limits how many segments a curve can flatten into, so an
+/// untrusted file cannot exhaust memory.
 fn element_is_within_limit(el: &PathEl) -> bool {
     let within =
         |p: &kurbo::Point| p.x.abs() <= MAX_COORDINATE_MM && p.y.abs() <= MAX_COORDINATE_MM;
@@ -979,6 +980,48 @@ mod tests {
             }
             other => panic!("unexpected error {other:?}"),
         }
+    }
+
+    /// #59: the import limit is the shared 6 m bound. A path just past it
+    /// is refused; one just inside is imported.
+    #[test]
+    fn path_past_shared_coordinate_limit_is_rejected() {
+        let svg = |x: f64| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+                <rect id="far" x="{x}" y="0" width="10" height="10"/>
+            </svg>"#
+            )
+        };
+        let limit = MAX_COORDINATE_MM;
+        let options = SvgImportOptions::new(12.0);
+        assert!(import_svg(svg(limit - 11.0).as_bytes(), &options).is_ok());
+        match import_svg(svg(limit - 9.0).as_bytes(), &options).unwrap_err() {
+            ImportError::CoordinateOutOfRange { path, limit_mm } => {
+                assert_eq!(path, "far");
+                assert_approx_eq!(limit_mm, limit, 0.0);
+            }
+            other => panic!("unexpected error {other:?}"),
+        }
+    }
+
+    /// #59: the page side is bounded by the same limit.
+    #[test]
+    fn page_past_shared_coordinate_limit_is_rejected() {
+        let svg = |width_mm: f64| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width_mm}mm" height="100mm" viewBox="0 0 100 100">
+                <rect x="0" y="0" width="10" height="10"/>
+            </svg>"#
+            )
+        };
+        let limit = MAX_COORDINATE_MM;
+        let options = SvgImportOptions::new(12.0);
+        assert!(import_svg(svg(limit - 1.0).as_bytes(), &options).is_ok());
+        assert!(matches!(
+            import_svg(svg(limit + 1.0).as_bytes(), &options),
+            Err(ImportError::InvalidPageSize { .. })
+        ));
     }
 
     #[test]
