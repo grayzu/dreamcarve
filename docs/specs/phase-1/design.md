@@ -191,8 +191,9 @@ first use and validated by a test, with `bundled()` and
 `lookup(id) -> Result<PostProcessor, ExportError>`.
 
 ```rust
-pub struct Program { pub text: String, pub extension: String, pub pauses: Vec<Pause> }
+pub struct Program { pub text: String, pub extension: String, pub pauses: Vec<Pause>, pub first_tool: FirstTool }
 pub struct Pause { pub line: usize, pub message: String }
+pub struct FirstTool { pub number: usize, pub name: String }
 pub fn emit(project: &Project, ops: &[(ProfileOp, Tool, Toolpath)]) -> Result<(Program, Vec<Warning>), ExportError>;
 pub fn parse_motion(text: &str) -> Vec<MachineMove>;   // test-only helper, re-exported for safety tests
 ```
@@ -269,17 +270,26 @@ Inputs: project, op. Output: toolpath in project space.
    `workCoordinates.selectCommand`, each only if not in the header. The
    header's lines that only set modal state (`G17`, `G20`/`G21`, `G54`–`G59`,
    `G90`, `G94`), plus any of those three added, form the setup that is
-   written again after every pause that more motion follows (#55).
+   written again after every pause that more motion follows (#55). If the
+   enabled operations change tools, and the post-processor's tool change
+   has no `M6` line, export fails with `ToolChangeNotSupported`, naming the
+   tools; if it has one, `M61 Q{n}` for the first tool follows the setup,
+   because grblHAL skips an `M6` for the tool it holds and keeps that
+   number from the previous job (#57).
 5. Per operation: `operationHeader` with `{operationIndex}`,
-   `{operationName}`, `{toolNumber}`, `{toolName}`; tool change block on the
-   first op or tool change. The block always starts with a retract to safe
-   Z (written even at program start, where Z is unknown). A line of the
-   block that only pauses (`M0`, `M1`), or `pause_after_change`, becomes
-   one DreamCarve pause, `M0 (MSG, Fit T{n} {name}. Set Z zero, then
-   resume.)`, with the name shortened to keep the message within 96
-   characters. After the block, the position is unknown (the user may jog,
-   probe or set Z zero), so the program retracts to safe Z again, and the
-   next move writes its motion and feed words in full (#43). Then spindle
+   `{operationName}`, `{toolNumber}`, `{toolName}`. On the first op, a
+   retract to safe Z (Z is unknown at program start) and no stop: the user
+   fitted the first tool and set work zero with it before starting (#57).
+   On a tool change, the tool change block: a retract to safe Z, then
+   `spindle_off` if the spindle runs, then the definition's commands. Its
+   `M6` line becomes DreamCarve's own `T{n} M6 (MSG, Fit T{n} {name}. Set Z
+   zero, then resume.)`, with the name shortened to keep the message within
+   96 characters; lines that only pause (`M0`, `M1`) and
+   `pause_after_change` are left out, and so are lines that only stop a
+   spindle that is already off. After the block the setup is written
+   again, the position is unknown (the user may jog, probe or set Z zero),
+   so the program retracts to safe Z again, and the next move writes its
+   motion and feed words in full (#43). Then spindle
    on with `S{rpm}`; then
    `feed_speed.spindle_on_dwell.command` with `{seconds}` filled, unless its
    `duration_s` is 0 (after every spindle start, including after a tool
@@ -287,8 +297,8 @@ Inputs: project, op. Output: toolpath in project space.
    tool change, and at the end unless the footer has it.
    With manual spindle control: no spindle words and no dwell. Lines of the
    tool-change block and footer that only stop the spindle are left out.
-   After the tool change and its second retract, before the first move of
-   each tool, pause for the router:
+   After the first op's retract, or the tool change and its second
+   retract, before the first move of each tool, pause for the router:
    `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
    leaving out the speed when the tool has none. After the last op of a tool
    (before a tool change, and at the end), retract to safe Z, then
@@ -306,14 +316,17 @@ Inputs: project, op. Output: toolpath in project space.
    G1/G2/G3 has an active F), S4 (spindle running and dwelled before a cut,
    or with manual control an `M0` at safe Z after the last retract before
    each tool's first cut, and no `M3`, `M5` or `S` word; in both modes every
-   `M0` or `M1` at a known Z at or above safe Z, Z unknown after it, and an
-   `M3` only at a known Z at or above safe Z, so a retract follows every
-   pause before the spindle starts), S5 (units, WCS and `G90` before the
-   first move or spindle start, and again after every pause). A violation is
-   `ExportError`, never a warning.
-8. `Program.pauses` lists every `M0` line with its 1-based line number and
-   its comment text, so the CLI can tell the user what each stop is for when
-   the sender does not show the message.
+   `M0`, `M1` or `M6` at a known Z at or above safe Z, Z unknown after it,
+   and an `M3` only at a known Z at or above safe Z, so a retract follows
+   every stop before the spindle starts), S5 (units, WCS and `G90` before
+   the first move or spindle start, and again after every stop). `M6` and
+   `M61` are accepted only from a definition whose tool change has `M6`. A
+   violation is `ExportError`, never a warning.
+8. `Program.pauses` lists every `M0` and `M6` line with its 1-based line
+   number and its comment text, so the CLI can tell the user what each stop
+   is for when the sender does not show the message. `Program.first_tool`
+   is the tool the user fits and zeroes with before starting; the CLI
+   prints "Before you start: fit T{n} {name} and set work zero with it."
 
 ### SVG import (dc-import::svg)
 

@@ -28,12 +28,18 @@
 //!   `M0` and a `(MSG, ...)` comment for the user to switch the router on
 //!   before each tool's first cut, and off before a tool change and at the
 //!   end.
-//! - A tool change, the first one included, retracts to safe Z first. Its
-//!   pause is DreamCarve's own `M0 (MSG, Fit T<n> <name>. Set Z zero, then
-//!   resume.)`, written in place of the definition's pause-only line or
-//!   `pause_after_change`. The user may jog or set Z zero there, so the
-//!   position is then unknown and the program retracts to safe Z again
-//!   before the spindle starts or the router-on pause (#43).
+//! - There is no stop for the first tool: the user fits it and sets work
+//!   zero with it before starting the program (#57). A later tool needs a
+//!   definition whose tool change has `M6` (grblHAL); otherwise export
+//!   fails. The change retracts to safe Z and stops the spindle, then
+//!   writes DreamCarve's own `T<n> M6 (MSG, Fit T<n> <name>. Set Z zero,
+//!   then resume.)` in place of the definition's `M6` line, leaving out
+//!   lines that only pause and `pause_after_change`: one stop per change.
+//!   The user may jog or set Z zero there, so the position is then unknown
+//!   and the program retracts to safe Z again before the spindle starts or
+//!   the router-on pause (#43). A program that changes tools first sets the
+//!   controller's current tool with `M61 Q<n>`, because grblHAL skips an
+//!   `M6` for the tool it holds.
 //! - Before the first move the program sets absolute distance mode (`G90`)
 //!   as well as units and work coordinates, adding any the header leaves
 //!   out. After every pause that more motion follows, it sets them again,
@@ -66,13 +72,26 @@ pub struct Program {
     pub text: String,
     /// File extension without the dot, from the post-processor.
     pub extension: String,
-    /// Every `M0` in the program, in order. The controller may not show a
-    /// pause's message (GRBL drops comments), so a caller lists these for
-    /// the user.
+    /// Every `M0` and `M6` in the program, in order. The controller may not
+    /// show a pause's message (GRBL drops comments), so a caller lists these
+    /// for the user.
     pub pauses: Vec<Pause>,
+    /// The tool the program starts with. It does not stop for it: the user
+    /// fits it and sets work zero with it before starting (#57).
+    pub first_tool: FirstTool,
 }
 
-/// A point where the program stops until the user resumes it.
+/// The tool a program starts with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FirstTool {
+    /// Its number, `T<n>`: its 1-based place in the project's tool list.
+    pub number: usize,
+    /// Its name, as written in the program's comments.
+    pub name: String,
+}
+
+/// A point where the program stops until the user resumes it: an `M0`, or
+/// an `M6` tool change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pause {
     /// 1-based line number in [`Program::text`] (not an `N` number).
@@ -119,8 +138,9 @@ pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 /// # Errors
 ///
 /// A missing feed, plunge rate, or (with automatic spindle control)
-/// spindle speed names the tool and field; any safety violation in the emitted program is an error, never a
-/// warning. See [`ExportError`].
+/// spindle speed names the tool and field; more than one tool with a
+/// definition that has no `M6` names the tools; any safety violation in the
+/// emitted program is an error, never a warning. See [`ExportError`].
 pub fn emit(
     project: &Project,
     ops: &[(ProfileOp, Tool, Toolpath)],
@@ -160,6 +180,31 @@ pub fn emit(
             })?;
         planned.push((op, tool, toolpath, rates, number));
     }
+    // #57: the program stops for every tool after the first, and only `M6`
+    // stops where the user may jog to set Z zero.
+    let changes_tools = planned
+        .iter()
+        .zip(planned.iter().skip(1))
+        .any(|(a, b)| a.1.id != b.1.id);
+    if changes_tools && !uses_m6(post) {
+        let mut tools: Vec<String> = Vec::new();
+        for &(_, tool, ..) in &planned {
+            if !tools.contains(&tool.name) {
+                tools.push(tool.name.clone());
+            }
+        }
+        return Err(ExportError::ToolChangeNotSupported {
+            post: post.id.clone(),
+            tools,
+        });
+    }
+    let first_tool = planned
+        .first()
+        .map(|&(_, tool, _, _, number)| FirstTool {
+            number,
+            name: comment_text(&tool.name),
+        })
+        .ok_or(ExportError::NoEnabledOperations)?;
     // Steps 2 and 3: machine transform and units.
     let transform = MachineTransform::new(project)?;
     let (units_command, units_field) = match transform.output_units() {
@@ -236,6 +281,12 @@ pub fn emit(
         setup.push(wcs_command.to_owned());
     }
     w.setup = setup;
+    if changes_tools {
+        // #57: grblHAL skips an `M6` for the tool it holds, and that number
+        // survives from the previous job. Tell it which tool the user
+        // fitted, so no later `M6` is skipped. `M61` sets the number only.
+        w.line(&format!("{SET_TOOL_COMMAND} Q{}", first_tool.number));
+    }
 
     // Step 5: operations.
     let mut lines = Vec::with_capacity(planned.len());
@@ -266,40 +317,47 @@ pub fn emit(
         let spindle_off = post.feed_speed.spindle_off.trim();
         let safe_z_mm = project.stock.thickness_mm + op.safe_z_mm;
         // The tool change belongs to the operation, so the safety pass
-        // checks its pause against this operation's safe Z.
+        // checks its stop against this operation's safe Z.
         let first_line = w.next_line();
-        if w.tool.as_ref() != Some(&tool.id) {
-            // S4, #43: the user fits the tool with the bit clear of the
-            // work. At program start Z is wherever the user left it, and
-            // after a router-off pause the user may have jogged, so the
-            // retract is always written.
+        if w.tool.is_none() {
+            // S4, #57: the user fitted the first tool and set work zero
+            // with it before starting, so there is no stop. Z is wherever
+            // the user left it, so the program lifts to safe Z first.
+            w.forget_position();
+            w.retract(safe_z_mm)?;
+            w.tool = Some(tool.id.clone());
+        } else if w.tool.as_ref() != Some(&tool.id) {
+            // S4, #57: the user fits the tool with the bit clear of the
+            // work. After a router-off pause the user may have jogged, so
+            // the retract is always written.
             w.forget_position();
             w.retract(safe_z_mm)?;
             if post.tool_change.stop_spindle_first && w.spindle_rpm.is_some() {
                 w.line(spindle_off);
                 w.spindle_rpm = None;
             }
+            // The definition's `M6` line becomes DreamCarve's own, with the
+            // tool number and the message. Lines that only pause are left
+            // out (one stop per change), and so are lines that only stop a
+            // spindle that is already off, or that the user switches (S4).
             let fit = tool_change_message(number, &tool.name);
-            let mut paused = false;
+            let mut changed = false;
             for line in &post.tool_change.commands {
-                if only_pauses(line) {
-                    if !paused {
-                        w.pause(&fit, true);
-                        paused = true;
+                if changes_tool(line) {
+                    if !changed {
+                        w.change_tool(number, &fit);
+                        changed = true;
                     }
-                } else if !(manual && only_stops_spindle(line, spindle_off)) {
-                    // Manual: the router is already off, and no spindle
-                    // word is sent (S4).
+                } else if !(only_pauses(line)
+                    || (w.spindle_rpm.is_none() && only_stops_spindle(line, spindle_off)))
+                {
                     w.template(line, &context);
                 }
             }
-            if post.tool_change.pause_after_change && !paused {
-                w.pause(&fit, true);
-            }
             w.tool = Some(tool.id.clone());
-            // A definition with no pause may still move the tool, so where
-            // it is is no longer known either way. Lift to safe Z, relative
-            // to any new zero, before the spindle starts.
+            // The user may have jogged and set Z zero, so where the tool is
+            // is no longer known. Lift to safe Z, relative to the new zero,
+            // before the spindle starts.
             w.forget_position();
             w.retract(safe_z_mm)?;
         }
@@ -385,6 +443,7 @@ pub fn emit(
             text,
             extension: post.file_extension.clone(),
             pauses,
+            first_tool,
         },
         warnings,
     ))
@@ -463,6 +522,28 @@ impl Rates {
 /// and resume only on cycle start (`gcode.c`, "[21. Program flow]").
 const PAUSE_COMMAND: &str = "M0";
 
+/// grblHAL's tool change (`definitions/README.md`, "Tool changes"). With
+/// `$341` at 0 and no automatic tool changer it syncs the planner, reports
+/// the line's `(MSG, ...)`, and waits in its tool-change state, where the
+/// user may jog, until cycle start.
+const TOOL_CHANGE_COMMAND: &str = "M6";
+
+/// grblHAL's "set current tool number" (`M61 Q<n>`): no stop, no motion.
+const SET_TOOL_COMMAND: &str = "M61";
+
+/// Whether `post` can change tools within a program: its tool change has
+/// an `M6` line. GRBL 1.1 has none (#57).
+pub(crate) fn uses_m6(post: &PostProcessor) -> bool {
+    post.tool_change.commands.iter().any(|l| changes_tool(l))
+}
+
+/// Whether template `line` has an `M6` code word.
+fn changes_tool(line: &str) -> bool {
+    code_words(line)
+        .iter()
+        .any(|w| matches!(w.as_str(), "M6" | "M06"))
+}
+
 /// The message of the pause before a tool's last cut is followed by a
 /// tool change or the end of the program.
 const ROUTER_OFF_MESSAGE: &str = "Turn the router OFF.";
@@ -476,11 +557,11 @@ fn router_on_message(rpm: Option<u32>) -> String {
     }
 }
 
-/// What the user does at a tool-change pause, after the tool's number and
+/// What the user does at a tool change, after the tool's number and
 /// name (#43): a new tool has a new length, so Z zero is set with it.
 const SET_Z_ZERO: &str = "Set Z zero, then resume.";
 
-/// The message of the tool-change pause for tool `number` named `name`.
+/// The message of the tool change for tool `number` named `name`.
 /// The name is shortened so the instruction always fits
 /// [`MAX_MESSAGE_CHARS`] whole.
 fn tool_change_message(number: usize, name: &str) -> String {
@@ -563,12 +644,12 @@ fn comment_of(line: &str) -> String {
     text.trim().to_owned()
 }
 
-/// Every `M0` line of `text`, with its message.
+/// Every `M0` and `M6` line of `text`, with its message.
 fn pauses(text: &str) -> Result<Vec<Pause>, ExportError> {
     let blocks = parse_program(text)?;
     let mut raw = text.lines().enumerate();
     let mut out = Vec::new();
-    for block in blocks.iter().filter(|b| b.has('M', 0.0)) {
+    for block in blocks.iter().filter(|b| b.has('M', 0.0) || b.has('M', 6.0)) {
         let message = raw
             .find(|(index, _)| index + 1 == block.line)
             .map(|(_, line)| comment_of(line))
@@ -820,6 +901,24 @@ impl<'a> Writer<'a> {
     fn pause(&mut self, message: &str, moves_after: bool) {
         let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
         self.line(&format!("{PAUSE_COMMAND} (MSG, {message})"));
+        self.stopped(moves_after);
+    }
+
+    /// Writes `T<number> M6` with `message` as a `(MSG, ...)` comment on
+    /// the same line, and sets up again after it as after a pause: the user
+    /// jogs and sets Z zero at the stop (#57). On its own line the message
+    /// would be reported when the controller reads the line, which may be
+    /// long before it stops; on the `M6` line grblHAL reports it after the
+    /// planner has synced, as it stops (`definitions/README.md`).
+    fn change_tool(&mut self, number: usize, message: &str) {
+        let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
+        self.line(&format!("T{number} {TOOL_CHANGE_COMMAND} (MSG, {message})"));
+        self.stopped(true);
+    }
+
+    /// After a stop: the modal state the user may have changed is written
+    /// again, and the setup lines too when the program `moves_after`.
+    fn stopped(&mut self, moves_after: bool) {
         self.motion = None;
         self.feed = None;
         if moves_after {
@@ -1642,30 +1741,25 @@ mod tests {
 
     #[test]
     fn dwell_follows_every_spindle_start() {
-        for post in ["grblhal", "grbl"] {
-            let mut project = project_with(post);
-            let ops = two_tool_ops(&mut project);
-            let text = emit(&project, &ops, DATE).unwrap().0.text;
-            let lines: Vec<&str> = text.lines().collect();
-            let starts: Vec<usize> = (0..lines.len())
-                .filter(|&i| has_word(lines[i], "M3"))
-                .collect();
-            assert_eq!(starts.len(), 2, "{post}: program start and the tool change");
-            assert_eq!(code(lines[starts[1]]), "M3 S12000");
-            for &i in &starts {
-                assert_eq!(lines[i + 1], "G4 P3.000", "{post}");
-                let next_cut = (i..lines.len()).find(|&k| is_cut(lines[k])).unwrap();
-                assert!(next_cut > i + 1, "{post}");
-            }
-            // The tool change stops the spindle and pauses before the
-            // second start.
-            let stop = (starts[0]..starts[1]).find(|&k| has_word(lines[k], "M5"));
-            let pause = (starts[0]..starts[1]).find(|&k| has_word(lines[k], "M0"));
-            assert!(
-                matches!((stop, pause), (Some(s), Some(p)) if s < p),
-                "{post}"
-            );
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let text = emit(&project, &ops, DATE).unwrap().0.text;
+        let lines: Vec<&str> = text.lines().collect();
+        let starts: Vec<usize> = (0..lines.len())
+            .filter(|&i| has_word(lines[i], "M3"))
+            .collect();
+        assert_eq!(starts.len(), 2, "program start and the tool change");
+        assert_eq!(code(lines[starts[1]]), "M3 S12000");
+        for &i in &starts {
+            assert_eq!(lines[i + 1], "G4 P3.000");
+            let next_cut = (i..lines.len()).find(|&k| is_cut(lines[k])).unwrap();
+            assert!(next_cut > i + 1);
         }
+        // The tool change stops the spindle, then stops the program, before
+        // the second start.
+        let stop = (starts[0]..starts[1]).find(|&k| has_word(lines[k], "M5"));
+        let change = (starts[0]..starts[1]).find(|&k| has_word(lines[k], "M6"));
+        assert!(matches!((stop, change), (Some(s), Some(c)) if s < c));
     }
 
     #[test]
@@ -1794,9 +1888,8 @@ mod tests {
     /// #34, Behaviour 2 and 5: in manual mode the program sends no spindle
     /// words and no spin-up dwell. Before the first cut it retracts to safe
     /// Z and pauses with a message to turn the router on; resuming is the
-    /// user's confirmation that it is running. #43: the tool-change pause,
-    /// asking for the tool and Z zero, comes first, then a retract, then
-    /// the router-on pause, both at safe Z.
+    /// user's confirmation that it is running. #57: the first tool has no
+    /// tool-change stop, so the router-on pause is the only one.
     #[test]
     fn manual_spindle_pauses_before_first_cut() {
         for post in ["grblhal", "grbl"] {
@@ -1813,23 +1906,16 @@ mod tests {
             }
             let cut = first_index(&lines, is_cut).unwrap();
             let pauses: Vec<usize> = (0..cut).filter(|&i| has_word(lines[i], "M0")).collect();
-            let [fit, on] = pauses[..] else {
-                panic!("{post}: two M0 before the first cut, not {pauses:?}");
+            let [on] = pauses[..] else {
+                panic!("{post}: one M0 before the first cut, not {pauses:?}");
             };
-            assert!(
-                lines[fit].contains("(MSG, Fit T1 ") && lines[fit].contains("Set Z zero"),
-                "{post}: {}",
-                lines[fit]
-            );
             assert!(
                 lines[on].contains("(MSG, Turn the router ON."),
                 "{post}: {}",
                 lines[on]
             );
-            for pause in [fit, on] {
-                let z = z_before(&text, pause).unwrap_or_else(|| panic!("{post}: Z unknown"));
-                assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
-            }
+            let z = z_before(&text, on).unwrap_or_else(|| panic!("{post}: Z unknown"));
+            assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
         }
     }
 
@@ -1861,87 +1947,87 @@ mod tests {
 
     /// #34, Behaviour 3 and 4: with two tools the program pauses to turn
     /// the router off before each tool change and at the end, each time at
-    /// safe Z. #43: each tool has two stops before it cuts, one to fit it
-    /// and set Z zero and one, after a retract, to turn the router on.
+    /// safe Z. #43, #57: each later tool has two stops before it cuts, the
+    /// `M6` to fit it and set Z zero and, after a retract, a pause to turn
+    /// the router on. GRBL cannot change tools within a program.
     #[test]
     fn manual_spindle_pauses_off_at_tool_change_and_end() {
-        for post in ["grblhal", "grbl"] {
-            let mut project = manual_project(post);
-            let ops = two_tool_ops(&mut project);
-            let text = emit(&project, &ops, DATE).unwrap().0.text;
-            let lines: Vec<&str> = text.lines().collect();
-            let mut events: Vec<&str> = lines
-                .iter()
-                .filter_map(|l| {
-                    if l.contains("Turn the router ON") {
-                        Some("on")
-                    } else if l.contains("Turn the router OFF") {
-                        Some("off")
-                    } else if l.contains("Set Z zero") {
-                        Some("fit")
-                    } else if is_cut(l) {
-                        Some("cut")
-                    } else if has_word(l, "M30") {
-                        Some("end")
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            events.dedup();
-            assert_eq!(
-                events,
-                ["fit", "on", "cut", "off", "fit", "on", "cut", "off", "end"],
-                "{post}"
-            );
-            for (index, line) in lines.iter().enumerate() {
-                if line.contains("Turn the router") {
-                    let z = z_before(&text, index);
-                    assert!(
-                        z.is_some_and(|z| (z - SAFE_Z_MACHINE).abs() < 1e-9),
-                        "{post}: line {} pauses at Z {z:?}",
-                        index + 1
-                    );
+        let mut project = manual_project("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let text = emit(&project, &ops, DATE).unwrap().0.text;
+        let lines: Vec<&str> = text.lines().collect();
+        let mut events: Vec<&str> = lines
+            .iter()
+            .filter_map(|l| {
+                if l.contains("Turn the router ON") {
+                    Some("on")
+                } else if l.contains("Turn the router OFF") {
+                    Some("off")
+                } else if l.contains("Set Z zero") {
+                    Some("fit")
+                } else if is_cut(l) {
+                    Some("cut")
+                } else if has_word(l, "M30") {
+                    Some("end")
+                } else {
+                    None
                 }
+            })
+            .collect();
+        events.dedup();
+        assert_eq!(
+            events,
+            ["on", "cut", "off", "fit", "on", "cut", "off", "end"]
+        );
+        for (index, line) in lines.iter().enumerate() {
+            if line.contains("Turn the router") {
+                let z = z_before(&text, index);
+                assert!(
+                    z.is_some_and(|z| (z - SAFE_Z_MACHINE).abs() < 1e-9),
+                    "line {} pauses at Z {z:?}",
+                    index + 1
+                );
             }
         }
     }
 
-    /// #34: the program lists every `M0` with its line and message, so the
-    /// CLI can tell the user what each stop is for when the controller does
-    /// not show the message (GRBL drops comments).
+    /// #34: the program lists every stop, `M0` or `M6`, with its line and
+    /// message, so the CLI can tell the user what each stop is for when
+    /// the controller does not show the message (GRBL drops comments).
     #[test]
     fn program_lists_every_pause_with_its_message() {
         let on_18000 = "Turn the router ON. Speed 18000 RPM. Resume to start cutting.";
         let on_12000 = "Turn the router ON. Speed 12000 RPM. Resume to start cutting.";
         let off = "Turn the router OFF.";
-        let (tc1, tc2) = (
-            "Fit T1 6.35 mm upcut. Set Z zero, then resume.",
-            "Fit T2 3 mm downcut. Set Z zero, then resume.",
-        );
-        for (control, expected) in [
-            (SpindleControl::Automatic, vec![tc1, tc2]),
+        let tc2 = "Fit T2 3 mm downcut. Set Z zero, then resume.";
+        for (post, tools, control, expected) in [
+            ("grblhal", 2, SpindleControl::Automatic, vec![tc2]),
             (
+                "grblhal",
+                2,
                 SpindleControl::Manual,
-                vec![tc1, on_18000, off, tc2, on_12000, off],
+                vec![on_18000, off, tc2, on_12000, off],
             ),
+            ("grbl", 1, SpindleControl::Manual, vec![on_18000, off]),
+            ("grbl", 1, SpindleControl::Automatic, vec![]),
         ] {
-            for post in ["grblhal", "grbl"] {
-                let mut project = project_with(post);
-                project.post_processor.feed_speed.spindle_control = control;
-                let ops = two_tool_ops(&mut project);
-                let program = emit(&project, &ops, DATE).unwrap().0;
-                let messages: Vec<&str> =
-                    program.pauses.iter().map(|p| p.message.as_str()).collect();
-                assert_eq!(messages, expected, "{post} {control:?}");
-                let lines: Vec<&str> = program.text.lines().collect();
-                let m0_lines: Vec<usize> = (0..lines.len())
-                    .filter(|&i| has_word(lines[i], "M0"))
-                    .map(|i| i + 1)
-                    .collect();
-                let pause_lines: Vec<usize> = program.pauses.iter().map(|p| p.line).collect();
-                assert_eq!(pause_lines, m0_lines, "{post} {control:?}");
-            }
+            let mut project = project_with(post);
+            project.post_processor.feed_speed.spindle_control = control;
+            let ops = if tools == 1 {
+                ops_for(&project)
+            } else {
+                two_tool_ops(&mut project)
+            };
+            let program = emit(&project, &ops, DATE).unwrap().0;
+            let messages: Vec<&str> = program.pauses.iter().map(|p| p.message.as_str()).collect();
+            assert_eq!(messages, expected, "{post} {control:?}");
+            let lines: Vec<&str> = program.text.lines().collect();
+            let stop_lines: Vec<usize> = (0..lines.len())
+                .filter(|&i| has_word(lines[i], "M0") || has_word(lines[i], "M6"))
+                .map(|i| i + 1)
+                .collect();
+            let pause_lines: Vec<usize> = program.pauses.iter().map(|p| p.line).collect();
+            assert_eq!(pause_lines, stop_lines, "{post} {control:?}");
         }
     }
 
@@ -1983,13 +2069,22 @@ mod tests {
         }
     }
 
+    /// Whether `line` stops the program: an `M0` pause or an `M6` tool
+    /// change.
+    fn is_stop(line: &str) -> bool {
+        has_word(line, "M0") || has_word(line, "M6")
+    }
+
     /// Every spindle mode, for each bundled post-processor, with one and
-    /// with two tools.
+    /// with two tools. GRBL cannot change tools within a program (#57).
     fn every_program() -> Vec<(String, String)> {
         let mut out = Vec::new();
         for post in ["grblhal", "grbl"] {
             for control in [SpindleControl::Automatic, SpindleControl::Manual] {
                 for tools in [1, 2] {
+                    if post == "grbl" && tools == 2 {
+                        continue;
+                    }
                     let mut project = project_with(post);
                     project.post_processor.feed_speed.spindle_control = control;
                     let ops = if tools == 1 {
@@ -2005,17 +2100,16 @@ mod tests {
         out
     }
 
-    /// S4, #43: the user fits the tool and switches the router at a pause,
-    /// so every `M0` comes at a known Z at or above safe Z. At program start
-    /// Z is unknown, so a `G0 Z` comes before the first pause.
+    /// S4, #43, #57: the user fits the tool and switches the router at a
+    /// stop, so every `M0` and `M6` comes at a known Z at or above safe Z.
+    /// At program start Z is unknown, so a `G0 Z` comes before the first.
     #[test]
     fn tool_change_pause_is_at_safe_z() {
+        let mut checked = 0;
         for (case, text) in every_program() {
             let lines: Vec<&str> = text.lines().collect();
-            let pauses: Vec<usize> = (0..lines.len())
-                .filter(|&i| has_word(lines[i], "M0"))
-                .collect();
-            assert!(!pauses.is_empty(), "{case}");
+            let pauses: Vec<usize> = (0..lines.len()).filter(|&i| is_stop(lines[i])).collect();
+            checked += pauses.len();
             for i in pauses {
                 let z = z_before(&text, i);
                 assert!(
@@ -2025,9 +2119,10 @@ mod tests {
                 );
             }
         }
+        assert!(checked > 0);
     }
 
-    /// #43: the user may set Z zero at the tool-change pause, so the
+    /// #43, #57: the user may set Z zero at the tool change, so the
     /// program lifts to safe Z again before the spindle starts (automatic)
     /// or before the router-on pause (manual).
     #[test]
@@ -2037,7 +2132,7 @@ mod tests {
             let fits: Vec<usize> = (0..lines.len())
                 .filter(|&i| lines[i].contains("Set Z zero"))
                 .collect();
-            assert!(!fits.is_empty(), "{case}");
+            assert_eq!(fits.is_empty(), case.contains("1 tool"), "{case}");
             for i in fits {
                 let start = (i + 1..lines.len())
                     .find(|&k| has_word(lines[k], "M3") || lines[k].contains("Turn the router ON"))
@@ -2060,15 +2155,16 @@ mod tests {
         }
     }
 
-    /// #43, option C: every tool-change pause asks for the tool and for Z
-    /// zero to be set with it. A long tool name is shortened so the message
-    /// fits [`MAX_MESSAGE_CHARS`]; the instruction is never cut.
+    /// #43, option C: every tool change asks for the tool and for Z zero
+    /// to be set with it. A long tool name is shortened so the message fits
+    /// [`MAX_MESSAGE_CHARS`]; the instruction is never cut. #57: the first
+    /// tool has no tool change.
     #[test]
     fn tool_change_message_asks_to_set_z_zero() {
         for (case, text) in every_program() {
-            let tools = if case.contains("2 tool") { 2 } else { 1 };
+            let changes = usize::from(case.contains("2 tool"));
             let fits: Vec<&str> = text.lines().filter(|l| l.contains("(MSG, Fit T")).collect();
-            assert_eq!(fits.len(), tools, "{case}: {fits:?}");
+            assert_eq!(fits.len(), changes, "{case}: {fits:?}");
             for line in fits {
                 assert!(
                     line.ends_with(". Set Z zero, then resume.)"),
@@ -2076,22 +2172,28 @@ mod tests {
                 );
             }
         }
-        for post in ["grblhal", "grbl"] {
-            for control in [SpindleControl::Automatic, SpindleControl::Manual] {
-                let mut project = project_with(post);
-                project.post_processor.feed_speed.spindle_control = control;
-                let mut ops = ops_for(&project);
-                ops[0].1.name = "a very long tool name ".repeat(6);
-                let program = emit(&project, &ops, DATE).unwrap().0;
-                let fit = &program.pauses[0].message;
-                assert!(fit.starts_with("Fit T1 a very long"), "{post}: {fit}");
-                assert!(fit.ends_with(". Set Z zero, then resume."), "{post}: {fit}");
-                assert!(
-                    fit.len() <= MAX_MESSAGE_CHARS,
-                    "{post}: {} chars",
-                    fit.len()
-                );
-            }
+        for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            let mut project = project_with("grblhal");
+            project.post_processor.feed_speed.spindle_control = control;
+            let mut ops = two_tool_ops(&mut project);
+            ops[1].1.name = "a very long tool name ".repeat(6);
+            let program = emit(&project, &ops, DATE).unwrap().0;
+            let fit = &program
+                .pauses
+                .iter()
+                .find(|p| p.message.starts_with("Fit T2"))
+                .unwrap()
+                .message;
+            assert!(fit.starts_with("Fit T2 a very long"), "{control:?}: {fit}");
+            assert!(
+                fit.ends_with(". Set Z zero, then resume."),
+                "{control:?}: {fit}"
+            );
+            assert!(
+                fit.len() <= MAX_MESSAGE_CHARS,
+                "{control:?}: {} chars",
+                fit.len()
+            );
         }
     }
 
@@ -2102,7 +2204,7 @@ mod tests {
     fn moves_after_a_pause_restate_motion_and_feed() {
         for (case, text) in every_program() {
             let lines: Vec<&str> = text.lines().collect();
-            for i in (0..lines.len()).filter(|&i| has_word(lines[i], "M0")) {
+            for i in (0..lines.len()).filter(|&i| is_stop(lines[i])) {
                 let Some(next) = (i + 1..lines.len()).find(|&k| {
                     let c = code(lines[k]);
                     c.contains('X') || c.contains('Y') || c.contains('Z')
@@ -2129,21 +2231,22 @@ mod tests {
         }
     }
 
-    /// For each `M0` in `text` that is followed by motion or a spindle
-    /// start: the lines between the pause and that line, inclusive.
+    /// For each stop (`M0` or `M6`) in `text` that is followed by motion
+    /// or a spindle start: the lines between the stop and that line,
+    /// inclusive.
     fn after_pauses(text: &str) -> Vec<(usize, Vec<&str>)> {
         let lines: Vec<&str> = text.lines().collect();
         let mut out = Vec::new();
-        for i in (0..lines.len()).filter(|&i| has_word(lines[i], "M0")) {
+        for i in (0..lines.len()).filter(|&i| is_stop(lines[i])) {
             let next = (i + 1..lines.len()).find(|&k| {
                 let c = code(lines[k]);
-                has_word(lines[k], "M0")
+                is_stop(lines[k])
                     || has_word(lines[k], "M3")
                     || c.contains('X')
                     || c.contains('Y')
                     || c.contains('Z')
             });
-            if let Some(next) = next.filter(|&k| !has_word(lines[k], "M0")) {
+            if let Some(next) = next.filter(|&k| !is_stop(lines[k])) {
                 out.push((i + 1, lines[i + 1..=next].to_vec()));
             }
         }
@@ -2156,9 +2259,10 @@ mod tests {
     /// moves or starts the spindle.
     #[test]
     fn setup_is_resent_after_every_pause_before_motion() {
+        let mut checked = 0;
         for (case, text) in every_program() {
             let pauses = after_pauses(&text);
-            assert!(!pauses.is_empty(), "{case}");
+            checked += pauses.len();
             for (line, between) in pauses {
                 for word in ["G21", "G54", "G90", "G17", "G94"] {
                     assert!(
@@ -2168,16 +2272,25 @@ mod tests {
                 }
             }
         }
+        assert!(checked > 0);
     }
 
     /// #55: an inch project sets inches again after a pause, never
     /// millimetres.
     #[test]
     fn inch_project_resends_g20() {
-        for post in ["grblhal", "grbl"] {
+        for (post, control) in [
+            ("grblhal", SpindleControl::Automatic),
+            ("grbl", SpindleControl::Manual),
+        ] {
             let mut project = project_with(post);
             project.display_units = Units::Inch;
-            let ops = ops_for(&project);
+            project.post_processor.feed_speed.spindle_control = control;
+            let ops = if post == "grblhal" {
+                two_tool_ops(&mut project)
+            } else {
+                ops_for(&project)
+            };
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             let pauses = after_pauses(&text);
             assert!(!pauses.is_empty(), "{post}");

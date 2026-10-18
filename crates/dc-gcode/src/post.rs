@@ -153,32 +153,40 @@ mod tests {
     }
 
     #[test]
-    fn bundled_tool_changes_stop_the_spindle_and_pause_once() {
-        // GRBL rejects M6; grblHAL ignores M6 without T and otherwise needs
-        // a sender that speaks its tool-change protocol. A single M0 after
-        // M5 works on both; M0 is a feed hold that leaves the spindle on.
+    fn bundled_tool_changes_stop_the_spindle_then_change_once() {
+        // #57: grblHAL changes tools with `T<n> M6` after `M5`, and no `M0`
+        // (one stop per change). GRBL 1.1 has no M6, so its definition has
+        // none and `emit` refuses a second tool; its pause line is kept for
+        // comparison with PureCutCNC and never written.
         for post in bundled().unwrap() {
             let tc = &post.tool_change;
             assert!(tc.stop_spindle_first, "{}", post.id);
-            assert!(!has_word(&tc.commands, "M6"), "{}", post.id);
+            assert!(!tc.pause_after_change, "{}", post.id);
+            let changes: Vec<&String> = tc
+                .commands
+                .iter()
+                .filter(|l| words(l).iter().any(|w| w == "M6"))
+                .collect();
+            if post.id != "grblhal" {
+                assert!(changes.is_empty(), "{}", post.id);
+                continue;
+            }
+            assert_eq!(changes, ["T{toolNumber} M6"], "{}", post.id);
             let off = post.feed_speed.spindle_off.to_uppercase();
             let first_off = tc.commands.iter().position(|l| words(l).contains(&off));
-            let first_pause = tc
-                .commands
-                .iter()
-                .position(|l| words(l).iter().any(|w| w == "M0"));
+            let change = tc.commands.iter().position(|l| l == changes[0]);
             assert!(
-                matches!((first_off, first_pause), (Some(o), Some(p)) if o < p),
-                "{}: spindle must stop before the pause",
+                matches!((first_off, change), (Some(o), Some(c)) if o < c),
+                "{}: spindle must stop before the change",
                 post.id
             );
-            let pauses = tc
-                .commands
-                .iter()
-                .filter(|l| words(l).iter().any(|w| w == "M0"))
-                .count()
-                + usize::from(tc.pause_after_change);
-            assert_eq!(pauses, 1, "{}: one cycle start per tool change", post.id);
+            assert!(
+                !tc.commands
+                    .iter()
+                    .any(|l| words(l).iter().any(|w| w == "M0" || w == "M1")),
+                "{}: one stop per tool change",
+                post.id
+            );
         }
     }
 

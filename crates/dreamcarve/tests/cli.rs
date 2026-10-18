@@ -436,13 +436,13 @@ fn pause_message(line: &str) -> String {
         .to_owned()
 }
 
-/// Asserts that `summary` lists every `M0` of `program` by its 1-based line
-/// number together with its message.
+/// Asserts that `summary` lists every `M0` and `M6` of `program` by its
+/// 1-based line number together with its message.
 fn assert_lists_pauses(program: &str, summary: &str) {
     let pauses: Vec<(usize, &str)> = program
         .lines()
         .enumerate()
-        .filter(|(_, l)| l.starts_with("M0"))
+        .filter(|(_, l)| l.starts_with("M0") || l.split_whitespace().any(|w| w == "M6"))
         .map(|(i, l)| (i + 1, l))
         .collect();
     assert!(!pauses.is_empty(), "the program pauses at least once");
@@ -462,7 +462,8 @@ fn assert_lists_pauses(program: &str, summary: &str) {
 
 /// Design step 8 (#40): the controller or sender may not show a pause's
 /// message (GRBL drops comments), so `export` lists every `M0` with its line
-/// number and what it is for.
+/// number and what it is for. #57: the coaster has one tool, so with
+/// automatic spindle control it does not stop at all.
 #[test]
 fn export_lists_each_pause() {
     let dir = work_dir("export_lists_each_pause");
@@ -472,12 +473,11 @@ fn export_lists_each_pause() {
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
     let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
     let summary = stdout(&out);
-    assert_lists_pauses(&program, &summary);
-    // #43: the tool-change pause asks for Z zero in both modes.
     assert!(
-        summary.contains("Fit T1 Set me. Set Z zero, then resume."),
-        "the tool-change pause is listed: {summary}"
+        !program.lines().any(|l| l.starts_with("M0")),
+        "no pause: {program}"
     );
+    assert!(!summary.contains("Pauses"), "no pause listed: {summary}");
 
     let mut project = load_file(&dcv).project;
     project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
@@ -493,8 +493,7 @@ fn export_lists_each_pause() {
     let summary = stdout(&out);
     assert_lists_pauses(&program, &summary);
     assert!(
-        summary.contains("Fit T1 Set me. Set Z zero, then resume.")
-            && summary.contains("Turn the router ON"),
+        summary.contains("Turn the router ON") && summary.contains("Turn the router OFF"),
         "both manual pauses are listed: {summary}"
     );
 }

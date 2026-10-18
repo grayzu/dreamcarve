@@ -43,8 +43,8 @@ rules S1–S6. The `post::tests` in `dc-gcode` lock each finding in.
 | `G94` added to the header | both | Units-per-minute feed. Both controllers support G93 inverse time, which changes what `F` means if left active by an aborted program. |
 | Footer `[]` → `["M5"]` | `grbl.json` | S4 says the footer stops the spindle. M30 also does, but S4 is checked on the text. |
 | Footer `G0 G53 Z0` removed | `grblhal.json` | With soft limits on, machine Z0 is outside the envelope (max is −pull-off) and raises an alarm; unhomed, machine Z0 is wherever Z was at power-on. The program already ends at safe Z. |
-| Tool change `M6 …` → `M0 ( Tool change: T{toolNumber} {toolName} )`, `pause_after_change` → `false` | `grblhal.json` | M6 without a T word is ignored; with one, it needs a sender that speaks grblHAL's tool-change protocol (`$341`). M0 after M5 pauses on every setup. |
-| Tool change pauses once, `pause_after_change` → `false` | `grbl.json` | The command list already has M0, so `true` made the operator press cycle start twice. GRBL does not support M6. |
+| Tool change `M6 ( Tool change: {toolName} )` → `T{toolNumber} M6`, `pause_after_change` → `false` | `grblhal.json` | #57, checked 2026-10-18 (see "Tool changes" below). `M6` without a T word changes to the pending tool, normally the current one, so it is skipped (`gcode.c` 2543-2544, 2619-2621). A second stop after `M6` would make the user press cycle start twice. The line marks the definition as able to change tools; `emit` writes its own `T<n> M6 (MSG, ...)` in its place. (#43 had made it an `M0` pause, in which the user cannot jog.) |
+| Tool change pauses once, `pause_after_change` → `false` | `grbl.json` | The command list already has M0, so `true` made the operator press cycle start twice. GRBL does not support M6. Since #57 the list is never written: with no `M6` line, `emit` refuses a program with a second tool. |
 | `{operationDescription}` lines removed | both | `emit` does not fill that placeholder, so it would reach the machine as literal text. |
 | Em-dashes in `description` → `-` | both | Bytes above 0x7F are real-time commands on both controllers (0x94 is a feed override). |
 | `feed_speed.spindle_on_dwell` added: `G4 P{seconds}`, `duration_s` 3.0 | both | Neither controller waits for the spindle to reach speed after M3 (grblHAL `$394` defaults to 0). `G4 P` is seconds on both: `mc_dwell(float seconds)` in `grbl/motion_control.c` and grblHAL `motion_control.c`. DreamCarve field, not in PureCutCNC's schema (#28). |
@@ -61,34 +61,83 @@ default (`DEFAULT_LEGACY_RTCOMMANDS On` in `config.h`; checked in
 or laser capability) or M7 (optional on both). Numbers never use exponent
 notation. Arc IJ offsets are taken from the rounded start point emitted.
 
-## Tool-change pause
+## Tool changes
 
-In both spindle modes `emit` writes its own tool-change pause in place of a
-definition line that only pauses (`M0` or `M1`), or of
-`pause_after_change`: `M0 (MSG, Fit T{n} {name}. Set Z zero, then
-resume.)`. A new bit has a new length, so Z zero must be set with it
-(#43). The tool change starts with a retract to safe Z, also at program
-start where Z is unknown, and ends with another, measured from the new
-zero, before the spindle starts or the router-on pause. The next move
-writes its motion and feed words again, because the user may probe
-(`G38.2`) or move with their own feed to set Z zero, which changes the
-controller's modal state. After every pause that more motion follows, the
-program also writes the setup again: the header's lines that only set
-modal state, plus `G90`, units and work coordinates if the header leaves
-them out (#55). The user may have left the controller in `G91`, `G20` or
-another work coordinate system. The bundled definitions keep their
-`M0 ( Tool change: ... )` lines for comparison with PureCutCNC; that text is
-not written.
+There is no stop for the first tool. The user fits it and sets work zero
+with it before starting the program, and `export` says so (#57). A later
+tool needs a definition whose `tool_change.commands` has an `M6` line;
+otherwise `emit` fails with `ExportError::ToolChangeNotSupported`, naming
+the tools. For a later tool the program retracts to safe Z, stops the
+spindle, and writes `T{n} M6 (MSG, Fit T{n} {name}. Set Z zero, then
+resume.)` in place of the definition's `M6` line. Lines that only pause
+(`M0`, `M1`) and `pause_after_change` are left out: one stop per change. A
+new bit has a new length, so Z zero is set with it (#43). After the change
+the program writes the setup again (the header's lines that only set modal
+state, plus `G90`, units and work coordinates if the header leaves them
+out, #55), writes its next motion and feed words in full, and retracts to
+safe Z, measured from the new zero, before the spindle starts or the
+router-on pause. A program that changes tools starts with `M61 Q<n>` for
+its first tool. The safety pass accepts `M6` and `M61` only from a
+definition with an `M6` line, and checks `M6` as it checks `M0`: at a
+known Z at or above safe Z, Z unknown after it, setup required after it.
+
+Checked on 2026-10-18 against `grblHAL/core` at commit
+`4ec1ae44b857a70d2f9298344feac4b43ed0eb6b` (master that day):
+
+- **Modes.** `$341` is the tool change mode: `Normal, Manual touch off,
+  Manual touch off @ G59.3, Automatic touch off @ G59.3, Ignore M6`, 0 to 4
+  (`settings.c` 2482). The help text for 0: "Normal: allows jogging for
+  manual touch off. Set new position manually." (`settings.c` 2681).
+- **`$341` must not be 4.** With no tool changer and mode 4, `M6` is
+  dropped without a word (`gcode.c` 1845): no stop, so the program cuts
+  with the old bit and the old Z zero. The post-processors chapter states
+  this as a prerequisite; DreamCarve cannot read the setting at export.
+- **Mode 0 stops without moving.** `tc_init` installs no tool-change
+  handler for mode 0 or 4 (`tool_change.c` 563-566), so `M6` takes the
+  manual branch: it syncs the planner, reports the line's `(MSG, ...)`
+  (`gcode.c` 4229-4236), sets `EXEC_TOOL_CHANGE` and waits in
+  `STATE_TOOL_CHANGE` (`gcode.c` 4262-4266). Jogging is allowed in that
+  state (`system.c` 241), and cycle start resumes.
+- **Modes 1 to 3 move the machine** (Z up; 2 and 3 also to a `G59.3` tool
+  setter) and need homing first: Z for mode 1, X, Y and Z for 2 and 3
+  (`tool_change.c` 459-462). They work, for users who set them up.
+- **`M6` needs a stream that can be suspended.** Without
+  `hal.stream.suspend_read` grblHAL rejects `M6` with
+  `Status_GcodeUnsupportedCommand` (`error:20`, `gcode.c` 1846-1850). That
+  failure is on the machine, not at export; the chapter documents it.
+- **`M6` for the current tool is skipped** (`gcode.c` 2619-2621, "Tool
+  already in spindle, ignore"), and the current tool survives a soft reset
+  (`gcode.c` 794) and, with `tool_persistent`, a power cycle (`gcode.c`
+  770-780). So the first tool has no `M6`, and a program that changes
+  tools first sets the current tool with `M61 Q<n>` (`gcode.c` 1887-1889,
+  2519). `M61` sets it at once, with no stop and no motion, when `<n>`
+  differs from the pending tool (`gcode.c` 4155-4170), which after a reset
+  is the current one (`gcode.c` 794). Without it, a later `T<n> M6` whose
+  `<n>` was the last tool of the previous job would be skipped, and the
+  program would cut with the wrong bit and Z zero.
+- **The message goes on the `M6` line.** A comment-only line's message is
+  reported when the line is parsed (`gcode.c` 1343-1346), which may be
+  before the machine gets there. The message of the `M6` line is reported
+  after the planner has synced (`gcode.c` 4229-4236).
+- **GRBL 1.1 has no `M6`**: `grbl/gcode.c` lists it under unsupported, and
+  the M-word `default` case fails with `STATUS_GCODE_UNSUPPORTED_COMMAND`.
+  Its `M0` is a feed hold, in which `$J` jogging is refused
+  (`grbl/system.c`: only in IDLE or JOG). So GRBL cannot stop for a new bit
+  where the user can set Z zero, and export refuses a second tool.
+
+The tool-change height is not set: in mode 0 grblHAL waits at the
+operation's safe Z, and the user jogs up to swap the bit (#73).
 
 ## Manual spindle control
 
 With `feed_speed.spindle_control: "manual"` the program sends no `M3`, `M5`
-or `S` word. After the tool change (see "Tool-change pause" below) it
+or `S` word. After any tool change (see "Tool changes" above) it
 pauses with
 `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`
 before each tool's first cut, and retracts to safe Z and pauses with
-`M0 (MSG, Turn the router OFF.)` before a tool change and at the end. So a
-tool has two stops before it cuts, with a retract between them: the router
+`M0 (MSG, Turn the router OFF.)` before a tool change and at the end. So a later
+tool has two stops before it cuts, `M6` and the router-on pause, with a
+retract between them: the router
 starts only after the bit has been lifted from the Z zero the user set.
 Checked on
 2026-10-16 against each controller's source:
@@ -117,12 +166,12 @@ Checked on
 Sources:
 
 - GRBL v1.1: `gnea/grbl` `README.md`, `grbl/gcode.c`, `grbl/serial.c`,
-  `grbl/protocol.c`, `grbl/config.h`; wiki pages "Grbl v1.1 Commands",
-  "Grbl v1.1 Interface", "Grbl v1.1 Configuration".
+  `grbl/protocol.c`, `grbl/config.h`, `grbl/system.c`; wiki pages "Grbl
+  v1.1 Commands", "Grbl v1.1 Interface", "Grbl v1.1 Configuration".
 - grblHAL: `grblHAL/core` `gcode.c`, `grbl.h`, `config.h`, `protocol.c`,
-  `machine_limits.c`, `tool_change.c`; wiki pages "Manual, semi-automatic and
-  automatic tool change", "Manual tool change protocol", "Changes from grbl
-  1.1".
+  `machine_limits.c`, `tool_change.c`, `settings.c`, `system.c`; wiki pages
+  "Manual, semi-automatic and automatic tool change", "Manual tool change
+  protocol", "Changes from grbl 1.1".
 
 Still needs a check on a real machine: the sender's handling of comments,
 `$32` laser mode off, `$30` at or above the requested RPM, and spindle

@@ -8,14 +8,6 @@ G54
 ( Operation 1: Profile )
 ( Tool 1: Set me )
 G0 Z5.000
-M5
-M0 (MSG, Fit T1 Set me. Set Z zero, then resume.)
-G90
-G17
-G94
-G21
-G54
-G0 Z5.000
 M3 S18000
 G4 P3.000
 X103.139 Y56.863

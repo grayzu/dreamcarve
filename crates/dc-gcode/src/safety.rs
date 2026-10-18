@@ -18,6 +18,7 @@ use dc_geometry::{EPS_MM, Point3, approx_eq};
 use dc_project::{PostProcessor, ProfileOp, SpindleControl, Tool, ToolId, Units};
 
 use crate::ExportError;
+use crate::emit::uses_m6;
 use crate::format::decimal_places;
 use crate::parse::{Block, MachineMove, MotionKind, is_code, parse_program};
 use crate::transform::{MachineTransform, mm_per_unit};
@@ -55,7 +56,7 @@ pub(crate) fn check(
 ) -> Result<(), ExportError> {
     check_characters(text)?;
     let blocks = parse_program(text)?;
-    check_words(&blocks)?;
+    check_words(&blocks, uses_m6(post))?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
     let manual = post.feed_speed.spindle_control == SpindleControl::Manual;
@@ -92,10 +93,10 @@ pub(crate) fn check(
                 });
             }
         }
-        // S4, #43: the user fits tools and switches the router at a pause,
-        // so it comes with the bit at safe Z. Afterwards Z is unknown: the
-        // user may have jogged or set Z zero.
-        if block.has('M', 0.0) || block.has('M', 1.0) {
+        // S4, #43, #57: the user fits tools and switches the router at a
+        // pause or an `M6` tool change, so it comes with the bit at safe Z.
+        // Afterwards Z is unknown: the user may have jogged or set Z zero.
+        if block.has('M', 0.0) || block.has('M', 1.0) || block.has('M', 6.0) {
             let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
             if !router.at_or_above(safe_z_mm) {
                 return Err(ExportError::PauseNotAtSafeZ { line });
@@ -204,7 +205,7 @@ pub(crate) fn check(
 
 /// Where Z is, for the S4 checks in both spindle modes, and, with manual
 /// spindle control, what the program has done since its last cut. A tool's
-/// first cut needs a pause after the last retract, so a tool-change pause
+/// first cut needs a pause after the last retract, so a tool-change stop
 /// followed by the retract to safe Z does not count as the pause to turn
 /// the router on.
 #[derive(Debug, Default)]
@@ -281,14 +282,20 @@ const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
 /// `M8` coolant, could change what the controller does in a way the check
 /// cannot follow, so it is rejected. This also keeps out the words
 /// DreamCarve never sends to GRBL or grblHAL (`definitions/README.md`,
-/// "Verification"): `M4` needs a direction pin or laser mode, `M6` needs a
-/// tool-change protocol the sender may not speak, `M7` is optional on both,
-/// and `G28`, `G30`, and `G53` move in machine coordinates.
+/// "Verification"): `M4` needs a direction pin or laser mode, `M7` is
+/// optional on both, and `G28`, `G30`, and `G53` move in machine
+/// coordinates. `M6` is accepted only from a definition whose tool change
+/// uses it ([`TOOL_CHANGE_M`]).
 const ALLOWED_G: [f64; 16] = [
     0.0, 1.0, 2.0, 3.0, 4.0, 17.0, 20.0, 21.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 90.0, 94.0,
 ];
 /// See [`ALLOWED_G`].
 const ALLOWED_M: [f64; 6] = [0.0, 1.0, 2.0, 3.0, 5.0, 30.0];
+/// The `M` codes of grblHAL's tool change, accepted when the definition's
+/// tool change uses `M6` (#57): `M6` itself, checked like a pause, and
+/// `M61`, which sets the current tool number without a stop or a move.
+/// GRBL 1.1 has neither.
+const TOOL_CHANGE_M: [f64; 2] = [6.0, 61.0];
 
 /// A dwell shorter than the configured one by less than this still counts:
 /// it absorbs the rounding of the written seconds.
@@ -321,15 +328,23 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
     Ok(())
 }
 
-fn check_words(blocks: &[Block]) -> Result<(), ExportError> {
+/// Rejects every `G` and `M` code not in [`ALLOWED_G`] or [`ALLOWED_M`].
+/// The codes in [`TOOL_CHANGE_M`] are allowed too when the definition
+/// changes tools with `M6` (`with_m6`).
+fn check_words(blocks: &[Block], with_m6: bool) -> Result<(), ExportError> {
+    let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     for block in blocks {
         for word in &block.words {
-            let allowed: &[f64] = match word.letter {
-                'G' => &ALLOWED_G,
-                'M' => &ALLOWED_M,
+            let (allowed, extra): (&[f64], &[f64]) = match word.letter {
+                'G' => (&ALLOWED_G, &[]),
+                'M' => (&ALLOWED_M, tool_change),
                 _ => continue,
             };
-            if !allowed.iter().any(|&code| is_code(word.value, code)) {
+            if !allowed
+                .iter()
+                .chain(extra)
+                .any(|&code| is_code(word.value, code))
+            {
                 return Err(ExportError::ForbiddenWord {
                     line: block.line,
                     word: format!("{}{}", word.letter, word.value),

@@ -119,18 +119,24 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   a message to turn the router off. The safety pass checks that each tool's
   first cutting move follows an `M0` issued at safe Z after the last retract
   and after the previous cut, and that an `M0` at safe Z follows the last
-  cut. In both modes every tool change, the first included, retracts to
-  safe Z, pauses with `M0` and a message to fit the tool and set Z zero,
-  then retracts to safe Z again, from the new zero, before the spindle or
-  router starts. Every `M0` is at safe Z, and the safety pass treats Z as
-  unknown after it, so a spindle start needs a retract after the last
-  pause (#43).
+  cut. In both modes the program does not stop for the first tool: the
+  user fits it and sets work zero with it before starting, and `export`
+  says so (#57). Every later tool change retracts to safe Z, stops the
+  spindle, and stops with `T<n> M6` and a message to fit the tool and set
+  Z zero, then retracts to safe Z again, from the new zero, before the
+  spindle or router starts. Only a post-processor whose tool change has
+  `M6` (grblHAL) can change tools; with any other (GRBL), export of
+  operations that use more than one tool fails, naming the tools. A program
+  that changes tools first sets the controller's current tool with
+  `M61 Q<n>`, because grblHAL skips an `M6` for the tool it holds. Every
+  `M0` and `M6` is at safe Z, and the safety pass treats Z as unknown after
+  it, so a spindle start needs a retract after the last stop (#43, #57).
 - **S5** The program begins with the post-processor's units command,
   work-coordinate select and absolute distance mode (`G90`), so a
-  controller in the wrong state is corrected. After every pause that more
-  motion follows, it sets them again, with the header's other modal lines,
-  because the user may change them at the controller during the pause
-  (#55).
+  controller in the wrong state is corrected. After every pause or tool
+  change that more motion follows, it sets them again, with the header's
+  other modal lines, because the user may change them at the controller
+  during the stop (#55, #57).
 - **S6** Machine origin is applied as a translation and axis mapping only.
   No mirroring occurs in export (ADR-0001).
 
