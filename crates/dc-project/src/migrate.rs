@@ -21,13 +21,17 @@
 //!   tagged by `kind` to serde's external tagging: a choice without data is
 //!   a plain string (`"bottom_left"`), one with data is a one-key object
 //!   (`{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`) (#46).
+//! - **4**: `stock.thickness_mm` and each Profile's `depth_mm` may be
+//!   `null` (unset), which `init` writes so export refuses until the user
+//!   sets them (#64). Earlier files always held numbers, which carry over
+//!   unchanged.
 
 use crate::serialize::LoadError;
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -39,6 +43,7 @@ fn step(from: u32) -> Option<Step> {
         0 => Some(v0_to_v1),
         1 => Some(v1_to_v2),
         2 => Some(v2_to_v3),
+        3 => Some(v3_to_v4),
         _ => None,
     }
 }
@@ -144,6 +149,30 @@ fn v2_to_v3(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
     Ok(root)
 }
 
+/// Version 3 → 4: thickness and depth become optional. Every version 3
+/// value is a number and stays as it is; this step only checks that, so a
+/// broken file is not carried over as "unset".
+fn v3_to_v4(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let thickness = root
+        .get("stock")
+        .and_then(|stock| stock.get("thickness_mm"));
+    if !thickness.is_some_and(Value::is_number) {
+        return Err("`stock.thickness_mm` is missing or not a number".into());
+    }
+    let operations = root
+        .get("operations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "`operations` is missing or not an array".to_owned())?;
+    for (i, op) in operations.iter().enumerate() {
+        if !op.get("depth_mm").is_some_and(Value::is_number) {
+            return Err(format!(
+                "`operations[{i}].depth_mm` is missing or not a number"
+            ));
+        }
+    }
+    Ok(root)
+}
+
 /// Rewrites one `{ "kind": k, ..data }` object as `k` when there is no
 /// data, else as `{ k: { ..data } }`. `path` names the value in errors.
 fn untag(value: Value, path: &str) -> Result<Value, String> {
@@ -173,6 +202,7 @@ mod tests {
     const V0_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v0/sample.dcv");
     const V1_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v1/sample.dcv");
     const V2_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v2/sample.dcv");
+    const V3_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v3/sample.dcv");
 
     /// The sample project as raw JSON of `version`, without the fields
     /// added after it.
@@ -241,6 +271,40 @@ mod tests {
         let loaded = load(V2_FIXTURE).unwrap();
         assert_eq!(loaded.project.version, CURRENT_VERSION);
         assert_eq!(loaded.project, sample_project());
+    }
+
+    #[test]
+    fn version_3_fixture_loads() {
+        let loaded = load(V3_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// #64: version 4 lets thickness and depth be unset, but a version 3
+    /// file always had numbers, and they carry over unchanged.
+    #[test]
+    fn v3_to_v4_keeps_thickness_and_depth() {
+        let mut root = sample_root_at(3);
+        root["stock"]["thickness_mm"] = json!(18.3);
+        root["operations"][0]["depth_mm"] = json!(18.5);
+        let migrated = migrate(root, 3).unwrap();
+        let project: crate::Project = serde_json::from_value(migrated).unwrap();
+        dc_geometry::assert_approx_eq!(project.stock.thickness_mm.unwrap(), 18.3, 0.0);
+        let crate::Operation::Profile(op) = &project.operations[0];
+        dc_geometry::assert_approx_eq!(op.depth_mm.unwrap(), 18.5, 0.0);
+    }
+
+    /// A version 3 file had no way to leave thickness unset, so a `null`
+    /// there is a broken file, not one to carry over as unset.
+    #[test]
+    fn v3_with_null_thickness_fails() {
+        let mut root = sample_root_at(3);
+        root["stock"]["thickness_mm"] = Value::Null;
+        let err = migrate(root, 3).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 3, to: 4, .. }),
+            "{err:?}"
+        );
     }
 
     /// Unit variants become strings; a variant with data becomes a one-key

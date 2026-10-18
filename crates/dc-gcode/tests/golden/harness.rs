@@ -165,12 +165,20 @@ fn emit_program(project: &Project) -> String {
     program.text
 }
 
+/// The stock thickness; every case sets it.
+fn thickness(project: &Project) -> f64 {
+    project
+        .stock
+        .thickness_mm
+        .expect("every case sets the stock thickness")
+}
+
 /// The machine Z of the tab top, if the operation has tabs. Machine Z zero
 /// is the stock top in every case.
 fn project_tab_top_z(project: &Project, op: &ProfileOp) -> Option<f64> {
     op.tabs
         .as_ref()
-        .map(|tabs| tabs.height_mm - project.stock.thickness_mm)
+        .map(|tabs| tabs.height_mm - thickness(project))
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +362,7 @@ impl Limits {
     fn of(project: &Project, op: &ProfileOp, tool: &Tool) -> Self {
         // Machine Z zero is the stock top in every case.
         Self {
-            floor_z: -project.stock.thickness_mm - op.through_cut_allowance_mm,
+            floor_z: -thickness(project) - op.through_cut_allowance_mm,
             safe_z: op.safe_z_mm,
             feed: tool.feed_mm_min.expect("the tool has a feed"),
             plunge: tool.plunge_mm_min.expect("the tool has a plunge rate"),

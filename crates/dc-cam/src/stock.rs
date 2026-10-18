@@ -130,7 +130,7 @@ mod tests {
         Stock {
             width_mm: 100.0,
             height_mm: 50.0,
-            thickness_mm: 6.0,
+            thickness_mm: Some(6.0),
         }
     }
 

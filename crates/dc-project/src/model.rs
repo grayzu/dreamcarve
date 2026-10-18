@@ -69,8 +69,11 @@ pub struct Stock {
     pub width_mm: f64,
     /// Extent along Y, millimetres.
     pub height_mm: f64,
-    /// Extent along Z, millimetres. The material bottom is Z = 0.
-    pub thickness_mm: f64,
+    /// Extent along Z, millimetres. The material bottom is Z = 0. `None`
+    /// until the user measures the material; like a feed, it is never
+    /// defaulted, and validation reports it as an error until set (#64).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub thickness_mm: Option<f64>,
 }
 
 /// Where the machine's work zero sits relative to the stock.
@@ -263,8 +266,10 @@ pub struct ProfileOp {
     pub tool: ToolId,
     /// Which side of the outline the cutter runs on.
     pub side: Side,
-    /// Final depth below the stock top, millimetres.
-    pub depth_mm: f64,
+    /// Final depth below the stock top, millimetres. `None` until the user
+    /// sets it; never defaulted, and an error in validation until set (#64).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
     #[serde(deserialize_with = "Option::deserialize")]
     pub step_down_mm: Option<f64>,

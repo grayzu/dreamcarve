@@ -1,7 +1,7 @@
 # Your first cut from an SVG
 
 This chapter takes a drawing of a coaster from SVG to G-code, and then to a
-cut part. The coaster is a 90 mm circle cut out of 12 mm plywood. Four small
+cut part. The coaster is a 90 mm circle cut out of plywood sold as 12 mm. Four small
 **tabs** (bridges of uncut material) hold it to the board until you are done.
 
 You will run four commands and edit one file by hand. Every command here is
@@ -15,9 +15,11 @@ you, that is a bug.
 - The drawing,
   [`coaster.svg`](https://raw.githubusercontent.com/grayzu/dreamcarve/main/fixtures/coaster.svg).
   It is also in the repository at `fixtures/coaster.svg`.
-- For the cut: a piece of 12 mm plywood at least 110 × 110 mm, a 6.35 mm
-  (1/4") two-flute upcut end mill, and a router controlled by grblHAL. GRBL
-  works too; see [Post-processors](../user-guide/post-processors.md).
+- Calipers, to measure the plywood.
+- For the cut: a piece of plywood sold as 12 mm, at least 110 × 110 mm, on
+  a spoilboard; a 6.35 mm (1/4") two-flute upcut end mill; and a router
+  controlled by grblHAL. GRBL works too; see
+  [Post-processors](../user-guide/post-processors.md).
 
 ## 1. Put the drawing in a folder
 
@@ -41,8 +43,8 @@ dreamcarve init coaster.svg
 
 ```text
 Imported 1 shape(s) from coaster.svg: page units mm, 1 user unit = 1.0000 mm.
-Wrote coaster.dcv: stock 110.00 × 110.00 × 12.00 mm, post-processor grblhal, 1 shape(s) targeted by Profile.
-Next: edit coaster.dcv to set the stock thickness and the Profile depth (`operations[op1].depth_mm`) to match your material, and tool `t1` (Set me): feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.
+Wrote coaster.dcv: stock 110.00 × 110.00 mm, post-processor grblhal, 1 shape(s) targeted by Profile.
+Next: edit coaster.dcv to set `stock.thickness_mm` to your material's measured thickness, the Profile depth `operations[op1].depth_mm` (to cut through: the thickness plus `through_cut_allowance_mm`), and tool `t1` (Set me): feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.
 ```
 
 The project holds everything about the job: the shapes, the **stock** (the
@@ -52,10 +54,10 @@ reads). `init` fills it with these defaults:
 
 | Setting | Default |
 | --- | --- |
-| Stock | The drawing's bounds plus 10 mm on each side, 12 mm thick: 110 × 110 × 12 mm here |
+| Stock | The drawing's bounds plus 10 mm on each side: 110 × 110 mm here, **no thickness** |
 | Work zero | X and Y at the stock's bottom-left corner, Z at the stock top |
 | Tool `t1`, named "Set me" | 6.35 mm end mill, 2 flutes, **no feed, plunge rate or spindle speed** |
-| Operation `op1` | A Profile of every closed shape: outside the line, climb, 12 mm deep in 4 mm passes, safe Z 5 mm |
+| Operation `op1` | A Profile of every closed shape: outside the line, climb, **no depth**, 4 mm passes, safe Z 5 mm |
 | Tabs | 4 tabs, 8 mm wide and 3 mm tall, square |
 | Post-processor | grblHAL, millimetres |
 
@@ -76,18 +78,51 @@ This fails, on purpose:
 warning: tool `Set me` (`t1`) has no feed_mm_min; export fails until it is set
 warning: tool `Set me` (`t1`) has no plunge_mm_min; export fails until it is set
 warning: tool `Set me` (`t1`) has no rpm; export fails until it is set
-error: tool `Set me` has no usable feed rate (feed_mm_min)
+error: the stock has no thickness_mm; export fails until it is set
+error: operation `Profile` (`op1`) has no depth_mm; export fails until it is set
 error: export of coaster.dcv failed; nothing was written
 ```
 
-DreamCarve never guesses a feed rate or spindle speed. A wrong guess can
-break a bit or start a fire, so `export` refuses and writes nothing until
-you supply every value yourself.
+DreamCarve never guesses your material's thickness, the cut depth, a feed
+rate or a spindle speed. A wrong thickness puts every pass, and sometimes
+every rapid move, at the wrong height; a wrong feed can break a bit or
+start a fire. So `export` refuses and writes nothing until you supply every
+value yourself.
 
-## 4. Set the feeds
+## 4. Set the material and the feeds
 
-Open `coaster.dcv` in your text editor. It is a JSON file. Find the tool,
-under `"tools"`. Its three rates are `null`:
+Open `coaster.dcv` in your text editor. It is a JSON file.
+
+### The material
+
+Plywood sold as 12 mm is often thinner. Measure yours with calipers in a
+few places. This chapter uses 11.8 mm; use your own measurement.
+
+In the file, `"thickness_mm"` under `"stock"` and `"depth_mm"` under
+`"operations"` are `null`, and `"through_cut_allowance_mm"` is `0.0`.
+Change those three lines to:
+
+<!-- doc-test: edit coaster.dcv -->
+```json
+"thickness_mm": 11.8,
+"depth_mm": 12.0,
+"through_cut_allowance_mm": 0.2,
+```
+
+- `thickness_mm` is your measurement, in millimetres.
+- `depth_mm` is how deep the Profile cuts, measured down from the top of
+  the plywood: the thickness plus 0.2 mm. Plywood cut exactly to its bottom
+  often keeps a thin skin of fibres; going 0.2 mm into the spoilboard (the
+  board under the plywood) cuts the part free.
+- `through_cut_allowance_mm` allows that 0.2 mm. DreamCarve refuses any cut
+  that goes further below the bottom of the stock than this.
+
+If your measurement differs, set `thickness_mm` to it and `depth_mm` to it
+plus 0.2.
+
+### The bit
+
+Find the tool, under `"tools"`. Its three rates are `null`:
 
 ```json
 "feed_mm_min": null,
@@ -115,12 +150,8 @@ Save the file.
 These are starting values for this bit in plywood. Your machine may need
 others. If you are not sure, ask the maker of your bit or your machine.
 
-### If your plywood is not 12.0 mm
-
-Plywood sold as 12 mm is often thinner. Measure yours with calipers. If it
-differs, change two more lines: `"thickness_mm"` under `"stock"`, and
-`"depth_mm"` under `"operations"`, both to your measurement. The
-[project file](../user-guide/project-file.md) chapter lists every field.
+The [project file](../user-guide/project-file.md) chapter lists every
+field.
 
 ## 5. Check the project
 
@@ -202,9 +233,10 @@ X103.174 Y55.063 F1500.000
 | `G1 Z-4.000 F500.000` | Plunge to the first pass, 4 mm deep, at the plunge rate. |
 | `X103.174 Y55.063 F1500.000` | Cut along the outline at the feed rate. |
 
-The circle is cut in three passes: Z −4, −8 and −12. On the last pass the
-bit rises to Z −9 over each tab, leaving 3 mm of wood. Then it retracts to
-safe Z, stops the spindle (`M5`) and ends (`M30`).
+The circle is cut in three passes: Z −4, −8 and −12. The bottom of the
+plywood is at Z −11.8, so the last pass goes 0.2 mm into the spoilboard. On
+that pass the bit rises to Z −8.8 over each tab, leaving 3 mm of wood. Then
+it retracts to safe Z, stops the spindle (`M5`) and ends (`M30`).
 
 ## 8. Before you cut
 
@@ -217,8 +249,8 @@ job:
    106.35 mm from your XY zero, so keep clamps and screws outside that area,
    with room to spare for the collet nut. Your board can be bigger. If you
    change the project, export again and use the new extents.
-2. **Use a spoilboard.** The cut goes right down to the bottom of the
-   plywood.
+2. **Use a spoilboard.** The last pass goes 0.2 mm below the plywood,
+   into the board under it.
 3. **Fit the bit and set work zero with it.** Fit the 6.35 mm bit first: a
    different bit, or the same one seated deeper, has a different length.
    Then set X and Y at the front-left corner of the square (the corner

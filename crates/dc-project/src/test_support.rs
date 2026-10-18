@@ -44,7 +44,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with four tabs. Matches the committed fixture
-/// `tests/fixtures/dcv/v3/sample.dcv`.
+/// `tests/fixtures/dcv/v4/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -59,7 +59,7 @@ pub fn sample_project() -> Project {
         stock: Stock {
             width_mm: 100.0,
             height_mm: 100.0,
-            thickness_mm: 6.0,
+            thickness_mm: Some(6.0),
         },
         origin: MachineOrigin {
             xy: OriginXy::BottomLeft,
@@ -84,7 +84,7 @@ pub fn sample_project() -> Project {
             targets: vec![InstanceId::new("i1")],
             tool: ToolId::new("t1"),
             side: Side::Outside,
-            depth_mm: 6.0,
+            depth_mm: Some(6.0),
             step_down_mm: None,
             direction: CutDirection::Climb,
             through_cut_allowance_mm: 0.0,

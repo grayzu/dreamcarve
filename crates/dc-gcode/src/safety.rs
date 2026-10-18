@@ -57,16 +57,17 @@ pub(crate) fn check(
     post: &PostProcessor,
     transform: &MachineTransform,
     stock: &Stock,
+    stock_thickness_mm: f64,
     flatten_tolerance_mm: f64,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
-    let blocks = check_rules(text, post, transform, stock.thickness_mm, spans)?;
+    let blocks = check_rules(text, post, transform, stock_thickness_mm, spans)?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
         check_reproduces(span, &blocks, post, transform, flatten_tolerance_mm)?;
     }
     // S7: every cut stays on the stock.
-    check_on_stock(&blocks, post, transform, stock, spans)?;
+    check_on_stock(&blocks, post, transform, stock, stock_thickness_mm, spans)?;
     Ok(extents(&blocks, transform.output_units()))
 }
 
@@ -190,13 +191,14 @@ fn check_on_stock(
     post: &PostProcessor,
     transform: &MachineTransform,
     stock: &Stock,
+    stock_thickness_mm: f64,
     spans: &[OpSpan<'_>],
 ) -> Result<(), ExportError> {
     for mv in blocks.iter().filter_map(|b| b.motion.as_ref()) {
         if !mv.kind.is_cut() {
             continue;
         }
-        let limits = Limits::for_line(mv.line, spans, stock.thickness_mm);
+        let limits = Limits::for_line(mv.line, spans, stock_thickness_mm);
         let radius_mm = limits.tool.map_or(0.0, |t| t.diameter_mm / 2.0);
         let tolerance_mm = quantum_mm(post, mv.units) + EPS_MM;
         let ends = [mv.from, mv.to]
@@ -1232,7 +1234,7 @@ mod tests {
             text,
             &project.post_processor,
             &transform,
-            project.stock.thickness_mm,
+            project.stock.thickness_mm.unwrap(),
             &spans,
         )
         .map(|_| ())
@@ -1735,6 +1737,7 @@ mod tests {
             &project.post_processor,
             &transform,
             &project.stock,
+            project.stock.thickness_mm.unwrap(),
             project.flatten_tolerance_mm,
             &spans,
         )

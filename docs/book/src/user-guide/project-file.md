@@ -40,7 +40,7 @@ controller.
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `3`. |
+| `version` | Format version. This build writes `4`. |
 | `name` | The project name, written at the top of the program. `init` uses the SVG's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs. |
@@ -58,7 +58,7 @@ controller.
 "stock": {
   "width_mm": 110.0,
   "height_mm": 110.0,
-  "thickness_mm": 12.0
+  "thickness_mm": 11.8
 }
 ```
 
@@ -66,12 +66,14 @@ controller.
 | --- | --- |
 | `width_mm` | Size along X. |
 | `height_mm` | Size along Y. |
-| `thickness_mm` | Size along Z. Measure your material and enter the real value. |
+| `thickness_mm` | Size along Z. **Required.** Measure your material and enter the real value. |
 
-`init` sizes the stock to the drawing plus 10 mm on each side, 12 mm thick.
-It rounds the size and the shapes' placement up to 0.01 mm, so the file
-holds `110.0`, not `110.0000025`.
-If you change `thickness_mm`, change the operation's `depth_mm` to match.
+`init` sizes the stock to the drawing plus 10 mm on each side. It rounds
+the size and the shapes' placement up to 0.01 mm, so the file holds
+`110.0`, not `110.0000025`. It cannot know your material, so it leaves
+`thickness_mm` as `null`, and export refuses until you set it. Set the
+operation's `depth_mm` with it: to cut through, the thickness plus the
+operation's `through_cut_allowance_mm`.
 
 ## `origin`
 
@@ -191,7 +193,7 @@ A list of operations, cut in order. Phase 1 has one kind, Profile:
   "depth_mm": 12.0,
   "step_down_mm": 4.0,
   "direction": "climb",
-  "through_cut_allowance_mm": 0.0,
+  "through_cut_allowance_mm": 0.2,
   "safe_z_mm": 5.0,
   "tabs": {
     "placement": { "kind": "count", "count": 4 },
@@ -203,7 +205,8 @@ A list of operations, cut in order. Phase 1 has one kind, Profile:
 ```
 
 Each field is explained in [Profile operation](profile.md), and `tabs` in
-[Tabs](tabs.md).
+[Tabs](tabs.md). `init` leaves `depth_mm` as `null`; export refuses until
+you set it.
 
 ## `post_processor`
 
@@ -224,6 +227,7 @@ refused.
 | 1 | Adds `flatten_tolerance_mm`, set to 0.01 on upgrade. |
 | 2 | Adds `post_processor.feed_speed.spindle_control`, set to `"automatic"` on upgrade. |
 | 3 | Writes `origin.xy` and each tool's `cutter` as a plain string (`"bottom_left"`, `"end_mill"`), or as a one-key object when the choice carries values (`{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`). Older files tagged them with `kind`, as in `{ "kind": "bottom_left" }`; the upgrade rewrites them. |
+| 4 | Lets `stock.thickness_mm` and each operation's `depth_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds. |
 
 ## What `check` reports
 
@@ -233,7 +237,8 @@ Errors stop export. Warnings do not.
 | --- | --- |
 | Two tools, instances or operations with the same id | An operation is disabled |
 | An id that refers to nothing | A tool has no feed rate, plunge rate or spindle speed (export still fails if the tool is used) |
-| A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | An open path, which Profile does not cut |
+| A stock without `thickness_mm` or an operation without `depth_mm` (`null`) | An open path, which Profile does not cut |
+| A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
 | A value that is not a number | A shape too small for the tool, a duplicate shape, or tabs that overlap or do nothing |
 | A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |
 | A cut deeper than the stock plus its through-cut allowance | |
