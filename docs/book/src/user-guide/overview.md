@@ -79,13 +79,19 @@ Generates the toolpaths and writes the program.
 
 Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed
-(the speed is optional when the router is switched by hand). After the file
-is written it lists each operation, names the bit to fit and set work zero
-with before you start, then lists every place the program stops. The
-coaster, with one bit and the default automatic spindle control, does not
-stop:
+(the speed is optional when the router is switched by hand), and one whose
+cut would leave the stock. After the file is written it lists each
+operation, prints the program's extents, names the bit to fit and set work
+zero with before you start, then lists every place the program stops. The
+extents are in machine coordinates, the numbers your controller shows once
+work zero is set: first where the centre of the bit goes on each axis (Z
+min is the deepest cut), then where its edge reaches in X and Y. Place
+clamps from them ([Safety](safety.md#before-every-cut)). The coaster, with
+one bit and the default automatic spindle control, does not stop:
 
 ```text
+Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
@@ -100,7 +106,8 @@ one bit also lists each tool change there, such as
 Runs everything `export` does except writing the file, and prints every
 error and warning. It also lists open paths, which Profile does not cut.
 Each message about one value starts with its file, line and column, and
-every value still unset is reported in the same run.
+every value still unset is reported in the same run. When the program
+could be built, it prints the program's extents as `export` does.
 
 ### `dreamcarve posts`
 

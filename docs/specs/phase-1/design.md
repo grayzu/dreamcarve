@@ -203,6 +203,11 @@ pub struct Move { pub kind: MoveKind, pub to: Point3, pub feed_mm_min: Option<f6
 pub struct Warning { pub code: WarningCode, pub params: BTreeMap<String, String> }
 
 pub fn generate_profile(project: &Project, op: &ProfileOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
+
+// #62: the cutter's XY reach, and how far it runs past each stock edge.
+pub struct Overhang { pub min_x_mm: f64, pub max_x_mm: f64, pub min_y_mm: f64, pub max_y_mm: f64 }
+pub fn swept_bounds(toolpath: &Toolpath, tool_radius_mm: f64) -> Option<Rect>;
+pub fn stock_overhang(stock: &Stock, swept: Rect) -> Option<Overhang>;
 ```
 
 ### dc-gcode
@@ -219,7 +224,9 @@ first use and validated by a test, with `bundled()` and
 `lookup(id) -> Result<PostProcessor, ExportError>`.
 
 ```rust
-pub struct Program { pub text: String, pub extension: String, pub pauses: Vec<Pause>, pub first_tool: FirstTool }
+pub struct Program { pub text: String, pub extension: String, pub pauses: Vec<Pause>, pub first_tool: FirstTool, pub extents: Extents }
+pub struct Extents { pub units: Units, pub x: Option<AxisRange>, pub y: Option<AxisRange>, pub z: Option<AxisRange> }  // machine coordinates, program units
+pub struct AxisRange { pub min: f64, pub max: f64 }
 pub struct Pause { pub line: usize, pub message: String }
 pub struct FirstTool { pub number: usize, pub name: String }
 pub fn emit(project: &Project, ops: &[(ProfileOp, Tool, Toolpath)]) -> Result<(Program, Vec<Warning>), ExportError>;
@@ -286,7 +293,19 @@ Inputs: project, op. Output: toolpath in project space.
    hole may not cut free. That warning names the shape, path length, tab
    total and share, and suggests a count or width that fits; the tabs are
    still cut as set (maintainer decision on #63).
-8. Return moves and warnings.
+8. Stock bounds (#62, `dc-cam::stock`). The swept extent is the XY
+   bounds of the toolpath's cutting moves (rapids are at safe Z, above the
+   stock), each arc counted to its axis extremes, widened by r. If it
+   runs past the stock rectangle `[0, width] × [0, height]` by more than
+   `EPS_MM` on any side, return `CamError::OffStock { op, overhang }`,
+   whose message names the operation and each side's overhang in mm
+   ("operation `op1` cuts off the stock: 71.350 mm past the +X (right)
+   edge"). It is an error, like a depth below the floor: the cutter would
+   leave the material and may hit clamps. The check lives in `dc-cam`
+   because it needs the tool radius and the stock and is a property of the
+   toolpath, not of the G-code; `dc-gcode` repeats it on the parsed program
+   (S7) because the post-processor does not trust its callers.
+9. Return moves and warnings.
 
 ### Emission (dc-gcode::emit)
 
@@ -359,7 +378,14 @@ Inputs: project, op. Output: toolpath in project space.
    are its toolpath move for move: rapids split only into their Z and XY
    parts, arcs as `G2`/`G3` with the toolpath's direction and centre, or
    as straight moves on the arc in order within the flatten tolerance, and
-   nothing else but retracts before the first move and after the last).
+   nothing else but retracts before the first move and after the last),
+   S7 (every cutting move, mapped back to project space with its arc
+   extremes and widened by its operation's tool radius, stays in the stock
+   rectangle within one unit in the last written place:
+   `ExportError::OffStock { op, line, side, overhang_mm }`, #62). An arc
+   anywhere in the program whose end is its start within half a unit in
+   the last written place is a full circle to the controller and fails
+   as `ExportError::FullCircleArc`, so S7 and the extents never see one.
    `M6` and `M61` are accepted only from a definition whose tool change has
    `M6`. A violation is `ExportError`, never a warning.
 8. `Program.pauses` lists every `M0` and `M6` line with its 1-based line
@@ -367,6 +393,10 @@ Inputs: project, op. Output: toolpath in project space.
    is for when the sender does not show the message. `Program.first_tool`
    is the tool the user fits and zeroes with before starting; the CLI
    prints "Before you start: fit T{n} {name} and set work zero with it."
+   `Program.extents` is the range of every machine axis the parsed program
+   reaches, in its own units: every known end point of every move, and the
+   axis extremes of every arc (from I/J, or the centre GRBL computes from
+   R), so it can be wider than the X and Y words (#62).
 
 ### SVG import (dc-import::svg)
 
@@ -427,12 +457,29 @@ pointing at its `null`. Exit codes: 0 ok, 1 validation/export error, 2 usage.
 `<dcv>:line:column:`, so every missing value is listed, located, in one run
 before any toolpath is generated.
 
+`export` prints, after the operation lines and before "Before you start",
+and `check` prints, after its problems when the program could be built,
+the program's extents (#62):
+
+```
+Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
+```
+
+Numbers go through `dc-gcode::format::format_number` with the
+post-processor's number format, so they read like the program's words, in
+the program's units (`mm` or `in`, the project's display units). Other
+summary values (`12 mm deep`) are project values and stay in mm; the
+extents are machine coordinates, which the user compares with the
+controller's display, so they use the program's units. The second line
+widens X and Y by the largest radius among the exported operations' tools.
+
 ## Module layout
 
 ```
 crates/dc-geometry/src/{lib.rs, point.rs, polyline.rs, contour.rs, region.rs, offset.rs, flatten.rs, transform.rs}
 crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, layout.rs, locate.rs, migrate.rs, validate.rs, history.rs, post_processor.rs}
-crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, passes.rs, tabs.rs, tab_profile.rs}
+crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, passes.rs, stock.rs, tabs.rs, tab_profile.rs}
 crates/dc-gcode/src/{lib.rs, error.rs, post.rs, emit.rs, format.rs, transform.rs, parse.rs, definitions/{README.md, grblhal.json, grbl.json}}
 crates/dc-import/src/{lib.rs, svg.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs}
@@ -493,6 +540,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `profile::first_move_is_rapid_at_safe_z`.
 - `profile::descent_uses_plunge_feed`.
 - `profile::retracts_to_safe_z_between_contours`.
+- `profile::toolpath_off_stock_is_an_error` — outside cut 6.35 mm past a 120 mm stock is `OffStock` at +X; the inside cut fits (#62).
+- `stock::rapids_do_not_count`, `stock::arc_bulge_counts`, `stock::edge_to_edge_is_on_the_stock` (#62).
 - `tabs::count_four_spaces_evenly` — centres at L/8, 3L/8, 5L/8, 7L/8.
 - `tabs::span_is_width_plus_diameter` (port: `tabs.test.ts` tool-centre footprint cases).
 - `tabs::passes_above_tab_height_untouched`.
@@ -521,6 +570,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::reversed_arc_fails_reproduction`, `safety::wrong_arc_centre_fails`,
   `safety::extra_move_between_points_fails`, `safety::flattened_arc_passes`,
   `safety::flipped_arcs_fail_emit` — S6 (#60).
+- `safety::cut_off_stock_fails_s7` — S7: a cut along the stock edge with a 6 mm tool, and an arc bulging past the back edge, fail (#62).
+- `safety::extents_include_arc_bulges` — `Program.extents` reaches an arc's top, past its end words (#62).
 - `parse::round_trips_emitted_program` — parse(emit(tp)) reproduces tp's XYZ within 1e-3.
 
 **dc-import**
@@ -540,6 +591,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::init_lists_every_required_value_with_location`, `cli::check_reports_all_missing_values_at_once` (#76) — one `coaster.dcv:L:C:` line per unset value, each at its `null`.
 - `cli::self_intersecting_target_fails_check` — `check` exits 1 naming the instance; `export` writes nothing.
 - `cli::posts_lists_grblhal_and_grbl`.
+- `cli::toolpath_off_stock_is_an_error` — the coaster with `e` = 80 fails `check` naming `op1` and 71.35 mm past +X; `export` writes nothing (#62).
+- `cli::toolpath_just_inside_stock_passes` — the coaster, and moved 3.5 mm either way, pass (#62).
+- `cli::export_prints_extents` — `export` and `check` print Z equal to the Z words' range and X, Y containing the X, Y words' ranges of `tests/expected/coaster-grblhal.nc` (#62).
 
 **dc-gcode (integration, `tests/golden.rs`)**
 - `golden::profile_outside_rect` (golden), `golden::profile_inside_circle` (golden), `golden::profile_ring` (golden), `golden::profile_tabs_circle` (golden) — per-Z-level cutting move sets match within 0.01 mm after start-point alignment; feeds equal, except the differences each case's README lists.

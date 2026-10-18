@@ -52,6 +52,15 @@ written. There are no safety warnings, only errors.
    into its up-or-down and sideways parts, an arc written as short
    straight moves along it, and a lift to safe Z before or after the
    operation.
+8. **The cut stays on the stock.** Every cutting move, widened by the
+   bit's radius, stays inside the stock's `width_mm` by `height_mm`
+   rectangle; arcs count all the way round, not just at their ends. A shape
+   moved or scaled off the stock stops the export with an error that names
+   the operation and how far past which edge the bit goes, for example
+   ``operation `op1` cuts off the stock: 71.350 mm past the +X (right)
+   edge``. A cut that runs exactly along an edge is allowed. Toolpath
+   generation checks this first, and the read-back program is checked
+   again.
 
 It also checks that:
 
@@ -65,6 +74,8 @@ It also checks that:
 
 - **Clamps and fixtures.** DreamCarve has no idea where they are. The bit
   will cut through anything in its path, at any height below safe Z.
+  `export` and `check` print where the bit goes (see "Before every cut"),
+  but keeping clamps out of that area is up to you.
 - **The stock.** It trusts the size and thickness in the project. It has no
   default thickness: `init` leaves `thickness_mm` and the operation's
   `depth_mm` unset, and export refuses until you enter them, but it cannot
@@ -95,13 +106,20 @@ It also checks that:
 
 ## Before every cut
 
-1. **Read the export output.** Check the operations, their depths, and the
-   list of pauses.
+1. **Read the export output.** Check the operations, their depths, the
+   extents, and the list of pauses. The extents line gives the range of
+   every axis in machine coordinates, the numbers your controller shows
+   once work zero is set: `X min..max, Y min..max` for the centre of the
+   bit and `Z min..max`, where Z min is the deepest cut and Z max is safe Z.
+   The line after it widens X and Y by the bit's radius (the largest bit's,
+   if there are several): that is where the bit's edge reaches.
 2. **Check the stock.** Measure its thickness and compare it with
    `thickness_mm`. Make sure the stock covers the area from work zero to
    `width_mm` by `height_mm`.
-3. **Check the clamps.** Keep them outside the area the bit can reach, or
-   above safe Z with room to spare.
+3. **Check the clamps.** Keep them outside the area the bit's edge
+   reaches, from the printed extents, with room to spare for the collet
+   nut. Rapids cross that area at safe Z (Z max), so anything left inside
+   it must be well below safe Z.
 4. **Use a spoilboard** under any cut that goes through.
 5. **Check the bit.** It matches `diameter_mm`, and it is tight in the
    collet.
