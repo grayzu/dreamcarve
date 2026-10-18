@@ -12,58 +12,6 @@
     "xy": "bottom_left",
     "z": "stock_top"
   },
-  "definitions": {
-    "d1": {
-      "id": "d1",
-      "name": "Rectangle",
-      "profiles": [
-        {
-          "vertices": [
-            {
-              "x": 0.0,
-              "y": 0.0,
-              "bulge": 0.0
-            },
-            {
-              "x": 50.0,
-              "y": 0.0,
-              "bulge": 0.0
-            },
-            {
-              "x": 50.0,
-              "y": 30.0,
-              "bulge": 0.0
-            },
-            {
-              "x": 0.0,
-              "y": 30.0,
-              "bulge": 0.0
-            }
-          ],
-          "closed": true
-        }
-      ]
-    }
-  },
-  "instances": [
-    {
-      "id": "i1",
-      "definition": "d1",
-      "transform": [
-        1.0,
-        0.0,
-        0.0,
-        1.0,
-        10.0,
-        10.0
-      ],
-      "name": "Rectangle 1",
-      "visible": true,
-      "locked": false,
-      "z_top_mm": 6.0,
-      "z_bottom_mm": 0.0
-    }
-  ],
   "tools": [
     {
       "id": "t1",
@@ -103,6 +51,25 @@
         "height_mm": 2.0,
         "shape": "rect"
       }
+    }
+  ],
+  "instances": [
+    {
+      "id": "i1",
+      "definition": "d1",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "Rectangle 1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 6.0,
+      "z_bottom_mm": 0.0
     }
   ],
   "post_processor": {
@@ -189,6 +156,23 @@
     "coolant": null,
     "stop": {
       "program_end_command": "M30"
+    }
+  },
+  "definitions": {
+    "d1": {
+      "id": "d1",
+      "name": "Rectangle",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 0.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 50.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 50.0, "y": 30.0, "bulge": 0.0 },
+            { "x": 0.0, "y": 30.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
     }
   }
 }

@@ -641,8 +641,10 @@ mod tests {
         assert_eq!(problems[0].severity(), Severity::Error);
     }
 
+    /// #76: an unset feed is an error, so `check` lists it with the other
+    /// unset values in one run instead of failing later in export.
     #[test]
-    fn unset_feed_is_warning_not_error() {
+    fn unset_feed_is_an_error() {
         let mut p = sample_project();
         p.tools[0].feed_mm_min = None;
         let problems = validate(&p);
@@ -654,18 +656,25 @@ mod tests {
                 field: "feed_mm_min",
             }]
         );
-        assert_eq!(problems[0].severity(), Severity::Warning);
-        assert!(errors(&problems).is_empty());
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(
+            problems[0].to_string(),
+            "tools[t1].feed_mm_min is not set (mm/min) for tool `6.35 mm upcut`"
+        );
     }
 
     #[test]
-    fn unset_plunge_and_rpm_are_warnings() {
+    fn unset_plunge_and_rpm_are_errors() {
         let mut p = sample_project();
         p.tools[0].plunge_mm_min = None;
         p.tools[0].rpm = None;
         let problems = validate(&p);
         assert_eq!(problems.len(), 2);
-        assert!(errors(&problems).is_empty());
+        assert_eq!(errors(&problems).len(), 2);
+        assert_eq!(
+            problems[1].to_string(),
+            "tools[t1].rpm is not set (RPM) for tool `6.35 mm upcut`"
+        );
     }
 
     /// #34, S3 (manual): with the router switched by hand, the speed is
@@ -742,7 +751,7 @@ mod tests {
         assert!(problems[0].is_error());
         assert_eq!(
             problems[0].to_string(),
-            "the stock has no thickness_mm; export fails until it is set"
+            "stock.thickness_mm is not set (mm)"
         );
     }
 
@@ -764,7 +773,7 @@ mod tests {
         assert!(problems[0].is_error());
         assert_eq!(
             problems[0].to_string(),
-            "operation `Cut out` (`o1`) has no depth_mm; export fails until it is set"
+            "operations[o1].depth_mm is not set (mm) for operation `Cut out`"
         );
     }
 
@@ -786,6 +795,64 @@ mod tests {
         assert!(problems.iter().any(
             |p| matches!(p, Problem::ToolValueUnset { field, .. } if *field == "feed_mm_min")
         ));
+    }
+
+    /// #76: every unset value is listed, in the order the file holds them,
+    /// each with the field that locates it.
+    #[test]
+    fn unset_values_are_listed_in_file_order_with_fields() {
+        let mut p = sample_project();
+        p.stock.thickness_mm = None;
+        p.tools[0].feed_mm_min = None;
+        p.tools[0].plunge_mm_min = None;
+        p.tools[0].rpm = None;
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.depth_mm = None;
+        let problems = validate(&p);
+        assert!(problems.iter().all(Problem::is_unset_value), "{problems:?}");
+        assert!(problems.iter().all(Problem::is_error), "{problems:?}");
+        let fields: Vec<_> = problems.iter().filter_map(Problem::field).collect();
+        assert_eq!(
+            fields,
+            [
+                "stock.thickness_mm",
+                "tools[t1].feed_mm_min",
+                "tools[t1].plunge_mm_min",
+                "tools[t1].rpm",
+                "operations[o1].depth_mm",
+            ]
+        );
+    }
+
+    /// #76: a problem's field is where it sits in the saved file.
+    #[test]
+    fn problem_fields_locate_in_the_saved_file() {
+        let mut p = sample_project();
+        p.tools[0].diameter_mm = 0.0;
+        p.tools[0].cutter = ToolKind::VBit {
+            included_angle_deg: 200.0,
+        };
+        p.instances[0].definition = DefinitionId::new("missing");
+        p.post_processor.file_extension = "dcv".into();
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.safe_z_mm = 0.0;
+        op.enabled = false;
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 6, "{problems:?}");
+        let text = crate::save(&p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        for problem in &problems {
+            let field = problem.field().unwrap();
+            assert!(map.locate(&field).is_some(), "{field} in {text}");
+        }
+        assert!(
+            Problem::DuplicateToolId {
+                id: ToolId::new("t1")
+            }
+            .field()
+            .is_none()
+        );
+        assert!(!problems.iter().any(Problem::is_unset_value));
     }
 
     #[test]
@@ -841,7 +908,7 @@ mod tests {
                     field: "stock.width_mm".into()
                 },
                 Problem::NonFinite {
-                    field: "tools[t1].cutter.included_angle_deg".into()
+                    field: "tools[t1].cutter.v_bit.included_angle_deg".into()
                 },
             ]
         );
@@ -880,7 +947,7 @@ mod tests {
         };
         assert_eq!(
             problem.to_string(),
-            "tool `Set me` (`t1`) has no feed_mm_min; export fails until it is set"
+            "tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`"
         );
     }
 

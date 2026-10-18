@@ -231,6 +231,7 @@ dependencies = [
  "dc-geometry",
  "dc-import",
  "dc-project",
+ "serde_json",
 ]
 
 [[package]]

@@ -200,32 +200,125 @@ fn init_project_has_no_thickness_or_depth() {
     }
 }
 
-/// Issues #44 and #64: `init`'s "Next:" line lists every value the user
-/// must set, by its field name, thickness and depth with the feeds.
+/// The fields a fresh coaster project leaves unset, in file order, with
+/// the key each one's line holds.
+const UNSET_FIELDS: [(&str, &str); 5] = [
+    ("stock.thickness_mm", "thickness_mm"),
+    ("tools[t1].feed_mm_min", "feed_mm_min"),
+    ("tools[t1].plunge_mm_min", "plunge_mm_min"),
+    ("tools[t1].rpm", "rpm"),
+    ("operations[op1].depth_mm", "depth_mm"),
+];
+
+/// The lines of `output` that start `file:line:column: ` and name a field,
+/// as `(line, column, rest)`.
+fn located_lines<'a>(output: &'a str, file: &str) -> Vec<(usize, usize, &'a str)> {
+    output
+        .lines()
+        .filter_map(|l| {
+            let rest = l.strip_prefix(file)?.strip_prefix(':')?;
+            let (line, rest) = rest.split_once(':')?;
+            let (column, rest) = rest.split_once(": ")?;
+            Some((line.parse().ok()?, column.parse().ok()?, rest))
+        })
+        .collect()
+}
+
+/// Asserts that line `line`, column `column` of `text` is the `null` value
+/// of `key`.
+fn assert_points_at_null(text: &str, line: usize, column: usize, key: &str) {
+    let source = text.lines().nth(line - 1).expect("line exists");
+    let before: String = source.chars().take(column - 1).collect();
+    let at: String = source.chars().skip(column - 1).collect();
+    assert!(at.starts_with("null"), "{line}:{column} is `{at}`");
+    assert!(
+        before.trim_end().ends_with(&format!("\"{key}\":")),
+        "{line}:{column} is the value of {key}: `{source}`"
+    );
+}
+
+/// #76: `init` lists every value the user must set, one per line, as
+/// `coaster.dcv:line:column:`, and each position is that value's `null` in
+/// the file written. Thickness and depth (#64) come with the tool's feed,
+/// plunge rate and RPM.
 #[test]
-fn init_hint_names_thickness_and_depth() {
-    let dir = work_dir("init_hint_names_thickness_and_depth");
+fn init_lists_every_required_value_with_location() {
+    let dir = work_dir("init_lists_every_required_value_with_location");
     std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
     let out = run(&dir, &["init", "coaster.svg"]);
     assert_eq!(out.status.code(), Some(0), "stderr was {}", stderr(&out));
     let stdout = stdout(&out);
+    let text = std::fs::read_to_string(dir.join("coaster.dcv")).expect("dcv readable");
+    let located = located_lines(&stdout, "coaster.dcv");
+    assert_eq!(located.len(), UNSET_FIELDS.len(), "{stdout}");
+    for ((line, column, message), (field, key)) in located.iter().zip(UNSET_FIELDS) {
+        assert!(
+            message.starts_with(&format!("{field} is not set")),
+            "{message}"
+        );
+        assert_points_at_null(&text, *line, *column, key);
+    }
     let next = stdout
         .lines()
         .find(|l| l.starts_with("Next:"))
         .unwrap_or_else(|| panic!("init prints a Next: line: {stdout}"));
-    for field in [
-        "stock.thickness_mm",
-        "operations[op1].depth_mm",
-        "feed_mm_min",
-        "plunge_mm_min",
-        "rpm",
-    ] {
-        assert!(next.contains(field), "Next: names {field}: {next}");
+    assert!(next.contains("listed above"), "{next}");
+}
+
+/// #76: `check` on a fresh project reports every missing value in one run,
+/// each as an error located at its `null`, and exits 1.
+#[test]
+fn check_reports_all_missing_values_at_once() {
+    let dir = work_dir("check_reports_all_missing_values_at_once");
+    let dcv = init_coaster(&dir);
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let stdout = stdout(&out);
+    assert_eq!(out.status.code(), Some(1), "exits 1: {stdout}");
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let located = located_lines(&stdout, "coaster.dcv");
+    assert_eq!(located.len(), UNSET_FIELDS.len(), "{stdout}");
+    for ((line, column, message), (field, key)) in located.iter().zip(UNSET_FIELDS) {
+        assert!(
+            message.starts_with(&format!("error: {field} is not set")),
+            "{message}"
+        );
+        assert_points_at_null(&text, *line, *column, key);
+    }
+    assert!(stdout.contains("5 error(s), 0 warning(s)"), "{stdout}");
+}
+
+/// #76: the locations are found in the file as the user has it, here
+/// re-ordered and re-indented by hand, not where `init` put the values.
+#[test]
+fn check_locates_values_in_a_reformatted_file() {
+    let dir = work_dir("check_locates_values_in_a_reformatted_file");
+    let dcv = init_coaster(&dir);
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&dcv).expect("dcv readable"))
+            .expect("dcv is JSON");
+    let serde_json::Value::Object(map) = value else {
+        panic!("root is an object")
+    };
+    let reversed: serde_json::Map<_, _> = map.into_iter().rev().collect();
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(reversed))
+        .expect("serializes")
+        .replace("  ", "\t");
+    std::fs::write(&dcv, &text).expect("dcv written");
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let stdout = stdout(&out);
+    let located = located_lines(&stdout, "coaster.dcv");
+    assert_eq!(located.len(), UNSET_FIELDS.len(), "{stdout}");
+    for (line, column, message) in located {
+        let (_, key) = UNSET_FIELDS
+            .iter()
+            .find(|(field, _)| message.starts_with(&format!("error: {field} ")))
+            .unwrap_or_else(|| panic!("{message}"));
+        assert_points_at_null(&text, line, column, key);
     }
 }
 
-/// #64: exporting a fresh project reports the unset thickness and depth as
-/// errors and the unset feeds in the same run, so one edit fixes them all.
+/// #64, #76: exporting a fresh project reports the unset thickness, depth
+/// and feeds as errors in the same run, so one edit fixes them all.
 /// Nothing is written.
 #[test]
 fn export_of_fresh_project_reports_thickness_depth_and_feeds() {
@@ -234,14 +327,13 @@ fn export_of_fresh_project_reports_thickness_depth_and_feeds() {
     let out = run(&dir, &["export", "coaster.dcv"]);
     let stderr = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "exits 1: {stderr}");
-    for needle in [
-        "error: the stock has no thickness_mm; export fails until it is set",
-        "error: operation `Profile` (`op1`) has no depth_mm; export fails until it is set",
-        "has no feed_mm_min",
-        "has no plunge_mm_min",
-        "has no rpm",
-    ] {
-        assert!(stderr.contains(needle), "reports {needle:?}: {stderr}");
+    let located = located_lines(&stderr, "coaster.dcv");
+    assert_eq!(located.len(), UNSET_FIELDS.len(), "{stderr}");
+    for ((_, _, message), (field, _)) in located.iter().zip(UNSET_FIELDS) {
+        assert!(
+            message.starts_with(&format!("error: {field} is not set")),
+            "{message}"
+        );
     }
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
 }
@@ -579,7 +671,7 @@ fn warnings_are_readable() {
     let report = format!("{}{}{}", stdout(&check), stderr(&check), stderr(&export));
     let warnings: Vec<&str> = report
         .lines()
-        .filter(|l| l.starts_with("warning:"))
+        .filter(|l| l.starts_with("warning:") || l.contains(": warning: "))
         .collect();
     for needle in [
         "open path",
@@ -781,7 +873,7 @@ fn post_override_revalidates() {
     let stderr = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "exits 1: {stderr}");
     assert!(
-        stderr.contains("tool `Set me` (`t1`) has no rpm"),
+        stderr.contains("tools[t1].rpm is not set (RPM) for tool `Set me`"),
         "validation of the new post names the missing rpm: {stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");

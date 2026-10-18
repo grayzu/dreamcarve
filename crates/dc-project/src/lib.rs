@@ -9,6 +9,7 @@
 
 mod history;
 mod ids;
+mod locate;
 mod migrate;
 mod model;
 mod post_processor;
