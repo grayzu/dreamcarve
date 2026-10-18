@@ -7,12 +7,15 @@
 //!
 //! Error-class problems make a project unsafe or impossible to machine
 //! (dangling ids, non-positive dimensions, non-finite numbers, coordinates,
-//! transforms and stock sides beyond [`MAX_COORDINATE_MM`], and an unset
-//! stock thickness or operation depth, which nothing may default; #64).
-//! Warning-class
-//! problems still allow a correct result but need the user's attention
-//! (disabled operations, tools without feeds or RPM, which export rejects
-//! when such a tool is actually used).
+//! transforms and stock sides beyond [`MAX_COORDINATE_MM`], and every value
+//! the user must supply that is unset: the stock thickness, each operation's
+//! depth, each tool's feed, plunge rate and, under automatic spindle control,
+//! RPM; nothing may default them, #64, #76). Warning-class problems still
+//! allow a correct result but need the user's attention (disabled operations,
+//! open paths).
+//!
+//! [`Problem::field`] names where in the file each problem is, so the CLI
+//! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
@@ -103,6 +106,7 @@ pub enum Problem {
         operation: OperationId,
     },
     /// A tool has no value for a field export needs (feed, plunge or RPM).
+    /// An error since #76, so `check` lists every unset value in one run.
     ToolValueUnset {
         /// The tool.
         tool: ToolId,
@@ -158,9 +162,7 @@ impl Problem {
     /// Whether this problem is an error or a warning.
     pub fn severity(&self) -> Severity {
         match self {
-            Self::OperationDisabled { .. }
-            | Self::ToolValueUnset { .. }
-            | Self::OpenProfile { .. } => Severity::Warning,
+            Self::OperationDisabled { .. } | Self::OpenProfile { .. } => Severity::Warning,
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -171,6 +173,7 @@ impl Problem {
             | Self::OutOfRange { .. }
             | Self::NonFinite { .. }
             | Self::MissingPlaceholder { .. }
+            | Self::ToolValueUnset { .. }
             | Self::StockThicknessUnset
             | Self::OperationValueUnset { .. }
             | Self::ToolOutOfRange { .. }
@@ -181,6 +184,68 @@ impl Problem {
     /// Whether this problem is error-class.
     pub fn is_error(&self) -> bool {
         self.severity() == Severity::Error
+    }
+
+    /// Whether this problem is a value the user must supply and has not:
+    /// the list `init` prints (#76).
+    pub fn is_unset_value(&self) -> bool {
+        matches!(
+            self,
+            Self::ToolValueUnset { .. }
+                | Self::StockThicknessUnset
+                | Self::OperationValueUnset { .. }
+        )
+    }
+
+    /// The field this problem is about, written as the messages write
+    /// fields (`stock.thickness_mm`, `tools[t1].feed_mm_min`), for
+    /// [`crate::SourceMap::locate`]. `None` when no one value is at fault,
+    /// as with an id used twice.
+    #[must_use]
+    pub fn field(&self) -> Option<String> {
+        match self {
+            Self::DefinitionKeyMismatch { key, .. } => Some(format!("definitions[{key}].id")),
+            Self::DuplicateInstanceId { .. }
+            | Self::DuplicateToolId { .. }
+            | Self::DuplicateOperationId { .. } => None,
+            Self::DanglingDefinition { instance, .. } => {
+                Some(format!("instances[{instance}].definition"))
+            }
+            Self::DanglingTool { operation, .. } => Some(format!("operations[{operation}].tool")),
+            Self::DanglingInstance { operation, .. } => {
+                Some(format!("operations[{operation}].targets"))
+            }
+            Self::OutOfRange { field, .. }
+            | Self::NonFinite { field }
+            | Self::MissingPlaceholder { field, .. } => Some(field.clone()),
+            Self::OperationDisabled { operation } => {
+                Some(format!("operations[{operation}].enabled"))
+            }
+            Self::ToolValueUnset { tool, field, .. } | Self::ToolOutOfRange { tool, field, .. } => {
+                Some(format!("tools[{tool}].{field}"))
+            }
+            Self::StockThicknessUnset => Some(STOCK_THICKNESS.to_owned()),
+            Self::OperationValueUnset {
+                operation, field, ..
+            } => Some(format!("operations[{operation}].{field}")),
+            Self::OpenProfile {
+                definition,
+                profile,
+                ..
+            } => Some(format!("definitions[{definition}].profiles[{profile}]")),
+            Self::UnsafeFileExtension { .. } => Some("post_processor.file_extension".to_owned()),
+        }
+    }
+}
+
+const STOCK_THICKNESS: &str = "stock.thickness_mm";
+
+/// The unit of a value the user must supply, for "is not set" messages.
+fn unset_unit(field: &str) -> &'static str {
+    match field {
+        "feed_mm_min" | "plunge_mm_min" => "mm/min",
+        "rpm" => "RPM",
+        _ => "mm",
     }
 }
 
@@ -226,22 +291,20 @@ impl fmt::Display for Problem {
                     "operation `{operation}` is disabled and will not be exported"
                 )
             }
-            Self::ToolValueUnset { tool, name, field } => {
-                write!(
-                    f,
-                    "tool `{name}` (`{tool}`) has no {field}; export fails until it is set"
-                )
-            }
-            Self::StockThicknessUnset => {
-                f.write_str("the stock has no thickness_mm; export fails until it is set")
-            }
+            Self::ToolValueUnset { tool, name, field } => write!(
+                f,
+                "tools[{tool}].{field} is not set ({}) for tool `{name}`",
+                unset_unit(field)
+            ),
+            Self::StockThicknessUnset => write!(f, "{STOCK_THICKNESS} is not set (mm)"),
             Self::OperationValueUnset {
                 operation,
                 name,
                 field,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) has no {field}; export fails until it is set"
+                "operations[{operation}].{field} is not set ({}) for operation `{name}`",
+                unset_unit(field)
             ),
             Self::ToolOutOfRange {
                 tool,
@@ -271,7 +334,8 @@ impl fmt::Display for Problem {
 }
 
 /// Checks `project` and returns every problem found, errors and warnings,
-/// in a deterministic order (project fields in declaration order).
+/// in a deterministic order: project fields in declaration order, which is
+/// the order a saved file holds them.
 #[must_use]
 pub fn validate(project: &Project) -> Vec<Problem> {
     let mut v = Validator::default();
@@ -304,93 +368,11 @@ impl Validator {
             None => self.problems.push(Problem::StockThicknessUnset),
         }
         if let OriginXy::Custom { x_mm, y_mm } = p.origin.xy {
-            self.finite("origin.xy.x_mm", x_mm);
-            self.finite("origin.xy.y_mm", y_mm);
+            self.finite("origin.xy.custom.x_mm", x_mm);
+            self.finite("origin.xy.custom.y_mm", y_mm);
         }
 
-        // Definitions with a coordinate out of range; their instances are
-        // not checked again, so each mistake is reported once.
-        let mut out_of_range = BTreeSet::new();
-        for (key, def) in &p.definitions {
-            if *key != def.id {
-                self.problems.push(Problem::DefinitionKeyMismatch {
-                    key: key.clone(),
-                    id: def.id.clone(),
-                });
-            }
-            for (i, profile) in def.profiles.iter().enumerate() {
-                if !profile.is_closed() {
-                    self.problems.push(Problem::OpenProfile {
-                        definition: def.id.clone(),
-                        name: def.name.clone(),
-                        profile: i,
-                    });
-                }
-                let mut ok = true;
-                for (j, vertex) in profile.vertices().iter().enumerate() {
-                    let at = format!("definitions[{key}].profiles[{i}].vertices[{j}]");
-                    ok &= self.coordinate(&format!("{at}.x"), vertex.x);
-                    ok &= self.coordinate(&format!("{at}.y"), vertex.y);
-                    ok &= self.finite(&format!("{at}.bulge"), vertex.bulge);
-                }
-                // An arc can bow past the limit between vertices inside it.
-                let reach_mm = profile.reach_mm();
-                if ok && reach_mm > MAX_COORDINATE_MM {
-                    self.out_of_range(format!("definitions[{key}].profiles[{i}]"), reach_mm, REACH);
-                    ok = false;
-                }
-                if !ok {
-                    out_of_range.insert(key);
-                }
-            }
-        }
-
-        let mut seen = BTreeSet::new();
-        for inst in &p.instances {
-            if !seen.insert(&inst.id) {
-                self.problems.push(Problem::DuplicateInstanceId {
-                    id: inst.id.clone(),
-                });
-            }
-            if !p.definitions.contains_key(&inst.definition) {
-                self.problems.push(Problem::DanglingDefinition {
-                    instance: inst.id.clone(),
-                    definition: inst.definition.clone(),
-                });
-            }
-            let at = format!("instances[{}]", inst.id);
-            let coeffs = inst.transform.as_kurbo().as_coeffs();
-            let mut ok = true;
-            for (i, c) in coeffs.iter().enumerate() {
-                let field = format!("{at}.transform[{i}]");
-                if !self.finite(&field, *c) {
-                    ok = false;
-                } else if c.abs() > MAX_COORDINATE_MM {
-                    self.out_of_range(field, *c, COEFFICIENT);
-                    ok = false;
-                }
-            }
-            // Each coefficient can be in range and still carry a shape past
-            // the limit. Other transform errors (singular, arcs under a
-            // non-uniform scale) are the generators' to report.
-            let def = p.definitions.get(&inst.definition);
-            if let Some(def) = def.filter(|_| ok && !out_of_range.contains(&inst.definition)) {
-                let reach_mm = def
-                    .profiles
-                    .iter()
-                    .filter_map(|profile| match inst.transform.apply_polyline(profile) {
-                        Err(GeometryError::CoordinateOutOfRange { reach_mm, .. }) => Some(reach_mm),
-                        _ => None,
-                    })
-                    .reduce(f64::max);
-                if let Some(reach_mm) = reach_mm {
-                    self.out_of_range(format!("{at}.transform"), reach_mm, REACH);
-                }
-            }
-            self.finite(&format!("{at}.z_top_mm"), inst.z_top_mm);
-            self.finite(&format!("{at}.z_bottom_mm"), inst.z_bottom_mm);
-        }
-
+        // In the order the file holds them (#76): settings, then geometry.
         let mut seen = BTreeSet::new();
         for tool in &p.tools {
             if !seen.insert(&tool.id) {
@@ -400,7 +382,7 @@ impl Validator {
             }
             let at = format!("tools[{}]", tool.id);
             if let ToolKind::VBit { included_angle_deg } = tool.cutter {
-                let field = "cutter.included_angle_deg";
+                let field = "cutter.v_bit.included_angle_deg";
                 if self.finite(&format!("{at}.{field}"), included_angle_deg)
                     && !(included_angle_deg > 0.0 && included_angle_deg < 180.0)
                 {
@@ -503,6 +485,89 @@ impl Validator {
                 self.positive(&format!("{at}.tabs.width_mm"), tabs.width_mm);
                 self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
             }
+        }
+
+        // Definitions with a coordinate out of range; their instances are
+        // not checked again, so each mistake is reported once.
+        let mut out_of_range = BTreeSet::new();
+        for (key, def) in &p.definitions {
+            if *key != def.id {
+                self.problems.push(Problem::DefinitionKeyMismatch {
+                    key: key.clone(),
+                    id: def.id.clone(),
+                });
+            }
+            for (i, profile) in def.profiles.iter().enumerate() {
+                if !profile.is_closed() {
+                    self.problems.push(Problem::OpenProfile {
+                        definition: def.id.clone(),
+                        name: def.name.clone(),
+                        profile: i,
+                    });
+                }
+                let mut ok = true;
+                for (j, vertex) in profile.vertices().iter().enumerate() {
+                    let at = format!("definitions[{key}].profiles[{i}].vertices[{j}]");
+                    ok &= self.coordinate(&format!("{at}.x"), vertex.x);
+                    ok &= self.coordinate(&format!("{at}.y"), vertex.y);
+                    ok &= self.finite(&format!("{at}.bulge"), vertex.bulge);
+                }
+                // An arc can bow past the limit between vertices inside it.
+                let reach_mm = profile.reach_mm();
+                if ok && reach_mm > MAX_COORDINATE_MM {
+                    self.out_of_range(format!("definitions[{key}].profiles[{i}]"), reach_mm, REACH);
+                    ok = false;
+                }
+                if !ok {
+                    out_of_range.insert(key);
+                }
+            }
+        }
+
+        let mut seen = BTreeSet::new();
+        for inst in &p.instances {
+            if !seen.insert(&inst.id) {
+                self.problems.push(Problem::DuplicateInstanceId {
+                    id: inst.id.clone(),
+                });
+            }
+            if !p.definitions.contains_key(&inst.definition) {
+                self.problems.push(Problem::DanglingDefinition {
+                    instance: inst.id.clone(),
+                    definition: inst.definition.clone(),
+                });
+            }
+            let at = format!("instances[{}]", inst.id);
+            let coeffs = inst.transform.as_kurbo().as_coeffs();
+            let mut ok = true;
+            for (i, c) in coeffs.iter().enumerate() {
+                let field = format!("{at}.transform[{i}]");
+                if !self.finite(&field, *c) {
+                    ok = false;
+                } else if c.abs() > MAX_COORDINATE_MM {
+                    self.out_of_range(field, *c, COEFFICIENT);
+                    ok = false;
+                }
+            }
+            // Each coefficient can be in range and still carry a shape past
+            // the limit. Other transform errors (singular, arcs under a
+            // non-uniform scale) are the generators' to report.
+            let def = p.definitions.get(&inst.definition);
+            if let Some(def) = def.filter(|_| ok && !out_of_range.contains(&inst.definition)) {
+                let reach_mm = def
+                    .profiles
+                    .iter()
+                    .filter_map(|profile| match inst.transform.apply_polyline(profile) {
+                        Err(GeometryError::CoordinateOutOfRange { reach_mm, .. }) => Some(reach_mm),
+                        _ => None,
+                    })
+                    .reduce(f64::max);
+                if let Some(reach_mm) = reach_mm {
+                    self.out_of_range(format!("{at}.transform"), reach_mm, REACH);
+                }
+            }
+            self.finite(&format!("{at}.z_top_mm"), inst.z_top_mm);
+            self.finite(&format!("{at}.z_bottom_mm"), inst.z_bottom_mm);
         }
 
         if !is_safe_file_extension(&p.post_processor.file_extension) {

@@ -174,7 +174,9 @@ nothing else.
 **Must**
 
 - `serde` + `serde_json`, pretty-printed, keys in declaration order
-  (`preserve_order` feature). Field names are `snake_case` in JSON; enums use
+  (`preserve_order` feature). A `.dcv` writes each vertex on one line
+  through `dc-project`'s formatter; only whitespace differs from
+  `to_string_pretty`. Field names are `snake_case` in JSON; enums use
   `#[serde(rename_all = "snake_case")]`. An enum with any unit variant keeps
   serde's default external tagging, so a unit variant reads as a plain string
   (`"bottom_left"`) and a variant with data as a one-key object

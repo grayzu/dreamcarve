@@ -99,11 +99,11 @@ pub struct Project {
     pub flatten_tolerance_mm: f64,            // default 0.01
     pub stock: Stock,
     pub origin: MachineOrigin,
-    pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,
-    pub instances: Vec<FeatureInstance>,
     pub tools: Vec<Tool>,
     pub operations: Vec<Operation>,
+    pub instances: Vec<FeatureInstance>,
     pub post_processor: PostProcessor,        // embedded copy, see dc-project::post_processor
+    pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,  // last: the bulk of the file
 }
 
 pub struct Stock { pub width_mm: f64, pub height_mm: f64, pub thickness_mm: Option<f64> }
@@ -154,6 +154,16 @@ pub struct History { snapshots: Vec<Project>, cursor: usize }  // push/undo/redo
 ```
 
 Serialization: serde + serde_json, pretty-printed, keys in declaration order.
+`Project` declares its fields in the order a person edits them (#76):
+settings first (`version`, `name`, `display_units`, `flatten_tolerance_mm`,
+`stock`, `origin`, `tools`, `operations`), then `instances`,
+`post_processor`, and the geometry, `definitions`, last. `save` writes
+through a custom `serde_json::ser::Formatter` (`layout.rs`) that puts each
+vertex object of a `vertices` array on one line,
+`{ "x": 137.684, "y": 88.535, "bulge": 0.0 }`, and is otherwise serde_json's
+pretty printer. Neither change touches the schema: the keys, types and
+number digits are the same, so there is no version bump, readers accept any
+key order and layout, and output stays byte-for-byte deterministic.
 `OriginXy` and `ToolKind` save a choice without data as a plain string
 (`"xy": "bottom_left"`) and one with data as a one-key object
 (`"xy": { "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`); version 3 made this
@@ -164,10 +174,23 @@ carries every version 3 number over unchanged.
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
 magnitudes beyond `dc_geometry::MAX_COORDINATE_MM`, an unsafe post-processor
-`file_extension`, an unset stock thickness or operation depth; disabled operations, unset tool
-feeds and open profiles as warnings). Tool problems name the tool by name
-and id. A file with a newer version
+`file_extension`, and every value the user must supply that is unset: the
+stock thickness, an operation's depth, a tool's feed and plunge rate, and its
+RPM under automatic spindle control (#64, #76); disabled operations and open
+profiles as warnings). Problems come in file order. Tool problems name the
+tool by name and id. A file with a newer version
 fails with `LoadError::NewerVersion`.
+
+Locations (#76): `Problem::field()` names the value a problem is about as
+the messages write it (`stock.thickness_mm`, `tools[t1].feed_mm_min`;
+a bracket after an array picks the element by `id`, else by index).
+`SourceMap::parse(&str)` (`locate.rs`) scans the JSON text itself, since
+serde_json keeps no spans, and records the 1-based line and column
+(in characters) of every value; `locate(field)` and
+`position(&[PathSegment])` look one up. It reads the file as the user has
+it, so positions stay right after hand reformatting or reordering. The CLI
+turns them into `coaster.dcv:9:21:` prefixes. Schema errors (#65) can reuse
+`position` with serde's path.
 
 ### dc-cam
 
@@ -396,14 +419,19 @@ the margin holds to the program's 0.001 mm resolution and the file reads
 cleanly. Origin BottomLeft/StockTop, one tool "Set me" with
 `diameter 6.35`, flutes 2, feeds `None`, one Profile op targeting every
 closed instance, outside, depth `None`, step 4, climb, safe Z 5, tabs
-`Count(4)` 8×3 rect. Exit codes: 0 ok, 1 validation/export error, 2 usage.
+`Count(4)` 8×3 rect. `init` then lists every unset value the user must
+supply, one per line as `coaster.dcv:line:column: <field> is not set (<unit>)`,
+pointing at its `null`. Exit codes: 0 ok, 1 validation/export error, 2 usage.
 `check` prints problems and warnings and exits 1 on any error-class problem.
+`check` and `export` prefix each problem about one value with
+`<dcv>:line:column:`, so every missing value is listed, located, in one run
+before any toolpath is generated.
 
 ## Module layout
 
 ```
 crates/dc-geometry/src/{lib.rs, point.rs, polyline.rs, contour.rs, region.rs, offset.rs, flatten.rs, transform.rs}
-crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, migrate.rs, validate.rs, history.rs, post_processor.rs}
+crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, layout.rs, locate.rs, migrate.rs, validate.rs, history.rs, post_processor.rs}
 crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, passes.rs, tabs.rs, tab_profile.rs}
 crates/dc-gcode/src/{lib.rs, error.rs, post.rs, emit.rs, format.rs, transform.rs, parse.rs, definitions/{README.md, grblhal.json, grbl.json}}
 crates/dc-import/src/{lib.rs, svg.rs}
@@ -439,10 +467,12 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-project**
 - `serialize::round_trip_is_identity` — load(save(p)) == p.
 - `serialize::keys_are_stable` — saved JSON matches a committed fixture byte for byte.
+- `serialize::settings_are_written_before_geometry`, `serialize::vertices_are_one_per_line`, `serialize::compact_output_round_trips`, `serialize::old_key_order_still_loads` (#76).
+- `locate::paths_map_to_line_and_column`, `locate::positions_survive_reformatting` (#76).
 - `migrate::version_0_fixture_loads` — a committed v0 file migrates (placeholder for the first real migration; v0 is the pre-release shape).
 - `migrate::newer_version_is_rejected`.
 - `validate::dangling_tool_id_is_error`.
-- `validate::unset_feed_is_warning_not_error`.
+- `validate::unset_feed_is_an_error` (a warning before #76).
 - `post_processor::post_processor_round_trips_through_json`, `post_processor::unknown_field_is_rejected`.
 - `history::undo_restores_previous_snapshot`, `history::redo_after_undo`, `history::new_edit_truncates_redo`.
 
@@ -507,6 +537,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::init_then_export_coaster_matches_committed_program` — end to end on `fixtures/coaster.svg`, compared to a committed expected `.nc`.
 - `cli::export_refuses_zero_feed_and_writes_nothing`.
 - `cli::check_reports_open_paths`.
+- `cli::init_lists_every_required_value_with_location`, `cli::check_reports_all_missing_values_at_once` (#76) — one `coaster.dcv:L:C:` line per unset value, each at its `null`.
 - `cli::self_intersecting_target_fails_check` — `check` exits 1 naming the instance; `export` writes nothing.
 - `cli::posts_lists_grblhal_and_grbl`.
 

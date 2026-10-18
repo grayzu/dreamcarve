@@ -11,6 +11,8 @@
 //! The stock thickness, the Profile depth, the feeds and the spindle speed
 //! are left unset (`null`), so `export` refuses the project until the user
 //! fills them in (S3, #64): `init` cannot know the material or the machine.
+//! `init` lists each of them as `coaster.dcv:line:column: …`, a link an
+//! editor or terminal opens at the `null` to replace (#76).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -20,8 +22,8 @@ use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Rect, Transfo
 use dc_import::{SvgImport, SvgImportOptions, import_svg};
 use dc_project::{
     CURRENT_VERSION, CutDirection, MachineOrigin, Operation, OperationId, OriginXy, OriginZ,
-    PostProcessor, ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId,
-    ToolKind, Units,
+    PostProcessor, ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec,
+    Tool, ToolId, ToolKind, Units, validate,
 };
 
 use crate::cli::{Failure, InitArgs, StagedFile, lookup_post, read_file};
@@ -107,7 +109,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     let text = dc_project::save(&project).map_err(Failure::error)?;
     StagedFile::write(&output, text.as_bytes())?.commit()?;
 
-    report(&project, &output);
+    report(&project, &output, &text);
     Ok(ExitCode::SUCCESS)
 }
 
@@ -215,8 +217,9 @@ fn default_project(
     }
 }
 
-/// Prints what was written and what the user must do next.
-fn report(project: &Project, output: &Path) {
+/// Prints what was written and what the user must do next: one line per
+/// value to set, located in `text`, the file as written.
+fn report(project: &Project, output: &Path, text: &str) {
     let targets = project
         .operations
         .iter()
@@ -236,11 +239,21 @@ fn report(project: &Project, output: &Path) {
             "{untargeted} shape(s) are open paths and are not cut; `dreamcarve check` lists them."
         );
     }
+    println!("Values to set; export refuses until every one is set:");
+    let map = SourceMap::parse(text).ok();
+    for problem in validate(project).iter().filter(|p| p.is_unset_value()) {
+        let at = problem
+            .field()
+            .and_then(|field| map.as_ref()?.locate(&field));
+        match at {
+            Some(at) => println!("{}:{at}: {problem}", output.display()),
+            None => println!("{problem}"),
+        }
+    }
     println!(
-        "Next: edit {} to set `stock.thickness_mm` to your material's measured thickness, \
-         the Profile depth `operations[{OPERATION_ID}].depth_mm` (to cut through: the thickness \
-         plus `through_cut_allowance_mm`), and tool `{TOOL_ID}` ({TOOL_NAME}): feed_mm_min, \
-         plunge_mm_min and rpm. Export refuses until they are set.",
+        "Next: edit {} and replace each `null` listed above. To cut through, `depth_mm` is \
+         the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check {}`.",
+        output.display(),
         output.display()
     );
 }

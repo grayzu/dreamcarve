@@ -4,8 +4,9 @@
 //! `.dcv` load and save (ADR-0002; `docs/specs/phase-1/design.md`, "Data
 //! model → dc-project").
 //!
-//! [`save`] writes pretty-printed JSON with keys in declaration order and a
-//! trailing newline. [`load`] parses bytes, reads `version`, migrates to
+//! [`save`] writes pretty-printed JSON with keys in declaration order, the
+//! settings first and the geometry last, each vertex on one line
+//! ([`crate::layout`]), and a trailing newline. [`load`] parses bytes, reads `version`, migrates to
 //! [`crate::CURRENT_VERSION`], deserializes strictly (unknown fields and missing
 //! fields both fail), and then validates.
 //!
@@ -14,9 +15,11 @@
 //! a caller such as the CLI `check` command can report all of them; callers
 //! that machine the project must refuse it when [`Loaded::has_errors`].
 
+use crate::layout::DcvFormatter;
 use crate::migrate::migrate;
 use crate::model::Project;
 use crate::validate::{Problem, validate};
+use serde::Serialize;
 use serde_json::Value;
 
 /// Why bytes could not be loaded as a project.
@@ -113,7 +116,8 @@ impl Loaded {
 }
 
 /// Serializes `project` as `.dcv` text: pretty JSON, keys in declaration
-/// order, `Option` fields as `null`, ending in a newline.
+/// order, each vertex on one line, `Option` fields as `null`, ending in a
+/// newline.
 ///
 /// Fails with [`SaveError::NonFinite`] rather than writing a NaN or
 /// infinity, which serde_json would silently turn into `null`.
@@ -121,11 +125,18 @@ pub fn save(project: &Project) -> Result<String, SaveError> {
     if let Some(field) = first_non_finite(&validate(project)) {
         return Err(SaveError::NonFinite { field });
     }
-    let mut text = serde_json::to_string_pretty(project).map_err(|e| SaveError::Serialize {
+    let mut bytes = Vec::new();
+    let mut serializer =
+        serde_json::Serializer::with_formatter(&mut bytes, DcvFormatter::default());
+    project
+        .serialize(&mut serializer)
+        .map_err(|e| SaveError::Serialize {
+            message: e.to_string(),
+        })?;
+    bytes.push(b'\n');
+    String::from_utf8(bytes).map_err(|e| SaveError::Serialize {
         message: e.to_string(),
-    })?;
-    text.push('\n');
-    Ok(text)
+    })
 }
 
 /// Parses `.dcv` bytes into a project, migrating older versions and then

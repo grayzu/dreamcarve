@@ -7,6 +7,12 @@ a saved project exports.
 
 The file is JSON. `init` writes it; you edit it in a text editor.
 
+DreamCarve writes the settings you edit first and the shapes last, so every
+value you must fill in is in the first screen or two of the file. You may
+reorder, reindent or reformat the file as you like: any layout of the same
+JSON reads the same, and the line numbers DreamCarve reports follow your
+layout.
+
 ## Rules for editing
 
 - Every field must be present. A field DreamCarve does not know is an
@@ -18,7 +24,31 @@ The file is JSON. `init` writes it; you edit it in a text editor.
 - JSON has no comments, and no comma after the last item in a list or
   object.
 - Run `dreamcarve check` after each edit. It names the field and the value
-  it does not accept.
+  it does not accept, and where it is in the file (see
+  [Finding a value](#finding-a-value)).
+
+## Finding a value
+
+`init`, `check` and `export` start each message about one value with the
+file, the line and the column of that value:
+
+```text
+coaster.dcv:9:21: error: stock.thickness_mm is not set (mm)
+coaster.dcv:22:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+```
+
+Line 9, column 21 is where the value starts, here the `null` to replace.
+Lines and columns count from 1, and a tab counts as one column. Most
+editors and terminals open the file at that spot when you click the
+`coaster.dcv:9:21` part, or from the command line, as `code -g
+coaster.dcv:9:21` or `vim +9 coaster.dcv`.
+
+The field after the location says the same in words: `stock.thickness_mm`
+is `thickness_mm` inside `stock`, and `tools[t1].feed_mm_min` is
+`feed_mm_min` in the tool whose `id` is `t1`. `init` lists every value you
+still have to set, and `check` and `export` report all of them in one run,
+so you can fix them all in one edit. A message about no one value, such as
+a tool id used twice, has no location.
 
 ## Coordinates
 
@@ -38,6 +68,8 @@ controller.
 
 ## Top level
 
+The fields, in the order DreamCarve writes them:
+
 | Field | Meaning |
 | --- | --- |
 | `version` | Format version. This build writes `4`. |
@@ -46,11 +78,11 @@ controller.
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs. |
 | `stock` | The block of material. |
 | `origin` | Where work zero is on the stock. |
-| `definitions` | The shapes, keyed by id. |
-| `instances` | Placed copies of the shapes. |
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
+| `instances` | Placed copies of the shapes. |
 | `post_processor` | The G-code dialect. See [Post-processors](post-processors.md). |
+| `definitions` | The shapes, keyed by id. Last, because it is most of the file. |
 
 ## `stock`
 
@@ -127,6 +159,10 @@ corner.
 (Numbers shortened here; the file holds them in full. The coaster's circle
 is 160 short straight lines.)
 
+DreamCarve writes each vertex on one line, as above, to keep a drawing
+short; the numbers keep their full precision. A vertex spread over several
+lines, as other JSON tools write it, reads the same.
+
 A definition's `profiles` are its outlines. Each vertex has `x` and `y` in
 millimetres and a `bulge`: 0 for a straight line to the next vertex, or the
 tangent of a quarter of the arc's sweep angle, positive for
@@ -174,8 +210,9 @@ To move a shape on the stock, change `e` and `f`.
 | `step_down_mm` | Default depth per pass, used when the operation sets none. |
 | `step_over_fraction` | For future operations. Phase 1 ignores it. |
 
-DreamCarve has no default feeds. A tool with an unset rate is a warning in
-`check`, and `export` fails when an operation uses that tool.
+DreamCarve has no default feeds. A tool with an unset feed rate, plunge
+rate or (with automatic spindle control) spindle speed is an error in
+`check`, and `export` refuses until it is set.
 
 ## `operations`
 
@@ -236,8 +273,8 @@ Errors stop export. Warnings do not.
 | Errors | Warnings |
 | --- | --- |
 | Two tools, instances or operations with the same id | An operation is disabled |
-| An id that refers to nothing | A tool has no feed rate, plunge rate or spindle speed (export still fails if the tool is used) |
-| A stock without `thickness_mm` or an operation without `depth_mm` (`null`) | An open path, which Profile does not cut |
+| An id that refers to nothing | An open path, which Profile does not cut |
+| A value you must set that is `null`: the stock's `thickness_mm`, an operation's `depth_mm`, a tool's `feed_mm_min` and `plunge_mm_min`, and its `rpm` unless spindle control is manual | |
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
 | A value that is not a number | A shape too small for the tool, a duplicate shape, or tabs that overlap or do nothing |
 | A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |
