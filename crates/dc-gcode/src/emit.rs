@@ -364,6 +364,7 @@ pub fn emit(
         }
     }
     w.line(&post.stop.program_end_command);
+    let flatten_tolerance_mm = w.flatten_tolerance_mm;
     let text = w.finish();
 
     // Step 7: the safety pass, on the text.
@@ -377,7 +378,14 @@ pub fn emit(
             lines,
         })
         .collect();
-    safety::check(&text, post, &transform, project.stock.thickness_mm, &spans)?;
+    safety::check(
+        &text,
+        post,
+        &transform,
+        project.stock.thickness_mm,
+        flatten_tolerance_mm,
+        &spans,
+    )?;
     let pauses = pauses(&text)?;
 
     Ok((
