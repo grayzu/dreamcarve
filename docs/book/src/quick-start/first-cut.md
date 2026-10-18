@@ -44,8 +44,19 @@ dreamcarve init coaster.svg
 ```text
 Imported 1 shape(s) from coaster.svg: page units mm, 1 user unit = 1.0000 mm.
 Wrote coaster.dcv: stock 110.00 × 110.00 mm, post-processor grblhal, 1 shape(s) targeted by Profile.
-Next: edit coaster.dcv to set `stock.thickness_mm` to your material's measured thickness, the Profile depth `operations[op1].depth_mm` (to cut through: the thickness plus `through_cut_allowance_mm`), and tool `t1` (Set me): feed_mm_min, plunge_mm_min and rpm. Export refuses until they are set.
+Values to set; export refuses until every one is set:
+coaster.dcv:9:21: stock.thickness_mm is not set (mm)
+coaster.dcv:22:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:23:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:24:14: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:40:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
+Next: edit coaster.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check coaster.dcv`.
 ```
+
+Each `coaster.dcv:9:21:` is a file, a line and a column: here line 9,
+column 21, where the value to replace starts. Many editors and terminals
+open the file at that spot when you click it, or with a command such as
+`code -g coaster.dcv:9:21`.
 
 The project holds everything about the job: the shapes, the **stock** (the
 block of material you cut from), the tool, the operation, and the
@@ -75,11 +86,11 @@ dreamcarve export coaster.dcv
 This fails, on purpose:
 
 ```text
-warning: tool `Set me` (`t1`) has no feed_mm_min; export fails until it is set
-warning: tool `Set me` (`t1`) has no plunge_mm_min; export fails until it is set
-warning: tool `Set me` (`t1`) has no rpm; export fails until it is set
-error: the stock has no thickness_mm; export fails until it is set
-error: operation `Profile` (`op1`) has no depth_mm; export fails until it is set
+coaster.dcv:9:21: error: stock.thickness_mm is not set (mm)
+coaster.dcv:22:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:23:24: error: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:24:14: error: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:40:19: error: operations[op1].depth_mm is not set (mm) for operation `Profile`
 error: export of coaster.dcv failed; nothing was written
 ```
 
@@ -87,11 +98,42 @@ DreamCarve never guesses your material's thickness, the cut depth, a feed
 rate or a spindle speed. A wrong thickness puts every pass, and sometimes
 every rapid move, at the wrong height; a wrong feed can break a bit or
 start a fire. So `export` refuses and writes nothing until you supply every
-value yourself.
+value yourself. It lists all of them at once, so one edit can fix them all.
 
 ## 4. Set the material and the feeds
 
-Open `coaster.dcv` in your text editor. It is a JSON file.
+Open `coaster.dcv` in your text editor. It is a JSON file. Everything you
+set is near the top, before the shapes. The file starts like this:
+
+<!-- doc-test: excerpt coaster.dcv -->
+```json
+{
+  "version": 4,
+  "name": "coaster",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 110.0,
+    "height_mm": 110.0,
+    "thickness_mm": null
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "Set me",
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": null,
+      "plunge_mm_min": null,
+      "rpm": null,
+```
+
+The operations follow the tools, and after them the shapes.
 
 ### The material
 

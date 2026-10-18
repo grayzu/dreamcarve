@@ -23,5 +23,9 @@ dc-geometry.workspace = true
 dc-import.workspace = true
 dc-project.workspace = true
 
+[dev-dependencies]
+# Tests re-lay out a .dcv by hand, as a user might (#76).
+serde_json.workspace = true
+
 [lints]
 workspace = true

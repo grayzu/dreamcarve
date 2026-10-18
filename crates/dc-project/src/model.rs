@@ -20,6 +20,9 @@ use std::collections::BTreeMap;
 
 /// A DreamCarve project: stock, features, tools, operations and machine
 /// setup. The root of a `.dcv` file.
+///
+/// Fields are declared, and so saved, in the order a person edits them
+/// (#76): the settings first, the geometry last. Readers accept any order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
@@ -38,16 +41,17 @@ pub struct Project {
     pub stock: Stock,
     /// Where the machine's work zero sits relative to the stock.
     pub origin: MachineOrigin,
-    /// Canonical shapes, keyed by id.
-    pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,
-    /// Placed copies of definitions.
-    pub instances: Vec<FeatureInstance>,
     /// Tools embedded in the project (ADR-0002).
     pub tools: Vec<Tool>,
     /// Machining operations, in cutting order.
     pub operations: Vec<Operation>,
+    /// Placed copies of definitions.
+    pub instances: Vec<FeatureInstance>,
     /// Embedded copy of the post-processor definition (ADR-0002).
     pub post_processor: PostProcessor,
+    /// Canonical shapes, keyed by id. Last in the file, since it is the
+    /// bulk of it and rarely edited by hand.
+    pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,
 }
 
 /// Display units for the CLI and new projects.

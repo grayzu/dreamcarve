@@ -47,6 +47,12 @@ listed in the [quick start](../quick-start/first-cut.md#2-create-the-project).
 | `--post <ID>` | Post-processor to embed: `grblhal` (default) or `grbl`. |
 | `--units <mm\|inch>` | Units the G-code is written in. Default `mm`. |
 
+`init` leaves the values only you can know unset (`null`): the stock
+thickness, the cut depth, and the tool's feed rate, plunge rate and spindle
+speed. It then lists each one with its line and column in the file, as
+`coaster.dcv:9:21: stock.thickness_mm is not set (mm)`. See
+[Finding a value](project-file.md#finding-a-value).
+
 `init` never overwrites a file: if the project already exists, it stops.
 Remove the old one or choose another name with `-o`.
 
@@ -99,8 +105,9 @@ one bit also lists each tool change there, such as
 
 Runs everything `export` does except writing the file, and prints every
 error and warning. It also lists open paths, which Profile does not cut.
-When the program could be built, it prints the program's extents as
-`export` does.
+Each message about one value starts with its file, line and column, and
+every value still unset is reported in the same run. When the program
+could be built, it prints the program's extents as `export` does.
 
 ### `dreamcarve posts`
 

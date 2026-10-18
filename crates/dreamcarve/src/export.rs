@@ -11,6 +11,10 @@
 //! `check` reports exactly what `export` would. It validates the project it
 //! is given rather than trusting the problems found at load, so the checks
 //! that depend on the post-processor see the one `--post` swapped in.
+//!
+//! A finding about one value of the file is printed as
+//! `coaster.dcv:9:21: error: …`, the form editors and terminals turn into a
+//! link to that line and column (#76).
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -19,17 +23,65 @@ use dc_cam::generate_profile;
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{AxisRange, ExportWarning, Program, emit};
-use dc_project::{Operation, Project, Severity, Units, validate};
+use dc_project::{Operation, Project, Severity, SourceMap, Units, validate};
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
+
+/// One error or warning.
+#[derive(Debug)]
+pub struct Finding {
+    /// The field it is about, as validation names it
+    /// (`tools[t1].feed_mm_min`), when it is about one.
+    pub field: Option<String>,
+    /// What is wrong.
+    pub message: String,
+}
+
+impl Finding {
+    /// A finding about no one field.
+    fn plain(message: String) -> Self {
+        Self {
+            field: None,
+            message,
+        }
+    }
+}
 
 /// What the pipeline found, in the order found.
 #[derive(Debug, Default)]
 pub struct Findings {
     /// Error-class findings; any one means no program.
-    pub errors: Vec<String>,
+    pub errors: Vec<Finding>,
     /// Findings that still allow a safe program.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Finding>,
+}
+
+/// The `.dcv` file as read, to locate findings in.
+pub struct ProjectFile<'a> {
+    /// The path as the user gave it.
+    pub path: &'a Path,
+    /// Where each value is in the text, or `None` if it could not be
+    /// scanned (then no finding gets a location).
+    map: Option<SourceMap>,
+    /// Whether the post-processor in the file was replaced (`--post`), so
+    /// its fields' positions no longer match what was checked.
+    post_replaced: bool,
+}
+
+impl ProjectFile<'_> {
+    /// `finding` as one line: `path:line:column: label: message` when its
+    /// field is in the file, `label: message` otherwise.
+    pub fn describe(&self, label: &str, finding: &Finding) -> String {
+        let position = finding
+            .field
+            .as_deref()
+            .filter(|f| !(self.post_replaced && f.starts_with("post_processor")))
+            .and_then(|f| self.map.as_ref()?.locate(f));
+        match position {
+            Some(at) => format!("{}:{at}: {label}: {}", self.path.display(), finding.message),
+            None => format!("{label}: {}", finding.message),
+        }
+    }
 }
 
 /// The pipeline's result: the program when there were no errors.
@@ -46,9 +98,13 @@ pub struct Built {
 pub fn build(project: &Project, date: &str) -> Built {
     let mut findings = Findings::default();
     for problem in validate(project) {
+        let finding = Finding {
+            field: problem.field(),
+            message: problem.to_string(),
+        };
         match problem.severity() {
-            Severity::Error => findings.errors.push(problem.to_string()),
-            Severity::Warning => findings.warnings.push(problem.to_string()),
+            Severity::Error => findings.errors.push(finding),
+            Severity::Warning => findings.warnings.push(finding),
         }
     }
     if !findings.errors.is_empty() {
@@ -66,10 +122,10 @@ pub fn build(project: &Project, date: &str) -> Built {
             continue;
         }
         let Some(tool) = project.tools.iter().find(|t| t.id == op.tool) else {
-            findings.errors.push(format!(
+            findings.errors.push(Finding::plain(format!(
                 "operation `{}` uses tool `{}`, which is not in the project",
                 op.id, op.tool
-            ));
+            )));
             continue;
         };
         match generate_profile(project, op) {
@@ -77,11 +133,11 @@ pub fn build(project: &Project, date: &str) -> Built {
                 findings.warnings.extend(
                     warnings
                         .iter()
-                        .map(|w| format!("operation `{}`: {w}", op.id)),
+                        .map(|w| Finding::plain(format!("operation `{}`: {w}", op.id))),
                 );
                 ops.push((op.clone(), tool.clone(), toolpath));
             }
-            Err(e) => findings.errors.push(e.to_string()),
+            Err(e) => findings.errors.push(Finding::plain(e.to_string())),
         }
     }
     if !findings.errors.is_empty() {
@@ -93,16 +149,18 @@ pub fn build(project: &Project, date: &str) -> Built {
 
     match emit(project, &ops, date) {
         Ok((program, warnings)) => {
-            findings
-                .warnings
-                .extend(warnings.iter().map(describe_export_warning));
+            findings.warnings.extend(
+                warnings
+                    .iter()
+                    .map(|w| Finding::plain(describe_export_warning(w))),
+            );
             Built {
                 program: Some(program),
                 findings,
             }
         }
         Err(e) => {
-            findings.errors.push(e.to_string());
+            findings.errors.push(Finding::plain(e.to_string()));
             Built {
                 program: None,
                 findings,
@@ -123,30 +181,40 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
 }
 
 /// Loads the `.dcv` at `path`; a file that cannot become a project is an
-/// error (exit 1). Only the project is returned: [`build`] validates it
-/// again, after any `--post` swap, so problems found at load cannot go
-/// stale.
-pub fn load_project(path: &Path) -> Result<Project, Failure> {
+/// error (exit 1). The problems found at load are not returned: [`build`]
+/// validates the project again, after any `--post` swap, so they cannot go
+/// stale. The file comes back to locate [`build`]'s findings in.
+pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> {
     let bytes = read_file(path)?;
-    dc_project::load(&bytes)
+    let project = dc_project::load(&bytes)
         .map(|loaded| loaded.project)
-        .map_err(|e| Failure::error(format!("cannot load {}: {e}", path.display())))
+        .map_err(|e| Failure::error(format!("cannot load {}: {e}", path.display())))?;
+    let map = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|text| SourceMap::parse(text).ok());
+    let file = ProjectFile {
+        path,
+        map,
+        post_replaced: false,
+    };
+    Ok((project, file))
 }
 
 /// Runs `export`.
 pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
-    let mut project = load_project(&args.dcv)?;
+    let (mut project, mut file) = load_project(&args.dcv)?;
     if let Some(id) = &args.post {
         project.post_processor = lookup_post(id)?;
+        file.post_replaced = true;
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
 
     let Built { program, findings } = build(&project, &date);
     for warning in &findings.warnings {
-        eprintln!("warning: {warning}");
+        eprintln!("{}", file.describe("warning", warning));
     }
     for error in &findings.errors {
-        eprintln!("error: {error}");
+        eprintln!("{}", file.describe("error", error));
     }
     let Some(program) = program else {
         return Err(Failure::error(format!(

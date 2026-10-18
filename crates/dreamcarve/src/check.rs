@@ -7,6 +7,9 @@
 //! cuts it (functional spec, capabilities 4 and 8), then, when the program
 //! could be built, its extents as `export` prints them (#62). Exits 1 when
 //! any error was found.
+//!
+//! Every value the user has yet to set is an error, so one run lists all of
+//! them, each as `coaster.dcv:line:column: error: …` (#76).
 
 use std::process::ExitCode;
 
@@ -18,14 +21,14 @@ const CHECK_DATE: &str = "check";
 
 /// Runs `check`.
 pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
-    let project = export::load_project(&args.dcv)?;
+    let (project, file) = export::load_project(&args.dcv)?;
     let export::Built { program, findings } = export::build(&project, CHECK_DATE);
 
     for error in &findings.errors {
-        println!("error: {error}");
+        println!("{}", file.describe("error", error));
     }
     for warning in &findings.warnings {
-        println!("warning: {warning}");
+        println!("{}", file.describe("warning", warning));
     }
     // #62: where the program would take the tool, as `export` prints it.
     if let Some(program) = &program {

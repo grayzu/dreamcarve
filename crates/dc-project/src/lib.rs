@@ -9,6 +9,8 @@
 
 mod history;
 mod ids;
+mod layout;
+mod locate;
 mod migrate;
 mod model;
 mod post_processor;
@@ -20,6 +22,7 @@ pub mod test_support;
 
 pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{DefinitionId, InstanceId, OperationId, ToolId};
+pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
     CutDirection, FeatureDefinition, FeatureInstance, MachineOrigin, Operation, OriginXy, OriginZ,

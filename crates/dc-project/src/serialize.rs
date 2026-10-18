@@ -4,8 +4,9 @@
 //! `.dcv` load and save (ADR-0002; `docs/specs/phase-1/design.md`, "Data
 //! model → dc-project").
 //!
-//! [`save`] writes pretty-printed JSON with keys in declaration order and a
-//! trailing newline. [`load`] parses bytes, reads `version`, migrates to
+//! [`save`] writes pretty-printed JSON with keys in declaration order, the
+//! settings first and the geometry last, each vertex on one line
+//! ([`crate::layout`]), and a trailing newline. [`load`] parses bytes, reads `version`, migrates to
 //! [`crate::CURRENT_VERSION`], deserializes strictly (unknown fields and missing
 //! fields both fail), and then validates.
 //!
@@ -14,9 +15,11 @@
 //! a caller such as the CLI `check` command can report all of them; callers
 //! that machine the project must refuse it when [`Loaded::has_errors`].
 
+use crate::layout::DcvFormatter;
 use crate::migrate::migrate;
 use crate::model::Project;
 use crate::validate::{Problem, validate};
+use serde::Serialize;
 use serde_json::Value;
 
 /// Why bytes could not be loaded as a project.
@@ -113,7 +116,8 @@ impl Loaded {
 }
 
 /// Serializes `project` as `.dcv` text: pretty JSON, keys in declaration
-/// order, `Option` fields as `null`, ending in a newline.
+/// order, each vertex on one line, `Option` fields as `null`, ending in a
+/// newline.
 ///
 /// Fails with [`SaveError::NonFinite`] rather than writing a NaN or
 /// infinity, which serde_json would silently turn into `null`.
@@ -121,11 +125,18 @@ pub fn save(project: &Project) -> Result<String, SaveError> {
     if let Some(field) = first_non_finite(&validate(project)) {
         return Err(SaveError::NonFinite { field });
     }
-    let mut text = serde_json::to_string_pretty(project).map_err(|e| SaveError::Serialize {
+    let mut bytes = Vec::new();
+    let mut serializer =
+        serde_json::Serializer::with_formatter(&mut bytes, DcvFormatter::default());
+    project
+        .serialize(&mut serializer)
+        .map_err(|e| SaveError::Serialize {
+            message: e.to_string(),
+        })?;
+    bytes.push(b'\n');
+    String::from_utf8(bytes).map_err(|e| SaveError::Serialize {
         message: e.to_string(),
-    })?;
-    text.push('\n');
-    Ok(text)
+    })
 }
 
 /// Parses `.dcv` bytes into a project, migrating older versions and then
@@ -180,6 +191,11 @@ mod tests {
     /// The sample project as this build saves it.
     const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v4/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
+    /// The sample in the layout before #76: geometry first, and each vertex
+    /// over five lines.
+    const V3_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v3/sample.dcv");
+    const V4_GEOMETRY_FIRST_FIXTURE: &str =
+        include_str!("../tests/fixtures/dcv/v4/sample-geometry-first.dcv");
 
     #[test]
     fn round_trip_is_identity() {
@@ -353,10 +369,12 @@ mod tests {
     #[test]
     fn load_returns_warnings_without_errors() {
         let mut p = sample_project();
-        p.tools[0].rpm = None;
+        let Operation::Profile(op) = &mut p.operations[0];
+        op.enabled = false;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert!(!loaded.has_errors());
-        assert_eq!(loaded.problems.len(), 1);
+        // The disabled operation, and its tool, which nothing else uses.
+        assert_eq!(loaded.problems.len(), 2);
     }
 
     #[test]
@@ -438,5 +456,98 @@ mod tests {
             load(text.as_bytes()),
             Err(LoadError::Schema { .. })
         ));
+    }
+
+    /// The byte offset of the top-level `key` in `text`.
+    fn top_level_offset(text: &str, key: &str) -> usize {
+        text.find(&format!("\n  \"{key}\": "))
+            .unwrap_or_else(|| panic!("{key} is a top-level key: {text}"))
+    }
+
+    /// #76: everything a user fills in comes before the geometry.
+    #[test]
+    fn settings_are_written_before_geometry() {
+        let text = save(&sample_project()).unwrap();
+        let settings = ["stock", "tools", "operations"].map(|k| top_level_offset(&text, k));
+        let rest =
+            ["instances", "post_processor", "definitions"].map(|k| top_level_offset(&text, k));
+        for setting in settings {
+            assert!(rest.iter().all(|r| setting < *r), "{text}");
+        }
+        assert!(rest.windows(2).all(|w| w[0] < w[1]), "{text}");
+    }
+
+    /// #76: each vertex object is on one line; the rest of the file is the
+    /// committed pretty layout.
+    #[test]
+    fn vertices_are_one_per_line() {
+        let text = save(&sample_project()).unwrap();
+        let vertex_lines: Vec<&str> = text.lines().filter(|l| l.contains("\"x\"")).collect();
+        assert_eq!(vertex_lines.len(), 4, "{text}");
+        for line in vertex_lines {
+            let line = line.trim().trim_end_matches(',');
+            assert!(line.starts_with("{ \"x\": "), "{line}");
+            assert!(line.contains(", \"y\": "), "{line}");
+            assert!(line.contains(", \"bulge\": "), "{line}");
+            assert!(line.ends_with(" }"), "{line}");
+        }
+        assert!(!text.contains("\"y\": 0.0,\n"), "{text}");
+        assert_eq!(text, CURRENT_FIXTURE);
+    }
+
+    /// #76: the compact layout loses nothing: every `f64` comes back
+    /// bit-for-bit, and saving again gives the same bytes.
+    #[test]
+    fn compact_output_round_trips() {
+        let mut p = sample_project();
+        let vertices = [
+            (0.1 + 0.2, 1e-7, 0.0),
+            (137.684_123_456_789_01, -88.535, 0.414_213_562_373_095_1),
+            (f64::MIN_POSITIVE, 5_999.999_999_999_999, -1.0 / 3.0),
+        ]
+        .map(|(x, y, bulge)| dc_geometry::Vertex { x, y, bulge });
+        p.definitions.values_mut().for_each(|d| {
+            d.profiles = vec![dc_geometry::Polyline::new(vertices.to_vec(), true)];
+        });
+        let first = save(&p).unwrap();
+        let loaded = load(first.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        let profile = &loaded.project.definitions.values().next().unwrap().profiles[0];
+        for (got, want) in profile.vertices().iter().zip(&vertices) {
+            assert_eq!(got.x.to_bits(), want.x.to_bits());
+            assert_eq!(got.y.to_bits(), want.y.to_bits());
+            assert_eq!(got.bulge.to_bits(), want.bulge.to_bits());
+        }
+        assert_eq!(save(&loaded.project).unwrap(), first);
+    }
+
+    /// #76 changed only the layout, not the version: a file in the old
+    /// order and layout (geometry first, a vertex over five lines) loads,
+    /// at version 3 and at version 4.
+    #[test]
+    fn old_key_order_still_loads() {
+        for text in [V3_FIXTURE, V4_GEOMETRY_FIRST_FIXTURE] {
+            assert!(
+                text.find("\"definitions\"") < text.find("\"tools\""),
+                "fixture is geometry first"
+            );
+            assert!(text.contains("\"x\": 0.0,\n"), "fixture has the old layout");
+            let loaded = load(text.as_bytes()).unwrap();
+            assert_eq!(loaded.project, sample_project());
+            assert_eq!(loaded.problems, vec![]);
+        }
+    }
+
+    /// Readers take the members in any order, as JSON allows.
+    #[test]
+    fn any_key_order_loads() {
+        let value: Value = serde_json::from_str(CURRENT_FIXTURE).unwrap();
+        let Value::Object(map) = value else {
+            panic!("root is an object")
+        };
+        let reversed: serde_json::Map<_, _> = map.into_iter().rev().collect();
+        let text = serde_json::to_string(&Value::Object(reversed)).unwrap();
+        assert!(text.starts_with("{\"definitions\""), "{text}");
+        assert_eq!(load(text.as_bytes()).unwrap().project, sample_project());
     }
 }
