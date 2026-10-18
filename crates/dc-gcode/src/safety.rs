@@ -9,18 +9,21 @@
 //! Checks run in project space: each parsed point is mapped back through
 //! the [`MachineTransform`] using the units the program itself selected, so
 //! a wrong origin, a mirror, or a missing units command shows up as a
-//! violation instead of being trusted.
+//! violation instead of being trusted. S6 compares each operation's moves
+//! with its toolpath move for move, arc direction and centre included; see
+//! [`check_reproduces`] for exactly what it accepts.
 
+use std::f64::consts::TAU;
 use std::ops::Range;
 
-use dc_cam::Toolpath;
-use dc_geometry::{EPS_MM, Point3, approx_eq};
+use dc_cam::{MoveKind, Toolpath};
+use dc_geometry::{EPS_MM, Point, Point3, approx_eq};
 use dc_project::{PostProcessor, ProfileOp, SpindleControl, Tool, ToolId, Units};
 
 use crate::ExportError;
 use crate::emit::uses_m6;
 use crate::format::decimal_places;
-use crate::parse::{Block, MachineMove, MotionKind, is_code, parse_program};
+use crate::parse::{Block, MachineMove, MachinePosition, MotionKind, is_code, parse_program};
 use crate::transform::{MachineTransform, mm_per_unit};
 
 /// The longest line, in characters, DreamCarve emits. grblHAL's line
@@ -42,7 +45,8 @@ pub(crate) struct OpSpan<'a> {
 }
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S6.
+/// in `spans`, against S1–S6. `flatten_tolerance_mm` is the most a
+/// straight move written for an arc may cut inside it.
 ///
 /// # Errors
 ///
@@ -52,8 +56,25 @@ pub(crate) fn check(
     post: &PostProcessor,
     transform: &MachineTransform,
     stock_thickness_mm: f64,
+    flatten_tolerance_mm: f64,
     spans: &[OpSpan<'_>],
 ) -> Result<(), ExportError> {
+    let blocks = check_rules(text, post, transform, stock_thickness_mm, spans)?;
+    // S6: reading the program back reproduces each toolpath.
+    for span in spans {
+        check_reproduces(span, &blocks, post, transform, flatten_tolerance_mm)?;
+    }
+    Ok(())
+}
+
+/// Checks `text` against S1–S5 and returns its blocks.
+fn check_rules(
+    text: &str,
+    post: &PostProcessor,
+    transform: &MachineTransform,
+    stock_thickness_mm: f64,
+    spans: &[OpSpan<'_>],
+) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
     let blocks = parse_program(text)?;
     check_words(&blocks, uses_m6(post))?;
@@ -195,12 +216,7 @@ pub(crate) fn check(
     if manual && router.cut_since_pause {
         return Err(ExportError::RouterNotStopped);
     }
-
-    // S6: reading the program back reproduces each toolpath.
-    for span in spans {
-        check_reproduces(span, &blocks, post, transform)?;
-    }
-    Ok(())
+    Ok(blocks)
 }
 
 /// Where Z is, for the S4 checks in both spindle modes, and, with manual
@@ -513,57 +529,359 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
     Ok(())
 }
 
-/// S6: every point of the span's toolpath is reached, in order, by the
-/// program's moves read back into project space. A wrong origin, units, or
-/// mirror cannot pass.
+/// S6: reading the program back reproduces the span's toolpath, move for
+/// move, in project space.
+///
+/// Each toolpath move must be matched by the next motion lines, and by
+/// nothing else:
+///
+/// - a rapid by one rapid that ends at its end point, or two whose first
+///   moves in Z alone or in XY alone towards it (`emit` splits a rapid so
+///   it never travels sideways below either end);
+/// - a straight cut by one `G1` that ends at its end point;
+/// - an arc by `G2`/`G3` moves and straight moves that each end on the
+///   arc, further along it than the last, the last one at the arc's end.
+///   A `G2`/`G3` must turn the same way as the toolpath once the axis
+///   mapping is applied (a mirror swaps them), and its centre, from I and
+///   J, must be the toolpath's; with R, where the centre is
+///   ill-conditioned for short chords, the controller's arc midpoint must
+///   lie on the toolpath's arc instead. A straight move may cut inside the
+///   arc by no more than the flatten tolerance. An arc too small to be one
+///   is matched as a straight cut, as `emit` writes it.
+///
+/// A move whose end point the program is already at may be matched by no
+/// lines, since `emit` writes nothing for it. The only other motion
+/// allowed in the span is a retract (a rapid up in Z alone) before the
+/// first toolpath move or after the last: the tool-change and router
+/// retracts. Ends compare within one unit in the last written place.
 fn check_reproduces(
     span: &OpSpan<'_>,
     blocks: &[Block],
     post: &PostProcessor,
     transform: &MachineTransform,
+    flatten_tolerance_mm: f64,
 ) -> Result<(), ExportError> {
-    let points: Vec<(Point3, f64)> = blocks
+    let motions: Vec<ReadMove<'_>> = blocks
         .iter()
         .filter(|b| span.lines.contains(&b.line))
         .filter_map(|b| b.motion.as_ref())
-        .filter_map(|m| {
-            let machine = Point3::new(m.to.x?, m.to.y?, m.to.z?);
-            Some((
-                transform.to_project(machine, m.units),
-                quantum_mm(post, m.units),
-            ))
-        })
+        .map(|mv| ReadMove::new(mv, post, transform))
         .collect();
-    let mut cursor = 0;
+    let mismatch = |index| ExportError::MotionMismatch {
+        op: span.op.id.clone(),
+        index,
+    };
+    let mut cursor = motions
+        .iter()
+        .position(|m| !is_retract(m.mv))
+        .unwrap_or(motions.len());
+    let mut previous: Option<Point3> = None;
     for (index, mv) in span.toolpath.moves.iter().enumerate() {
-        let target = mv.to;
-        let found = points.get(cursor..).and_then(|rest| {
-            rest.iter().position(|(p, quantum)| {
-                let tolerance = *quantum + EPS_MM;
-                approx_eq(p.x, target.x, tolerance)
-                    && approx_eq(p.y, target.y, tolerance)
-                    && approx_eq(p.z, target.z, tolerance)
-            })
-        });
-        let Some(offset) = found else {
-            return Err(ExportError::MotionMismatch {
-                op: span.op.id.clone(),
-                index,
-            });
+        let rest = motions.get(cursor..).unwrap_or_default();
+        // Where the controller is before `rest`.
+        let here = rest
+            .first()
+            .map_or_else(|| motions.last().and_then(|m| m.to), |m| m.from);
+        let tolerance_mm = rest
+            .first()
+            .or(motions.last())
+            .map_or(EPS_MM, |m| m.tolerance_mm);
+        let already_there = here.is_some_and(|h| near(h, mv.to, tolerance_mm));
+        let consumed = match mv.kind {
+            MoveKind::Rapid => match_rapid(rest, mv.to, already_there),
+            MoveKind::Linear => match_linear(rest, mv.to, already_there),
+            MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+                let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
+                match previous.map(|start| ToolpathArc::new(start, mv.to, centre, clockwise)) {
+                    Some(Some(arc)) => match_arc(rest, &arc, transform, flatten_tolerance_mm),
+                    // Too small to be an arc: `emit` writes a straight cut.
+                    Some(None) => match_linear(rest, mv.to, already_there),
+                    // `emit` cannot write an arc without a start.
+                    None => None,
+                }
+            }
         };
-        cursor += offset;
+        cursor += consumed.ok_or_else(|| mismatch(index))?;
+        previous = Some(mv.to);
     }
-    Ok(())
+    if motions
+        .get(cursor..)
+        .unwrap_or_default()
+        .iter()
+        .all(|m| is_retract(m.mv))
+    {
+        Ok(())
+    } else {
+        Err(mismatch(span.toolpath.moves.len()))
+    }
+}
+
+/// A parsed move with its ends in project space, mm.
+struct ReadMove<'a> {
+    mv: &'a MachineMove,
+    /// The start, if every axis is known.
+    from: Option<Point3>,
+    /// The end, if every axis is known.
+    to: Option<Point3>,
+    /// The end in XY, if known.
+    to_xy: Option<Point>,
+    /// The end in Z, if known.
+    to_z: Option<f64>,
+    /// One unit in the last written place, mm, plus [`EPS_MM`].
+    tolerance_mm: f64,
+}
+
+impl<'a> ReadMove<'a> {
+    fn new(mv: &'a MachineMove, post: &PostProcessor, transform: &MachineTransform) -> Self {
+        let xy = |p: &MachinePosition| {
+            let m = Point3::new(p.x?, p.y?, 0.0);
+            Some(transform.to_project(m, mv.units).xy())
+        };
+        let z = |p: &MachinePosition| p.z.map(|z| transform.project_z(z, mv.units));
+        let full = |p: &MachinePosition| {
+            let (xy, z) = (xy(p)?, z(p)?);
+            Some(Point3::new(xy.x, xy.y, z))
+        };
+        Self {
+            mv,
+            from: full(&mv.from),
+            to: full(&mv.to),
+            to_xy: xy(&mv.to),
+            to_z: z(&mv.to),
+            tolerance_mm: quantum_mm(post, mv.units) + EPS_MM,
+        }
+    }
+
+    /// Whether the move ends at `target`.
+    fn reaches(&self, target: Point3) -> bool {
+        self.to
+            .is_some_and(|to| near(to, target, self.tolerance_mm))
+    }
+}
+
+/// Whether `a` and `b` agree on every axis within `tolerance_mm`.
+fn near(a: Point3, b: Point3, tolerance_mm: f64) -> bool {
+    approx_eq(a.x, b.x, tolerance_mm)
+        && approx_eq(a.y, b.y, tolerance_mm)
+        && approx_eq(a.z, b.z, tolerance_mm)
+}
+
+/// How many of `rest` a rapid to `target` takes, if they match it.
+fn match_rapid(rest: &[ReadMove<'_>], target: Point3, already_there: bool) -> Option<usize> {
+    let rapid = |m: &&ReadMove<'_>| m.mv.kind == MotionKind::Rapid;
+    if let Some(first) = rest.first().filter(rapid) {
+        if first.reaches(target) {
+            return Some(1);
+        }
+        let (from, to) = (&first.mv.from, &first.mv.to);
+        let tolerance = first.tolerance_mm;
+        let z_only = !differs(from.x, to.x)
+            && !differs(from.y, to.y)
+            && first
+                .to_z
+                .is_some_and(|z| approx_eq(z, target.z, tolerance));
+        let xy_only = !differs(from.z, to.z)
+            && first.to_xy.is_some_and(|p| {
+                approx_eq(p.x, target.x, tolerance) && approx_eq(p.y, target.y, tolerance)
+            });
+        if (z_only || xy_only) && rest.get(1).filter(rapid).is_some_and(|m| m.reaches(target)) {
+            return Some(2);
+        }
+    }
+    already_there.then_some(0)
+}
+
+/// How many of `rest` a straight cut to `target` takes, if they match it.
+fn match_linear(rest: &[ReadMove<'_>], target: Point3, already_there: bool) -> Option<usize> {
+    if rest
+        .first()
+        .is_some_and(|m| m.mv.kind == MotionKind::Linear && m.reaches(target))
+    {
+        return Some(1);
+    }
+    already_there.then_some(0)
+}
+
+/// How many of `rest` `arc` takes, if they match it: see
+/// [`check_reproduces`].
+fn match_arc(
+    rest: &[ReadMove<'_>],
+    arc: &ToolpathArc,
+    transform: &MachineTransform,
+    flatten_tolerance_mm: f64,
+) -> Option<usize> {
+    let mut turned_rad = 0.0;
+    for (count, read) in rest.iter().enumerate() {
+        let to = read.to?;
+        let tolerance = read.tolerance_mm;
+        let turn_rad = arc.turn_to(to.xy(), tolerance)?;
+        let slack_rad = arc.angle_tolerance_rad(tolerance);
+        let (low_z, high_z) = (arc.start.z.min(arc.end.z), arc.start.z.max(arc.end.z));
+        if turn_rad < turned_rad - slack_rad
+            || to.z < low_z - tolerance
+            || to.z > high_z + tolerance
+        {
+            return None;
+        }
+        match read.mv.kind {
+            MotionKind::Rapid => return None,
+            MotionKind::Linear => {
+                // A chord cuts inside the arc by its sagitta.
+                let step_rad = (turn_rad - turned_rad).max(0.0);
+                let sagitta_mm = arc.radius_mm * (1.0 - (step_rad / 2.0).cos());
+                if sagitta_mm > flatten_tolerance_mm + tolerance {
+                    return None;
+                }
+            }
+            MotionKind::ArcCw | MotionKind::ArcCcw => {
+                if !arc_follows(read, arc, transform, turned_rad, turn_rad) {
+                    return None;
+                }
+            }
+        }
+        if near(to, arc.end, tolerance) {
+            return Some(count + 1);
+        }
+        turned_rad = turn_rad;
+    }
+    None
+}
+
+/// Whether arc move `read`, which ends `turn_rad` along `arc`, runs along
+/// `arc` from `turned_rad`: same direction, and the same centre (I/J) or
+/// a midpoint on the arc (R).
+fn arc_follows(
+    read: &ReadMove<'_>,
+    arc: &ToolpathArc,
+    transform: &MachineTransform,
+    turned_rad: f64,
+    turn_rad: f64,
+) -> bool {
+    let mv = read.mv;
+    let machine_cw = mv.kind == MotionKind::ArcCw;
+    if (machine_cw != transform.mirrors_xy()) != arc.clockwise {
+        return false;
+    }
+    let (Some(sx), Some(sy), Some(ex), Some(ey)) = (mv.from.x, mv.from.y, mv.to.x, mv.to.y) else {
+        return false;
+    };
+    let to_project = |x: f64, y: f64| transform.to_project(Point3::new(x, y, 0.0), mv.units).xy();
+    let tolerance = read.tolerance_mm;
+    // The same start and end is a full circle to the controller.
+    let (start, end) = (to_project(sx, sy), to_project(ex, ey));
+    if (end.x - start.x).abs() < tolerance / 2.0 && (end.y - start.y).abs() < tolerance / 2.0 {
+        return false;
+    }
+    let Some(r) = mv.arc.r else {
+        let (i, j) = (mv.arc.i.unwrap_or(0.0), mv.arc.j.unwrap_or(0.0));
+        let centre = to_project(sx + i, sy + j);
+        return approx_eq(centre.x, arc.centre.x, tolerance)
+            && approx_eq(centre.y, arc.centre.y, tolerance);
+    };
+    // The centre GRBL and grblHAL compute from R (`gcode.c`, radius
+    // format): on the right of the chord for G2 and the left for G3, the
+    // other side for a negative R.
+    let (dx, dy) = (ex - sx, ey - sy);
+    let chord = dx.hypot(dy);
+    let h = (r * r - chord * chord / 4.0).max(0.0).sqrt();
+    let side = if machine_cw { 1.0 } else { -1.0 } * r.signum();
+    let (cx, cy) = (
+        (sx + ex) / 2.0 + side * h * dy / chord,
+        (sy + ey) / 2.0 - side * h * dx / chord,
+    );
+    let start_rad = (sy - cy).atan2(sx - cx);
+    let end_rad = (ey - cy).atan2(ex - cx);
+    let sweep_rad = if machine_cw {
+        start_rad - end_rad
+    } else {
+        end_rad - start_rad
+    }
+    .rem_euclid(TAU);
+    let mid_rad = start_rad + if machine_cw { -1.0 } else { 1.0 } * sweep_rad / 2.0;
+    let radius = (sx - cx).hypot(sy - cy);
+    let mid = to_project(cx + radius * mid_rad.cos(), cy + radius * mid_rad.sin());
+    let slack_rad = arc.angle_tolerance_rad(tolerance);
+    arc.turn_to(mid, tolerance)
+        .is_some_and(|t| t >= turned_rad - slack_rad && t <= turn_rad + slack_rad)
+}
+
+/// An arc move of a toolpath in project space, mm.
+struct ToolpathArc {
+    start: Point3,
+    end: Point3,
+    centre: Point,
+    radius_mm: f64,
+    start_rad: f64,
+    sweep_rad: f64,
+    clockwise: bool,
+}
+
+/// An arc whose radius or sweep is below this is written as a straight
+/// move (`emit`, `ArcGeometry::new`).
+const MIN_ARC_SWEEP_RAD: f64 = 1e-9;
+
+impl ToolpathArc {
+    /// The arc from `start` to `end` about `centre`, or `None` if `emit`
+    /// writes it as a straight move.
+    fn new(start: Point3, end: Point3, centre: Point, clockwise: bool) -> Option<Self> {
+        let radius_mm = start.xy().distance_to(centre);
+        let start_rad = (start.y - centre.y).atan2(start.x - centre.x);
+        let end_rad = (end.y - centre.y).atan2(end.x - centre.x);
+        let turn = if clockwise {
+            start_rad - end_rad
+        } else {
+            end_rad - start_rad
+        };
+        let sweep_rad = turn.rem_euclid(TAU);
+        (radius_mm > MIN_ARC_SWEEP_RAD && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
+            start,
+            end,
+            centre,
+            radius_mm,
+            start_rad,
+            sweep_rad,
+            clockwise,
+        })
+    }
+
+    /// The angle `tolerance_mm` spans on the arc.
+    fn angle_tolerance_rad(&self, tolerance_mm: f64) -> f64 {
+        tolerance_mm / self.radius_mm
+    }
+
+    /// How far along the arc `p` is, as the angle turned from the start in
+    /// the arc's direction, or `None` if `p` is not on the arc within
+    /// `tolerance_mm`.
+    fn turn_to(&self, p: Point, tolerance_mm: f64) -> Option<f64> {
+        if (p.distance_to(self.centre) - self.radius_mm).abs() > tolerance_mm {
+            return None;
+        }
+        let slack_rad = self.angle_tolerance_rad(tolerance_mm);
+        let angle = (p.y - self.centre.y).atan2(p.x - self.centre.x);
+        let turn = if self.clockwise {
+            self.start_rad - angle
+        } else {
+            angle - self.start_rad
+        };
+        let mut turn = turn.rem_euclid(TAU);
+        // Just short of the start, within rounding.
+        if turn > self.sweep_rad + slack_rad && turn > TAU - slack_rad {
+            turn -= TAU;
+        }
+        (turn <= self.sweep_rad + slack_rad).then_some(turn)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::emit::emit;
-    use dc_cam::{Move, generate_profile};
-    use dc_geometry::Point3;
+    use std::f64::consts::FRAC_PI_2;
+
+    use dc_cam::{Move, MoveKind, generate_profile};
+    use dc_geometry::{Point, Point3};
     use dc_project::test_support::sample_project;
-    use dc_project::{Operation, Project, SpindleControl};
+    use dc_project::{ArcFormat, Axis, Operation, Project, SpindleControl};
 
     /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
     /// plunge 300, 18000 rpm, GRBL), its operation, and its tool.
@@ -597,8 +915,8 @@ mod tests {
         emit(project, &[(op.clone(), tool.clone(), tp)], "2026-10-15").map(|(p, _)| p.text)
     }
 
-    /// Runs the safety pass on hand-written `text` as if it were the whole
-    /// of the fixture's operation.
+    /// Runs S1–S5 on hand-written `text` as if it were the whole of the
+    /// fixture's operation.
     fn check_text(text: &str) -> Result<(), ExportError> {
         check_text_as(text, SpindleControl::Automatic)
     }
@@ -628,13 +946,14 @@ mod tests {
             toolpath: &toolpath,
             lines: 1..lines,
         }];
-        check(
+        check_rules(
             text,
             &project.post_processor,
             &transform,
             project.stock.thickness_mm,
             &spans,
         )
+        .map(|_| ())
     }
 
     #[test]
@@ -1088,5 +1407,157 @@ mod tests {
             matches!(&err, ExportError::ForbiddenWord { line: 5, word } if word == "M6"),
             "{err:?}"
         );
+    }
+
+    /// Rapid in, plunge, a straight cut to (10, 0), a quarter circle
+    /// counter-clockwise about (10, 10) to (20, 10), retract. Project Z is
+    /// machine Z + 6 in the fixture.
+    fn line_then_arc() -> Toolpath {
+        Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+                Move::linear(Point3::new(0.0, 0.0, 5.0), 300.0),
+                Move::linear(Point3::new(10.0, 0.0, 5.0), 1000.0),
+                Move {
+                    kind: MoveKind::ArcCcw {
+                        centre: Point::new(10.0, 10.0),
+                    },
+                    to: Point3::new(20.0, 10.0, 5.0),
+                    feed_mm_min: Some(1000.0),
+                },
+                Move::rapid(Point3::new(20.0, 10.0, 11.0)),
+            ],
+        }
+    }
+
+    /// The program for [`line_then_arc`], with `arc` as the arc's lines.
+    fn line_then_arc_text(arc: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F1000\n{arc}G0 Z5\nM5\n"
+        )
+    }
+
+    /// Runs the whole safety pass, S6 included, on `text` as the fixture's
+    /// operation with `toolpath`.
+    fn check_against(text: &str, toolpath: &Toolpath) -> Result<(), ExportError> {
+        let (project, op, tool) = fixture();
+        let transform = MachineTransform::new(&project).unwrap();
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath,
+            lines: 1..text.lines().count() + 1,
+        }];
+        check(
+            text,
+            &project.post_processor,
+            &transform,
+            project.stock.thickness_mm,
+            project.flatten_tolerance_mm,
+            &spans,
+        )
+    }
+
+    fn is_mismatch_at(result: &Result<(), ExportError>, at: usize) -> bool {
+        matches!(result, Err(ExportError::MotionMismatch { index, .. }) if *index == at)
+    }
+
+    /// The arc, written as it should be, passes; the test programs below
+    /// differ from it in one line.
+    #[test]
+    fn arc_as_written_passes() {
+        let text = line_then_arc_text("G3 X20 Y10 I0 J10\n");
+        check_against(&text, &line_then_arc()).unwrap();
+    }
+
+    /// S6, #60: G2 and G3 have the same radius check, so only S6 sees an
+    /// arc that runs the other way round.
+    #[test]
+    fn reversed_arc_fails_reproduction() {
+        let text = line_then_arc_text("G2 X20 Y10 I0 J10\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 3), "{result:?}");
+    }
+
+    /// S6, #60: the same end points about a centre on the other side of the
+    /// chord.
+    #[test]
+    fn wrong_arc_centre_fails() {
+        let text = line_then_arc_text("G3 X20 Y10 I10 J0\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 3), "{result:?}");
+    }
+
+    /// S6, #60: a move between two toolpath points that the toolpath does
+    /// not have.
+    #[test]
+    fn extra_move_between_points_fails() {
+        let text = line_then_arc_text("G3 X20 Y10 I0 J10\n")
+            .replace("X10 F1000\n", "X5 Y3 F1000\nX10 Y0\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 2), "{result:?}");
+        // After the toolpath's last move, only a retract may follow.
+        let text = line_then_arc_text("G3 X20 Y10 I0 J10\n").replace("M5\n", "X30\nM5\n");
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 5), "{result:?}");
+    }
+
+    /// The arc of [`line_then_arc`] as `n` straight moves, counter-clockwise
+    /// (`ccw`) as in the toolpath, or the long way round clockwise.
+    fn flattened(n: u32, ccw: bool) -> String {
+        let sweep = if ccw { FRAC_PI_2 } else { -3.0 * FRAC_PI_2 };
+        let mut text = String::new();
+        for k in 1..=n {
+            let angle = -FRAC_PI_2 + sweep * f64::from(k) / f64::from(n);
+            let (x, y) = (10.0 + 10.0 * angle.cos(), 10.0 + 10.0 * angle.sin());
+            text.push_str(&format!("G1 X{x:.3} Y{y:.3}\n"));
+        }
+        text
+    }
+
+    /// S6, #60: an arc written as short straight moves, as with
+    /// `arc_interpolation: false` or when the controller would reject the
+    /// rounded arc, still reproduces the toolpath. The same end point
+    /// reached the long way round does not.
+    #[test]
+    fn flattened_arc_passes() {
+        let text = line_then_arc_text(&flattened(64, true));
+        check_against(&text, &line_then_arc()).unwrap();
+        let text = line_then_arc_text(&flattened(192, false));
+        let result = check_against(&text, &line_then_arc());
+        assert!(is_mismatch_at(&result, 3), "{result:?}");
+
+        // Through the emitter: flattened, IJ, and R, mirrored or not.
+        let (mut project, op, tool) = fixture();
+        for (interpolate, format, x_axis) in [
+            (false, ArcFormat::Ij, Axis::X),
+            (true, ArcFormat::Ij, Axis::X),
+            (true, ArcFormat::R, Axis::X),
+            (true, ArcFormat::Ij, Axis::NegX),
+            (true, ArcFormat::R, Axis::NegX),
+        ] {
+            let motion = &mut project.post_processor.motion;
+            motion.arc_interpolation = interpolate;
+            motion.arc_format = format;
+            project.post_processor.coordinate_system.x_axis = x_axis;
+            let (toolpath, _) = generate_profile(&project, &op).unwrap();
+            emit_one(&project, &op, &tool, toolpath).unwrap();
+            emit_one(&project, &op, &tool, line_then_arc()).unwrap();
+        }
+    }
+
+    /// Mutation guard, #60: an emitter that writes every arc the other way
+    /// round fails its own safety pass.
+    #[test]
+    fn flipped_arcs_fail_emit() {
+        let (project, op, tool) = fixture();
+        crate::emit::FLIP_ARCS.set(true);
+        let result = emit_one(&project, &op, &tool, line_then_arc());
+        crate::emit::FLIP_ARCS.set(false);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { index: 3, .. })),
+            "{result:?}"
+        );
+        emit_one(&project, &op, &tool, line_then_arc()).unwrap();
     }
 }

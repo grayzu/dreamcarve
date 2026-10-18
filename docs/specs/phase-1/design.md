@@ -328,9 +328,14 @@ Inputs: project, op. Output: toolpath in project space.
    `M0`, `M1` or `M6` at a known Z at or above safe Z, Z unknown after it,
    and an `M3` only at a known Z at or above safe Z, so a retract follows
    every stop before the spindle starts), S5 (units, WCS and `G90` before
-   the first move or spindle start, and again after every stop). `M6` and
-   `M61` are accepted only from a definition whose tool change has `M6`. A
-   violation is `ExportError`, never a warning.
+   the first move or spindle start, and again after every stop), S6 (each
+   operation's motion lines, mapped back through the machine transform,
+   are its toolpath move for move: rapids split only into their Z and XY
+   parts, arcs as `G2`/`G3` with the toolpath's direction and centre, or
+   as straight moves on the arc in order within the flatten tolerance, and
+   nothing else but retracts before the first move and after the last).
+   `M6` and `M61` are accepted only from a definition whose tool change has
+   `M6`. A violation is `ExportError`, never a warning.
 8. `Program.pauses` lists every `M0` and `M6` line with its 1-based line
    number and its comment text, so the CLI can tell the user what each stop
    is for when the sender does not show the message. `Program.first_tool`
@@ -479,6 +484,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::rapids_only_at_or_above_safe_z` — S2.
 - `safety::every_cut_has_active_feed` — S3.
 - `safety::violation_is_error_not_warning` — a hand-built bad toolpath is rejected.
+- `safety::reversed_arc_fails_reproduction`, `safety::wrong_arc_centre_fails`,
+  `safety::extra_move_between_points_fails`, `safety::flattened_arc_passes`,
+  `safety::flipped_arcs_fail_emit` — S6 (#60).
 - `parse::round_trips_emitted_program` — parse(emit(tp)) reproduces tp's XYZ within 1e-3.
 
 **dc-import**

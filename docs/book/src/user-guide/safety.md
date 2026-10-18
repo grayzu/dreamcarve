@@ -42,8 +42,14 @@ written. There are no safety warnings, only errors.
    work coordinate system and absolute coordinates (`G90`) before it moves,
    and again after every pause and tool change, where you may have changed
    them.
-7. **No mirroring.** The program's coordinates are the project's, moved to
-   your work zero. Nothing is flipped.
+7. **No mirroring, and nothing else.** The program's coordinates are the
+   project's, moved to your work zero. Nothing is flipped. Read back, each
+   operation's moves are its toolpath, move for move: every straight move
+   ends where the toolpath's does, every arc turns the same way about the
+   same centre, and there are no moves in between except a rapid split
+   into its up-or-down and sideways parts, an arc written as short
+   straight moves along it, and a lift to safe Z before or after the
+   operation.
 
 It also checks that:
 
@@ -51,8 +57,7 @@ It also checks that:
   with no character the controller would act on as a command;
 - every arc is one the controller will accept once its numbers are rounded
   (an arc that would not be is written as short straight moves, with a
-  warning);
-- the program's motion is the toolpath DreamCarve computed, move for move.
+  warning).
 
 ## What DreamCarve cannot check
 

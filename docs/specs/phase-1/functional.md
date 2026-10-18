@@ -138,7 +138,18 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   other modal lines, because the user may change them at the controller
   during the stop (#55, #57).
 - **S6** Machine origin is applied as a translation and axis mapping only.
-  No mirroring occurs in export (ADR-0001).
+  No mirroring occurs in export (ADR-0001). The safety pass reads each
+  operation's moves back into project space and checks that they are its
+  toolpath, move for move: a rapid is one or two rapids (Z first when
+  rising, XY first when falling) ending at its end point; a straight cut
+  is one `G1` ending at its end point; an arc is `G2`/`G3` moves turning
+  the same way (after any mirroring axis map) about the same centre (from
+  I/J; with R, the controller's arc midpoint lies on the arc), or straight
+  moves whose ends lie on the arc in order and that cut inside it by no
+  more than the flatten tolerance. A move to where the tool already is may
+  be written as nothing. The only other motion in an operation is a
+  retract straight up before its first move or after its last. Points
+  compare within one unit in the last written decimal place (#60).
 
 ## Test part
 

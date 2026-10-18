@@ -286,12 +286,14 @@ pub enum ExportError {
         delta_mm: f64,
     },
     /// S6: reading the program back does not reproduce the toolpath: a
-    /// toolpath point is missing or out of order in machine space.
+    /// move is missing, ends elsewhere, is the wrong kind, turns the wrong
+    /// way, has the wrong centre, or has moves the toolpath does not.
     #[error("the program does not reproduce operation `{op}` move {index}")]
     MotionMismatch {
         /// The operation.
         op: OperationId,
-        /// Index of the first move not found.
+        /// Index of the first toolpath move not reproduced; the number of
+        /// moves if extra motion follows the last.
         index: usize,
     },
 }
