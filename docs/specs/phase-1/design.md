@@ -254,7 +254,11 @@ Inputs: project, op. Output: toolpath in project space.
    and down at feed following `smoothTabZAt` (raised cosine), sampled per
    `smoothTabSampleFractions` at `flatten_tolerance_mm`. Tab spans that
    overlap merge. Warnings: `TabsOverlap`, `TabsOutsideCutRange`
-   (ported from `applyTabWarnings`).
+   (ported from `applyTabWarnings`), and `TabsCoverMostOfContour` when the
+   merged spans cover more than half of a contour's length, so the part or
+   hole may not cut free. That warning names the shape, path length, tab
+   total and share, and suggests a count or width that fits; the tabs are
+   still cut as set (maintainer decision on #63).
 8. Return moves and warnings.
 
 ### Emission (dc-gcode::emit)

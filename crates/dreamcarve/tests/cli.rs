@@ -459,6 +459,85 @@ fn check_reports_unsafe_file_extension() {
     );
 }
 
+/// The longest run of digits after a decimal point in `text`.
+fn most_decimals(text: &str) -> usize {
+    let mut most = 0;
+    let mut run: Option<usize> = None;
+    let mut prev_digit = false;
+    for c in text.chars() {
+        match (c, run) {
+            ('.', _) if prev_digit => run = Some(0),
+            (d, Some(n)) if d.is_ascii_digit() => {
+                run = Some(n + 1);
+                most = most.max(n + 1);
+            }
+            _ => run = None,
+        }
+        prev_digit = c.is_ascii_digit();
+    }
+    most
+}
+
+/// Every warning `check` and `export` print is a plain sentence: no
+/// `key=value` pairs, and no value with more than 3 decimals. The project
+/// raises every toolpath warning: an open path, a duplicate shape, a hole
+/// the bit does not fit, tabs that overlap and cover most of a hole, and a
+/// tab top above the stock top.
+#[test]
+fn warnings_are_readable() {
+    let dir = work_dir("warnings_are_readable");
+    std::fs::write(
+        dir.join("part.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <rect id="outline" x="10" y="10" width="60" height="40"/>
+  <rect id="outline-copy" x="10" y="10" width="60" height="40"/>
+  <rect id="small-hole" x="15" y="15" width="20" height="20"/>
+  <circle id="pin-hole" cx="55" cy="30" r="2"/>
+  <path id="guide-line" d="M 20 80 L 80 80"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "part.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("part.dcv");
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let thickness_mm = project.stock.thickness_mm;
+    for dc_project::Operation::Profile(op) in &mut project.operations {
+        if let Some(tabs) = &mut op.tabs {
+            tabs.height_mm = thickness_mm + 1.0;
+        }
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "part.dcv"]);
+    let export = run(&dir, &["export", "part.dcv", "--date", FIXED_DATE]);
+    assert_eq!(export.status.code(), Some(0), "export: {}", stderr(&export));
+    let report = format!("{}{}{}", stdout(&check), stderr(&check), stderr(&export));
+    let warnings: Vec<&str> = report
+        .lines()
+        .filter(|l| l.starts_with("warning:"))
+        .collect();
+    for needle in [
+        "open path",
+        "same outline",
+        "does not fit",
+        "overlap",
+        "may not cut free",
+        "stock top",
+    ] {
+        assert!(
+            warnings.iter().any(|w| w.contains(needle)),
+            "a warning says {needle:?}: {report}"
+        );
+    }
+    for line in warnings {
+        assert!(!line.contains('='), "no key=value: {line}");
+        assert!(most_decimals(line) <= 3, "rounded: {line}");
+    }
+}
+
 /// #59: a finite but huge transform used to pass validation and panic
 /// inside the offset library. `check` now reports it as an error naming the
 /// instance's transform and exits 1, for a huge scale and a huge

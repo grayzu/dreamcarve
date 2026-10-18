@@ -24,7 +24,8 @@ pub enum WarningCode {
     DuplicateShapeDropped,
     /// Two or more tab spans on one tool-centre contour overlap, so they
     /// were merged into one raised span. Params: `op`, `contour` (0-based,
-    /// in cut order), `path_length_mm`.
+    /// in cut order), `instance`, `instance_name`, `profile`,
+    /// `path_length_mm`.
     TabsOverlap,
     /// The tab top lies outside the range the cut passes through: no pass
     /// goes below it (`reason` `cut_stops_above_tab`; the tabs change
@@ -32,6 +33,15 @@ pub enum WarningCode {
     /// `above_stock_top`; the tabs still apply). Params: `op`, `reason`,
     /// `tab_top_mm`, `deepest_pass_z_mm`, `stock_top_mm`.
     TabsOutsideCutRange,
+    /// The tab spans on one tool-centre contour cover more than half of its
+    /// length, so the part or hole may not cut free. The tabs are cut as
+    /// set. Params: `op`, `contour` (0-based, in cut order), `instance`,
+    /// `instance_name`, `profile`, `path_length_mm`, `tab_count`,
+    /// `tab_span_mm` (one tab's length of path: width plus tool diameter),
+    /// `tab_total_mm` (count times span), `max_count` (most tabs of this
+    /// width that cover at most half), and `max_width_mm` (widest tab at
+    /// this count that covers at most half; absent when none fits).
+    TabsCoverMostOfContour,
 }
 
 impl WarningCode {
@@ -44,6 +54,7 @@ impl WarningCode {
             Self::DuplicateShapeDropped => "duplicate_shape_dropped",
             Self::TabsOverlap => "tabs_overlap",
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
+            Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
         }
     }
 }
@@ -86,5 +97,161 @@ impl Warning {
     #[must_use]
     pub fn param(&self, key: &str) -> Option<&str> {
         self.params.get(key).map(String::as_str)
+    }
+}
+
+/// `value` rounded to `decimals` places, trailing zeros dropped.
+fn rounded(value: f64, decimals: usize) -> String {
+    let text = format!("{value:.decimals$}");
+    let text = if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        &text
+    };
+    if text == "-0" { "0" } else { text }.to_owned()
+}
+
+/// Lengths are shown to 0.01 mm, shares to 0.1%.
+const MM_DECIMALS: usize = 2;
+const PERCENT_DECIMALS: usize = 1;
+
+impl Warning {
+    /// Param `key`, or `?` when unset.
+    fn text(&self, key: &str) -> &str {
+        self.param(key).unwrap_or("?")
+    }
+
+    /// Param `key` as a number rounded to `decimals` places; unchanged when
+    /// it is not a number.
+    fn number(&self, key: &str, decimals: usize) -> String {
+        let text = self.text(key);
+        text.parse::<f64>()
+            .map_or_else(|_| text.to_owned(), |v| rounded(v, decimals))
+    }
+
+    /// Param `key` as a length, rounded for display.
+    fn mm(&self, key: &str) -> String {
+        self.number(key, MM_DECIMALS)
+    }
+
+    /// The shape the warning is about, as the user knows it.
+    fn shape(&self) -> String {
+        match (self.param("instance_name"), self.param("instance")) {
+            (Some(name), Some(instance)) => format!(
+                "`{name}` (instance `{instance}`, profile {})",
+                self.text("profile")
+            ),
+            _ => match self.param("contour").and_then(|c| c.parse::<usize>().ok()) {
+                Some(c) => format!("contour {} in cut order", c + 1),
+                None => "a shape".to_owned(),
+            },
+        }
+    }
+
+    /// The suggestion for tabs that cover most of a contour.
+    fn coverage_advice(&self) -> String {
+        let count = self.text("tab_count");
+        let max_count = self.number("max_count", 0);
+        let fewer = if max_count == "0" {
+            "even one tab this wide covers more than half".to_owned()
+        } else {
+            format!("use at most {max_count} tab(s) this wide")
+        };
+        match self.param("max_width_mm") {
+            Some(_) => format!(
+                "To let it cut free, {fewer}, or make the {count} tab(s) at most {} mm wide.",
+                self.mm("max_width_mm")
+            ),
+            None if max_count == "0" => format!(
+                "To let it cut free, {fewer}: this outline is too short for tabs with this bit, so consider removing them."
+            ),
+            None => format!("To let it cut free, {fewer}."),
+        }
+    }
+}
+
+/// A plain sentence, values rounded for display. The operation is not
+/// named; the caller says which operation the warning came from.
+impl fmt::Display for Warning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.code {
+            WarningCode::OpenPathSkipped => write!(
+                f,
+                "{} is an open path; Profile cuts only closed shapes, so it is not cut",
+                self.shape()
+            ),
+            WarningCode::ToolTooLarge => write!(
+                f,
+                "tool `{}` ({} mm) does not fit {}, so that shape is not cut",
+                self.text("tool"),
+                self.mm("diameter_mm"),
+                self.shape()
+            ),
+            WarningCode::DuplicateShapeDropped => write!(
+                f,
+                "{} is the same outline in the same place as instance `{}` profile {}, so it is cut only once",
+                self.shape(),
+                self.text("duplicate_of_instance"),
+                self.text("duplicate_of_profile")
+            ),
+            WarningCode::TabsOverlap => write!(
+                f,
+                "tabs on {} touch or overlap on its {} mm tool path, so they were joined into longer tabs; use fewer or narrower tabs",
+                self.shape(),
+                self.mm("path_length_mm")
+            ),
+            WarningCode::TabsOutsideCutRange => match self.param("reason") {
+                Some("above_stock_top") => write!(
+                    f,
+                    "the tab top is {} mm above the stock bottom, higher than the {} mm stock top; over each tab every pass lifts clear of the stock",
+                    self.mm("tab_top_mm"),
+                    self.mm("stock_top_mm")
+                ),
+                _ => write!(
+                    f,
+                    "the tab top is {} mm above the stock bottom, but the deepest pass stops at {} mm, so the tabs change nothing; lower the tabs or cut deeper",
+                    self.mm("tab_top_mm"),
+                    self.mm("deepest_pass_z_mm")
+                ),
+            },
+            WarningCode::TabsCoverMostOfContour => {
+                let path_mm = self
+                    .param("path_length_mm")
+                    .and_then(|v| v.parse::<f64>().ok());
+                let total_mm = self
+                    .param("tab_total_mm")
+                    .and_then(|v| v.parse::<f64>().ok());
+                let share = match (path_mm, total_mm) {
+                    (Some(p), Some(t)) if p > 0.0 => {
+                        format!(" ({}%)", rounded(100.0 * t / p, PERCENT_DECIMALS))
+                    }
+                    _ => String::new(),
+                };
+                write!(
+                    f,
+                    "tabs on {} cover more than half of its tool path: {} tab(s) of {} mm each (tab width plus bit diameter) total {} mm on a {} mm path{share}, so the part or hole may not cut free. {} The tabs are cut as set.",
+                    self.shape(),
+                    self.text("tab_count"),
+                    self.mm("tab_span_mm"),
+                    self.mm("tab_total_mm"),
+                    self.mm("path_length_mm"),
+                    self.coverage_advice()
+                )
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rounded_drops_noise_and_trailing_zeros() {
+        assert_eq!(rounded(54.600_002_225_240_075, 2), "54.6");
+        assert_eq!(rounded(14.35, 2), "14.35");
+        assert_eq!(rounded(12.0, 2), "12");
+        assert_eq!(rounded(-0.001, 2), "0");
+        assert_eq!(rounded(105.128, 1), "105.1");
     }
 }
