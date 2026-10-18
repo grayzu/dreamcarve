@@ -667,6 +667,81 @@ fn export_lists_each_pause() {
     );
 }
 
+/// #61: `--post` replaces the post-processor, and the checks that depend
+/// on it run again against the new one. A tool with no spindle speed is
+/// fine while the router is switched by hand; switching to grblHAL, which
+/// sets the speed with `S`, must report validation's missing-rpm problem,
+/// fail, and write nothing.
+#[test]
+fn post_override_revalidates() {
+    let dir = work_dir("post_override_revalidates");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+    for tool in &mut project.tools {
+        tool.rpm = None;
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "manual post passes: {report}");
+
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--post", "grblhal"]);
+    let stderr = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "exits 1: {stderr}");
+    assert!(
+        stderr.contains("tool `Set me` (`t1`) has no rpm"),
+        "validation of the new post names the missing rpm: {stderr}"
+    );
+    assert!(!dir.join("coaster.nc").exists(), "no program is written");
+    assert_eq!(
+        std::fs::read(&dcv).expect("dcv readable"),
+        before,
+        "the .dcv is untouched"
+    );
+}
+
+/// #61, the reverse: a problem that only the embedded post-processor
+/// causes (here an extension that would overwrite the project) fails
+/// `check`, but `export --post grblhal` replaces that post and exports.
+#[test]
+fn post_override_to_valid_post_succeeds() {
+    let dir = work_dir("post_override_to_valid_post_succeeds");
+    let dcv = init_coaster(&dir);
+    set_rates(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor.file_extension = "dcv".into();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(1), "embedded post fails: {report}");
+
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert!(dir.join("coaster.nc").exists(), "the program is written");
+    let saved = load_file(&dcv);
+    assert_eq!(saved.project.post_processor.file_extension, "nc");
+    assert!(
+        !saved.has_errors(),
+        "the saved project is valid: {:?}",
+        saved.problems
+    );
+}
+
 /// The project-file chapter names the `.dcv` version this build writes and
 /// lists that version in its Versions table, so the chapter cannot drift
 /// from `dc_project::CURRENT_VERSION` again (issue #69).

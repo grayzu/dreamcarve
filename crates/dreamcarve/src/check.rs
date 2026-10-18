@@ -17,8 +17,8 @@ const CHECK_DATE: &str = "check";
 
 /// Runs `check`.
 pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
-    let loaded = export::load_project(&args.dcv)?;
-    let findings = export::build(&loaded, CHECK_DATE).findings;
+    let project = export::load_project(&args.dcv)?;
+    let findings = export::build(&project, CHECK_DATE).findings;
 
     for error in &findings.errors {
         println!("error: {error}");

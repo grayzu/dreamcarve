@@ -69,7 +69,7 @@ Generates the toolpaths and writes the program.
 | Option | Meaning |
 | --- | --- |
 | `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). |
-| `--post <ID>` | Switch the project to another post-processor, save the project with it, then export. |
+| `--post <ID>` | Switch the project to another post-processor, save the project with it, then export. The project is checked against the new post-processor, not the old one. |
 
 Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed

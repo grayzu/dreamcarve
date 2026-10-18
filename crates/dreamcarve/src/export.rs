@@ -8,14 +8,16 @@
 //! temporary file and renamed into place at the end.
 //!
 //! [`build`] is the whole pipeline without writing; `check` runs it too, so
-//! `check` reports exactly what `export` would.
+//! `check` reports exactly what `export` would. It validates the project it
+//! is given rather than trusting the problems found at load, so the checks
+//! that depend on the post-processor see the one `--post` swapped in.
 
 use std::path::Path;
 use std::process::ExitCode;
 
 use dc_cam::generate_profile;
 use dc_gcode::{ExportWarning, Program, emit};
-use dc_project::{Loaded, Operation, Problem, Severity, is_safe_file_extension};
+use dc_project::{Operation, Project, Severity, validate};
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
 
@@ -36,18 +38,18 @@ pub struct Built {
     pub findings: Findings,
 }
 
-/// Validates the loaded project, generates every enabled operation's
-/// toolpath, and emits the program, collecting every error and warning on
-/// the way. `date` fills the program header's `{date}`.
-pub fn build(loaded: &Loaded, date: &str) -> Built {
+/// Validates `project`, generates every enabled operation's toolpath, and
+/// emits the program, collecting every error and warning on the way.
+/// `date` fills the program header's `{date}`.
+pub fn build(project: &Project, date: &str) -> Built {
     let mut findings = Findings::default();
-    for problem in &loaded.problems {
+    for problem in validate(project) {
         match problem.severity() {
             Severity::Error => findings.errors.push(problem.to_string()),
             Severity::Warning => findings.warnings.push(problem.to_string()),
         }
     }
-    if loaded.has_errors() {
+    if !findings.errors.is_empty() {
         // Generators must not see a project validation rejects.
         return Built {
             program: None,
@@ -55,7 +57,6 @@ pub fn build(loaded: &Loaded, date: &str) -> Built {
         };
     }
 
-    let project = &loaded.project;
     let mut ops = Vec::new();
     for Operation::Profile(op) in &project.operations {
         // Disabled operations are already reported by validation.
@@ -120,22 +121,25 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
 }
 
 /// Loads the `.dcv` at `path`; a file that cannot become a project is an
-/// error (exit 1).
-pub fn load_project(path: &Path) -> Result<Loaded, Failure> {
+/// error (exit 1). Only the project is returned: [`build`] validates it
+/// again, after any `--post` swap, so problems found at load cannot go
+/// stale.
+pub fn load_project(path: &Path) -> Result<Project, Failure> {
     let bytes = read_file(path)?;
     dc_project::load(&bytes)
+        .map(|loaded| loaded.project)
         .map_err(|e| Failure::error(format!("cannot load {}: {e}", path.display())))
 }
 
 /// Runs `export`.
 pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
-    let mut loaded = load_project(&args.dcv)?;
+    let mut project = load_project(&args.dcv)?;
     if let Some(id) = &args.post {
-        loaded.project.post_processor = lookup_post(id)?;
+        project.post_processor = lookup_post(id)?;
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
 
-    let Built { program, findings } = build(&loaded, &date);
+    let Built { program, findings } = build(&project, &date);
     for warning in &findings.warnings {
         eprintln!("warning: {warning}");
     }
@@ -151,7 +155,9 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
 
     let output = match &args.output {
         Some(path) => path.clone(),
-        None => args.dcv.with_extension(safe_extension(&program.extension)?),
+        // `build` validated the extension of the post-processor it emitted
+        // with, so it is safe to append (`is_safe_file_extension`).
+        None => args.dcv.with_extension(&program.extension),
     };
     if same_file(&output, &args.dcv) {
         return Err(Failure::error(format!(
@@ -163,7 +169,7 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     let staged_program = StagedFile::write(&output, program.text.as_bytes())?;
     let staged_project = match &args.post {
         Some(_) => {
-            let text = dc_project::save(&loaded.project).map_err(Failure::error)?;
+            let text = dc_project::save(&project).map_err(Failure::error)?;
             Some(StagedFile::write(&args.dcv, text.as_bytes())?)
         }
         None => None,
@@ -173,25 +179,8 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         staged.commit()?;
     }
 
-    report(&loaded, &program, &output, args);
+    report(&project, &program, &output, args);
     Ok(ExitCode::SUCCESS)
-}
-
-/// The post-processor's output extension, if it is safe to append to the
-/// project's file name ([`is_safe_file_extension`]). Validation already
-/// refuses an unsafe one; this guards the post-processor `--post` swapped in
-/// after validation ran.
-fn safe_extension(extension: &str) -> Result<&str, Failure> {
-    if is_safe_file_extension(extension) {
-        Ok(extension)
-    } else {
-        Err(Failure::error(
-            Problem::UnsafeFileExtension {
-                extension: extension.to_owned(),
-            }
-            .to_string(),
-        ))
-    }
 }
 
 /// True if `a` and `b` name the same existing file.
@@ -205,8 +194,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// Prints the export summary: the file written, one line per exported
 /// operation, then every pause with its line number and message, because
 /// the controller or sender may not show the message (design step 8).
-fn report(loaded: &Loaded, program: &Program, output: &Path, args: &ExportArgs) {
-    let project = &loaded.project;
+fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs) {
     println!(
         "Wrote {} ({} lines, post-processor {}).",
         output.display(),
