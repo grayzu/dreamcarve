@@ -4,9 +4,10 @@
 //! Figures for the user guide, drawn from what the engine actually returns.
 //! Each nesting figure runs [`dc_geometry::nest`] on the same shapes as a
 //! unit test (or on an untested edge case) and draws the result, so a figure
-//! can only show behaviour the code really has.
+//! can only show behaviour the code really has. Outline figures do the same
+//! with [`Contour::new`], for a shape rejected before nesting.
 
-use dc_geometry::{Contour, EPS_MM, Point, Polyline, Rect, Region, nest};
+use dc_geometry::{Contour, EPS_MM, GeometryError, Point, Polyline, Rect, Region, Vertex, nest};
 use std::fmt::Write as _;
 
 /// One generated figure: where it lives under the repo root and its SVG.
@@ -20,13 +21,15 @@ pub struct Figure {
 /// Every generated figure, in a fixed order.
 #[must_use]
 pub fn all() -> Vec<Figure> {
-    nesting_cases()
-        .into_iter()
-        .map(|case| Figure {
-            path: case.path,
-            svg: render_nesting(&case.contours),
-        })
-        .collect()
+    let nesting = nesting_cases().into_iter().map(|case| Figure {
+        path: case.path,
+        svg: render_nesting(&case.contours),
+    });
+    let outlines = outline_cases().into_iter().map(|case| Figure {
+        path: case.path,
+        svg: render_outline(&case.polyline),
+    });
+    nesting.chain(outlines).collect()
 }
 
 struct Case {
@@ -152,6 +155,29 @@ fn nesting_cases() -> Vec<Case> {
     ]
 }
 
+/// A single outline that [`Contour::new`] judges on its own.
+struct OutlineCase {
+    path: &'static str,
+    polyline: Polyline,
+}
+
+/// The outline cases. Each mirrors a `dc_geometry::contour` unit test.
+fn outline_cases() -> Vec<OutlineCase> {
+    vec![OutlineCase {
+        // Mirrors contour::tests::bowtie_is_rejected_as_self_intersecting.
+        path: "docs/book/src/user-guide/figures/nesting/self-crossing.svg",
+        polyline: Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(60.0, 40.0),
+                Vertex::line(60.0, 0.0),
+                Vertex::line(0.0, 30.0),
+            ],
+            true,
+        ),
+    }]
+}
+
 /// Fills for regions R1, R2, …; light enough to read strokes over.
 const REGION_FILLS: [&str; 4] = ["#cfe3ff", "#ffe2b8", "#d4f2cc", "#f1d3f5"];
 const OUTER_STROKE: &str = "#0b5cd5";
@@ -201,7 +227,10 @@ fn num(v: f64) -> String {
 }
 
 fn path_data(c: &Contour, v: &View) -> String {
-    let pl = c.polyline();
+    polyline_data(c.polyline(), v)
+}
+
+fn polyline_data(pl: &Polyline, v: &View) -> String {
     let mut d = String::new();
     if let Some(first) = pl.vertices().first() {
         let _ = write!(d, "M{} {}", num(v.x(first.x)), num(v.y(first.y)));
@@ -422,6 +451,90 @@ fn render_nesting(inputs: &[Contour]) -> String {
         }
     };
 
+    finish_svg(
+        draw_h,
+        &shapes,
+        &strokes,
+        &labels,
+        &heading,
+        &legend,
+        "dc_geometry::nest",
+    )
+}
+
+/// Draws one outline that [`Contour::new`] judges on its own: grey and
+/// dotted when it is rejected, with a ring at the crossing it reports.
+fn render_outline(polyline: &Polyline) -> String {
+    let result = Contour::new(polyline.clone());
+    let bounds = polyline
+        .bounds()
+        .unwrap_or(Rect::from_point(Point::new(0.0, 0.0)));
+    let view = View::fit(bounds);
+    let draw_h = bounds.height_mm() * view.scale;
+    let mut strokes = String::new();
+    let mut legend: Vec<(Marker, String)> = Vec::new();
+    let heading = match &result {
+        Ok(contour) => {
+            let _ = write!(
+                strokes,
+                "<path d=\"{}\" fill=\"none\" stroke=\"{OUTER_STROKE}\" stroke-width=\"2\"/>{}",
+                path_data(contour, &view),
+                arrow(contour, &view, OUTER_STROKE)
+            );
+            "Contour::new result: a valid outline".to_owned()
+        }
+        Err(e) => {
+            let _ = write!(
+                strokes,
+                "<path d=\"{}\" fill=\"none\" stroke=\"{UNUSED_STROKE}\" stroke-width=\"2\" stroke-dasharray=\"2 3\"/>",
+                polyline_data(polyline, &view)
+            );
+            if let GeometryError::SelfIntersecting { at } = e {
+                let _ = write!(
+                    strokes,
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"7\" fill=\"none\" stroke=\"{HOLE_STROKE}\" stroke-width=\"2\"/>",
+                    num(view.x(at.x)),
+                    num(view.y(at.y))
+                );
+            }
+            push_alert(&mut legend, &format!("Error: {e}"));
+            "Contour::new result: error, nothing is cut".to_owned()
+        }
+    };
+    let labels: Vec<(f64, f64, String)> = polyline
+        .bounds()
+        .map(|b| {
+            (
+                view.x((b.min.x + b.max.x) / 2.0),
+                view.y(b.max.y) - 4.0,
+                "#0".to_owned(),
+            )
+        })
+        .into_iter()
+        .collect();
+    finish_svg(
+        draw_h,
+        "",
+        &strokes,
+        &labels,
+        &heading,
+        &legend,
+        "dc_geometry::Contour::new",
+    )
+}
+
+/// Lays out a figure: the drawing (`shapes` under `strokes`, then
+/// `labels`), and under it `heading` and the `legend` lines. `source` names
+/// the engine function in the generated-file comment.
+fn finish_svg(
+    draw_h: f64,
+    shapes: &str,
+    strokes: &str,
+    labels: &[(f64, f64, String)],
+    heading: &str,
+    legend: &[(Marker, String)],
+    source: &str,
+) -> String {
     let legend_top = MARGIN_PX + draw_h + 28.0;
     let rows = legend.len();
     let total_h = legend_top + LINE_PX * (rows as f64 + 1.0) + 6.0;
@@ -431,16 +544,16 @@ fn render_nesting(inputs: &[Contour]) -> String {
     let _ = write!(
         svg,
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\" font-family=\"system-ui, sans-serif\" font-size=\"12\">\n\
-         <!-- Generated by tools/doc-figures from dc_geometry::nest. Do not edit; run `cargo run -p doc-figures`. -->\n\
+         <!-- Generated by tools/doc-figures from {source}. Do not edit; run `cargo run -p doc-figures`. -->\n\
          <rect width=\"{w}\" height=\"{h}\" fill=\"#ffffff\"/>\n",
         w = num(total_w),
         h = num(total_h)
     );
-    svg.push_str(&shapes);
+    svg.push_str(shapes);
     svg.push('\n');
-    svg.push_str(&strokes);
+    svg.push_str(strokes);
     svg.push('\n');
-    for (x, y, text) in &labels {
+    for (x, y, text) in labels {
         let _ = writeln!(
             svg,
             "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" fill=\"{INK}\" stroke=\"#ffffff\" stroke-width=\"3\" paint-order=\"stroke\">{text}</text>",
