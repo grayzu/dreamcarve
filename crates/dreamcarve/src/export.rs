@@ -71,16 +71,11 @@ pub fn build(loaded: &Loaded, date: &str) -> Built {
         };
         match generate_profile(project, op) {
             Ok((toolpath, warnings)) => {
-                for w in warnings {
-                    let params: Vec<String> =
-                        w.params.iter().map(|(k, v)| format!("{k}={v}")).collect();
-                    findings.warnings.push(format!(
-                        "operation `{}`: {} ({})",
-                        op.id,
-                        w.code,
-                        params.join(", ")
-                    ));
-                }
+                findings.warnings.extend(
+                    warnings
+                        .iter()
+                        .map(|w| format!("operation `{}`: {w}", op.id)),
+                );
                 ops.push((op.clone(), tool.clone(), toolpath));
             }
             Err(e) => findings.errors.push(e.to_string()),

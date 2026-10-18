@@ -16,7 +16,9 @@
 
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::passes::pass_z_mm;
-use crate::tabs::{LapRates, PathTabs, Tabs, cut_range_warnings, emit_lap, overlap_warning};
+use crate::tabs::{
+    LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, emit_lap, overlap_warning,
+};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{Contour, GeometryError, GeometryWarning, Point3, Polyline, nest, offset};
@@ -123,7 +125,9 @@ fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// With `op.tabs`, every pass below the tab top rises over each tab span
 /// (`width + diameter` along the tool-centre contour); overlapping spans
-/// merge with [`WarningCode::TabsOverlap`], and a tab top no pass reaches,
+/// merge with [`WarningCode::TabsOverlap`], spans covering more than half a
+/// contour give [`WarningCode::TabsCoverMostOfContour`] (the tabs are still
+/// cut as set), and a tab top no pass reaches,
 /// or one above the stock top, gives [`WarningCode::TabsOutsideCutRange`].
 ///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
@@ -202,7 +206,8 @@ pub fn generate_profile(
     }
 
     let radius_mm = tool.diameter_mm / 2.0;
-    let mut paths: Vec<Polyline> = Vec::new();
+    // Each tool-centre path with the shape it cuts, for warnings.
+    let mut paths: Vec<(Polyline, Option<&ShapeRef>)> = Vec::new();
     for region in &regions {
         // Holes first, so a through-cut part is freed only by its last contour.
         let ordered = region
@@ -217,8 +222,12 @@ pub fn generate_profile(
                 Offset::Shrink => offset(contour, -radius_mm),
                 Offset::None => vec![contour.clone()],
             };
+            let shape = shapes
+                .iter()
+                .find(|(_, c)| same_contour(c, contour))
+                .map(|(s, _)| s);
             if centres.is_empty() {
-                if let Some((shape, _)) = shapes.iter().find(|(_, c)| same_contour(c, contour)) {
+                if let Some(shape) = shape {
                     warnings.push(
                         shape_warning(WarningCode::ToolTooLarge, shape)
                             .with("tool", &tool.name)
@@ -229,23 +238,25 @@ pub fn generate_profile(
             }
             let ccw = traversal_is_ccw(wall, op.direction);
             paths.extend(centres.into_iter().map(|c| {
-                if c.is_ccw() == ccw {
+                let path = if c.is_ccw() == ccw {
                     c.into_polyline()
                 } else {
                     c.reversed().into_polyline()
-                }
+                };
+                (path, shape)
             }));
         }
     }
 
     let mut toolpath = Toolpath::default();
-    for (index, path) in paths.iter().enumerate() {
+    for (index, (path, shape)) in paths.iter().enumerate() {
         let layout = tabs.as_ref().map(|tabs| {
             let length_mm = path.length_mm();
             let (layout, overlapped) = tabs.layout(length_mm);
             if overlapped {
-                warnings.push(overlap_warning(&op.id, index, length_mm));
+                warnings.push(overlap_warning(&op.id, index, *shape, length_mm));
             }
+            warnings.extend(coverage_warning(&op.id, index, *shape, tabs, &layout));
             (tabs, layout)
         });
         let tabs = layout.as_ref().map(|(tabs, layout)| (*tabs, layout));

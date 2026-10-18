@@ -15,7 +15,7 @@
 //! `width + diameter` along the path: the cutter's full width must clear
 //! the tab. World-placed tabs arrive with the GUI in phase 5.
 
-use crate::error::CamError;
+use crate::error::{CamError, ShapeRef};
 use crate::tab_profile::{smooth_tab_sample_fractions, smooth_tab_z_mm};
 use crate::toolpath::{Move, MoveKind};
 use crate::warning::{Warning, WarningCode};
@@ -67,6 +67,8 @@ pub(crate) struct Tabs {
     placement: TabPlacement,
     shape: TabShape,
     top_z_mm: f64,
+    /// Width of one tab as left on the part.
+    width_mm: f64,
     /// Length of path one tab raises: tab width plus tool diameter.
     span_mm: f64,
     chord_tolerance_mm: f64,
@@ -108,6 +110,7 @@ impl Tabs {
             placement: spec.placement.clone(),
             shape: spec.shape,
             top_z_mm: spec.height_mm,
+            width_mm: spec.width_mm,
             span_mm: spec.width_mm + diameter_mm,
             chord_tolerance_mm: if chord_tolerance_mm > 0.0 {
                 chord_tolerance_mm
@@ -316,13 +319,74 @@ pub(crate) fn cut_range_warnings(
     warnings
 }
 
+/// A warning about the tabs on contour `contour` (0-based, in cut order)
+/// of operation `op`, cut for `shape` when it is known.
+fn contour_warning(
+    code: WarningCode,
+    op: &OperationId,
+    contour: usize,
+    shape: Option<&ShapeRef>,
+) -> Warning {
+    let warning = Warning::new(code).with("op", op).with("contour", contour);
+    match shape {
+        Some(shape) => warning
+            .with("instance", &shape.instance)
+            .with("instance_name", &shape.instance_name)
+            .with("profile", shape.profile),
+        None => warning,
+    }
+}
+
 /// The warning that tab spans on contour `contour` (0-based, in cut order)
 /// overlapped and were merged.
-pub(crate) fn overlap_warning(op: &OperationId, contour: usize, path_length_mm: f64) -> Warning {
-    Warning::new(WarningCode::TabsOverlap)
-        .with("op", op)
-        .with("contour", contour)
+pub(crate) fn overlap_warning(
+    op: &OperationId,
+    contour: usize,
+    shape: Option<&ShapeRef>,
+    path_length_mm: f64,
+) -> Warning {
+    contour_warning(WarningCode::TabsOverlap, op, contour, shape)
         .with("path_length_mm", path_length_mm)
+}
+
+/// [`WarningCode::TabsCoverMostOfContour`] when the merged spans of
+/// `layout` cover more than half of contour `contour` (0-based, in cut
+/// order), so the part or hole may not cut free. The tabs are not changed:
+/// the user may want them, and they never make motion unsafe.
+pub(crate) fn coverage_warning(
+    op: &OperationId,
+    contour: usize,
+    shape: Option<&ShapeRef>,
+    tabs: &Tabs,
+    layout: &PathTabs,
+) -> Option<Warning> {
+    let l = layout.length_mm;
+    let covered_mm = if layout.full {
+        l
+    } else {
+        layout.spans.iter().map(|s| s.length_mm).sum::<f64>().min(l)
+    };
+    let half_mm = l / 2.0;
+    if covered_mm <= half_mm + EPS_MM {
+        return None;
+    }
+    let centres = tab_centres_mm(&tabs.placement, l);
+    let count_f: f64 = centres.iter().map(|_| 1.0).sum();
+    // Evenly spaced tabs that fit in half the path never overlap.
+    let max_count = ((half_mm + EPS_MM) / tabs.span_mm).floor();
+    let diameter_mm = tabs.span_mm - tabs.width_mm;
+    let mut warning = contour_warning(WarningCode::TabsCoverMostOfContour, op, contour, shape)
+        .with("path_length_mm", l)
+        .with("tab_count", centres.len())
+        .with("tab_span_mm", tabs.span_mm)
+        .with("tab_total_mm", tabs.span_mm * count_f)
+        .with("max_count", max_count);
+    // Rounded down to 0.01 mm so the suggested width does fit.
+    let max_width_mm = ((half_mm / count_f - diameter_mm) * 100.0).floor() / 100.0;
+    if max_width_mm > 0.0 {
+        warning = warning.with("max_width_mm", max_width_mm);
+    }
+    Some(warning)
 }
 
 /// One move of a lap, before the vertical step that may precede it.

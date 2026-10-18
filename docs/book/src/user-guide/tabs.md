@@ -61,13 +61,39 @@ rises over one tab is the tab width plus the bit diameter: 8 + 6.35 =
 Passes at or above the tab top are not changed. Only the passes that cut
 below it rise over the tabs.
 
+## Tabs that cover most of an outline
+
+Tabs need room. On a small hole or a short outline, the tab stretches
+(tab width plus bit diameter each) can add up to most of the bit's path.
+Then the last pass barely reaches full depth, or never does, and the part
+or hole stays attached all the way round.
+
+When the tabs on one outline cover more than half of the bit's path,
+`check` and `export` warn. The warning names the shape, the length of the
+bit's path, the tab total and its share of the path, and suggests a tab
+count or width that would cover at most half. For example, the default
+four 8 mm tabs on a 20 mm square hole, cut with a 6.35 mm bit:
+
+```text
+warning: operation `op1`: tabs on `small-hole` (instance `i3`, profile 0) cover more than half of its tool path: 4 tab(s) of 14.35 mm each (tab width plus bit diameter) total 57.4 mm on a 54.6 mm path (105.1%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide, or make the 4 tab(s) at most 0.47 mm wide. The tabs are cut as set.
+```
+
+DreamCarve does not change your tabs. Export continues and cuts them as
+set, because that can be what you want, for example to leave a slug in a
+hole. To let the part cut free, use fewer or narrower tabs, or give the
+operation that cuts small holes no tabs.
+
 ## Warnings
 
-| Warning | Meaning |
+These still give a safe program. `check` and `export` print each one as a
+sentence, after the operation's id.
+
+| Warning starts with | Meaning |
 | --- | --- |
-| `tabs_overlap` | Tabs on one outline touch or overlap, so they were joined into one longer tab. Use fewer or narrower tabs, or check that the outline is not too short for them. |
-| `tabs_outside_cut_range`, `reason=cut_stops_above_tab` | No pass goes below the tab top, so the tabs change nothing. The cut is shallower than the stock, or the tabs are taller than the depth reaches. |
-| `tabs_outside_cut_range`, `reason=above_stock_top` | The tab top is above the stock top. The tabs still apply: over each tab, every pass lifts clear of the stock, leaving its full thickness. |
+| "tabs on ... touch or overlap" | Tabs on one outline touch or overlap, so they were joined into one longer tab. Use fewer or narrower tabs, or check that the outline is not too short for them. |
+| "tabs on ... cover more than half of its tool path" | The part or hole may not cut free. See [Tabs that cover most of an outline](#tabs-that-cover-most-of-an-outline). |
+| "the tab top is ... but the deepest pass stops at ..." | No pass goes below the tab top, so the tabs change nothing. The cut is shallower than the stock, or the tabs are taller than the depth reaches. |
+| "the tab top is ... higher than the ... stock top" | The tab top is above the stock top. The tabs still apply: over each tab, every pass lifts clear of the stock, leaving its full thickness. |
 
 ## Removing tabs
 
