@@ -40,7 +40,7 @@ controller.
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `2`. |
+| `version` | Format version. This build writes `3`. |
 | `name` | The project name, written at the top of the program. `init` uses the SVG's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs. |
@@ -223,6 +223,7 @@ refused.
 | 0 | Before the first release. |
 | 1 | Adds `flatten_tolerance_mm`, set to 0.01 on upgrade. |
 | 2 | Adds `post_processor.feed_speed.spindle_control`, set to `"automatic"` on upgrade. |
+| 3 | Writes `origin.xy` and each tool's `cutter` as a plain string (`"bottom_left"`, `"end_mill"`), or as a one-key object when the choice carries values (`{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`). Older files tagged them with `kind`, as in `{ "kind": "bottom_left" }`; the upgrade rewrites them. |
 
 ## What `check` reports
 

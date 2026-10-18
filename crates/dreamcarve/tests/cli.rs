@@ -587,3 +587,29 @@ fn export_lists_each_pause() {
         "both manual pauses are listed: {summary}"
     );
 }
+
+/// The project-file chapter names the `.dcv` version this build writes and
+/// lists that version in its Versions table, so the chapter cannot drift
+/// from `dc_project::CURRENT_VERSION` again (issue #69).
+#[test]
+fn project_file_chapter_names_current_version() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/book/src/user-guide/project-file.md");
+    let chapter = std::fs::read_to_string(&path).expect("project-file chapter reads");
+    let version = dc_project::CURRENT_VERSION;
+
+    let field_row = chapter
+        .lines()
+        .find(|line| line.starts_with("| `version` |"))
+        .expect("the Top level table has a `version` row");
+    assert!(
+        field_row.contains(&format!("This build writes `{version}`.")),
+        "the `version` row must say this build writes `{version}`: {field_row}"
+    );
+
+    let versions_row = format!("| {version} |");
+    assert!(
+        chapter.lines().any(|line| line.starts_with(&versions_row)),
+        "the Versions table must have a row for version {version}"
+    );
+}
