@@ -227,5 +227,5 @@ Errors stop export. Warnings do not.
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | An open path, which Profile does not cut |
 | A value that is not a number | A shape too small for the tool, a duplicate shape, or tabs that overlap or do nothing |
 | A cut deeper than the stock plus its through-cut allowance | |
-| Shapes that cross each other | |
+| Shapes that cross each other, or a shape that crosses itself | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |

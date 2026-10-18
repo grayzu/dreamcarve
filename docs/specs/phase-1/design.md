@@ -64,7 +64,8 @@ pub struct Vertex { pub x: f64, pub y: f64, pub bulge: f64 }
 pub struct Polyline { vertices: Vec<Vertex>, closed: bool }
 
 /// A closed polyline with known orientation. Outer boundaries are CCW,
-/// holes are CW (ADR-0001). Constructors normalise.
+/// holes are CW (ADR-0001). Constructors normalise, and reject an outline
+/// that crosses itself (SelfIntersecting, with the first crossing point).
 pub struct Contour(Polyline);
 
 /// One or more contours forming a region: one outer, zero or more holes.
@@ -209,7 +210,10 @@ Inputs: project, op. Output: toolpath in project space.
 
 1. Resolve each target instance: apply `transform` to every profile of its
    definition. Closed polylines become `Contour`s (normalised CCW). Open
-   polylines raise `Warning::OpenPathSkipped` and are dropped.
+   polylines raise `Warning::OpenPathSkipped` and are dropped. A closed
+   polyline that encloses no area or crosses itself fails the operation
+   with `CamError::InvalidTarget` naming the instance (for a crossing,
+   `GeometryError::SelfIntersecting` with the point where it crosses).
 2. `nest` the contours of all targets into `Region`s. Outer contours are
    CCW, holes CW. Crossing shapes fail the operation with
    `CamError::Geometry(GeometryError::ContoursCross)`, naming both
@@ -374,6 +378,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `polyline::closed_rect_has_expected_length` — 100×50 rect length 300.
 - `contour::normalises_cw_input_to_ccw` — orientation flag true after construction.
 - `contour::area_sign_matches_orientation` — CCW positive, CW negative.
+- `contour::bowtie_is_rejected_as_self_intersecting` — `SelfIntersecting` at (180/7, 120/7).
+- `contour::figure_eight_with_arcs_is_rejected` — two bulge arcs crossing once.
+- `contour::simple_polygons_are_accepted` — square, concave star, collinear and repeated vertices.
 - `offset::outside_rect_grows_bounds_by_diameter` — +3.175 on 100×50 → 106.35×56.35 bounds.
 - `offset::inside_rect_shrinks_bounds_by_diameter` — −3.175 → 93.65×43.65.
 - `offset::inside_offset_larger_than_shape_vanishes` — returns empty, no panic.
@@ -455,6 +462,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::init_then_export_coaster_matches_committed_program` — end to end on `fixtures/coaster.svg`, compared to a committed expected `.nc`.
 - `cli::export_refuses_zero_feed_and_writes_nothing`.
 - `cli::check_reports_open_paths`.
+- `cli::self_intersecting_target_fails_check` — `check` exits 1 naming the instance; `export` writes nothing.
 - `cli::posts_lists_grblhal_and_grbl`.
 
 **dc-gcode (integration, `tests/golden.rs`)**

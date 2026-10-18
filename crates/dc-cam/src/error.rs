@@ -156,7 +156,7 @@ pub enum CamError {
         /// The later shape in target order.
         second: ShapeRef,
     },
-    /// A target shape cannot be used: it encloses no area, or its
+    /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
     #[error("shape {shape} cannot be cut: {source}")]
     InvalidTarget {
