@@ -448,6 +448,32 @@ mod tests {
         assert_approx_eq!(tan.y, 0.0, TOL);
     }
 
+    /// #59: the shoelace sum stays accurate far from the origin, where
+    /// products of absolute coordinates cancel catastrophically.
+    #[test]
+    fn area_is_accurate_far_from_origin() {
+        let r = Polyline::rect(Point::new(1e9, 1e9), 80.0, 50.0);
+        let area = r.signed_area_mm2();
+        assert_approx_eq!(area, 4000.0, 4000.0 * 1e-6);
+    }
+
+    /// #59: a NaN length reaches `point_at`'s clamp through an overflowing
+    /// transform; it must not panic a library crate.
+    #[test]
+    fn point_at_with_nan_length_does_not_panic() {
+        let seg = Segment {
+            start: Point::new(0.0, 0.0),
+            end: Point::new(f64::NAN, 0.0),
+            bulge: 0.0,
+        };
+        let _ = seg.point_at(1.0);
+        let open = Polyline::new(
+            vec![Vertex::line(0.0, 0.0), Vertex::line(f64::NAN, 0.0)],
+            false,
+        );
+        let _ = open.point_at(1.0);
+    }
+
     #[test]
     fn polyline_round_trips_through_json() {
         let c = Polyline::circle(Point::new(1.0, 2.0), 3.0);

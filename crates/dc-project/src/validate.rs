@@ -513,7 +513,7 @@ mod tests {
     use super::*;
     use crate::model::{Operation, ToolKind};
     use crate::test_support::sample_project;
-    use dc_geometry::{Polyline, Vertex};
+    use dc_geometry::{MAX_COORDINATE_MM, Polyline, Transform, Vertex, approx_eq};
 
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
         problems.iter().filter(|p| p.is_error()).collect()
@@ -818,6 +818,152 @@ mod tests {
             message.contains("Rectangle") && message.contains("open"),
             "{message}"
         );
+    }
+
+    /// The fields of every error-class problem, in order.
+    fn error_fields(problems: &[Problem]) -> Vec<String> {
+        problems
+            .iter()
+            .filter(|p| p.is_error())
+            .map(|p| match p {
+                Problem::OutOfRange { field, .. } | Problem::NonFinite { field } => field.clone(),
+                other => panic!("unexpected problem {other:?}"),
+            })
+            .collect()
+    }
+
+    /// #59: a finite but huge transform passed validation and then
+    /// panicked `cavalier_contours`. Scale and translation are each
+    /// rejected, naming the instance's transform.
+    #[test]
+    fn huge_transform_is_rejected() {
+        for transform in [
+            Transform::scale(1e15, 1e15),
+            Transform::translate(1e12, 0.0),
+            Transform::from([1.0, 0.0, 0.0, 1.0, 0.0, -1e12]),
+        ] {
+            let mut p = sample_project();
+            p.instances[0].transform = transform;
+            let fields = error_fields(&validate(&p));
+            assert!(!fields.is_empty(), "{transform:?} is rejected");
+            assert!(
+                fields
+                    .iter()
+                    .all(|f| f.starts_with("instances[i1].transform")),
+                "{transform:?}: {fields:?}"
+            );
+        }
+    }
+
+    /// #59: an instance whose placed shape reaches just past the limit is
+    /// rejected even though each coefficient is in range; one that reaches
+    /// exactly the limit is accepted. The sample rectangle is 50 × 30 mm.
+    #[test]
+    fn placement_past_coordinate_limit_is_rejected() {
+        let mut p = sample_project();
+        p.stock.width_mm = MAX_COORDINATE_MM;
+        p.instances[0].transform = Transform::translate(MAX_COORDINATE_MM - 50.0, 10.0);
+        assert_eq!(validate(&p), vec![], "reaching the limit is accepted");
+        p.instances[0].transform = Transform::translate(MAX_COORDINATE_MM - 49.5, 10.0);
+        let problems = validate(&p);
+        assert!(
+            matches!(&problems[..], [Problem::OutOfRange { field, value, .. }]
+                if field == "instances[i1].transform"
+                    && approx_eq(*value, MAX_COORDINATE_MM + 0.5, 1e-9)),
+            "{problems:?}"
+        );
+    }
+
+    /// #59: vertex coordinates are bounded by the limit, inclusive.
+    #[test]
+    fn huge_vertex_is_rejected() {
+        let mut p = sample_project();
+        p.instances[0].transform = Transform::IDENTITY;
+        let def = p
+            .definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1");
+        def.profiles = vec![Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(MAX_COORDINATE_MM, 0.0),
+                Vertex::line(MAX_COORDINATE_MM, 10.0),
+            ],
+            true,
+        )];
+        assert!(errors(&validate(&p)).is_empty(), "the limit is accepted");
+        let def = p
+            .definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1");
+        def.profiles = vec![Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(1e12, 0.0),
+                Vertex::line(1e12, -10.0),
+            ],
+            true,
+        )];
+        assert_eq!(
+            error_fields(&validate(&p)),
+            vec![
+                "definitions[d1].profiles[0].vertices[1].x",
+                "definitions[d1].profiles[0].vertices[2].x",
+            ]
+        );
+    }
+
+    /// #59: an arc whose vertices are in range can still bow past the
+    /// limit; the profile is reported.
+    #[test]
+    fn arc_bulging_past_coordinate_limit_is_rejected() {
+        let mut p = sample_project();
+        p.instances[0].transform = Transform::IDENTITY;
+        let def = p
+            .definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1");
+        def.profiles = vec![Polyline::circle(
+            dc_geometry::Point::new(0.0, MAX_COORDINATE_MM - 0.5),
+            1.0,
+        )];
+        let fields = error_fields(&validate(&p));
+        assert!(
+            fields.contains(&"definitions[d1].profiles[0]".to_owned()),
+            "{fields:?}"
+        );
+    }
+
+    /// #59: stock sides are bounded by the same limit, inclusive.
+    #[test]
+    fn huge_stock_is_rejected() {
+        let mut p = sample_project();
+        p.stock.width_mm = MAX_COORDINATE_MM;
+        p.stock.height_mm = MAX_COORDINATE_MM;
+        p.stock.thickness_mm = MAX_COORDINATE_MM;
+        assert_eq!(validate(&p), vec![], "the limit is accepted");
+        p.stock.width_mm = MAX_COORDINATE_MM + 0.5;
+        p.stock.height_mm = 1e15;
+        p.stock.thickness_mm = 1e300;
+        assert_eq!(
+            error_fields(&validate(&p)),
+            vec!["stock.width_mm", "stock.height_mm", "stock.thickness_mm"]
+        );
+    }
+
+    /// #59: the message states the limit, so the user knows what to aim for.
+    #[test]
+    fn limit_messages_state_the_limit() {
+        let mut p = sample_project();
+        p.stock.width_mm = 1e15;
+        p.instances[0].transform = Transform::translate(1e12, 0.0);
+        let limit = MAX_COORDINATE_MM.to_string();
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        for problem in problems {
+            let message = problem.to_string();
+            assert!(message.contains(&limit), "`{message}` states {limit}");
+        }
     }
 
     /// #36 security review (#40): a shared `.dcv` chooses its output

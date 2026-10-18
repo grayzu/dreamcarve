@@ -981,6 +981,48 @@ mod tests {
         }
     }
 
+    /// #59: the import limit is the shared 6 m bound. A path just past it
+    /// is refused; one just inside is imported.
+    #[test]
+    fn path_past_shared_coordinate_limit_is_rejected() {
+        let svg = |x: f64| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+                <rect id="far" x="{x}" y="0" width="10" height="10"/>
+            </svg>"#
+            )
+        };
+        let limit = dc_geometry::MAX_COORDINATE_MM;
+        let options = SvgImportOptions::new(12.0);
+        assert!(import_svg(svg(limit - 11.0).as_bytes(), &options).is_ok());
+        match import_svg(svg(limit - 9.0).as_bytes(), &options).unwrap_err() {
+            ImportError::CoordinateOutOfRange { path, limit_mm } => {
+                assert_eq!(path, "far");
+                assert_approx_eq!(limit_mm, limit, 0.0);
+            }
+            other => panic!("unexpected error {other:?}"),
+        }
+    }
+
+    /// #59: the page side is bounded by the same limit.
+    #[test]
+    fn page_past_shared_coordinate_limit_is_rejected() {
+        let svg = |width_mm: f64| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width_mm}mm" height="100mm" viewBox="0 0 100 100">
+                <rect x="0" y="0" width="10" height="10"/>
+            </svg>"#
+            )
+        };
+        let limit = dc_geometry::MAX_COORDINATE_MM;
+        let options = SvgImportOptions::new(12.0);
+        assert!(import_svg(svg(limit - 1.0).as_bytes(), &options).is_ok());
+        assert!(matches!(
+            import_svg(svg(limit + 1.0).as_bytes(), &options),
+            Err(ImportError::InvalidPageSize { .. })
+        ));
+    }
+
     #[test]
     fn huge_page_is_rejected() {
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="200000000mm" height="100mm" viewBox="0 0 100 100">
