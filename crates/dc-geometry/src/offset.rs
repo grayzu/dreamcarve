@@ -28,7 +28,7 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     source
         .parallel_offset(cav_delta)
         .iter()
-        .filter_map(|p| Contour::new(from_cavalier(p)).ok())
+        .filter_map(|p| Contour::oriented(from_cavalier(p)).ok())
         .map(|c| if ccw { c } else { c.reversed() })
         .collect()
 }

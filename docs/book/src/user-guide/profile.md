@@ -132,5 +132,6 @@ sentence, after the operation's id, with lengths rounded to 0.01 mm.
 | "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
 
-Shapes that cross each other are an error: DreamCarve cannot tell which side
-is material, so it cuts nothing.
+Shapes that cross each other, or a shape that crosses itself, are an error:
+DreamCarve cannot tell which side is material, so it cuts nothing. See
+[Shapes, holes, and islands](shapes-and-holes.md), rules 10 and 11.
