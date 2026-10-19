@@ -22,7 +22,9 @@ use crate::tabs::{
 };
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
-use dc_geometry::{Contour, GeometryError, GeometryWarning, Point3, Polyline, nest, offset};
+use dc_geometry::{
+    Contour, GeometryError, GeometryWarning, Point3, Polyline, Region, nest, offset,
+};
 use dc_project::{CutDirection, ProfileOp, Project, Side, Tool};
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
@@ -118,8 +120,10 @@ fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// Each target instance's closed profiles are placed by its transform,
 /// nested into parts and holes, offset by the tool radius per `op.side`, and
 /// oriented per [`traversal_is_ccw`]. Within each part its holes are cut
-/// before its outer contour, so the part is freed last. Each tool-centre
-/// contour is cut at every depth pass before the next: one rapid to its
+/// before its outer contour, so the part is freed last, and a part inside
+/// another part's hole is cut before that hole, at every nesting depth;
+/// otherwise parts follow the drawing order. Each tool-centre contour is
+/// cut at every depth pass before the next: one rapid to its
 /// start at safe Z, then per pass a straight descent at the plunge rate and
 /// one lap at the feed rate ending at the start, then a rapid retract to
 /// safe Z. Arc segments stay arcs.
@@ -216,7 +220,7 @@ pub fn generate_profile(
     let radius_mm = tool.diameter_mm / 2.0;
     // Each tool-centre path with the shape it cuts, for warnings.
     let mut paths: Vec<(Polyline, Option<&ShapeRef>)> = Vec::new();
-    for region in &regions {
+    for region in cut_order(&regions) {
         // Holes first, so a through-cut part is freed only by its last contour.
         let ordered = region
             .holes()
@@ -280,6 +284,18 @@ pub fn generate_profile(
         });
     }
     Ok((toolpath, warnings))
+}
+
+/// The order to cut `regions` in (invariant O1,
+/// `docs/research/toolpath-ordering.md`): deepest nest depth first, so a
+/// part inside another part's hole is cut out before that hole frees the
+/// waste it sits in, at every depth. Regions at the same depth keep
+/// `nest`'s drawing order, so the result depends only on the input.
+fn cut_order(regions: &[Region]) -> Vec<&Region> {
+    let mut ordered: Vec<&Region> = regions.iter().collect();
+    // Stable, so drawing order breaks ties.
+    ordered.sort_by_key(|region| std::cmp::Reverse(region.depth()));
+    ordered
 }
 
 /// Places every profile of every target instance, in target then profile
@@ -684,6 +700,103 @@ mod tests {
         }
         for lap in &laps[3..] {
             assert!(lap.x_extent_mm() > 100.0, "outer last: {lap:?}");
+        }
+    }
+
+    /// Names each lap, in cut order, by the `(name, x extent mm)` its
+    /// x extent is nearest to. Each contour is cut at every pass before the
+    /// next contour starts, so the result is the contour cut order with one
+    /// entry per pass.
+    fn lap_names(toolpath: &Toolpath, contours: &[(&'static str, f64)]) -> Vec<&'static str> {
+        laps(toolpath)
+            .iter()
+            .map(|lap| {
+                let off = |w: f64| (lap.x_extent_mm() - w).abs();
+                let (name, width_mm) = contours
+                    .iter()
+                    .copied()
+                    .min_by(|a, b| off(a.1).total_cmp(&off(b.1)))
+                    .unwrap();
+                assert!(off(width_mm) < TOL, "lap {lap:?} matches no contour");
+                name
+            })
+            .collect()
+    }
+
+    /// Each name repeated once per pass, for comparing with [`lap_names`].
+    fn every_pass(names: &[&'static str]) -> Vec<&'static str> {
+        names
+            .iter()
+            .flat_map(|&n| std::iter::repeat_n(n, PASS_Z_MM.len()))
+            .collect()
+    }
+
+    /// O1 (`docs/research/toolpath-ordering.md`): a 200 × 150 frame (outline
+    /// A, 160 × 110 hole B) with a 60 mm coaster C inside the hole. Whatever
+    /// the drawing order, the coaster is cut first, then the hole that frees
+    /// the waste around it, then the frame's outline.
+    #[test]
+    fn island_is_cut_before_the_hole_around_it() {
+        let a = Polyline::rect(Point::new(0.0, 0.0), 200.0, 150.0);
+        let b = Polyline::rect(Point::new(20.0, 20.0), 160.0, 110.0);
+        let c = Polyline::circle(Point::new(100.0, 75.0), 30.0);
+        // Outside: A and C grow by the radius, the hole B shrinks.
+        let widths = [("A", 206.35), ("B", 153.65), ("C", 66.35)];
+        let orders = [
+            vec![a.clone(), b.clone(), c.clone()],
+            vec![c.clone(), b.clone(), a.clone()],
+            vec![b, c, a],
+        ];
+        for profiles in orders {
+            let p = project(profiles, &[("i1", at_20_20())]);
+            let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(lap_names(&tp, &widths), every_pass(&["C", "B", "A"]));
+        }
+    }
+
+    /// Four nested contours, drawn outermost first: outer, hole, island,
+    /// hole in the island. The innermost is cut first, and each hole still
+    /// comes before its own outline.
+    #[test]
+    fn four_levels_cut_innermost_first() {
+        let p = project(
+            vec![
+                Polyline::rect(Point::new(0.0, 0.0), 200.0, 150.0),
+                Polyline::rect(Point::new(20.0, 20.0), 160.0, 110.0),
+                Polyline::rect(Point::new(40.0, 40.0), 120.0, 70.0),
+                Polyline::rect(Point::new(60.0, 60.0), 80.0, 30.0),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let widths = [
+            ("outer", 206.35),
+            ("hole", 153.65),
+            ("island", 126.35),
+            ("island hole", 73.65),
+        ];
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            lap_names(&tp, &widths),
+            every_pass(&["island hole", "island", "hole", "outer"])
+        );
+    }
+
+    /// Two parts side by side, neither inside the other, are cut in the
+    /// order they were drawn, either way round.
+    #[test]
+    fn apart_regions_keep_drawing_order() {
+        let small = Polyline::rect(Point::new(0.0, 0.0), 40.0, 30.0);
+        let big = Polyline::rect(Point::new(100.0, 0.0), 60.0, 30.0);
+        let widths = [("small", 46.35), ("big", 66.35)];
+        for (profiles, expected) in [
+            (vec![small.clone(), big.clone()], ["small", "big"]),
+            (vec![big, small], ["big", "small"]),
+        ] {
+            let p = project(profiles, &[("i1", at_20_20())]);
+            let (tp, _) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+            assert_eq!(lap_names(&tp, &widths), every_pass(&expected));
         }
     }
 

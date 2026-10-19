@@ -85,6 +85,14 @@ the drawing, yet the regions are ordered by their parts, `#1` then `#2`.
 
 ![Regions ordered by where their parts appear](figures/nesting/region-order.svg)
 
+The cut order follows the drawing too, with one exception: a part inside
+another part's hole (an island) is always cut before that hole, at every
+depth. Cutting the hole frees the waste inside it, so a part still sitting
+in that waste must already be cut out. Parts at the same depth are cut in
+drawing order, and each part's holes still come before its outline. For a
+frame with a coaster inside its opening, the coaster is cut first, then the
+opening, then the frame's outline, whichever was drawn first.
+
 ### 7. Reordering the drawing doesn't change which shapes are holes
 
 Shuffling the shapes changes only the order of the results, never which
