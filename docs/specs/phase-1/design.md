@@ -187,15 +187,17 @@ fails with `LoadError::NewerVersion`.
 Sanity checks (#67, functional spec S8) run in the same pass and look
 only at enabled operations and the tools they use. Errors: a feed or
 plunge rate above `MAX_RATE_MM_MIN` (20 000 mm/min, `Problem::ToolOutOfRange`),
-`Problem::CutterNotFlat` (a Profile whose tool is not
-`ToolKind::EndMill`; `ToolKind::is_flat`), `Problem::OperationHasNoTargets`,
+`Problem::CutterNotFlat` (an Outside or Inside Profile whose tool is not
+`ToolKind::EndMill`; `ToolKind::is_flat`; `Side::OnLine` accepts any
+cutter, since the tool centre follows the line), `Problem::OperationHasNoTargets`,
 and a `post_processor.program.line_number_increment` of 0
 (`Problem::OutOfRange`). Warnings: `Problem::StepDownAboveDiameter`
 (located at the step-down in effect, the operation's or else the tool's),
 `Problem::PlungeAboveFeed`, `Problem::SpindleSpeedHigh` (above `MAX_RPM`,
 60 000) and `Problem::LargeDiameter` (above `MAX_TOOL_DIAMETER_MM`, 50 mm).
 The thresholds are public constants in `validate.rs`. `generate_profile`
-also refuses a cutter that is not flat (`CamError::CutterNotFlat`), so a
+also refuses a cutter that is not flat on Outside or Inside
+(`CamError::CutterNotFlat`), so a
 caller that skips validation never gets a wrong-size part.
 
 Locations (#76): `Problem::field()` names the value a problem is about as
@@ -561,7 +563,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `migrate::newer_version_is_rejected`.
 - `validate::dangling_tool_id_is_error`.
 - `validate::unset_feed_is_an_error` (a warning before #76), `validate::unused_tool_with_unset_values_is_a_warning_not_an_error`, `validate::tool_used_only_by_disabled_operation_is_unused`, `validate::used_tool_with_unset_values_is_still_an_error`.
-- Sanity checks (#67): `validate::step_down_above_diameter_warns`, `validate::v_bit_in_profile_is_an_error`, `validate::ball_nose_and_engraver_in_profile_are_errors`, `validate::feed_above_limit_is_an_error`, `validate::plunge_above_limit_is_an_error`, `validate::rpm_above_limit_warns`, `validate::plunge_above_feed_warns`, `validate::diameter_above_limit_warns`, `validate::zero_line_increment_is_rejected`, `validate::empty_operation_is_an_error`, `validate::unused_tool_gets_no_sanity_findings`, `validate::sanity_problems_are_reported_together`, `validate::quick_start_values_have_no_sanity_findings`; CLI `quick_start_project_has_no_sanity_warnings`, `export_refuses_feed_above_limit_with_location`.
+- Sanity checks (#67): `validate::step_down_above_diameter_warns`, `validate::v_bit_in_profile_is_an_error`, `validate::ball_nose_and_engraver_in_profile_are_errors` (Outside and Inside), `validate::v_bit_on_line_is_allowed`, `validate::ball_nose_and_engraver_on_line_are_allowed`, `validate::feed_above_limit_is_an_error`, `validate::plunge_above_limit_is_an_error`, `validate::rpm_above_limit_warns`, `validate::plunge_above_feed_warns`, `validate::diameter_above_limit_warns`, `validate::zero_line_increment_is_rejected`, `validate::empty_operation_is_an_error`, `validate::unused_tool_gets_no_sanity_findings`, `validate::sanity_problems_are_reported_together`, `validate::quick_start_values_have_no_sanity_findings`; CLI `quick_start_project_has_no_sanity_warnings`, `export_refuses_feed_above_limit_with_location`.
 - `post_processor::post_processor_round_trips_through_json`, `post_processor::unknown_field_is_rejected`.
 - `history::undo_restores_previous_snapshot`, `history::redo_after_undo`, `history::new_edit_truncates_redo`.
 
@@ -578,7 +580,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `profile::climb_inside_is_counter_clockwise`.
 - `profile::open_path_is_skipped_with_warning`.
 - `profile::tool_larger_than_hole_warns_and_skips`.
-- `profile::v_bit_in_profile_is_an_error` — any cutter but a flat end mill is `CamError::CutterNotFlat` (#67).
+- `profile::v_bit_in_profile_is_an_error` — on Outside or Inside, any cutter but a flat end mill is `CamError::CutterNotFlat` (#67).
+- `profile::v_bit_on_line_is_allowed` — On line, a V-bit, ball-nose or engraving bit cuts with no error or warning (#67).
 - `profile::every_cut_move_has_feed_and_every_rapid_has_none`.
 - `profile::first_move_is_rapid_at_safe_z`.
 - `profile::descent_uses_plunge_feed`.

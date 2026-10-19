@@ -217,7 +217,7 @@ To move a shape on the stock, change `e` and `f`.
 | --- | --- |
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
-| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but Profile cuts only with `"end_mill"`: it offsets by half the diameter, which is wrong for any other bit. |
+| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside or Inside Profile cuts only with `"end_mill"`: it offsets by half the diameter, which is wrong for any other bit. On line, any cutter is allowed. |
 | `diameter_mm` | Cutting diameter. Profile offsets the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used in phase 1. |
 | `feed_mm_min` | Feed rate while cutting. **Required.** At most 20 000. |
@@ -302,7 +302,7 @@ Errors stop export. Warnings do not.
 | Shapes that cross each other, or a shape that crosses itself | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
-| A Profile whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
+| An Outside or Inside Profile whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
 | An enabled operation with no `targets` | A spindle speed above 60 000 RPM |
 | A post-processor `line_number_increment` of 0 | A tool diameter above 50 mm |
 

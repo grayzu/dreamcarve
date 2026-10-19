@@ -18,8 +18,8 @@
 //!
 //! Sanity checks (#67) catch values that are valid but dangerous, and look
 //! only at enabled operations and the tools they use. Errors: a feed or
-//! plunge rate above [`MAX_RATE_MM_MIN`], a Profile cut with a cutter other
-//! than a flat end mill, an enabled operation with no targets, and a
+//! plunge rate above [`MAX_RATE_MM_MIN`], an Outside or Inside Profile cut
+//! with a cutter other than a flat end mill, an enabled operation with no targets, and a
 //! `line_number_increment` of 0. Warnings: a step-down deeper than the
 //! tool's diameter, a plunge rate above the feed rate, a spindle speed
 //! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
@@ -29,7 +29,7 @@
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
-use crate::model::{Operation, OriginXy, ProfileOp, Project, TabPlacement, Tool, ToolKind};
+use crate::model::{Operation, OriginXy, ProfileOp, Project, Side, TabPlacement, Tool, ToolKind};
 use crate::post_processor::{MAX_FILE_EXTENSION_CHARS, SpindleControl, is_safe_file_extension};
 use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeSet;
@@ -192,9 +192,10 @@ pub enum Problem {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
-    /// An enabled Profile cuts with a tool that is not a flat end mill
-    /// (#67). Profile offsets by half the diameter, so any other cutter
-    /// makes the part the wrong size: an error.
+    /// An enabled Outside or Inside Profile cuts with a tool that is not a
+    /// flat end mill (#67). Those sides offset by half the diameter, so any
+    /// other cutter makes the part the wrong size: an error. On the line the
+    /// tool centre follows the line, so any cutter is allowed.
     CutterNotFlat {
         /// The operation.
         operation: OperationId,
@@ -817,7 +818,7 @@ impl Validator {
 
     /// The sanity checks of an enabled Profile `op` at `at`, cutting with
     /// `tool` when it exists (#67): it has targets, the tool is a flat end
-    /// mill, and the step-down in effect is at most the tool's diameter.
+    /// mill unless the cut is on the line, and the step-down in effect is at most the tool's diameter.
     fn enabled_profile(&mut self, op: &ProfileOp, tool: Option<&Tool>, at: &str) {
         if op.targets.is_empty() {
             self.problems.push(Problem::OperationHasNoTargets {
@@ -828,7 +829,7 @@ impl Validator {
         let Some(tool) = tool else {
             return;
         };
-        if !tool.cutter.is_flat() {
+        if op.side != Side::OnLine && !tool.cutter.is_flat() {
             self.problems.push(Problem::CutterNotFlat {
                 operation: op.id.clone(),
                 name: op.name.clone(),

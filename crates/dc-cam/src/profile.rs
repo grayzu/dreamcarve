@@ -155,9 +155,10 @@ pub fn generate_profile(
             op: op.id.clone(),
             tool: op.tool.clone(),
         })?;
-    // The offset below is half the diameter, right only for a flat end
-    // mill at every depth (#67).
-    if !tool.cutter.is_flat() {
+    // Outside and Inside offset by half the diameter, right only for a flat
+    // end mill at every depth (#67). On the line the tool centre follows
+    // the line, so any cutter cuts it as drawn.
+    if op.side != Side::OnLine && !tool.cutter.is_flat() {
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
             tool: tool.name.clone(),
