@@ -42,6 +42,11 @@ pub enum WarningCode {
     /// width that cover at most half), and `max_width_mm` (widest tab at
     /// this count that covers at most half; absent when none fits).
     TabsCoverMostOfContour,
+    /// The tool path of one shape cuts into material another shape in the
+    /// same operation keeps. Params: `instance`, `instance_name`,
+    /// `profile` (the shape cut first), `other_instance`,
+    /// `other_instance_name`, `other_profile`, `gap_mm`.
+    ToolpathsOverlap,
 }
 
 impl WarningCode {
@@ -55,6 +60,7 @@ impl WarningCode {
             Self::TabsOverlap => "tabs_overlap",
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
+            Self::ToolpathsOverlap => "toolpaths_overlap",
         }
     }
 }
@@ -214,6 +220,7 @@ impl fmt::Display for Warning {
                     self.mm("deepest_pass_z_mm")
                 ),
             },
+            WarningCode::ToolpathsOverlap => write!(f, "tool paths overlap"),
             WarningCode::TabsCoverMostOfContour => {
                 let path_mm = self
                     .param("path_length_mm")
