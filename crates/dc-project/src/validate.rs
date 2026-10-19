@@ -16,11 +16,20 @@
 //! enabled. Warning-class problems still allow a correct result but need the
 //! user's attention (disabled operations, unused tools, open paths).
 //!
+//! Sanity checks (#67) catch values that are valid but dangerous, and look
+//! only at enabled operations and the tools they use. Errors: a feed or
+//! plunge rate above [`MAX_RATE_MM_MIN`], a Profile cut with a cutter other
+//! than a flat end mill, an enabled operation with no targets, and a
+//! `line_number_increment` of 0. Warnings: a step-down deeper than the
+//! tool's diameter, a plunge rate above the feed rate, a spindle speed
+//! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
+//! changes a value; they only report.
+//!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
-use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
+use crate::model::{Operation, OriginXy, ProfileOp, Project, TabPlacement, Tool, ToolKind};
 use crate::post_processor::{MAX_FILE_EXTENSION_CHARS, SpindleControl, is_safe_file_extension};
 use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeSet;
@@ -567,6 +576,15 @@ impl Validator {
                 }
             }
             self.tool_positive(tool, "diameter_mm", tool.diameter_mm);
+            // #67: the sanity limits apply only to a tool something cuts
+            // with; an unused tool is one warning already.
+            if in_use && tool.diameter_mm.is_finite() && tool.diameter_mm > MAX_TOOL_DIAMETER_MM {
+                self.problems.push(Problem::LargeDiameter {
+                    tool: tool.id.clone(),
+                    name: tool.name.clone(),
+                    diameter_mm: tool.diameter_mm,
+                });
+            }
             if tool.flutes == 0 {
                 self.tool_out_of_range(tool, "flutes", 0.0, POSITIVE);
             }
@@ -583,7 +601,28 @@ impl Validator {
                     field: "rpm",
                 }),
                 Some(0) => self.tool_out_of_range(tool, "rpm", 0.0, POSITIVE),
+                Some(rpm) if in_use && rpm > MAX_RPM => {
+                    self.problems.push(Problem::SpindleSpeedHigh {
+                        tool: tool.id.clone(),
+                        name: tool.name.clone(),
+                        rpm,
+                    });
+                }
                 None | Some(_) => {}
+            }
+            if let (true, Some(feed_mm_min), Some(plunge_mm_min)) =
+                (in_use, tool.feed_mm_min, tool.plunge_mm_min)
+                && feed_mm_min.is_finite()
+                && feed_mm_min > 0.0
+                && plunge_mm_min.is_finite()
+                && plunge_mm_min > feed_mm_min
+            {
+                self.problems.push(Problem::PlungeAboveFeed {
+                    tool: tool.id.clone(),
+                    name: tool.name.clone(),
+                    plunge_mm_min,
+                    feed_mm_min,
+                });
             }
             if let Some(step) = tool.step_down_mm {
                 self.tool_positive(tool, "step_down_mm", step);
@@ -627,6 +666,9 @@ impl Validator {
                 }
             }
             let at = format!("operations[{}]", op.id);
+            if op.enabled {
+                self.enabled_profile(op, p.tools.iter().find(|t| t.id == op.tool), &at);
+            }
             match op.depth_mm {
                 Some(depth_mm) => self.positive(&format!("{at}.depth_mm"), depth_mm),
                 None => self.problems.push(Problem::OperationValueUnset {
@@ -753,6 +795,15 @@ impl Validator {
             });
         }
 
+        // #67: an increment of 0 writes `N0` on every line.
+        if p.post_processor.program.line_number_increment == 0 {
+            self.out_of_range(
+                "post_processor.program.line_number_increment".to_owned(),
+                0.0,
+                POSITIVE,
+            );
+        }
+
         let dwell = &p.post_processor.feed_speed.spindle_on_dwell;
         let at = "post_processor.feed_speed.spindle_on_dwell";
         self.non_negative(&format!("{at}.duration_s"), dwell.duration_s);
@@ -760,6 +811,50 @@ impl Validator {
             self.problems.push(Problem::MissingPlaceholder {
                 field: format!("{at}.command"),
                 placeholder: "{seconds}",
+            });
+        }
+    }
+
+    /// The sanity checks of an enabled Profile `op` at `at`, cutting with
+    /// `tool` when it exists (#67): it has targets, the tool is a flat end
+    /// mill, and the step-down in effect is at most the tool's diameter.
+    fn enabled_profile(&mut self, op: &ProfileOp, tool: Option<&Tool>, at: &str) {
+        if op.targets.is_empty() {
+            self.problems.push(Problem::OperationHasNoTargets {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+            });
+        }
+        let Some(tool) = tool else {
+            return;
+        };
+        if !tool.cutter.is_flat() {
+            self.problems.push(Problem::CutterNotFlat {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                cutter: tool.cutter.describe(),
+            });
+        }
+        let step = match (op.step_down_mm, tool.step_down_mm) {
+            (Some(step), _) => Some((step, format!("{at}.step_down_mm"))),
+            (None, Some(step)) => Some((step, format!("tools[{}].step_down_mm", tool.id))),
+            (None, None) => None,
+        };
+        if let Some((step_down_mm, field)) = step
+            && step_down_mm.is_finite()
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0
+            && step_down_mm > tool.diameter_mm
+        {
+            self.problems.push(Problem::StepDownAboveDiameter {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+                tool_name: tool.name.clone(),
+                field,
+                step_down_mm,
+                diameter_mm: tool.diameter_mm,
             });
         }
     }
@@ -823,7 +918,13 @@ impl Validator {
                 name: tool.name.clone(),
                 field,
             }),
-            Some(v) => self.tool_positive(tool, field, v),
+            Some(v) => {
+                self.tool_positive(tool, field, v);
+                // #67: far past any hobby machine, so almost surely a typo.
+                if in_use && v.is_finite() && v > MAX_RATE_MM_MIN {
+                    self.tool_out_of_range(tool, field, v, RATE);
+                }
+            }
         }
     }
 
@@ -1277,6 +1378,14 @@ mod tests {
                 },
                 Problem::NonFinite {
                     field: "tools[t1].cutter.v_bit.included_angle_deg".into()
+                },
+                // #67: a V-bit of any angle cannot cut a Profile.
+                Problem::CutterNotFlat {
+                    operation: OperationId::new("o1"),
+                    name: "Cut out".into(),
+                    tool: ToolId::new("t1"),
+                    tool_name: "6.35 mm upcut".into(),
+                    cutter: "a V-bit",
                 },
             ]
         );

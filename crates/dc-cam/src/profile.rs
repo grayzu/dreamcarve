@@ -155,6 +155,15 @@ pub fn generate_profile(
             op: op.id.clone(),
             tool: op.tool.clone(),
         })?;
+    // The offset below is half the diameter, right only for a flat end
+    // mill at every depth (#67).
+    if !tool.cutter.is_flat() {
+        return Err(CamError::CutterNotFlat {
+            op: op.id.clone(),
+            tool: tool.name.clone(),
+            cutter: tool.cutter.describe(),
+        });
+    }
     let rates = rates_of(tool)?;
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
