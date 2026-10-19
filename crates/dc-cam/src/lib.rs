@@ -13,7 +13,6 @@ mod overlap;
 pub mod passes;
 mod profile;
 mod stock;
-pub mod tab_profile;
 mod tabs;
 mod toolpath;
 mod warning;
