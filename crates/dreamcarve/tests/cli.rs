@@ -477,6 +477,44 @@ fn export_refuses_zero_feed_and_writes_nothing() {
     );
 }
 
+/// #67: the quick start's coaster, filled in as the chapter does (feed
+/// 1500, plunge 500, 18000 RPM, `init`'s 4 mm step-down and 6.35 mm end
+/// mill), passes `check` with no error and no warning.
+#[test]
+fn quick_start_project_has_no_sanity_warnings() {
+    let dir = work_dir("quick_start_project_has_no_sanity_warnings");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let stdout = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "{stdout}{}", stderr(&out));
+    assert!(stdout.contains("0 error(s), 0 warning(s)"), "{stdout}");
+}
+
+/// #67 (maintainer comment): a feed far beyond any hobby machine fails
+/// export, located at the value like every other error, and is reported
+/// together with the other sanity findings in one run.
+#[test]
+fn export_refuses_feed_above_limit_with_location() {
+    let dir = work_dir("export_refuses_feed_above_limit");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1e9, 500.0, 1_000_000);
+
+    let out = run(&dir, &["export", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(1), "an error exits 1");
+    let stderr = stderr(&out);
+    assert!(
+        stderr.contains("coaster.dcv:22:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("coaster.dcv:24:14: warning: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        "{stderr}"
+    );
+    assert!(!dir.join("coaster.nc").exists(), "no program is written");
+}
+
 /// Capability 8: an open path is imported but not targeted, and `check`
 /// reports it by name. With rates set there is nothing else wrong, so
 /// `check` exits 0: an open path is a warning, not an error.

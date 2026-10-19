@@ -16,11 +16,20 @@
 //! enabled. Warning-class problems still allow a correct result but need the
 //! user's attention (disabled operations, unused tools, open paths).
 //!
+//! Sanity checks (#67) catch values that are valid but dangerous, and look
+//! only at enabled operations and the tools they use. Errors: a feed or
+//! plunge rate above [`MAX_RATE_MM_MIN`], an Outside or Inside Profile cut
+//! with a cutter other than a flat end mill, an enabled operation with no targets, and a
+//! `line_number_increment` of 0. Warnings: a step-down deeper than the
+//! tool's diameter, a plunge rate above the feed rate, a spindle speed
+//! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
+//! changes a value; they only report.
+//!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
-use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
+use crate::model::{Operation, OriginXy, ProfileOp, Project, Side, TabPlacement, Tool, ToolKind};
 use crate::post_processor::{MAX_FILE_EXTENSION_CHARS, SpindleControl, is_safe_file_extension};
 use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeSet;
@@ -166,15 +175,106 @@ pub enum Problem {
         /// The extension found.
         extension: String,
     },
+    /// An enabled operation cuts deeper per pass than its tool is wide
+    /// (#67). A warning: the program is still what was asked for.
+    StepDownAboveDiameter {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+        /// The tool's display name.
+        tool_name: String,
+        /// Where the step-down in effect is set: the operation's
+        /// `step_down_mm`, or else the tool's.
+        field: String,
+        /// The step-down in effect, mm.
+        step_down_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
+    /// An enabled Outside or Inside Profile cuts with a tool that is not a
+    /// flat end mill (#67). Those sides offset by half the diameter, so any
+    /// other cutter makes the part the wrong size: an error. On the line the
+    /// tool centre follows the line, so any cutter is allowed.
+    CutterNotFlat {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        tool_name: String,
+        /// The cutter in words, such as `a V-bit`.
+        cutter: &'static str,
+    },
+    /// An enabled operation targets nothing, so its program would start
+    /// and stop the spindle without moving (#67). An error.
+    OperationHasNoTargets {
+        /// The operation.
+        operation: OperationId,
+        /// The operation's display name.
+        name: String,
+    },
+    /// A used tool's spindle speed is above [`MAX_RPM`] (#67). A warning:
+    /// GRBL and grblHAL clamp `S` to the machine's maximum (`$30`), and
+    /// under manual control the speed is only a hint.
+    SpindleSpeedHigh {
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        name: String,
+        /// The speed set, RPM.
+        rpm: u32,
+    },
+    /// A used tool plunges faster than it cuts (#67), which usually means
+    /// the two rates are swapped. A warning.
+    PlungeAboveFeed {
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        name: String,
+        /// The plunge rate, mm/min.
+        plunge_mm_min: f64,
+        /// The feed rate, mm/min.
+        feed_mm_min: f64,
+    },
+    /// A used tool's diameter is above [`MAX_TOOL_DIAMETER_MM`] (#67). A
+    /// warning: a shape such a bit does not fit is already skipped with a
+    /// warning, and around a part it cuts valid geometry.
+    LargeDiameter {
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        name: String,
+        /// The diameter, mm.
+        diameter_mm: f64,
+    },
 }
+
+/// The fastest feed or plunge rate a used tool may have, mm/min (#67).
+/// Above it export fails: no hobby machine moves that fast, so the value is
+/// almost surely a typo. Raise it if users report real machines beyond it.
+pub const MAX_RATE_MM_MIN: f64 = 20_000.0;
+
+/// Above this spindle speed a used tool gets a warning, RPM (#67).
+pub const MAX_RPM: u32 = 60_000;
+
+/// Above this diameter a used tool gets a warning, mm (#67).
+pub const MAX_TOOL_DIAMETER_MM: f64 = 50.0;
 
 impl Problem {
     /// Whether this problem is an error or a warning.
     pub fn severity(&self) -> Severity {
         match self {
-            Self::OperationDisabled { .. } | Self::UnusedTool { .. } | Self::OpenProfile { .. } => {
-                Severity::Warning
-            }
+            Self::OperationDisabled { .. }
+            | Self::UnusedTool { .. }
+            | Self::OpenProfile { .. }
+            | Self::StepDownAboveDiameter { .. }
+            | Self::SpindleSpeedHigh { .. }
+            | Self::PlungeAboveFeed { .. }
+            | Self::LargeDiameter { .. } => Severity::Warning,
+            Self::CutterNotFlat { .. } | Self::OperationHasNoTargets { .. } => Severity::Error,
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -247,6 +347,14 @@ impl Problem {
                 ..
             } => Some(format!("definitions[{definition}].profiles[{profile}]")),
             Self::UnsafeFileExtension { .. } => Some("post_processor.file_extension".to_owned()),
+            Self::StepDownAboveDiameter { field, .. } => Some(field.clone()),
+            Self::CutterNotFlat { operation, .. } => Some(format!("operations[{operation}].tool")),
+            Self::OperationHasNoTargets { operation, .. } => {
+                Some(format!("operations[{operation}].targets"))
+            }
+            Self::SpindleSpeedHigh { tool, .. } => Some(format!("tools[{tool}].rpm")),
+            Self::PlungeAboveFeed { tool, .. } => Some(format!("tools[{tool}].plunge_mm_min")),
+            Self::LargeDiameter { tool, .. } => Some(format!("tools[{tool}].diameter_mm")),
         }
     }
 }
@@ -346,6 +454,52 @@ impl fmt::Display for Problem {
                 "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_FILE_EXTENSION_CHARS} letters or digits and not `dcv`",
                 extension.escape_default()
             ),
+            Self::StepDownAboveDiameter {
+                operation,
+                name,
+                tool_name,
+                step_down_mm,
+                diameter_mm,
+                ..
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts {step_down_mm} mm per pass, deeper than the {diameter_mm} mm diameter of tool `{tool_name}`; passes that deep can break the bit, so use a step-down of at most {diameter_mm} mm"
+            ),
+            Self::CutterNotFlat {
+                operation,
+                name,
+                tool,
+                tool_name,
+                cutter,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; Profile offsets the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+            ),
+            Self::OperationHasNoTargets { operation, name } => write!(
+                f,
+                "operation `{name}` (`{operation}`) is enabled but has no targets, so it would cut nothing; add targets or disable it"
+            ),
+            Self::SpindleSpeedHigh { tool, name, rpm } => write!(
+                f,
+                "tool `{name}` (`{tool}`) is set to {rpm} RPM, faster than the {MAX_RPM} RPM a hobby spindle or router turns; check it for a typo"
+            ),
+            Self::PlungeAboveFeed {
+                tool,
+                name,
+                plunge_mm_min,
+                feed_mm_min,
+            } => write!(
+                f,
+                "tool `{name}` (`{tool}`) plunges at {plunge_mm_min} mm/min, faster than it cuts ({feed_mm_min} mm/min); a plunge rate is usually well below the feed rate, so check the two are not swapped"
+            ),
+            Self::LargeDiameter {
+                tool,
+                name,
+                diameter_mm,
+            } => write!(
+                f,
+                "tool `{name}` (`{tool}`) is {diameter_mm} mm in diameter, larger than the {MAX_TOOL_DIAMETER_MM} mm of a hobby router bit; check it for a typo"
+            ),
         }
     }
 }
@@ -369,6 +523,8 @@ const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
 const COORDINATE: &str = "a value from -6000 to 6000 mm";
 const COEFFICIENT: &str = "a value from -6000 to 6000";
 const REACH: &str = "a shape that stays within 6000 mm of the origin";
+// Spells out `MAX_RATE_MM_MIN`; a test checks they agree.
+const RATE: &str = "a value greater than 0 and at most 20000 mm/min";
 
 #[derive(Default)]
 struct Validator {
@@ -421,6 +577,15 @@ impl Validator {
                 }
             }
             self.tool_positive(tool, "diameter_mm", tool.diameter_mm);
+            // #67: the sanity limits apply only to a tool something cuts
+            // with; an unused tool is one warning already.
+            if in_use && tool.diameter_mm.is_finite() && tool.diameter_mm > MAX_TOOL_DIAMETER_MM {
+                self.problems.push(Problem::LargeDiameter {
+                    tool: tool.id.clone(),
+                    name: tool.name.clone(),
+                    diameter_mm: tool.diameter_mm,
+                });
+            }
             if tool.flutes == 0 {
                 self.tool_out_of_range(tool, "flutes", 0.0, POSITIVE);
             }
@@ -437,7 +602,28 @@ impl Validator {
                     field: "rpm",
                 }),
                 Some(0) => self.tool_out_of_range(tool, "rpm", 0.0, POSITIVE),
+                Some(rpm) if in_use && rpm > MAX_RPM => {
+                    self.problems.push(Problem::SpindleSpeedHigh {
+                        tool: tool.id.clone(),
+                        name: tool.name.clone(),
+                        rpm,
+                    });
+                }
                 None | Some(_) => {}
+            }
+            if let (true, Some(feed_mm_min), Some(plunge_mm_min)) =
+                (in_use, tool.feed_mm_min, tool.plunge_mm_min)
+                && feed_mm_min.is_finite()
+                && feed_mm_min > 0.0
+                && plunge_mm_min.is_finite()
+                && plunge_mm_min > feed_mm_min
+            {
+                self.problems.push(Problem::PlungeAboveFeed {
+                    tool: tool.id.clone(),
+                    name: tool.name.clone(),
+                    plunge_mm_min,
+                    feed_mm_min,
+                });
             }
             if let Some(step) = tool.step_down_mm {
                 self.tool_positive(tool, "step_down_mm", step);
@@ -481,6 +667,9 @@ impl Validator {
                 }
             }
             let at = format!("operations[{}]", op.id);
+            if op.enabled {
+                self.enabled_profile(op, p.tools.iter().find(|t| t.id == op.tool), &at);
+            }
             match op.depth_mm {
                 Some(depth_mm) => self.positive(&format!("{at}.depth_mm"), depth_mm),
                 None => self.problems.push(Problem::OperationValueUnset {
@@ -607,6 +796,15 @@ impl Validator {
             });
         }
 
+        // #67: an increment of 0 writes `N0` on every line.
+        if p.post_processor.program.line_number_increment == 0 {
+            self.out_of_range(
+                "post_processor.program.line_number_increment".to_owned(),
+                0.0,
+                POSITIVE,
+            );
+        }
+
         let dwell = &p.post_processor.feed_speed.spindle_on_dwell;
         let at = "post_processor.feed_speed.spindle_on_dwell";
         self.non_negative(&format!("{at}.duration_s"), dwell.duration_s);
@@ -614,6 +812,50 @@ impl Validator {
             self.problems.push(Problem::MissingPlaceholder {
                 field: format!("{at}.command"),
                 placeholder: "{seconds}",
+            });
+        }
+    }
+
+    /// The sanity checks of an enabled Profile `op` at `at`, cutting with
+    /// `tool` when it exists (#67): it has targets, the tool is a flat end
+    /// mill unless the cut is on the line, and the step-down in effect is at most the tool's diameter.
+    fn enabled_profile(&mut self, op: &ProfileOp, tool: Option<&Tool>, at: &str) {
+        if op.targets.is_empty() {
+            self.problems.push(Problem::OperationHasNoTargets {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+            });
+        }
+        let Some(tool) = tool else {
+            return;
+        };
+        if op.side != Side::OnLine && !tool.cutter.is_flat() {
+            self.problems.push(Problem::CutterNotFlat {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                cutter: tool.cutter.describe(),
+            });
+        }
+        let step = match (op.step_down_mm, tool.step_down_mm) {
+            (Some(step), _) => Some((step, format!("{at}.step_down_mm"))),
+            (None, Some(step)) => Some((step, format!("tools[{}].step_down_mm", tool.id))),
+            (None, None) => None,
+        };
+        if let Some((step_down_mm, field)) = step
+            && step_down_mm.is_finite()
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0
+            && step_down_mm > tool.diameter_mm
+        {
+            self.problems.push(Problem::StepDownAboveDiameter {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+                tool_name: tool.name.clone(),
+                field,
+                step_down_mm,
+                diameter_mm: tool.diameter_mm,
             });
         }
     }
@@ -677,7 +919,13 @@ impl Validator {
                 name: tool.name.clone(),
                 field,
             }),
-            Some(v) => self.tool_positive(tool, field, v),
+            Some(v) => {
+                self.tool_positive(tool, field, v);
+                // #67: far past any hobby machine, so almost surely a typo.
+                if in_use && v.is_finite() && v > MAX_RATE_MM_MIN {
+                    self.tool_out_of_range(tool, field, v, RATE);
+                }
+            }
         }
     }
 
@@ -1132,6 +1380,14 @@ mod tests {
                 Problem::NonFinite {
                     field: "tools[t1].cutter.v_bit.included_angle_deg".into()
                 },
+                // #67: a V-bit of any angle cannot cut a Profile.
+                Problem::CutterNotFlat {
+                    operation: OperationId::new("o1"),
+                    name: "Cut out".into(),
+                    tool: ToolId::new("t1"),
+                    tool_name: "6.35 mm upcut".into(),
+                    cutter: "a V-bit",
+                },
             ]
         );
     }
@@ -1445,5 +1701,299 @@ mod tests {
             p.post_processor.file_extension = extension.into();
             assert_eq!(validate(&p), vec![], "`{extension}` is allowed");
         }
+    }
+
+    // #67: sanity checks on dangerous but valid values.
+
+    fn op_mut(p: &mut Project) -> &mut crate::model::ProfileOp {
+        let Operation::Profile(op) = &mut p.operations[0];
+        op
+    }
+
+    /// Asserts `problems` is exactly one problem with `severity`, whose
+    /// field locates in the saved `p`; returns its message.
+    fn only_located(p: &Project, problems: &[Problem], severity: Severity) -> String {
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].severity(), severity, "{problems:?}");
+        let text = crate::save(p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        let field = problems[0].field().unwrap();
+        assert!(map.locate(&field).is_some(), "{field} in {text}");
+        problems[0].to_string()
+    }
+
+    /// #67: a 50 mm step-down with a 6.35 mm end mill is one full-depth
+    /// pass; it is a warning naming the operation and the tool, located at
+    /// the step-down in effect.
+    #[test]
+    fn step_down_above_diameter_warns() {
+        let mut p = sample_project();
+        op_mut(&mut p).step_down_mm = Some(50.0);
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Warning);
+        assert_eq!(problems[0].field().unwrap(), "operations[o1].step_down_mm");
+        assert_eq!(
+            message,
+            "operation `Cut out` (`o1`) cuts 50 mm per pass, deeper than the 6.35 mm diameter of tool `6.35 mm upcut`; passes that deep can break the bit, so use a step-down of at most 6.35 mm"
+        );
+
+        // The tool's step-down, when the operation sets none.
+        let mut p = sample_project();
+        p.tools[0].step_down_mm = Some(7.0);
+        let problems = validate(&p);
+        only_located(&p, &problems, Severity::Warning);
+        assert_eq!(problems[0].field().unwrap(), "tools[t1].step_down_mm");
+
+        // Equal to the diameter is fine.
+        let mut p = sample_project();
+        op_mut(&mut p).step_down_mm = Some(6.35);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #67: Profile offsets by half the diameter, which is right only for
+    /// a flat end mill; any other cutter makes the part the wrong size.
+    #[test]
+    fn v_bit_in_profile_is_an_error() {
+        let mut p = sample_project();
+        p.tools[0].cutter = ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Error);
+        assert_eq!(problems[0].field().unwrap(), "operations[o1].tool");
+        assert_eq!(
+            message,
+            "operation `Cut out` (`o1`) cuts with tool `6.35 mm upcut` (`t1`), a V-bit; Profile offsets the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+        );
+    }
+
+    #[test]
+    fn ball_nose_and_engraver_in_profile_are_errors() {
+        for (cutter, words) in [
+            (ToolKind::BallNose, "a ball-nose bit"),
+            (ToolKind::Engraver, "an engraving bit"),
+        ] {
+            for side in [crate::model::Side::Outside, crate::model::Side::Inside] {
+                let mut p = sample_project();
+                p.tools[0].cutter = cutter.clone();
+                op_mut(&mut p).side = side;
+                let problems = validate(&p);
+                let message = only_located(&p, &problems, Severity::Error);
+                assert!(message.contains(words), "{message}");
+            }
+        }
+    }
+
+    /// #67 (maintainer, PR #96): on the line the tool centre follows the
+    /// line itself, so the cut does not depend on the cutter's shape.
+    #[test]
+    fn v_bit_on_line_is_allowed() {
+        let mut p = sample_project();
+        p.tools[0].cutter = ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        op_mut(&mut p).side = crate::model::Side::OnLine;
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    #[test]
+    fn ball_nose_and_engraver_on_line_are_allowed() {
+        for cutter in [ToolKind::BallNose, ToolKind::Engraver] {
+            let mut p = sample_project();
+            p.tools[0].cutter = cutter;
+            op_mut(&mut p).side = crate::model::Side::OnLine;
+            assert_eq!(validate(&p), vec![]);
+        }
+    }
+
+    /// #67 (maintainer comment): a feed over the limit fails export. The
+    /// error names the tool, the field and the limit.
+    #[test]
+    fn feed_above_limit_is_an_error() {
+        let mut p = sample_project();
+        p.tools[0].feed_mm_min = Some(1e9);
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Error);
+        assert_eq!(problems[0].field().unwrap(), "tools[t1].feed_mm_min");
+        assert_eq!(
+            message,
+            "tool `6.35 mm upcut` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"
+        );
+        p.tools[0].feed_mm_min = Some(MAX_RATE_MM_MIN);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    #[test]
+    fn plunge_above_limit_is_an_error() {
+        let mut p = sample_project();
+        p.tools[0].feed_mm_min = Some(MAX_RATE_MM_MIN);
+        p.tools[0].plunge_mm_min = Some(MAX_RATE_MM_MIN + 1.0);
+        let problems = validate(&p);
+        // Also faster than the feed, which is a warning of its own.
+        let errors = errors(&problems);
+        assert_eq!(errors.len(), 1, "{problems:?}");
+        assert_eq!(errors[0].field().unwrap(), "tools[t1].plunge_mm_min");
+    }
+
+    /// The rate limit phrase spells out `MAX_RATE_MM_MIN` by hand.
+    #[test]
+    fn rate_limit_phrase_matches_the_constant() {
+        assert!(
+            RATE.contains(&format!("{MAX_RATE_MM_MIN} mm/min")),
+            "{RATE}"
+        );
+    }
+
+    /// #67: GRBL and grblHAL clamp `S` to `$30`, so a huge speed is a
+    /// warning, not an error.
+    #[test]
+    fn rpm_above_limit_warns() {
+        let mut p = sample_project();
+        p.tools[0].rpm = Some(1_000_000);
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Warning);
+        assert_eq!(problems[0].field().unwrap(), "tools[t1].rpm");
+        assert_eq!(
+            message,
+            "tool `6.35 mm upcut` (`t1`) is set to 1000000 RPM, faster than the 60000 RPM a hobby spindle or router turns; check it for a typo"
+        );
+        p.tools[0].rpm = Some(MAX_RPM);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    #[test]
+    fn plunge_above_feed_warns() {
+        let mut p = sample_project();
+        p.tools[0].plunge_mm_min = Some(1200.0);
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Warning);
+        assert_eq!(problems[0].field().unwrap(), "tools[t1].plunge_mm_min");
+        assert_eq!(
+            message,
+            "tool `6.35 mm upcut` (`t1`) plunges at 1200 mm/min, faster than it cuts (1000 mm/min); a plunge rate is usually well below the feed rate, so check the two are not swapped"
+        );
+        p.tools[0].plunge_mm_min = Some(1000.0);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    #[test]
+    fn diameter_above_limit_warns() {
+        let mut p = sample_project();
+        p.tools[0].diameter_mm = 200.0;
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Warning);
+        assert_eq!(problems[0].field().unwrap(), "tools[t1].diameter_mm");
+        assert_eq!(
+            message,
+            "tool `6.35 mm upcut` (`t1`) is 200 mm in diameter, larger than the 50 mm of a hobby router bit; check it for a typo"
+        );
+        p.tools[0].diameter_mm = MAX_TOOL_DIAMETER_MM;
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #67: an increment of 0 writes `N0` on every line.
+    #[test]
+    fn zero_line_increment_is_rejected() {
+        let mut p = sample_project();
+        p.post_processor.program.line_number_increment = 0;
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Error);
+        assert_eq!(
+            message,
+            "post_processor.program.line_number_increment is 0, expected a value greater than 0"
+        );
+    }
+
+    /// #67: an enabled operation with no targets would write a program
+    /// that starts the spindle and stops it without moving.
+    #[test]
+    fn empty_operation_is_an_error() {
+        let mut p = sample_project();
+        op_mut(&mut p).targets.clear();
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Error);
+        assert_eq!(problems[0].field().unwrap(), "operations[o1].targets");
+        assert_eq!(
+            message,
+            "operation `Cut out` (`o1`) is enabled but has no targets, so it would cut nothing; add targets or disable it"
+        );
+        // Disabled, it is only the disabled warning (and its unused tool).
+        op_mut(&mut p).enabled = false;
+        assert!(errors(&validate(&p)).is_empty());
+    }
+
+    /// #67: only tools an enabled operation uses are checked; an unused
+    /// tool is already a warning of its own.
+    #[test]
+    fn unused_tool_gets_no_sanity_findings() {
+        let mut p = sample_project();
+        p.tools.push(Tool {
+            id: ToolId::new("t2"),
+            name: "Odd".into(),
+            cutter: ToolKind::VBit {
+                included_angle_deg: 60.0,
+            },
+            diameter_mm: 200.0,
+            feed_mm_min: Some(1e9),
+            plunge_mm_min: Some(2e9),
+            rpm: Some(1_000_000),
+            step_down_mm: Some(500.0),
+            ..crate::test_support::tool_6_35_upcut()
+        });
+        assert_eq!(
+            validate(&p),
+            vec![Problem::UnusedTool {
+                tool: ToolId::new("t2"),
+                name: "Odd".into(),
+            }]
+        );
+    }
+
+    /// #67: every sanity problem is reported in one run, in file order.
+    #[test]
+    fn sanity_problems_are_reported_together() {
+        let mut p = sample_project();
+        p.tools[0].feed_mm_min = Some(1e9);
+        p.tools[0].plunge_mm_min = Some(2e9);
+        p.tools[0].rpm = Some(1_000_000);
+        p.post_processor.program.line_number_increment = 0;
+        op_mut(&mut p).targets.clear();
+        let problems = validate(&p);
+        let fields: Vec<_> = problems.iter().filter_map(Problem::field).collect();
+        assert_eq!(
+            fields,
+            [
+                "tools[t1].feed_mm_min",
+                "tools[t1].plunge_mm_min",
+                "tools[t1].rpm",
+                "tools[t1].plunge_mm_min",
+                "operations[o1].targets",
+                "post_processor.program.line_number_increment",
+            ],
+            "{problems:?}"
+        );
+        assert_eq!(errors(&problems).len(), 4, "{problems:?}");
+    }
+
+    /// #67: the quick start's coaster, as the chapter fills it in (feed
+    /// 1500, plunge 500, 18000 RPM, 4 mm step-down, 6.35 mm end mill),
+    /// draws no sanity finding. `dreamcarve`'s CLI test
+    /// `quick_start_project_has_no_sanity_warnings` checks the real file.
+    #[test]
+    fn quick_start_values_have_no_sanity_findings() {
+        let mut p = sample_project();
+        let tool = &mut p.tools[0];
+        tool.cutter = ToolKind::EndMill;
+        tool.diameter_mm = 6.35;
+        tool.feed_mm_min = Some(1500.0);
+        tool.plunge_mm_min = Some(500.0);
+        tool.rpm = Some(18000);
+        tool.step_down_mm = None;
+        p.stock.thickness_mm = Some(11.8);
+        let op = op_mut(&mut p);
+        op.step_down_mm = Some(4.0);
+        op.depth_mm = Some(12.0);
+        op.through_cut_allowance_mm = 0.2;
+        assert_eq!(validate(&p), vec![]);
     }
 }

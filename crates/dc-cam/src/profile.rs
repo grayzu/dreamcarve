@@ -155,6 +155,16 @@ pub fn generate_profile(
             op: op.id.clone(),
             tool: op.tool.clone(),
         })?;
+    // Outside and Inside offset by half the diameter, right only for a flat
+    // end mill at every depth (#67). On the line the tool centre follows
+    // the line, so any cutter cuts it as drawn.
+    if op.side != Side::OnLine && !tool.cutter.is_flat() {
+        return Err(CamError::CutterNotFlat {
+            op: op.id.clone(),
+            tool: tool.name.clone(),
+            cutter: tool.cutter.describe(),
+        });
+    }
     let rates = rates_of(tool)?;
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
@@ -1082,6 +1092,59 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed { .. }
         ));
+    }
+
+    /// #67: Profile offsets by half the diameter, right only for a flat end
+    /// mill. Validation reports it first; the generator refuses too, so no
+    /// caller gets a wrong-size part.
+    #[test]
+    fn v_bit_in_profile_is_an_error() {
+        let mut p = rect_project();
+        p.tools[0].cutter = dc_project::ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        let op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        assert_eq!(
+            generate_profile(&p, &op).unwrap_err(),
+            CamError::CutterNotFlat {
+                op: OperationId::new("o1"),
+                tool: "6.35 mm upcut".into(),
+                cutter: "a V-bit",
+            }
+        );
+        for cutter in [
+            dc_project::ToolKind::BallNose,
+            dc_project::ToolKind::Engraver,
+        ] {
+            p.tools[0].cutter = cutter;
+            for side in [Side::Outside, Side::Inside] {
+                let op = profile_op(&p, side, CutDirection::Climb);
+                assert!(matches!(
+                    generate_profile(&p, &op).unwrap_err(),
+                    CamError::CutterNotFlat { .. }
+                ));
+            }
+        }
+    }
+
+    /// #67 (maintainer, PR #96): on the line the tool centre follows the
+    /// line, so any cutter cuts it as drawn.
+    #[test]
+    fn v_bit_on_line_is_allowed() {
+        for cutter in [
+            dc_project::ToolKind::VBit {
+                included_angle_deg: 60.0,
+            },
+            dc_project::ToolKind::BallNose,
+            dc_project::ToolKind::Engraver,
+        ] {
+            let mut p = rect_project();
+            p.tools[0].cutter = cutter;
+            let op = profile_op(&p, Side::OnLine, CutDirection::Climb);
+            let (tp, warnings) = generate(&p, &op);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_safe(&tp, &p, &op);
+        }
     }
 
     #[test]

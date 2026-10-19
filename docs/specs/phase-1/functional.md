@@ -175,6 +175,20 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   overhang in mm past each edge it crosses; the safety pass checks it
   again on the parsed program, within one unit in the last written
   decimal place. There is no setting that allows an overhang.
+- **S8** Values that are valid but dangerous are reported, never changed
+  (#67). Only enabled operations and the tools they use are checked. Export
+  fails on a feed or plunge rate above 20 000 mm/min
+  (`MAX_RATE_MM_MIN`), an Outside or Inside Profile cut with a cutter
+  other than a flat end mill (those sides offset by half the diameter,
+  which is wrong at any depth for a V-bit, ball-nose or engraving bit; On
+  line follows the line with the tool centre, so any cutter is allowed
+  there, with no error and no warning), an enabled operation with no
+  targets, and a post-processor `line_number_increment` of 0. A step-down
+  deeper than the tool's diameter, a plunge rate above the feed rate, a
+  spindle speed above 60 000 RPM (`MAX_RPM`; GRBL and grblHAL clamp `S` to
+  `$30`), and a tool diameter above 50 mm (`MAX_TOOL_DIAMETER_MM`) are
+  warnings. Each finding names the tool or operation and is located at the
+  value in the file.
 
 ## Test part
 
