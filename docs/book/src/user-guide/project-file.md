@@ -50,6 +50,22 @@ still have to set, and `check` and `export` report all of them in one run,
 so you can fix them all in one edit. A message about no one value, such as
 a tool id used twice, has no location.
 
+A file DreamCarve cannot read at all, because a field is misspelled,
+missing, or of the wrong kind, stops at the first such field. The message
+names where it is, as keys and list positions counted from 0, and its line
+and column:
+
+```text
+error: cannot load coaster.dcv: file does not match the project format at `operations[0].tabs.placement` (line 48, column 32): unknown field `bogus`, expected `count`
+```
+
+A missing field is reported at the object it belongs in, here
+`post_processor`:
+
+```text
+error: cannot load coaster.dcv: file does not match the project format at `post_processor` (line 75, column 21): missing field `vendor`
+```
+
 ## Coordinates
 
 Project coordinates follow the machine, seen from above: X to the right, Y
