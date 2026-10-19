@@ -1772,11 +1772,36 @@ mod tests {
             (ToolKind::BallNose, "a ball-nose bit"),
             (ToolKind::Engraver, "an engraving bit"),
         ] {
+            for side in [crate::model::Side::Outside, crate::model::Side::Inside] {
+                let mut p = sample_project();
+                p.tools[0].cutter = cutter.clone();
+                op_mut(&mut p).side = side;
+                let problems = validate(&p);
+                let message = only_located(&p, &problems, Severity::Error);
+                assert!(message.contains(words), "{message}");
+            }
+        }
+    }
+
+    /// #67 (maintainer, PR #96): on the line the tool centre follows the
+    /// line itself, so the cut does not depend on the cutter's shape.
+    #[test]
+    fn v_bit_on_line_is_allowed() {
+        let mut p = sample_project();
+        p.tools[0].cutter = ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        op_mut(&mut p).side = crate::model::Side::OnLine;
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    #[test]
+    fn ball_nose_and_engraver_on_line_are_allowed() {
+        for cutter in [ToolKind::BallNose, ToolKind::Engraver] {
             let mut p = sample_project();
             p.tools[0].cutter = cutter;
-            let problems = validate(&p);
-            let message = only_located(&p, &problems, Severity::Error);
-            assert!(message.contains(words), "{message}");
+            op_mut(&mut p).side = crate::model::Side::OnLine;
+            assert_eq!(validate(&p), vec![]);
         }
     }
 

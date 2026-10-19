@@ -1116,10 +1116,33 @@ mod tests {
             dc_project::ToolKind::Engraver,
         ] {
             p.tools[0].cutter = cutter;
-            assert!(matches!(
-                generate_profile(&p, &op).unwrap_err(),
-                CamError::CutterNotFlat { .. }
-            ));
+            for side in [Side::Outside, Side::Inside] {
+                let op = profile_op(&p, side, CutDirection::Climb);
+                assert!(matches!(
+                    generate_profile(&p, &op).unwrap_err(),
+                    CamError::CutterNotFlat { .. }
+                ));
+            }
+        }
+    }
+
+    /// #67 (maintainer, PR #96): on the line the tool centre follows the
+    /// line, so any cutter cuts it as drawn.
+    #[test]
+    fn v_bit_on_line_is_allowed() {
+        for cutter in [
+            dc_project::ToolKind::VBit {
+                included_angle_deg: 60.0,
+            },
+            dc_project::ToolKind::BallNose,
+            dc_project::ToolKind::Engraver,
+        ] {
+            let mut p = rect_project();
+            p.tools[0].cutter = cutter;
+            let op = profile_op(&p, Side::OnLine, CutDirection::Climb);
+            let (tp, warnings) = generate(&p, &op);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_safe(&tp, &p, &op);
         }
     }
 
