@@ -16,9 +16,13 @@
 //! Upstream fills five fields with zod defaults when absent (`builtin`,
 //! `program.operation_header`, `motion.arc_interpolation`,
 //! `canned_cycles.chip_break_drill_command`, `canned_cycles.cancel_command`).
-//! Here every field is required, so a saved file shows every setting.
+//! Here every field is required, so a saved file shows every setting. An
+//! `Option` field is required too, `null` when unset (#65): serde would
+//! otherwise read a missing one as `None`, so a schema change could slip in
+//! without a migration (ADR-0002).
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
+use std::fmt;
 
 /// Longest [`PostProcessor::file_extension`] accepted.
 pub const MAX_FILE_EXTENSION_CHARS: usize = 8;
@@ -47,6 +51,7 @@ pub struct PostProcessor {
     /// One-line description.
     pub description: String,
     /// Controller vendor, if any.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub vendor: Option<String>,
     /// True for definitions shipped with DreamCarve.
     pub builtin: bool,
@@ -71,9 +76,11 @@ pub struct PostProcessor {
     pub tool_change: ToolChange,
     /// Drilling canned cycles, or `None` if the controller has none.
     /// Parsed but unused until phase 2.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub canned_cycles: Option<CannedCycles>,
     /// Coolant commands, or `None` if the controller has none.
     /// Parsed but unused until phase 2.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub coolant: Option<Coolant>,
     /// Program-end command.
     pub stop: Stop,
@@ -129,8 +136,7 @@ pub struct NumberFormat {
 /// Decimal places for millimetre and inch output. Reads either one number
 /// for both units or an object; always writes the object, as upstream
 /// normalises it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "DecimalPlacesRepr")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DecimalPlaces {
     /// Decimal places when output is in millimetres.
     pub mm: u8,
@@ -138,13 +144,7 @@ pub struct DecimalPlaces {
     pub inch: u8,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum DecimalPlacesRepr {
-    Both(u8),
-    PerUnit(DecimalPlacesPerUnit),
-}
-
+/// The object form of [`DecimalPlaces`], read strictly.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DecimalPlacesPerUnit {
@@ -152,12 +152,43 @@ struct DecimalPlacesPerUnit {
     inch: u8,
 }
 
-impl From<DecimalPlacesRepr> for DecimalPlaces {
-    fn from(repr: DecimalPlacesRepr) -> Self {
-        match repr {
-            DecimalPlacesRepr::Both(n) => Self { mm: n, inch: n },
-            DecimalPlacesRepr::PerUnit(DecimalPlacesPerUnit { mm, inch }) => Self { mm, inch },
+/// Reads either form of [`DecimalPlaces`]. A visitor rather than an
+/// untagged enum, so a value of neither form is reported as what was
+/// expected (#65), and an error inside the object keeps its key.
+struct DecimalPlacesVisitor;
+
+impl<'de> de::Visitor<'de> for DecimalPlacesVisitor {
+    type Value = DecimalPlaces;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "a whole number from 0 to 255 for both units, or an object with `mm` and `inch`",
+        )
+    }
+
+    fn visit_u64<E: de::Error>(self, n: u64) -> Result<DecimalPlaces, E> {
+        let n =
+            u8::try_from(n).map_err(|_| E::invalid_value(de::Unexpected::Unsigned(n), &self))?;
+        Ok(DecimalPlaces { mm: n, inch: n })
+    }
+
+    fn visit_i64<E: de::Error>(self, n: i64) -> Result<DecimalPlaces, E> {
+        match u64::try_from(n) {
+            Ok(n) => self.visit_u64(n),
+            Err(_) => Err(E::invalid_value(de::Unexpected::Signed(n), &self)),
         }
+    }
+
+    fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<DecimalPlaces, A::Error> {
+        let DecimalPlacesPerUnit { mm, inch } =
+            DecimalPlacesPerUnit::deserialize(de::value::MapAccessDeserializer::new(map))?;
+        Ok(DecimalPlaces { mm, inch })
+    }
+}
+
+impl<'de> Deserialize<'de> for DecimalPlaces {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(DecimalPlacesVisitor)
     }
 }
 
@@ -166,8 +197,10 @@ impl From<DecimalPlacesRepr> for DecimalPlaces {
 #[serde(deny_unknown_fields)]
 pub struct UnitCommands {
     /// Command selecting millimetres, for example `G21`.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub mm_command: Option<String>,
     /// Command selecting inches, for example `G20`.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub inch_command: Option<String>,
 }
 
@@ -196,6 +229,7 @@ pub struct ProgramFormat {
 #[serde(deny_unknown_fields)]
 pub struct WorkCoordinates {
     /// Command selecting the WCS, for example `G54`; `None` emits nothing.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub select_command: Option<String>,
 }
 
@@ -312,16 +346,21 @@ pub enum RetractMode {
 #[serde(deny_unknown_fields)]
 pub struct CannedCycles {
     /// Plain drill cycle, for example `G81`.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub drill_command: Option<String>,
     /// Drill with dwell, for example `G82`.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub drill_with_dwell_command: Option<String>,
     /// Peck drill, for example `G83`.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub peck_drill_command: Option<String>,
     /// Chip-break drill, for example `G73`.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub chip_break_drill_command: Option<String>,
     /// Word carrying the peck step, for example `Q`.
     pub peck_step_word: String,
     /// Retract mode, or `None` to emit none.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub retract_mode: Option<RetractMode>,
     /// Cycle cancel, for example `G80`.
     pub cancel_command: String,

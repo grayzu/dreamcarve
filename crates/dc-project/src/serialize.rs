@@ -8,7 +8,9 @@
 //! settings first and the geometry last, each vertex on one line
 //! ([`crate::layout`]), and a trailing newline. [`load`] parses bytes, reads `version`, migrates to
 //! [`crate::CURRENT_VERSION`], deserializes strictly (unknown fields and missing
-//! fields both fail), and then validates.
+//! fields both fail), and then validates. A schema error names the path to
+//! the bad value and, when the file has a value there, its line and column
+//! (#65).
 //!
 //! `load` fails only when the bytes cannot become a [`Project`]. Validation
 //! problems, errors included, come back beside the project in [`Loaded`] so
@@ -16,12 +18,13 @@
 //! that machine the project must refuse it when [`Loaded::has_errors`].
 
 use crate::layout::DcvFormatter;
-use crate::locate::TextPosition;
+use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::migrate;
-use crate::model::Project;
+use crate::model::{ProfileOp, Project};
 use crate::validate::{Problem, validate};
 use serde::Serialize;
 use serde_json::Value;
+use serde_path_to_error::Segment;
 
 /// Why bytes could not be loaded as a project.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -157,11 +160,7 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
     })?;
     let version = read_version(&root)?;
     let root = migrate(root, version)?;
-    let project: Project = serde_json::from_value(root).map_err(|e| LoadError::Schema {
-        path: String::new(),
-        at: None,
-        message: e.to_string(),
-    })?;
+    let project = deserialize_project(&root, bytes)?;
     let problems = validate(&project);
     // serde_json rejects NaN and out-of-range numbers while parsing, so this
     // is a backstop for the "reject non-finite at the boundary" rule.
@@ -169,6 +168,113 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         return Err(LoadError::NonFinite { field });
     }
     Ok(Loaded { project, problems })
+}
+
+/// The serde error that stopped a deserialization, with the path to it.
+type PathError = serde_path_to_error::Error<serde_json::Error>;
+
+/// Deserializes the migrated `root` strictly. On a mismatch, says where it
+/// is (#65): the path from serde_path_to_error, and the line and column of
+/// that path in `bytes`, the file as the user has it, found with
+/// [`SourceMap`]. The same lookup serves a file at the current version and
+/// a migrated one; a path only the migration created has no position.
+fn deserialize_project(root: &Value, bytes: &[u8]) -> Result<Project, LoadError> {
+    let err = match serde_path_to_error::deserialize::<_, Project>(root) {
+        Ok(project) => return Ok(project),
+        Err(err) => err,
+    };
+    let mut path = path_segments(&err);
+    let mut message = err.inner().to_string();
+    if let Some(inner) = operation_error(root, &path) {
+        path.extend(path_segments(&inner));
+        message = inner.inner().to_string();
+    }
+    let at = std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| SourceMap::parse(text).ok())
+        .and_then(|map| schema_error_position(&map, &path, &message));
+    Err(LoadError::Schema {
+        path: path_text(&path),
+        at,
+        message,
+    })
+}
+
+/// The path of `err` as [`PathSegment`]s, up to the first step that is
+/// not a key or an index.
+fn path_segments(err: &PathError) -> Vec<PathSegment> {
+    err.path()
+        .iter()
+        .map_while(|segment| match segment {
+            Segment::Map { key } => Some(PathSegment::Key(key.clone())),
+            // An externally tagged variant is the key of a one-key object.
+            Segment::Enum { variant } => Some(PathSegment::Key(variant.clone())),
+            Segment::Seq { index } => Some(PathSegment::Index(*index)),
+            Segment::Unknown => None,
+        })
+        .collect()
+}
+
+/// serde reads an internally tagged enum such as
+/// [`Operation`](crate::model::Operation) whole before
+/// it picks the variant, so serde_path_to_error's path stops at
+/// `operations[i]`. Reading that operation's fields again as its variant's
+/// struct gives the error with the rest of the path. `None` when `path` is
+/// not an operation or the error is not inside its fields.
+fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
+    let [PathSegment::Key(key), PathSegment::Index(i)] = path else {
+        return None;
+    };
+    if key != "operations" {
+        return None;
+    }
+    let mut fields = root.get(key)?.get(*i)?.as_object()?.clone();
+    let kind = fields.shift_remove("kind")?;
+    let fields = Value::Object(fields);
+    // One arm per `Operation` variant, by its `kind`.
+    match kind.as_str()? {
+        "profile" => serde_path_to_error::deserialize::<_, ProfileOp>(&fields).err(),
+        _ => None,
+    }
+}
+
+/// Where the value at `path` starts in the file. An unknown field inside
+/// an internally tagged enum is not in the path (see [`operation_error`]),
+/// so when `message` names one that the object at `path` has, the
+/// position is that field's.
+fn schema_error_position(
+    map: &SourceMap,
+    path: &[PathSegment],
+    message: &str,
+) -> Option<TextPosition> {
+    let unknown = message
+        .strip_prefix("unknown field `")
+        .and_then(|rest| rest.split('`').next());
+    if let Some(field) = unknown {
+        let mut field_path = path.to_vec();
+        field_path.push(PathSegment::Key(field.to_owned()));
+        if let Some(at) = map.position(&field_path) {
+            return Some(at);
+        }
+    }
+    map.position(path)
+}
+
+/// `path` written as keys and indices: `operations[0].tabs.placement`.
+fn path_text(path: &[PathSegment]) -> String {
+    let mut out = String::new();
+    for segment in path {
+        match segment {
+            PathSegment::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(key);
+            }
+            PathSegment::Index(i) => out.push_str(&format!("[{i}]")),
+        }
+    }
+    out
 }
 
 /// ` at `path` (line L, column C)`, as much of it as is known, for

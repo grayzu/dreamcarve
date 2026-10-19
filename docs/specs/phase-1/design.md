@@ -191,8 +191,15 @@ serde_json keeps no spans, and records the 1-based line and column
 (in characters) of every value; `locate(field)` and
 `position(&[PathSegment])` look one up. It reads the file as the user has
 it, so positions stay right after hand reformatting or reordering. The CLI
-turns them into `coaster.dcv:9:21:` prefixes. Schema errors (#65) can reuse
-`position` with serde's path.
+turns them into `coaster.dcv:9:21:` prefixes. Schema errors (#65) reuse
+`position`: `load` deserializes through `serde_path_to_error`, and
+`LoadError::Schema` carries the path (`operations[0].tabs.placement`) and,
+when the file as written has a value there, its line and column. One lookup
+serves current and migrated files. serde reads the internally tagged
+`Operation` whole, which loses the path inside it, so `load` reads a
+failing operation's fields again as its variant's struct to recover it.
+Every `Option` field, the post-processor's included, is required on load
+(`null` when unset).
 
 ### dc-cam
 
