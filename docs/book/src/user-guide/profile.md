@@ -112,7 +112,9 @@ cut counts as outside on a part's outline and inside on a hole.
 ## What the program does
 
 For each part, the holes are cut first and the outline last, so a part cut
-through is freed only at the end. For each outline:
+through is freed only at the end. A part inside another part's hole is cut
+before that hole, however deep the nesting, so it is never cut out of loose
+waste. Otherwise parts are cut in drawing order. For each outline:
 
 1. Rapid to safe Z, then to the start of the outline.
 2. Plunge to the first pass at the plunge rate.

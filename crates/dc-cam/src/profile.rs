@@ -22,7 +22,9 @@ use crate::tabs::{
 };
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
-use dc_geometry::{Contour, GeometryError, GeometryWarning, Point3, Polyline, nest, offset};
+use dc_geometry::{
+    Contour, GeometryError, GeometryWarning, Point3, Polyline, Region, nest, offset,
+};
 use dc_project::{CutDirection, ProfileOp, Project, Side, Tool};
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
@@ -118,8 +120,10 @@ fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// Each target instance's closed profiles are placed by its transform,
 /// nested into parts and holes, offset by the tool radius per `op.side`, and
 /// oriented per [`traversal_is_ccw`]. Within each part its holes are cut
-/// before its outer contour, so the part is freed last. Each tool-centre
-/// contour is cut at every depth pass before the next: one rapid to its
+/// before its outer contour, so the part is freed last, and a part inside
+/// another part's hole is cut before that hole, at every nesting depth;
+/// otherwise parts follow the drawing order. Each tool-centre contour is
+/// cut at every depth pass before the next: one rapid to its
 /// start at safe Z, then per pass a straight descent at the plunge rate and
 /// one lap at the feed rate ending at the start, then a rapid retract to
 /// safe Z. Arc segments stay arcs.
@@ -216,7 +220,7 @@ pub fn generate_profile(
     let radius_mm = tool.diameter_mm / 2.0;
     // Each tool-centre path with the shape it cuts, for warnings.
     let mut paths: Vec<(Polyline, Option<&ShapeRef>)> = Vec::new();
-    for region in &regions {
+    for region in cut_order(&regions) {
         // Holes first, so a through-cut part is freed only by its last contour.
         let ordered = region
             .holes()
@@ -280,6 +284,18 @@ pub fn generate_profile(
         });
     }
     Ok((toolpath, warnings))
+}
+
+/// The order to cut `regions` in (invariant O1,
+/// `docs/research/toolpath-ordering.md`): deepest nest depth first, so a
+/// part inside another part's hole is cut out before that hole frees the
+/// waste it sits in, at every depth. Regions at the same depth keep
+/// `nest`'s drawing order, so the result depends only on the input.
+fn cut_order(regions: &[Region]) -> Vec<&Region> {
+    let mut ordered: Vec<&Region> = regions.iter().collect();
+    // Stable, so drawing order breaks ties.
+    ordered.sort_by_key(|region| std::cmp::Reverse(region.depth()));
+    ordered
 }
 
 /// Places every profile of every target instance, in target then profile

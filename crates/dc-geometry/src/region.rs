@@ -20,6 +20,7 @@ use std::f64::consts::{PI, TAU};
 pub struct Region {
     outer: Contour,
     holes: Vec<Contour>,
+    depth: usize,
 }
 
 impl Region {
@@ -34,6 +35,14 @@ impl Region {
     #[must_use]
     pub fn holes(&self) -> &[Contour] {
         &self.holes
+    }
+
+    /// How many input contours enclose [`Region::outer`]: 0 for a part
+    /// inside nothing, 2 for an island in a hole of a depth-0 part, and so
+    /// on (always even). A region that encloses another has a smaller depth.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.depth
     }
 }
 
@@ -193,6 +202,7 @@ fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
                 Region {
                     outer: with_ccw(contour, true),
                     holes: Vec::new(),
+                    depth: depths.get(index).copied().unwrap_or(0),
                 },
             )),
             Role::HoleOf(parent) => holes.push((parent, with_ccw(contour, false))),
@@ -396,6 +406,22 @@ mod tests {
         assert_approx_eq!(area(regions[1].outer()), PI * 9.0, 1e-9);
         assert!(regions[1].outer().is_ccw());
         assert!(regions[1].holes().is_empty());
+        assert_eq!(regions[0].depth(), 0);
+        assert_eq!(regions[1].depth(), 2, "an island is at depth 2");
+    }
+
+    #[test]
+    fn region_depth_counts_every_enclosing_contour() {
+        // Drawn innermost first, beside an unrelated part.
+        let regions = nest_ok(vec![
+            rect(15.0, 15.0, 10.0, 10.0),
+            rect(100.0, 0.0, 10.0, 10.0),
+            rect(10.0, 10.0, 20.0, 20.0),
+            rect(5.0, 5.0, 30.0, 30.0),
+            rect(0.0, 0.0, 40.0, 40.0),
+        ]);
+        let depths: Vec<usize> = regions.iter().map(Region::depth).collect();
+        assert_eq!(depths, [0, 2, 0], "apart, island, outer, in input order");
     }
 
     #[test]
