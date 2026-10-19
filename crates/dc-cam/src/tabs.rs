@@ -1464,6 +1464,155 @@ mod tests {
         assert_no_vertical_step_in_final_pass(&tp);
     }
 
+    /// A 100 × 40 mm bar cut outside, with one tab per `tabs`.
+    fn bar(tabs: Option<TabSpec>) -> (Project, ProfileOp) {
+        job(
+            "Bar",
+            vec![Polyline::rect(Point::new(-50.0, -20.0), 100.0, 40.0)],
+            Side::Outside,
+            tabs,
+        )
+    }
+
+    /// One smooth tab centred `BAR_TAB_MM` along the bar's tool-centre
+    /// path: the middle of a long straight edge.
+    const BAR_TAB_MM: f64 = 60.0;
+
+    fn bar_smooth_tab() -> (Project, ProfileOp) {
+        bar(Some(tab_spec(
+            TabPlacement::AtDistances {
+                distances_mm: vec![BAR_TAB_MM],
+            },
+            TabShape::Smooth,
+        )))
+    }
+
+    /// The final lap as a Z profile along the path: (distance, Z) at each
+    /// vertex, Z linear in distance between them.
+    fn lap_profile(lap: &[XyMove]) -> Vec<(f64, f64)> {
+        let mut out = Vec::new();
+        let mut at_mm = 0.0;
+        for m in lap {
+            out.push((at_mm, m.from.z));
+            at_mm += m.length_mm;
+            out.push((at_mm, m.mv.to.z));
+        }
+        out
+    }
+
+    /// The material a flat bit of radius `DIAMETER_MM / 2` leaves above the
+    /// stock bottom at `x_mm` along the path: the lowest the tool's
+    /// bottom reaches over every centre position within one radius.
+    fn material_mm(profile: &[(f64, f64)], x_mm: f64) -> f64 {
+        let r = DIAMETER_MM / 2.0;
+        let (lo, hi) = (x_mm - r, x_mm + r);
+        let z_at = |s: f64| {
+            profile
+                .windows(2)
+                .find(|w| w[0].0 <= s && s <= w[1].0 && w[1].0 > w[0].0)
+                .map(|w| w[0].1 + (w[1].1 - w[0].1) * (s - w[0].0) / (w[1].0 - w[0].0))
+                .unwrap()
+        };
+        profile
+            .iter()
+            .filter(|(s, _)| (lo..=hi).contains(s))
+            .map(|(_, z)| *z)
+            .chain([z_at(lo), z_at(hi)])
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    #[test]
+    fn smooth_tab_plateau_is_bit_diameter() {
+        let (p, op) = bar_smooth_tab();
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lap = final_lap(&tp);
+        // The tab sits on a straight edge.
+        let lifted = runs(&lap, |m| m.z_max() > TOL);
+        assert_eq!(lifted.len(), 1, "{lifted:?}");
+        let mut at_mm = 0.0;
+        for m in &lap {
+            let inside = at_mm >= lifted[0].start_mm - TOL
+                && at_mm + m.length_mm <= lifted[0].start_mm + lifted[0].length_mm + TOL;
+            if inside {
+                assert_eq!(m.mv.kind, MoveKind::Linear, "{m:?}");
+            }
+            at_mm += m.length_mm;
+        }
+        // The final pass holds the tab top for at least one bit diameter,
+        // centred on the tab.
+        let raised = raised_runs(&lap);
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert!(
+            raised[0].length_mm >= DIAMETER_MM - TOL,
+            "plateau {} < {DIAMETER_MM}",
+            raised[0].length_mm
+        );
+        assert_approx_eq!(
+            raised[0].start_mm + raised[0].length_mm / 2.0,
+            BAR_TAB_MM,
+            TOL
+        );
+    }
+
+    #[test]
+    fn smooth_tab_bridge_is_full_height() {
+        let (p, op) = bar_smooth_tab();
+        let (tp, _) = generate(&p, &op);
+        let profile = lap_profile(&final_lap(&tp));
+        let peak = (-400..=400)
+            .map(|i| material_mm(&profile, BAR_TAB_MM + f64::from(i) * 0.01))
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert_approx_eq!(peak, TAB_Z_MM, 0.01);
+    }
+
+    #[test]
+    fn smooth_tab_bridge_is_triangle() {
+        let half_mm = TAB_WIDTH_MM / 2.0;
+        let triangle = |x: f64| TAB_Z_MM * (1.0 - x.abs() / half_mm).max(0.0);
+        let samples = [0.0, 1.0, -1.0, 2.0, -2.5, 3.0, -3.5, 4.0, -4.0, 5.0, -6.0];
+
+        // On a straight edge.
+        let (p, op) = bar_smooth_tab();
+        let (tp, _) = generate(&p, &op);
+        let profile = lap_profile(&final_lap(&tp));
+        for x in samples {
+            assert_approx_eq!(material_mm(&profile, BAR_TAB_MM + x), triangle(x), 0.01);
+        }
+
+        // On the coaster's arcs: four tabs, each the same triangle centred
+        // on its distance, each lifted over width + diameter, every move
+        // along the path at the feed rate, with no vertical step.
+        let (p, op) = coaster(Some(tab_spec(
+            TabPlacement::Count { count: 4 },
+            TabShape::Smooth,
+        )));
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lap = final_lap(&tp);
+        let lifted = runs(&lap, |m| m.z_max() > TOL);
+        assert_eq!(lifted.len(), 4, "{lifted:?}");
+        for run in &lifted {
+            assert_approx_eq!(run.length_mm, TAB_WIDTH_MM + DIAMETER_MM, CHORD_TOL);
+        }
+        let profile = lap_profile(&lap);
+        let l = coaster_path_mm();
+        for k in 0..4 {
+            let centre = l * (2.0 * f64::from(k) + 1.0) / 8.0;
+            for x in samples {
+                assert_approx_eq!(material_mm(&profile, centre + x), triangle(x), 0.01);
+            }
+        }
+        assert!(
+            lap.iter()
+                .all(|m| m.from.z >= -1e-12 && m.mv.to.z <= TAB_Z_MM + 1e-12)
+        );
+        for m in &lap {
+            assert_approx_eq!(m.mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
+        }
+        assert_no_vertical_step_in_final_pass(&tp);
+    }
+
     #[test]
     fn tabs_above_cut_depth_warn() {
         // The cut stops at Z 6, above a 3 mm tab: the tabs never apply.
