@@ -217,12 +217,12 @@ To move a shape on the stock, change `e` and `f`.
 | --- | --- |
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
-| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`; Profile uses only the diameter. |
-| `diameter_mm` | Cutting diameter. Profile offsets the path by half of it. |
+| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside or Inside Profile cuts only with `"end_mill"`: it offsets by half the diameter, which is wrong for any other bit. On line, any cutter is allowed. |
+| `diameter_mm` | Cutting diameter. Profile offsets the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used in phase 1. |
-| `feed_mm_min` | Feed rate while cutting. **Required.** |
-| `plunge_mm_min` | Feed rate straight down, and onto and off square tabs. **Required.** |
-| `rpm` | Spindle speed. **Required**, except with [manual spindle control](post-processors.md#manual-spindle-control), where it is only shown in the pause message. |
+| `feed_mm_min` | Feed rate while cutting. **Required.** At most 20 000. |
+| `plunge_mm_min` | Feed rate straight down, and onto and off square tabs. **Required.** At most 20 000; above `feed_mm_min` is a warning. |
+| `rpm` | Spindle speed. **Required**, except with [manual spindle control](post-processors.md#manual-spindle-control), where it is only shown in the pause message. Above 60 000 is a warning. |
 | `step_down_mm` | Default depth per pass, used when the operation sets none. |
 | `step_over_fraction` | For future operations. Phase 1 ignores it. |
 
@@ -231,7 +231,8 @@ that has an unset feed rate, plunge rate or (with automatic spindle control)
 spindle speed is an error in `check`, and `export` refuses until it is set.
 A tool no enabled operation uses is a warning instead, and its unset values
 are not reported; enable an operation that uses it and they are errors
-again.
+again. The limits above also apply only to a tool an enabled operation
+uses; see [Values that look wrong](profile.md#values-that-look-wrong).
 
 ## `operations`
 
@@ -302,3 +303,11 @@ Errors stop export. Warnings do not.
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
+| A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
+| An Outside or Inside Profile whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
+| An enabled operation with no `targets` | A spindle speed above 60 000 RPM |
+| A post-processor `line_number_increment` of 0 | A tool diameter above 50 mm |
+
+Apart from the line-number increment, the checks in the last four rows look
+only at enabled operations and the tools they use. See [Values that look
+wrong](profile.md#values-that-look-wrong).

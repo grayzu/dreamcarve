@@ -33,7 +33,7 @@ phase 1.
 | `tool` | The id of the tool to cut with. |
 | `side` | `"outside"`, `"inside"`, or `"on_line"`. See [Side](#side). |
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required:** `init` leaves it `null`, and export refuses until you set it. To cut through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
-| `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, export fails. |
+| `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, export fails. More than the tool's diameter is a warning. |
 | `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. 0 by default. See [Cutting through](#cutting-through). |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
@@ -134,6 +134,24 @@ sentence, after the operation's id, with lengths rounded to 0.01 mm.
 | "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
 | "the tool paths of ... and ... cut into each other" | Two shapes are closer than the bit needs to cut between them, so cutting one gouges the other. See below. |
+
+### Values that look wrong
+
+`check` and `export` also look for values that are allowed but probably a
+mistake. They check only enabled operations and the tools those use. Each
+finding names the operation or tool and starts with where the value is in
+the file, as in `coaster.dcv:22:22:`. DreamCarve never changes the value
+for you.
+
+| Message says | Kind | Meaning |
+| --- | --- | --- |
+| "... cuts ... mm per pass, deeper than the ... mm diameter of tool ..." | Warning | The step-down in effect (the operation's, or else the tool's) is more than the bit's diameter. Passes that deep can break the bit. |
+| "... plunges at ... mm/min, faster than it cuts ..." | Warning | The tool's `plunge_mm_min` is above its `feed_mm_min`. They may be swapped. |
+| "... is set to ... RPM, faster than the 60000 RPM ..." | Warning | The spindle speed is above 60 000 RPM. GRBL and grblHAL run the spindle at its maximum instead, and with manual spindle control the speed is only a hint, so this does not stop export. |
+| "... is ... mm in diameter, larger than the 50 mm ..." | Warning | The tool's `diameter_mm` is above 50 mm. Check it for a typo. |
+| "feed_mm_min is ..., expected a value greater than 0 and at most 20000 mm/min" (or `plunge_mm_min`) | Error | No hobby machine moves faster than 20 000 mm/min, so the value is almost surely a typo. Export fails. |
+| "... cuts with tool ..., a V-bit; Profile offsets the path by half the diameter ..." | Error | With `side` `"outside"` or `"inside"`, Profile needs a flat end mill (`"cutter": "end_mill"`): it offsets the path by half the diameter, so with a V-bit, ball-nose or engraving bit the part comes out the wrong size. Export fails. With `"on_line"` the bit's centre follows the line, so any cutter is allowed. |
+| "... is enabled but has no targets ..." | Error | The operation would cut nothing. Add targets or set `enabled` to `false`. |
 
 ### Shapes too close together
 
