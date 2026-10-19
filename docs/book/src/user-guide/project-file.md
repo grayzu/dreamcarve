@@ -208,7 +208,7 @@ To move a shape on the stock, change `e` and `f`.
   "feed_mm_min": 1500.0,
   "plunge_mm_min": 500.0,
   "rpm": 18000,
-  "step_down_mm": null,
+  "step_down_mm": 4.0,
   "step_over_fraction": null
 }
 ```
@@ -223,12 +223,14 @@ To move a shape on the stock, change `e` and `f`.
 | `feed_mm_min` | Feed rate while cutting. **Required.** At most 20 000. |
 | `plunge_mm_min` | Feed rate straight down, and onto and off square tabs. **Required.** At most 20 000; above `feed_mm_min` is a warning. |
 | `rpm` | Spindle speed. **Required**, except with [manual spindle control](post-processors.md#manual-spindle-control), where it is only shown in the pause message. Above 60 000 is a warning. |
-| `step_down_mm` | Default depth per pass, used when the operation sets none. |
+| `step_down_mm` | Depth per pass, used when the operation sets none. **Required** when an enabled operation that uses the tool sets none; `init` leaves it `null`. |
 | `step_over_fraction` | For future operations. Phase 1 ignores it. |
 
 DreamCarve has no default feeds. A tool that an enabled operation uses and
 that has an unset feed rate, plunge rate or (with automatic spindle control)
 spindle speed is an error in `check`, and `export` refuses until it is set.
+So is an unset `step_down_mm` when an enabled operation using the tool sets
+no `step_down_mm` of its own; it is reported once, at the tool.
 A tool no enabled operation uses is a warning instead, and its unset values
 are not reported; enable an operation that uses it and they are errors
 again. The limits above also apply only to a tool an enabled operation
@@ -248,7 +250,7 @@ A list of operations, cut in order. Phase 1 has one kind, Profile:
   "tool": "t1",
   "side": "outside",
   "depth_mm": 12.0,
-  "step_down_mm": 4.0,
+  "step_down_mm": null,
   "direction": "climb",
   "through_cut_allowance_mm": 0.2,
   "safe_z_mm": 5.0,
@@ -263,7 +265,8 @@ A list of operations, cut in order. Phase 1 has one kind, Profile:
 
 Each field is explained in [Profile operation](profile.md), and `tabs` in
 [Tabs](tabs.md). `init` leaves `depth_mm` as `null`; export refuses until
-you set it.
+you set it. It also leaves `step_down_mm` as `null`, so the operation uses
+the tool's depth per pass; set it only to override the tool's.
 
 ## `post_processor`
 

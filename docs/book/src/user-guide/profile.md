@@ -14,7 +14,7 @@ phase 1.
   "tool": "t1",
   "side": "outside",
   "depth_mm": 12.0,
-  "step_down_mm": 4.0,
+  "step_down_mm": null,
   "direction": "climb",
   "through_cut_allowance_mm": 0.2,
   "safe_z_mm": 5.0,
@@ -33,7 +33,7 @@ phase 1.
 | `tool` | The id of the tool to cut with. |
 | `side` | `"outside"`, `"inside"`, or `"on_line"`. See [Side](#side). |
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required:** `init` leaves it `null`, and export refuses until you set it. To cut through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
-| `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, export fails. More than the tool's diameter is a warning. |
+| `step_down_mm` | The most to cut in one pass. `null`, as `init` writes it, uses the tool's `step_down_mm`; if both are `null`, `check` reports the tool's as not set and export refuses. More than the tool's diameter is a warning. |
 | `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. 0 by default. See [Cutting through](#cutting-through). |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |

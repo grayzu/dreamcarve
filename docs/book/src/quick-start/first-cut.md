@@ -49,6 +49,7 @@ coaster.dcv:9:21: stock.thickness_mm is not set (mm)
 coaster.dcv:22:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
 coaster.dcv:23:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
 coaster.dcv:24:14: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:25:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
 coaster.dcv:40:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
 Next: edit coaster.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check coaster.dcv`.
 ```
@@ -67,8 +68,8 @@ reads). `init` fills it with these defaults:
 | --- | --- |
 | Stock | The drawing's bounds plus 10 mm on each side: 110 × 110 mm here, **no thickness** |
 | Work zero | X and Y at the stock's bottom-left corner, Z at the stock top |
-| Tool `t1`, named "Set me" | 6.35 mm end mill, 2 flutes, **no feed, plunge rate or spindle speed** |
-| Operation `op1` | A Profile of every closed shape: outside the line, climb, **no depth**, 4 mm passes, safe Z 5 mm |
+| Tool `t1`, named "Set me" | 6.35 mm end mill, 2 flutes, **no feed, plunge rate, spindle speed or depth per pass** |
+| Operation `op1` | A Profile of every closed shape: outside the line, climb, **no depth**, passes as deep as the tool's depth per pass, safe Z 5 mm |
 | Tabs | 4 tabs, 8 mm wide and 3 mm tall, square |
 | Post-processor | grblHAL, millimetres |
 
@@ -90,12 +91,13 @@ coaster.dcv:9:21: error: stock.thickness_mm is not set (mm)
 coaster.dcv:22:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
 coaster.dcv:23:24: error: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
 coaster.dcv:24:14: error: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:25:23: error: tools[t1].step_down_mm is not set (mm) for tool `Set me`
 coaster.dcv:40:19: error: operations[op1].depth_mm is not set (mm) for operation `Profile`
 error: export of coaster.dcv failed; nothing was written
 ```
 
-DreamCarve never guesses your material's thickness, the cut depth, a feed
-rate or a spindle speed. A wrong thickness puts every pass, and sometimes
+DreamCarve never guesses your material's thickness, the cut depth, the
+depth per pass, a feed rate or a spindle speed. A wrong thickness puts every pass, and sometimes
 every rapid move, at the wrong height; a wrong feed can break a bit or
 start a fire. So `export` refuses and writes nothing until you supply every
 value yourself. It lists all of them at once, so one edit can fix them all.
@@ -131,6 +133,7 @@ set is near the top, before the shapes. The file starts like this:
       "feed_mm_min": null,
       "plunge_mm_min": null,
       "rpm": null,
+      "step_down_mm": null,
 ```
 
 The operations follow the tools, and after them the shapes.
@@ -164,21 +167,24 @@ plus 0.2.
 
 ### The bit
 
-Find the tool, under `"tools"`. Its three rates are `null`:
+Find the tool, under `"tools"`. Its three rates and its depth per pass
+are `null`:
 
 ```json
 "feed_mm_min": null,
 "plunge_mm_min": null,
 "rpm": null,
+"step_down_mm": null,
 ```
 
-Change those three lines to:
+Change those four lines to:
 
 <!-- doc-test: edit coaster.dcv -->
 ```json
 "feed_mm_min": 1500.0,
 "plunge_mm_min": 500.0,
 "rpm": 18000,
+"step_down_mm": 4.0,
 ```
 
 Save the file.
@@ -188,6 +194,14 @@ Save the file.
 - `plunge_mm_min` is the **plunge rate**: how fast it moves straight down
   into the material, in millimetres per minute.
 - `rpm` is the spindle speed, in revolutions per minute.
+- `step_down_mm` is the **depth per pass**: the most the bit cuts deeper
+  on each trip around the outline, in millimetres. The 12 mm cut takes
+  three passes of 4 mm. Keep it at most the bit's diameter, 6.35 mm here;
+  `check` warns about a deeper one, which can break the bit.
+
+The operation has a `step_down_mm` of its own, also `null`. Leave it: an
+operation's value overrides the tool's, and `null` means it uses the
+tool's.
 
 These are starting values for this bit in plywood. Your machine may need
 others. If you are not sure, ask the maker of your bit or your machine.

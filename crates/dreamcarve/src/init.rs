@@ -5,12 +5,14 @@
 //! a `.dcv` project with the defaults of `docs/specs/phase-1/design.md`,
 //! "CLI (dreamcarve)": stock = drawing bounds plus a 10 mm margin on each
 //! side; origin bottom-left at the stock top; one placeholder tool "Set me"
-//! (6.35 mm, 2 flutes, no feeds); one outside climb Profile of every closed
-//! shape in 4 mm passes, safe Z 5 mm, four 8 × 3 mm rectangular tabs.
+//! (6.35 mm, 2 flutes, no feeds or step-down); one outside climb Profile of
+//! every closed shape, safe Z 5 mm, four 8 × 3 mm rectangular tabs.
 //!
-//! The stock thickness, the Profile depth, the feeds and the spindle speed
-//! are left unset (`null`), so `export` refuses the project until the user
-//! fills them in (S3, #64): `init` cannot know the material or the machine.
+//! The stock thickness, the Profile depth, the feeds, the spindle speed and
+//! the step-down are left unset (`null`), so `export` refuses the project
+//! until the user fills them in (S3, #64, #98): `init` cannot know the
+//! material or the machine. The step-down is the tool's: the operation's,
+//! which would override it, stays `null` too.
 //! `init` lists each of them as `coaster.dcv:line:column: …`, a link an
 //! editor or terminal opens at the `null` to replace (#76).
 
@@ -51,7 +53,6 @@ const TOOL_DIAMETER_MM: f64 = 6.35;
 const TOOL_FLUTES: u8 = 2;
 /// The one operation `init` writes, a Profile, and its defaults.
 const OPERATION_ID: &str = "op1";
-const STEP_DOWN_MM: f64 = 4.0;
 const SAFE_Z_MM: f64 = 5.0;
 const TAB_COUNT: u8 = 4;
 const TAB_WIDTH_MM: f64 = 8.0;
@@ -184,7 +185,7 @@ fn default_project(
         tool: tool.id.clone(),
         side: Side::Outside,
         depth_mm: None,
-        step_down_mm: Some(STEP_DOWN_MM),
+        step_down_mm: None,
         direction: CutDirection::Climb,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: SAFE_Z_MM,

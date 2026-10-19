@@ -118,7 +118,8 @@ pub enum Problem {
         /// The disabled operation.
         operation: OperationId,
     },
-    /// A tool has no value for a field export needs (feed, plunge or RPM).
+    /// A tool has no value for a field export needs (feed, plunge or RPM),
+    /// or no step-down while an enabled operation sets none either (#98).
     /// An error since #76, so `check` lists every unset value in one run.
     ToolValueUnset {
         /// The tool.
@@ -570,6 +571,16 @@ impl Validator {
             .filter(|op| op.enabled())
             .map(Operation::tool)
             .collect();
+        // Tools an enabled operation takes its step-down from (#98).
+        let step_down_from_tool: BTreeSet<&ToolId> = p
+            .operations
+            .iter()
+            .filter(|op| op.enabled())
+            .filter_map(|op| {
+                let Operation::Profile(op) = op;
+                op.step_down_mm.is_none().then_some(&op.tool)
+            })
+            .collect();
         let mut seen = BTreeSet::new();
         for tool in &p.tools {
             let in_use = used.contains(&tool.id);
@@ -642,8 +653,18 @@ impl Validator {
                     feed_mm_min,
                 });
             }
-            if let Some(step) = tool.step_down_mm {
-                self.tool_positive(tool, "step_down_mm", step);
+            // Unset is an error only when an enabled operation falls back on
+            // it; one error per tool, however many operations do (#98).
+            match tool.step_down_mm {
+                Some(step) => self.tool_positive(tool, "step_down_mm", step),
+                None if step_down_from_tool.contains(&tool.id) => {
+                    self.problems.push(Problem::ToolValueUnset {
+                        tool: tool.id.clone(),
+                        name: tool.name.clone(),
+                        field: "step_down_mm",
+                    });
+                }
+                None => {}
             }
             if let Some(fraction) = tool.step_over_fraction {
                 let field = "step_over_fraction";
@@ -2121,10 +2142,11 @@ mod tests {
         tool.feed_mm_min = Some(1500.0);
         tool.plunge_mm_min = Some(500.0);
         tool.rpm = Some(18000);
-        tool.step_down_mm = None;
+        // On the tool since #98; the operation's is left unset.
+        tool.step_down_mm = Some(4.0);
         p.stock.thickness_mm = Some(11.8);
         let op = op_mut(&mut p);
-        op.step_down_mm = Some(4.0);
+        op.step_down_mm = None;
         op.depth_mm = Some(12.0);
         op.through_cut_allowance_mm = 0.2;
         assert_eq!(validate(&p), vec![]);

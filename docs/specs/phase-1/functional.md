@@ -28,9 +28,10 @@ as G-code they can trust.
    default stock sized to the drawing's bounds, a default origin, one
    placeholder tool, one Profile operation targeting all closed shapes, and
    the grblHAL post-processor embedded. The placeholder tool's feed, plunge
-   rate and spindle speed, the stock thickness, and the Profile depth are
-   unset (`null`): `check` reports them and `export` refuses until the user
-   sets them (#64).
+   rate, spindle speed and step-down, the stock thickness, and the Profile
+   depth are unset (`null`): `check` reports them and `export` refuses until
+   the user sets them (#64). The Profile's own step-down is `null` too, so
+   it takes the tool's (#98).
 2. The user can edit the `.dcv` by hand: stock dimensions, origin, tool
    geometry and feeds, Profile side (inside, outside, on line), total depth,
    depth per pass, cut direction (climb or conventional), tabs (count, width,
