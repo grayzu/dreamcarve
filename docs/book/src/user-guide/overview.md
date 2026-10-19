@@ -70,11 +70,13 @@ larger than 6000 mm on a side. See
 
 ### `dreamcarve export <dcv>`
 
-Generates the toolpaths and writes the program.
+Generates the toolpaths and writes the program. When the enabled
+operations use more than one tool, it writes one program per tool run, by
+default ([Projects with more than one tool](post-processors.md#projects-with-more-than-one-tool)).
 
 | Option | Meaning |
 | --- | --- |
-| `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). |
+| `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). With one program per tool run, its stem and extension name them: `-o job.nc` writes `job-1-T1.nc`, `job-2-T2.nc`, … |
 | `--post <ID>` | Switch the project to another post-processor, save the project with it, then export. The project is checked against the new post-processor, not the old one. |
 
 Export writes nothing unless every step succeeds. It refuses a project with
@@ -97,8 +99,11 @@ Before you start: fit T1 Set me and set work zero with it.
 
 With [manual spindle control](post-processors.md#manual-spindle-control)
 the list shows the "Turn the router ON" and "Turn the router OFF"
-pauses, under "Pauses and tool changes". A grblHAL program with more than
-one bit also lists each tool change there, such as
+pauses, under "Pauses and tool changes". A project with more than one bit
+lists its programs in the order to run them, with what to do before each,
+then each program's extents and pauses. With
+[one program with M6](post-processors.md#one-program-with-m6) (grblHAL
+only), the list shows each tool change instead, such as
 `Fit T2 3 mm downcut. Set Z zero, then resume.`
 
 ### `dreamcarve check <dcv>`
@@ -107,7 +112,8 @@ Runs everything `export` does except writing the file, and prints every
 error and warning. It also lists open paths, which Profile does not cut.
 Each message about one value starts with its file, line and column, and
 every value still unset is reported in the same run. When the program
-could be built, it prints the program's extents as `export` does.
+could be built, it prints the program's extents as `export` does, for each
+program when there is one per tool run.
 
 ### `dreamcarve posts`
 

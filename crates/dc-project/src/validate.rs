@@ -30,7 +30,9 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::model::{Operation, OriginXy, ProfileOp, Project, Side, TabPlacement, Tool, ToolKind};
-use crate::post_processor::{MAX_FILE_EXTENSION_CHARS, SpindleControl, is_safe_file_extension};
+use crate::post_processor::{
+    MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
+};
 use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -175,6 +177,13 @@ pub enum Problem {
         /// The extension found.
         extension: String,
     },
+    /// The tool-change mode is `"m6"`, but the post-processor's tool
+    /// change has no `M6`, so it cannot change tools within a program
+    /// (#95). GRBL 1.1 has none.
+    ToolChangeModeNeedsM6 {
+        /// The post-processor's id.
+        post: String,
+    },
     /// An enabled operation cuts deeper per pass than its tool is wide
     /// (#67). A warning: the program is still what was asked for.
     StepDownAboveDiameter {
@@ -289,7 +298,8 @@ impl Problem {
             | Self::StockThicknessUnset
             | Self::OperationValueUnset { .. }
             | Self::ToolOutOfRange { .. }
-            | Self::UnsafeFileExtension { .. } => Severity::Error,
+            | Self::UnsafeFileExtension { .. }
+            | Self::ToolChangeModeNeedsM6 { .. } => Severity::Error,
         }
     }
 
@@ -347,6 +357,9 @@ impl Problem {
                 ..
             } => Some(format!("definitions[{definition}].profiles[{profile}]")),
             Self::UnsafeFileExtension { .. } => Some("post_processor.file_extension".to_owned()),
+            Self::ToolChangeModeNeedsM6 { .. } => {
+                Some("post_processor.tool_change.mode".to_owned())
+            }
             Self::StepDownAboveDiameter { field, .. } => Some(field.clone()),
             Self::CutterNotFlat { operation, .. } => Some(format!("operations[{operation}].tool")),
             Self::OperationHasNoTargets { operation, .. } => {
@@ -453,6 +466,10 @@ impl fmt::Display for Problem {
                 f,
                 "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_FILE_EXTENSION_CHARS} letters or digits and not `dcv`",
                 extension.escape_default()
+            ),
+            Self::ToolChangeModeNeedsM6 { post } => write!(
+                f,
+                "tool_change.mode is \"m6\", but post-processor `{post}` has no M6 in its tool_change.commands, so it cannot change tools within one program; use \"separate_programs\""
             ),
             Self::StepDownAboveDiameter {
                 operation,
@@ -793,6 +810,13 @@ impl Validator {
         if !is_safe_file_extension(&p.post_processor.file_extension) {
             self.problems.push(Problem::UnsafeFileExtension {
                 extension: p.post_processor.file_extension.clone(),
+            });
+        }
+
+        let tool_change = &p.post_processor.tool_change;
+        if tool_change.mode == ToolChangeMode::M6 && !tool_change.has_m6() {
+            self.problems.push(Problem::ToolChangeModeNeedsM6 {
+                post: p.post_processor.id.clone(),
             });
         }
 
@@ -1701,6 +1725,32 @@ mod tests {
             p.post_processor.file_extension = extension.into();
             assert_eq!(validate(&p), vec![], "`{extension}` is allowed");
         }
+    }
+
+    /// #95: `"m6"` needs a definition whose tool change has `M6`. GRBL 1.1
+    /// has none (`definitions/README.md`, "Tool changes"), so the mode is an
+    /// error located at the field, whatever the operations. With an `M6`
+    /// line, as grblHAL has, it is fine.
+    #[test]
+    fn m6_mode_without_m6_command_is_an_error() {
+        let mut p = sample_project();
+        p.post_processor.tool_change.mode = crate::ToolChangeMode::M6;
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].is_error(), "{problems:?}");
+        let field = problems[0].field().unwrap();
+        assert_eq!(field, "post_processor.tool_change.mode");
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("M6") && message.contains("separate_programs"),
+            "{message}"
+        );
+        let text = crate::save(&p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        assert!(map.locate(&field).is_some(), "{field} in {text}");
+
+        p.post_processor.tool_change.commands = vec!["M5".into(), "T{toolNumber} M6".into()];
+        assert_eq!(validate(&p), vec![]);
     }
 
     // #67: sanity checks on dangerous but valid values.

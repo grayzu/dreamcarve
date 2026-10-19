@@ -30,9 +30,13 @@
 //!   end. Z is unknown after the router-on pause, so the program retracts
 //!   to safe Z again before it moves in XY (#68).
 //! - There is no stop for the first tool: the user fits it and sets work
-//!   zero with it before starting the program (#57). A later tool needs a
-//!   definition whose tool change has `M6` (grblHAL); otherwise export
-//!   fails. The change retracts to safe Z and stops the spindle, then
+//!   zero with it before starting the program (#57). By default a program
+//!   has one tool: [`emit_programs`] writes one program per tool run, which
+//!   every sender and controller stops between (#95). Only with the
+//!   post-processor's `tool_change.mode` `"m6"` and a definition whose tool
+//!   change has `M6` (grblHAL) does one program change tools; otherwise
+//!   [`emit`] refuses a second tool. The change retracts to safe Z and
+//!   stops the spindle, then
 //!   writes DreamCarve's own `T<n> M6 (MSG, Fit T<n> <name>. Set Z zero,
 //!   then resume.)` in place of the definition's `M6` line, leaving out
 //!   lines that only pause and `pause_after_change`: one stop per change.
@@ -56,7 +60,8 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use dc_cam::{FeedField, MoveKind, Toolpath};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
 use dc_project::{
-    ArcFormat, OperationId, PostProcessor, ProfileOp, Project, SpindleControl, Tool, ToolId, Units,
+    ArcFormat, OperationId, PostProcessor, ProfileOp, Project, SpindleControl, Tool,
+    ToolChangeMode, ToolId, Units, is_m6_line,
 };
 
 use crate::ExportError;
@@ -131,11 +136,54 @@ pub const MIN_DECIMAL_PLACES_MM: u8 = 2;
 /// Fewest decimal places accepted in inches: one unit is 0.0254 mm.
 pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 
-/// Emits a program for the enabled operations in `ops`, each with its tool
-/// and its toolpath (project space, mm), using the project's embedded
+/// One operation to emit: the operation, its tool, and its toolpath.
+type OpEntry = (ProfileOp, Tool, Toolpath);
+
+/// Emits the programs `export` writes for the enabled operations in `ops`,
+/// as [`emit`] does, split as the post-processor's `tool_change.mode` says
+/// (#95):
+///
+/// - `"separate_programs"`: one program per tool run, a run being
+///   consecutive operations with the same tool, in operation order.
+///   Operations are never regrouped by tool, which would change the cut
+///   order. Each program is exactly what [`emit`] writes for its run alone:
+///   a one-tool program with no `M6` and no `M61`, checked by the safety
+///   pass on its own, with its own extents. A one-tool project is one
+///   program, the same as [`emit`]'s.
+/// - `"m6"`: the one program [`emit`] writes, with `T<n> M6` at each tool
+///   change.
+///
+/// Warnings are those of every program, disabled operations once.
+///
+/// # Errors
+///
+/// As for [`emit`]; the first program that fails fails the whole call, so
+/// a caller never has some of the programs.
+pub fn emit_programs(
+    project: &Project,
+    ops: &[OpEntry],
+    date: &str,
+) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError> {
+    let (enabled, mut warnings) = enabled_ops(ops)?;
+    let runs: Vec<&[&OpEntry]> = match project.post_processor.tool_change.mode {
+        ToolChangeMode::M6 => vec![enabled.as_slice()],
+        ToolChangeMode::SeparatePrograms => enabled.chunk_by(|a, b| a.1.id == b.1.id).collect(),
+    };
+    let mut programs = Vec::with_capacity(runs.len());
+    for run in runs {
+        let (program, run_warnings) = emit_enabled(project, run, date)?;
+        warnings.extend(run_warnings);
+        programs.push(program);
+    }
+    Ok((programs, warnings))
+}
+
+/// Emits one program for the enabled operations in `ops`, each with its
+/// tool and its toolpath (project space, mm), using the project's embedded
 /// post-processor, machine origin, and display units. `date` fills the
 /// `{date}` placeholder; the caller supplies it so output is
-/// deterministic.
+/// deterministic. `export` calls [`emit_programs`], which splits a
+/// multi-tool project as the post-processor's tool-change mode says.
 ///
 /// The emitted text is parsed back and checked against safety rules S1–S7
 /// before it is returned.
@@ -143,17 +191,24 @@ pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 /// # Errors
 ///
 /// A missing feed, plunge rate, or (with automatic spindle control)
-/// spindle speed names the tool and field; more than one tool with a
-/// definition that has no `M6` names the tools; any safety violation in the
+/// spindle speed names the tool and field; more than one tool, unless the
+/// tool-change mode is `"m6"` and the definition has `M6`, names the tools
+/// ([`ExportError::ToolChangeNotSupported`]); any safety violation in the
 /// emitted program is an error, never a warning. See [`ExportError`].
 pub fn emit(
     project: &Project,
-    ops: &[(ProfileOp, Tool, Toolpath)],
+    ops: &[OpEntry],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
-    let post = &project.post_processor;
-    let control = post.feed_speed.spindle_control;
-    let manual = control == SpindleControl::Manual;
+    let (enabled, mut warnings) = enabled_ops(ops)?;
+    let (program, emitted) = emit_enabled(project, &enabled, date)?;
+    warnings.extend(emitted);
+    Ok((program, warnings))
+}
+
+/// The enabled entries of `ops`, and a warning for each disabled one.
+/// Fails when none is enabled.
+fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), ExportError> {
     let mut warnings = Vec::new();
     let mut enabled = Vec::with_capacity(ops.len());
     for entry in ops {
@@ -168,11 +223,24 @@ pub fn emit(
     if enabled.is_empty() {
         return Err(ExportError::NoEnabledOperations);
     }
+    Ok((enabled, warnings))
+}
+
+/// [`emit`] for operations already known to be enabled.
+fn emit_enabled(
+    project: &Project,
+    enabled: &[&OpEntry],
+    date: &str,
+) -> Result<(Program, Vec<ExportWarning>), ExportError> {
+    let post = &project.post_processor;
+    let control = post.feed_speed.spindle_control;
+    let manual = control == SpindleControl::Manual;
+    let mut warnings = Vec::new();
 
     // Step 1: preconditions, all checked before a line is written. The
     // post-processor is the last line and trusts no caller.
     let mut planned = Vec::with_capacity(enabled.len());
-    for (op, tool, toolpath) in enabled {
+    for &(op, tool, toolpath) in enabled {
         let rates = Rates::of(tool, control)?;
         let number = project
             .tools
@@ -186,12 +254,14 @@ pub fn emit(
         planned.push((op, tool, toolpath, rates, number));
     }
     // #57: the program stops for every tool after the first, and only `M6`
-    // stops where the user may jog to set Z zero.
+    // stops where the user may jog to set Z zero. #95: and only when the
+    // user chose one program with `M6`; otherwise each tool run is a
+    // program of its own (`emit_programs`).
     let changes_tools = planned
         .iter()
         .zip(planned.iter().skip(1))
         .any(|(a, b)| a.1.id != b.1.id);
-    if changes_tools && !uses_m6(post) {
+    if changes_tools && !changes_tools_in_program(post) {
         let mut tools: Vec<String> = Vec::new();
         for &(_, tool, ..) in &planned {
             if !tools.contains(&tool.name) {
@@ -354,7 +424,7 @@ pub fn emit(
             let fit = tool_change_message(number, &tool.name);
             let mut changed = false;
             for line in &post.tool_change.commands {
-                if changes_tool(line) {
+                if is_m6_line(line) {
                     if !changed {
                         w.change_tool(number, &fit);
                         changed = true;
@@ -563,17 +633,11 @@ const TOOL_CHANGE_COMMAND: &str = "M6";
 /// grblHAL's "set current tool number" (`M61 Q<n>`): no stop, no motion.
 const SET_TOOL_COMMAND: &str = "M61";
 
-/// Whether `post` can change tools within a program: its tool change has
-/// an `M6` line. GRBL 1.1 has none (#57).
-pub(crate) fn uses_m6(post: &PostProcessor) -> bool {
-    post.tool_change.commands.iter().any(|l| changes_tool(l))
-}
-
-/// Whether template `line` has an `M6` code word.
-fn changes_tool(line: &str) -> bool {
-    code_words(line)
-        .iter()
-        .any(|w| matches!(w.as_str(), "M6" | "M06"))
+/// Whether a program for `post` may change tools: the user chose one
+/// program with `M6` (`tool_change.mode` `"m6"`, #95) and its tool change
+/// has an `M6` line, which GRBL 1.1 lacks (#57).
+pub(crate) fn changes_tools_in_program(post: &PostProcessor) -> bool {
+    post.tool_change.mode == ToolChangeMode::M6 && post.tool_change.has_m6()
 }
 
 /// The message of the pause before a tool's last cut is followed by a
@@ -1305,7 +1369,9 @@ mod tests {
     use dc_cam::{FeedField, Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3, assert_approx_eq};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
-    use dc_project::{Operation, OperationId, OriginZ, SpindleControl, ToolId, Units};
+    use dc_project::{
+        Operation, OperationId, OriginZ, SpindleControl, ToolChangeMode, ToolId, Units,
+    };
 
     const DATE: &str = "2026-10-15";
 
@@ -1781,8 +1847,11 @@ mod tests {
         }
     }
 
-    /// The sample operation, then the same with a second tool.
+    /// The sample operation, then the same with a second tool. The
+    /// project's tool-change mode becomes `"m6"`, the one program with a
+    /// tool change that [`emit`] writes (#95).
     fn two_tool_ops(project: &mut Project) -> Vec<(ProfileOp, Tool, Toolpath)> {
+        project.post_processor.tool_change.mode = ToolChangeMode::M6;
         project.tools.push(second_tool());
         let mut second = profile_op(project);
         second.id = OperationId::new("o2");
@@ -2593,5 +2662,64 @@ mod tests {
             ops[1].0.tool = ops[0].1.id.clone();
             emit(&project, &ops, DATE).unwrap();
         }
+    }
+
+    /// #95: with `"separate_programs"`, the bundled default, a two-tool
+    /// project is one program per tool run, on grblHAL and on GRBL. Each is
+    /// the program its run's operations alone emit: no `M6`, no `M61`, one
+    /// spindle start at its tool's speed, its own extents, and it passed
+    /// the safety pass on its own. Output is the same on every run.
+    #[test]
+    fn tool_run_program_passes_safety_alone() {
+        for post in ["grblhal", "grbl"] {
+            let mut project = project_with(post);
+            let ops = two_tool_ops(&mut project);
+            project.post_processor.tool_change.mode = ToolChangeMode::SeparatePrograms;
+            let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+            assert_eq!(programs.len(), 2, "{post}: one program per tool run");
+            for (k, program) in programs.iter().enumerate() {
+                let text = &program.text;
+                for word in ["M6", "M61"] {
+                    assert!(
+                        !text.lines().any(|l| has_word(l, word)),
+                        "{post} program {k} has {word}: {text}"
+                    );
+                }
+                let starts: Vec<&str> = text.lines().filter(|l| has_word(l, "M3")).collect();
+                let rpm = ops[k].1.rpm.unwrap();
+                assert_eq!(starts, [format!("M3 S{rpm}")], "{post} program {k}");
+                assert_eq!(program.first_tool.number, k + 1, "{post} program {k}");
+                let (alone, _) = emit(&project, &ops[k..=k], DATE).unwrap();
+                assert_eq!(program, &alone, "{post} program {k} is its run alone");
+            }
+            let (again, _) = emit_programs(&project, &ops, DATE).unwrap();
+            assert_eq!(again, programs, "{post}: deterministic");
+        }
+    }
+
+    /// #95: with `"m6"` the programs are the one [`emit`] writes, with its
+    /// `T2 M6` tool change, byte for byte.
+    #[test]
+    fn m6_mode_emits_one_program_with_m6() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+        let (single, _) = emit(&project, &ops, DATE).unwrap();
+        assert_eq!(programs, [single]);
+    }
+
+    /// #95: [`emit`] writes one program, so with `"separate_programs"` it
+    /// refuses a second tool rather than write an `M6` the user did not
+    /// choose.
+    #[test]
+    fn emit_refuses_tool_change_in_separate_programs_mode() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        project.post_processor.tool_change.mode = ToolChangeMode::SeparatePrograms;
+        let err = emit(&project, &ops, DATE).unwrap_err();
+        assert!(
+            matches!(err, ExportError::ToolChangeNotSupported { .. }),
+            "{err:?}"
+        );
     }
 }

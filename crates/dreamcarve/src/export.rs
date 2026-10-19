@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `dreamcarve export <dcv>`: loads the project, generates every enabled
-//! operation's toolpath with `dc-cam`, emits the program with `dc-gcode`,
-//! and writes it. Nothing is written unless every step succeeds: the
-//! program (and, with `--post`, the updated project) is staged in a
-//! temporary file and renamed into place at the end.
+//! operation's toolpath with `dc-cam`, emits the programs with `dc-gcode`,
+//! and writes them. A project whose operations use one tool is one
+//! program, `<stem>.<ext>`. With more than one tool, the post-processor's
+//! `tool_change.mode` decides (#95): `"separate_programs"` writes one
+//! program per tool run, `<stem>-<k>-T<n>.<ext>`, and `"m6"` one program
+//! with `M6` tool changes. Nothing is written unless every step succeeds:
+//! every program (and, with `--post`, the updated project) is staged in a
+//! temporary file, and all are renamed into place at the end.
 //!
 //! [`build`] is the whole pipeline without writing; `check` runs it too, so
 //! `check` reports exactly what `export` would. It validates the project it
@@ -16,14 +20,15 @@
 //! `coaster.dcv:9:21: error: …`, the form editors and terminals turn into a
 //! link to that line and column (#76).
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dc_cam::generate_profile;
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, ExportWarning, Program, emit};
-use dc_project::{Operation, Project, Severity, SourceMap, Units, validate};
+use dc_gcode::{AxisRange, ExportWarning, Program, emit_programs};
+use dc_project::{Operation, Project, Severity, SourceMap, ToolChangeMode, Units, validate};
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
 
@@ -84,17 +89,18 @@ impl ProjectFile<'_> {
     }
 }
 
-/// The pipeline's result: the program when there were no errors.
+/// The pipeline's result: the programs when there were no errors.
 pub struct Built {
-    /// The emitted program, `None` when any error was found.
-    pub program: Option<Program>,
+    /// The emitted programs, in the order they are run: one per tool run
+    /// or one in all (#95). Empty when any error was found.
+    pub programs: Vec<Program>,
     /// Errors and warnings.
     pub findings: Findings,
 }
 
 /// Validates `project`, generates every enabled operation's toolpath, and
-/// emits the program, collecting every error and warning on the way.
-/// `date` fills the program header's `{date}`.
+/// emits the programs, collecting every error and warning on the way.
+/// `date` fills each program header's `{date}`.
 pub fn build(project: &Project, date: &str) -> Built {
     let mut findings = Findings::default();
     for problem in validate(project) {
@@ -110,7 +116,7 @@ pub fn build(project: &Project, date: &str) -> Built {
     if !findings.errors.is_empty() {
         // Generators must not see a project validation rejects.
         return Built {
-            program: None,
+            programs: Vec::new(),
             findings,
         };
     }
@@ -142,27 +148,24 @@ pub fn build(project: &Project, date: &str) -> Built {
     }
     if !findings.errors.is_empty() {
         return Built {
-            program: None,
+            programs: Vec::new(),
             findings,
         };
     }
 
-    match emit(project, &ops, date) {
-        Ok((program, warnings)) => {
+    match emit_programs(project, &ops, date) {
+        Ok((programs, warnings)) => {
             findings.warnings.extend(
                 warnings
                     .iter()
                     .map(|w| Finding::plain(describe_export_warning(w))),
             );
-            Built {
-                program: Some(program),
-                findings,
-            }
+            Built { programs, findings }
         }
         Err(e) => {
             findings.errors.push(Finding::plain(e.to_string()));
             Built {
-                program: None,
+                programs: Vec::new(),
                 findings,
             }
         }
@@ -209,34 +212,34 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
 
-    let Built { program, findings } = build(&project, &date);
+    let Built { programs, findings } = build(&project, &date);
     for warning in &findings.warnings {
         eprintln!("{}", file.describe("warning", warning));
     }
     for error in &findings.errors {
         eprintln!("{}", file.describe("error", error));
     }
-    let Some(program) = program else {
+    if programs.is_empty() {
         return Err(Failure::error(format!(
             "export of {} failed; nothing was written",
             args.dcv.display()
         )));
-    };
+    }
 
-    let output = match &args.output {
-        Some(path) => path.clone(),
-        // `build` validated the extension of the post-processor it emitted
-        // with, so it is safe to append (`is_safe_file_extension`).
-        None => args.dcv.with_extension(&program.extension),
-    };
-    if same_file(&output, &args.dcv) {
+    let outputs = output_paths(args, &programs)?;
+    if outputs.iter().any(|output| same_file(output, &args.dcv)) {
         return Err(Failure::error(format!(
             "refusing to write the program over the project file {}",
             args.dcv.display()
         )));
     }
-    // Stage everything before moving anything into place.
-    let staged_program = StagedFile::write(&output, program.text.as_bytes())?;
+    // Stage everything before moving anything into place. A failed write
+    // drops the files staged so far, which removes them.
+    let staged_programs = outputs
+        .iter()
+        .zip(&programs)
+        .map(|(output, program)| StagedFile::write(output, program.text.as_bytes()))
+        .collect::<Result<Vec<_>, _>>()?;
     let staged_project = match &args.post {
         Some(_) => {
             let text = dc_project::save(&project).map_err(Failure::error)?;
@@ -244,13 +247,51 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         }
         None => None,
     };
-    staged_program.commit()?;
+    for staged in staged_programs {
+        staged.commit()?;
+    }
     if let Some(staged) = staged_project {
         staged.commit()?;
     }
 
-    report(&project, &program, &output, args);
+    match (programs.as_slice(), outputs.as_slice()) {
+        ([program], [output]) => report(&project, program, output, args),
+        _ => report_runs(&project, &programs, &outputs, args),
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Where each program goes. One program goes to `-o`, or to the project's
+/// path with the post-processor's extension. Programs of tool runs (#95)
+/// go beside it, named `<stem>-<k>-T<n>.<ext>`: `<k>` the run's place,
+/// `<n>` its tool's number, `<stem>` and `<ext>` those of that one path.
+fn output_paths(args: &ExportArgs, programs: &[Program]) -> Result<Vec<PathBuf>, Failure> {
+    let single = match (&args.output, programs.first()) {
+        (Some(path), _) => path.clone(),
+        // `build` validated the extension of the post-processor it emitted
+        // with, so it is safe to append (`is_safe_file_extension`).
+        (None, Some(program)) => args.dcv.with_extension(&program.extension),
+        (None, None) => args.dcv.clone(),
+    };
+    if programs.len() < 2 {
+        return Ok(vec![single]);
+    }
+    let stem = single
+        .file_stem()
+        .ok_or_else(|| Failure::error(format!("{} is not a file path", single.display())))?;
+    Ok(programs
+        .iter()
+        .enumerate()
+        .map(|(k, program)| {
+            let mut name = OsString::from(stem);
+            name.push(format!("-{}-T{}", k + 1, program.first_tool.number));
+            if let Some(extension) = single.extension() {
+                name.push(".");
+                name.push(extension);
+            }
+            single.with_file_name(name)
+        })
+        .collect())
 }
 
 /// True if `a` and `b` name the same existing file.
@@ -261,10 +302,11 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Prints the export summary: the file written, one line per exported
-/// operation, the program's extents (#62), the tool to fit and set work zero with before starting (#57),
-/// then every pause and tool change with its line number and message, because
-/// the controller or sender may not show the message (design step 8).
+/// Prints the export summary of one program: the file written, one line
+/// per exported operation, the program's extents (#62), the tool to fit and
+/// set work zero with before starting (#57), then every pause and tool
+/// change with its line number and message, because the controller or
+/// sender may not show the message (design step 8).
 fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs) {
     println!(
         "Wrote {} ({} lines, post-processor {}).",
@@ -272,6 +314,65 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
         program.text.lines().count(),
         project.post_processor.id
     );
+    report_post_and_operations(project, args);
+    for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
+        println!("{line}");
+    }
+    // #57: the program does not stop for the first tool.
+    println!(
+        "Before you start: fit T{}{} and set work zero with it.",
+        program.first_tool.number,
+        name_suffix(&program.first_tool.name)
+    );
+    report_pauses(program, "");
+    // #95: the user chose one program with M6; it stops only if the
+    // sender lets M6 through or stops for it itself.
+    if project.post_processor.tool_change.mode == ToolChangeMode::M6 && changes_tools(project) {
+        println!(
+            "This program changes tools with M6, so your sender must stop at M6; see \"One program with M6\" in the post-processors chapter."
+        );
+    }
+}
+
+/// Prints the export summary of the programs of tool runs (#95): the files
+/// in the order to run them, with what to do before each, then one line
+/// per exported operation, then each program's extents (#62) and pauses.
+fn report_runs(project: &Project, programs: &[Program], outputs: &[PathBuf], args: &ExportArgs) {
+    println!("Wrote {} programs; run them in this order:", programs.len());
+    for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
+        let tool = &program.first_tool;
+        let fit = format!("fit T{}{}", tool.number, name_suffix(&tool.name));
+        // The first program sets work zero; a later one keeps X and Y and
+        // sets Z zero with its new bit, whose length differs (#43).
+        let before = if k == 0 {
+            format!("{fit} and set work zero (X, Y and Z) with it.")
+        } else {
+            format!("{fit} and set Z zero with it. Keep X and Y zero.")
+        };
+        println!(
+            "  {}. {}  Before you start: {before}",
+            k + 1,
+            output.display()
+        );
+    }
+    println!("Post-processor {}.", project.post_processor.id);
+    report_post_and_operations(project, args);
+    for (program, output) in programs.iter().zip(outputs) {
+        println!(
+            "{} ({} lines):",
+            output.display(),
+            program.text.lines().count()
+        );
+        for line in describe_extents(project, program, tool_radius_mm(project, program)) {
+            println!("  {line}");
+        }
+        report_pauses(program, "  ");
+    }
+}
+
+/// Prints that `--post` updated the project, then one line per exported
+/// operation.
+fn report_post_and_operations(project: &Project, args: &ExportArgs) {
     if args.post.is_some() {
         println!(
             "Updated {} to use post-processor {}.",
@@ -297,39 +398,74 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
             op.targets.len(),
         );
     }
-    for line in describe_extents(project, program) {
-        println!("{line}");
+}
+
+/// Prints every pause and tool change of `program`, each line after
+/// `indent`.
+fn report_pauses(program: &Program, indent: &str) {
+    if program.pauses.is_empty() {
+        return;
     }
-    // #57: the program does not stop for the first tool.
-    let first = &program.first_tool;
-    let name = if first.name.is_empty() {
+    println!("{indent}Pauses and tool changes; resume each with cycle start:");
+    for pause in &program.pauses {
+        let message = if pause.message.is_empty() {
+            "(no message)"
+        } else {
+            pause.message.as_str()
+        };
+        println!("{indent}  line {}: {message}", pause.line);
+    }
+}
+
+/// ` <name>`, or nothing for an empty name.
+fn name_suffix(name: &str) -> String {
+    if name.is_empty() {
         String::new()
     } else {
-        format!(" {}", first.name)
-    };
-    println!(
-        "Before you start: fit T{}{name} and set work zero with it.",
-        first.number
-    );
-    if !program.pauses.is_empty() {
-        println!("Pauses and tool changes; resume each with cycle start:");
-        for pause in &program.pauses {
-            let message = if pause.message.is_empty() {
-                "(no message)"
-            } else {
-                pause.message.as_str()
-            };
-            println!("  line {}: {message}", pause.line);
-        }
+        format!(" {name}")
     }
+}
+
+/// Whether consecutive enabled operations of `project` use different tools.
+fn changes_tools(project: &Project) -> bool {
+    let tools: Vec<_> = project
+        .operations
+        .iter()
+        .filter(|op| op.enabled())
+        .map(Operation::tool)
+        .collect();
+    tools.windows(2).any(|pair| pair.first() != pair.get(1))
+}
+
+/// The radius of the largest tool an enabled operation uses, mm: how far
+/// the cutter's edge reaches past the tool centre in a program that uses
+/// them all.
+pub fn largest_tool_radius_mm(project: &Project) -> f64 {
+    project
+        .operations
+        .iter()
+        .filter(|op| op.enabled())
+        .filter_map(|op| project.tools.iter().find(|t| &t.id == op.tool()))
+        .map(|t| t.diameter_mm / 2.0)
+        .fold(0.0, f64::max)
+}
+
+/// The radius of the one tool of `program`, a tool run's program (#95), mm.
+pub fn tool_radius_mm(project: &Project, program: &Program) -> f64 {
+    program
+        .first_tool
+        .number
+        .checked_sub(1)
+        .and_then(|i| project.tools.get(i))
+        .map_or(0.0, |t| t.diameter_mm / 2.0)
 }
 
 /// The program's extents in machine coordinates (#62), written as the
 /// program writes numbers: first the tool centre's, every axis, then in X
-/// and Y widened by the largest exported tool's radius, which is where the
-/// cutter's edge reaches. Users place clamps from them. Empty for a
-/// program that never moves.
-pub fn describe_extents(project: &Project, program: &Program) -> Vec<String> {
+/// and Y widened by `radius_mm`, the largest radius of the program's tools,
+/// which is where the cutter's edge reaches. Users place clamps from them.
+/// Empty for a program that never moves.
+pub fn describe_extents(project: &Project, program: &Program, radius_mm: f64) -> Vec<String> {
     let extents = &program.extents;
     let units = extents.units;
     let format = &project.post_processor.number_format;
@@ -360,13 +496,6 @@ pub fn describe_extents(project: &Project, program: &Program) -> Vec<String> {
         "Extents (machine coordinates, {unit}, tool centre): {}",
         centre.join(", ")
     )];
-    let radius_mm = project
-        .operations
-        .iter()
-        .filter(|op| op.enabled())
-        .filter_map(|op| project.tools.iter().find(|t| &t.id == op.tool()))
-        .map(|t| t.diameter_mm / 2.0)
-        .fold(0.0, f64::max);
     let edge = ranges(
         radius_mm / mm_per_unit(units),
         &[("X", extents.x), ("Y", extents.y)],

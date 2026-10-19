@@ -15,7 +15,7 @@ user edits .dcv ─────────────────────�
                        dc-cam::profile::generate(project, op) ─▶ Toolpath (project coords, mm, Y-up)
                                                  │
                                                  ▼
-                       dc-gcode::emit(project, toolpaths) ─▶ Program (text) + warnings
+                       dc-gcode::emit_programs(project, toolpaths) ─▶ Programs (text) + warnings
                                                  │
                                                  ▼
                                    safety checks on the parsed Program
@@ -91,7 +91,7 @@ figures, are in the user guide chapter "Shapes, holes, and islands".
 ### dc-project
 
 ```rust
-pub const CURRENT_VERSION: u32 = 4;
+pub const CURRENT_VERSION: u32 = 5;
 
 pub struct Project {
     pub version: u32,
@@ -170,7 +170,12 @@ key order and layout, and output stays byte-for-byte deterministic.
 (`"xy": { "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`); version 3 made this
 change (#46). Version 4 made `stock.thickness_mm` and each Profile's
 `depth_mm` nullable, so `init` can leave them unset (#64); the migration
-carries every version 3 number over unchanged.
+carries every version 3 number over unchanged. Version 5 added
+`post_processor.tool_change.mode` (`ToolChangeMode::{SeparatePrograms,
+M6}`, `"separate_programs"` | `"m6"`); the migration sets
+`"separate_programs"` (#95). Validation reports `"m6"` on a definition
+whose `tool_change.commands` has no `M6` line as
+`Problem::ToolChangeModeNeedsM6`, located at the field.
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
@@ -256,8 +261,16 @@ pub struct AxisRange { pub min: f64, pub max: f64 }
 pub struct Pause { pub line: usize, pub message: String }
 pub struct FirstTool { pub number: usize, pub name: String }
 pub fn emit(project: &Project, ops: &[(ProfileOp, Tool, Toolpath)]) -> Result<(Program, Vec<Warning>), ExportError>;
+pub fn emit_programs(project: &Project, ops: &[(ProfileOp, Tool, Toolpath)]) -> Result<(Vec<Program>, Vec<Warning>), ExportError>;
 pub fn parse_motion(text: &str) -> Vec<MachineMove>;   // test-only helper, re-exported for safety tests
 ```
+
+`emit` writes one program. `emit_programs` is what `export` calls: with
+`tool_change.mode` `"separate_programs"` it splits the enabled operations
+into tool runs (consecutive operations with the same tool, in operation
+order; never regrouped) and returns `emit` of each run, so each program
+passed the safety pass on its own and has its own extents; with `"m6"` it
+returns `emit` of all of them. Any error fails the whole call (#95).
 
 `ExportError::{MissingFeed{tool, field}, MissingRpm{tool}, BelowMaterialBottom{op, z}, RapidBelowSafeZ, NoEnabledOperations, UnknownPostProcessor{id}, BundledDefinition{file, source}}`.
 `BundledDefinition` means a bundled JSON file failed to parse, which only a
@@ -363,9 +376,12 @@ Inputs: project, op. Output: toolpath in project space.
    header's lines that only set modal state (`G17`, `G20`/`G21`, `G54`–`G59`,
    `G90`, `G94`), plus any of those three added, form the setup that is
    written again after every pause that more motion follows (#55). If the
-   enabled operations change tools, and the post-processor's tool change
-   has no `M6` line, export fails with `ToolChangeNotSupported`, naming the
-   tools; if it has one, `M61 Q{n}` for the first tool follows the setup,
+   enabled operations change tools, and the post-processor's
+   `tool_change.mode` is not `"m6"` or its tool change has no `M6` line,
+   `emit` fails with `ToolChangeNotSupported`, naming the tools
+   (`emit_programs` never asks it to in `"separate_programs"` mode, and
+   validation refuses `"m6"` without `M6`); otherwise `M61 Q{n}` for the
+   first tool follows the setup,
    because grblHAL skips an `M6` for the tool it holds and keeps that
    number from the previous job (#57).
 5. Per operation: `operationHeader` with `{operationIndex}`,
@@ -430,7 +446,8 @@ Inputs: project, op. Output: toolpath in project space.
    the last written place is a full circle to the controller and fails
    as `ExportError::FullCircleArc`, so S7 and the extents never see one.
    `M6` and `M61` are accepted only from a definition whose tool change has
-   `M6`. A violation is `ExportError`, never a warning.
+   `M6` and whose `tool_change.mode` is `"m6"`. A violation is
+   `ExportError`, never a warning.
 8. `Program.pauses` lists every `M0` and `M6` line with its 1-based line
    number and its comment text, so the CLI can tell the user what each stop
    is for when the sender does not show the message. `Program.first_tool`
@@ -496,6 +513,21 @@ closed instance, outside, depth `None`, step 4, climb, safe Z 5, tabs
 supply, one per line as `coaster.dcv:line:column: <field> is not set (<unit>)`,
 pointing at its `null`. Exit codes: 0 ok, 1 validation/export error, 2 usage.
 `check` prints problems and warnings and exits 1 on any error-class problem.
+
+`export` writes what `emit_programs` returns (#95). One program goes to
+`-o`, or to the project's path with the post-processor's extension, as
+before. Programs of tool runs go to `<stem>-<k>-T<n>.<ext>`, where `<k>` is
+the run's 1-based place, `<n>` its tool's number, and `<stem>` and `<ext>`
+are those of that one path (`-o out/job.nc` gives `out/job-1-T1.nc`). Every
+program, and with `--post` the project, is staged before any is moved into
+place, so a failure writes nothing. The summary then starts
+`Wrote <n> programs; run them in this order:` and lists each file with
+"Before you start: fit T{n} {name} and set work zero (X, Y and Z) with it."
+for the first and "… and set Z zero with it. Keep X and Y zero." for the
+others, then the operation lines, then per program its line count, extents
+and pauses. A single program in `"m6"` mode that changes tools adds a line
+saying the sender must stop at `M6`. `check` prints the extents of each
+program under `Program <k> (T<n>):`.
 `check` and `export` prefix each problem about one value with
 `<dcv>:line:column:`, so every missing value is listed, located, in one run
 before any toolpath is generated.
@@ -515,7 +547,9 @@ the program's units (`mm` or `in`, the project's display units). Other
 summary values (`12 mm deep`) are project values and stay in mm; the
 extents are machine coordinates, which the user compares with the
 controller's display, so they use the program's units. The second line
-widens X and Y by the largest radius among the exported operations' tools.
+widens X and Y by the largest radius among the program's tools: the
+exported operations' tools for one program, the run's tool for a tool
+run's program.
 
 ## Module layout
 
@@ -642,6 +676,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::toolpath_off_stock_is_an_error` — the coaster with `e` = 80 fails `check` naming `op1` and 71.35 mm past +X; `export` writes nothing (#62).
 - `cli::toolpath_just_inside_stock_passes` — the coaster, and moved 3.5 mm either way, pass (#62).
 - `cli::export_prints_extents` — `export` and `check` print Z equal to the Z words' range and X, Y containing the X, Y words' ranges of `tests/expected/coaster-grblhal.nc` (#62).
+- `cli::multi_tool_export_writes_one_file_per_tool_run`, `cli::single_tool_export_is_unchanged`, `cli::alternating_tools_keep_cut_order`, `cli::multi_tool_export_works_on_grbl`, `cli::output_flag_sets_the_stem`, `cli::failed_tool_run_writes_no_files`, `cli::m6_mode_writes_one_program`, `cli::m6_mode_on_grbl_is_invalid` — one program per tool run by default, `"m6"` opt-in on grblHAL (#95).
+- `emit::tool_run_program_passes_safety_alone` — each program of `emit_programs` is `emit` of its run alone: no `M6` or `M61`, its own extents, deterministic (#95).
 
 **dc-gcode (integration, `tests/golden.rs`)**
 - `golden::profile_outside_rect` (golden), `golden::profile_inside_circle` (golden), `golden::profile_ring` (golden), `golden::profile_tabs_circle` (golden) — per-Z-level cutting move sets match within 0.01 mm after start-point alignment; feeds equal, except the differences each case's README lists.

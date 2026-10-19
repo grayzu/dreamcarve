@@ -51,9 +51,79 @@ program. `export` names the bit:
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
-## Tool changes
+## Projects with more than one tool
 
-Every tool change works the same way, in both spindle modes:
+When the enabled operations use more than one tool, `export` writes one
+complete program for each **tool run**: a run of consecutive operations
+with the same tool, in operation order. Operations are never regrouped by
+tool, because that would change the cut order, for example a through-cut
+before the detail work. T1, T2, T1 is three programs.
+
+The programs are named `<stem>-<k>-T<n>.<ext>`: `<k>` is the run's place
+(1, 2, …) and `<n>` the tool's number. `<stem>` is the project file's name,
+or the name given with `-o`: `-o out/job.nc` writes `out/job-1-T1.nc`,
+`out/job-2-T2.nc`, … A project with one tool writes one program, named as
+before (`coaster.nc`).
+
+Each program is complete on its own, exactly as a one-tool project exports:
+header, rise to safe Z, spindle start (or the pause to switch the router
+on), cuts, end. It has no `M6` and no `M61`, passes the safety check on its
+own, and `export` prints its extents. If any program fails, no file is
+written. `export` lists the programs in the order to run them, with what to
+do before each:
+
+```text
+Wrote 2 programs; run them in this order:
+  1. coaster-1-T1.nc  Before you start: fit T1 Set me and set work zero (X, Y and Z) with it.
+  2. coaster-2-T2.nc  Before you start: fit T2 3mm finisher and set Z zero with it. Keep X and Y zero.
+```
+
+Between programs, fit the next bit and set Z zero with it. A new bit has a
+new length, so set Z zero even if it is a bit you zeroed with before. Leave
+X and Y zero as they are. Each program starts by rising to safe Z,
+measured from the Z zero you just set.
+
+**Why one program per tool.** In one program, the tool change is an `M6`,
+and whether `M6` stops the machine depends on your sender, not on the
+controller. Several senders by default do not stop there (see
+[Senders](#senders) below). gSender, for example, comments the `M6` line
+out and keeps streaming, so the program switches the spindle off and on
+and cuts the second tool's paths with the first bit still fitted. Separate
+programs stop at every bit change with every sender and every controller,
+including GRBL.
+
+The choice is a machine setting, `tool_change.mode` in the post-processor:
+
+| Value | Export of more than one tool |
+| --- | --- |
+| `"separate_programs"` | One program per tool run. The default, on every controller. |
+| `"m6"` | One program that stops with `T<n> M6` at each tool change. grblHAL only; see the next section. |
+
+`--post <id>` embeds the bundled definition, so it sets
+`"separate_programs"`, like every other field. If you use `"m6"`, set it
+again after switching.
+
+## One program with M6
+
+On grblHAL you can export a multi-tool project as one program with `M6`
+tool changes, if your sender stops there (see [Senders](#senders)). Set,
+in `post_processor.tool_change`:
+
+```json
+"mode": "m6"
+```
+
+GRBL has no `M6`, so `"m6"` with the GRBL definition is an error: `check`
+reports it at the field, and export writes nothing.
+
+`export` then writes one program and adds:
+
+```text
+This program changes tools with M6, so your sender must stop at M6; see "One program with M6" in the post-processors chapter.
+```
+
+Every tool change in the program works the same way, in both spindle
+modes:
 
 1. The program rises to safe Z, so the bit is clear of the work, and stops
    the spindle (or, with manual control, pauses for you to switch the
@@ -88,15 +158,13 @@ with the wrong bit.
 
 **GRBL cannot change tools within a program.** It has no `M6`, and at an
 `M0` pause it is in feed hold, where it refuses to jog, so you could not
-set Z zero for the new bit. Export of a GRBL project whose enabled
-operations use more than one tool fails and names the tools. Export the
-operations of one tool at a time (disable the others), or use grblHAL.
-Several operations with the same tool export as one program.
+set Z zero for the new bit. That is why `"m6"` is refused with GRBL; the
+default, one program per tool run, works on it.
 
 ### grblHAL settings for tool changes
 
 The tool change depends on these controller settings. Check them once
-before running a program with more than one bit:
+before running a program with `M6`:
 
 - **`$341` (tool change mode) must not be 4 ("Ignore M6").** With 4,
   grblHAL skips the stop and cuts with the old bit and the old Z zero.
@@ -112,6 +180,43 @@ before running a program with more than one bit:
 - **The tool number.** grblHAL skips `T<n> M6` when `<n>` is already the
   current tool. The `M61` line at the start prevents that.
 
+### Senders
+
+Most senders read `M6` themselves before the controller sees it, and their
+defaults differ. Before you use `"m6"`, set your sender so that it stops at
+`M6`:
+
+| Sender | What it does with `M6` by default | For one program with `M6` |
+| --- | --- | --- |
+| gSender | Ignores it: comments the line out as `(M6)` and keeps streaming, with no pause. Pause and the re-zero and tool-sensor wizards are opt-in. | Set Tool Changing to Pause, or to one of its wizards. Never Ignore. |
+| CNCjs | Replaces `M6` with `(M6)`, but holds the stream with a message. `M6` never reaches the controller. | Any tool-change policy except "send M6" holds. |
+| Universal Gcode Sender | Removes `M6`, sends `G0 Z<max Z of the file>` and `M5`, then shows a change-tool dialog. | The default works. |
+| ioSender | Passes `M6` to grblHAL, which handles it as `$341` says. | Keep `$341` other than 4 (see above). |
+| Candle | Sends `M6` to the controller. Whether the sender also pauses is a setting whose default is unclear. | Enable "Pause sender on M6". |
+| OpenBuilds CONTROL | Splits the file at `M6` lines into per-tool sections. | Use its per-tool run menu. |
+
+This behaviour was read from each sender's source code on 2026-10-19, for
+interoperability only:
+
+- gSender (`Sienci-Labs/gsender`):
+  `src/server/controllers/Grblhal/GrblHalController.js`, "ignore is default
+  and comments line out with no other action".
+- CNCjs (`cncjs/cncjs`): `src/server/controllers/Grbl/GrblController.js`,
+  about lines 301 to 335; the `tool.toolChangePolicy` default is
+  `TOOL_CHANGE_POLICY_IGNORE_M6_COMMANDS`.
+- Universal Gcode Sender (`winder/Universal-G-Code-Sender`):
+  `ugs-core/.../utils/Settings.java` line 85 (`handleToolChanges = true`);
+  `services/interceptor/ToolChangeInterceptor.java`.
+- ioSender (`terjeio/ioSender`): `CNC Controls/AppConfig.cs` line 245;
+  `JobControl.xaml.cs`, about line 665.
+- Candle (`Denvi/Candle`): `src/candle/frmmain.cpp`, about line 2546;
+  `help/en/settings/index.md` line 33 (the UI and the help disagree on the
+  default).
+- OpenBuilds CONTROL (`OpenBuilds/OpenBuilds-CONTROL`): `app/js/toolchange.js`.
+
+Senders change; check yours on a test file before you rely on it. With the
+default, one program per tool run, none of this matters.
+
 ## grblHAL and GRBL compared
 
 The motion is identical. Only these differ:
@@ -120,7 +225,7 @@ The motion is identical. Only these differ:
 | --- | --- | --- |
 | Comments | `( text )` | `; text` |
 | Messages | Shows `(MSG, text)` comments to the sender as `[MSG:text]` | Has no messages: comments are removed before the line is run |
-| Tool changes | `T<n> M6`, after `M61 Q<n>` at the start | None: export of more than one tool fails |
+| More than one tool | One program per tool run; with `"m6"`, one program with `T<n> M6`, after `M61 Q<n>` at the start | One program per tool run; `"m6"` is an error |
 
 ## Units
 
@@ -139,6 +244,7 @@ knowing:
 | `file_extension` | The program's extension, without the dot. 1 to 8 letters or digits, and not `dcv`. Default `nc`. |
 | `feed_speed.spindle_on_dwell.duration_s` | Seconds to wait after the spindle starts. Default 3. Raise it if your spindle or VFD takes longer to reach speed; 0 means no wait. |
 | `feed_speed.spindle_control` | `"automatic"` (default) or `"manual"`. See below. |
+| `tool_change.mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). |
 | `number_format.decimal_places` | Digits after the point: `mm` at least 2, `inch` at least 3. Default 3 and 4. |
 
 Names that DreamCarve puts in comments (the project, tool and operation
@@ -184,10 +290,12 @@ and after its last:
   ```
 
   Switch the router off and resume. After the last tool the program then
-  ends. Before a second tool (grblHAL only), the program stops with
-  `T2 M6` and `Fit T2 …`, as with automatic control, then rises to safe Z
-  again and pauses with `Turn the router ON. …` for the next tool. So the
-  router starts only after the bit has been lifted from the Z zero you set.
+  ends. With one program per tool run, the default, every program has its
+  own pair of pauses. With `"m6"` (grblHAL only), before a second tool the
+  program stops with `T2 M6` and `Fit T2 …`, as with automatic control,
+  then rises to safe Z again and pauses with `Turn the router ON. …` for
+  the next tool. So the router starts only after the bit has been lifted
+  from the Z zero you set.
 
 For the coaster, the program pauses twice: to turn the router on, and to
 turn it off. `export` lists each pause with its line number:

@@ -48,6 +48,7 @@ rules S1–S6. The `post::tests` in `dc-gcode` lock each finding in.
 | `{operationDescription}` lines removed | both | `emit` does not fill that placeholder, so it would reach the machine as literal text. |
 | Em-dashes in `description` → `-` | both | Bytes above 0x7F are real-time commands on both controllers (0x94 is a feed override). |
 | `feed_speed.spindle_on_dwell` added: `G4 P{seconds}`, `duration_s` 3.0 | both | Neither controller waits for the spindle to reach speed after M3 (grblHAL `$394` defaults to 0). `G4 P` is seconds on both: `mc_dwell(float seconds)` in `grbl/motion_control.c` and grblHAL `motion_control.c`. DreamCarve field, not in PureCutCNC's schema (#28). |
+| `tool_change.mode` added: `"separate_programs"` | both | #95. A project with more than one tool exports one program per tool run, because whether an `M6` stops the machine depends on the sender, and several senders' defaults do not stop (post-processors chapter, "Senders"). `"m6"` writes one program with `M6` and is valid only on a definition whose tool change has `M6`, so not on GRBL. DreamCarve field, not in PureCutCNC's schema. |
 | `feed_speed.spindle_control` added: `"automatic"` | both | The bundled definitions switch the spindle with `M3`/`M5`. `"manual"` is for a router switched by hand; see "Manual spindle control" below. DreamCarve field, not in PureCutCNC's schema (#34). |
 
 Rules for the emitter that come from the same check (enforced in `emit`, not
@@ -64,10 +65,14 @@ notation. Arc IJ offsets are taken from the rounded start point emitted.
 ## Tool changes
 
 There is no stop for the first tool. The user fits it and sets work zero
-with it before starting the program, and `export` says so (#57). A later
-tool needs a definition whose `tool_change.commands` has an `M6` line;
-otherwise `emit` fails with `ExportError::ToolChangeNotSupported`, naming
-the tools. For a later tool the program retracts to safe Z, stops the
+with it before starting the program, and `export` says so (#57). With
+`tool_change.mode` `"separate_programs"`, the default, a project with more
+than one tool is one program per tool run (`emit_programs`, #95), and no
+program changes tools. With `"m6"`, one program changes tools; that needs
+a definition whose `tool_change.commands` has an `M6` line, which
+validation checks, and otherwise `emit` fails with
+`ExportError::ToolChangeNotSupported`, naming the tools. For a later tool
+the program retracts to safe Z, stops the
 spindle, and writes `T{n} M6 (MSG, Fit T{n} {name}. Set Z zero, then
 resume.)` in place of the definition's `M6` line. Lines that only pause
 (`M0`, `M1`) and `pause_after_change` are left out: one stop per change. A
@@ -78,7 +83,8 @@ out, #55), writes its next motion and feed words in full, and retracts to
 safe Z, measured from the new zero, before the spindle starts or the
 router-on pause. A program that changes tools starts with `M61 Q<n>` for
 its first tool. The safety pass accepts `M6` and `M61` only from a
-definition with an `M6` line, and checks `M6` as it checks `M0`: at a
+definition with an `M6` line and mode `"m6"`, and checks `M6` as it checks
+`M0`: at a
 known Z at or above safe Z, Z unknown after it, setup required after it.
 
 Checked on 2026-10-18 against `grblHAL/core` at commit
@@ -123,7 +129,8 @@ Checked on 2026-10-18 against `grblHAL/core` at commit
   the M-word `default` case fails with `STATUS_GCODE_UNSUPPORTED_COMMAND`.
   Its `M0` is a feed hold, in which `$J` jogging is refused
   (`grbl/system.c`: only in IDLE or JOG). So GRBL cannot stop for a new bit
-  where the user can set Z zero, and export refuses a second tool.
+  where the user can set Z zero, and `"m6"` is refused on it; one program
+  per tool run works.
 
 The tool-change height is not set: in mode 0 grblHAL waits at the
 operation's safe Z, and the user jogs up to swap the bit (#73).
@@ -135,7 +142,7 @@ or `S` word. After any tool change (see "Tool changes" above) it
 pauses with
 `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`
 before each tool's first cut, and retracts to safe Z and pauses with
-`M0 (MSG, Turn the router OFF.)` before a tool change and at the end. So a later
+`M0 (MSG, Turn the router OFF.)` before a tool change and at the end. With `"m6"`, a later
 tool has two stops before it cuts, `M6` and the router-on pause, with a
 retract between them: the router
 starts only after the bit has been lifted from the Z zero the user set.

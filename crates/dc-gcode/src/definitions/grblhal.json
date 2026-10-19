@@ -77,7 +77,8 @@
     ],
     "stop_spindle_first": true,
     "pause_after_change": false,
-    "pause_command": "M0"
+    "pause_command": "M0",
+    "mode": "separate_programs"
   },
   "canned_cycles": null,
   "coolant": {

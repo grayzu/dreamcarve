@@ -37,14 +37,20 @@ as G-code they can trust.
    height, shape), safe Z, and which post-processor to use.
 3. `dreamcarve export <file.dcv>` writes G-code for the embedded
    post-processor. grblHAL and GRBL are available. `--post <id>` switches the
-   embedded post-processor before export and updates the file.
+   embedded post-processor before export and updates the file. When the
+   enabled operations use more than one tool, export writes one complete
+   program per tool run (consecutive operations with the same tool, in
+   operation order), named `<stem>-<k>-T<n>.<ext>`, and lists them in the
+   order to run them with what to do before each. The post-processor's
+   `tool_change.mode` `"m6"` (grblHAL only) writes one program with `M6`
+   tool changes instead (#95).
 4. `dreamcarve check <file.dcv>` validates the project and prints the
    warnings and errors that export would raise, without writing G-code.
-   `export`, and `check` when the program could be built, print the
+   `export`, and `check` when the program could be built, print each
    program's extents in machine coordinates and the program's units, as
    the program writes numbers: `X min..max, Y min..max, Z min..max` of the
    tool centre (Z min is the deepest cut; arcs count to their bulge), then
-   X and Y widened by the largest exported tool's radius, where the
+   X and Y widened by the radius of the program's largest tool, where the
    cutter's edge reaches. Users place clamps from them (#62).
 5. `dreamcarve posts` lists the available post-processors.
 6. The exported program cuts each Profile target in depth passes from the
@@ -61,7 +67,8 @@ as G-code they can trust.
 ## Out of scope
 
 Pocket, Drill, V-Carve, Engrave. DXF. Lead-in/lead-out, ramped entry, arc
-fitting of flattened curves. Multiple tools in one program. Any GUI. Undo
+fitting of flattened curves. Automatic tool changers and tool setters. Any
+GUI. Undo
 exposed to the user (the history type exists but nothing drives it).
 Clamps. Text. Stock from a shape (stock is rectangular).
 
@@ -110,6 +117,14 @@ Clamps. Text. Stock from a shape (stock is rectangular).
     the default coaster passes. `export` prints extents whose Z range is
     that of the program's Z words and whose X and Y ranges contain those of
     its X and Y words (#62).
+17. **More than one tool.** The coaster with a second Profile using a
+    3.175 mm tool exports, on grblHAL and on GRBL, `coaster-1-T1.nc` and
+    `coaster-2-T2.nc` and no `coaster.nc`; neither has `M6` or `M61`, and
+    each starts only its own tool's spindle. Operations using T1, T2, T1
+    give three programs whose cuts, in order, are those of the one `"m6"`
+    program. If any program fails, no file is written. With `"m6"`,
+    grblHAL gets one program with `M61 Q1` and `T2 M6`; on GRBL `"m6"` is
+    an error located at the field (#95).
 
 ## Safety requirements
 
@@ -136,14 +151,19 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   and after the previous cut, and that an `M0` at safe Z follows the last
   cut. In both modes the program does not stop for the first tool: the
   user fits it and sets work zero with it before starting, and `export`
-  says so (#57). Every later tool change retracts to safe Z, stops the
-  spindle, and stops with `T<n> M6` and a message to fit the tool and set
-  Z zero, then retracts to safe Z again, from the new zero, before the
-  spindle or router starts. Only a post-processor whose tool change has
-  `M6` (grblHAL) can change tools; with any other (GRBL), export of
-  operations that use more than one tool fails, naming the tools. A program
-  that changes tools first sets the controller's current tool with
-  `M61 Q<n>`, because grblHAL skips an `M6` for the tool it holds. Every
+  says so (#57). By default a program has one tool: a project whose
+  operations use more than one is exported as one program per tool run,
+  each of which passes S1–S7 on its own, and none is written unless all
+  pass (#95). Whether an `M6` stops the machine depends on the sender, and
+  several senders' defaults do not stop, so a program with `M6` is opt-in:
+  the post-processor's `tool_change.mode` `"m6"`, valid only when its tool
+  change has `M6` (grblHAL). In that program every later tool change
+  retracts to safe Z, stops the spindle, and stops with `T<n> M6` and a
+  message to fit the tool and set Z zero, then retracts to safe Z again,
+  from the new zero, before the spindle or router starts. A program that
+  changes tools first sets the controller's current tool with
+  `M61 Q<n>`, because grblHAL skips an `M6` for the tool it holds. `M6`
+  and `M61` are refused in any other program. Every
   `M0` and `M6` is at safe Z, and the safety pass treats Z as unknown after
   it, so a spindle start, the next stop, and an XY rapid each need a
   retract after the last stop; the program retracts after the router-on

@@ -5,8 +5,9 @@
 //! without writing anything and prints every error and warning it finds,
 //! including each open path, which validation reports because Profile never
 //! cuts it (functional spec, capabilities 4 and 8), then, when the program
-//! could be built, its extents as `export` prints them (#62). Exits 1 when
-//! any error was found.
+//! could be built, its extents as `export` prints them (#62), for each
+//! program when there is one per tool run (#95). Exits 1 when any error
+//! was found.
 //!
 //! Every value the user has yet to set is an error, so one run lists all of
 //! them, each as `coaster.dcv:line:column: error: …` (#76).
@@ -22,7 +23,7 @@ const CHECK_DATE: &str = "check";
 /// Runs `check`.
 pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     let (project, file) = export::load_project(&args.dcv)?;
-    let export::Built { program, findings } = export::build(&project, CHECK_DATE);
+    let export::Built { programs, findings } = export::build(&project, CHECK_DATE);
 
     for error in &findings.errors {
         println!("{}", file.describe("error", error));
@@ -30,10 +31,20 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     for warning in &findings.warnings {
         println!("{}", file.describe("warning", warning));
     }
-    // #62: where the program would take the tool, as `export` prints it.
-    if let Some(program) = &program {
-        for line in export::describe_extents(&project, program) {
+    // #62: where the program would take the tool, as `export` prints it;
+    // for each program when there is one per tool run (#95).
+    if let [program] = programs.as_slice() {
+        let radius_mm = export::largest_tool_radius_mm(&project);
+        for line in export::describe_extents(&project, program, radius_mm) {
             println!("{line}");
+        }
+    } else {
+        for (k, program) in programs.iter().enumerate() {
+            println!("Program {} (T{}):", k + 1, program.first_tool.number);
+            let radius_mm = export::tool_radius_mm(&project, program);
+            for line in export::describe_extents(&project, program, radius_mm) {
+                println!("  {line}");
+            }
         }
     }
     println!(

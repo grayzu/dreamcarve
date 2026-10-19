@@ -34,19 +34,28 @@ written. There are no safety warnings, only errors.
 5. **Stops happen at safe Z, and the program lifts again after them.**
    The program does not stop for its first bit: you fit it and set work
    zero with it before you start. Every later stop, a pause (`M0`) or a
-   tool change (`M6`, grblHAL only), comes with the bit at safe Z. You may
+   tool change (`M6`, only in one program with `M6`), comes with the bit
+   at safe Z. You may
    jog and set Z zero at any stop, so after it the program rises to safe Z
    again before the spindle starts, before the next stop, and before any
    move across the work, and writes its next motion and feed words in
    full. The safety check treats Z as unknown after every stop, so a
-   program that moves sideways before it lifts is refused. GRBL cannot stop for a tool
-   change where you can jog, so DreamCarve refuses a GRBL program that
-   needs a second bit.
-6. **The controller is in a known state.** The program sets units, the
+   program that moves sideways before it lifts is refused.
+6. **One bit per program, unless you choose otherwise.** A project with
+   more than one bit exports, by default, one program per tool run, and
+   no program changes the bit. Whether an `M6` tool change stops the
+   machine depends on your sender, and several do not stop by default, so
+   a program with `M6` could cut the next bit's paths with the old bit
+   still fitted. Each program passes every check here on its own, and if
+   any fails, none is written. One program with `M6` is a setting you
+   choose, on grblHAL only, after setting your sender to stop at `M6`
+   ([Senders](post-processors.md#senders)). GRBL cannot stop for a tool
+   change where you can jog, so DreamCarve refuses `M6` with GRBL.
+7. **The controller is in a known state.** The program sets units, the
    work coordinate system and absolute coordinates (`G90`) before it moves,
    and again after every pause and tool change, where you may have changed
    them.
-7. **No mirroring, and nothing else.** The program's coordinates are the
+8. **No mirroring, and nothing else.** The program's coordinates are the
    project's, moved to your work zero. Nothing is flipped. Read back, each
    operation's moves are its toolpath, move for move: every straight move
    ends where the toolpath's does, every arc turns the same way about the
@@ -54,7 +63,7 @@ written. There are no safety warnings, only errors.
    into its up-or-down and sideways parts, an arc written as short
    straight moves along it, and a lift to safe Z before or after the
    operation.
-8. **The cut stays on the stock.** Every cutting move, widened by the
+9. **The cut stays on the stock.** Every cutting move, widened by the
    bit's radius, stays inside the stock's `width_mm` by `height_mm`
    rectangle; arcs count all the way round, not just at their ends. A shape
    moved or scaled off the stock stops the export with an error that names
@@ -105,6 +114,10 @@ It also checks that:
 - **The router, in manual mode.** It cannot tell whether you switched it on.
 - **Pause messages.** Your sender may not show why the program paused. Use
   the pause list `export` prints.
+- **Your sender, with one program with `M6`.** Whether the program stops at
+  a tool change depends on your sender's setting, which DreamCarve cannot
+  read ([Senders](post-processors.md#senders)). Nor can it tell that you
+  run separate programs in the order listed, with the right bit in each.
 
 ## Before every cut
 
@@ -127,7 +140,9 @@ It also checks that:
    collet.
 6. **Fit the first bit, then set work zero** with it where `origin` says,
    and check it by jogging there. `export` names the first bit
-   ("Before you start: fit T1 ...").
+   ("Before you start: fit T1 ..."). With more than one bit, run the
+   programs in the order `export` lists them. Before each later one, fit
+   the bit it names and set Z zero with it; keep X and Y zero.
 7. **Do an air cut.** Set Z zero well above the stock: more than the cut
    depth plus a margin, for example 20 mm for a 12 mm cut. Run the whole
    program and watch where the bit goes. Then set Z zero back on the stock.
