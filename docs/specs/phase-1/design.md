@@ -342,7 +342,7 @@ Inputs: project, op. Output: toolpath in project space.
    (ported from `applyTabWarnings`), and `TabsCoverMostOfContour` when the
    merged spans cover more than half of a contour's length, so the part or
    hole may not cut free. That warning names the shape, path length, tab
-   total and share, and suggests a count or width that fits; the tabs are
+   width, tool diameter, path each tab raises, tab total and share, and suggests a count or width that fits; the tabs are
    still cut as set (maintainer decision on #63).
 8. Stock bounds (#62, `dc-cam::stock`). The swept extent is the XY
    bounds of the toolpath's cutting moves (rapids are at safe Z, above the
