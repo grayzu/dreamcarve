@@ -21,7 +21,9 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::model::{Operation, OriginXy, Project, TabPlacement, Tool, ToolKind};
-use crate::post_processor::{MAX_FILE_EXTENSION_CHARS, SpindleControl, is_safe_file_extension};
+use crate::post_processor::{
+    MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
+};
 use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -166,6 +168,13 @@ pub enum Problem {
         /// The extension found.
         extension: String,
     },
+    /// The tool-change mode is `"m6"`, but the post-processor's tool
+    /// change has no `M6`, so it cannot change tools within a program
+    /// (#95). GRBL 1.1 has none.
+    ToolChangeModeNeedsM6 {
+        /// The post-processor's id.
+        post: String,
+    },
 }
 
 impl Problem {
@@ -189,7 +198,8 @@ impl Problem {
             | Self::StockThicknessUnset
             | Self::OperationValueUnset { .. }
             | Self::ToolOutOfRange { .. }
-            | Self::UnsafeFileExtension { .. } => Severity::Error,
+            | Self::UnsafeFileExtension { .. }
+            | Self::ToolChangeModeNeedsM6 { .. } => Severity::Error,
         }
     }
 
@@ -247,6 +257,9 @@ impl Problem {
                 ..
             } => Some(format!("definitions[{definition}].profiles[{profile}]")),
             Self::UnsafeFileExtension { .. } => Some("post_processor.file_extension".to_owned()),
+            Self::ToolChangeModeNeedsM6 { .. } => {
+                Some("post_processor.tool_change.mode".to_owned())
+            }
         }
     }
 }
@@ -345,6 +358,10 @@ impl fmt::Display for Problem {
                 f,
                 "the post-processor's file extension `{}` is not allowed: it must be 1 to {MAX_FILE_EXTENSION_CHARS} letters or digits and not `dcv`",
                 extension.escape_default()
+            ),
+            Self::ToolChangeModeNeedsM6 { post } => write!(
+                f,
+                "tool_change.mode is \"m6\", but post-processor `{post}` has no M6 in its tool_change.commands, so it cannot change tools within one program; use \"separate_programs\""
             ),
         }
     }
@@ -604,6 +621,13 @@ impl Validator {
         if !is_safe_file_extension(&p.post_processor.file_extension) {
             self.problems.push(Problem::UnsafeFileExtension {
                 extension: p.post_processor.file_extension.clone(),
+            });
+        }
+
+        let tool_change = &p.post_processor.tool_change;
+        if tool_change.mode == ToolChangeMode::M6 && !tool_change.has_m6() {
+            self.problems.push(Problem::ToolChangeModeNeedsM6 {
+                post: p.post_processor.id.clone(),
             });
         }
 

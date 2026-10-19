@@ -88,7 +88,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `4`. |
+| `version` | Format version. This build writes `5`. |
 | `name` | The project name, written at the top of the program. `init` uses the SVG's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -284,6 +284,7 @@ refused.
 | 2 | Adds `post_processor.feed_speed.spindle_control`, set to `"automatic"` on upgrade. |
 | 3 | Writes `origin.xy` and each tool's `cutter` as a plain string (`"bottom_left"`, `"end_mill"`), or as a one-key object when the choice carries values (`{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`). Older files tagged them with `kind`, as in `{ "kind": "bottom_left" }`; the upgrade rewrites them. |
 | 4 | Lets `stock.thickness_mm` and each operation's `depth_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds. |
+| 5 | Adds `post_processor.tool_change.mode`, set to `"separate_programs"` on upgrade: a project with more than one tool exports one program per tool run. Set `"m6"` (grblHAL only) for the one program with `M6` that older versions wrote. See [Post-processors](post-processors.md#projects-with-more-than-one-tool). |
 
 ## What `check` reports
 
@@ -297,6 +298,7 @@ Errors stop export. Warnings do not.
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
 | A value that is not a number | A shape too small for the tool, a duplicate shape, or tabs that overlap or do nothing |
 | A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |
+| `post_processor.tool_change.mode` is `"m6"` but the post-processor has no `M6` (GRBL) | |
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |

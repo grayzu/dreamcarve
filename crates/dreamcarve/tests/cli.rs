@@ -1173,13 +1173,17 @@ fn two_tool_coaster(dir: &Path) -> PathBuf {
     let dcv = init_coaster(dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
-    let mut finisher = project.tools[0].clone();
+    let mut finisher = project.tools.first().expect("the coaster tool").clone();
     finisher.id = ToolId::new("t2");
     finisher.name = "3mm finisher".into();
     finisher.diameter_mm = 3.175;
     finisher.rpm = Some(20000);
     project.tools.push(finisher);
-    let Operation::Profile(mut finish) = project.operations[0].clone();
+    let Operation::Profile(mut finish) = project
+        .operations
+        .first()
+        .expect("the coaster profile")
+        .clone();
     finish.id = OperationId::new("op2");
     finish.name = "Finish".into();
     finish.tool = ToolId::new("t2");
@@ -1199,9 +1203,12 @@ fn has_code_word(program: &str, word: &str) -> bool {
     })
 }
 
-/// The spindle starts of `program`: its lines that start with `M3`.
+/// The spindle starts of `program`: its lines whose first word is `M3`.
 fn spindle_starts(program: &str) -> Vec<&str> {
-    program.lines().filter(|l| l.starts_with("M3")).collect()
+    program
+        .lines()
+        .filter(|l| l.split_whitespace().next() == Some("M3"))
+        .collect()
 }
 
 /// Sets the tool-change mode of the `.dcv` at `dcv`.

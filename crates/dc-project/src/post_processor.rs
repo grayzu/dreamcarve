@@ -328,10 +328,37 @@ pub struct ToolChange {
     pub pause_after_change: bool,
     /// Pause command, for example `M0`.
     pub pause_command: String,
-    /// How a project whose operations use more than one tool is exported.
-    // Red-commit stub: the default goes once the v5 migration lands.
-    #[serde(default)]
+    /// How a project whose operations use more than one tool is exported
+    /// (#95). Added in `.dcv` version 5.
     pub mode: ToolChangeMode,
+}
+
+impl ToolChange {
+    /// Whether a line of [`ToolChange::commands`] has an `M6` (or `M06`)
+    /// code word, outside `( )` and `;` comments: whether the definition
+    /// can change tools within one program. GRBL 1.1 has no `M6` (#57).
+    #[must_use]
+    pub fn has_m6(&self) -> bool {
+        self.commands.iter().any(|line| is_m6_line(line))
+    }
+}
+
+/// Whether template `line` has an `M6` code word, comments skipped.
+#[must_use]
+pub fn is_m6_line(line: &str) -> bool {
+    let mut code = String::new();
+    let mut in_comment = false;
+    for c in line.chars() {
+        match c {
+            ';' if !in_comment => break,
+            '(' => in_comment = true,
+            ')' => in_comment = false,
+            c if !in_comment => code.push(c),
+            _ => {}
+        }
+    }
+    code.split_whitespace()
+        .any(|w| w.eq_ignore_ascii_case("M6") || w.eq_ignore_ascii_case("M06"))
 }
 
 /// How a project whose operations use more than one tool is exported (#95).
@@ -579,6 +606,22 @@ mod tests {
         let mut value = serde_json::to_value(sample()).unwrap();
         value.as_object_mut().unwrap().remove("builtin");
         assert!(serde_json::from_value::<PostProcessor>(value).is_err());
+    }
+
+    #[test]
+    fn m6_is_found_in_code_not_comments() {
+        let mut change = sample().tool_change;
+        for (commands, has) in [
+            (vec!["M5", "T{toolNumber} M6"], true),
+            (vec!["m06 t{toolNumber}"], true),
+            (vec!["M5", "M0 ; Tool change: M6"], false),
+            (vec!["M0 (M6)"], false),
+            (vec!["M61 Q1"], false),
+            (vec![], false),
+        ] {
+            change.commands = commands.iter().map(|&c| c.to_owned()).collect();
+            assert_eq!(change.has_m6(), has, "{commands:?}");
+        }
     }
 
     #[test]

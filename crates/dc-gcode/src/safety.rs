@@ -21,7 +21,7 @@ use dc_geometry::{Arc, EPS_MM, Point, Point3, approx_eq};
 use dc_project::{PostProcessor, ProfileOp, SpindleControl, Stock, Tool, ToolId, Units};
 
 use crate::ExportError;
-use crate::emit::uses_m6;
+use crate::emit::changes_tools_in_program;
 use crate::format::decimal_places;
 use crate::parse::{Block, MachineMove, MachinePosition, MotionKind, is_code, parse_program};
 use crate::transform::{MachineTransform, mm_per_unit};
@@ -237,7 +237,7 @@ fn check_rules(
 ) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
     let blocks = parse_program(text)?;
-    check_words(&blocks, uses_m6(post))?;
+    check_words(&blocks, changes_tools_in_program(post))?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
     let manual = post.feed_speed.spindle_control == SpindleControl::Manual;
@@ -469,14 +469,14 @@ const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
 /// "Verification"): `M4` needs a direction pin or laser mode, `M7` is
 /// optional on both, and `G28`, `G30`, and `G53` move in machine
 /// coordinates. `M6` is accepted only from a definition whose tool change
-/// uses it ([`TOOL_CHANGE_M`]).
+/// uses it and whose tool-change mode is `"m6"` ([`TOOL_CHANGE_M`]).
 const ALLOWED_G: [f64; 16] = [
     0.0, 1.0, 2.0, 3.0, 4.0, 17.0, 20.0, 21.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 90.0, 94.0,
 ];
 /// See [`ALLOWED_G`].
 const ALLOWED_M: [f64; 6] = [0.0, 1.0, 2.0, 3.0, 5.0, 30.0];
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
-/// tool change uses `M6` (#57): `M6` itself, checked like a pause, and
+/// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
 /// `M61`, which sets the current tool number without a stop or a move.
 /// GRBL 1.1 has neither.
 const TOOL_CHANGE_M: [f64; 2] = [6.0, 61.0];
@@ -513,8 +513,8 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 }
 
 /// Rejects every `G` and `M` code not in [`ALLOWED_G`] or [`ALLOWED_M`].
-/// The codes in [`TOOL_CHANGE_M`] are allowed too when the definition
-/// changes tools with `M6` (`with_m6`).
+/// The codes in [`TOOL_CHANGE_M`] are allowed too when the program may
+/// change tools with `M6` (`with_m6`).
 fn check_words(blocks: &[Block], with_m6: bool) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     for block in blocks {
@@ -1063,7 +1063,7 @@ mod tests {
     use dc_cam::{Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3};
     use dc_project::test_support::sample_project;
-    use dc_project::{ArcFormat, Axis, Operation, Project, SpindleControl};
+    use dc_project::{ArcFormat, Axis, Operation, Project, SpindleControl, ToolChangeMode};
 
     /// The sample project (100 × 100 × 6 mm stock, safe Z 11 absolute,
     /// feed 1000, plunge 300, 18000 rpm, GRBL), its operation, and its
@@ -1469,7 +1469,7 @@ mod tests {
         // does a pause before it count: the router needs its own pause
         // after the `M6`.
         let manual_grblhal = |text: &str| {
-            let grblhal = crate::post::lookup("grblhal").unwrap();
+            let grblhal = grblhal_m6();
             check_text_on(text, grblhal, SpindleControl::Manual)
         };
         for text in [
@@ -1622,7 +1622,7 @@ mod tests {
     #[test]
     fn xy_rapid_after_m6_needs_a_retract() {
         let check = |text: &str| {
-            let grblhal = crate::post::lookup("grblhal").unwrap();
+            let grblhal = grblhal_m6();
             check_text_on(text, grblhal, SpindleControl::Automatic)
         };
         let no_lift = "G21 G90\nG54\nG0 Z5\nT2 M6\nG21 G90 G54\nG0 X10 Y10\n";
@@ -1714,7 +1714,7 @@ mod tests {
     #[test]
     fn m6_counts_as_a_pause() {
         let check = |text: &str| {
-            let grblhal = crate::post::lookup("grblhal").unwrap();
+            let grblhal = grblhal_m6();
             check_text_on(text, grblhal, SpindleControl::Automatic)
         };
         let ok = "G21 G90\nG54\nG0 Z5\nM5\nT2 M6\nG21 G90 G54 G0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
@@ -1763,6 +1763,32 @@ mod tests {
             matches!(&err, ExportError::ForbiddenWord { line: 5, word } if word == "M6"),
             "{err:?}"
         );
+    }
+
+    /// #95: with `"separate_programs"`, the bundled default, each program
+    /// has one tool, so `M6` and `M61` are refused even on grblHAL.
+    #[test]
+    fn tool_change_words_need_m6_mode() {
+        let grblhal = crate::post::lookup("grblhal").unwrap();
+        assert_eq!(grblhal.tool_change.mode, ToolChangeMode::SeparatePrograms);
+        for (text, word) in [
+            ("G21 G90\nG54\nG0 Z5\nM5\nT2 M6\n", "M6"),
+            ("G21 G90\nG54\nM61 Q1\n", "M61"),
+        ] {
+            let err = check_text_on(text, grblhal.clone(), SpindleControl::Automatic).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { word: w, .. } if w == word),
+                "{text:?}: {err:?}"
+            );
+        }
+    }
+
+    /// The bundled grblHAL definition with `tool_change.mode` `"m6"`: the
+    /// one program with `M6` tool changes (#95).
+    fn grblhal_m6() -> PostProcessor {
+        let mut grblhal = crate::post::lookup("grblhal").unwrap();
+        grblhal.tool_change.mode = ToolChangeMode::M6;
+        grblhal
     }
 
     /// Rapid in, plunge, a straight cut to (10, 0), a quarter circle

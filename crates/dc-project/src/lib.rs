@@ -32,7 +32,7 @@ pub use post_processor::{
     ArcFormat, Axis, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces, FeedSpeed,
     MAX_FILE_EXTENSION_CHARS, Motion, NumberFormat, PostProcessor, ProgramFormat, RetractMode,
     SpindleControl, SpindleDwell, Stop, ToolChange, ToolChangeMode, UnitCommands, WorkCoordinates,
-    is_safe_file_extension,
+    is_m6_line, is_safe_file_extension,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use validate::{Problem, Severity, validate};

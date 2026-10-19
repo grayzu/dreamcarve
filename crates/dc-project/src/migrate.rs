@@ -25,13 +25,18 @@
 //!   `null` (unset), which `init` writes so export refuses until the user
 //!   sets them (#64). Earlier files always held numbers, which carry over
 //!   unchanged.
+//! - **5**: adds `post_processor.tool_change.mode`, set to
+//!   `"separate_programs"` by the migration (#95): a project whose
+//!   operations use more than one tool exports one program per tool run.
+//!   Before, such a project exported one program with `M6` (grblHAL) or
+//!   failed (GRBL); `"m6"` keeps the first.
 
 use crate::serialize::LoadError;
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 4;
+pub const CURRENT_VERSION: u32 = 5;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -44,12 +49,14 @@ fn step(from: u32) -> Option<Step> {
         1 => Some(v1_to_v2),
         2 => Some(v2_to_v3),
         3 => Some(v3_to_v4),
+        4 => Some(v4_to_v5),
         _ => None,
     }
 }
 
 const FLATTEN_TOLERANCE_KEY: &str = "flatten_tolerance_mm";
 const SPINDLE_CONTROL_KEY: &str = "spindle_control";
+const TOOL_CHANGE_MODE_KEY: &str = "mode";
 
 /// Migrates the raw JSON root of a `.dcv` file from `from_version` to
 /// [`CURRENT_VERSION`] and sets its `version` field accordingly.
@@ -170,6 +177,26 @@ fn v3_to_v4(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
             ));
         }
     }
+    Ok(root)
+}
+
+/// Version 4 → 5: adds `mode: "separate_programs"` at the end of
+/// `post_processor.tool_change`.
+fn v4_to_v5(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let tool_change = root
+        .get_mut("post_processor")
+        .and_then(|post| post.get_mut("tool_change"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "`post_processor.tool_change` is missing or not an object".to_owned())?;
+    if tool_change.contains_key(TOOL_CHANGE_MODE_KEY) {
+        return Err(format!(
+            "a version 4 file has no `tool_change.{TOOL_CHANGE_MODE_KEY}`, but this one does"
+        ));
+    }
+    tool_change.insert(
+        TOOL_CHANGE_MODE_KEY.into(),
+        Value::from("separate_programs"),
+    );
     Ok(root)
 }
 
