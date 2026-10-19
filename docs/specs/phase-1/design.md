@@ -81,6 +81,7 @@ pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>
 pub fn length(p: &Polyline) -> f64;
 pub fn point_at(p: &Polyline, distance: f64) -> (Point, Vec2);    // position and tangent
 pub fn bounds(p: &Polyline) -> Rect;
+pub fn distance_mm(a: &Polyline, b: &Polyline) -> f64;          // shortest gap between lines, arcs exact; 0 when they touch
 ```
 
 Errors: `GeometryError::{Degenerate, SelfIntersecting, OffsetVanished, ArcUnderNonUniformTransform, ContoursCross}`.
@@ -269,6 +270,14 @@ Inputs: project, op. Output: toolpath in project space.
    - `OnLine`: no offset.
    Offsets that vanish (hole smaller than the tool) raise
    `Warning::ToolTooLarge` and that contour is skipped.
+   Overlap check (`dc-cam::overlap`, decision D6 in
+   `docs/research/toolpath-ordering.md`): for every pair of tool-centre
+   paths whose shapes lie in different regions, if either path comes closer
+   than r to the other shape's line, its swept tool enters material that
+   shape keeps; raise one `Warning::ToolpathsOverlap` per pair of shapes,
+   in cut order, naming both and the smallest gap between their lines.
+   A part and its own holes are one region and never compared. Close
+   outlines are not merged (PureCutCNC's `edgeLevelRuns` does that).
 4. Direction. Spindle is clockwise viewed from above. Climb milling on an
    outside wall traverses the tool-centre contour clockwise; on an inside
    wall, counter-clockwise. Conventional is the reverse. A contour that is
@@ -495,9 +504,9 @@ widens X and Y by the largest radius among the exported operations' tools.
 ## Module layout
 
 ```
-crates/dc-geometry/src/{lib.rs, point.rs, polyline.rs, contour.rs, region.rs, offset.rs, flatten.rs, transform.rs}
+crates/dc-geometry/src/{lib.rs, point.rs, polyline.rs, contour.rs, region.rs, distance.rs, offset.rs, flatten.rs, transform.rs}
 crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, layout.rs, locate.rs, migrate.rs, validate.rs, history.rs, post_processor.rs}
-crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, passes.rs, stock.rs, tabs.rs}
+crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, overlap.rs, passes.rs, stock.rs, tabs.rs}
 crates/dc-gcode/src/{lib.rs, error.rs, post.rs, emit.rs, format.rs, transform.rs, parse.rs, definitions/{README.md, grblhal.json, grbl.json}}
 crates/dc-import/src/{lib.rs, svg.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs}

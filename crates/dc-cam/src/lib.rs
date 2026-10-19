@@ -9,6 +9,7 @@
 //! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.
 
 mod error;
+mod overlap;
 pub mod passes;
 mod profile;
 mod stock;
