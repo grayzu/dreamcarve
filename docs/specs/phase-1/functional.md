@@ -145,7 +145,9 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   that changes tools first sets the controller's current tool with
   `M61 Q<n>`, because grblHAL skips an `M6` for the tool it holds. Every
   `M0` and `M6` is at safe Z, and the safety pass treats Z as unknown after
-  it, so a spindle start needs a retract after the last stop (#43, #57).
+  it, so a spindle start, the next stop, and an XY rapid each need a
+  retract after the last stop; the program retracts after the router-on
+  pause too (#43, #57, #68).
 - **S5** The program begins with the post-processor's units command,
   work-coordinate select and absolute distance mode (`G90`), so a
   controller in the wrong state is corrected. After every pause or tool
