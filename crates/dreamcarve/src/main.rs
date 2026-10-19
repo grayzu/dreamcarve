@@ -13,6 +13,7 @@ use std::process::ExitCode;
 
 mod check;
 mod cli;
+mod clock;
 mod export;
 mod init;
 

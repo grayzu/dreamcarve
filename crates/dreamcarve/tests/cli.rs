@@ -20,6 +20,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use dc_geometry::{Rect, assert_approx_eq};
+
+#[path = "../src/clock.rs"]
+#[allow(dead_code, reason = "the test uses only the timestamp")]
+mod clock;
 use dc_project::{Loaded, SpindleControl, load, save};
 
 /// The date every compared program is exported with.
@@ -103,13 +107,49 @@ fn fill_in(path: &Path, feed_mm_min: f64, plunge_mm_min: f64, rpm: u32) {
     std::fs::write(path, save(&project).expect("project saves")).expect("dcv written");
 }
 
+/// Runs `git args` in this crate's directory; `None` when git is missing or
+/// fails.
+fn git(args: &[&str]) -> Option<String> {
+    let out = Command::new("git")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(args)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// `--version` marks every build but the release tag's as work toward the
+/// release, `<version>-dev.<UTC build time>+g<hash>`, so later builds sort
+/// higher (`docs/plan.md`, "Versioning").
 #[test]
-fn version_flag_prints_name_and_cargo_version() {
+fn version_flag_prints_dev_build_time_and_commit_hash() {
     let out = dreamcarve().arg("--version").output().expect("binary runs");
     assert!(out.status.success(), "exit status: {:?}", out.status);
-    assert_eq!(
-        stdout(&out).trim(),
-        format!("dreamcarve {}", env!("CARGO_PKG_VERSION"))
+    let printed = stdout(&out).trim().to_owned();
+    let version = env!("CARGO_PKG_VERSION");
+    let tag = format!("v{version}");
+    let github_tag = std::env::var("GITHUB_REF_TYPE").is_ok_and(|t| t == "tag")
+        && std::env::var("GITHUB_REF_NAME").is_ok_and(|n| n == tag);
+    let git_tag = git(&["tag", "--points-at", "HEAD"]).is_some_and(|t| t.lines().any(|l| l == tag));
+    if github_tag || git_tag {
+        assert_eq!(printed, format!("dreamcarve {version}"));
+        return;
+    }
+    let rest = printed
+        .strip_prefix(&format!("dreamcarve {version}-dev."))
+        .unwrap_or_else(|| panic!("not a dev version: {printed}"));
+    let (built, hash) = match rest.split_once("+g") {
+        Some((built, hash)) => (built, Some(hash)),
+        None => (rest, None),
+    };
+    assert_eq!(hash, git(&["rev-parse", "--short=7", "HEAD"]).as_deref());
+    assert_eq!(built.len(), 14, "YYYYMMDDHHMMSS: {built}");
+    assert!(built.bytes().all(|b| b.is_ascii_digit()), "digits: {built}");
+    assert!(
+        built <= clock::timestamp_utc(clock::now_secs()).as_str(),
+        "built in the future: {built}"
     );
 }
 
