@@ -277,13 +277,18 @@ fn check_rules(
         // S4, #43, #57: the user fits tools and switches the router at a
         // pause or an `M6` tool change, so it comes with the bit at safe Z.
         // Afterwards Z is unknown: the user may have jogged or set Z zero.
-        if block.has('M', 0.0) || block.has('M', 1.0) || block.has('M', 6.0) {
+        let changes_tool = block.has('M', 6.0);
+        if block.has('M', 0.0) || block.has('M', 1.0) || changes_tool {
             let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
             if !router.at_or_above(safe_z_mm) {
                 return Err(ExportError::PauseNotAtSafeZ { line });
             }
             if manual {
-                router.pause(safe_z_mm);
+                if changes_tool {
+                    router.tool_changed();
+                } else {
+                    router.pause();
+                }
             }
             router.z_mm = None;
             last_pause = Some(line);
@@ -344,6 +349,13 @@ fn check_rules(
         };
         let limits = Limits::for_line(line, spans, stock_thickness_mm);
         let tolerance_mm = quantum_mm(post, mv.units);
+        // #68: Z after this move. A line without a Z word leaves Z where it
+        // was, which after a pause is unknown, whatever Z the program last
+        // wrote.
+        let z_after = match (block.value('Z'), mv.to.z) {
+            (Some(_), Some(z)) => Some((transform.project_z(z, mv.units), tolerance_mm)),
+            _ => router.z_mm,
+        };
         check_depth(mv, &limits, transform, tolerance_mm)?;
         if mv.kind.is_cut() {
             if manual {
@@ -360,16 +372,9 @@ fn check_rules(
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
         } else {
-            check_rapid(mv, &limits, transform, tolerance_mm)?;
+            check_rapid(mv, &limits, router.z_mm, z_after)?;
         }
-        if manual && is_retract(mv) {
-            router.retracted();
-        }
-        router.moved(
-            mv.to
-                .z
-                .map(|z| (transform.project_z(z, mv.units), tolerance_mm)),
-        );
+        router.moved(z_after);
     }
     if spindle_on {
         return Err(ExportError::SpindleNotStopped);
@@ -380,18 +385,21 @@ fn check_rules(
     Ok(blocks)
 }
 
-/// Where Z is, for the S4 checks in both spindle modes, and, with manual
-/// spindle control, what the program has done since its last cut. A tool's
-/// first cut needs a pause after the last retract, so a tool-change stop
-/// followed by the retract to safe Z does not count as the pause to turn
-/// the router on.
+/// Where Z is, for the S2 and S4 checks in both spindle modes, and, with
+/// manual spindle control, what the program has done since its last cut.
+/// Z is unknown at program start and after every pause (`M0`, `M1`, `M6`)
+/// until a move writes Z again; a rapid, a pause, and a spindle start all
+/// read this one state (#43, #68). A tool's first cut needs an `M0` or
+/// `M1` after the last cut and the last `M6`: the user fits a tool at an
+/// `M6`, so an `M6` never counts as the pause to turn the router on.
 #[derive(Debug, Default)]
 struct RouterPauses<'a> {
     /// Z above stock bottom, mm, and its rounding tolerance, if known.
     z_mm: Option<(f64, f64)>,
-    /// An `M0` at safe Z has come after the last cut and the last retract.
+    /// An `M0` or `M1` (at safe Z) has come after the last cut and the
+    /// last `M6`.
     paused_at_safe_z: bool,
-    /// A cut has come after the last `M0` at safe Z.
+    /// A cut has come after the last `M0` or `M1`.
     cut_since_pause: bool,
     /// The tool of the last cut.
     tool: Option<&'a ToolId>,
@@ -411,17 +419,16 @@ impl<'a> RouterPauses<'a> {
             .is_some_and(|(z, tolerance)| z >= safe_z_mm - tolerance)
     }
 
-    /// A retract: a pause before it does not count for the next cut.
-    fn retracted(&mut self) {
-        self.paused_at_safe_z = false;
+    /// An `M0` or `M1` at safe Z.
+    fn pause(&mut self) {
+        self.paused_at_safe_z = true;
+        self.cut_since_pause = false;
     }
 
-    /// An `M0` where safe Z is `safe_z_mm`.
-    fn pause(&mut self, safe_z_mm: f64) {
-        if self.at_or_above(safe_z_mm) {
-            self.paused_at_safe_z = true;
-            self.cut_since_pause = false;
-        }
+    /// An `M6` at safe Z: a pause before it does not count for the next
+    /// tool's first cut.
+    fn tool_changed(&mut self) {
+        self.paused_at_safe_z = false;
     }
 
     /// A cut on `line` with `tool`. A tool's first cut needs a pause at
@@ -600,22 +607,23 @@ fn check_depth(
 }
 
 /// S2: a rapid ends at or above safe Z, and one that moves in XY also
-/// starts there.
+/// starts there. `from_z_mm` and `to_z_mm` are Z above stock bottom and
+/// its rounding tolerance before and after the move, `None` where Z is
+/// unknown: at program start and after a pause until Z is written (#68).
 fn check_rapid(
     mv: &MachineMove,
     limits: &Limits<'_>,
-    transform: &MachineTransform,
-    tolerance_mm: f64,
+    from_z_mm: Option<(f64, f64)>,
+    to_z_mm: Option<(f64, f64)>,
 ) -> Result<(), ExportError> {
-    let below = |z: Option<f64>| -> Option<Option<f64>> {
-        let Some(z) = z else {
+    let below = |z: Option<(f64, f64)>| -> Option<Option<f64>> {
+        let Some((z_mm, tolerance_mm)) = z else {
             return Some(None);
         };
-        let z_mm = transform.project_z(z, mv.units);
         (z_mm < limits.safe_z_mm - tolerance_mm).then_some(Some(z_mm))
     };
     let moves_xy = differs(mv.from.x, mv.to.x) || differs(mv.from.y, mv.to.y);
-    let offending = below(mv.to.z).or_else(|| if moves_xy { below(mv.from.z) } else { None });
+    let offending = below(to_z_mm).or_else(|| if moves_xy { below(from_z_mm) } else { None });
     match offending {
         Some(z_mm) => Err(ExportError::RapidBelowSafeZ {
             line: mv.line,
@@ -1447,7 +1455,7 @@ mod tests {
     /// Z after its last cut. Safe Z is machine Z5 in the fixture.
     #[test]
     fn manual_cut_without_on_pause_is_rejected() {
-        let ok = "G21 G90\nG54\nG0 Z5\nM0 (MSG, Turn the router ON.)\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM0 (MSG, Turn the router OFF.)\n";
+        let ok = "G21 G90\nG54\nG0 Z5\nM0 (MSG, Turn the router ON.)\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nX10 F1000\nG0 Z5\nM0 (MSG, Turn the router OFF.)\n";
         check_manual(ok).unwrap();
 
         let no_pause = "G21 G90\nG54\nG0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
@@ -1457,17 +1465,30 @@ mod tests {
             "{err:?}"
         );
 
-        // A tool-change pause, then the retract that must follow it: the
-        // router still needs its own pause after the retract.
-        let no_on_after_retract =
-            "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
-        let err = check_manual(no_on_after_retract).unwrap_err();
-        assert!(
-            matches!(err, ExportError::RouterNotStarted { line: 7 }),
-            "{err:?}"
-        );
+        // #68: a tool change is not the pause to turn the router on, nor
+        // does a pause before it count: the router needs its own pause
+        // after the `M6`.
+        let manual_grblhal = |text: &str| {
+            let grblhal = crate::post::lookup("grblhal").unwrap();
+            check_text_on(text, grblhal, SpindleControl::Manual)
+        };
+        for text in [
+            "G21 G90\nG54\nG0 Z5\nT1 M6\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n",
+            "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nT1 M6\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n",
+        ] {
+            let line = text.lines().position(|l| l.starts_with("G1")).unwrap() + 1;
+            let err = manual_grblhal(text).unwrap_err();
+            assert!(
+                matches!(err, ExportError::RouterNotStarted { line: l } if l == line),
+                "{text:?}: {err:?}"
+            );
+        }
+        manual_grblhal(
+            "G21 G90\nG54\nG0 Z5\nT1 M6\nG21 G90 G54 G0 Z5\nM0\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n",
+        )
+        .unwrap();
 
-        let no_off = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nG0 Z5\n";
+        let no_off = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n";
         let err = check_manual(no_off).unwrap_err();
         assert!(matches!(err, ExportError::RouterNotStopped), "{err:?}");
 
@@ -1497,10 +1518,11 @@ mod tests {
         );
         let ok = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
         check_text_as(ok, SpindleControl::Automatic).unwrap();
-        let manual_style = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let manual_style =
+            "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         let err = check_text_as(manual_style, SpindleControl::Automatic).unwrap_err();
         assert!(
-            matches!(err, ExportError::SpindleNotRunning { line: 6 }),
+            matches!(err, ExportError::SpindleNotRunning { line: 7 }),
             "{err:?}"
         );
         let no_dwell = "G21 G90\nG54\nG0 Z5\nM3 S18000\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
@@ -1521,7 +1543,7 @@ mod tests {
                     "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nM0\n"
                 }
                 SpindleControl::Manual => {
-                    "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nM0\n"
+                    "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nM0\n"
                 }
             };
             let below_line = below.lines().count();
@@ -1566,7 +1588,7 @@ mod tests {
             matches!(err, ExportError::PauseNotAtSafeZ { line: 5 }),
             "{err:?}"
         );
-        let manual_lifted = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nM0\nG21 G90 G54 X0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
+        let manual_lifted = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54 G0 Z5\nM0\nG21 G90 G54 G0 Z5\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM0\n";
         check_manual(manual_lifted).unwrap();
     }
 

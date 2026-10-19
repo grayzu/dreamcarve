@@ -35,9 +35,11 @@ written. There are no safety warnings, only errors.
    The program does not stop for its first bit: you fit it and set work
    zero with it before you start. Every later stop, a pause (`M0`) or a
    tool change (`M6`, grblHAL only), comes with the bit at safe Z. You may
-   jog and set Z zero at a tool change, so after any stop the program
-   rises to safe Z again before the spindle or router starts, and writes
-   its next motion and feed words in full. GRBL cannot stop for a tool
+   jog and set Z zero at any stop, so after it the program rises to safe Z
+   again before the spindle starts, before the next stop, and before any
+   move across the work, and writes its next motion and feed words in
+   full. The safety check treats Z as unknown after every stop, so a
+   program that moves sideways before it lifts is refused. GRBL cannot stop for a tool
    change where you can jog, so DreamCarve refuses a GRBL program that
    needs a second bit.
 6. **The controller is in a known state.** The program sets units, the

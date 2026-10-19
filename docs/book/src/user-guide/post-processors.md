@@ -166,9 +166,12 @@ and after its last:
   G0 Z5.000
   M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)
   G90 … G54
+  G0 Z5.000
   ```
 
-  (`G90 … G54` stands for the five setup lines.)
+  (`G90 … G54` stands for the five setup lines.) You may jog or set Z
+  zero while it is paused, so the program rises to safe Z again before it
+  moves across the work.
 
   Switch the router on, set its dial to the speed shown, wait until it is
   at speed, then resume with cycle start. Without an `rpm` on the tool
@@ -193,7 +196,7 @@ turn it off. `export` lists each pause with its line number:
 Before you start: fit T1 Set me and set work zero with it.
 Pauses and tool changes; resume each with cycle start:
   line 11: Turn the router ON. Speed 18000 RPM. Resume to start cutting.
-  line 998: Turn the router OFF.
+  line 999: Turn the router OFF.
 ```
 
 ### What the controller does with the pause

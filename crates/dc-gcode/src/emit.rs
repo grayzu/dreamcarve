@@ -27,7 +27,8 @@
 //!   are no spindle words: the program retracts to safe Z and pauses with
 //!   `M0` and a `(MSG, ...)` comment for the user to switch the router on
 //!   before each tool's first cut, and off before a tool change and at the
-//!   end.
+//!   end. Z is unknown after the router-on pause, so the program retracts
+//!   to safe Z again before it moves in XY (#68).
 //! - There is no stop for the first tool: the user fits it and sets work
 //!   zero with it before starting the program (#57). A later tool needs a
 //!   definition whose tool change has `M6` (grblHAL); otherwise export
@@ -375,10 +376,14 @@ pub fn emit(
         if manual {
             // S4 (manual): retract, then pause for the user to switch the
             // router on. Resuming is the confirmation, so there is no
-            // dwell, and the speed is only a hint.
+            // dwell, and the speed is only a hint. The user may jog or set
+            // Z zero at the pause, so Z is unknown after it: lift to safe
+            // Z again before moving in XY (#68).
             if !router_on {
                 w.retract(safe_z_mm)?;
                 w.pause(&router_on_message(rates.rpm), true);
+                w.forget_position();
+                w.retract(safe_z_mm)?;
                 router_on = true;
             }
         } else if let Some(rpm) = rates.rpm

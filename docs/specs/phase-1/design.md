@@ -356,7 +356,8 @@ Inputs: project, op. Output: toolpath in project space.
    After the first op's retract, or the tool change and its second
    retract, before the first move of each tool, pause for the router:
    `M0 (MSG, Turn the router ON. Speed {rpm} RPM. Resume to start cutting.)`,
-   leaving out the speed when the tool has none. After the last op of a tool
+   leaving out the speed when the tool has none, then the setup again and,
+   as after any stop, a retract to safe Z (#68). After the last op of a tool
    (before a tool change, and at the end), retract to safe Z, then
    `M0 (MSG, Turn the router OFF.)`. The message is always a `( )` comment,
    whatever the dialect's comment syntax, passes the comment sanitizer, and
@@ -368,13 +369,17 @@ Inputs: project, op. Output: toolpath in project space.
    Modal motion words omitted when `modalMotion`.
 6. Footer, `programEndCommand`.
 7. Safety pass over the emitted text using `parse_motion`: S1 (Z ≥ machine
-   bottom − allowance), S2 (rapids at or above machine safe Z), S3 (every
+   bottom − allowance), S2 (rapids end at or above machine safe Z, and an
+   XY rapid starts at a known Z at or above it), S3 (every
    G1/G2/G3 has an active F), S4 (spindle running and dwelled before a cut,
-   or with manual control an `M0` at safe Z after the last retract before
-   each tool's first cut, and no `M3`, `M5` or `S` word; in both modes every
-   `M0`, `M1` or `M6` at a known Z at or above safe Z, Z unknown after it,
-   and an `M3` only at a known Z at or above safe Z, so a retract follows
-   every stop before the spindle starts), S5 (units, WCS and `G90` before
+   or with manual control an `M0` or `M1` after the last cut and the last
+   `M6` before each tool's first cut, and no `M3`, `M5` or `S` word; in
+   both modes every `M0`, `M1` or `M6` at a known Z at or above safe Z).
+   Z is one state for S2 and S4: unknown at program start and after every
+   `M0`, `M1` or `M6` until a line writes Z, whatever Z the program wrote
+   before the stop. A rapid in XY, a stop, and an `M3` all need a known Z
+   at or above safe Z, so a retract follows every stop before any of them
+   (#43, #68). S5 (units, WCS and `G90` before
    the first move or spindle start, and again after every stop), S6 (each
    operation's motion lines, mapped back through the machine transform,
    are its toolpath move for move: rapids split only into their Z and XY
