@@ -45,7 +45,10 @@ pub enum WarningCode {
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. Params: `instance`, `instance_name`,
     /// `profile` (the shape cut first), `other_instance`,
-    /// `other_instance_name`, `other_profile`, `gap_mm`.
+    /// `other_instance_name`, `other_profile`, `gap_mm` (the smallest
+    /// distance between the two shapes' lines), `tool`, `diameter_mm`, and
+    /// `needed_mm` (the gap this side needs: the diameter for Outside, the
+    /// radius for On line). The shapes are cut as drawn.
     ToolpathsOverlap,
 }
 
@@ -154,6 +157,17 @@ impl Warning {
         }
     }
 
+    /// The second shape a two-shape warning names, from its `other_*`
+    /// params.
+    fn other_shape(&self) -> String {
+        format!(
+            "`{}` (instance `{}`, profile {})",
+            self.text("other_instance_name"),
+            self.text("other_instance"),
+            self.text("other_profile")
+        )
+    }
+
     /// The suggestion for tabs that cover most of a contour.
     fn coverage_advice(&self) -> String {
         let count = self.text("tab_count");
@@ -220,7 +234,17 @@ impl fmt::Display for Warning {
                     self.mm("deepest_pass_z_mm")
                 ),
             },
-            WarningCode::ToolpathsOverlap => write!(f, "tool paths overlap"),
+            WarningCode::ToolpathsOverlap => write!(
+                f,
+                "the tool paths of {} and {} cut into each other: the shapes are {} mm apart, closer than the {} mm tool `{}` ({} mm) needs between them, so cutting one gouges the other. Move them at least {} mm apart or use a smaller bit.",
+                self.shape(),
+                self.other_shape(),
+                self.mm("gap_mm"),
+                self.mm("needed_mm"),
+                self.text("tool"),
+                self.mm("diameter_mm"),
+                self.mm("needed_mm")
+            ),
             WarningCode::TabsCoverMostOfContour => {
                 let path_mm = self
                     .param("path_length_mm")
@@ -260,5 +284,24 @@ mod tests {
         assert_eq!(rounded(12.0, 2), "12");
         assert_eq!(rounded(-0.001, 2), "0");
         assert_eq!(rounded(105.128, 1), "105.1");
+    }
+
+    #[test]
+    fn toolpaths_overlap_names_both_shapes_and_the_gap() {
+        let w = Warning::new(WarningCode::ToolpathsOverlap)
+            .with("instance", "a")
+            .with("instance_name", "Left")
+            .with("profile", 0)
+            .with("other_instance", "b")
+            .with("other_instance_name", "Right")
+            .with("other_profile", 1)
+            .with("gap_mm", 2.000_000_000_1)
+            .with("tool", "6 mm upcut")
+            .with("diameter_mm", 6.0)
+            .with("needed_mm", 6.0);
+        assert_eq!(
+            w.to_string(),
+            "the tool paths of `Left` (instance `a`, profile 0) and `Right` (instance `b`, profile 1) cut into each other: the shapes are 2 mm apart, closer than the 6 mm tool `6 mm upcut` (6 mm) needs between them, so cutting one gouges the other. Move them at least 6 mm apart or use a smaller bit."
+        );
     }
 }

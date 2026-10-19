@@ -8,9 +8,10 @@
 use crate::GeometryError;
 use crate::GeometryWarning;
 use crate::contour::Contour;
+use crate::distance::distance_to_segment;
 use crate::offset::to_cavalier;
 use crate::point::{EPS_MM, Point, Vec2};
-use crate::polyline::{Arc, Segment};
+use crate::polyline::Segment;
 use cavalier_contours::polyline::{BooleanOp, PlineSource};
 use std::f64::consts::{PI, TAU};
 
@@ -246,41 +247,6 @@ fn on_boundary(contour: &Contour, p: Point) -> bool {
         .polyline()
         .segments()
         .any(|seg| distance_to_segment(seg, p) <= EPS_MM)
-}
-
-/// Shortest distance from `p` to `seg`, mm, following arcs.
-fn distance_to_segment(seg: Segment, p: Point) -> f64 {
-    let to_ends = || p.distance_to(seg.start).min(p.distance_to(seg.end));
-    match seg.arc() {
-        Some(arc) => {
-            let v = p - arc.centre;
-            if sweep_contains(arc, v.y.atan2(v.x)) {
-                (v.length() - arc.radius_mm).abs()
-            } else {
-                to_ends()
-            }
-        }
-        None => {
-            let d = seg.end - seg.start;
-            let len2 = d.dot(d);
-            if len2 <= EPS_MM * EPS_MM {
-                return to_ends();
-            }
-            let t = ((p - seg.start).dot(d) / len2).clamp(0.0, 1.0);
-            p.distance_to(seg.start + d * t)
-        }
-    }
-}
-
-/// True when the direction `angle_rad` from the arc centre falls within the
-/// arc's sweep.
-fn sweep_contains(arc: Arc, angle_rad: f64) -> bool {
-    let from_start = if arc.sweep_rad > 0.0 {
-        (angle_rad - arc.start_angle_rad).rem_euclid(TAU)
-    } else {
-        (arc.start_angle_rad - angle_rad).rem_euclid(TAU)
-    };
-    from_start <= arc.sweep_rad.abs()
 }
 
 /// The winding number of `contour` about `p`: +1 inside a counter-clockwise

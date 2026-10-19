@@ -15,6 +15,7 @@
 //! counter-clockwise arc, and the direction rule is [`traversal_is_ccw`].
 
 use crate::error::{CamError, FeedField, ShapeRef};
+use crate::overlap::overlap_warnings;
 use crate::passes::pass_z_mm;
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
@@ -132,7 +133,8 @@ fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// or one above the stock top, gives [`WarningCode::TabsOutsideCutRange`].
 ///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
-/// with a [`Warning`]. Fails without a toolpath when a feed, plunge rate, or
+/// with a [`Warning`]. Shapes in different regions whose tool paths cut
+/// into each other give [`WarningCode::ToolpathsOverlap`], in cut order. Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
 /// allowance, when targets cross, when an id does not resolve, or when the
 /// cutter would leave the stock ([`CamError::OffStock`]).
@@ -255,6 +257,9 @@ pub fn generate_profile(
             }));
         }
     }
+
+    // D6: paths are in cut order, so the warnings follow it.
+    warnings.extend(overlap_warnings(&paths, &shapes, &regions, op.side, tool));
 
     let mut toolpath = Toolpath::default();
     for (index, (path, shape)) in paths.iter().enumerate() {

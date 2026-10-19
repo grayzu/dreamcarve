@@ -131,6 +131,23 @@ sentence, after the operation's id, with lengths rounded to 0.01 mm.
 | "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
 | "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
+| "the tool paths of ... and ... cut into each other" | Two shapes are closer than the bit needs to cut between them, so cutting one gouges the other. See below. |
+
+### Shapes too close together
+
+DreamCarve cuts each shape on its own. When two shapes in one operation are
+closer than the bit needs to pass between them, the bit cutting one also
+cuts into the other. With **Outside** both cuts run in the gap, so the
+shapes need at least one bit diameter between them; with **On line** each
+cut reaches half a bit past its line, so they need one radius. **Inside**
+cuts stay within their own shapes and never warn.
+
+The warning names both shapes and the smallest gap between them, listed in
+the order the shapes are cut. It also applies to a part inside another
+part's hole: a coaster 1 mm from the wall of a frame's hole warns. A part
+and its own holes are never compared: a hole close to its outline leaves a
+thin wall, not a gouge. The program is still written as drawn. Move the
+shapes apart, or use a smaller bit.
 
 Shapes that cross each other, or a shape that crosses itself, are an error:
 DreamCarve cannot tell which side is material, so it cuts nothing. See

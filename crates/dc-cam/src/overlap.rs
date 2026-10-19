@@ -5,6 +5,116 @@
 //! into each other (`docs/research/toolpath-ordering.md`, decision D6).
 //! DreamCarve cuts each shape on its own rather than merging close outlines
 //! as PureCutCNC's `edgeLevelRuns` does, so it warns instead.
+//!
+//! The tool sweeps a band `r` wide either side of its centre path. That band
+//! reaches the material another shape keeps exactly when the path comes
+//! closer than `r` to that shape's line: next to the line, its kept side is
+//! the material of the region it bounds (the part, or for a hole the frame
+//! around it). Under Inside every path stays inside its own region, at
+//! least `r` from every other region's line, so only Outside and On line
+//! cuts can warn. A part and its own holes are one region and are never
+//! compared: cutting close to them leaves a thin wall, not a gouge.
+
+use crate::error::ShapeRef;
+use crate::warning::{Warning, WarningCode};
+use dc_geometry::{Contour, EPS_MM, Polyline, Rect, Region, distance_mm};
+use dc_project::{Side, Tool};
+
+/// One tool-centre path in cut order, with the shape it cuts.
+pub(crate) type CutPath<'a> = (Polyline, Option<&'a ShapeRef>);
+
+/// One [`WarningCode::ToolpathsOverlap`] per pair of shapes, from different
+/// regions, where either one's tool path comes closer than the tool radius
+/// to the other's line. `paths` are in cut order; so are the warnings, by
+/// the first path of each pair and then the second, and the shape cut
+/// first is named first. `shapes` are the resolved targets and `regions`
+/// what `nest` made of them.
+#[must_use]
+pub(crate) fn overlap_warnings(
+    paths: &[CutPath<'_>],
+    shapes: &[(ShapeRef, Contour)],
+    regions: &[Region],
+    side: Side,
+    tool: &Tool,
+) -> Vec<Warning> {
+    let radius_mm = tool.diameter_mm / 2.0;
+    // Each path that has a known shape, with that shape's line and region.
+    let placed: Vec<(&Polyline, &ShapeRef, &Contour, usize)> = paths
+        .iter()
+        .filter_map(|(path, shape)| {
+            let shape = (*shape)?;
+            let (_, contour) = shapes.iter().find(|(s, _)| s == shape)?;
+            let region = regions.iter().position(|r| {
+                std::iter::once(r.outer())
+                    .chain(r.holes())
+                    .any(|c| c == contour || *c == contour.reversed())
+            })?;
+            Some((path, shape, contour, region))
+        })
+        .collect();
+
+    let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
+    let mut warnings = Vec::new();
+    for (index, &(path_a, shape_a, line_a, region_a)) in placed.iter().enumerate() {
+        for &(path_b, shape_b, line_b, region_b) in placed.iter().skip(index + 1) {
+            if region_a == region_b
+                || warned
+                    .iter()
+                    .any(|&(x, y)| (x, y) == (shape_a, shape_b) || (x, y) == (shape_b, shape_a))
+            {
+                continue;
+            }
+            if !(within(path_a, line_b.polyline(), radius_mm)
+                || within(path_b, line_a.polyline(), radius_mm))
+            {
+                continue;
+            }
+            warned.push((shape_a, shape_b));
+            warnings.push(
+                Warning::new(WarningCode::ToolpathsOverlap)
+                    .with("instance", &shape_a.instance)
+                    .with("instance_name", &shape_a.instance_name)
+                    .with("profile", shape_a.profile)
+                    .with("other_instance", &shape_b.instance)
+                    .with("other_instance_name", &shape_b.instance_name)
+                    .with("other_profile", shape_b.profile)
+                    .with("gap_mm", distance_mm(line_a.polyline(), line_b.polyline()))
+                    .with("tool", &tool.name)
+                    .with("diameter_mm", tool.diameter_mm)
+                    .with("needed_mm", needed_gap_mm(side, tool.diameter_mm)),
+            );
+        }
+    }
+    warnings
+}
+
+/// True when `path` comes closer than `radius_mm` to `line`, by more than
+/// [`EPS_MM`]: shapes exactly a tool's reach apart are fine.
+fn within(path: &Polyline, line: &Polyline, radius_mm: f64) -> bool {
+    let reach_mm = radius_mm - EPS_MM;
+    let near = match (path.bounds(), line.bounds()) {
+        (Some(a), Some(b)) => boxes_within(a, b, reach_mm),
+        _ => false,
+    };
+    near && distance_mm(path, line) < reach_mm
+}
+
+/// True when boxes `a` and `b` are less than `reach_mm` apart on each axis.
+fn boxes_within(a: Rect, b: Rect, reach_mm: f64) -> bool {
+    a.min.x - b.max.x < reach_mm
+        && b.min.x - a.max.x < reach_mm
+        && a.min.y - b.max.y < reach_mm
+        && b.min.y - a.max.y < reach_mm
+}
+
+/// The gap two shapes need for this side not to cut into each other: both
+/// tools run between them on Outside, half of each on the line.
+fn needed_gap_mm(side: Side, diameter_mm: f64) -> f64 {
+    match side {
+        Side::Outside | Side::Inside => diameter_mm,
+        Side::OnLine => diameter_mm / 2.0,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -149,6 +259,25 @@ mod tests {
     }
 
     #[test]
+    fn inside_cuts_of_close_parts_are_quiet() {
+        let p = squares(&[("a", 20.0), ("b", 42.0)]);
+        let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::Inside)).unwrap();
+        assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn on_line_cuts_need_only_the_radius() {
+        let close = squares(&[("a", 20.0), ("b", 42.0)]);
+        let (_, warnings) = generate_profile(&close, &profile_op(&close, Side::OnLine)).unwrap();
+        let found = overlaps(&warnings);
+        assert_eq!(found.len(), 1, "{warnings:?}");
+        assert_eq!(found[0].param("needed_mm"), Some("3"));
+        let apart = squares(&[("a", 20.0), ("b", 43.5)]);
+        let (_, warnings) = generate_profile(&apart, &profile_op(&apart, Side::OnLine)).unwrap();
+        assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    #[test]
     fn part_and_its_own_hole_are_not_compared() {
         // A 40 mm square with an 18 mm square hole 1 mm from its left edge.
         let p = project(
@@ -206,20 +335,28 @@ mod tests {
     }
 
     /// The instance each contour of `toolpath` cuts, in cut order: the
-    /// square whose 3 mm-wide surround holds each XY rapid's end.
+    /// square whose centre is nearest the mean X of the cutting moves
+    /// between two rapids.
     fn cut_order(toolpath: &Toolpath, xs_mm: &[(&str, f64)]) -> Vec<String> {
         let mut order: Vec<String> = Vec::new();
+        let mut cut_xs: Vec<f64> = Vec::new();
         for m in &toolpath.moves {
             if m.kind != MoveKind::Rapid {
+                cut_xs.push(m.to.x);
                 continue;
             }
-            let p = m.to;
-            let square = xs_mm
-                .iter()
-                .find(|&&(_, x)| p.x >= x - 3.5 && p.x <= x + 23.5 && p.y >= 16.5 && p.y <= 43.5);
-            if let Some(&(id, _)) = square
-                && order.last().map(String::as_str) != Some(id)
-            {
+            if cut_xs.is_empty() {
+                continue;
+            }
+            #[allow(clippy::cast_precision_loss, reason = "a few hundred moves")]
+            let mean_x = cut_xs.iter().sum::<f64>() / cut_xs.len() as f64;
+            cut_xs.clear();
+            let nearest = xs_mm.iter().min_by(|&&(_, a), &&(_, b)| {
+                (a + 10.0 - mean_x)
+                    .abs()
+                    .total_cmp(&(b + 10.0 - mean_x).abs())
+            });
+            if let Some(&(id, _)) = nearest {
                 order.push(id.to_owned());
             }
         }

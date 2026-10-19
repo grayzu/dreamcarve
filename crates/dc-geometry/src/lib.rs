@@ -8,6 +8,7 @@
 //! counter-clockwise and holes clockwise.
 
 mod contour;
+mod distance;
 mod flatten;
 mod offset;
 mod point;
@@ -16,6 +17,7 @@ mod region;
 mod transform;
 
 pub use contour::Contour;
+pub use distance::distance_mm;
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, flatten};
 pub use offset::offset;
 pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq};
