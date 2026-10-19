@@ -118,7 +118,8 @@ pub enum Problem {
         /// The disabled operation.
         operation: OperationId,
     },
-    /// A tool has no value for a field export needs (feed, plunge or RPM).
+    /// A tool has no value for a field export needs (feed, plunge or RPM),
+    /// or no step-down while an enabled operation sets none either (#98).
     /// An error since #76, so `check` lists every unset value in one run.
     ToolValueUnset {
         /// The tool.
@@ -570,6 +571,16 @@ impl Validator {
             .filter(|op| op.enabled())
             .map(Operation::tool)
             .collect();
+        // Tools an enabled operation takes its step-down from (#98).
+        let step_down_from_tool: BTreeSet<&ToolId> = p
+            .operations
+            .iter()
+            .filter(|op| op.enabled())
+            .filter_map(|op| {
+                let Operation::Profile(op) = op;
+                op.step_down_mm.is_none().then_some(&op.tool)
+            })
+            .collect();
         let mut seen = BTreeSet::new();
         for tool in &p.tools {
             let in_use = used.contains(&tool.id);
@@ -642,8 +653,18 @@ impl Validator {
                     feed_mm_min,
                 });
             }
-            if let Some(step) = tool.step_down_mm {
-                self.tool_positive(tool, "step_down_mm", step);
+            // Unset is an error only when an enabled operation falls back on
+            // it; one error per tool, however many operations do (#98).
+            match tool.step_down_mm {
+                Some(step) => self.tool_positive(tool, "step_down_mm", step),
+                None if step_down_from_tool.contains(&tool.id) => {
+                    self.problems.push(Problem::ToolValueUnset {
+                        tool: tool.id.clone(),
+                        name: tool.name.clone(),
+                        field: "step_down_mm",
+                    });
+                }
+                None => {}
             }
             if let Some(fraction) = tool.step_over_fraction {
                 let field = "step_over_fraction";
@@ -2061,6 +2082,89 @@ mod tests {
         assert_eq!(errors(&problems).len(), 4, "{problems:?}");
     }
 
+    /// #98: with neither the operation nor its tool giving a step-down,
+    /// the passes are unknown, so it is an error located at the tool, the
+    /// one value every operation using it falls back on.
+    #[test]
+    fn step_down_unset_on_operation_and_tool_is_error() {
+        let mut p = sample_project();
+        p.tools[0].step_down_mm = None;
+        op_mut(&mut p).step_down_mm = None;
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ToolValueUnset {
+                tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
+                field: "step_down_mm",
+            }]
+        );
+        assert!(problems[0].is_error());
+        assert!(problems[0].is_unset_value());
+        assert_eq!(problems[0].field().unwrap(), "tools[t1].step_down_mm");
+        assert_eq!(
+            problems[0].to_string(),
+            "tools[t1].step_down_mm is not set (mm) for tool `6.35 mm upcut`"
+        );
+    }
+
+    /// #98: the operation's own step-down is enough.
+    #[test]
+    fn step_down_on_operation_only_is_valid() {
+        let mut p = sample_project();
+        p.tools[0].step_down_mm = None;
+        op_mut(&mut p).step_down_mm = Some(2.0);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #98: the tool's step-down applies when the operation sets none.
+    #[test]
+    fn step_down_on_tool_only_is_valid() {
+        let mut p = sample_project();
+        p.tools[0].step_down_mm = Some(2.0);
+        op_mut(&mut p).step_down_mm = None;
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #98: two operations falling back on the same unset tool value give
+    /// one error, not one per operation.
+    #[test]
+    fn step_down_unset_reported_once_per_tool() {
+        let mut p = sample_project();
+        p.tools[0].step_down_mm = None;
+        op_mut(&mut p).step_down_mm = None;
+        let Operation::Profile(mut second) = p.operations[0].clone();
+        second.id = OperationId::new("o2");
+        p.operations.push(Operation::Profile(second));
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ToolValueUnset {
+                tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
+                field: "step_down_mm",
+            }]
+        );
+    }
+
+    /// #98: a disabled operation cuts nothing, so it needs no step-down.
+    #[test]
+    fn disabled_operation_needs_no_step_down() {
+        let mut p = sample_project();
+        p.tools[0].step_down_mm = None;
+        let op = op_mut(&mut p);
+        op.step_down_mm = None;
+        op.enabled = false;
+        let problems = validate(&p);
+        assert!(errors(&problems).is_empty(), "{problems:?}");
+        assert!(
+            !problems
+                .iter()
+                .any(|p| matches!(p, Problem::ToolValueUnset { .. })),
+            "{problems:?}"
+        );
+    }
+
     /// #67: the quick start's coaster, as the chapter fills it in (feed
     /// 1500, plunge 500, 18000 RPM, 4 mm step-down, 6.35 mm end mill),
     /// draws no sanity finding. `dreamcarve`'s CLI test
@@ -2074,10 +2178,11 @@ mod tests {
         tool.feed_mm_min = Some(1500.0);
         tool.plunge_mm_min = Some(500.0);
         tool.rpm = Some(18000);
-        tool.step_down_mm = None;
+        // On the tool since #98; the operation's is left unset.
+        tool.step_down_mm = Some(4.0);
         p.stock.thickness_mm = Some(11.8);
         let op = op_mut(&mut p);
-        op.step_down_mm = Some(4.0);
+        op.step_down_mm = None;
         op.depth_mm = Some(12.0);
         op.through_cut_allowance_mm = 0.2;
         assert_eq!(validate(&p), vec![]);

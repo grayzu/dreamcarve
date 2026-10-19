@@ -14,8 +14,9 @@
 //!   `<!-- doc-test: run, exit N -->` expects exit code `N` instead.
 //! - `<!-- doc-test: edit FILE -->` before a block of `"key": value` lines:
 //!   the hand edit the chapter asks for. Each key must occur on exactly one
-//!   line of `FILE`, and that line's value is replaced, as a user would in a
-//!   text editor.
+//!   line of `FILE`, or else on the line right after the block's previous
+//!   key (the tool's `step_down_mm` follows its `rpm`, #98), and that line's
+//!   value is replaced, as a user would in a text editor.
 //! - `<!-- doc-test: excerpt FILE -->` before a block: the first lines of
 //!   `FILE` as the chapter shows them. The header line carrying the date is
 //!   compared up to the date.
@@ -208,19 +209,27 @@ fn step(directive: &str, at: usize, first: usize, body: &[&str]) -> Vec<Step> {
     }
 }
 
-/// Applies a hand edit: each key's one line gets the new value, keeping
-/// its indentation and any trailing comma.
+/// Applies a hand edit: each key's line gets the new value, keeping its
+/// indentation and any trailing comma. A key on several lines is the one
+/// right after the block's previous key, where the chapter shows it.
 fn edit(path: &Path, changes: &[(String, String)], at: usize) {
     let text = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("{CHAPTER}:{at}: cannot read {}: {e}", path.display()));
     let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let mut previous: Option<usize> = None;
     for (key, value) in changes {
-        let found: Vec<usize> = lines
+        let mut found: Vec<usize> = lines
             .iter()
             .enumerate()
             .filter(|(_, l)| l.trim_start().starts_with(&format!("{key}:")))
             .map(|(i, _)| i)
             .collect();
+        if found.len() > 1
+            && let Some(next) = previous.map(|p| p + 1)
+            && found.contains(&next)
+        {
+            found = vec![next];
+        }
         let [index] = found[..] else {
             panic!(
                 "{CHAPTER}:{at}: the chapter says to change {key}, which is on {} lines of {}; a reader could not tell which",
@@ -236,6 +245,7 @@ fn edit(path: &Path, changes: &[(String, String)], at: usize) {
             ""
         };
         lines[index] = format!("{indent}{key}: {value}{comma}");
+        previous = Some(index);
     }
     std::fs::write(path, lines.join("\n") + "\n").expect("edited file written");
 }

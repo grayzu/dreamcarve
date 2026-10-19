@@ -91,15 +91,20 @@ const MEASURED_THICKNESS_MM: f64 = 11.8;
 /// The functional spec's test-part through-cut allowance, mm.
 const THROUGH_CUT_ALLOWANCE_MM: f64 = 0.2;
 
+/// The quick start's depth per pass, set on the tool (#98), mm.
+const STEP_DOWN_MM: f64 = 4.0;
+
 /// Edits the `.dcv` at `path` as the quick start does: every tool gets
-/// `feed`, `plunge`, and `rpm`; the stock gets the measured thickness; and
-/// every Profile cuts through it by the test part's 0.2 mm allowance.
+/// `feed`, `plunge`, `rpm` and the 4 mm step-down; the stock gets the
+/// measured thickness; and every Profile cuts through it by the test part's
+/// 0.2 mm allowance.
 fn fill_in(path: &Path, feed_mm_min: f64, plunge_mm_min: f64, rpm: u32) {
     let mut project = load_file(path).project;
     for tool in &mut project.tools {
         tool.feed_mm_min = Some(feed_mm_min);
         tool.plunge_mm_min = Some(plunge_mm_min);
         tool.rpm = Some(rpm);
+        tool.step_down_mm = Some(STEP_DOWN_MM);
     }
     project.stock.thickness_mm = Some(MEASURED_THICKNESS_MM);
     for dc_project::Operation::Profile(op) in &mut project.operations {
@@ -242,6 +247,74 @@ fn init_project_has_no_thickness_or_depth() {
     }
 }
 
+/// #98: an operation's step-down overrides the tool's, so a value `init`
+/// guessed would silently beat the one the user sets on the tool. `init`
+/// leaves it `null`, like every other cutting value.
+#[test]
+fn init_leaves_operation_step_down_unset() {
+    let dir = work_dir("init_leaves_operation_step_down_unset");
+    let dcv = init_coaster(&dir);
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&dcv).expect("dcv readable"))
+            .expect("dcv is JSON");
+    assert_eq!(
+        value["operations"][0]["step_down_mm"],
+        serde_json::Value::Null,
+        "{value}"
+    );
+    assert!(
+        value["operations"][0]
+            .as_object()
+            .expect("operation is an object")
+            .contains_key("step_down_mm"),
+        "the key is written, as null"
+    );
+}
+
+/// #98: `check` on a fresh project lists the unset step-down once, located
+/// at the tool's `null`, alongside the feed, plunge rate and RPM.
+#[test]
+fn check_after_init_lists_missing_step_down() {
+    let dir = work_dir("check_after_init_lists_missing_step_down");
+    let dcv = init_coaster(&dir);
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let stdout = stdout(&out);
+    assert_eq!(out.status.code(), Some(1), "exits 1: {stdout}");
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let located = located_lines(&stdout, "coaster.dcv");
+    let step_down: Vec<_> = located
+        .iter()
+        .filter(|(_, _, m)| m.contains("step_down_mm"))
+        .collect();
+    let [(line, column, message)] = step_down[..] else {
+        panic!("one step-down error: {stdout}");
+    };
+    assert_eq!(
+        *message,
+        "error: tools[t1].step_down_mm is not set (mm) for tool `Set me`"
+    );
+    assert_points_at_null(&text, *line, *column, "step_down_mm");
+    let source = text.lines().nth(line - 1).expect("line exists");
+    let rpm_line = located
+        .iter()
+        .find(|(_, _, m)| m.starts_with("error: tools[t1].rpm "))
+        .unwrap_or_else(|| panic!("rpm error listed: {stdout}"))
+        .0;
+    assert_eq!(
+        *line,
+        rpm_line + 1,
+        "the tool's step-down follows its rpm: {source}"
+    );
+    for field in ["feed_mm_min", "plunge_mm_min", "rpm"] {
+        assert!(
+            located
+                .iter()
+                .any(|(_, _, m)| m.starts_with(&format!("error: tools[t1].{field} is not set"))),
+            "{field}: {stdout}"
+        );
+    }
+}
+
 /// #99: `init` cannot know a feature's depth, so every instance leaves
 /// `z_top_mm` and `z_bottom_mm` unset (`null` in the file) instead of a
 /// placeholder that would read as a decision.
@@ -262,11 +335,12 @@ fn init_leaves_instance_depths_unset() {
 
 /// The fields a fresh coaster project leaves unset, in file order, with
 /// the key each one's line holds.
-const UNSET_FIELDS: [(&str, &str); 5] = [
+const UNSET_FIELDS: [(&str, &str); 6] = [
     ("stock.thickness_mm", "thickness_mm"),
     ("tools[t1].feed_mm_min", "feed_mm_min"),
     ("tools[t1].plunge_mm_min", "plunge_mm_min"),
     ("tools[t1].rpm", "rpm"),
+    ("tools[t1].step_down_mm", "step_down_mm"),
     ("operations[op1].depth_mm", "depth_mm"),
 ];
 
@@ -344,7 +418,7 @@ fn check_reports_all_missing_values_at_once() {
         );
         assert_points_at_null(&text, *line, *column, key);
     }
-    assert!(stdout.contains("5 error(s), 0 warning(s)"), "{stdout}");
+    assert!(stdout.contains("6 error(s), 0 warning(s)"), "{stdout}");
 }
 
 /// #76: the locations are found in the file as the user has it, here

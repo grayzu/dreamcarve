@@ -188,7 +188,9 @@ magnitudes beyond `dc_geometry::MAX_COORDINATE_MM`, an unsafe post-processor
 `file_extension`, and every value the user must supply that is unset: the
 stock thickness, an operation's depth, and, for a tool an enabled operation
 uses, its feed and plunge rate and its RPM under automatic spindle control
-(#64, #76); disabled operations, open profiles, and tools no enabled
+(#64, #76), and its step-down when an enabled operation using it sets none
+(#98; `Problem::ToolValueUnset` at the tool, once per tool; dc-cam's
+`CamError::MissingStepDown` stays as the library's own guard); disabled operations, open profiles, and tools no enabled
 operation uses (`Problem::UnusedTool`, located at the tool, with its unset
 rates not reported) as warnings). Problems come in file order. Tool problems name the
 tool by name and id. A file with a newer version
@@ -513,7 +515,8 @@ too, #99; phase 1 never reads them). The instance offset and the stock size are 
 the margin holds to the program's 0.001 mm resolution and the file reads
 cleanly. Origin BottomLeft/StockTop, one tool "Set me" with
 `diameter 6.35`, flutes 2, feeds `None`, one Profile op targeting every
-closed instance, outside, depth `None`, step 4, climb, safe Z 5, tabs
+closed instance, outside, depth `None`, step-down `None` (the tool's,
+also `None`, applies; #98), climb, safe Z 5, tabs
 `Count(4)` 8×3 rect. `init` then lists every unset value the user must
 supply, one per line as `coaster.dcv:line:column: <field> is not set (<unit>)`,
 pointing at its `null`. Exit codes: 0 ok, 1 validation/export error, 2 usage.
@@ -602,6 +605,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `migrate::newer_version_is_rejected`.
 - `validate::dangling_tool_id_is_error`.
 - `validate::unset_feed_is_an_error` (a warning before #76), `validate::unused_tool_with_unset_values_is_a_warning_not_an_error`, `validate::tool_used_only_by_disabled_operation_is_unused`, `validate::used_tool_with_unset_values_is_still_an_error`.
+- Unset step-down (#98): `validate::step_down_unset_on_operation_and_tool_is_error`, `validate::step_down_on_operation_only_is_valid`, `validate::step_down_on_tool_only_is_valid`, `validate::step_down_unset_reported_once_per_tool`, `validate::disabled_operation_needs_no_step_down`; CLI `init_leaves_operation_step_down_unset`, `check_after_init_lists_missing_step_down`.
 - Sanity checks (#67): `validate::step_down_above_diameter_warns`, `validate::v_bit_in_profile_is_an_error`, `validate::ball_nose_and_engraver_in_profile_are_errors` (Outside and Inside), `validate::v_bit_on_line_is_allowed`, `validate::ball_nose_and_engraver_on_line_are_allowed`, `validate::feed_above_limit_is_an_error`, `validate::plunge_above_limit_is_an_error`, `validate::rpm_above_limit_warns`, `validate::plunge_above_feed_warns`, `validate::diameter_above_limit_warns`, `validate::zero_line_increment_is_rejected`, `validate::empty_operation_is_an_error`, `validate::unused_tool_gets_no_sanity_findings`, `validate::sanity_problems_are_reported_together`, `validate::quick_start_values_have_no_sanity_findings`; CLI `quick_start_project_has_no_sanity_warnings`, `export_refuses_feed_above_limit_with_location`.
 - `post_processor::post_processor_round_trips_through_json`, `post_processor::unknown_field_is_rejected`.
 - `history::undo_restores_previous_snapshot`, `history::redo_after_undo`, `history::new_edit_truncates_redo`.
