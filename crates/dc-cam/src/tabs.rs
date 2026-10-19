@@ -1219,6 +1219,41 @@ mod tests {
         assert!(coverage_warnings(&warnings).is_empty(), "{warnings:?}");
     }
 
+    /// The coverage warning for four 3 mm tabs cut with a 1/8" (3.175 mm)
+    /// bit on a 13.175 mm square hole: a 40 mm tool path, 24.7 mm of it
+    /// raised.
+    fn small_bit_coverage_warning() -> Warning {
+        let spec = TabSpec {
+            width_mm: 3.0,
+            ..four_rect_tabs()
+        };
+        let (mut p, op) = square_with_hole(13.175, Some(spec));
+        p.tools[0].diameter_mm = 3.175;
+        let (_, warnings) = generate(&p, &op);
+        let cover = coverage_warnings(&warnings);
+        assert_eq!(cover.len(), 1, "only the hole: {warnings:?}");
+        cover[0].clone()
+    }
+
+    #[test]
+    fn coverage_warning_carries_tab_width_and_diameter() {
+        let w = small_bit_coverage_warning();
+        assert_approx_eq!(param_mm(&w, "tab_width_mm"), 3.0, TOL);
+        assert_approx_eq!(param_mm(&w, "diameter_mm"), 3.175, TOL);
+        assert_approx_eq!(param_mm(&w, "tab_span_mm"), 6.175, TOL);
+        assert_approx_eq!(param_mm(&w, "tab_total_mm"), 4.0 * 6.175, TOL);
+        assert_approx_eq!(param_mm(&w, "path_length_mm"), 40.0, TOL);
+    }
+
+    #[test]
+    fn coverage_warning_text_names_the_tab_width() {
+        let text = small_bit_coverage_warning().to_string();
+        for needle in ["3 mm wide", "3.175 mm bit", "6.17 mm", "24.7 mm", "40 mm"] {
+            assert!(text.contains(needle), "{needle:?} in {text:?}");
+        }
+        assert!(!text.contains("tab(s) of 6.17 mm each"), "{text}");
+    }
+
     #[test]
     fn tabs_are_not_changed_when_they_warn() {
         // Eleven 14.35 mm spans on the 302.7 mm coaster path cover 52%:
