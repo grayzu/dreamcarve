@@ -1084,6 +1084,36 @@ mod tests {
         ));
     }
 
+    /// #67: Profile offsets by half the diameter, right only for a flat end
+    /// mill. Validation reports it first; the generator refuses too, so no
+    /// caller gets a wrong-size part.
+    #[test]
+    fn v_bit_in_profile_is_an_error() {
+        let mut p = rect_project();
+        p.tools[0].cutter = dc_project::ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        let op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        assert_eq!(
+            generate_profile(&p, &op).unwrap_err(),
+            CamError::CutterNotFlat {
+                op: OperationId::new("o1"),
+                tool: "6.35 mm upcut".into(),
+                cutter: "a V-bit",
+            }
+        );
+        for cutter in [
+            dc_project::ToolKind::BallNose,
+            dc_project::ToolKind::Engraver,
+        ] {
+            p.tools[0].cutter = cutter;
+            assert!(matches!(
+                generate_profile(&p, &op).unwrap_err(),
+                CamError::CutterNotFlat { .. }
+            ));
+        }
+    }
+
     #[test]
     fn missing_step_down_is_error() {
         let mut p = rect_project();

@@ -87,6 +87,21 @@ pub enum CamError {
         /// Which rate is missing.
         field: FeedField,
     },
+    /// The tool is not a flat end mill. Profile offsets the path by half
+    /// the diameter, which only a flat end mill cuts at every depth, so any
+    /// other cutter makes the part the wrong size (#67). Validation reports
+    /// this first.
+    #[error(
+        "operation `{op}` cuts with tool `{tool}`, {cutter}; Profile needs a flat end mill, or the part comes out the wrong size"
+    )]
+    CutterNotFlat {
+        /// The operation.
+        op: OperationId,
+        /// The tool's name.
+        tool: String,
+        /// The cutter in words, such as `a V-bit`.
+        cutter: &'static str,
+    },
     /// Neither the operation nor its tool sets a step-down.
     #[error("operation `{op}` has no step-down and tool `{tool}` sets none")]
     MissingStepDown {

@@ -209,6 +209,28 @@ pub enum ToolKind {
     Engraver,
 }
 
+impl ToolKind {
+    /// Whether the cutter cuts its full diameter at every depth, as a flat
+    /// end mill does. Profile offsets the path by half the diameter, which
+    /// is right only for such a cutter (#67). An engraving bit usually
+    /// narrows to a point, and its kind carries no shape, so it is not.
+    #[must_use]
+    pub const fn is_flat(&self) -> bool {
+        matches!(self, Self::EndMill)
+    }
+
+    /// The cutter in words, with its article, as messages name it.
+    #[must_use]
+    pub const fn describe(&self) -> &'static str {
+        match self {
+            Self::EndMill => "an end mill",
+            Self::BallNose => "a ball-nose bit",
+            Self::VBit { .. } => "a V-bit",
+            Self::Engraver => "an engraving bit",
+        }
+    }
+}
+
 /// A machining operation. Phase 1 has only Profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
