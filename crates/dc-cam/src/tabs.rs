@@ -76,6 +76,8 @@ pub(crate) struct Tabs {
     top_z_mm: f64,
     /// Width of one tab as left on the part.
     width_mm: f64,
+    /// Diameter of the tool that cuts the tabs.
+    diameter_mm: f64,
     /// Length of path one tab raises: tab width plus tool diameter.
     span_mm: f64,
     chord_tolerance_mm: f64,
@@ -118,6 +120,7 @@ impl Tabs {
             shape: spec.shape,
             top_z_mm: spec.height_mm,
             width_mm: spec.width_mm,
+            diameter_mm,
             span_mm: spec.width_mm + diameter_mm,
             chord_tolerance_mm: if chord_tolerance_mm > 0.0 {
                 chord_tolerance_mm
@@ -372,15 +375,16 @@ pub(crate) fn coverage_warning(
     let count_f: f64 = centres.iter().map(|_| 1.0).sum();
     // Evenly spaced tabs that fit in half the path never overlap.
     let max_count = ((half_mm + EPS_MM) / tabs.span_mm).floor();
-    let diameter_mm = tabs.span_mm - tabs.width_mm;
     let mut warning = contour_warning(WarningCode::TabsCoverMostOfContour, op, contour, shape)
         .with("path_length_mm", l)
         .with("tab_count", centres.len())
+        .with("tab_width_mm", tabs.width_mm)
+        .with("diameter_mm", tabs.diameter_mm)
         .with("tab_span_mm", tabs.span_mm)
         .with("tab_total_mm", tabs.span_mm * count_f)
         .with("max_count", max_count);
     // Rounded down to 0.01 mm so the suggested width does fit.
-    let max_width_mm = ((half_mm / count_f - diameter_mm) * 100.0).floor() / 100.0;
+    let max_width_mm = ((half_mm / count_f - tabs.diameter_mm) * 100.0).floor() / 100.0;
     if max_width_mm > 0.0 {
         warning = warning.with("max_width_mm", max_width_mm);
     }

@@ -80,12 +80,14 @@ or hole stays attached all the way round.
 
 When the tabs on one outline cover more than half of the bit's path,
 `check` and `export` warn. The warning names the shape, the length of the
-bit's path, the tab total and its share of the path, and suggests a tab
-count or width that would cover at most half. For example, the default
+bit's path, your tab width and the bit diameter, how much of the path
+each tab keeps raised (tab width plus bit diameter, because the bit is
+round), the total and its share of the path, and suggests a tab count or
+width that would cover at most half. For example, the default
 four 8 mm tabs on a 20 mm square hole, cut with a 6.35 mm bit:
 
 ```text
-warning: operation `op1`: tabs on `small-hole` (instance `i3`, profile 0) cover more than half of its tool path: 4 tab(s) of 14.35 mm each (tab width plus bit diameter) total 57.4 mm on a 54.6 mm path (105.1%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide, or make the 4 tab(s) at most 0.47 mm wide. The tabs are cut as set.
+warning: operation `op1`: tabs on `small-hole` (instance `i3`, profile 0) cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 54.6 mm path (105.1%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide, or make the 4 tab(s) at most 0.47 mm wide. The tabs are cut as set.
 ```
 
 DreamCarve does not change your tabs. Export continues and cuts them as
