@@ -14,9 +14,16 @@
 //! tool-centre contour instead, so that growth becomes a span of
 //! `width + diameter` along the path: the cutter's full width must clear
 //! the tab. World-placed tabs arrive with the GUI in phase 5.
+//!
+//! A smooth tab leaves a triangular bridge: base `width`, peak `height`
+//! above the cut floor (#66). For a flat bit of radius r the tool centre
+//! holds the tab top for `2r` centred on the tab and ramps straight down
+//! over `width / 2` on each side, so the span is still `width + 2r`.
+//! PureCutCNC's raised cosine (`tabProfile.ts`) over the same span touches
+//! the tab top at a single point, which leaves only about 60% of the height
+//! under a 6.35 mm bit; it is not ported.
 
 use crate::error::{CamError, ShapeRef};
-use crate::tab_profile::{smooth_tab_sample_fractions, smooth_tab_z_mm};
 use crate::toolpath::{Move, MoveKind};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Polyline, Segment};
@@ -76,9 +83,9 @@ pub(crate) struct Tabs {
 
 impl Tabs {
     /// Checks `spec` for operation `op` cut with a tool `diameter_mm` wide.
-    /// `chord_tolerance_mm` bounds how far a smooth ramp's chords stray from
-    /// the path in XY and from the raised cosine in Z; a value that is not
-    /// positive falls back to [`FLATTEN_TOLERANCE_DEFAULT_MM`].
+    /// `chord_tolerance_mm` bounds how far the chords of a smooth ramp on an
+    /// arc stray from the path in XY; a value that is not positive falls
+    /// back to [`FLATTEN_TOLERANCE_DEFAULT_MM`].
     ///
     /// Fails with [`CamError::InvalidTab`] when the width or height is not
     /// a positive number or a distance is not finite.
@@ -181,9 +188,10 @@ impl Tabs {
         (layout, overlap)
     }
 
-    /// Half of a single tab's span: the length a smooth ramp rises over.
+    /// The length of path a smooth ramp rises or falls over: half the tab
+    /// width, so the bridge left is a triangle `width` wide at its base.
     fn ramp_mm(&self) -> f64 {
-        self.span_mm / 2.0
+        self.width_mm / 2.0
     }
 }
 
@@ -210,7 +218,8 @@ pub(crate) struct PathTabs {
 enum Zone {
     /// Outside every span: the pass Z.
     Clear,
-    /// On a smooth ramp, at normalised crossing position `u`.
+    /// On a smooth ramp, `f` of the way up from the pass Z (0) to the tab
+    /// top (1).
     Ramp(f64),
     /// At the tab top.
     Hold,
@@ -230,12 +239,12 @@ impl PathTabs {
             }
             return match tabs.shape {
                 TabShape::Rect => Zone::Hold,
-                // A merged smooth span rises over the first half-span and
-                // falls over the last, holding the top between; a single
-                // tab is exactly one raised cosine.
-                TabShape::Smooth if t < ramp_mm => Zone::Ramp(t / (2.0 * ramp_mm)),
+                // A smooth span rises over its first half tab width and
+                // falls over its last, holding the top between: one bit
+                // diameter on a single tab, longer on a merged span.
+                TabShape::Smooth if t < ramp_mm => Zone::Ramp(t / ramp_mm),
                 TabShape::Smooth if t > span.length_mm - ramp_mm => {
-                    Zone::Ramp(1.0 - (span.length_mm - t) / (2.0 * ramp_mm))
+                    Zone::Ramp((span.length_mm - t) / ramp_mm)
                 }
                 TabShape::Smooth => Zone::Hold,
             };
@@ -247,38 +256,27 @@ impl PathTabs {
     fn z_at(&self, tabs: &Tabs, distance_mm: f64, base_z_mm: f64) -> f64 {
         match self.zone(tabs, distance_mm) {
             Zone::Clear => base_z_mm,
-            Zone::Ramp(u) => smooth_tab_z_mm(u, base_z_mm, tabs.top_z_mm),
+            // Laps at or above the tab top never get here (`emit_lap`).
+            Zone::Ramp(f) => base_z_mm + (tabs.top_z_mm - base_z_mm) * f,
             Zone::Hold => tabs.top_z_mm,
         }
     }
 
-    /// Distances where the lap must have a vertex for a pass at
-    /// `base_z_mm`: span boundaries and, for smooth tabs, the ramp samples.
-    fn breakpoints_mm(&self, tabs: &Tabs, base_z_mm: f64) -> Vec<f64> {
+    /// Distances where the lap must have a vertex: span boundaries and,
+    /// for smooth tabs, the ends of each straight ramp.
+    fn breakpoints_mm(&self, tabs: &Tabs) -> Vec<f64> {
         if self.full {
             return Vec::new();
         }
-        let fractions = match tabs.shape {
-            TabShape::Rect => Vec::new(),
-            TabShape::Smooth => {
-                smooth_tab_sample_fractions(tabs.top_z_mm - base_z_mm, tabs.chord_tolerance_mm)
-            }
-        };
-        let ramp_2_mm = 2.0 * tabs.ramp_mm();
+        let ramp_mm = tabs.ramp_mm();
         let mut out = Vec::new();
         for span in &self.spans {
             let end = span.start_mm + span.length_mm;
             out.push(span.start_mm);
             out.push(end);
-            // The rising half from the start, the falling half back from
-            // the end; 0.5 belongs to both, which meet on a single tab.
-            for &f in &fractions {
-                if f <= 0.5 {
-                    out.push(span.start_mm + f * ramp_2_mm);
-                }
-                if f >= 0.5 {
-                    out.push(end - (1.0 - f) * ramp_2_mm);
-                }
+            if tabs.shape == TabShape::Smooth {
+                out.push(span.start_mm + ramp_mm);
+                out.push(end - ramp_mm);
             }
         }
         for d in &mut out {
@@ -403,7 +401,8 @@ struct Piece {
 /// lap back to the path start. Where `tabs` is given and `z_mm` lies below
 /// the tab top, the lap rises over each tab span: rect tabs with a vertical
 /// lift, a traverse at the tab top, and a vertical descent; smooth tabs
-/// along the raised cosine. Every vertical move is at the plunge rate; every
+/// along straight ramps either side of a hold at the tab top. Every vertical
+/// move is at the plunge rate; every
 /// move along the path, smooth ramps down included, is at the feed rate.
 pub(crate) fn emit_lap(
     moves: &mut Vec<Move>,
@@ -460,7 +459,7 @@ fn lap_pieces(path: &Polyline, z_mm: f64, tabs: Option<(&Tabs, &PathTabs)>) -> V
             })
             .collect();
     };
-    let mut breakpoints = layout.breakpoints_mm(tabs, z_mm);
+    let mut breakpoints = layout.breakpoints_mm(tabs);
     breakpoints.sort_by(f64::total_cmp);
 
     let lap = Lap {
@@ -525,8 +524,9 @@ impl Lap<'_> {
             });
             return;
         }
-        // A ramp: straight chords, Z from the raised cosine at each end;
-        // arcs split so the chords stay within tolerance in XY too.
+        // A ramp: Z is linear in distance along the path, so a straight
+        // piece is one move; an arc is split into chords that stay within
+        // the tolerance in XY, Z exact at each chord end.
         let chords = match segment.arc() {
             Some(arc) => {
                 let angle_rad = (b - a) / arc.radius_mm;
@@ -589,10 +589,6 @@ fn segment_kind(segment: &Segment) -> MoveKind {
 mod tests {
     use super::*;
     use crate::profile::generate_profile;
-    use crate::tab_profile::{
-        smooth_tab_height_fraction, smooth_tab_sample_count, smooth_tab_sample_fractions,
-        smooth_tab_z_mm,
-    };
     use crate::test_support::assert_safe;
     use crate::toolpath::{MoveKind, Toolpath};
     use crate::warning::WarningCode;
@@ -1101,7 +1097,9 @@ mod tests {
             .iter()
             .map(|r| r.length_mm)
             .sum();
-        assert_approx_eq!(held, 8.0, TOL);
+        // From the first tab's one-diameter hold to the last's: the ramps
+        // are half a tab width each.
+        assert_approx_eq!(held, 8.0 + DIAMETER_MM, TOL);
         assert_no_vertical_step_in_final_pass(&tp);
 
         // Tabs wide enough to cover the whole path merge into one: the
@@ -1322,146 +1320,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn smooth_profile_is_raised_cosine() {
-        // Exact endpoints and peak (port: testExactEndpointsAndPeak).
-        assert_approx_eq!(smooth_tab_height_fraction(0.0), 0.0, 0.0);
-        assert_approx_eq!(smooth_tab_height_fraction(1.0), 0.0, 0.0);
-        assert_approx_eq!(smooth_tab_height_fraction(0.5), 1.0, 0.0);
-        assert_approx_eq!(smooth_tab_z_mm(0.0, -5.0, 3.0), -5.0, 0.0);
-        assert_approx_eq!(smooth_tab_z_mm(1.0, -5.0, 3.0), -5.0, 0.0);
-        assert_approx_eq!(smooth_tab_z_mm(0.5, -5.0, 3.0), 3.0, 0.0);
-
-        // Zero-slope joins (port: testZeroSlopeJoins).
-        let h = 1e-6;
-        let slope = |u: f64| {
-            (smooth_tab_height_fraction(u + h) - smooth_tab_height_fraction(u - h)) / (2.0 * h)
-        };
-        assert_approx_eq!(slope(h), 0.0, 1e-4);
-        assert_approx_eq!(slope(1.0 - h), 0.0, 1e-4);
-        assert_approx_eq!(slope(0.5), 0.0, 1e-4);
-        assert!(slope(0.25) > 1.0);
-        assert!(slope(0.75) < -1.0);
-
-        // Monotonic halves, bounded (port: testMonotonicAndBounded).
-        let steps = 2000_u32;
-        let at = |i: u32| smooth_tab_height_fraction(f64::from(i) / f64::from(steps));
-        for i in 1..=steps / 2 {
-            assert!(at(i) >= at(i - 1) - 1e-12, "rising at {i}");
-        }
-        for i in steps / 2 + 1..=steps {
-            assert!(at(i) <= at(i - 1) + 1e-12, "falling at {i}");
-        }
-        assert!((0..=steps).all(|i| (0.0..=1.0).contains(&at(i))));
-
-        // Never below the cut Z, never above the top (port:
-        // testNeverBelowCutZ).
-        for i in 0..=500_u32 {
-            let z = smooth_tab_z_mm(f64::from(i) / 500.0, -4.25, -1.0);
-            assert!((-4.25 - 1e-12..=-1.0 + 1e-12).contains(&z), "{z}");
-        }
-
-        // A top at or below the base never descends (port:
-        // testMalformedRanges).
-        assert_approx_eq!(smooth_tab_z_mm(0.5, -2.0, -2.0), -2.0, 0.0);
-        assert_approx_eq!(smooth_tab_z_mm(0.5, -2.0, -6.0), -2.0, 0.0);
-        assert_approx_eq!(smooth_tab_z_mm(0.25, -2.0, -6.0), -2.0, 0.0);
-
-        // The sample count honours the chord tolerance, measured (port:
-        // testSampleCountMeetsTolerance).
-        for (rise, tol) in [
-            (3.0, 0.01),
-            (0.5, 0.01),
-            (12.0, 0.01),
-            (3.0, 0.001),
-            (0.12, 0.0004),
-        ] {
-            let n = smooth_tab_sample_count(rise, tol);
-            assert_eq!(n % 2, 0, "even for rise {rise} tol {tol}");
-            let nf = f64::from(n);
-            let mut worst: f64 = 0.0;
-            for i in 0..n {
-                let (u0, u1) = (f64::from(i) / nf, f64::from(i + 1) / nf);
-                let (z0, z1) = (
-                    smooth_tab_z_mm(u0, 0.0, rise),
-                    smooth_tab_z_mm(u1, 0.0, rise),
-                );
-                for step in 1..32_u32 {
-                    let t = f64::from(step) / 32.0;
-                    let chord = z0 + (z1 - z0) * t;
-                    let curve = smooth_tab_z_mm(u0 + (u1 - u0) * t, 0.0, rise);
-                    worst = worst.max((curve - chord).abs());
-                }
-            }
-            assert!(
-                worst <= tol,
-                "chord error {worst} > {tol} for rise {rise} (n {n})"
-            );
-        }
-
-        // Count bounds (port: testSampleCountBounds).
-        assert!(smooth_tab_sample_count(12.0, 0.01) > smooth_tab_sample_count(3.0, 0.01));
-        assert!(smooth_tab_sample_count(3.0, 0.001) > smooth_tab_sample_count(3.0, 0.01));
-        assert_eq!(smooth_tab_sample_count(0.0, 0.01), 4);
-        assert_eq!(smooth_tab_sample_count(3.0, 0.0), 4);
-        assert_eq!(smooth_tab_sample_count(1e9, 1e-9), 512);
-
-        // Fractions (port: testSampleFractions).
-        let fractions = smooth_tab_sample_fractions(3.0, 0.01);
-        assert_eq!(
-            fractions.len(),
-            smooth_tab_sample_count(3.0, 0.01) as usize + 1
-        );
-        assert_approx_eq!(fractions[0], 0.0, 0.0);
-        assert_approx_eq!(*fractions.last().unwrap(), 1.0, 0.0);
-        assert!(fractions.iter().any(|f| (f - 0.5).abs() <= 0.0));
-        assert!(fractions.windows(2).all(|w| w[1] > w[0]));
-
-        // On the coaster: four ramps, each rising from the pass Z to the
-        // tab top at its centre and back, over width + diameter, with no
-        // vertical step.
-        let (p, op) = coaster(Some(tab_spec(
-            TabPlacement::Count { count: 4 },
-            TabShape::Smooth,
-        )));
-        let (tp, warnings) = generate(&p, &op);
-        assert!(warnings.is_empty(), "{warnings:?}");
-        let lap = final_lap(&tp);
-        let lifted = runs(&lap, |m| m.z_max() > TOL);
-        assert_eq!(lifted.len(), 4, "{lifted:?}");
-        let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
-        for run in &lifted {
-            assert_approx_eq!(run.length_mm, span_mm, CHORD_TOL);
-        }
-        let peaks = lap
-            .iter()
-            .filter(|m| (m.mv.to.z - TAB_Z_MM).abs() <= 1e-9)
-            .count();
-        assert_eq!(peaks, 4, "the top is reached exactly once per tab");
-        assert!(
-            lap.iter()
-                .all(|m| m.from.z >= -1e-12 && m.mv.to.z <= TAB_Z_MM + 1e-12)
-        );
-        // Every lap point lies on the raised cosine for its distance along
-        // its span.
-        let mut at_mm = 0.0;
-        for m in &lap {
-            at_mm += m.length_mm;
-            let Some(run) = lifted
-                .iter()
-                .find(|r| at_mm > r.start_mm + TOL && at_mm < r.start_mm + r.length_mm - TOL)
-            else {
-                continue;
-            };
-            let u = (at_mm - run.start_mm) / span_mm;
-            assert_approx_eq!(m.mv.to.z, smooth_tab_z_mm(u, 0.0, TAB_Z_MM), CHORD_TOL);
-            // A ramp moves in XY, so it is a cut, not a plunge: down as
-            // well as up, it runs at the feed rate.
-            assert_approx_eq!(m.mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
-        }
-        assert_no_vertical_step_in_final_pass(&tp);
     }
 
     /// A 100 × 40 mm bar cut outside, with one tab per `tabs`.

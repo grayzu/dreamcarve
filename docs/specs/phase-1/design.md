@@ -37,7 +37,7 @@ machine origin are applied only in the CLI's `init` defaults and in
 | `dc-project::model` | `src/types/project.ts` (`Project`, `Stock`, `MachineOrigin`, `Tool`, `FeatureDefinition`, `FeatureInstance`, `Tab`, `Operation`) | Only the fields phase 1 needs. `z_top`/`z_bottom` kept on instances. Tool feeds become `Option` so "unset" is representable. |
 | `dc-project::history` | `src/store/projectStore.ts` undo/redo | Snapshot list, no UI. |
 | `dc-cam::profile` | `src/engine/toolpaths/edge.ts` (`generateEdgeRouteToolpath`, `edgeRouteTargetWalls`), `multiFeature.ts` for nesting | Only the plain contour path: no trochoidal, no keep-out holes, no entry policy. Winding re-derived for Y-up. |
-| `dc-cam::tabs` | `src/engine/toolpaths/tabs.ts` (`applyTabsToEdgeRoute`, `toolCentreContours`, `tabLayoutFreeFraction`, `applyTabWarnings`), `tabProfile.ts` (smooth tab cosine), `tabs.test.ts` | Tabs are specified per operation by count or explicit positions along the path; PureCutCNC's world-placed `Tab` rectangles arrive in phase 5 with the GUI. Smooth profile math ported as is. |
+| `dc-cam::tabs` | `src/engine/toolpaths/tabs.ts` (`applyTabsToEdgeRoute`, `toolCentreContours`, `tabLayoutFreeFraction`, `applyTabWarnings`), `tabs.test.ts` | Tabs are specified per operation by count or explicit positions along the path; PureCutCNC's world-placed `Tab` rectangles arrive in phase 5 with the GUI. Smooth tabs are not PureCutCNC's raised cosine (`tabProfile.ts`), which reaches the tab top at one point and leaves about 60% of the height under the bit; they leave a triangular bridge instead (#66). |
 | `dc-cam::passes` | depth stepping inside `edge.ts` | Final pass clamps to depth, never deeper. |
 | `dc-project::post_processor` | `src/engine/gcode/types.ts` (`MachineDefinitionSchema`) | Keys snake_case. Every field required (upstream zod defaults dropped) so a saved file shows every setting. Lives in `dc-project` because `Project` embeds it. |
 | `dc-gcode::post` | `postprocessor.ts` (`runPostProcessor`), `utils.ts` (`projectToMachinePoint`, number formatting) | `projectToMachinePoint` loses its Y mirror; axis mapping and inversion kept. Canned cycles and coolant parsed but unused until phase 2. |
@@ -286,10 +286,14 @@ Inputs: project, op. Output: toolpath in project space.
    `width + diameter` centred on it, since the cutter's full width must clear
    the tab (ported from `toolCentreContours`). Rect tabs: split the path at
    span boundaries, lift to tab Z with a vertical linear move at plunge
-   feed, traverse at feed, descend at plunge feed. Smooth tabs: ramp up
-   and down at feed following `smoothTabZAt` (raised cosine), sampled per
-   `smoothTabSampleFractions` at `flatten_tolerance_mm`. Tab spans that
-   overlap merge. Warnings: `TabsOverlap`, `TabsOutsideCutRange`
+   feed, traverse at feed, descend at plunge feed. Smooth tabs leave a
+   triangular bridge with base `width` and peak `height_mm` (#66): the
+   tool centre holds the tab top for one bit diameter centred on the tab
+   and ramps straight down to the pass Z over `width / 2` on each side, so
+   the span is still `width + diameter`. Every move is at feed; a ramp on
+   an arc is split into chords within `flatten_tolerance_mm` in XY. Tab
+   spans that overlap merge; a merged smooth span ramps over `width / 2`
+   at each end and holds the top between. Warnings: `TabsOverlap`, `TabsOutsideCutRange`
    (ported from `applyTabWarnings`), and `TabsCoverMostOfContour` when the
    merged spans cover more than half of a contour's length, so the part or
    hole may not cut free. That warning names the shape, path length, tab
@@ -481,7 +485,7 @@ widens X and Y by the largest radius among the exported operations' tools.
 ```
 crates/dc-geometry/src/{lib.rs, point.rs, polyline.rs, contour.rs, region.rs, offset.rs, flatten.rs, transform.rs}
 crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, layout.rs, locate.rs, migrate.rs, validate.rs, history.rs, post_processor.rs}
-crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, passes.rs, stock.rs, tabs.rs, tab_profile.rs}
+crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, passes.rs, stock.rs, tabs.rs}
 crates/dc-gcode/src/{lib.rs, error.rs, post.rs, emit.rs, format.rs, transform.rs, parse.rs, definitions/{README.md, grblhal.json, grbl.json}}
 crates/dc-import/src/{lib.rs, svg.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs}
@@ -549,7 +553,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `tabs::passes_above_tab_height_untouched`.
 - `tabs::final_pass_has_exactly_four_raised_segments_at_tab_z`.
 - `tabs::overlapping_tabs_merge_and_warn` (port).
-- `tabs::smooth_profile_is_raised_cosine` (port: `tabProfile` tests for `smoothTabHeightFraction`, `smoothTabZAt`, sample counts).
+- `tabs::smooth_tab_plateau_is_bit_diameter` — on a straight edge the final pass holds the tab top for at least one bit diameter, centred on the tab (#66).
+- `tabs::smooth_tab_bridge_is_full_height` — the material left under the bit, computed from the moves and tool radius, peaks at `height_mm` within 0.01 mm (#66).
+- `tabs::smooth_tab_bridge_is_triangle` — material at offset x from the tab centre is `height·(1 − |x|/(width/2))` within 0.01 mm, on a straight edge and on arcs (#66).
 - `tabs::tabs_above_cut_depth_warn` (port: `applyTabWarnings`).
 
 **dc-gcode**

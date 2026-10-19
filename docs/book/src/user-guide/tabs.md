@@ -25,8 +25,8 @@ Set `"tabs": null` for no tabs.
 | --- | --- |
 | `placement` | Where the tabs go. See [Placement](#placement). |
 | `width_mm` | Length of each tab along the outline, as it is left on the part. |
-| `height_mm` | Height of the tab top above the stock bottom: how thick the bridge is. |
-| `shape` | `"rect"` (square shoulders) or `"smooth"` (a gentle ramp up and down). |
+| `height_mm` | Height of the tab top above the stock bottom. A rect tab is this thick all along; a smooth tab is this thick at its middle. |
+| `shape` | `"rect"` (square shoulders) or `"smooth"` (a triangle: straight ramps up and down). |
 
 The coaster's tabs are 8 mm wide and 3 mm tall, in the quick start's
 11.8 mm plywood: each pass deeper than 3 mm above the stock bottom rises to
@@ -55,9 +55,18 @@ rises over one tab is the tab width plus the bit diameter: 8 + 6.35 =
 - **Rect.** At the start of the stretch the bit moves straight up to the tab
   top at the plunge rate, cuts along the stretch at the tab top at the feed
   rate, and moves straight down at the plunge rate.
-- **Smooth.** The bit rises and falls along the path in a smooth curve,
-  reaching the tab top at the middle of the stretch. It never stops moving
-  along the path, which leaves fewer marks. Every move is at the feed rate.
+- **Smooth.** The tab left on the part is a triangle: `width_mm` long at
+  its base and `height_mm` tall at its middle. The bit ramps up in a
+  straight line along the path over half the tab width, holds the tab top
+  for one bit diameter, and ramps back down over the other half. For the
+  coaster's 8 mm tabs and 6.35 mm bit, that is 4 mm up, 6.35 mm level,
+  and 4 mm down. The bit never stops moving along the path, which leaves
+  fewer marks. Every move is at the feed rate.
+
+  A smooth tab has half the cross-section of a rect tab of the same width
+  and height, so it holds less. Make it wider or taller if the part is
+  heavy. Smooth tabs that touch or overlap join into one: the bit ramps
+  up, holds the tab top until the last tab, and ramps down.
 
 Passes at or above the tab top are not changed. Only the passes that cut
 below it rise over the tabs.
