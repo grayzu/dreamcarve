@@ -24,7 +24,9 @@ use dc_geometry::{Rect, assert_approx_eq};
 #[path = "../src/clock.rs"]
 #[allow(dead_code, reason = "the test uses only the timestamp")]
 mod clock;
-use dc_project::{Loaded, SpindleControl, load, save};
+use dc_project::{
+    Loaded, Operation, OperationId, SpindleControl, ToolChangeMode, ToolId, load, save,
+};
 
 /// The date every compared program is exported with.
 const FIXED_DATE: &str = "2026-10-15";
@@ -1162,4 +1164,274 @@ fn export_prints_extents() {
             );
         }
     }
+}
+
+/// The quick-start coaster, filled in, with a second tool `t2`,
+/// `3mm finisher` (3.175 mm, 20000 RPM), and after `op1` a second Profile
+/// `op2` that cuts the same circle with it (#95).
+fn two_tool_coaster(dir: &Path) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut finisher = project.tools[0].clone();
+    finisher.id = ToolId::new("t2");
+    finisher.name = "3mm finisher".into();
+    finisher.diameter_mm = 3.175;
+    finisher.rpm = Some(20000);
+    project.tools.push(finisher);
+    let Operation::Profile(mut finish) = project.operations[0].clone();
+    finish.id = OperationId::new("op2");
+    finish.name = "Finish".into();
+    finish.tool = ToolId::new("t2");
+    project.operations.push(Operation::Profile(finish));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// Whether `program` has a line with code word `word`, comments skipped.
+fn has_code_word(program: &str, word: &str) -> bool {
+    program.lines().any(|l| {
+        l.split(['(', ';'])
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .any(|w| w == word)
+    })
+}
+
+/// The spindle starts of `program`: its lines that start with `M3`.
+fn spindle_starts(program: &str) -> Vec<&str> {
+    program.lines().filter(|l| l.starts_with("M3")).collect()
+}
+
+/// Sets the tool-change mode of the `.dcv` at `dcv`.
+fn set_tool_change_mode(dcv: &Path, mode: ToolChangeMode) {
+    let mut project = load_file(dcv).project;
+    project.post_processor.tool_change.mode = mode;
+    std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
+}
+
+/// #95: a project with two tools exports, by default, one complete program
+/// per tool run, named `<stem>-<k>-T<n>.<ext>`, and no `coaster.nc`. Neither
+/// program changes tools (no `M6`, no `M61`); each starts its own tool's
+/// spindle once. The summary lists them in order with what to do before
+/// each: the first sets work zero, the later one only Z zero.
+#[test]
+fn multi_tool_export_writes_one_file_per_tool_run() {
+    let dir = work_dir("multi_tool_export_writes_one_file_per_tool_run");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert!(!dir.join("coaster.nc").exists(), "no single program");
+    for (name, start) in [
+        ("coaster-1-T1.nc", "M3 S18000"),
+        ("coaster-2-T2.nc", "M3 S20000"),
+    ] {
+        let program = std::fs::read_to_string(dir.join(name))
+            .unwrap_or_else(|e| panic!("{name} written: {e}"));
+        for word in ["M6", "M61"] {
+            assert!(!has_code_word(&program, word), "{name} has {word}");
+        }
+        assert_eq!(spindle_starts(&program), [start], "{name}");
+    }
+    let summary = stdout(&out);
+    let expected = "Wrote 2 programs; run them in this order:\n  \
+        1. coaster-1-T1.nc  Before you start: fit T1 Set me and set work zero (X, Y and Z) with it.\n  \
+        2. coaster-2-T2.nc  Before you start: fit T2 3mm finisher and set Z zero with it. Keep X and Y zero.\n";
+    assert!(summary.contains(expected), "{summary}");
+}
+
+/// #95: a project with one tool still writes the one `coaster.nc` it always
+/// did, byte for byte the committed program.
+#[test]
+fn single_tool_export_is_unchanged() {
+    let dir = work_dir("single_tool_export_is_unchanged");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(program == include_str!("expected/coaster-grblhal.nc"));
+    assert!(!dir.join("coaster-1-T1.nc").exists());
+    let summary = stdout(&out);
+    assert!(summary.starts_with("Wrote coaster.nc ("), "{summary}");
+}
+
+/// The cutting moves (`G1`, `G2`, `G3`) of `program`, each as where it
+/// goes, at what feed, and its arc centre: what the machine cuts.
+fn cuts(program: &str) -> Vec<String> {
+    dc_gcode::parse_motion(program)
+        .expect("program parses")
+        .into_iter()
+        .filter(|m| m.kind.is_cut())
+        .map(|m| format!("{:?} {:?} {:?} {:?}", m.kind, m.to, m.feed, m.arc))
+        .collect()
+}
+
+/// #95: runs are consecutive operations with one tool, in operation order;
+/// operations are never regrouped by tool, which would change the cut
+/// order. T1, T2, T1 is three programs, and their cuts, in file order, are
+/// the cuts of the one `"m6"` program.
+#[test]
+fn alternating_tools_keep_cut_order() {
+    let dir = work_dir("alternating_tools_keep_cut_order");
+    let dcv = two_tool_coaster(&dir);
+    let mut project = load_file(&dcv).project;
+    let Operation::Profile(mut again) = project.operations[0].clone();
+    again.id = OperationId::new("op3");
+    again.name = "Again".into();
+    project.operations.push(Operation::Profile(again));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut separate = Vec::new();
+    for name in ["coaster-1-T1.nc", "coaster-2-T2.nc", "coaster-3-T1.nc"] {
+        let program = std::fs::read_to_string(dir.join(name))
+            .unwrap_or_else(|e| panic!("{name} written: {e}"));
+        separate.extend(cuts(&program));
+    }
+
+    set_tool_change_mode(&dcv, ToolChangeMode::M6);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "-o",
+            "single.nc",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "m6 export: {}", stderr(&out));
+    let single = std::fs::read_to_string(dir.join("single.nc")).expect("single.nc written");
+    assert!(!separate.is_empty());
+    assert_eq!(separate, cuts(&single));
+}
+
+/// #95: GRBL has no `M6`, but separate programs need none, so a two-tool
+/// project now exports on GRBL.
+#[test]
+fn multi_tool_export_works_on_grbl() {
+    let dir = work_dir("multi_tool_export_works_on_grbl");
+    two_tool_coaster(&dir);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grbl",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    for name in ["coaster-1-T1.nc", "coaster-2-T2.nc"] {
+        assert!(dir.join(name).exists(), "{name} written");
+    }
+}
+
+/// #95: `-o` names the stem, directory and extension of the programs.
+#[test]
+fn output_flag_sets_the_stem() {
+    let dir = work_dir("output_flag_sets_the_stem");
+    two_tool_coaster(&dir);
+    std::fs::create_dir(dir.join("out")).expect("out dir created");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "-o",
+            "out/job.nc",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    for name in ["out/job-1-T1.nc", "out/job-2-T2.nc"] {
+        assert!(dir.join(name).exists(), "{name} written");
+    }
+    assert!(!dir.join("out/job.nc").exists());
+    assert!(!dir.join("coaster-1-T1.nc").exists());
+}
+
+/// #95: writing is all or nothing. When the second run fails (its 30 mm
+/// tool takes the cut off the stock), export fails and writes neither
+/// program, and with `--post` leaves the project as it was.
+#[test]
+fn failed_tool_run_writes_no_files() {
+    let dir = work_dir("failed_tool_run_writes_no_files");
+    let dcv = two_tool_coaster(&dir);
+    let mut project = load_file(&dcv).project;
+    project.tools[1].diameter_mm = 30.0;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let before = std::fs::read(&dcv).expect("dcv readable");
+
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1), "export fails: {}", stderr(&out));
+    for name in ["coaster.nc", "coaster-1-T1.nc", "coaster-2-T2.nc"] {
+        assert!(!dir.join(name).exists(), "{name} not written");
+    }
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+}
+
+/// #95: with `"m6"` in the post-processor, grblHAL gets the single
+/// program: `M61 Q1` for the first tool and `T2 M6` at the change, and
+/// export says the sender must stop at `M6`.
+#[test]
+fn m6_mode_writes_one_program() {
+    let dir = work_dir("m6_mode_writes_one_program");
+    let dcv = two_tool_coaster(&dir);
+    set_tool_change_mode(&dcv, ToolChangeMode::M6);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(program.lines().any(|l| l == "M61 Q1"), "{program}");
+    assert!(program.lines().any(|l| l.starts_with("T2 M6")), "{program}");
+    assert!(!dir.join("coaster-1-T1.nc").exists());
+    let summary = stdout(&out);
+    assert!(summary.contains("sender must stop at M6"), "{summary}");
+}
+
+/// #95: GRBL has no `M6`, so `"m6"` on its definition is an error located
+/// at the field, which `check` reports and on which export writes nothing.
+#[test]
+fn m6_mode_on_grbl_is_invalid() {
+    let dir = work_dir("m6_mode_on_grbl_is_invalid");
+    let dcv = two_tool_coaster(&dir);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_gcode::post::lookup("grbl").expect("grbl is bundled");
+    project.post_processor.tool_change.mode = ToolChangeMode::M6;
+    let text = save(&project).expect("project saves");
+    std::fs::write(&dcv, &text).expect("dcv written");
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(1), "check fails: {report}");
+    let located = located_lines(&report, "coaster.dcv");
+    let [(line, column, message)] = located[..] else {
+        panic!("one located finding: {report}");
+    };
+    assert!(message.starts_with("error: "), "{message}");
+    let source = text.lines().nth(line - 1).expect("line exists");
+    let at: String = source.chars().skip(column - 1).collect();
+    assert_eq!(at, "\"m6\"", "{line}:{column} is the mode: `{source}`");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(1), "export fails: {}", stderr(&out));
+    assert!(!dir.join("coaster.nc").exists());
+    assert!(!dir.join("coaster-1-T1.nc").exists());
 }

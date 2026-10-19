@@ -195,7 +195,7 @@ fn untag(value: Value, path: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
     use crate::test_support::sample_project;
-    use crate::{OriginXy, SpindleControl, ToolKind, load, save};
+    use crate::{OriginXy, SpindleControl, ToolChangeMode, ToolKind, load, save};
     use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
     use serde_json::json;
 
@@ -203,11 +203,18 @@ mod tests {
     const V1_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v1/sample.dcv");
     const V2_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v2/sample.dcv");
     const V3_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v3/sample.dcv");
+    const V4_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v4/sample.dcv");
 
     /// The sample project as raw JSON of `version`, without the fields
     /// added after it.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 5 {
+            root["post_processor"]["tool_change"]
+                .as_object_mut()
+                .unwrap()
+                .remove("mode");
+        }
         if version < 3 {
             root["origin"]["xy"] = json!({ "kind": "bottom_left" });
             root["tools"][0]["cutter"] = json!({ "kind": "end_mill" });
@@ -278,6 +285,44 @@ mod tests {
         let loaded = load(V3_FIXTURE).unwrap();
         assert_eq!(loaded.project.version, CURRENT_VERSION);
         assert_eq!(loaded.project, sample_project());
+    }
+
+    #[test]
+    fn version_4_fixture_loads() {
+        let loaded = load(V4_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// #95: a file before version 5 has no tool-change mode. The migration
+    /// sets `"separate_programs"`, the new default, at the end of
+    /// `tool_change`. A file that changed tools exported with `M6` before;
+    /// it now exports one program per tool run, which every sender runs
+    /// correctly, and `"m6"` brings the old output back.
+    #[test]
+    fn version_4_fixture_gets_separate_programs() {
+        let loaded = load(V4_FIXTURE).unwrap();
+        assert_eq!(
+            loaded.project.post_processor.tool_change.mode,
+            ToolChangeMode::SeparatePrograms
+        );
+        let migrated = migrate(sample_root_at(4), 4).unwrap();
+        assert_eq!(
+            migrated,
+            sample_root_at(CURRENT_VERSION),
+            "the key lands at the end of tool_change, where version 5 declares it"
+        );
+    }
+
+    #[test]
+    fn v4_with_tool_change_mode_already_present_fails() {
+        let mut root = sample_root_at(CURRENT_VERSION);
+        root["version"] = Value::from(4);
+        let err = migrate(root, 4).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 4, to: 5, .. }),
+            "{err:?}"
+        );
     }
 
     /// #64: version 4 lets thickness and depth be unset, but a version 3

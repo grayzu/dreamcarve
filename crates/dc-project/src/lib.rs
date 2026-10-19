@@ -31,7 +31,7 @@ pub use model::{
 pub use post_processor::{
     ArcFormat, Axis, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces, FeedSpeed,
     MAX_FILE_EXTENSION_CHARS, Motion, NumberFormat, PostProcessor, ProgramFormat, RetractMode,
-    SpindleControl, SpindleDwell, Stop, ToolChange, UnitCommands, WorkCoordinates,
+    SpindleControl, SpindleDwell, Stop, ToolChange, ToolChangeMode, UnitCommands, WorkCoordinates,
     is_safe_file_extension,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};

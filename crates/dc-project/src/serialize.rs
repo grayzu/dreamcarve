@@ -317,7 +317,7 @@ mod tests {
     use crate::validate::validate;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v4/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v5/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -396,6 +396,24 @@ mod tests {
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
             matches!(&err, LoadError::Schema { message, .. } if message.contains("feed_mm_min")),
+            "{err:?}"
+        );
+    }
+
+    /// #95, #65: a current-version file without `tool_change.mode` is
+    /// rejected, naming the field. Only an older file gets it, from the
+    /// migration.
+    #[test]
+    fn missing_tool_change_mode_is_rejected() {
+        let text = CURRENT_FIXTURE.replacen(
+            "      \"pause_command\": \"M0\",\n      \"mode\": \"separate_programs\"\n",
+            "      \"pause_command\": \"M0\"\n",
+            1,
+        );
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Schema { message, .. } if message.contains("mode")),
             "{err:?}"
         );
     }

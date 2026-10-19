@@ -1446,4 +1446,30 @@ mod tests {
             assert_eq!(validate(&p), vec![], "`{extension}` is allowed");
         }
     }
+
+    /// #95: `"m6"` needs a definition whose tool change has `M6`. GRBL 1.1
+    /// has none (`definitions/README.md`, "Tool changes"), so the mode is an
+    /// error located at the field, whatever the operations. With an `M6`
+    /// line, as grblHAL has, it is fine.
+    #[test]
+    fn m6_mode_without_m6_command_is_an_error() {
+        let mut p = sample_project();
+        p.post_processor.tool_change.mode = crate::ToolChangeMode::M6;
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].is_error(), "{problems:?}");
+        let field = problems[0].field().unwrap();
+        assert_eq!(field, "post_processor.tool_change.mode");
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("M6") && message.contains("separate_programs"),
+            "{message}"
+        );
+        let text = crate::save(&p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        assert!(map.locate(&field).is_some(), "{field} in {text}");
+
+        p.post_processor.tool_change.commands = vec!["M5".into(), "T{toolNumber} M6".into()];
+        assert_eq!(validate(&p), vec![]);
+    }
 }

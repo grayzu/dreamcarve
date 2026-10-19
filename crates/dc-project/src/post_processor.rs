@@ -328,6 +328,26 @@ pub struct ToolChange {
     pub pause_after_change: bool,
     /// Pause command, for example `M0`.
     pub pause_command: String,
+    /// How a project whose operations use more than one tool is exported.
+    // Red-commit stub: the default goes once the v5 migration lands.
+    #[serde(default)]
+    pub mode: ToolChangeMode,
+}
+
+/// How a project whose operations use more than one tool is exported (#95).
+/// A machine setting, so it lives in the post-processor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolChangeMode {
+    /// One complete program per run of consecutive operations with the
+    /// same tool, each with no tool change. The user changes the bit and
+    /// sets Z zero between programs. Works on every controller and sender.
+    #[default]
+    SeparatePrograms,
+    /// One program that stops with `T<n> M6` at each tool change. Needs a
+    /// definition whose tool change has `M6` (grblHAL) and a sender that
+    /// stops there.
+    M6,
 }
 
 /// Canned-cycle retract mode.
@@ -452,6 +472,7 @@ mod tests {
                 stop_spindle_first: true,
                 pause_after_change: false,
                 pause_command: "M0".into(),
+                mode: ToolChangeMode::M6,
             },
             canned_cycles: Some(CannedCycles {
                 drill_command: Some("G81".into()),
@@ -498,6 +519,32 @@ mod tests {
             let back: PostProcessor = serde_json::from_value(json).unwrap();
             assert_eq!(back, post, "{control:?}");
         }
+    }
+
+    /// #95: the tool-change mode is a snake_case string in the file.
+    #[test]
+    fn tool_change_mode_round_trips_as_snake_case() {
+        let mut post = sample();
+        for (mode, text) in [
+            (ToolChangeMode::SeparatePrograms, "separate_programs"),
+            (ToolChangeMode::M6, "m6"),
+        ] {
+            post.tool_change.mode = mode;
+            let json = serde_json::to_value(&post).unwrap();
+            assert_eq!(json["tool_change"]["mode"], text, "{mode:?}");
+            let back: PostProcessor = serde_json::from_value(json).unwrap();
+            assert_eq!(back, post, "{mode:?}");
+        }
+    }
+
+    /// #95, #65: a definition without `tool_change.mode` is rejected, like
+    /// any other missing field.
+    #[test]
+    fn missing_tool_change_mode_is_rejected() {
+        let mut value = serde_json::to_value(sample()).unwrap();
+        value["tool_change"].as_object_mut().unwrap().remove("mode");
+        let err = serde_json::from_value::<PostProcessor>(value).unwrap_err();
+        assert!(err.to_string().contains("mode"), "{err}");
     }
 
     #[test]

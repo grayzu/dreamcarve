@@ -474,6 +474,20 @@ pub fn emit(
     ))
 }
 
+/// The programs `export` writes for `ops`. Red-commit stub.
+///
+/// # Errors
+///
+/// As for [`emit`].
+pub fn emit_programs(
+    project: &Project,
+    ops: &[(ProfileOp, Tool, Toolpath)],
+    date: &str,
+) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError> {
+    let (program, warnings) = emit(project, ops, date)?;
+    Ok((vec![program], warnings))
+}
+
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under
 /// [`crate::MAX_LINE_CHARS`]; the safety pass rejects any that does not.
@@ -1305,7 +1319,9 @@ mod tests {
     use dc_cam::{FeedField, Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3, assert_approx_eq};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
-    use dc_project::{Operation, OperationId, OriginZ, SpindleControl, ToolId, Units};
+    use dc_project::{
+        Operation, OperationId, OriginZ, SpindleControl, ToolChangeMode, ToolId, Units,
+    };
 
     const DATE: &str = "2026-10-15";
 
@@ -1781,8 +1797,11 @@ mod tests {
         }
     }
 
-    /// The sample operation, then the same with a second tool.
+    /// The sample operation, then the same with a second tool. The
+    /// project's tool-change mode becomes `"m6"`, the one program with a
+    /// tool change that [`emit`] writes (#95).
     fn two_tool_ops(project: &mut Project) -> Vec<(ProfileOp, Tool, Toolpath)> {
+        project.post_processor.tool_change.mode = ToolChangeMode::M6;
         project.tools.push(second_tool());
         let mut second = profile_op(project);
         second.id = OperationId::new("o2");
@@ -2593,5 +2612,64 @@ mod tests {
             ops[1].0.tool = ops[0].1.id.clone();
             emit(&project, &ops, DATE).unwrap();
         }
+    }
+
+    /// #95: with `"separate_programs"`, the bundled default, a two-tool
+    /// project is one program per tool run, on grblHAL and on GRBL. Each is
+    /// the program its run's operations alone emit: no `M6`, no `M61`, one
+    /// spindle start at its tool's speed, its own extents, and it passed
+    /// the safety pass on its own. Output is the same on every run.
+    #[test]
+    fn tool_run_program_passes_safety_alone() {
+        for post in ["grblhal", "grbl"] {
+            let mut project = project_with(post);
+            let ops = two_tool_ops(&mut project);
+            project.post_processor.tool_change.mode = ToolChangeMode::SeparatePrograms;
+            let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+            assert_eq!(programs.len(), 2, "{post}: one program per tool run");
+            for (k, program) in programs.iter().enumerate() {
+                let text = &program.text;
+                for word in ["M6", "M61"] {
+                    assert!(
+                        !text.lines().any(|l| has_word(l, word)),
+                        "{post} program {k} has {word}: {text}"
+                    );
+                }
+                let starts: Vec<&str> = text.lines().filter(|l| has_word(l, "M3")).collect();
+                let rpm = ops[k].1.rpm.unwrap();
+                assert_eq!(starts, [format!("M3 S{rpm}")], "{post} program {k}");
+                assert_eq!(program.first_tool.number, k + 1, "{post} program {k}");
+                let (alone, _) = emit(&project, &ops[k..=k], DATE).unwrap();
+                assert_eq!(program, &alone, "{post} program {k} is its run alone");
+            }
+            let (again, _) = emit_programs(&project, &ops, DATE).unwrap();
+            assert_eq!(again, programs, "{post}: deterministic");
+        }
+    }
+
+    /// #95: with `"m6"` the programs are the one [`emit`] writes, with its
+    /// `T2 M6` tool change, byte for byte.
+    #[test]
+    fn m6_mode_emits_one_program_with_m6() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+        let (single, _) = emit(&project, &ops, DATE).unwrap();
+        assert_eq!(programs, [single]);
+    }
+
+    /// #95: [`emit`] writes one program, so with `"separate_programs"` it
+    /// refuses a second tool rather than write an `M6` the user did not
+    /// choose.
+    #[test]
+    fn emit_refuses_tool_change_in_separate_programs_mode() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        project.post_processor.tool_change.mode = ToolChangeMode::SeparatePrograms;
+        let err = emit(&project, &ops, DATE).unwrap_err();
+        assert!(
+            matches!(err, ExportError::ToolChangeNotSupported { .. }),
+            "{err:?}"
+        );
     }
 }
