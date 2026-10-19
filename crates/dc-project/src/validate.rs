@@ -803,8 +803,13 @@ impl Validator {
                     self.out_of_range(format!("{at}.transform"), reach_mm, REACH);
                 }
             }
-            self.finite(&format!("{at}.z_top_mm"), inst.z_top_mm);
-            self.finite(&format!("{at}.z_bottom_mm"), inst.z_bottom_mm);
+            // Unset depths are fine: phase 1 does not use them (#99).
+            if let Some(z_top_mm) = inst.z_top_mm {
+                self.coordinate(&format!("{at}.z_top_mm"), z_top_mm);
+            }
+            if let Some(z_bottom_mm) = inst.z_bottom_mm {
+                self.coordinate(&format!("{at}.z_bottom_mm"), z_bottom_mm);
+            }
         }
 
         if !is_safe_file_extension(&p.post_processor.file_extension) {

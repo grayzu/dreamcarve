@@ -114,8 +114,8 @@ fn project(
             name: format!("Shape {}", index + 1),
             visible: true,
             locked: false,
-            z_top_mm: THICKNESS_MM,
-            z_bottom_mm: 0.0,
+            z_top_mm: Some(THICKNESS_MM),
+            z_bottom_mm: Some(0.0),
         });
         targets.push(instance);
     }

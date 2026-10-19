@@ -87,24 +87,27 @@ pub struct SvgImportOptions {
     /// Furthest a flattened polyline may stray from the source curve, mm.
     /// At least [`MIN_FLATTEN_TOLERANCE_MM`].
     pub flatten_tolerance_mm: f64,
-    /// Stock thickness, mm: every instance's `z_top_mm`.
-    pub thickness_mm: f64,
     /// Most vertices the whole import may produce before it fails with
     /// [`ImportError::TooManyVertices`].
     pub max_vertices: usize,
 }
 
 impl SvgImportOptions {
-    /// Options for stock `thickness_mm` thick at the default flattening
-    /// tolerance, [`FLATTEN_TOLERANCE_DEFAULT_MM`], and the default vertex
-    /// cap, [`MAX_IMPORT_VERTICES`].
+    /// Options at the default flattening tolerance,
+    /// [`FLATTEN_TOLERANCE_DEFAULT_MM`], and the default vertex cap,
+    /// [`MAX_IMPORT_VERTICES`].
     #[must_use]
-    pub const fn new(thickness_mm: f64) -> Self {
+    pub const fn new() -> Self {
         Self {
             flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
-            thickness_mm,
             max_vertices: MAX_IMPORT_VERTICES,
         }
+    }
+}
+
+impl Default for SvgImportOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -117,7 +120,7 @@ pub struct SvgImport {
     /// `path-N` (N counts every path in document order, from 1).
     pub definitions: Vec<FeatureDefinition>,
     /// One instance per definition, same order. Ids are `i1`, `i2`, ...;
-    /// identity transform, `z_top_mm` = stock thickness, `z_bottom_mm` = 0.
+    /// identity transform, `z_top_mm` and `z_bottom_mm` unset (`None`).
     pub instances: Vec<FeatureInstance>,
     /// Bounds of all imported polylines, mm; `None` when nothing imported.
     pub bounds: Option<Rect>,
@@ -154,10 +157,6 @@ pub fn import_svg(
     let tolerance_mm = options.flatten_tolerance_mm;
     if !(tolerance_mm.is_finite() && tolerance_mm >= MIN_FLATTEN_TOLERANCE_MM) {
         return Err(ImportError::InvalidTolerance { tolerance_mm });
-    }
-    let thickness_mm = options.thickness_mm;
-    if !(thickness_mm.is_finite() && thickness_mm > 0.0) {
-        return Err(ImportError::InvalidThickness { thickness_mm });
     }
 
     let tree = usvg::Tree::from_data(bytes, &usvg_options())?;
@@ -199,7 +198,6 @@ pub fn import_svg(
 
     let mut walker = Walker {
         tolerance_mm,
-        thickness_mm,
         // Pixels to millimetres, then the Y flip `y' = height − y`.
         px_to_mm: Affine::new([MM_PER_PX, 0.0, 0.0, -MM_PER_PX, 0.0, page_height_mm]),
         max_vertices: options.max_vertices,
@@ -325,7 +323,6 @@ fn length_units(length: &str) -> RootUnits {
 /// Walks usvg's tree in document order, collecting definitions.
 struct Walker {
     tolerance_mm: f64,
-    thickness_mm: f64,
     px_to_mm: Affine,
     max_vertices: usize,
     /// Vertices flattened so far, across all paths.
@@ -447,8 +444,8 @@ impl Walker {
             name: name.clone(),
             visible: true,
             locked: false,
-            z_top_mm: self.thickness_mm,
-            z_bottom_mm: 0.0,
+            z_top_mm: None,
+            z_bottom_mm: None,
         });
         self.definitions.push(FeatureDefinition {
             id: definition,
@@ -619,7 +616,7 @@ mod tests {
     const TOL_MM: f64 = 1e-4;
 
     fn import(bytes: &[u8]) -> (SvgImport, Vec<ImportWarning>) {
-        import_svg(bytes, &SvgImportOptions::new(12.0)).expect("import succeeds")
+        import_svg(bytes, &SvgImportOptions::new()).expect("import succeeds")
     }
 
     fn def<'a>(result: &'a SvgImport, name: &str) -> &'a FeatureDefinition {
@@ -783,7 +780,7 @@ mod tests {
 
     #[test]
     fn circle_flattens_within_tolerance() {
-        let options = SvgImportOptions::new(12.0);
+        let options = SvgImportOptions::new();
         let (result, _) =
             import_svg(include_bytes!("../tests/fixtures/circle.svg"), &options).unwrap();
         assert_eq!(result.definitions.len(), 1);
@@ -923,7 +920,7 @@ mod tests {
 
     #[test]
     fn malformed_svg_is_an_error() {
-        let err = import_svg(b"<svg", &SvgImportOptions::new(12.0)).unwrap_err();
+        let err = import_svg(b"<svg", &SvgImportOptions::new()).unwrap_err();
         assert!(matches!(err, ImportError::Svg(_)), "{err:?}");
     }
 
@@ -933,17 +930,11 @@ mod tests {
         for tolerance_mm in [0.0, -0.1, f64::NAN, f64::INFINITY] {
             let options = SvgImportOptions {
                 flatten_tolerance_mm: tolerance_mm,
-                ..SvgImportOptions::new(12.0)
+                ..SvgImportOptions::new()
             };
             assert!(matches!(
                 import_svg(bytes, &options),
                 Err(ImportError::InvalidTolerance { .. })
-            ));
-        }
-        for thickness_mm in [0.0, -1.0, f64::NAN, f64::NEG_INFINITY] {
-            assert!(matches!(
-                import_svg(bytes, &SvgImportOptions::new(thickness_mm)),
-                Err(ImportError::InvalidThickness { .. })
             ));
         }
     }
@@ -955,7 +946,7 @@ mod tests {
         let bytes = include_bytes!("../tests/fixtures/mm_root.svg");
         let too_fine = SvgImportOptions {
             flatten_tolerance_mm: MIN_FLATTEN_TOLERANCE_MM / 2.0,
-            ..SvgImportOptions::new(12.0)
+            ..SvgImportOptions::new()
         };
         assert!(matches!(
             import_svg(bytes, &too_fine),
@@ -963,7 +954,7 @@ mod tests {
         ));
         let finest = SvgImportOptions {
             flatten_tolerance_mm: MIN_FLATTEN_TOLERANCE_MM,
-            ..SvgImportOptions::new(12.0)
+            ..SvgImportOptions::new()
         };
         assert!(import_svg(bytes, &finest).is_ok());
     }
@@ -975,7 +966,7 @@ mod tests {
             <rect id="ok" x="0" y="0" width="10" height="10"/>
             <path id="far" d="M0,0 C200000000,0 200000000,50 0,50" fill="none" stroke="black"/>
         </svg>"#;
-        let err = import_svg(svg, &SvgImportOptions::new(12.0)).unwrap_err();
+        let err = import_svg(svg, &SvgImportOptions::new()).unwrap_err();
         match err {
             ImportError::CoordinateOutOfRange { path, limit_mm } => {
                 assert_eq!(path, "far");
@@ -997,7 +988,7 @@ mod tests {
             )
         };
         let limit = MAX_COORDINATE_MM;
-        let options = SvgImportOptions::new(12.0);
+        let options = SvgImportOptions::new();
         assert!(import_svg(svg(limit - 11.0).as_bytes(), &options).is_ok());
         match import_svg(svg(limit - 9.0).as_bytes(), &options).unwrap_err() {
             ImportError::CoordinateOutOfRange { path, limit_mm } => {
@@ -1019,7 +1010,7 @@ mod tests {
             )
         };
         let limit = MAX_COORDINATE_MM;
-        let options = SvgImportOptions::new(12.0);
+        let options = SvgImportOptions::new();
         assert!(import_svg(svg(limit - 1.0).as_bytes(), &options).is_ok());
         assert!(matches!(
             import_svg(svg(limit + 1.0).as_bytes(), &options),
@@ -1033,7 +1024,7 @@ mod tests {
             <rect x="0" y="0" width="10" height="10"/>
         </svg>"#;
         assert!(matches!(
-            import_svg(svg, &SvgImportOptions::new(12.0)),
+            import_svg(svg, &SvgImportOptions::new()),
             Err(ImportError::InvalidPageSize { .. })
         ));
     }
@@ -1043,7 +1034,7 @@ mod tests {
         // The circle flattens to far more than 10 vertices.
         let options = SvgImportOptions {
             max_vertices: 10,
-            ..SvgImportOptions::new(12.0)
+            ..SvgImportOptions::new()
         };
         let err = import_svg(include_bytes!("../tests/fixtures/circle.svg"), &options).unwrap_err();
         assert!(
@@ -1058,7 +1049,7 @@ mod tests {
         let bytes = include_bytes!("../tests/fixtures/y_flip.svg");
         let capped = |max_vertices| SvgImportOptions {
             max_vertices,
-            ..SvgImportOptions::new(12.0)
+            ..SvgImportOptions::new()
         };
         assert!(import_svg(bytes, &capped(8)).is_ok());
         assert!(matches!(
@@ -1069,7 +1060,7 @@ mod tests {
 
     #[test]
     fn default_options_use_the_documented_limits() {
-        let options = SvgImportOptions::new(12.0);
+        let options = SvgImportOptions::new();
         assert_eq!(options.max_vertices, MAX_IMPORT_VERTICES);
         const { assert!(MIN_FLATTEN_TOLERANCE_MM <= FLATTEN_TOLERANCE_DEFAULT_MM) };
     }
@@ -1081,7 +1072,7 @@ mod tests {
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
             <g transform="scale(1e38)"><g transform="scale(1e38)"><rect width="10" height="10"/></g></g>
         </svg>"#;
-        match import_svg(svg, &SvgImportOptions::new(12.0)) {
+        match import_svg(svg, &SvgImportOptions::new()) {
             Err(ImportError::NonFinite { .. }) => {}
             Ok((result, _)) => {
                 for p in result.definitions.iter().flat_map(|d| &d.profiles) {

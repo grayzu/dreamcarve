@@ -30,13 +30,17 @@
 //!   operations use more than one tool exports one program per tool run.
 //!   Before, such a project exported one program with `M6` (grblHAL) or
 //!   failed (GRBL); `"m6"` keeps the first.
+//! - **6**: each `instances[].z_top_mm` and `z_bottom_mm` may be `null`
+//!   (unset), which `init` and the SVG importer write (#99). Earlier files
+//!   always held numbers, which carry over unchanged, including the 12 mm
+//!   placeholder `init` used to write for `z_top_mm`.
 
 use crate::serialize::LoadError;
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 5;
+pub const CURRENT_VERSION: u32 = 6;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -50,6 +54,7 @@ fn step(from: u32) -> Option<Step> {
         2 => Some(v2_to_v3),
         3 => Some(v3_to_v4),
         4 => Some(v4_to_v5),
+        5 => Some(v5_to_v6),
         _ => None,
     }
 }
@@ -197,6 +202,24 @@ fn v4_to_v5(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
         TOOL_CHANGE_MODE_KEY.into(),
         Value::from("separate_programs"),
     );
+    Ok(root)
+}
+
+/// Version 5 → 6: instance depths become optional. Every version 5 value
+/// is a number and stays as it is; this step only checks that, so a broken
+/// file is not carried over as "unset".
+fn v5_to_v6(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let instances = root
+        .get("instances")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "`instances` is missing or not an array".to_owned())?;
+    for (i, instance) in instances.iter().enumerate() {
+        for key in ["z_top_mm", "z_bottom_mm"] {
+            if !instance.get(key).is_some_and(Value::is_number) {
+                return Err(format!("`instances[{i}].{key}` is missing or not a number"));
+            }
+        }
+    }
     Ok(root)
 }
 
