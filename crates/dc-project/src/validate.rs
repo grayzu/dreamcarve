@@ -1602,6 +1602,37 @@ mod tests {
         );
     }
 
+    /// #99: phase 1 does not use the instance depths, so leaving them unset
+    /// is neither an error nor a warning.
+    #[test]
+    fn unset_instance_depths_are_valid() {
+        let mut p = sample_project();
+        p.instances[0].z_top_mm = None;
+        p.instances[0].z_bottom_mm = None;
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #99: a set instance depth is still checked against the coordinate
+    /// limit.
+    #[test]
+    fn instance_z_top_out_of_range_is_error() {
+        let mut p = sample_project();
+        p.instances[0].z_top_mm = Some(7000.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::OutOfRange {
+                field: "instances[i1].z_top_mm".into(),
+                value: 7000.0,
+                expected: COORDINATE,
+            }]
+        );
+        assert!(problems[0].is_error());
+        p.instances[0].z_top_mm = Some(MAX_COORDINATE_MM);
+        p.instances[0].z_bottom_mm = Some(-MAX_COORDINATE_MM);
+        assert_eq!(validate(&p), vec![], "the limit is inclusive");
+    }
+
     /// #59: vertex coordinates are bounded by the limit, inclusive.
     #[test]
     fn huge_vertex_is_rejected() {

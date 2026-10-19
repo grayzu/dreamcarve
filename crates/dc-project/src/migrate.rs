@@ -231,6 +231,7 @@ mod tests {
     const V2_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v2/sample.dcv");
     const V3_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v3/sample.dcv");
     const V4_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v4/sample.dcv");
+    const V5_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v5/sample.dcv");
 
     /// The sample project as raw JSON of `version`, without the fields
     /// added after it.
@@ -350,6 +351,52 @@ mod tests {
             matches!(err, LoadError::Migration { from: 4, to: 5, .. }),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn version_5_fixture_loads() {
+        let loaded = load(V5_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// #99: version 6 lets the instance depths be unset, but the migration
+    /// never changes a value the user may have set. A version 5 file's
+    /// numbers, including `init`'s old 12 mm placeholder, carry over.
+    #[test]
+    fn v5_to_v6_keeps_instance_depths() {
+        let mut root = sample_root_at(5);
+        root["instances"][0]["z_top_mm"] = json!(12.0);
+        root["instances"][0]["z_bottom_mm"] = json!(0.0);
+        let text = serde_json::to_string_pretty(&root).unwrap();
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(CURRENT_VERSION, 6);
+        assert_eq!(loaded.project.version, 6);
+        let instance = &loaded.project.instances[0];
+        assert_eq!(instance.z_top_mm, Some(12.0));
+        assert_eq!(instance.z_bottom_mm, Some(0.0));
+        let migrated = migrate(sample_root_at(5), 5).unwrap();
+        assert_eq!(
+            migrated,
+            sample_root_at(CURRENT_VERSION),
+            "the migration only bumps the version"
+        );
+    }
+
+    /// A version 5 file had no way to leave an instance depth unset, so a
+    /// `null` there is a broken file, not one to carry over as unset.
+    #[test]
+    fn v5_with_null_instance_depth_fails() {
+        for key in ["z_top_mm", "z_bottom_mm"] {
+            let mut root = sample_root_at(5);
+            root["instances"][0][key] = Value::Null;
+            let err = migrate(root, 5).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Migration { from: 5, to: 6, message }
+                    if message.contains(&format!("instances[0].{key}"))),
+                "{err:?}"
+            );
+        }
     }
 
     /// #64: version 4 lets thickness and depth be unset, but a version 3

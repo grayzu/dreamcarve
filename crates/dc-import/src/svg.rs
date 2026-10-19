@@ -874,13 +874,16 @@ mod tests {
         assert_eq!(ids, ["d1", "d2", "d3"]);
     }
 
+    /// #99: the importer cannot know a feature's depth, so every instance
+    /// leaves `z_top_mm` and `z_bottom_mm` unset.
     #[test]
-    fn one_instance_per_definition_at_stock_thickness() {
+    fn imported_instances_have_unset_depths() {
         let (result, _) = import_svg(
             include_bytes!("../tests/fixtures/y_flip.svg"),
-            &SvgImportOptions::new(18.5),
+            &SvgImportOptions::new(),
         )
         .unwrap();
+        assert!(!result.instances.is_empty());
         assert_eq!(result.instances.len(), result.definitions.len());
         for (n, (inst, def)) in result.instances.iter().zip(&result.definitions).enumerate() {
             assert_eq!(inst.id, InstanceId::new(format!("i{}", n + 1)));
@@ -888,8 +891,8 @@ mod tests {
             assert_eq!(def.id, DefinitionId::new(format!("d{}", n + 1)));
             assert_eq!(inst.name, def.name);
             assert_eq!(inst.transform, Transform::IDENTITY);
-            assert_approx_eq!(inst.z_top_mm, 18.5, 0.0);
-            assert_approx_eq!(inst.z_bottom_mm, 0.0, 0.0);
+            assert_eq!(inst.z_top_mm, None);
+            assert_eq!(inst.z_bottom_mm, None);
             assert!(inst.visible);
             assert!(!inst.locked);
         }
