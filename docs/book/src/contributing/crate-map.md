@@ -70,7 +70,6 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | `passes.rs` | `pass_z_mm`: depth pass levels; refuses cuts below the stock bottom plus allowance. |
 | `stock.rs` | `swept_bounds`, `stock_overhang`: does the cutter stay on the stock (#62). |
 | `tabs.rs` | Tab placement along the tool-centre path, rect and smooth laps. |
-| `tab_profile.rs` | The raised-cosine Z profile of a smooth tab. |
 | `toolpath.rs` | `Toolpath`, `Move`, `MoveKind`: project-space output. |
 | `error.rs`, `warning.rs` | `CamError`; `Warning` with a stable `WarningCode`. |
 | `test_support.rs` | `assert_safe`, the shared emitted-motion safety assertions (`test-support` feature). |

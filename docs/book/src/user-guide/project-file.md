@@ -75,7 +75,7 @@ The fields, in the order DreamCarve writes them:
 | `version` | Format version. This build writes `4`. |
 | `name` | The project name, written at the top of the program. `init` uses the SVG's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
-| `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs. |
+| `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
 | `stock` | The block of material. |
 | `origin` | Where work zero is on the stock. |
 | `tools` | The tools. |

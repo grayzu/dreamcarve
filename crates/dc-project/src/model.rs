@@ -347,6 +347,6 @@ pub enum TabPlacement {
 pub enum TabShape {
     /// Square-shouldered tab.
     Rect,
-    /// Raised-cosine ramp.
+    /// Triangular bridge: straight ramps up to the tab top and back down.
     Smooth,
 }
