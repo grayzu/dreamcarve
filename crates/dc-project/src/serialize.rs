@@ -16,6 +16,7 @@
 //! that machine the project must refuse it when [`Loaded::has_errors`].
 
 use crate::layout::DcvFormatter;
+use crate::locate::TextPosition;
 use crate::migrate::migrate;
 use crate::model::Project;
 use crate::validate::{Problem, validate};
@@ -68,8 +69,14 @@ pub enum LoadError {
     },
     /// The JSON does not match the project schema (unknown or missing
     /// field, wrong type).
-    #[error("file does not match the project format: {message}")]
+    #[error("file does not match the project format{}: {message}", schema_where(path, *at))]
     Schema {
+        /// Where in the project the mismatch is, as keys and indices:
+        /// `operations[0].tabs.placement`. Empty for the top level.
+        path: String,
+        /// Where in the file's text the mismatch is, when the file has a
+        /// value at `path`.
+        at: Option<TextPosition>,
         /// serde's description, naming the offending field.
         message: String,
     },
@@ -151,6 +158,8 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
     let version = read_version(&root)?;
     let root = migrate(root, version)?;
     let project: Project = serde_json::from_value(root).map_err(|e| LoadError::Schema {
+        path: String::new(),
+        at: None,
         message: e.to_string(),
     })?;
     let problems = validate(&project);
@@ -160,6 +169,19 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         return Err(LoadError::NonFinite { field });
     }
     Ok(Loaded { project, problems })
+}
+
+/// ` at `path` (line L, column C)`, as much of it as is known, for
+/// [`LoadError::Schema`].
+fn schema_where(path: &str, at: Option<TextPosition>) -> String {
+    let mut out = String::new();
+    if !path.is_empty() {
+        out.push_str(&format!(" at `{path}`"));
+    }
+    if let Some(at) = at {
+        out.push_str(&format!(" (line {}, column {})", at.line, at.column));
+    }
+    out
 }
 
 /// Reads the root object's `version` without interpreting anything else.
@@ -267,7 +289,7 @@ mod tests {
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Schema { message } if message.contains("feed_mm_min")),
+            matches!(&err, LoadError::Schema { message, .. } if message.contains("feed_mm_min")),
             "{err:?}"
         );
     }
@@ -277,7 +299,7 @@ mod tests {
         let text = CURRENT_FIXTURE.replacen("{\n", "{\n  \"colour\": \"red\",\n", 1);
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Schema { message } if message.contains("colour")),
+            matches!(&err, LoadError::Schema { message, .. } if message.contains("colour")),
             "{err:?}"
         );
     }
@@ -292,7 +314,7 @@ mod tests {
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Schema { message } if message.contains("grain")),
+            matches!(&err, LoadError::Schema { message, .. } if message.contains("grain")),
             "{err:?}"
         );
     }
@@ -307,7 +329,7 @@ mod tests {
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Schema { message } if message.contains("ramp")),
+            matches!(&err, LoadError::Schema { message, .. } if message.contains("ramp")),
             "{err:?}"
         );
     }
@@ -549,5 +571,150 @@ mod tests {
         let text = serde_json::to_string(&Value::Object(reversed)).unwrap();
         assert!(text.starts_with("{\"definitions\""), "{text}");
         assert_eq!(load(text.as_bytes()).unwrap().project, sample_project());
+    }
+
+    const V2_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v2/sample.dcv");
+    /// The bundled grblHAL definition. It lives in `dc-gcode`, which this
+    /// crate cannot depend on, so the test reads the file.
+    const GRBLHAL: &str = include_str!("../../dc-gcode/src/definitions/grblhal.json");
+
+    /// Every `Option` field of a post-processor, as keys inside
+    /// `post_processor`.
+    const POST_OPTION_KEYS: &[&[&str]] = &[
+        &["vendor"],
+        &["units", "mm_command"],
+        &["units", "inch_command"],
+        &["work_coordinates", "select_command"],
+        &["canned_cycles"],
+        &["canned_cycles", "drill_command"],
+        &["canned_cycles", "drill_with_dwell_command"],
+        &["canned_cycles", "peck_drill_command"],
+        &["canned_cycles", "chip_break_drill_command"],
+        &["canned_cycles", "retract_mode"],
+        &["coolant"],
+    ];
+
+    /// #65: an `Option` is required on load, `null` when unset, so a
+    /// post-processor with a field left out fails rather than loading as
+    /// `None`.
+    #[test]
+    fn every_missing_post_option_fails() {
+        let mut root: Value = serde_json::from_str(CURRENT_FIXTURE).unwrap();
+        let mut post: Value = serde_json::from_str(GRBLHAL).unwrap();
+        // grblHAL has no canned cycles; fill them so their options are there
+        // to remove.
+        post["canned_cycles"] = serde_json::json!({
+            "drill_command": "G81",
+            "drill_with_dwell_command": "G82",
+            "peck_drill_command": "G83",
+            "chip_break_drill_command": "G73",
+            "peck_step_word": "Q",
+            "retract_mode": "G98",
+            "cancel_command": "G80"
+        });
+        root["post_processor"] = post;
+        let whole = serde_json::to_string_pretty(&root).unwrap();
+        assert!(load(whole.as_bytes()).is_ok(), "the grblHAL sample loads");
+        for keys in POST_OPTION_KEYS {
+            let mut edited = root.clone();
+            let (last, parents) = keys.split_last().unwrap();
+            let mut parent = &mut edited["post_processor"];
+            for key in parents {
+                parent = &mut parent[*key];
+            }
+            let removed = parent.as_object_mut().and_then(|o| o.shift_remove(*last));
+            assert!(removed.is_some(), "{keys:?} is in the sample");
+            let text = serde_json::to_string_pretty(&edited).unwrap();
+            let err = load(text.as_bytes()).unwrap_err();
+            let missing = format!("missing field `{last}`");
+            assert!(
+                matches!(&err, LoadError::Schema { message, .. } if message.contains(&missing)),
+                "{keys:?}: {err:?}"
+            );
+        }
+    }
+
+    /// The 1-based line of the first line of `text` containing `needle`.
+    fn line_of(text: &str, needle: &str) -> usize {
+        text.lines()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} in {text}"))
+            + 1
+    }
+
+    /// #65: an unknown key in a file at the current version is reported at
+    /// its line and column, also inside an internally tagged enum.
+    #[test]
+    fn schema_error_has_line_and_column() {
+        let cases = [
+            (
+                "\"thickness_mm\": 6.0",
+                "\"thickness_mm\": 6.0,\n    \"grain\": \"oak\"",
+                "\"grain\"",
+                "stock.grain",
+                14,
+            ),
+            (
+                "\"count\": 4",
+                "\"count\": 4,\n          \"bogus\": 1",
+                "\"bogus\"",
+                "operations[0].tabs.placement",
+                20,
+            ),
+        ];
+        for (from, to, key, path, column) in cases {
+            let text = CURRENT_FIXTURE.replacen(from, to, 1);
+            assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
+            let line = line_of(&text, key);
+            let err = load(text.as_bytes()).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Schema { path: p, at, .. }
+                    if p == path && *at == Some(TextPosition { line, column })),
+                "{err:?}"
+            );
+            let shown = err.to_string();
+            assert!(shown.contains(&format!("`{path}`")), "{shown}");
+            assert!(
+                shown.contains(&format!("line {line}, column {column}")),
+                "{shown}"
+            );
+        }
+    }
+
+    /// #65: after a migration the error still names where the bad value is.
+    #[test]
+    fn schema_error_after_migration_has_path() {
+        let text = V2_FIXTURE.replacen("\"count\": 4", "\"count\": 4,\n          \"bogus\": 1", 1);
+        assert_ne!(text, V2_FIXTURE, "fixture layout changed");
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Schema { path, message, .. }
+                if path == "operations[0].tabs.placement" && message.contains("bogus")),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string().contains("`operations[0].tabs.placement`"),
+            "{err}"
+        );
+    }
+
+    /// #65: a `decimal_places` of the wrong form says where it is and what
+    /// it may be.
+    #[test]
+    fn bad_decimal_places_message() {
+        let text = CURRENT_FIXTURE.replacen(
+            "\"decimal_places\": {\n        \"mm\": 3,\n        \"inch\": 4\n      }",
+            "\"decimal_places\": \"three\"",
+            1,
+        );
+        assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
+        let err = load(text.as_bytes()).unwrap_err();
+        let shown = err.to_string();
+        assert!(
+            shown.contains("`post_processor.number_format.decimal_places`"),
+            "{shown}"
+        );
+        assert!(shown.contains("a whole number"), "{shown}");
+        assert!(shown.contains("`mm` and `inch`"), "{shown}");
     }
 }

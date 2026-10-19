@@ -39,6 +39,9 @@ serde = { version = "1.0", features = ["derive"] }
 # bit-identical (acceptance test 1); the default parser can be off by 1 ulp.
 serde_json = { version = "1.0", features = ["preserve_order", "float_roundtrip"] }
 thiserror = "2.0"
+# Names the JSON path of a .dcv schema error (#65), which serde_json loses
+# once a migrated file is deserialized from a `Value`.
+serde_path_to_error = "0.1"
 clap = { version = "4.6", features = ["derive", "cargo"] }
 kurbo = "0.13"
 cavalier_contours = "0.9"
