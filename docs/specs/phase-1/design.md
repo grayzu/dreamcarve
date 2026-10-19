@@ -91,7 +91,7 @@ figures, are in the user guide chapter "Shapes, holes, and islands".
 ### dc-project
 
 ```rust
-pub const CURRENT_VERSION: u32 = 5;
+pub const CURRENT_VERSION: u32 = 6;
 
 pub struct Project {
     pub version: u32,
@@ -121,8 +121,10 @@ pub struct FeatureDefinition { pub id: DefinitionId, pub name: String, pub profi
 pub struct FeatureInstance {
     pub id: InstanceId, pub definition: DefinitionId, pub transform: Transform,
     pub name: String, pub visible: bool, pub locked: bool,
-    pub z_top_mm: f64, pub z_bottom_mm: f64,
+    pub z_top_mm: Option<f64>, pub z_bottom_mm: Option<f64>,
 }
+// z_top_mm / z_bottom_mm are None until the user sets them (#99); phase 1
+// reads neither, and validation range-checks them only when set.
 
 pub struct Tool {
     pub id: ToolId, pub name: String, pub cutter: ToolKind, // EndMill | BallNose | VBit{included_angle_deg} | Engraver
@@ -173,7 +175,10 @@ change (#46). Version 4 made `stock.thickness_mm` and each Profile's
 carries every version 3 number over unchanged. Version 5 added
 `post_processor.tool_change.mode` (`ToolChangeMode::{SeparatePrograms,
 M6}`, `"separate_programs"` | `"m6"`); the migration sets
-`"separate_programs"` (#95). Validation reports `"m6"` on a definition
+`"separate_programs"` (#95). Version 6 made each instance's `z_top_mm`
+and `z_bottom_mm` nullable, so `init` and the SVG importer leave them unset
+(#99); the migration carries every version 5 number over unchanged.
+Validation reports `"m6"` on a definition
 whose `tool_change.commands` has no `M6` line as
 `Problem::ToolChangeModeNeedsM6`, located at the field.
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
@@ -471,8 +476,8 @@ Inputs: project, op. Output: toolpath in project space.
 3. `flatten` at `flatten_tolerance_mm`. Closed subpaths become closed
    polylines; open stay open. Zero-area closed polylines are dropped with a
    warning.
-4. Each definition gets one instance with identity transform, `z_top =
-   thickness`, `z_bottom = 0`.
+4. Each definition gets one instance with identity transform and
+   `z_top_mm`, `z_bottom_mm` unset (`None`, #99).
 
 Text, images, gradients, and clip paths are ignored with a warning. usvg
 must be ≥ 0.45 (Apache/MIT; earlier versions are MPL-2.0).
@@ -502,8 +507,8 @@ dreamcarve posts
 ```
 
 `init` builds a project: stock = drawing bounds plus 10 mm margin each side,
-thickness `None` (the importer's instance `z_top` is a nominal 12 mm,
-which phase 1 never reads). The instance offset and the stock size are rounded up to
+thickness `None` (the instances' `z_top_mm` and `z_bottom_mm` are `None`
+too, #99; phase 1 never reads them). The instance offset and the stock size are rounded up to
 0.01 mm, ignoring up to 0.001 mm of flattening noise above a multiple, so
 the margin holds to the program's 0.001 mm resolution and the file reads
 cleanly. Origin BottomLeft/StockTop, one tool "Set me" with

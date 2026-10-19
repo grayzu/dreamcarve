@@ -169,8 +169,8 @@ mod tests {
                 name: format!("Shape {id}"),
                 visible: true,
                 locked: false,
-                z_top_mm: THICKNESS_MM,
-                z_bottom_mm: 0.0,
+                z_top_mm: Some(THICKNESS_MM),
+                z_bottom_mm: Some(0.0),
             })
             .collect();
         p.operations.clear();

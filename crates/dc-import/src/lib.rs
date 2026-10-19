@@ -63,12 +63,6 @@ pub enum ImportError {
         /// The rejected tolerance, millimetres.
         tolerance_mm: f64,
     },
-    /// The stock thickness is not a positive finite length.
-    #[error("stock thickness {thickness_mm} mm must be a positive finite length")]
-    InvalidThickness {
-        /// The rejected thickness, millimetres.
-        thickness_mm: f64,
-    },
 }
 
 /// Something in the input that was skipped or reinterpreted. The import
