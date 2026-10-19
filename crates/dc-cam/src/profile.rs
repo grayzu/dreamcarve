@@ -687,6 +687,103 @@ mod tests {
         }
     }
 
+    /// Names each lap, in cut order, by the `(name, x extent mm)` its
+    /// x extent is nearest to. Each contour is cut at every pass before the
+    /// next contour starts, so the result is the contour cut order with one
+    /// entry per pass.
+    fn lap_names(toolpath: &Toolpath, contours: &[(&'static str, f64)]) -> Vec<&'static str> {
+        laps(toolpath)
+            .iter()
+            .map(|lap| {
+                let off = |w: f64| (lap.x_extent_mm() - w).abs();
+                let (name, width_mm) = contours
+                    .iter()
+                    .copied()
+                    .min_by(|a, b| off(a.1).total_cmp(&off(b.1)))
+                    .unwrap();
+                assert!(off(width_mm) < TOL, "lap {lap:?} matches no contour");
+                name
+            })
+            .collect()
+    }
+
+    /// Each name repeated once per pass, for comparing with [`lap_names`].
+    fn every_pass(names: &[&'static str]) -> Vec<&'static str> {
+        names
+            .iter()
+            .flat_map(|&n| std::iter::repeat_n(n, PASS_Z_MM.len()))
+            .collect()
+    }
+
+    /// O1 (`docs/research/toolpath-ordering.md`): a 200 × 150 frame (outline
+    /// A, 160 × 110 hole B) with a 60 mm coaster C inside the hole. Whatever
+    /// the drawing order, the coaster is cut first, then the hole that frees
+    /// the waste around it, then the frame's outline.
+    #[test]
+    fn island_is_cut_before_the_hole_around_it() {
+        let a = Polyline::rect(Point::new(0.0, 0.0), 200.0, 150.0);
+        let b = Polyline::rect(Point::new(20.0, 20.0), 160.0, 110.0);
+        let c = Polyline::circle(Point::new(100.0, 75.0), 30.0);
+        // Outside: A and C grow by the radius, the hole B shrinks.
+        let widths = [("A", 206.35), ("B", 153.65), ("C", 66.35)];
+        let orders = [
+            vec![a.clone(), b.clone(), c.clone()],
+            vec![c.clone(), b.clone(), a.clone()],
+            vec![b, c, a],
+        ];
+        for profiles in orders {
+            let p = project(profiles, &[("i1", at_20_20())]);
+            let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(lap_names(&tp, &widths), every_pass(&["C", "B", "A"]));
+        }
+    }
+
+    /// Four nested contours, drawn outermost first: outer, hole, island,
+    /// hole in the island. The innermost is cut first, and each hole still
+    /// comes before its own outline.
+    #[test]
+    fn four_levels_cut_innermost_first() {
+        let p = project(
+            vec![
+                Polyline::rect(Point::new(0.0, 0.0), 200.0, 150.0),
+                Polyline::rect(Point::new(20.0, 20.0), 160.0, 110.0),
+                Polyline::rect(Point::new(40.0, 40.0), 120.0, 70.0),
+                Polyline::rect(Point::new(60.0, 60.0), 80.0, 30.0),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let widths = [
+            ("outer", 206.35),
+            ("hole", 153.65),
+            ("island", 126.35),
+            ("island hole", 73.65),
+        ];
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            lap_names(&tp, &widths),
+            every_pass(&["island hole", "island", "hole", "outer"])
+        );
+    }
+
+    /// Two parts side by side, neither inside the other, are cut in the
+    /// order they were drawn, either way round.
+    #[test]
+    fn apart_regions_keep_drawing_order() {
+        let small = Polyline::rect(Point::new(0.0, 0.0), 40.0, 30.0);
+        let big = Polyline::rect(Point::new(100.0, 0.0), 60.0, 30.0);
+        let widths = [("small", 46.35), ("big", 66.35)];
+        for (profiles, expected) in [
+            (vec![small.clone(), big.clone()], ["small", "big"]),
+            (vec![big, small], ["big", "small"]),
+        ] {
+            let p = project(profiles, &[("i1", at_20_20())]);
+            let (tp, _) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+            assert_eq!(lap_names(&tp, &widths), every_pass(&expected));
+        }
+    }
+
     #[test]
     fn climb_outside_is_clockwise() {
         let p = rect_project();
