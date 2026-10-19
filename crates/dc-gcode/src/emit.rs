@@ -2042,6 +2042,57 @@ mod tests {
         }
     }
 
+    /// Asserts that the first move after 0-based line `stop` of `text` is a
+    /// rapid in Z alone to safe Z: Z is unknown after a stop (#68).
+    fn assert_retract_after(text: &str, stop: usize, label: &str) {
+        let lines: Vec<&str> = text.lines().collect();
+        let axis = |w: &str| ['X', 'Y', 'Z'].iter().any(|&a| w.starts_with(a));
+        let next = (stop + 1..lines.len())
+            .find(|&k| code(lines[k]).split_whitespace().any(axis))
+            .unwrap_or_else(|| panic!("{label}: no move after line {}", stop + 1));
+        let words = code(lines[next]);
+        assert!(
+            has_word(lines[next], "G0")
+                && !words
+                    .split_whitespace()
+                    .any(|w| w.starts_with('X') || w.starts_with('Y')),
+            "{label}: line {} after the stop is {:?}, not a retract",
+            next + 1,
+            lines[next]
+        );
+        // Where Z is after line `next`.
+        let z = z_before(text, next + 1).unwrap_or_else(|| panic!("{label}: Z unknown"));
+        assert_approx_eq!(z, SAFE_Z_MACHINE, 1e-9);
+    }
+
+    /// #68, S4: the user may jog or set Z zero at the router-on pause, so
+    /// the program lifts to safe Z before it moves in XY.
+    #[test]
+    fn manual_router_on_pause_is_followed_by_a_retract() {
+        for post in ["grblhal", "grbl"] {
+            let text = emit_text(&manual_project(post));
+            let lines: Vec<&str> = text.lines().collect();
+            let on = first_index(&lines, |l| l.contains("Turn the router ON"))
+                .unwrap_or_else(|| panic!("{post}: no router-on pause"));
+            assert_retract_after(&text, on, post);
+        }
+    }
+
+    /// #68, #57: the same after an `M6` tool change, in both spindle modes.
+    #[test]
+    fn tool_change_is_followed_by_a_retract() {
+        for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            let mut project = project_with("grblhal");
+            project.post_processor.feed_speed.spindle_control = control;
+            let ops = two_tool_ops(&mut project);
+            let text = emit(&project, &ops, DATE).unwrap().0.text;
+            let lines: Vec<&str> = text.lines().collect();
+            let change = first_index(&lines, |l| has_word(l, "M6"))
+                .unwrap_or_else(|| panic!("{control:?}: no tool change"));
+            assert_retract_after(&text, change, &format!("{control:?}"));
+        }
+    }
+
     /// #34: the program lists every stop, `M0` or `M6`, with its line and
     /// message, so the CLI can tell the user what each stop is for when
     /// the controller does not show the message (GRBL drops comments).

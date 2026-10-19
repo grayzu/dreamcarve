@@ -1570,6 +1570,56 @@ mod tests {
         check_manual(manual_lifted).unwrap();
     }
 
+    /// S2, S4, #68: Z is unknown after a pause, because the user may have
+    /// jogged or set Z zero, so an XY rapid needs a move to safe Z first.
+    /// This is the same "Z unknown" state the pause and spindle-start
+    /// checks use.
+    #[test]
+    fn xy_rapid_after_pause_needs_a_retract() {
+        for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            let no_lift = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54\nG0 X10 Y10\n";
+            let err = check_text_as(no_lift, control).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ExportError::RapidBelowSafeZ {
+                        line: 6,
+                        z_mm: None,
+                        ..
+                    }
+                ),
+                "{control:?}: {err:?}"
+            );
+            let lifted = "G21 G90\nG54\nG0 Z5\nM0\nG21 G90 G54\nG0 Z5\nG0 X10 Y10\n";
+            check_text_as(lifted, control).unwrap();
+        }
+    }
+
+    /// #68, #57: the same holds after an `M6` tool change, where the user
+    /// sets Z zero with the new bit.
+    #[test]
+    fn xy_rapid_after_m6_needs_a_retract() {
+        let check = |text: &str| {
+            let grblhal = crate::post::lookup("grblhal").unwrap();
+            check_text_on(text, grblhal, SpindleControl::Automatic)
+        };
+        let no_lift = "G21 G90\nG54\nG0 Z5\nT2 M6\nG21 G90 G54\nG0 X10 Y10\n";
+        let err = check(no_lift).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::RapidBelowSafeZ {
+                    line: 6,
+                    z_mm: None,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let lifted = "G21 G90\nG54\nG0 Z5\nT2 M6\nG21 G90 G54\nG0 Z5\nG0 X10 Y10\n";
+        check(lifted).unwrap();
+    }
+
     /// S5, #55: the controller is in a known state before the program
     /// moves: units, work coordinates, and absolute distance mode. A
     /// controller left in `G91` by an earlier job reads every coordinate as
