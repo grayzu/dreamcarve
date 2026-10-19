@@ -53,7 +53,7 @@ reference implementation except where this plan says otherwise.
 | Localization | Strings keyed from the first GUI phase. English only until phase 8 | phase 4 design spec |
 | Fonts | Bundled OFL fonts plus user font files. No system font enumeration | phase 5 design spec |
 | STEP import | Post-1.0, pending a permissively licensed Rust reader | this file |
-| Versioning | `0.N.0` tags the end of phase N. 1.0.0 is phase 9 | this file |
+| Versioning | `0.N.0` tags the end of phase N; fixes between phases bump the patch. 1.0.0 is phase 9. Builds other than a release tag print `<version>-dev.<UTC build time>+g<hash>`; right after tagging, bump `Cargo.toml` to the next patch | this file |
 
 ## Toolpath coverage
 

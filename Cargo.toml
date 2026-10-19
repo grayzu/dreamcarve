@@ -16,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
 license = "Apache-2.0"
@@ -25,11 +25,11 @@ authors = ["The DreamCarve Contributors"]
 
 [workspace.dependencies]
 # Internal crates
-dc-geometry = { path = "crates/dc-geometry", version = "0.0.1" }
-dc-project = { path = "crates/dc-project", version = "0.0.1" }
-dc-cam = { path = "crates/dc-cam", version = "0.0.1" }
-dc-gcode = { path = "crates/dc-gcode", version = "0.0.1" }
-dc-import = { path = "crates/dc-import", version = "0.0.1" }
+dc-geometry = { path = "crates/dc-geometry", version = "0.1.0" }
+dc-project = { path = "crates/dc-project", version = "0.1.0" }
+dc-cam = { path = "crates/dc-cam", version = "0.1.0" }
+dc-gcode = { path = "crates/dc-gcode", version = "0.1.0" }
+dc-import = { path = "crates/dc-import", version = "0.1.0" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.
 # Geometry crates (i_overlay) are added when
