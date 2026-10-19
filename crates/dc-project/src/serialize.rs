@@ -317,7 +317,7 @@ mod tests {
     use crate::validate::validate;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v5/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v6/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -416,6 +416,54 @@ mod tests {
             matches!(&err, LoadError::Schema { message, .. } if message.contains("mode")),
             "{err:?}"
         );
+    }
+
+    /// #99: an instance whose depths are unset saves both as `null` and
+    /// loads back equal.
+    #[test]
+    fn instance_depths_round_trip_as_null() {
+        let mut p = sample_project();
+        p.instances[0].z_top_mm = None;
+        p.instances[0].z_bottom_mm = None;
+        let text = save(&p).unwrap();
+        assert!(text.contains("\"z_top_mm\": null"), "{text}");
+        assert!(text.contains("\"z_bottom_mm\": null"), "{text}");
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+    }
+
+    /// #99, #65: the instance depths may be `null`, but the keys stay
+    /// required. A file without one fails to load, naming the instance and
+    /// the missing key.
+    #[test]
+    fn missing_instance_z_top_fails_to_load() {
+        let cases = [
+            (
+                "      \"z_top_mm\": 6.0,\n      \"z_bottom_mm\": 0.0\n",
+                "      \"z_bottom_mm\": 0.0\n",
+                "z_top_mm",
+            ),
+            (
+                "      \"z_top_mm\": 6.0,\n      \"z_bottom_mm\": 0.0\n",
+                "      \"z_top_mm\": 6.0\n",
+                "z_bottom_mm",
+            ),
+        ];
+        for (from, to, key) in cases {
+            let text = CURRENT_FIXTURE.replacen(from, to, 1);
+            assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
+            let err = load(text.as_bytes()).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Schema { path, at, message }
+                    if path == "instances[0]"
+                        && at.is_some()
+                        && message.contains(&format!("missing field `{key}`"))),
+                "{err:?}"
+            );
+            let shown = err.to_string();
+            assert!(shown.contains("`instances[0]`"), "{shown}");
+            assert!(shown.contains(key), "{shown}");
+        }
     }
 
     #[test]

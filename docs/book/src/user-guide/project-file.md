@@ -88,7 +88,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `5`. |
+| `version` | Format version. This build writes `6`. |
 | `name` | The project name, written at the top of the program. `init` uses the SVG's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -192,7 +192,7 @@ Profile cuts only closed outlines.
 | `transform` | Six numbers `[a, b, c, d, e, f]` that move a point (x, y) to (a·x + c·y + e, b·x + d·y + f). `[1, 0, 0, 1, e, f]` moves the shape by `e` in X and `f` in Y. |
 | `name` | Shown in messages. |
 | `visible`, `locked` | For the future editor. Phase 1 ignores them. |
-| `z_top_mm`, `z_bottom_mm` | For future operations. Phase 1 ignores them. |
+| `z_top_mm`, `z_bottom_mm` | The feature's top and bottom, mm above the material bottom, for future operations. `null` means not set, which is how `init` writes them. Phase 1 ignores them. |
 
 To move a shape on the stock, change `e` and `f`.
 
@@ -289,6 +289,7 @@ refused.
 | 3 | Writes `origin.xy` and each tool's `cutter` as a plain string (`"bottom_left"`, `"end_mill"`), or as a one-key object when the choice carries values (`{ "custom": { "x_mm": 20.0, "y_mm": 5.0 } }`). Older files tagged them with `kind`, as in `{ "kind": "bottom_left" }`; the upgrade rewrites them. |
 | 4 | Lets `stock.thickness_mm` and each operation's `depth_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds. |
 | 5 | Adds `post_processor.tool_change.mode`, set to `"separate_programs"` on upgrade: a project with more than one tool exports one program per tool run. Set `"m6"` (grblHAL only) for the one program with `M6` that older versions wrote. See [Post-processors](post-processors.md#projects-with-more-than-one-tool). |
+| 6 | Lets each instance's `z_top_mm` and `z_bottom_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds, so a file `init` wrote before keeps its placeholder `z_top_mm` of 12.0 until you change it. Phase 1 ignores both. |
 
 ## What `check` reports
 

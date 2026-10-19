@@ -42,8 +42,8 @@ fn island_project() -> Project {
 
     let instance = &mut project.instances[0];
     instance.transform = dc_geometry::Transform::translate(20.0, 20.0);
-    instance.z_top_mm = THICKNESS_MM;
-    instance.z_bottom_mm = 0.0;
+    instance.z_top_mm = Some(THICKNESS_MM);
+    instance.z_bottom_mm = Some(0.0);
     let definition = project
         .definitions
         .get_mut(&instance.definition)

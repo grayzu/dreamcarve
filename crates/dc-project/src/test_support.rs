@@ -44,7 +44,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with four tabs. Matches the committed fixture
-/// `tests/fixtures/dcv/v5/sample.dcv`.
+/// `tests/fixtures/dcv/v6/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -73,8 +73,8 @@ pub fn sample_project() -> Project {
             name: "Rectangle 1".into(),
             visible: true,
             locked: false,
-            z_top_mm: 6.0,
-            z_bottom_mm: 0.0,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
         }],
         tools: vec![tool_6_35_upcut()],
         operations: vec![Operation::Profile(ProfileOp {

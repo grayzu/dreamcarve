@@ -50,7 +50,7 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | `post_processor.rs` | `PostProcessor`, the controller dialect, embedded in every project. |
 | `ids.rs` | `DefinitionId`, `InstanceId`, `ToolId`, `OperationId` newtypes. |
 | `serialize.rs` | `save`, `load` (strict: unknown and missing fields fail), `Loaded`, `LoadError`. |
-| `migrate.rs` | `CURRENT_VERSION` (2) and the raw-JSON migration steps from older versions. |
+| `migrate.rs` | `CURRENT_VERSION` (6) and the raw-JSON migration steps from older versions. |
 | `validate.rs` | `validate`, `Problem`, `Severity`: every problem at once, errors and warnings. |
 | `history.rs` | `History`: snapshot undo and redo. Nothing drives it in phase 1. |
 | `test_support.rs` | Fixture builders such as `sample_project()`; other crates' tests use them through the `test-support` feature. |

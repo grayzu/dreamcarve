@@ -76,6 +76,8 @@ pub(crate) struct Tabs {
     top_z_mm: f64,
     /// Width of one tab as left on the part.
     width_mm: f64,
+    /// Diameter of the tool that cuts the tabs.
+    diameter_mm: f64,
     /// Length of path one tab raises: tab width plus tool diameter.
     span_mm: f64,
     chord_tolerance_mm: f64,
@@ -118,6 +120,7 @@ impl Tabs {
             shape: spec.shape,
             top_z_mm: spec.height_mm,
             width_mm: spec.width_mm,
+            diameter_mm,
             span_mm: spec.width_mm + diameter_mm,
             chord_tolerance_mm: if chord_tolerance_mm > 0.0 {
                 chord_tolerance_mm
@@ -372,15 +375,16 @@ pub(crate) fn coverage_warning(
     let count_f: f64 = centres.iter().map(|_| 1.0).sum();
     // Evenly spaced tabs that fit in half the path never overlap.
     let max_count = ((half_mm + EPS_MM) / tabs.span_mm).floor();
-    let diameter_mm = tabs.span_mm - tabs.width_mm;
     let mut warning = contour_warning(WarningCode::TabsCoverMostOfContour, op, contour, shape)
         .with("path_length_mm", l)
         .with("tab_count", centres.len())
+        .with("tab_width_mm", tabs.width_mm)
+        .with("diameter_mm", tabs.diameter_mm)
         .with("tab_span_mm", tabs.span_mm)
         .with("tab_total_mm", tabs.span_mm * count_f)
         .with("max_count", max_count);
     // Rounded down to 0.01 mm so the suggested width does fit.
-    let max_width_mm = ((half_mm / count_f - diameter_mm) * 100.0).floor() / 100.0;
+    let max_width_mm = ((half_mm / count_f - tabs.diameter_mm) * 100.0).floor() / 100.0;
     if max_width_mm > 0.0 {
         warning = warning.with("max_width_mm", max_width_mm);
     }
@@ -673,8 +677,8 @@ mod tests {
             name: format!("{name} 1"),
             visible: true,
             locked: false,
-            z_top_mm: THICKNESS_MM,
-            z_bottom_mm: 0.0,
+            z_top_mm: Some(THICKNESS_MM),
+            z_bottom_mm: Some(0.0),
         }];
         let op = ProfileOp {
             id: OperationId::new("o1"),
@@ -1217,6 +1221,41 @@ mod tests {
         let (p, op) = square_with_hole(40.0, Some(four_rect_tabs()));
         let (_, warnings) = generate(&p, &op);
         assert!(coverage_warnings(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    /// The coverage warning for four 3 mm tabs cut with a 1/8" (3.175 mm)
+    /// bit on a 13.175 mm square hole: a 40 mm tool path, 24.7 mm of it
+    /// raised.
+    fn small_bit_coverage_warning() -> Warning {
+        let spec = TabSpec {
+            width_mm: 3.0,
+            ..four_rect_tabs()
+        };
+        let (mut p, op) = square_with_hole(13.175, Some(spec));
+        p.tools[0].diameter_mm = 3.175;
+        let (_, warnings) = generate(&p, &op);
+        let cover = coverage_warnings(&warnings);
+        assert_eq!(cover.len(), 1, "only the hole: {warnings:?}");
+        cover[0].clone()
+    }
+
+    #[test]
+    fn coverage_warning_carries_tab_width_and_diameter() {
+        let w = small_bit_coverage_warning();
+        assert_approx_eq!(param_mm(&w, "tab_width_mm"), 3.0, TOL);
+        assert_approx_eq!(param_mm(&w, "diameter_mm"), 3.175, TOL);
+        assert_approx_eq!(param_mm(&w, "tab_span_mm"), 6.175, TOL);
+        assert_approx_eq!(param_mm(&w, "tab_total_mm"), 4.0 * 6.175, TOL);
+        assert_approx_eq!(param_mm(&w, "path_length_mm"), 40.0, TOL);
+    }
+
+    #[test]
+    fn coverage_warning_text_names_the_tab_width() {
+        let text = small_bit_coverage_warning().to_string();
+        for needle in ["3 mm wide", "3.175 mm bit", "6.17 mm", "24.7 mm", "40 mm"] {
+            assert!(text.contains(needle), "{needle:?} in {text:?}");
+        }
+        assert!(!text.contains("tab(s) of 6.17 mm each"), "{text}");
     }
 
     #[test]

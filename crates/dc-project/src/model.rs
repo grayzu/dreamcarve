@@ -152,10 +152,15 @@ pub struct FeatureInstance {
     pub visible: bool,
     /// Protected from edits.
     pub locked: bool,
-    /// Top of the feature, millimetres above the material bottom.
-    pub z_top_mm: f64,
-    /// Bottom of the feature, millimetres above the material bottom.
-    pub z_bottom_mm: f64,
+    /// Top of the feature, millimetres above the material bottom. `None`
+    /// until the user sets it; nothing in phase 1 reads it, so it is never
+    /// guessed (#99).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub z_top_mm: Option<f64>,
+    /// Bottom of the feature, millimetres above the material bottom. `None`
+    /// until the user sets it, like `z_top_mm`.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub z_bottom_mm: Option<f64>,
 }
 
 /// A cutting tool embedded in the project. Feeds, plunge and RPM stay `None`

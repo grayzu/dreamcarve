@@ -315,6 +315,24 @@ fn check_after_init_lists_missing_step_down() {
     }
 }
 
+/// #99: `init` cannot know a feature's depth, so every instance leaves
+/// `z_top_mm` and `z_bottom_mm` unset (`null` in the file) instead of a
+/// placeholder that would read as a decision.
+#[test]
+fn init_leaves_instance_depths_unset() {
+    let dir = work_dir("init_leaves_instance_depths_unset");
+    let dcv = init_coaster(&dir);
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    assert!(text.contains("\"z_top_mm\": null"), "{text}");
+    assert!(text.contains("\"z_bottom_mm\": null"), "{text}");
+    let project = load_file(&dcv).project;
+    assert!(!project.instances.is_empty(), "init writes instances");
+    for instance in &project.instances {
+        assert_eq!(instance.z_top_mm, None, "{} z_top_mm", instance.id);
+        assert_eq!(instance.z_bottom_mm, None, "{} z_bottom_mm", instance.id);
+    }
+}
+
 /// The fields a fresh coaster project leaves unset, in file order, with
 /// the key each one's line holds.
 const UNSET_FIELDS: [(&str, &str); 6] = [

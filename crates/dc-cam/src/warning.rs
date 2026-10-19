@@ -37,7 +37,9 @@ pub enum WarningCode {
     /// length, so the part or hole may not cut free. The tabs are cut as
     /// set. Params: `op`, `contour` (0-based, in cut order), `instance`,
     /// `instance_name`, `profile`, `path_length_mm`, `tab_count`,
-    /// `tab_span_mm` (one tab's length of path: width plus tool diameter),
+    /// `tab_width_mm` (the tab width as set), `diameter_mm` (the tool
+    /// diameter), `tab_span_mm` (one tab's length of path: width plus tool
+    /// diameter),
     /// `tab_total_mm` (count times span), `max_count` (most tabs of this
     /// width that cover at most half), and `max_width_mm` (widest tab at
     /// this count that covers at most half; absent when none fits).
@@ -120,8 +122,10 @@ fn rounded(value: f64, decimals: usize) -> String {
     if text == "-0" { "0" } else { text }.to_owned()
 }
 
-/// Lengths are shown to 0.01 mm, shares to 0.1%.
+/// Lengths are shown to 0.01 mm, tool diameters to 0.001 mm (so a 1/8"
+/// bit reads 3.175 mm), shares to 0.1%.
 const MM_DECIMALS: usize = 2;
+const DIAMETER_DECIMALS: usize = 3;
 const PERCENT_DECIMALS: usize = 1;
 
 impl Warning {
@@ -258,14 +262,23 @@ impl fmt::Display for Warning {
                     }
                     _ => String::new(),
                 };
+                let width = self.mm("tab_width_mm");
+                let diameter = self.number("diameter_mm", DIAMETER_DECIMALS);
+                let span = self.mm("tab_span_mm");
+                let path = self.mm("path_length_mm");
+                let tabs = match self.text("tab_count") {
+                    "1" => format!(
+                        "its one tab is {width} mm wide, and with the {diameter} mm bit it keeps {span} mm of the tool path raised on a {path} mm path{share}"
+                    ),
+                    count => format!(
+                        "each of the {count} tabs is {width} mm wide, and with the {diameter} mm bit each one keeps {span} mm of the tool path raised, {} mm in total on a {path} mm path{share}",
+                        self.mm("tab_total_mm")
+                    ),
+                };
                 write!(
                     f,
-                    "tabs on {} cover more than half of its tool path: {} tab(s) of {} mm each (tab width plus bit diameter) total {} mm on a {} mm path{share}, so the part or hole may not cut free. {} The tabs are cut as set.",
+                    "tabs on {} cover more than half of its tool path: {tabs}, so the part or hole may not cut free. {} The tabs are cut as set.",
                     self.shape(),
-                    self.text("tab_count"),
-                    self.mm("tab_span_mm"),
-                    self.mm("tab_total_mm"),
-                    self.mm("path_length_mm"),
                     self.coverage_advice()
                 )
             }
@@ -284,6 +297,25 @@ mod tests {
         assert_eq!(rounded(12.0, 2), "12");
         assert_eq!(rounded(-0.001, 2), "0");
         assert_eq!(rounded(105.128, 1), "105.1");
+    }
+
+    #[test]
+    fn coverage_warning_with_one_tab_reads_in_the_singular() {
+        let w = Warning::new(WarningCode::TabsCoverMostOfContour)
+            .with("instance", "i1")
+            .with("instance_name", "Hole")
+            .with("profile", 1)
+            .with("path_length_mm", 10.0)
+            .with("tab_count", 1)
+            .with("tab_width_mm", 3.0)
+            .with("diameter_mm", 3.175)
+            .with("tab_span_mm", 6.175)
+            .with("tab_total_mm", 6.175)
+            .with("max_count", 0);
+        assert_eq!(
+            w.to_string(),
+            "tabs on `Hole` (instance `i1`, profile 1) cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole may not cut free. To let it cut free, even one tab this wide covers more than half: this outline is too short for tabs with this bit, so consider removing them. The tabs are cut as set."
+        );
     }
 
     #[test]

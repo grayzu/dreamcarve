@@ -42,10 +42,6 @@ const ROUND_STEPS_PER_MM: f64 = 100.0;
 /// 0.01 mm. The margin can fall short by less than this, which is below the
 /// 0.001 mm resolution programs are written with.
 const ROUND_SLACK_MM: f64 = 0.001;
-/// The instances' `z_top_mm`, which the importer needs. Nothing in phase 1
-/// reads it: depth and tab heights come from the stock thickness and the
-/// operation, which `init` leaves unset (#64).
-const FEATURE_TOP_MM: f64 = 12.0;
 /// The placeholder tool: a 1/4" two-flute end mill.
 const TOOL_ID: &str = "t1";
 const TOOL_NAME: &str = "Set me";
@@ -74,7 +70,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     }
 
     let bytes = read_file(&args.svg)?;
-    let (import, warnings) = import_svg(&bytes, &SvgImportOptions::new(FEATURE_TOP_MM))
+    let (import, warnings) = import_svg(&bytes, &SvgImportOptions::new())
         .map_err(|e| Failure::error(format!("cannot import {}: {e}", args.svg.display())))?;
     for warning in &warnings {
         eprintln!("warning: {warning}");
