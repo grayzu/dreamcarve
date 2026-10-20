@@ -24,8 +24,10 @@ use dc_geometry::{Rect, assert_approx_eq};
 #[path = "../src/clock.rs"]
 #[allow(dead_code, reason = "the test uses only the timestamp")]
 mod clock;
+use dc_gcode::MachineMove;
 use dc_project::{
-    Loaded, Operation, OperationId, SpindleControl, ToolChangeMode, ToolId, load, save,
+    FeatureInstance, Loaded, Operation, OperationId, Project, Side, SpindleControl, TabPlacement,
+    ToolChangeMode, ToolId, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -1574,4 +1576,265 @@ fn m6_mode_on_grbl_is_invalid() {
     assert_eq!(out.status.code(), Some(1), "export fails: {}", stderr(&out));
     assert!(!dir.join("coaster.nc").exists());
     assert!(!dir.join("coaster-1-T1.nc").exists());
+}
+
+/// A five-pointed star (points 40 mm and notches 20 mm from its centre)
+/// and, as a separate path, a 10 mm circle at its centre: a part with a
+/// hole too small for tabs (#104).
+const STAR_AND_HOLE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="star" d="M 50 10 L 38.244 33.82 L 11.958 37.639 L 30.979 56.18 L 26.489 82.361 L 50 70 L 73.511 82.361 L 69.021 56.18 L 88.042 37.639 L 61.756 33.82 Z"/>
+  <circle id="hole" cx="50" cy="50" r="5"/>
+</svg>
+"#;
+
+/// The star and hole as one SVG path: the circle is a second subpath.
+const STAR_WITH_HOLE_ONE_PATH_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="star" d="M 50 10 L 38.244 33.82 L 11.958 37.639 L 30.979 56.18 L 26.489 82.361 L 50 70 L 73.511 82.361 L 69.021 56.18 L 88.042 37.639 L 61.756 33.82 Z M 55 50 A 5 5 0 1 0 45 50 A 5 5 0 1 0 55 50 Z"/>
+</svg>
+"#;
+
+/// The hole's radius in the star fixtures, mm.
+const HOLE_RADIUS_MM: f64 = 5.0;
+/// Half the 6.35 mm bit `init` gives the tool, mm.
+const BIT_RADIUS_MM: f64 = 3.175;
+/// How far a cut may sit from its ideal radius: the circle is flattened to
+/// 0.01 mm and the program is rounded to 0.001 mm.
+const RADIUS_TOLERANCE_MM: f64 = 0.02;
+
+/// Writes `svg` as `star.svg` in `dir`, runs `init` on it, and fills the
+/// project in as the quick start does. Returns the `.dcv`'s path.
+fn init_star(dir: &Path, svg: &str) -> PathBuf {
+    std::fs::write(dir.join("star.svg"), svg).expect("svg written");
+    let out = run(dir, &["init", "star.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("star.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    dcv
+}
+
+/// The instance named `name` in `project`.
+fn instance_named<'a>(project: &'a Project, name: &str) -> &'a FeatureInstance {
+    project
+        .instances
+        .iter()
+        .find(|i| i.name == name)
+        .unwrap_or_else(|| panic!("an instance named {name}"))
+}
+
+/// The machine position of the SVG's (50, 50), the hole's centre, in the
+/// instance named `name`: (50, 50) moved by the instance's translation.
+/// `origin.xy` is `bottom_left`, so machine X and Y are project X and Y.
+fn hole_centre(project: &Project, name: &str) -> (f64, f64) {
+    let [_, _, _, _, e, f] = instance_named(project, name)
+        .transform
+        .as_kurbo()
+        .as_coeffs();
+    (50.0 + e, 50.0 + f)
+}
+
+/// Exports the `.dcv` in `dir` as `star.nc` and returns its moves.
+fn export_star(dir: &Path) -> Vec<MachineMove> {
+    let out = run(dir, &["export", "star.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("star.nc")).expect("star.nc written");
+    dc_gcode::parse_motion(&program).expect("program parses")
+}
+
+/// How far `m` ends from `centre` in XY, mm.
+fn distance_from(m: &MachineMove, centre: (f64, f64)) -> f64 {
+    let x = m.to.x.expect("X is known after the first move");
+    let y = m.to.y.expect("Y is known after the first move");
+    (x - centre.0).hypot(y - centre.1)
+}
+
+/// The indices of the cutting moves of `moves` that end within `radius_mm`
+/// of `centre`, and of those that end further out.
+fn split_cuts(
+    moves: &[MachineMove],
+    centre: (f64, f64),
+    radius_mm: f64,
+) -> (Vec<usize>, Vec<usize>) {
+    let (near, far): (Vec<_>, Vec<_>) = moves
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.kind.is_cut())
+        .partition(|(_, m)| distance_from(m, centre) <= radius_mm);
+    (
+        near.into_iter().map(|(k, _)| k).collect(),
+        far.into_iter().map(|(k, _)| k).collect(),
+    )
+}
+
+/// Whether `m` rises from below `z_mm` to `z_mm`.
+fn rises_to(m: &MachineMove, z_mm: f64) -> bool {
+    match (m.from.z, m.to.z) {
+        (Some(from), Some(to)) => from < z_mm - 1e-6 && (to - z_mm).abs() < 1e-6,
+        _ => false,
+    }
+}
+
+/// #104: the Tabs chapter's recipe for a part with a hole too small for
+/// tabs. Operation 1 cuts the hole alone, `inside`, no tabs; operation 2
+/// cuts the star alone, `outside`, 6 tabs, same tool. The hole is cut
+/// first, inside the circle (tool centre 5 − 3.175 mm from its centre),
+/// without rising over any tab; the star's last pass rises to the tab top
+/// exactly 6 times.
+#[test]
+fn part_and_hole_as_two_operations() {
+    let dir = work_dir("part_and_hole_as_two_operations");
+    let dcv = init_star(&dir, STAR_AND_HOLE_SVG);
+    let mut project = load_file(&dcv).project;
+    let star = instance_named(&project, "star").id.clone();
+    let hole = instance_named(&project, "hole").id.clone();
+    let centre = hole_centre(&project, "hole");
+    let Operation::Profile(mut hole_op) = project.operations[0].clone();
+    hole_op.name = "Hole".into();
+    hole_op.targets = vec![hole];
+    hole_op.side = Side::Inside;
+    hole_op.tabs = None;
+    let Operation::Profile(mut star_op) = project.operations[0].clone();
+    star_op.id = OperationId::new("op2");
+    star_op.name = "Star".into();
+    star_op.targets = vec![star];
+    star_op.side = Side::Outside;
+    let tabs = star_op.tabs.as_mut().expect("init gives the profile tabs");
+    tabs.placement = TabPlacement::Count { count: 6 };
+    let tab_top_z = tabs.height_mm - MEASURED_THICKNESS_MM;
+    project.operations = vec![Operation::Profile(hole_op), Operation::Profile(star_op)];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let moves = export_star(&dir);
+    let (hole_cuts, star_cuts) = split_cuts(&moves, centre, HOLE_RADIUS_MM);
+    let (Some(&first_hole), Some(&last_hole)) = (hole_cuts.first(), hole_cuts.last()) else {
+        panic!("the hole is cut");
+    };
+    let Some(&first_star) = star_cuts.first() else {
+        panic!("the star is cut");
+    };
+    assert!(last_hole < first_star, "the hole is cut before the star");
+
+    let inside_mm = HOLE_RADIUS_MM - BIT_RADIUS_MM;
+    for &k in &hole_cuts {
+        let radius = distance_from(&moves[k], centre);
+        assert!(
+            (radius - inside_mm).abs() <= RADIUS_TOLERANCE_MM,
+            "the hole's tool path is {inside_mm} mm from its centre, not {radius} mm"
+        );
+    }
+    let deepest_z = star_cuts
+        .iter()
+        .filter_map(|&k| moves[k].to.z)
+        .fold(f64::INFINITY, f64::min);
+    let hole_deepest_z = hole_cuts
+        .iter()
+        .filter_map(|&k| moves[k].to.z)
+        .fold(f64::INFINITY, f64::min);
+    assert_approx_eq!(hole_deepest_z, deepest_z, 1e-6);
+    // Tabs on a hole this small would cover its whole path and hold every
+    // pass below the tab top at it, so no hole move may end there.
+    for m in &moves[first_hole..=last_hole] {
+        assert!(m.kind.is_cut(), "the hole is one cut: {m:?}");
+        assert!(
+            m.to.z.is_none_or(|z| (z - tab_top_z).abs() > 1e-6),
+            "the hole has no tab: {m:?}"
+        );
+    }
+
+    let last_pass = star_cuts
+        .iter()
+        .copied()
+        .find(|&k| moves[k].to.z.is_some_and(|z| (z - deepest_z).abs() < 1e-6))
+        .expect("the star reaches full depth");
+    let rises = moves[last_pass..]
+        .iter()
+        .filter(|m| rises_to(m, tab_top_z))
+        .count();
+    assert_eq!(rises, 6, "the star's last pass rises over 6 tabs");
+}
+
+/// #104: whether an outline is a part or a hole is decided among one
+/// operation's targets. Targeted alone, the 10 mm circle is an outer
+/// outline: `outside` cuts around it, 5 + 3.175 mm from its centre, so the
+/// hole comes out one bit diameter too large. This is why the recipe uses
+/// `inside` for the hole.
+#[test]
+fn hole_targeted_alone_with_outside_is_oversize() {
+    let dir = work_dir("hole_targeted_alone_with_outside_is_oversize");
+    let dcv = init_star(&dir, STAR_AND_HOLE_SVG);
+    let mut project = load_file(&dcv).project;
+    let hole = instance_named(&project, "hole").id.clone();
+    let centre = hole_centre(&project, "hole");
+    let Operation::Profile(op) = &mut project.operations[0];
+    op.targets = vec![hole];
+    op.side = Side::Outside;
+    op.tabs = None;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let moves = export_star(&dir);
+    let outside_mm = HOLE_RADIUS_MM + BIT_RADIUS_MM;
+    let cuts: Vec<&MachineMove> = moves.iter().filter(|m| m.kind.is_cut()).collect();
+    assert!(!cuts.is_empty(), "the circle is cut");
+    for m in cuts {
+        let radius = distance_from(m, centre);
+        assert!(
+            (radius - outside_mm).abs() <= RADIUS_TOLERANCE_MM,
+            "cut at {radius} mm from the centre, not {outside_mm} mm: {m:?}"
+        );
+    }
+}
+
+/// #104: the claims the recipe rests on. A star and its hole drawn as one
+/// SVG path import as one instance, which no operation can split; cut
+/// `outside` in one operation, the circle is a hole of the star and is cut
+/// inside it, 5 − 3.175 mm from its centre. Operations run in file order:
+/// with the star's operation first, the whole star is cut before the hole.
+#[test]
+fn hole_role_is_decided_within_one_operation() {
+    let dir = work_dir("hole_role_is_decided_within_one_operation");
+    let dcv = init_star(&dir, STAR_WITH_HOLE_ONE_PATH_SVG);
+    let project = load_file(&dcv).project;
+    assert_eq!(project.instances.len(), 1, "one path is one instance");
+    let definition = project
+        .definitions
+        .values()
+        .next()
+        .expect("the star's definition");
+    assert_eq!(definition.profiles.len(), 2, "with both outlines");
+    let centre = hole_centre(&project, "star");
+    let moves = export_star(&dir);
+    let (hole_cuts, star_cuts) = split_cuts(&moves, centre, HOLE_RADIUS_MM);
+    assert!(
+        !hole_cuts.is_empty() && !star_cuts.is_empty(),
+        "both are cut"
+    );
+    let inside_mm = HOLE_RADIUS_MM - BIT_RADIUS_MM;
+    for &k in &hole_cuts {
+        let radius = distance_from(&moves[k], centre);
+        assert!(
+            (radius - inside_mm).abs() <= RADIUS_TOLERANCE_MM,
+            "the hole is cut inside, {inside_mm} mm from its centre, not {radius} mm"
+        );
+    }
+
+    let dir = work_dir("hole_role_is_decided_within_one_operation_order");
+    let dcv = init_star(&dir, STAR_AND_HOLE_SVG);
+    let mut project = load_file(&dcv).project;
+    let star = instance_named(&project, "star").id.clone();
+    let hole = instance_named(&project, "hole").id.clone();
+    let centre = hole_centre(&project, "hole");
+    let Operation::Profile(mut star_op) = project.operations[0].clone();
+    star_op.targets = vec![star];
+    star_op.tabs = None;
+    let mut hole_op = star_op.clone();
+    hole_op.id = OperationId::new("op2");
+    hole_op.targets = vec![hole];
+    hole_op.side = Side::Inside;
+    project.operations = vec![Operation::Profile(star_op), Operation::Profile(hole_op)];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let moves = export_star(&dir);
+    let (hole_cuts, star_cuts) = split_cuts(&moves, centre, HOLE_RADIUS_MM);
+    let (Some(&last_star), Some(&first_hole)) = (star_cuts.last(), hole_cuts.first()) else {
+        panic!("both are cut");
+    };
+    assert!(last_star < first_hole, "file order: the star first");
 }
