@@ -242,7 +242,24 @@ Clamps. Text. Stock from a shape (stock is rectangular).
 90 ± 0.2 mm across two diameters, and the toolpath never touched the clamps.
 Record the date, measured dimensions, and any deviation below.
 
-**Cut record:** not yet cut.
+**Cut record:** cut on 2026-10-20 (#17).
+
+| Item | Result |
+| --- | --- |
+| Released cleanly after cutting the tabs | Yes |
+| Diameter, two measurements | 90 mm, 90 mm (within 90 ± 0.2 mm) |
+| Toolpath clear of the clamps | Yes |
+| Stock thickness entered in the `.dcv` | 12 mm |
+| Controller | Sienci SLB-Lite, grblHAL 1.1f.20260908 |
+| Sender | gSender 1.6.4 |
+
+Deviations:
+
+- Feed, plunge and RPM were 2000 mm/min, 1000 mm/min and 19000, not
+  1500, 500 and 18000, to suit the machine.
+- gSender's Tool Changing strategy was changed from its default, Ignore,
+  to Flexible Re-zero, as the post-processors chapter requires for `"m6"`
+  programs. The coaster itself uses one tool and has no `M6`.
 
 ## Documentation deliverables
 
@@ -255,8 +272,8 @@ Record the date, measured dimensions, and any deviation below.
 
 ## Exit criteria
 
-- [ ] All acceptance tests and safety tests green on all three OSes.
-- [ ] Golden parity cases captured and passing.
-- [ ] Test part cut and recorded above.
-- [ ] Quick start published.
+- [x] All acceptance tests and safety tests green on all three OSes.
+- [x] Golden parity cases captured and passing.
+- [x] Test part cut and recorded above.
+- [x] Quick start published.
 - [ ] `v0.1.0` tagged with binaries.
