@@ -148,8 +148,7 @@ as a percentage of tool diameter. Rough and finish pockets. Drill (simple,
 peck, dwell, chip-break, canned cycles where the post supports them), Engrave
 (open and closed paths, at a fixed depth). Multiple operations per project
 with ordering. Multi-tool export: one program with tool changes or one program
-per tool, with a user default and a per-export override (see
-`docs/specs/phase-2/NOTES.md`). Tool library in the user config directory with
+per tool, with a user default and a per-export override. Tool library in the user config directory with
 import from Fusion `.tools`/`.json` and export to DreamCarve JSON. DXF import.
 LinuxCNC, Mach3, UCCNC, and generic post-processors. Arc fitting at export.
 Ramp and helical entry for pockets and profiles, and arc lead-in/out for
@@ -163,9 +162,6 @@ codes. A `dreamcarve check` command that reports warnings without exporting.
 ported behaviours; phase 2 test part cut; `v0.2.0`.
 
 **Real cut:** yes (a pocketed, drilled, engraved plaque).
-
-**Spec notes:** requirements captured ahead of the spec are in
-`docs/specs/phase-2/NOTES.md`; fold them in when writing the spec.
 
 **Read first:** `src/engine/toolpaths/pocket.ts`, `pocketPatterns.ts`,
 `drilling.ts`, `carving.ts`, `entry.ts`, `regions.ts`, `regionDomain.ts`,
