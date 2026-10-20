@@ -21,7 +21,11 @@ path without the coupling.
 
 - Projects embed copies of the tools and the post-processor they use, so a
   saved `.dcv` produces the same G-code regardless of library edits or app
-  upgrades. Replacing the embedded copy is an explicit user action.
+  upgrades. Replacing the embedded copy is an explicit user action. For the
+  post-processor this is superseded by
+  [ADR-0004](0004-post-processor-reference.md): a project references a
+  versioned bundled definition and stores only the user's settings, with the
+  same guarantee.
 - Bumping the schema means bumping `version`, adding a migration, and adding
   a fixture file of the previous version to the migration tests, all in the
   same change.

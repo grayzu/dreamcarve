@@ -19,7 +19,6 @@ authors.workspace = true
 dc-cam.workspace = true
 dc-geometry.workspace = true
 dc-project.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

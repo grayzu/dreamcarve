@@ -16,6 +16,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use dc_project::{PostProcessorError, PostProcessorRef};
 
 use crate::{check, clock, export, init};
 
@@ -49,7 +50,7 @@ pub struct InitArgs {
     /// Where to write the project [default: the SVG's name with .dcv].
     #[arg(short, long, value_name = "DCV")]
     pub output: Option<PathBuf>,
-    /// Post-processor to embed (see `dreamcarve posts`).
+    /// Post-processor to use, at its latest version (see `dreamcarve posts`).
     #[arg(long, value_name = "ID", default_value = "grblhal")]
     pub post: String,
     /// Display units of the project; G-code is written in these units.
@@ -66,8 +67,9 @@ pub struct ExportArgs {
     /// post-processor's extension].
     #[arg(short, long, value_name = "NC")]
     pub output: Option<PathBuf>,
-    /// Switch the embedded post-processor to this one, and save the
-    /// project with it, before exporting.
+    /// Switch the project to the latest version of this post-processor,
+    /// with its default settings, and save the project, before exporting.
+    /// The project's own id upgrades it to the latest version.
     #[arg(long, value_name = "ID")]
     pub post: Option<String>,
     /// The date written in the program header instead of today's (UTC).
@@ -154,32 +156,28 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     }
 }
 
-/// `dreamcarve posts`: one line per bundled post-processor, id first.
+/// `dreamcarve posts`: one line per bundled post-processor, id first, from
+/// its latest version.
 fn posts() -> Result<ExitCode, Failure> {
-    let posts = dc_gcode::post::bundled().map_err(Failure::error)?;
-    let width = posts.iter().map(|p| p.id.len()).max().unwrap_or(0);
-    for post in posts {
-        println!("{:width$}  {}", post.id, post.name);
+    let posts = dc_project::latest_definitions().map_err(Failure::error)?;
+    let width = posts.iter().map(|d| d.id.len()).max().unwrap_or(0);
+    for definition in posts {
+        println!(
+            "{:width$}  {}",
+            definition.id,
+            definition.post_processor().name
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// The bundled post-processor `id`; an unknown id is a usage error that
-/// lists the known ones.
-pub fn lookup_post(id: &str) -> Result<dc_project::PostProcessor, Failure> {
-    match dc_gcode::post::lookup(id) {
-        Ok(post) => Ok(post),
-        Err(err @ dc_gcode::ExportError::UnknownPostProcessor { .. }) => {
-            let known: Vec<&str> = dc_gcode::post::bundled()
-                .map_err(Failure::error)?
-                .iter()
-                .map(|p| p.id.as_str())
-                .collect();
-            Err(Failure::usage(format!(
-                "{err}; available: {}",
-                known.join(", ")
-            )))
-        }
+/// A reference to the latest bundled version of post-processor `id`, with
+/// its default settings (#106); an unknown id is a usage error that lists
+/// the known ones.
+pub fn lookup_post(id: &str) -> Result<PostProcessorRef, Failure> {
+    match PostProcessorRef::latest(id) {
+        Ok(reference) => Ok(reference),
+        Err(err @ PostProcessorError::UnknownId { .. }) => Err(Failure::usage(err.to_string())),
         Err(err) => Err(Failure::error(err)),
     }
 }

@@ -13,7 +13,7 @@
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
-use crate::post_processor::PostProcessor;
+use crate::post_processor::PostProcessorRef;
 use dc_geometry::{Polyline, Transform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -47,8 +47,9 @@ pub struct Project {
     pub operations: Vec<Operation>,
     /// Placed copies of definitions.
     pub instances: Vec<FeatureInstance>,
-    /// Embedded copy of the post-processor definition (ADR-0002).
-    pub post_processor: PostProcessor,
+    /// The bundled post-processor definition version and the user's
+    /// settings for it (ADR-0004).
+    pub post_processor: PostProcessorRef,
     /// Canonical shapes, keyed by id. Last in the file, since it is the
     /// bulk of it and rarely edited by hand.
     pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,

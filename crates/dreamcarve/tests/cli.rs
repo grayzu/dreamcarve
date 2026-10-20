@@ -682,7 +682,7 @@ fn self_intersecting_target_fails_check() {
 }
 
 /// Capability 5: both bundled post-processors are listed by id, grblHAL
-/// first, as `dc_gcode::post::bundled` orders them.
+/// first, as `dc_project::latest_definitions` orders them.
 #[test]
 fn posts_lists_grblhal_and_grbl() {
     let out = dreamcarve().arg("posts").output().expect("binary runs");
@@ -695,8 +695,8 @@ fn posts_lists_grblhal_and_grbl() {
     assert_eq!(ids, ["grblhal", "grbl"], "stdout was: {stdout}");
 }
 
-/// A `.dcv` embeds its post-processor, so a shared project chooses the
-/// output extension. An extension that is a path (`../x`) or names the
+/// The output extension is a setting in the `.dcv`, so a shared project
+/// chooses it. An extension that is a path (`../x`) or names the
 /// project file itself (`dcv`) must not let `export` write outside the
 /// project's folder or overwrite the project: export fails and writes
 /// nothing.
@@ -974,7 +974,7 @@ fn export_lists_each_pause() {
     assert!(!summary.contains("Pauses"), "no pause listed: {summary}");
 
     let mut project = load_file(&dcv).project;
-    project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+    project.post_processor.spindle_control = SpindleControl::Manual;
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(
@@ -1002,7 +1002,7 @@ fn export_tells_user_to_zero_before_start() {
     fill_in(&dcv, 1500.0, 500.0, 18000);
     for control in [SpindleControl::Automatic, SpindleControl::Manual] {
         let mut project = load_file(&dcv).project;
-        project.post_processor.feed_speed.spindle_control = control;
+        project.post_processor.spindle_control = control;
         std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
         let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
         assert_eq!(
@@ -1069,7 +1069,7 @@ fn post_override_revalidates() {
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
-    project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+    project.post_processor.spindle_control = SpindleControl::Manual;
     for tool in &mut project.tools {
         tool.rpm = None;
     }
@@ -1347,7 +1347,7 @@ fn spindle_starts(program: &str) -> Vec<&str> {
 /// Sets the tool-change mode of the `.dcv` at `dcv`.
 fn set_tool_change_mode(dcv: &Path, mode: ToolChangeMode) {
     let mut project = load_file(dcv).project;
-    project.post_processor.tool_change.mode = mode;
+    project.post_processor.tool_change_mode = mode;
     std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
 }
 
@@ -1553,8 +1553,8 @@ fn m6_mode_on_grbl_is_invalid() {
     let dir = work_dir("m6_mode_on_grbl_is_invalid");
     let dcv = two_tool_coaster(&dir);
     let mut project = load_file(&dcv).project;
-    project.post_processor = dc_gcode::post::lookup("grbl").expect("grbl is bundled");
-    project.post_processor.tool_change.mode = ToolChangeMode::M6;
+    project.post_processor = dc_project::PostProcessorRef::latest("grbl").expect("grbl is bundled");
+    project.post_processor.tool_change_mode = ToolChangeMode::M6;
     let text = save(&project).expect("project saves");
     std::fs::write(&dcv, &text).expect("dcv written");
 
@@ -1568,7 +1568,7 @@ fn m6_mode_on_grbl_is_invalid() {
     assert!(message.starts_with("error: "), "{message}");
     let source = text.lines().nth(line - 1).expect("line exists");
     let at: String = source.chars().skip(column - 1).collect();
-    assert_eq!(at, "\"m6\"", "{line}:{column} is the mode: `{source}`");
+    assert_eq!(at, "\"m6\",", "{line}:{column} is the mode: `{source}`");
 
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(1), "export fails: {}", stderr(&out));
@@ -1580,8 +1580,8 @@ fn m6_mode_on_grbl_is_invalid() {
 fn post_processor_block(dcv: &Path) -> serde_json::Map<String, serde_json::Value> {
     let text = std::fs::read_to_string(dcv).expect("dcv readable");
     let root: serde_json::Value = serde_json::from_str(&text).expect("dcv is JSON");
-    root["post_processor"]
-        .as_object()
+    root.get("post_processor")
+        .and_then(serde_json::Value::as_object)
         .expect("post_processor is an object")
         .clone()
 }
@@ -1685,7 +1685,7 @@ fn export_post_switch_writes_reference() {
 /// Sets the spindle control of the `.dcv` at `dcv`.
 fn set_spindle_control(dcv: &Path, control: SpindleControl) {
     let mut project = load_file(dcv).project;
-    project.post_processor.feed_speed.spindle_control = control;
+    project.post_processor.spindle_control = control;
     std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
 }
 

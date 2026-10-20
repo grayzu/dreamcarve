@@ -22,10 +22,10 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | Crate | Owns | Depends on |
 | --- | --- | --- |
 | `dreamcarve` | The command line. All file, terminal, clock and exit-code handling. | every `dc-` crate |
-| `dc-gcode` | Bundled post-processors, G-code emission, and the safety pass that parses every emitted program. | `dc-cam`, `dc-project`, `dc-geometry` |
+| `dc-gcode` | G-code emission and the safety pass that parses every emitted program. | `dc-cam`, `dc-project`, `dc-geometry` |
 | `dc-cam` | Toolpath generators. Pure functions from project and operation to toolpath plus warnings. | `dc-project`, `dc-geometry` |
 | `dc-import` | Importers. Flips imported Y into the internal Y-up frame. | `dc-project`, `dc-geometry` |
-| `dc-project` | The project data model, `.dcv` load and save, migrations, validation, undo history. | `dc-geometry` |
+| `dc-project` | The project data model, the bundled post-processor definitions, `.dcv` load and save, migrations, validation, undo history. | `dc-geometry` |
 | `dc-geometry` | Points, polylines with bulge arcs, transforms, offsets, flattening, nesting. Knows nothing about tools or stock. | nothing internal |
 
 ## Modules
@@ -47,10 +47,11 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | Module | Contents |
 | --- | --- |
 | `model.rs` | `Project` and everything in it: `Stock`, `MachineOrigin`, `FeatureDefinition`, `FeatureInstance`, `Tool`, `Operation`/`ProfileOp`, `TabSpec`. |
-| `post_processor.rs` | `PostProcessor`, the controller dialect, embedded in every project. |
+| `post_processor.rs` | `PostProcessor`, the controller dialect; `PostProcessorRef`, what a project stores (a bundled definition's id and version, and the user's settings); and the bundled definitions, by id and version. |
+| `definitions/` | `<id>/v<n>.json`, one file per definition version, compiled in and never edited once released, and a README with their verification against controller sources. |
 | `ids.rs` | `DefinitionId`, `InstanceId`, `ToolId`, `OperationId` newtypes. |
 | `serialize.rs` | `save`, `load` (strict: unknown and missing fields fail), `Loaded`, `LoadError`. |
-| `migrate.rs` | `CURRENT_VERSION` (6) and the raw-JSON migration steps from older versions. |
+| `migrate.rs` | `CURRENT_VERSION` (7) and the raw-JSON migration steps from older versions. |
 | `validate.rs` | `validate`, `Problem`, `Severity`: every problem at once, errors and warnings. |
 | `history.rs` | `History`: snapshot undo and redo. Nothing drives it in phase 1. |
 | `test_support.rs` | Fixture builders such as `sample_project()`; other crates' tests use them through the `test-support` feature. |
@@ -78,8 +79,7 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 
 | Module | Contents |
 | --- | --- |
-| `post.rs` | `bundled`, `lookup`: the definitions in `definitions/`, compiled in. |
-| `definitions/` | `grblhal.json`, `grbl.json`, and a README with their verification against controller sources. |
+| `post.rs` | Tests of every bundled definition version against the controller facts. |
 | `emit.rs` | `emit`: toolpaths to `Program` (text, extension, pauses). |
 | `transform.rs` | `MachineTransform`: project space to machine numbers; origin, axis map, units. |
 | `format.rs` | Number formatting, the one place numbers become text. |

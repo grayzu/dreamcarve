@@ -29,7 +29,7 @@ modules to theirs. Phase 1's is in `docs/specs/phase-1/design.md`.
   whose result reaches the machine.
 - **Controller data.** Post-processor definitions start from PureCutCNC's
   but are checked against each controller's own source and documentation.
-  `crates/dc-gcode/src/definitions/README.md` records what changed and why.
+  `crates/dc-project/src/definitions/README.md` records what changed and why.
 - **Scope.** PureCutCNC's process rules (its GitHub board, fast lane, npm
   gates) apply to that repository only.
 

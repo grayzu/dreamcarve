@@ -3,16 +3,18 @@
 
 //! Post-processor model and G-code emission for DreamCarve. Phase 1 adds grblHAL and GRBL.
 //!
-//! The [`PostProcessor`] type itself lives in `dc-project`, which embeds it in
-//! every project; this crate bundles the definitions and emits G-code.
-//! [`emit`] writes a program from toolpaths, then parses it back and checks
-//! the safety rules on the text (`docs/specs/phase-1/design.md`, "Emission").
+//! The [`PostProcessor`] type and the bundled definitions live in
+//! `dc-project`, which loads a project's reference to one (#106); this crate
+//! emits G-code with the effective definition. [`emit`] writes a program
+//! from toolpaths, then parses it back and checks the safety rules on the
+//! text (`docs/specs/phase-1/design.md`, "Emission").
 
 pub mod emit;
 mod error;
 pub mod format;
 pub mod parse;
-pub mod post;
+#[cfg(test)]
+mod post;
 mod safety;
 pub mod transform;
 

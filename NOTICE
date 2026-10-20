@@ -9,10 +9,11 @@ to Rust) from PureCutCNC, which is likewise licensed under the Apache License,
 Version 2.0. The PureCutCNC NOTICE attribution is retained below as required by
 Section 4(d) of that license.
 
-The bundled post-processor definitions in crates/dc-gcode/src/definitions/
-(grblhal.json, grbl.json) are data files copied from PureCutCNC and modified;
-crates/dc-gcode/src/definitions/README.md lists the upstream paths, commit,
-and changes.
+The bundled post-processor definitions in crates/dc-project/src/definitions/
+(grblhal/v1.json, grbl/v1.json) are data files copied from PureCutCNC and
+modified; crates/dc-project/src/definitions/README.md lists the upstream
+paths, commit, and changes. Copies of them as first modified are kept as test
+fixtures in crates/dc-project/tests/fixtures/post/ (grblhal.json, grbl.json).
 
 -------------------------------------------------------------------------------
 PureCutCNC (https://github.com/PureCutCNC)

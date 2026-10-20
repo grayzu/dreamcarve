@@ -10,19 +10,21 @@ use crate::model::{
     CutDirection, FeatureDefinition, FeatureInstance, MachineOrigin, Operation, OriginXy, OriginZ,
     ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
 };
-use crate::post_processor::PostProcessor;
+use crate::post_processor::{PostProcessorRef, bundled_definition};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
 use std::collections::BTreeMap;
 
-/// The GRBL post-processor: a copy of `dc-gcode`'s bundled `grbl.json`,
-/// kept identical by a test in `dc-gcode`.
+/// A reference to the bundled GRBL definition, version 1, with its
+/// default settings. Pinned to version 1, not the latest, so the committed
+/// fixtures stay valid when a version is added.
 #[allow(
     clippy::expect_used,
-    reason = "fixed fixture file; a parse failure is a broken test setup"
+    reason = "GRBL version 1 is bundled for good; a failure is a broken build"
 )]
-pub fn grbl_post_processor() -> PostProcessor {
-    serde_json::from_str(include_str!("../tests/fixtures/post/grbl.json"))
-        .expect("tests/fixtures/post/grbl.json is a valid post-processor")
+pub fn grbl_post_processor() -> PostProcessorRef {
+    bundled_definition("grbl", 1)
+        .expect("GRBL version 1 is bundled")
+        .default_ref()
 }
 
 /// A 6.35 mm two-flute up-cut end mill with every value set.
@@ -44,7 +46,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with four tabs. Matches the committed fixture
-/// `tests/fixtures/dcv/v6/sample.dcv`.
+/// `tests/fixtures/dcv/v7/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),

@@ -21,6 +21,7 @@ use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::migrate;
 use crate::model::{ProfileOp, Project};
+use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
 use serde::Serialize;
 use serde_json::Value;
@@ -161,6 +162,7 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
     let version = read_version(&root)?;
     let root = migrate(root, version)?;
     let project = deserialize_project(&root, bytes)?;
+    check_post_processor(&project, bytes)?;
     let problems = validate(&project);
     // serde_json rejects NaN and out-of-range numbers while parsing, so this
     // is a backstop for the "reject non-finite at the boundary" rule.
@@ -197,6 +199,34 @@ fn deserialize_project(root: &Value, bytes: &[u8]) -> Result<Project, LoadError>
         path: path_text(&path),
         at,
         message,
+    })
+}
+
+/// A `post_processor` that names no bundled definition version is a
+/// schema error at its `id` or `definition_version` (#106): the file is
+/// well formed, but nothing can export it. The message lists what is
+/// bundled.
+fn check_post_processor(project: &Project, bytes: &[u8]) -> Result<(), LoadError> {
+    let err = match project.post_processor.definition() {
+        Ok(_) => return Ok(()),
+        Err(err) => err,
+    };
+    let mut path = vec![PathSegment::Key("post_processor".into())];
+    match err {
+        PostProcessorError::UnknownId { .. } => path.push(PathSegment::Key("id".into())),
+        PostProcessorError::UnknownVersion { .. } => {
+            path.push(PathSegment::Key("definition_version".into()));
+        }
+        PostProcessorError::BundledDefinition { .. } => {}
+    }
+    let at = std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| SourceMap::parse(text).ok())
+        .and_then(|map| map.position(&path));
+    Err(LoadError::Schema {
+        path: path_text(&path),
+        at,
+        message: err.to_string(),
     })
 }
 
@@ -317,7 +347,7 @@ mod tests {
     use crate::validate::validate;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v6/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v7/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -400,20 +430,18 @@ mod tests {
         );
     }
 
-    /// #95, #65: a current-version file without `tool_change.mode` is
+    /// #95, #65: a current-version file without `tool_change_mode` is
     /// rejected, naming the field. Only an older file gets it, from the
     /// migration.
     #[test]
     fn missing_tool_change_mode_is_rejected() {
-        let text = CURRENT_FIXTURE.replacen(
-            "      \"pause_command\": \"M0\",\n      \"mode\": \"separate_programs\"\n",
-            "      \"pause_command\": \"M0\"\n",
-            1,
-        );
+        let text =
+            CURRENT_FIXTURE.replacen("    \"tool_change_mode\": \"separate_programs\",\n", "", 1);
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Schema { message, .. } if message.contains("mode")),
+            matches!(&err, LoadError::Schema { message, .. }
+                if message.contains("tool_change_mode")),
             "{err:?}"
         );
     }
@@ -574,8 +602,9 @@ mod tests {
     #[test]
     fn edited_post_processor_round_trips() {
         let mut p = sample_project();
-        p.post_processor.id = "my-router".into();
         p.post_processor.file_extension = "gcode".into();
+        p.post_processor.spindle_on_dwell_s = 5.5;
+        p.post_processor.decimal_places.inch = 5;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert_eq!(loaded.project, p);
     }
@@ -746,12 +775,10 @@ mod tests {
     }
 
     const V2_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v2/sample.dcv");
-    /// The bundled grblHAL definition. It lives in `dc-gcode`, which this
-    /// crate cannot depend on, so the test reads the file.
-    const GRBLHAL: &str = include_str!("../../dc-gcode/src/definitions/grblhal.json");
+    /// A whole grblHAL definition, as a project held it up to version 6.
+    const GRBLHAL: &str = include_str!("../tests/fixtures/post/grblhal.json");
 
-    /// Every `Option` field of a post-processor, as keys inside
-    /// `post_processor`.
+    /// Every `Option` field of a post-processor definition, as keys.
     const POST_OPTION_KEYS: &[&[&str]] = &[
         &["vendor"],
         &["units", "mm_command"],
@@ -766,12 +793,11 @@ mod tests {
         &["coolant"],
     ];
 
-    /// #65: an `Option` is required on load, `null` when unset, so a
-    /// post-processor with a field left out fails rather than loading as
-    /// `None`.
+    /// #65: an `Option` is required, `null` when unset, so a
+    /// post-processor definition with a field left out fails rather than
+    /// reading as `None`.
     #[test]
     fn every_missing_post_option_fails() {
-        let mut root: Value = serde_json::from_str(CURRENT_FIXTURE).unwrap();
         let mut post: Value = serde_json::from_str(GRBLHAL).unwrap();
         // grblHAL has no canned cycles; fill them so their options are there
         // to remove.
@@ -784,25 +810,20 @@ mod tests {
             "retract_mode": "G98",
             "cancel_command": "G80"
         });
-        root["post_processor"] = post;
-        let whole = serde_json::to_string_pretty(&root).unwrap();
-        assert!(load(whole.as_bytes()).is_ok(), "the grblHAL sample loads");
+        let parse = serde_json::from_value::<crate::PostProcessor>;
+        assert!(parse(post.clone()).is_ok(), "the grblHAL sample parses");
         for keys in POST_OPTION_KEYS {
-            let mut edited = root.clone();
+            let mut edited = post.clone();
             let (last, parents) = keys.split_last().unwrap();
-            let mut parent = &mut edited["post_processor"];
+            let mut parent = &mut edited;
             for key in parents {
                 parent = &mut parent[*key];
             }
             let removed = parent.as_object_mut().and_then(|o| o.shift_remove(*last));
             assert!(removed.is_some(), "{keys:?} is in the sample");
-            let text = serde_json::to_string_pretty(&edited).unwrap();
-            let err = load(text.as_bytes()).unwrap_err();
+            let err = parse(edited).unwrap_err();
             let missing = format!("missing field `{last}`");
-            assert!(
-                matches!(&err, LoadError::Schema { message, .. } if message.contains(&missing)),
-                "{keys:?}: {err:?}"
-            );
+            assert!(err.to_string().contains(&missing), "{keys:?}: {err}");
         }
     }
 
@@ -875,17 +896,14 @@ mod tests {
     #[test]
     fn bad_decimal_places_message() {
         let text = CURRENT_FIXTURE.replacen(
-            "\"decimal_places\": {\n        \"mm\": 3,\n        \"inch\": 4\n      }",
+            "\"decimal_places\": {\n      \"mm\": 3,\n      \"inch\": 4\n    }",
             "\"decimal_places\": \"three\"",
             1,
         );
         assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed");
         let err = load(text.as_bytes()).unwrap_err();
         let shown = err.to_string();
-        assert!(
-            shown.contains("`post_processor.number_format.decimal_places`"),
-            "{shown}"
-        );
+        assert!(shown.contains("`post_processor.decimal_places`"), "{shown}");
         assert!(shown.contains("a whole number"), "{shown}");
         assert!(shown.contains("`mm` and `inch`"), "{shown}");
     }

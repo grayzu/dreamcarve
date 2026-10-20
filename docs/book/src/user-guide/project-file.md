@@ -1,9 +1,10 @@
 # The project file
 
 A DreamCarve project is one `.dcv` file. It holds the shapes, the stock,
-the tools, the operations, and a full copy of the post-processor. Because
-the copy travels with the project, a DreamCarve upgrade never changes what
-a saved project exports.
+the tools, the operations, and which post-processor to use, with your
+settings for it. The tools are copies that travel with the project, and a
+post-processor version never changes once released, so a DreamCarve
+upgrade never changes what a saved project exports.
 
 The file is JSON. `init` writes it; you edit it in a text editor.
 
@@ -63,7 +64,7 @@ A missing field is reported at the object it belongs in, here
 `post_processor`:
 
 ```text
-error: cannot load coaster.dcv: file does not match the project format at `post_processor` (line 75, column 21): missing field `vendor`
+error: cannot load coaster.dcv: file does not match the project format at `post_processor` (line 75, column 21): missing field `spindle_on_dwell_s`
 ```
 
 ## Coordinates
@@ -88,7 +89,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `6`. |
+| `version` | Format version. This build writes `7`. |
 | `name` | The project name, written at the top of the program. `init` uses the SVG's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -97,7 +98,7 @@ The fields, in the order DreamCarve writes them:
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
 | `instances` | Placed copies of the shapes. |
-| `post_processor` | The G-code dialect. See [Post-processors](post-processors.md). |
+| `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
 | `definitions` | The shapes, keyed by id. Last, because it is most of the file. |
 
 ## `stock`
@@ -270,9 +271,28 @@ the tool's depth per pass; set it only to override the tool's.
 
 ## `post_processor`
 
-A full copy of the post-processor definition. To switch to another bundled
-one, run `dreamcarve export <dcv> --post <id>` rather than editing it. The
-fields you may want to change are in [Post-processors](post-processors.md).
+Which bundled post-processor the project uses, and your settings for it:
+
+```json
+"post_processor": {
+  "id": "grblhal",
+  "definition_version": 1,
+  "file_extension": "nc",
+  "spindle_control": "automatic",
+  "spindle_on_dwell_s": 3.0,
+  "tool_change_mode": "separate_programs",
+  "decimal_places": {
+    "mm": 3,
+    "inch": 4
+  }
+}
+```
+
+The definition itself, the controller's dialect, is built into DreamCarve,
+one unchanging file per version. To switch to another post-processor, or to
+the latest version of this one, run `dreamcarve export <dcv> --post <id>`
+rather than editing `id` or `definition_version`. Each field is explained in
+[Post-processors](post-processors.md#settings).
 
 ## Versions
 
@@ -290,6 +310,7 @@ refused.
 | 4 | Lets `stock.thickness_mm` and each operation's `depth_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds. |
 | 5 | Adds `post_processor.tool_change.mode`, set to `"separate_programs"` on upgrade: a project with more than one tool exports one program per tool run. Set `"m6"` (grblHAL only) for the one program with `M6` that older versions wrote. See [Post-processors](post-processors.md#projects-with-more-than-one-tool). |
 | 6 | Lets each instance's `z_top_mm` and `z_bottom_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds, so a file `init` wrote before keeps its placeholder `z_top_mm` of 12.0 until you change it. Phase 1 ignores both. |
+| 7 | `post_processor` names a bundled post-processor and its version, and holds only your five settings, instead of a full copy of the definition. The upgrade keeps your settings, and works only when the rest of the copy is exactly version 1 of the bundled definition; otherwise the file is not loaded, and the message lists each difference and the block to paste instead. See [Post-processors](post-processors.md#files-from-before-version-7). |
 
 ## What `check` reports
 
@@ -303,15 +324,15 @@ Errors stop export. Warnings do not.
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
 | A value that is not a number | A shape too small for the tool, a duplicate shape, or tabs that overlap or do nothing |
 | A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |
-| `post_processor.tool_change.mode` is `"m6"` but the post-processor has no `M6` (GRBL) | |
+| `post_processor.tool_change_mode` is `"m6"` but the post-processor has no `M6` (GRBL) | |
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
 | An Outside or Inside Profile whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
 | An enabled operation with no `targets` | A spindle speed above 60 000 RPM |
-| A post-processor `line_number_increment` of 0 | A tool diameter above 50 mm |
+| | A tool diameter above 50 mm |
 
-Apart from the line-number increment, the checks in the last four rows look
-only at enabled operations and the tools they use. See [Values that look
+The checks in the last four rows look only at enabled operations and the
+tools they use. See [Values that look
 wrong](profile.md#values-that-look-wrong).

@@ -12,16 +12,95 @@ grbl     GRBL 1.1
 
 (`dreamcarve posts` prints this list.)
 
-Each project holds its own copy of the definition, in `post_processor`. A
-DreamCarve upgrade never changes what an existing project exports.
+## In the project
+
+The project does not hold the definition itself. Its `post_processor`
+block names a bundled definition and holds your settings for it:
+
+```json
+"post_processor": {
+  "id": "grblhal",
+  "definition_version": 1,
+  "file_extension": "nc",
+  "spindle_control": "automatic",
+  "spindle_on_dwell_s": 3.0,
+  "tool_change_mode": "separate_programs",
+  "decimal_places": {
+    "mm": 3,
+    "inch": 4
+  }
+}
+```
+
+`id` and `definition_version` say which definition, and which version of
+it. Every key is required. The other five are the [settings](#settings)
+you may change. The rest of the dialect (comment style, header and footer,
+the spindle and tool-change commands) is not in the file, so it cannot be
+changed by mistake: each bundled definition was checked against the
+controller's own source code, and a project always uses it as checked.
+
+### Versions
+
+When a bundled definition has to change in a way that changes the G-code,
+DreamCarve adds a new version of it and keeps the old ones unchanged. A
+project keeps the version it names, so a DreamCarve upgrade never changes
+what an existing project exports. New projects get the latest version.
+
+To move a project to the latest version of its post-processor, run
+`export --post` with its own id:
+
+```text
+dreamcarve export coaster.dcv --post grblhal
+```
+
+It saves the project with the latest version and exports, and says which
+version it came from:
+
+```text
+Updated coaster.dcv: post-processor grblhal v1 → v2, with its default settings.
+```
+
+The settings are reset to the new version's defaults, so set any you had
+changed again.
+
+A file that names a post-processor or a version this DreamCarve does not
+have is refused when it is loaded, with the line and column of the value
+and the ones that are available.
+
+### Files from before version 7
+
+Older project files held a full copy of the definition. DreamCarve upgrades
+such a file when it opens it: your five settings keep their values, and the
+copy is replaced by a reference to version 1 of the bundled definition with
+the same `id`, but only if the rest of the copy is exactly that definition.
+
+If it is not, because the copy was edited or was made by an older
+DreamCarve whose definition has since changed, the file is not loaded.
+Using the bundled definition would change the program without telling
+you. The message names each field that differs, with both values, and
+ends with the block to paste in its place, your settings filled in:
+
+```text
+error: cannot load coaster.dcv: migration from version 6 to 7 failed: the post-processor in this file differs from the bundled `grblhal` definition, version 1. […] It differs in:
+  post_processor.motion.rapid_command: this file has "G1", grblhal version 1 has "G0"
+To use the bundled definition, change "version": 6 to "version": 7 and replace the whole post_processor block with this one, which keeps your settings:
+"post_processor": {
+  "id": "grblhal",
+  …
+}
+```
+
+Check that the differences are ones you can do without, then make both
+changes in the file. A post-processor that was never bundled is refused
+the same way, and the message offers the bundled one closest to it.
 
 ## Choosing one
 
 - `dreamcarve init part.svg --post grbl` creates a project with GRBL.
   grblHAL is the default.
 - `dreamcarve export part.dcv --post grbl` switches an existing project to
-  GRBL, saves the project with it, and exports. Your edits to the old copy,
-  such as a longer spindle dwell, are replaced by the bundled values.
+  the latest version of GRBL, saves the project with it, and exports. Your
+  settings, such as a longer spindle dwell, are reset to GRBL's defaults.
   The project is checked against the new post-processor, so the result
   can differ from what `check` reported. For example, a tool with no
   `rpm` passes with manual spindle control but fails after switching to a
@@ -92,25 +171,24 @@ and cuts the second tool's paths with the first bit still fitted. Separate
 programs stop at every bit change with every sender and every controller,
 including GRBL.
 
-The choice is a machine setting, `tool_change.mode` in the post-processor:
+The choice is a machine setting, `tool_change_mode` in `post_processor`:
 
 | Value | Export of more than one tool |
 | --- | --- |
 | `"separate_programs"` | One program per tool run. The default, on every controller. |
 | `"m6"` | One program that stops with `T<n> M6` at each tool change. grblHAL only; see the next section. |
 
-`--post <id>` embeds the bundled definition, so it sets
-`"separate_programs"`, like every other field. If you use `"m6"`, set it
-again after switching.
+`--post <id>` resets the settings to the definition's defaults, so it sets
+`"separate_programs"`. If you use `"m6"`, set it again after switching.
 
 ## One program with M6
 
 On grblHAL you can export a multi-tool project as one program with `M6`
 tool changes, if your sender stops there (see [Senders](#senders)). Set,
-in `post_processor.tool_change`:
+in `post_processor`:
 
 ```json
-"mode": "m6"
+"tool_change_mode": "m6",
 ```
 
 GRBL has no `M6`, so `"m6"` with the GRBL definition is an error: `check`
@@ -234,18 +312,19 @@ The motion is identical. Only these differ:
 minute). Choose it with `init --units inch`, or change it in the file. The
 project's own values stay in millimetres.
 
-## Settings you may change
+## Settings
 
-Most of the definition should stay as bundled. These are the fields worth
-knowing:
+The whole `post_processor` block, in the order DreamCarve writes it:
 
 | Field | Meaning |
 | --- | --- |
+| `id` | Which bundled post-processor: `"grblhal"` or `"grbl"`. Change it with `export --post`, which also sets the version and resets the settings. |
+| `definition_version` | Which version of it. See [Versions](#versions). |
 | `file_extension` | The program's extension, without the dot. 1 to 8 letters or digits, and not `dcv`. Default `nc`. |
-| `feed_speed.spindle_on_dwell.duration_s` | Seconds to wait after the spindle starts. Default 3. Raise it if your spindle or VFD takes longer to reach speed; 0 means no wait. |
-| `feed_speed.spindle_control` | `"automatic"` (default) or `"manual"`. See below. |
-| `tool_change.mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). |
-| `number_format.decimal_places` | Digits after the point: `mm` at least 2, `inch` at least 3. Default 3 and 4. |
+| `spindle_control` | `"automatic"` (default) or `"manual"`. See below. |
+| `spindle_on_dwell_s` | Seconds to wait after the spindle starts. Default 3. Raise it if your spindle or VFD takes longer to reach speed; 0 means no wait. |
+| `tool_change_mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). |
+| `decimal_places` | Digits after the point: `mm` at least 2, `inch` at least 3. Default 3 and 4. |
 
 Names that DreamCarve puts in comments (the project, tool and operation
 names) are reduced to plain ASCII without `( ) ; ! ? ~`. Both controllers
@@ -261,7 +340,7 @@ rather than a spindle the controller starts. For those, set:
 "spindle_control": "manual",
 ```
 
-in `post_processor.feed_speed`. The program then sends no `M3`, `M5` or `S`
+in `post_processor`. The program then sends no `M3`, `M5` or `S`
 word and no spin-up wait. Instead it pauses before each bit's first cut,
 and after its last:
 
@@ -341,4 +420,4 @@ on your controller:
 - Your sender shows comments and pauses the way you expect.
 
 The sources are listed in the repository, in
-`crates/dc-gcode/src/definitions/README.md`.
+`crates/dc-project/src/definitions/README.md`.

@@ -143,7 +143,10 @@ _Avoid_: Tool database, tool catalogue, tool list
 
 **Post-processor**:
 The description of how a controller wants its G-code written: header, footer,
-comment style, arc support, tool-change and coolant commands.
+comment style, arc support, tool-change and coolant commands. DreamCarve
+bundles versioned definitions of them; a project names one by id and
+definition version and holds only the user's post-processor settings
+(ADR-0004).
 _Avoid_: Machine definition, post, driver
 _PureCutCNC_: MachineDefinition
 

@@ -34,13 +34,24 @@
 //!   (unset), which `init` and the SVG importer write (#99). Earlier files
 //!   always held numbers, which carry over unchanged, including the 12 mm
 //!   placeholder `init` used to write for `z_top_mm`.
+//! - **7**: `post_processor` names a bundled definition version and holds
+//!   only the user's settings (#106, ADR-0004). The migration moves the
+//!   five settings out of the embedded copy, keeping their values, and
+//!   replaces the copy with a reference to the bundled definition's
+//!   version 1 only if everything else in it equals that version. A copy
+//!   that differs, or one whose id is not bundled, fails to load with
+//!   every difference and the block to paste instead: swapping in another
+//!   dialect would change the G-code without the user knowing.
 
+use crate::post_processor::{
+    BundledDefinition, PostProcessorError, SETTING_PATHS, bundled_definition, bundled_definitions,
+};
 use crate::serialize::LoadError;
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 6;
+pub const CURRENT_VERSION: u32 = 7;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -55,6 +66,7 @@ fn step(from: u32) -> Option<Step> {
         3 => Some(v3_to_v4),
         4 => Some(v4_to_v5),
         5 => Some(v5_to_v6),
+        6 => Some(v6_to_v7),
         _ => None,
     }
 }
@@ -223,6 +235,160 @@ fn v5_to_v6(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
+/// The definition version a version 6 project's embedded copy is compared
+/// with: the one bundled while version 6 was current.
+const V6_DEFINITION_VERSION: u32 = 1;
+
+/// Version 6 → 7 (#106): the embedded post-processor becomes a reference
+/// to the bundled definition's version 1 and the user's settings. Fails,
+/// naming every difference, when the rest of the copy is not exactly that
+/// definition.
+fn v6_to_v7(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let mut copy = root
+        .get_mut("post_processor")
+        .filter(|post| post.is_object())
+        .map(Value::take)
+        .ok_or_else(|| "`post_processor` is missing or not an object".to_owned())?;
+    let mut settings = Map::with_capacity(SETTING_PATHS.len());
+    for (key, path) in SETTING_PATHS {
+        let value = take_at(&mut copy, path)
+            .ok_or_else(|| format!("`post_processor.{}` is missing", path.join(".")))?;
+        settings.insert(key.to_owned(), value);
+    }
+    let id = copy
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "`post_processor.id` is missing or not a string".to_owned())?
+        .to_owned();
+    match bundled_definition(&id, V6_DEFINITION_VERSION) {
+        Ok(definition) => {
+            let differences = differences(&copy, definition);
+            if differences.is_empty() {
+                root.insert("post_processor".into(), reference(definition, &settings));
+                return Ok(root);
+            }
+            Err(format!(
+                "the post-processor in this file differs from the bundled `{id}` definition, \
+                 version {V6_DEFINITION_VERSION}. Since format version 7 a project names a \
+                 bundled definition instead of holding a copy, and using that one would change \
+                 the G-code, so the file is not loaded. It differs in:\n{}",
+                replacement(definition, &settings, &differences)
+            ))
+        }
+        Err(err @ PostProcessorError::UnknownId { .. }) => {
+            // Offer the bundled definition closest to the copy.
+            let closest = bundled_definitions()
+                .map_err(|e| e.to_string())?
+                .iter()
+                .filter(|d| d.version == V6_DEFINITION_VERSION)
+                .map(|d| (differences(&copy, d), d))
+                .min_by_key(|(differences, _)| differences.len());
+            let Some((differences, definition)) = closest else {
+                return Err(err.to_string());
+            };
+            Err(format!(
+                "{err}. Since format version 7 a project names a bundled definition instead \
+                 of holding a copy, so the file is not loaded. The closest bundled definition \
+                 is `{}`, version {V6_DEFINITION_VERSION}; it differs from this file in:\n{}",
+                definition.id,
+                replacement(definition, &settings, &differences)
+            ))
+        }
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+/// Removes and returns the value at `path` in `value`.
+fn take_at(value: &mut Value, path: &[&str]) -> Option<Value> {
+    let (last, parents) = path.split_last()?;
+    let mut at = value;
+    for key in parents {
+        at = at.get_mut(*key)?;
+    }
+    at.as_object_mut()?.shift_remove(*last)
+}
+
+/// The version 7 `post_processor` block: `definition` and `settings`, in
+/// the order a project writes them.
+fn reference(definition: &BundledDefinition, settings: &Map<String, Value>) -> Value {
+    let mut block = Map::with_capacity(2 + settings.len());
+    block.insert("id".into(), Value::from(definition.id));
+    block.insert("definition_version".into(), Value::from(definition.version));
+    block.extend(settings.clone());
+    Value::Object(block)
+}
+
+/// The end of a failed version 6 → 7 message: one line per difference,
+/// then the block to paste in place of the old one.
+fn replacement(
+    definition: &BundledDefinition,
+    settings: &Map<String, Value>,
+    differences: &[String],
+) -> String {
+    let block = serde_json::to_string_pretty(&reference(definition, settings))
+        .unwrap_or_else(|e| format!("(the block could not be written: {e})"));
+    format!(
+        "{}\nTo use the bundled definition, change \"version\": 6 to \"version\": 7 and replace the whole \
+         post_processor block with this one, which keeps your settings:\n\
+         \"post_processor\": {block}",
+        differences.join("\n")
+    )
+}
+
+/// Every field where `copy`, an embedded definition without its settings,
+/// differs from `definition`'s, as `  post_processor.<path>: this file has
+/// <value>, <id> version <n> has <value>`.
+fn differences(copy: &Value, definition: &BundledDefinition) -> Vec<String> {
+    let label = format!("{} version {}", definition.id, definition.version);
+    let mut out = Vec::new();
+    collect_differences(
+        "post_processor",
+        copy,
+        definition.dialect(),
+        &label,
+        &mut out,
+    );
+    out
+}
+
+fn collect_differences(
+    path: &str,
+    ours: &Value,
+    theirs: &Value,
+    label: &str,
+    out: &mut Vec<String>,
+) {
+    match (ours, theirs) {
+        (Value::Object(a), Value::Object(b)) => {
+            for (key, value) in a {
+                let at = format!("{path}.{key}");
+                match b.get(key) {
+                    Some(other) => collect_differences(&at, value, other, label, out),
+                    None => out.push(format!(
+                        "  {at}: this file has {value}, {label} has no such field"
+                    )),
+                }
+            }
+            for (key, other) in b {
+                if !a.contains_key(key) {
+                    out.push(format!(
+                        "  {path}.{key}: this file has none, {label} has {other}"
+                    ));
+                }
+            }
+        }
+        (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
+            for (i, (value, other)) in a.iter().zip(b).enumerate() {
+                collect_differences(&format!("{path}[{i}]"), value, other, label, out);
+            }
+        }
+        _ if ours == theirs => {}
+        _ => out.push(format!(
+            "  {path}: this file has {ours}, {label} has {theirs}"
+        )),
+    }
+}
+
 /// Rewrites one `{ "kind": k, ..data }` object as `k` when there is no
 /// data, else as `{ k: { ..data } }`. `path` names the value in errors.
 fn untag(value: Value, path: &str) -> Result<Value, String> {
@@ -257,9 +423,14 @@ mod tests {
     const V5_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v5/sample.dcv");
 
     /// The sample project as raw JSON of `version`, without the fields
-    /// added after it.
+    /// added after it. Before version 7 it embeds the whole GRBL
+    /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 7 {
+            root["post_processor"] =
+                serde_json::from_str(include_str!("../tests/fixtures/post/grbl.json")).unwrap();
+        }
         if version < 5 {
             root["post_processor"]["tool_change"]
                 .as_object_mut()
@@ -313,7 +484,7 @@ mod tests {
     fn version_1_fixture_gets_automatic_spindle_control() {
         let loaded = load(V1_FIXTURE).unwrap();
         assert_eq!(
-            loaded.project.post_processor.feed_speed.spindle_control,
+            loaded.project.post_processor.spindle_control,
             SpindleControl::Automatic
         );
         let migrated = migrate(sample_root_at(1), 1).unwrap();
@@ -354,7 +525,7 @@ mod tests {
     fn version_4_fixture_gets_separate_programs() {
         let loaded = load(V4_FIXTURE).unwrap();
         assert_eq!(
-            loaded.project.post_processor.tool_change.mode,
+            loaded.project.post_processor.tool_change_mode,
             ToolChangeMode::SeparatePrograms
         );
         let migrated = migrate(sample_root_at(4), 4).unwrap();
@@ -367,7 +538,7 @@ mod tests {
 
     #[test]
     fn v4_with_tool_change_mode_already_present_fails() {
-        let mut root = sample_root_at(CURRENT_VERSION);
+        let mut root = sample_root_at(5);
         root["version"] = Value::from(4);
         let err = migrate(root, 4).unwrap_err();
         assert!(
@@ -393,16 +564,16 @@ mod tests {
         root["instances"][0]["z_bottom_mm"] = json!(0.0);
         let text = serde_json::to_string_pretty(&root).unwrap();
         let loaded = load(text.as_bytes()).unwrap();
-        assert_eq!(CURRENT_VERSION, 6);
-        assert_eq!(loaded.project.version, 6);
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
         let instance = &loaded.project.instances[0];
         assert_eq!(instance.z_top_mm, Some(12.0));
         assert_eq!(instance.z_bottom_mm, Some(0.0));
-        let migrated = migrate(sample_root_at(5), 5).unwrap();
+        let mut stepped = v5_to_v6(sample_root_at(5).as_object().unwrap().clone()).unwrap();
+        stepped.insert("version".into(), Value::from(6));
         assert_eq!(
-            migrated,
-            sample_root_at(CURRENT_VERSION),
-            "the migration only bumps the version"
+            Value::Object(stepped),
+            sample_root_at(6),
+            "the step changes nothing"
         );
     }
 
@@ -523,7 +694,7 @@ mod tests {
 
     #[test]
     fn v1_with_spindle_control_already_present_fails() {
-        let mut root = sample_root_at(CURRENT_VERSION);
+        let mut root = sample_root_at(2);
         root["version"] = Value::from(1);
         let err = migrate(root, 1).unwrap_err();
         assert!(
@@ -539,6 +710,37 @@ mod tests {
         let err = migrate(root, 0).unwrap_err();
         assert!(
             matches!(err, LoadError::Migration { from: 0, to: 1, .. }),
+            "{err:?}"
+        );
+    }
+
+    const V6_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v6/sample.dcv");
+
+    #[test]
+    fn version_6_fixture_loads() {
+        let loaded = load(V6_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// #106: the migrated block is the reference, in the order a version 7
+    /// file writes it.
+    #[test]
+    fn v6_to_v7_writes_the_reference() {
+        let migrated = migrate(sample_root_at(6), 6).unwrap();
+        assert_eq!(migrated, sample_root_at(7));
+    }
+
+    /// #106: a version 6 file with no embedded post-processor is broken,
+    /// not one to give a default.
+    #[test]
+    fn v6_without_post_processor_fails() {
+        let mut root = sample_root_at(6);
+        root.as_object_mut().unwrap().remove("post_processor");
+        let err = migrate(root, 6).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 6, to: 7, message }
+                if message.contains("post_processor")),
             "{err:?}"
         );
     }

@@ -27,7 +27,8 @@ as G-code they can trust.
    containing the SVG's shapes as feature definitions and instances, a
    default stock sized to the drawing's bounds, a default origin, one
    placeholder tool, one Profile operation targeting all closed shapes, and
-   the grblHAL post-processor embedded. The placeholder tool's feed, plunge
+   a reference to the latest bundled grblHAL post-processor definition with
+   its default settings (#106, ADR-0004). The placeholder tool's feed, plunge
    rate, spindle speed and step-down, the stock thickness, and the Profile
    depth are unset (`null`): `check` reports them and `export` refuses until
    the user sets them (#64). The Profile's own step-down is `null` too, so
@@ -35,16 +36,23 @@ as G-code they can trust.
 2. The user can edit the `.dcv` by hand: stock dimensions, origin, tool
    geometry and feeds, Profile side (inside, outside, on line), total depth,
    depth per pass, cut direction (climb or conventional), tabs (count, width,
-   height, shape), safe Z, and which post-processor to use.
-3. `dreamcarve export <file.dcv>` writes G-code for the embedded
+   height, shape), safe Z, and the post-processor settings (output file
+   extension, spindle control, spin-up dwell, tool-change mode, decimal
+   places). The post-processor's dialect is not in the file: the project
+   names a bundled definition by id and version, and a released version
+   never changes, so an upgrade never changes what a saved project exports.
+3. `dreamcarve export <file.dcv>` writes G-code for the project's
    post-processor. grblHAL and GRBL are available. `--post <id>` switches the
-   embedded post-processor before export and updates the file. When the
+   project to the latest version of that bundled definition, with its
+   default settings, before export and updates the file; on the project's
+   own id it is how a project upgrades to a newer version, and export says
+   which (`grblhal v1 → v2`). When the
    enabled operations use more than one tool, export writes one complete
    program per tool run (consecutive operations with the same tool, in
    operation order), named `<stem>-<k>-T<n>.<ext>`, and lists them in the
-   order to run them with what to do before each. The post-processor's
-   `tool_change.mode` `"m6"` (grblHAL only) writes one program with `M6`
-   tool changes instead (#95).
+   order to run them with what to do before each. The post-processor
+   setting `tool_change_mode` `"m6"` (grblHAL only) writes one program with
+   `M6` tool changes instead (#95).
 4. `dreamcarve check <file.dcv>` validates the project and prints the
    warnings and errors that export would raise, without writing G-code.
    `export`, and `check` when the program could be built, print each
@@ -135,7 +143,7 @@ Clamps. Text. Stock from a shape (stock is rectangular).
 - **S2** Rapid moves occur only at or above safe Z.
 - **S3** Every cutting and plunging move has an explicit, user-supplied feed.
   Export fails if any tool an enabled operation uses lacks feed, plunge, or
-  RPM. With manual spindle control (`feed_speed.spindle_control: manual`)
+  RPM. With manual spindle control (`spindle_control: manual`)
   RPM is optional; feed and plunge are still required. A tool no enabled
   operation uses is a warning, and its unset values are not reported; they
   are never defaulted, so enabling an operation that uses it brings the
@@ -157,8 +165,8 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   each of which passes S1–S7 on its own, and none is written unless all
   pass (#95). Whether an `M6` stops the machine depends on the sender, and
   several senders' defaults do not stop, so a program with `M6` is opt-in:
-  the post-processor's `tool_change.mode` `"m6"`, valid only when its tool
-  change has `M6` (grblHAL). In that program every later tool change
+  the post-processor setting `tool_change_mode` `"m6"`, valid only when the
+  definition's tool change has `M6` (grblHAL). In that program every later tool change
   retracts to safe Z, stops the spindle, and stops with `T<n> M6` and a
   message to fit the tool and set Z zero, then retracts to safe Z again,
   from the new zero, before the spindle or router starts. A program that
@@ -203,8 +211,10 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   other than a flat end mill (those sides offset by half the diameter,
   which is wrong at any depth for a V-bit, ball-nose or engraving bit; On
   line follows the line with the tool centre, so any cutter is allowed
-  there, with no error and no warning), an enabled operation with no
-  targets, and a post-processor `line_number_increment` of 0. A step-down
+  there, with no error and no warning), and an enabled operation with no
+  targets. A project cannot change its post-processor definition, so the
+  definitions' own values, such as a `line_number_increment` above 0, are
+  checked by tests on every bundled version instead (#106). A step-down
   deeper than the tool's diameter, a plunge rate above the feed rate, a
   spindle speed above 60 000 RPM (`MAX_RPM`; GRBL and grblHAL clamp `S` to
   `$30`), and a tool diameter above 50 mm (`MAX_TOOL_DIAMETER_MM`) are
