@@ -10,8 +10,21 @@ silicon), and Windows x86_64 on the
 [releases page](https://github.com/grayzu/dreamcarve/releases), with shell
 and PowerShell installer scripts that put `dreamcarve` on your `PATH`.
 
-The first release that can write G-code is `v0.1.0`. Until it is published,
-the releases are scaffolding only, so build from source.
+The first release that can write G-code is `v0.1.0`. To install the latest
+release on macOS or Linux:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/grayzu/dreamcarve/releases/latest/download/dreamcarve-installer.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/grayzu/dreamcarve/releases/latest/download/dreamcarve-installer.ps1 | iex"
+```
+
+Each archive on the releases page also has a `.sha256` file to check a
+manual download against.
 
 ## Build from source
 
