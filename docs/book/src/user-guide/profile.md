@@ -57,6 +57,11 @@ outer circle is cut on its outside and the inner circle on its inside. Both
 edges of the ring keep the size you drew.
 [Shapes, holes, and islands](shapes-and-holes.md) has the rules.
 
+This is decided among one operation's targets only. A hole cut by an
+operation of its own is a part to that operation, so cut it `"inside"`:
+[Tabs](tabs.md#parts-with-holes) shows how, for a part whose hole should
+get no tabs.
+
 A 100 × 50 mm rectangle cut outside with a 6.35 mm bit gives a tool path
 106.35 × 56.35 mm across its centre line; cut inside, 93.65 × 43.65 mm.
 

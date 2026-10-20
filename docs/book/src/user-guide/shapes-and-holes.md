@@ -8,6 +8,11 @@ circle is cut on its outside, and the inner circle on its inside.
 Each group of one part and its holes is a **region**. This page states the
 rules, with a picture of each one.
 
+The rules apply to the outlines of one operation's targets. A shape cut by
+an operation of its own has nothing around it there, so it is a part. To
+cut a hole in a separate operation, for example to keep tabs out of it,
+see [Parts with holes](tabs.md#parts-with-holes).
+
 ## Reading the figures
 
 Every figure on this page is generated from the real code: `nest` runs on

@@ -44,7 +44,8 @@ the program.
 The path starts where DreamCarve chooses, which is not shown before you
 export, so `count` is the easier choice in phase 1.
 
-Every outline the operation cuts gets the tabs, holes included.
+Every outline the operation cuts gets the tabs, holes included. To leave
+a hole without tabs, see [Parts with holes](#parts-with-holes).
 
 ## What the bit does over a tab
 
@@ -93,7 +94,80 @@ warning: operation `op1`: tabs on `small-hole` (instance `i3`, profile 0) cover 
 DreamCarve does not change your tabs. Export continues and cuts them as
 set, because that can be what you want, for example to leave a slug in a
 hole. To let the part cut free, use fewer or narrower tabs, or give the
-operation that cuts small holes no tabs.
+operation that cuts small holes no tabs, as in
+[Parts with holes](#parts-with-holes).
+
+## Parts with holes
+
+Tabs belong to the operation, and one operation cuts all its targets'
+outlines with the same tabs. A star with a small hole in its centre can't
+have 6 tabs on the star and none in the hole in one operation. Use two
+operations with the same bit:
+
+1. Draw the hole as its own path: draw it as a separate shape, or select
+   the combined path in Inkscape and use Path → Break Apart. One path with
+   both outlines is one instance, and an operation can't split it.
+2. Run `init`. The star and the hole are now two instances, here `i1` and
+   `i2`.
+3. Make the first operation the hole: target `i2` only, `"side": "inside"`,
+   `"tabs": null`.
+4. Copy it as the second operation, the star: a new `id`, target `i1`
+   only, `"side": "outside"`, and the tabs you want.
+5. Keep the tool, depth and other settings the same in both. Leave
+   `step_down_mm` `null` so both use the tool's.
+
+```json
+"operations": [
+  {
+    "kind": "profile",
+    "id": "op1",
+    "name": "Hole",
+    "enabled": true,
+    "targets": [ "i2" ],
+    "tool": "t1",
+    "side": "inside",
+    "depth_mm": 12.0,
+    "step_down_mm": null,
+    "direction": "climb",
+    "through_cut_allowance_mm": 0.2,
+    "safe_z_mm": 5.0,
+    "tabs": null
+  },
+  {
+    "kind": "profile",
+    "id": "op2",
+    "name": "Star",
+    "enabled": true,
+    "targets": [ "i1" ],
+    "tool": "t1",
+    "side": "outside",
+    "depth_mm": 12.0,
+    "step_down_mm": null,
+    "direction": "climb",
+    "through_cut_allowance_mm": 0.2,
+    "safe_z_mm": 5.0,
+    "tabs": {
+      "placement": { "kind": "count", "count": 6 },
+      "width_mm": 8.0,
+      "height_mm": 3.0,
+      "shape": "rect"
+    }
+  }
+]
+```
+
+Operations run in the order they are listed, so put the hole first. The
+star is still held by the stock while its hole is cut. Within one operation
+DreamCarve cuts holes before their part on its own, but across two
+operations the order is yours.
+
+The hole uses `"inside"`, not `"outside"`. DreamCarve decides which outline
+is a hole only among one operation's targets, so on its own the circle is a
+part, and `"outside"` would cut around it and make the hole one bit
+diameter too large.
+
+Setting tabs on the part instead of on the operation is planned
+([#105](https://github.com/grayzu/dreamcarve/issues/105)).
 
 ## Warnings
 
