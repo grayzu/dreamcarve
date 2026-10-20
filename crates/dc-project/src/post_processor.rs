@@ -433,6 +433,104 @@ pub struct Stop {
     pub program_end_command: String,
 }
 
+/// What a project stores about its post-processor (#106, ADR-0004): which
+/// bundled definition version it uses, and the user's settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostProcessorRef {
+    /// The bundled definition's id, for example `grblhal`.
+    pub id: String,
+    /// The bundled definition's version.
+    pub definition_version: u32,
+    /// Output file extension without the dot.
+    pub file_extension: String,
+    /// Who switches the spindle on and off.
+    pub spindle_control: SpindleControl,
+    /// Seconds to wait after the spindle starts.
+    pub spindle_on_dwell_s: f64,
+    /// How a project with more than one tool is exported.
+    pub tool_change_mode: ToolChangeMode,
+    /// Decimal places per output unit.
+    pub decimal_places: DecimalPlaces,
+}
+
+/// Why a post-processor reference could not be resolved.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PostProcessorError {
+    /// Not implemented yet.
+    #[error("not implemented")]
+    Unimplemented,
+}
+
+/// One bundled definition version.
+#[derive(Debug)]
+pub struct BundledDefinition {
+    /// Its id.
+    pub id: &'static str,
+    /// Its version.
+    pub version: u32,
+    /// Its file under `definitions/`.
+    pub path: &'static str,
+    /// The file's text.
+    pub source: &'static str,
+}
+
+impl BundledDefinition {
+    /// A reference to this version with its default settings.
+    pub fn default_ref(&self) -> PostProcessorRef {
+        PostProcessorRef {
+            id: self.id.to_owned(),
+            definition_version: self.version,
+            file_extension: String::new(),
+            spindle_control: SpindleControl::Automatic,
+            spindle_on_dwell_s: 0.0,
+            tool_change_mode: ToolChangeMode::SeparatePrograms,
+            decimal_places: DecimalPlaces { mm: 0, inch: 0 },
+        }
+    }
+}
+
+impl PostProcessorRef {
+    /// The effective definition.
+    ///
+    /// # Errors
+    ///
+    /// Not implemented yet.
+    pub fn resolve(&self) -> Result<PostProcessor, PostProcessorError> {
+        Err(PostProcessorError::Unimplemented)
+    }
+}
+
+/// Every bundled definition version.
+///
+/// # Errors
+///
+/// Not implemented yet.
+pub fn bundled_definitions() -> Result<&'static [BundledDefinition], PostProcessorError> {
+    Ok(&[])
+}
+
+/// The bundled definition `id` at `version`.
+///
+/// # Errors
+///
+/// Not implemented yet.
+pub fn bundled_definition(
+    _id: &str,
+    _version: u32,
+) -> Result<&'static BundledDefinition, PostProcessorError> {
+    Err(PostProcessorError::Unimplemented)
+}
+
+/// The latest bundled version of `id`.
+///
+/// # Errors
+///
+/// Not implemented yet.
+pub fn latest_definition(_id: &str) -> Result<&'static BundledDefinition, PostProcessorError> {
+    Err(PostProcessorError::Unimplemented)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,5 +728,148 @@ mod tests {
         assert_eq!(places, DecimalPlaces { mm: 3, inch: 3 });
         let text = serde_json::to_string(&places).unwrap();
         assert_eq!(text, r#"{"mm":3,"inch":3}"#);
+    }
+
+    // #106: a project stores a reference to a bundled definition version
+    // and the user's settings, not the definition.
+
+    /// A version 7 project whose `post_processor` is the GRBL reference
+    /// with the default settings.
+    const V7_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v7/sample.dcv");
+
+    /// The reference block as the project writes it, keys in order.
+    const REFERENCE_BLOCK: &str = r#"{
+  "id": "grbl",
+  "definition_version": 1,
+  "file_extension": "nc",
+  "spindle_control": "automatic",
+  "spindle_on_dwell_s": 3.0,
+  "tool_change_mode": "separate_programs",
+  "decimal_places": {
+    "mm": 3,
+    "inch": 4
+  }
+}"#;
+
+    #[test]
+    fn project_post_processor_round_trips() {
+        let loaded = crate::load(V7_FIXTURE.as_bytes()).unwrap();
+        let block = serde_json::to_string_pretty(&loaded.project.post_processor).unwrap();
+        assert_eq!(block, REFERENCE_BLOCK);
+        assert_eq!(crate::save(&loaded.project).unwrap(), V7_FIXTURE);
+    }
+
+    /// `V7_FIXTURE` with `from` replaced by `to`, loaded.
+    fn load_edited(from: &str, to: &str) -> Result<crate::Loaded, crate::LoadError> {
+        assert!(V7_FIXTURE.contains(from), "the fixture has `{from}`");
+        crate::load(V7_FIXTURE.replacen(from, to, 1).as_bytes())
+    }
+
+    /// The line and column of the first `needle` in `V7_FIXTURE`.
+    fn position_of(needle: &str) -> crate::TextPosition {
+        let (line, text) = V7_FIXTURE
+            .lines()
+            .enumerate()
+            .find(|(_, text)| text.contains(needle))
+            .unwrap();
+        let column = text.find(needle).unwrap() + 1;
+        crate::TextPosition {
+            line: line + 1,
+            column,
+        }
+    }
+
+    #[test]
+    fn missing_post_processor_setting_fails_to_load() {
+        let err = load_edited("    \"spindle_on_dwell_s\": 3.0,\n", "").unwrap_err();
+        let crate::LoadError::Schema { path, at, message } = &err else {
+            panic!("a schema error: {err:?}");
+        };
+        assert_eq!(path, "post_processor", "{err}");
+        assert_eq!(*at, Some(position_of("\"post_processor\": {")), "{err}");
+        assert!(message.contains("spindle_on_dwell_s"), "{err}");
+    }
+
+    #[test]
+    fn unknown_post_id_fails_to_load() {
+        let err = load_edited("\"id\": \"grbl\"", "\"id\": \"mach3\"").unwrap_err();
+        let crate::LoadError::Schema { path, at, message } = &err else {
+            panic!("a schema error: {err:?}");
+        };
+        assert_eq!(path, "post_processor.id", "{err}");
+        let value = position_of("\"grbl\",");
+        assert_eq!(*at, Some(value), "{err}");
+        assert!(message.contains("`mach3`"), "{err}");
+        assert!(message.contains("grbl, grblhal"), "{err}");
+    }
+
+    #[test]
+    fn unknown_definition_version_fails_to_load() {
+        let err =
+            load_edited("\"definition_version\": 1", "\"definition_version\": 99").unwrap_err();
+        let crate::LoadError::Schema { path, at, message } = &err else {
+            panic!("a schema error: {err:?}");
+        };
+        assert_eq!(path, "post_processor.definition_version", "{err}");
+        let mut value = position_of("\"definition_version\": 1");
+        value.column += "\"definition_version\": ".len();
+        assert_eq!(*at, Some(value), "{err}");
+        assert!(message.contains("99"), "{err}");
+        assert!(message.contains("`grbl`"), "{err}");
+        assert!(message.ends_with("available: 1"), "{err}");
+    }
+
+    /// The definition that `id`.json on main parsed to, before #106, kept as
+    /// a fixture.
+    fn old_embedded(id: &str) -> PostProcessor {
+        let text = match id {
+            "grblhal" => include_str!("../tests/fixtures/post/grblhal.json"),
+            "grbl" => include_str!("../tests/fixtures/post/grbl.json"),
+            _ => panic!("no fixture for {id}"),
+        };
+        serde_json::from_str(text).unwrap()
+    }
+
+    /// Version 1 of each definition is today's file with the settings moved
+    /// out, so it must resolve, with the default settings, to exactly what
+    /// the file parsed to before: no controller-facing value changed.
+    #[test]
+    fn resolve_matches_old_embedded_definition() {
+        for id in ["grblhal", "grbl"] {
+            let definition = bundled_definition(id, 1).unwrap();
+            let resolved = definition.default_ref().resolve().unwrap();
+            assert_eq!(resolved, old_embedded(id), "{id}");
+        }
+    }
+
+    /// FNV-1a, 64 bit: enough to notice an edit, which is all the pin is
+    /// for. It is not a security measure.
+    fn fnv1a(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| {
+            (hash ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+    }
+
+    /// A released definition version never changes: a project that names it
+    /// must export the same bytes after any upgrade. A change that would
+    /// change emitted bytes is a new version file (`definitions/README.md`,
+    /// "Versions"); pin it here when it is added.
+    #[test]
+    fn released_definition_versions_are_unchanged() {
+        const PINNED: [(&str, u64); 2] = [
+            ("grblhal/v1.json", 0xb466_2fca_9b77_df77),
+            ("grbl/v1.json", 0xe5dc_88e6_fd09_a5a9),
+        ];
+        let bundled = bundled_definitions().unwrap();
+        let paths: Vec<&str> = bundled.iter().map(|d| d.path).collect();
+        let pinned: Vec<&str> = PINNED.iter().map(|&(path, _)| path).collect();
+        assert_eq!(paths, pinned, "every bundled version is pinned");
+        for (definition, (path, hash)) in bundled.iter().zip(PINNED) {
+            assert_eq!(
+                fnv1a(definition.source.as_bytes()),
+                hash,
+                "{path} changed; add a new version instead"
+            );
+        }
     }
 }

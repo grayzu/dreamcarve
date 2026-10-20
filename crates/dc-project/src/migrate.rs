@@ -543,6 +543,94 @@ mod tests {
         );
     }
 
+    /// A version 6 project embedding the bundled grblHAL definition of the
+    /// time, with the router switched by hand and a 5 s spin-up dwell.
+    const V6_GRBLHAL_MANUAL: &str = include_str!("../tests/fixtures/dcv/v6/grblhal-manual.dcv");
+
+    /// #106: a version 6 copy that matches the bundled definition becomes a
+    /// reference to its version 1, keeping the user's settings.
+    #[test]
+    fn v6_with_bundled_copy_migrates_to_reference() {
+        let loaded = load(V6_GRBLHAL_MANUAL.as_bytes()).unwrap();
+        assert_eq!(loaded.project.version, 7);
+        assert_eq!(
+            serde_json::to_value(&loaded.project.post_processor).unwrap(),
+            json!({
+                "id": "grblhal",
+                "definition_version": 1,
+                "file_extension": "nc",
+                "spindle_control": "manual",
+                "spindle_on_dwell_s": 5.0,
+                "tool_change_mode": "separate_programs",
+                "decimal_places": { "mm": 3, "inch": 4 }
+            })
+        );
+    }
+
+    /// The migration error for `V6_GRBLHAL_MANUAL` with `from` replaced by
+    /// `to`.
+    fn v6_edited_error(from: &str, to: &str) -> String {
+        assert!(V6_GRBLHAL_MANUAL.contains(from), "the fixture has `{from}`");
+        let text = V6_GRBLHAL_MANUAL.replacen(from, to, 1);
+        match load(text.as_bytes()) {
+            Err(LoadError::Migration {
+                from: 6,
+                to: 7,
+                message,
+            }) => message,
+            other => panic!("a migration error from 6 to 7: {other:?}"),
+        }
+    }
+
+    /// The block to paste in place of the old one, with the fixture's
+    /// settings filled in.
+    fn assert_has_replacement_block(message: &str, id: &str) {
+        let block = format!(
+            r#""post_processor": {{
+  "id": "{id}",
+  "definition_version": 1,
+  "file_extension": "nc",
+  "spindle_control": "manual",
+  "spindle_on_dwell_s": 5.0,
+  "tool_change_mode": "separate_programs",
+  "decimal_places": {{
+    "mm": 3,
+    "inch": 4
+  }}
+}}"#
+        );
+        assert!(message.contains(&block), "{message}");
+        assert!(message.contains("\"version\": 7"), "{message}");
+    }
+
+    /// #106: a copy whose dialect differs from the bundled version 1 is
+    /// never replaced by it, which would change the G-code: loading fails,
+    /// naming each differing field with both values, and shows the
+    /// reference block to use instead.
+    #[test]
+    fn v6_with_edited_dialect_fails_to_load() {
+        let message = v6_edited_error("\"rapid_command\": \"G0\"", "\"rapid_command\": \"G1\"");
+        assert!(
+            message.contains("post_processor.motion.rapid_command"),
+            "{message}"
+        );
+        assert!(message.contains("\"G1\""), "{message}");
+        assert!(message.contains("\"G0\""), "{message}");
+        assert!(!message.contains("linear_command"), "{message}");
+        assert_has_replacement_block(&message, "grblhal");
+    }
+
+    /// #106: a post-processor that was never bundled cannot become a
+    /// reference either.
+    #[test]
+    fn v6_with_unbundled_id_fails_to_load() {
+        let message = v6_edited_error("\"id\": \"grblhal\"", "\"id\": \"custom\"");
+        assert!(message.contains("`custom`"), "{message}");
+        assert!(message.contains("grbl, grblhal"), "{message}");
+        assert!(message.contains("post_processor.id"), "{message}");
+        assert_has_replacement_block(&message, "grblhal");
+    }
+
     #[test]
     fn current_version_is_unchanged() {
         let root = serde_json::to_value(sample_project()).unwrap();
