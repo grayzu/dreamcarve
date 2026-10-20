@@ -276,4 +276,4 @@ Deviations:
 - [x] Golden parity cases captured and passing.
 - [x] Test part cut and recorded above.
 - [x] Quick start published.
-- [ ] `v0.1.0` tagged with binaries.
+- [x] `v0.1.0` tagged with binaries.

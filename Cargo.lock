@@ -108,7 +108,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "check-headers"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "clap"
@@ -164,7 +164,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "dc-cam"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dc-geometry",
  "dc-project",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "dc-gcode"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dc-cam",
  "dc-geometry",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "dc-geometry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cavalier_contours",
  "kurbo",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "dc-import"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dc-geometry",
  "dc-project",
@@ -205,7 +205,7 @@ dependencies = [
 
 [[package]]
 name = "dc-project"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dc-geometry",
  "serde",
@@ -216,14 +216,14 @@ dependencies = [
 
 [[package]]
 name = "doc-figures"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dc-geometry",
 ]
 
 [[package]]
 name = "dreamcarve"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "dc-cam",
@@ -523,7 +523,7 @@ dependencies = [
 
 [[package]]
 name = "third-party-licenses"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
 ]
