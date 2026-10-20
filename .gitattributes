@@ -7,3 +7,5 @@
 *.dcv text eol=lf
 tests/golden/** text eol=lf
 *.nc text eol=lf
+# Bundled post-processor definitions are pinned by hash (#106).
+crates/dc-project/src/definitions/**/*.json text eol=lf

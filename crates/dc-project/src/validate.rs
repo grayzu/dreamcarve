@@ -19,8 +19,8 @@
 //! Sanity checks (#67) catch values that are valid but dangerous, and look
 //! only at enabled operations and the tools they use. Errors: a feed or
 //! plunge rate above [`MAX_RATE_MM_MIN`], an Outside or Inside Profile cut
-//! with a cutter other than a flat end mill, an enabled operation with no targets, and a
-//! `line_number_increment` of 0. Warnings: a step-down deeper than the
+//! with a cutter other than a flat end mill, and an enabled operation with
+//! no targets. Warnings: a step-down deeper than the
 //! tool's diameter, a plunge rate above the feed rate, a spindle speed
 //! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
 //! changes a value; they only report.
@@ -106,13 +106,6 @@ pub enum Problem {
         /// Path to the field.
         field: String,
     },
-    /// A template line lacks a placeholder it must contain.
-    MissingPlaceholder {
-        /// Path to the field.
-        field: String,
-        /// The placeholder, such as `{seconds}`.
-        placeholder: &'static str,
-    },
     /// An operation is disabled and will not be exported.
     OperationDisabled {
         /// The disabled operation.
@@ -178,8 +171,8 @@ pub enum Problem {
         /// The extension found.
         extension: String,
     },
-    /// The tool-change mode is `"m6"`, but the post-processor's tool
-    /// change has no `M6`, so it cannot change tools within a program
+    /// The tool-change mode is `"m6"`, but the post-processor definition's
+    /// tool change has no `M6`, so it cannot change tools within a program
     /// (#95). GRBL 1.1 has none.
     ToolChangeModeNeedsM6 {
         /// The post-processor's id.
@@ -294,7 +287,6 @@ impl Problem {
             | Self::DanglingInstance { .. }
             | Self::OutOfRange { .. }
             | Self::NonFinite { .. }
-            | Self::MissingPlaceholder { .. }
             | Self::ToolValueUnset { .. }
             | Self::StockThicknessUnset
             | Self::OperationValueUnset { .. }
@@ -338,9 +330,7 @@ impl Problem {
             Self::DanglingInstance { operation, .. } => {
                 Some(format!("operations[{operation}].targets"))
             }
-            Self::OutOfRange { field, .. }
-            | Self::NonFinite { field }
-            | Self::MissingPlaceholder { field, .. } => Some(field.clone()),
+            Self::OutOfRange { field, .. } | Self::NonFinite { field } => Some(field.clone()),
             Self::OperationDisabled { operation } => {
                 Some(format!("operations[{operation}].enabled"))
             }
@@ -359,7 +349,7 @@ impl Problem {
             } => Some(format!("definitions[{definition}].profiles[{profile}]")),
             Self::UnsafeFileExtension { .. } => Some("post_processor.file_extension".to_owned()),
             Self::ToolChangeModeNeedsM6 { .. } => {
-                Some("post_processor.tool_change.mode".to_owned())
+                Some("post_processor.tool_change_mode".to_owned())
             }
             Self::StepDownAboveDiameter { field, .. } => Some(field.clone()),
             Self::CutterNotFlat { operation, .. } => Some(format!("operations[{operation}].tool")),
@@ -417,9 +407,6 @@ impl fmt::Display for Problem {
                 expected,
             } => write!(f, "{field} is {value}, expected {expected}"),
             Self::NonFinite { field } => write!(f, "{field} is not a finite number"),
-            Self::MissingPlaceholder { field, placeholder } => {
-                write!(f, "{field} must contain {placeholder}")
-            }
             Self::OperationDisabled { operation } => {
                 write!(
                     f,
@@ -470,7 +457,7 @@ impl fmt::Display for Problem {
             ),
             Self::ToolChangeModeNeedsM6 { post } => write!(
                 f,
-                "tool_change.mode is \"m6\", but post-processor `{post}` has no M6 in its tool_change.commands, so it cannot change tools within one program; use \"separate_programs\""
+                "tool_change_mode is \"m6\", but post-processor `{post}` has no M6 in its tool change, so it cannot change tools within one program; use \"separate_programs\""
             ),
             Self::StepDownAboveDiameter {
                 operation,
@@ -622,7 +609,7 @@ impl Validator {
             // With the router switched by hand the speed is only a hint in
             // the pause message (#34), so it may be unset.
             let rpm_required =
-                in_use && p.post_processor.feed_speed.spindle_control == SpindleControl::Automatic;
+                in_use && p.post_processor.spindle_control == SpindleControl::Automatic;
             match tool.rpm {
                 None if rpm_required => self.problems.push(Problem::ToolValueUnset {
                     tool: tool.id.clone(),
@@ -839,31 +826,22 @@ impl Validator {
             });
         }
 
-        let tool_change = &p.post_processor.tool_change;
-        if tool_change.mode == ToolChangeMode::M6 && !tool_change.has_m6() {
+        // The definition's own values are checked by tests on every
+        // bundled version, since a project cannot change them (#106). A
+        // reference that names no bundled definition fails to load, so
+        // only a project built in code gets here without one; export
+        // refuses it.
+        let post = &p.post_processor;
+        let definition_has_m6 = post
+            .definition()
+            .is_ok_and(|d| d.post_processor().tool_change.has_m6());
+        if post.tool_change_mode == ToolChangeMode::M6 && !definition_has_m6 {
             self.problems.push(Problem::ToolChangeModeNeedsM6 {
-                post: p.post_processor.id.clone(),
+                post: post.id.clone(),
             });
         }
 
-        // #67: an increment of 0 writes `N0` on every line.
-        if p.post_processor.program.line_number_increment == 0 {
-            self.out_of_range(
-                "post_processor.program.line_number_increment".to_owned(),
-                0.0,
-                POSITIVE,
-            );
-        }
-
-        let dwell = &p.post_processor.feed_speed.spindle_on_dwell;
-        let at = "post_processor.feed_speed.spindle_on_dwell";
-        self.non_negative(&format!("{at}.duration_s"), dwell.duration_s);
-        if !dwell.command.contains("{seconds}") {
-            self.problems.push(Problem::MissingPlaceholder {
-                field: format!("{at}.command"),
-                placeholder: "{seconds}",
-            });
-        }
+        self.non_negative("post_processor.spindle_on_dwell_s", post.spindle_on_dwell_s);
     }
 
     /// The sanity checks of an enabled Profile `op` at `at`, cutting with
@@ -1092,7 +1070,7 @@ mod tests {
     #[test]
     fn unset_rpm_is_not_reported_with_manual_spindle_control() {
         let mut p = sample_project();
-        p.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+        p.post_processor.spindle_control = SpindleControl::Manual;
         p.tools[0].rpm = None;
         assert_eq!(validate(&p), vec![]);
         p.tools[0].plunge_mm_min = None;
@@ -1479,14 +1457,14 @@ mod tests {
         );
     }
 
-    const DWELL: &str = "post_processor.feed_speed.spindle_on_dwell";
+    const DWELL: &str = "post_processor.spindle_on_dwell_s";
 
     #[test]
     fn negative_spindle_dwell_is_error() {
         let mut p = sample_project();
-        p.post_processor.feed_speed.spindle_on_dwell.duration_s = -1.0;
+        p.post_processor.spindle_on_dwell_s = -1.0;
         let problems = validate(&p);
-        let field = format!("{DWELL}.duration_s");
+        let field = DWELL.to_owned();
         assert!(
             matches!(&problems[..], [Problem::OutOfRange { field: f, .. }] if *f == field),
             "{problems:?}"
@@ -1496,28 +1474,15 @@ mod tests {
     #[test]
     fn non_finite_spindle_dwell_is_error() {
         let mut p = sample_project();
-        p.post_processor.feed_speed.spindle_on_dwell.duration_s = f64::NAN;
-        let field = format!("{DWELL}.duration_s");
+        p.post_processor.spindle_on_dwell_s = f64::NAN;
+        let field = DWELL.to_owned();
         assert_eq!(validate(&p), vec![Problem::NonFinite { field }]);
-    }
-
-    #[test]
-    fn dwell_command_without_seconds_placeholder_is_error() {
-        let mut p = sample_project();
-        p.post_processor.feed_speed.spindle_on_dwell.command = "G4 P3".into();
-        assert_eq!(
-            validate(&p),
-            vec![Problem::MissingPlaceholder {
-                field: format!("{DWELL}.command"),
-                placeholder: "{seconds}",
-            }]
-        );
     }
 
     #[test]
     fn zero_spindle_dwell_is_allowed() {
         let mut p = sample_project();
-        p.post_processor.feed_speed.spindle_on_dwell.duration_s = 0.0;
+        p.post_processor.spindle_on_dwell_s = 0.0;
         assert!(validate(&p).is_empty());
     }
 
@@ -1791,12 +1756,12 @@ mod tests {
     #[test]
     fn m6_mode_without_m6_command_is_an_error() {
         let mut p = sample_project();
-        p.post_processor.tool_change.mode = crate::ToolChangeMode::M6;
+        p.post_processor.tool_change_mode = crate::ToolChangeMode::M6;
         let problems = validate(&p);
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].is_error(), "{problems:?}");
         let field = problems[0].field().unwrap();
-        assert_eq!(field, "post_processor.tool_change.mode");
+        assert_eq!(field, "post_processor.tool_change_mode");
         let message = problems[0].to_string();
         assert!(
             message.contains("M6") && message.contains("separate_programs"),
@@ -1806,7 +1771,12 @@ mod tests {
         let map = crate::SourceMap::parse(&text).unwrap();
         assert!(map.locate(&field).is_some(), "{field} in {text}");
 
-        p.post_processor.tool_change.commands = vec!["M5".into(), "T{toolNumber} M6".into()];
+        p.post_processor = crate::PostProcessorRef {
+            tool_change_mode: crate::ToolChangeMode::M6,
+            ..crate::bundled_definition("grblhal", 1)
+                .unwrap()
+                .default_ref()
+        };
         assert_eq!(validate(&p), vec![]);
     }
 
@@ -1998,19 +1968,6 @@ mod tests {
         assert_eq!(validate(&p), vec![]);
     }
 
-    /// #67: an increment of 0 writes `N0` on every line.
-    #[test]
-    fn zero_line_increment_is_rejected() {
-        let mut p = sample_project();
-        p.post_processor.program.line_number_increment = 0;
-        let problems = validate(&p);
-        let message = only_located(&p, &problems, Severity::Error);
-        assert_eq!(
-            message,
-            "post_processor.program.line_number_increment is 0, expected a value greater than 0"
-        );
-    }
-
     /// #67: an enabled operation with no targets would write a program
     /// that starts the spindle and stops it without moving.
     #[test]
@@ -2063,7 +2020,6 @@ mod tests {
         p.tools[0].feed_mm_min = Some(1e9);
         p.tools[0].plunge_mm_min = Some(2e9);
         p.tools[0].rpm = Some(1_000_000);
-        p.post_processor.program.line_number_increment = 0;
         op_mut(&mut p).targets.clear();
         let problems = validate(&p);
         let fields: Vec<_> = problems.iter().filter_map(Problem::field).collect();
@@ -2075,11 +2031,10 @@ mod tests {
                 "tools[t1].rpm",
                 "tools[t1].plunge_mm_min",
                 "operations[o1].targets",
-                "post_processor.program.line_number_increment",
             ],
             "{problems:?}"
         );
-        assert_eq!(errors(&problems).len(), 4, "{problems:?}");
+        assert_eq!(errors(&problems).len(), 3, "{problems:?}");
     }
 
     /// #98: with neither the operation nor its tool giving a step-down,

@@ -39,9 +39,9 @@ machine origin are applied only in the CLI's `init` defaults and in
 | `dc-cam::profile` | `src/engine/toolpaths/edge.ts` (`generateEdgeRouteToolpath`, `edgeRouteTargetWalls`), `multiFeature.ts` for nesting | Only the plain contour path: no trochoidal, no keep-out holes, no entry policy. Winding re-derived for Y-up. |
 | `dc-cam::tabs` | `src/engine/toolpaths/tabs.ts` (`applyTabsToEdgeRoute`, `toolCentreContours`, `tabLayoutFreeFraction`, `applyTabWarnings`), `tabs.test.ts` | Tabs are specified per operation by count or explicit positions along the path; PureCutCNC's world-placed `Tab` rectangles arrive in phase 5 with the GUI. Smooth tabs are not PureCutCNC's raised cosine (`tabProfile.ts`), which reaches the tab top at one point and leaves about 60% of the height under the bit; they leave a triangular bridge instead (#66). |
 | `dc-cam::passes` | depth stepping inside `edge.ts` | Final pass clamps to depth, never deeper. |
-| `dc-project::post_processor` | `src/engine/gcode/types.ts` (`MachineDefinitionSchema`) | Keys snake_case. Every field required (upstream zod defaults dropped) so a saved file shows every setting. Lives in `dc-project` because `Project` embeds it. |
+| `dc-project::post_processor` | `src/engine/gcode/types.ts` (`MachineDefinitionSchema`) | Keys snake_case. Every field required (upstream zod defaults dropped) so a definition file shows every value. Lives in `dc-project`, with the bundled definitions, because loading a project needs them (#106). |
 | `dc-gcode::post` | `postprocessor.ts` (`runPostProcessor`), `utils.ts` (`projectToMachinePoint`, number formatting) | `projectToMachinePoint` loses its Y mirror; axis mapping and inversion kept. Canned cycles and coolant parsed but unused until phase 2. |
-| `dc-gcode/definitions/*.json` | `src/engine/gcode/definitions/grblhal.json`, `grbl.json` | Copied as data, keys converted to snake_case. Attribution in `NOTICE` and `definitions/README.md`; the generator name in the header becomes DreamCarve's (`{date}` stays a placeholder filled at export). |
+| `dc-project/definitions/<id>/v<n>.json` | `src/engine/gcode/definitions/grblhal.json`, `grbl.json` | Copied as data, keys converted to snake_case, the five project settings moved into `default_settings` (#106). Attribution in `NOTICE` and `definitions/README.md`; the generator name in the header becomes DreamCarve's (`{date}` stays a placeholder filled at export). |
 | `dc-import::svg` | `src/import/svg.ts`, `normalize.ts`, `svg.test.ts` | Parsing delegated to usvg, which already resolves transforms, `use`, and shapes to paths. The flattening, Y flip, and definition grouping are ours. |
 | `tests/golden/profile-*` | captured via `tools/parity/` | See Test plan. |
 
@@ -103,7 +103,7 @@ pub struct Project {
     pub tools: Vec<Tool>,
     pub operations: Vec<Operation>,
     pub instances: Vec<FeatureInstance>,
-    pub post_processor: PostProcessor,        // embedded copy, see dc-project::post_processor
+    pub post_processor: PostProcessorRef,     // bundled definition id + version, and settings (#106)
     pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,  // last: the bulk of the file
 }
 
@@ -178,9 +178,10 @@ M6}`, `"separate_programs"` | `"m6"`); the migration sets
 `"separate_programs"` (#95). Version 6 made each instance's `z_top_mm`
 and `z_bottom_mm` nullable, so `init` and the SVG importer leave them unset
 (#99); the migration carries every version 5 number over unchanged.
-Validation reports `"m6"` on a definition
-whose `tool_change.commands` has no `M6` line as
-`Problem::ToolChangeModeNeedsM6`, located at the field.
+Version 7 replaced the embedded post-processor by a reference (#106,
+ADR-0004; see "Post-processor reference" below). Validation reports
+`tool_change_mode` `"m6"` on a definition whose `tool_change.commands` has
+no `M6` line as `Problem::ToolChangeModeNeedsM6`, located at the field.
 `load(bytes) -> Result<Project, LoadError>` reads `version`, applies
 migrations in sequence up to `CURRENT_VERSION`, then validates with
 `validate(&Project) -> Vec<Problem>` (dangling ids, non-positive dimensions,
@@ -201,9 +202,11 @@ only at enabled operations and the tools they use. Errors: a feed or
 plunge rate above `MAX_RATE_MM_MIN` (20 000 mm/min, `Problem::ToolOutOfRange`),
 `Problem::CutterNotFlat` (an Outside or Inside Profile whose tool is not
 `ToolKind::EndMill`; `ToolKind::is_flat`; `Side::OnLine` accepts any
-cutter, since the tool centre follows the line), `Problem::OperationHasNoTargets`,
-and a `post_processor.program.line_number_increment` of 0
-(`Problem::OutOfRange`). Warnings: `Problem::StepDownAboveDiameter`
+cutter, since the tool centre follows the line), and
+`Problem::OperationHasNoTargets`. A `line_number_increment` of 0 was an
+error here until #106; a project can no longer change it, so
+`post::bundled_line_number_increments_are_positive` checks every bundled
+version instead. Warnings: `Problem::StepDownAboveDiameter`
 (located at the step-down in effect, the operation's or else the tool's),
 `Problem::PlungeAboveFeed`, `Problem::SpindleSpeedHigh` (above `MAX_RPM`,
 60 000) and `Problem::LargeDiameter` (above `MAX_TOOL_DIAMETER_MM`, 50 mm).
@@ -227,8 +230,95 @@ when the file as written has a value there, its line and column. One lookup
 serves current and migrated files. serde reads the internally tagged
 `Operation` whole, which loses the path inside it, so `load` reads a
 failing operation's fields again as its variant's struct to recover it.
-Every `Option` field, the post-processor's included, is required on load
-(`null` when unset).
+Every `Option` field is required on load (`null` when unset), and so is
+every field of a post-processor definition file.
+
+#### Post-processor reference (#106, ADR-0004)
+
+A project stores which bundled definition version it uses and the user's
+settings, not the definition:
+
+```rust
+pub struct PostProcessorRef {               // `post_processor` in a .dcv, keys in this order
+    pub id: String,                         // "grblhal"
+    pub definition_version: u32,            // definitions/<id>/v<n>.json
+    pub file_extension: String,
+    pub spindle_control: SpindleControl,
+    pub spindle_on_dwell_s: f64,
+    pub tool_change_mode: ToolChangeMode,
+    pub decimal_places: DecimalPlaces,
+}
+impl PostProcessorRef {
+    pub fn latest(id: &str) -> Result<Self, PostProcessorError>;          // init, export --post
+    pub fn definition(&self) -> Result<&'static BundledDefinition, PostProcessorError>;
+    pub fn resolve(&self) -> Result<PostProcessor, PostProcessorError>;   // what dc-gcode emits with
+}
+pub fn bundled_definitions() -> Result<&'static [BundledDefinition], PostProcessorError>;
+pub fn latest_definitions() -> Result<Vec<&'static BundledDefinition>, PostProcessorError>;
+pub fn bundled_definition(id: &str, version: u32) -> Result<&'static BundledDefinition, PostProcessorError>;
+pub fn latest_definition(id: &str) -> Result<&'static BundledDefinition, PostProcessorError>;
+```
+
+`resolve` takes the definition's `PostProcessor` and puts the five settings
+where the full schema has them (`file_extension`,
+`feed_speed.spindle_control`, `feed_speed.spindle_on_dwell.duration_s`,
+`tool_change.mode`, `number_format.decimal_places`), so `dc-gcode` emits
+from the same `PostProcessor` as before and emission is unchanged.
+
+**Definition files.** `crates/dc-project/src/definitions/<id>/v<n>.json`,
+compiled in with `include_str!` and parsed on first use. A file is a
+`PostProcessor` without the five settings, plus a `default_settings` object
+holding them under the project's names: the settings `init` and `--post`
+write. Defaults are per definition because they are controller facts (the
+3 s spin-up dwell is cited in the definitions README; a future LinuxCNC
+definition would default to `ngc`). Parsing fails if a file also sets one
+of the five itself. Version 1 of `grblhal` and `grbl` is today's file with
+the settings moved out; `resolve_matches_old_embedded_definition` checks
+that each resolves, with its defaults, to exactly what the old file parsed
+to, kept in `tests/fixtures/post/`.
+
+**Versions.** A change to a definition that changes emitted bytes is a new
+version file; released versions stay in the binary unchanged.
+`released_definition_versions_are_unchanged` pins every file by an FNV-1a
+64-bit hash (no dependency; it detects edits and is not a security
+measure), and `.gitattributes` keeps them LF so the hash holds on Windows.
+`export --post <id>` writes the latest version with its default settings,
+as switching always reset them; on the project's own id it is how a user
+upgrades, and export prints `post-processor grblhal v1 → v2`.
+
+**Load.** After deserializing, `load` resolves the reference: an unknown
+`id` is `LoadError::Schema` at `post_processor.id`, an unknown
+`definition_version` at `post_processor.definition_version`, each with the
+file position and a list of what is bundled.
+
+**Migration to version 7** (`v6_to_v7`). The five settings move out of the
+embedded copy with their values. The rest of the copy is compared, as JSON,
+with the bundled version 1 of its `id`. Equal: the step writes the
+reference. Different, or an `id` that is not bundled: the step fails, and
+the message names every differing field path with both values, then the
+reference block (the user's settings filled in) to paste in place of the old
+one, with `"version"` set to 7. For an unbundled id the comparison is with
+the bundled version 1 that differs least. A different dialect is never
+swapped in silently, since that would change the G-code.
+
+**Where the registry lives.** In `dc-project`, not `dc-gcode`: `load` must
+reject an unknown id or version, validation needs the definition's tool
+change (`"m6"` needs an `M6` line, #95), and the version 6 migration compares
+with version 1, all inside `dc-project`, which cannot depend on `dc-gcode`.
+Keeping it in `dc-gcode` with validation taking the resolved definition as a
+parameter would still leave `load` and the migration without it.
+`dc-gcode::post` keeps the tests of the controller facts, run over every
+version of every definition, because some of them emit G-code.
+
+**`line_numbers` is not a setting.** The chapter never listed it among the
+settings a user may change, both bundled definitions have it off, and
+whether a controller accepts `N` words, and in what range, is controller
+data that belongs with the verified definition. So `line_numbers` and
+`line_number_increment` stay in the definition, and the #67 check that the
+increment is above 0 becomes a test on every bundled version. For the same
+reason the check that the dwell command has `{seconds}`
+(`Problem::MissingPlaceholder`, removed) is now part of
+`post::bundled_definitions_dwell_three_seconds_after_spindle_on`.
 
 ### dc-cam
 
@@ -254,12 +344,12 @@ pub fn stock_overhang(stock: &Stock, swept: Rect) -> Option<Overhang>;
 schema field for field (id, name, description, vendor, builtin,
 file_extension, coordinate_system, number_format, units, program,
 work_coordinates, motion, feed_speed, tool_change, canned_cycles, coolant,
-stop). It lives in `dc-project::post_processor`, not here, because `Project`
-embeds it and the crate direction (`dc-geometry → dc-project → dc-gcode`)
-forbids `dc-project` depending on `dc-gcode`; `dc-gcode` re-exports it.
-`dc-gcode::post` holds the bundled definitions: `include_str!` JSON parsed at
-first use and validated by a test, with `bundled()` and
-`lookup(id) -> Result<PostProcessor, ExportError>`.
+stop). It lives in `dc-project::post_processor`, with the bundled
+definitions (see "Post-processor reference" above), because the crate
+direction (`dc-geometry → dc-project → dc-gcode`) forbids `dc-project`
+depending on `dc-gcode`; `dc-gcode` re-exports it. `emit` and
+`emit_programs` resolve the project's `PostProcessorRef` and emit with the
+result; one that names no bundled definition is `ExportError::PostProcessor`.
 
 ```rust
 pub struct Program { pub text: String, pub extension: String, pub pauses: Vec<Pause>, pub first_tool: FirstTool, pub extents: Extents }
@@ -273,7 +363,7 @@ pub fn parse_motion(text: &str) -> Vec<MachineMove>;   // test-only helper, re-e
 ```
 
 `emit` writes one program. `emit_programs` is what `export` calls: with
-`tool_change.mode` `"separate_programs"` it splits the enabled operations
+the tool-change mode `"separate_programs"` it splits the enabled operations
 into tool runs (consecutive operations with the same tool, in operation
 order; never regrouped) and returns `emit` of each run, so each program
 passed the safety pass on its own and has its own extents; with `"m6"` it
@@ -369,7 +459,7 @@ Inputs: project, op. Output: toolpath in project space.
 
 1. Preconditions: every referenced tool has `feed`, `plunge`, `rpm`, else
    `ExportError::MissingFeed`/`MissingRpm`. With
-   `feed_speed.spindle_control: manual`, `rpm` is optional. At least one
+   `spindle_control: manual`, `rpm` is optional. At least one
    enabled op.
 2. Compute machine transform from `origin`: translation `(−ox, −oy, −oz)`
    with `oz = thickness` for `StockTop`, 0 for `StockBottom`; then axis
@@ -384,7 +474,7 @@ Inputs: project, op. Output: toolpath in project space.
    `G90`, `G94`), plus any of those three added, form the setup that is
    written again after every pause that more motion follows (#55). If the
    enabled operations change tools, and the post-processor's
-   `tool_change.mode` is not `"m6"` or its tool change has no `M6` line,
+   tool-change mode is not `"m6"` or its tool change has no `M6` line,
    `emit` fails with `ToolChangeNotSupported`, naming the tools
    (`emit_programs` never asks it to in `"separate_programs"` mode, and
    validation refuses `"m6"` without `M6`); otherwise `M61 Q{n}` for the
@@ -453,7 +543,7 @@ Inputs: project, op. Output: toolpath in project space.
    the last written place is a full circle to the controller and fails
    as `ExportError::FullCircleArc`, so S7 and the extents never see one.
    `M6` and `M61` are accepted only from a definition whose tool change has
-   `M6` and whose `tool_change.mode` is `"m6"`. A violation is
+   `M6` and whose tool-change mode is `"m6"`. A violation is
    `ExportError`, never a warning.
 8. `Program.pauses` lists every `M0` and `M6` line with its 1-based line
    number and its comment text, so the CLI can tell the user what each stop
@@ -563,9 +653,9 @@ run's program.
 
 ```
 crates/dc-geometry/src/{lib.rs, point.rs, polyline.rs, contour.rs, region.rs, distance.rs, offset.rs, flatten.rs, transform.rs}
-crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, layout.rs, locate.rs, migrate.rs, validate.rs, history.rs, post_processor.rs}
+crates/dc-project/src/{lib.rs, model.rs, ids.rs, serialize.rs, layout.rs, locate.rs, migrate.rs, validate.rs, history.rs, post_processor.rs, definitions/{README.md, grblhal/v1.json, grbl/v1.json}}
 crates/dc-cam/src/{lib.rs, toolpath.rs, warning.rs, profile.rs, overlap.rs, passes.rs, stock.rs, tabs.rs}
-crates/dc-gcode/src/{lib.rs, error.rs, post.rs, emit.rs, format.rs, transform.rs, parse.rs, definitions/{README.md, grblhal.json, grbl.json}}
+crates/dc-gcode/src/{lib.rs, error.rs, post.rs (tests only), emit.rs, format.rs, transform.rs, parse.rs}
 crates/dc-import/src/{lib.rs, svg.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs}
 tests/golden/{profile-outside-rect, profile-inside-circle, profile-ring, profile-tabs-circle}/
@@ -606,8 +696,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `validate::dangling_tool_id_is_error`.
 - `validate::unset_feed_is_an_error` (a warning before #76), `validate::unused_tool_with_unset_values_is_a_warning_not_an_error`, `validate::tool_used_only_by_disabled_operation_is_unused`, `validate::used_tool_with_unset_values_is_still_an_error`.
 - Unset step-down (#98): `validate::step_down_unset_on_operation_and_tool_is_error`, `validate::step_down_on_operation_only_is_valid`, `validate::step_down_on_tool_only_is_valid`, `validate::step_down_unset_reported_once_per_tool`, `validate::disabled_operation_needs_no_step_down`; CLI `init_leaves_operation_step_down_unset`, `check_after_init_lists_missing_step_down`.
-- Sanity checks (#67): `validate::step_down_above_diameter_warns`, `validate::v_bit_in_profile_is_an_error`, `validate::ball_nose_and_engraver_in_profile_are_errors` (Outside and Inside), `validate::v_bit_on_line_is_allowed`, `validate::ball_nose_and_engraver_on_line_are_allowed`, `validate::feed_above_limit_is_an_error`, `validate::plunge_above_limit_is_an_error`, `validate::rpm_above_limit_warns`, `validate::plunge_above_feed_warns`, `validate::diameter_above_limit_warns`, `validate::zero_line_increment_is_rejected`, `validate::empty_operation_is_an_error`, `validate::unused_tool_gets_no_sanity_findings`, `validate::sanity_problems_are_reported_together`, `validate::quick_start_values_have_no_sanity_findings`; CLI `quick_start_project_has_no_sanity_warnings`, `export_refuses_feed_above_limit_with_location`.
+- Sanity checks (#67): `validate::step_down_above_diameter_warns`, `validate::v_bit_in_profile_is_an_error`, `validate::ball_nose_and_engraver_in_profile_are_errors` (Outside and Inside), `validate::v_bit_on_line_is_allowed`, `validate::ball_nose_and_engraver_on_line_are_allowed`, `validate::feed_above_limit_is_an_error`, `validate::plunge_above_limit_is_an_error`, `validate::rpm_above_limit_warns`, `validate::plunge_above_feed_warns`, `validate::diameter_above_limit_warns`, `validate::empty_operation_is_an_error`, `validate::unused_tool_gets_no_sanity_findings`, `validate::sanity_problems_are_reported_together`, `validate::quick_start_values_have_no_sanity_findings`; CLI `quick_start_project_has_no_sanity_warnings`, `export_refuses_feed_above_limit_with_location`.
 - `post_processor::post_processor_round_trips_through_json`, `post_processor::unknown_field_is_rejected`.
+- Post-processor reference (#106): `post_processor::project_post_processor_round_trips`, `post_processor::missing_post_processor_setting_fails_to_load`, `post_processor::unknown_post_id_fails_to_load`, `post_processor::unknown_definition_version_fails_to_load`, `post_processor::resolve_matches_old_embedded_definition`, `post_processor::released_definition_versions_are_unchanged`; `migrate::version_6_fixture_loads`, `migrate::v6_with_bundled_copy_migrates_to_reference`, `migrate::v6_with_edited_dialect_fails_to_load`, `migrate::v6_with_unbundled_id_fails_to_load`; CLI `init_writes_post_processor_reference`, `export_post_switch_writes_reference`, and the byte-for-byte `manual_spindle_export_matches_committed_program`, `multi_tool_exports_match_committed_programs`, `m6_export_matches_committed_program`, `grbl_exports_match_committed_programs`.
 - `history::undo_restores_previous_snapshot`, `history::redo_after_undo`, `history::new_edit_truncates_redo`.
 
 **dc-cam**
@@ -642,8 +733,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `tabs::tabs_above_cut_depth_warn` (port: `applyTabWarnings`).
 
 **dc-gcode**
-- `post::bundled_definitions_validate` — grblhal.json and grbl.json parse; ids are `grblhal` and `grbl`.
-- `post::lookup_by_id` — finds both; an unknown id is `UnknownPostProcessor`.
+- `post::bundled_definitions_validate` — every version of every definition parses and has its id; the latest are `grblhal` and `grbl`. The other `post::bundled_*` tests also run over every version.
+- `post::latest_definition_by_id` — finds both; an unknown id is `PostProcessorError::UnknownId`, listing them.
+- `post::bundled_line_number_increments_are_positive`, `post::bundled_default_settings_are_valid` (#106).
 - `post::grblhal_and_grbl_differ_only_in_dialect` — same toolpath, diff restricted to header/footer/comment/tool-change/WCS lines.
 - `transform::origin_bottom_left_stock_top_translates_only` — no coordinate changes sign.
 - `transform::axis_inversion_from_definition_applies`.

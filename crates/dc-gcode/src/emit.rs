@@ -12,7 +12,7 @@
 //! fitting (phase 1 has none of them). Re-derived for Y-up: toolpaths are
 //! Y-up and so is the machine, so arc direction carries over unchanged
 //! unless the definition's axis map mirrors the plane. Changes from
-//! upstream, from the controller facts in `definitions/README.md`
+//! upstream, from the controller facts in `dc-project/src/definitions/README.md`
 //! ("Verification"):
 //!
 //! - Missing feed, plunge, or RPM is an error; nothing is defaulted. With
@@ -140,7 +140,7 @@ pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 type OpEntry = (ProfileOp, Tool, Toolpath);
 
 /// Emits the programs `export` writes for the enabled operations in `ops`,
-/// as [`emit`] does, split as the post-processor's `tool_change.mode` says
+/// as [`emit`] does, split as the post-processor's `tool_change_mode` says
 /// (#95):
 ///
 /// - `"separate_programs"`: one program per tool run, a run being
@@ -164,14 +164,15 @@ pub fn emit_programs(
     ops: &[OpEntry],
     date: &str,
 ) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError> {
+    let post = project.post_processor.resolve()?;
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let runs: Vec<&[&OpEntry]> = match project.post_processor.tool_change.mode {
+    let runs: Vec<&[&OpEntry]> = match post.tool_change.mode {
         ToolChangeMode::M6 => vec![enabled.as_slice()],
         ToolChangeMode::SeparatePrograms => enabled.chunk_by(|a, b| a.1.id == b.1.id).collect(),
     };
     let mut programs = Vec::with_capacity(runs.len());
     for run in runs {
-        let (program, run_warnings) = emit_enabled(project, run, date)?;
+        let (program, run_warnings) = emit_enabled(project, &post, run, date)?;
         warnings.extend(run_warnings);
         programs.push(program);
     }
@@ -179,8 +180,10 @@ pub fn emit_programs(
 }
 
 /// Emits one program for the enabled operations in `ops`, each with its
-/// tool and its toolpath (project space, mm), using the project's embedded
-/// post-processor, machine origin, and display units. `date` fills the
+/// tool and its toolpath (project space, mm), using the project's
+/// post-processor (its bundled definition with its settings, resolved by
+/// [`dc_project::PostProcessorRef::resolve`]), machine origin, and display
+/// units. `date` fills the
 /// `{date}` placeholder; the caller supplies it so output is
 /// deterministic. `export` calls [`emit_programs`], which splits a
 /// multi-tool project as the post-processor's tool-change mode says.
@@ -194,14 +197,27 @@ pub fn emit_programs(
 /// spindle speed names the tool and field; more than one tool, unless the
 /// tool-change mode is `"m6"` and the definition has `M6`, names the tools
 /// ([`ExportError::ToolChangeNotSupported`]); any safety violation in the
-/// emitted program is an error, never a warning. See [`ExportError`].
+/// emitted program is an error, never a warning. A post-processor that
+/// names no bundled definition is [`ExportError::PostProcessor`]. See
+/// [`ExportError`].
 pub fn emit(
     project: &Project,
     ops: &[OpEntry],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
+    emit_with(project, &project.post_processor.resolve()?, ops, date)
+}
+
+/// [`emit`] with the effective post-processor `post` given. Tests use it
+/// to try definitions that no bundled version has.
+pub(crate) fn emit_with(
+    project: &Project,
+    post: &PostProcessor,
+    ops: &[OpEntry],
+    date: &str,
+) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let (program, emitted) = emit_enabled(project, &enabled, date)?;
+    let (program, emitted) = emit_enabled(project, post, &enabled, date)?;
     warnings.extend(emitted);
     Ok((program, warnings))
 }
@@ -229,10 +245,10 @@ fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), E
 /// [`emit`] for operations already known to be enabled.
 fn emit_enabled(
     project: &Project,
+    post: &PostProcessor,
     enabled: &[&OpEntry],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
-    let post = &project.post_processor;
     let control = post.feed_speed.spindle_control;
     let manual = control == SpindleControl::Manual;
     let mut warnings = Vec::new();
@@ -287,7 +303,7 @@ fn emit_enabled(
         .thickness_mm
         .ok_or(ExportError::MissingThickness)?;
     // Steps 2 and 3: machine transform and units.
-    let transform = MachineTransform::new(project)?;
+    let transform = MachineTransform::new(project, post)?;
     let (units_command, units_field) = match transform.output_units() {
         Units::Mm => (post.units.mm_command.as_deref(), "units.mm_command"),
         Units::Inch => (post.units.inch_command.as_deref(), "units.inch_command"),
@@ -319,7 +335,7 @@ fn emit_enabled(
         });
     }
 
-    let mut w = Writer::new(project, transform);
+    let mut w = Writer::new(project, post, transform);
 
     // Step 4: header, then G90, units and WCS if the header does not place
     // them. The same setup is written again after every pause (#55).
@@ -624,7 +640,7 @@ impl Rates {
 /// and resume only on cycle start (`gcode.c`, "[21. Program flow]").
 const PAUSE_COMMAND: &str = "M0";
 
-/// grblHAL's tool change (`definitions/README.md`, "Tool changes"). With
+/// grblHAL's tool change (`dc-project/src/definitions/README.md`, "Tool changes"). With
 /// `$341` at 0 and no automatic tool changer it syncs the planner, reports
 /// the line's `(MSG, ...)`, and waits in its tool-change state, where the
 /// user may jog, until cycle start.
@@ -931,8 +947,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(project: &'a Project, transform: MachineTransform) -> Self {
-        let post = &project.post_processor;
+    fn new(project: &Project, post: &'a PostProcessor, transform: MachineTransform) -> Self {
         let tolerance = project.flatten_tolerance_mm;
         Self {
             post,
@@ -984,7 +999,7 @@ impl<'a> Writer<'a> {
 
     /// Writes an `M0` with `message`, sanitized, as a `(MSG, ...)` comment.
     /// grblHAL reports it to the sender as `[MSG:...]`; GRBL ignores the
-    /// comment (`definitions/README.md`, "Manual spindle control").
+    /// comment (`dc-project/src/definitions/README.md`, "Manual spindle control").
     ///
     /// The user may send commands while the program is paused, such as a
     /// probe (`G38.2`) or a `G1` with its own feed to set Z zero, so the
@@ -1005,7 +1020,7 @@ impl<'a> Writer<'a> {
     /// jogs and sets Z zero at the stop (#57). On its own line the message
     /// would be reported when the controller reads the line, which may be
     /// long before it stops; on the `M6` line grblHAL reports it after the
-    /// planner has synced, as it stops (`definitions/README.md`).
+    /// planner has synced, as it stops (`dc-project/src/definitions/README.md`).
     fn change_tool(&mut self, number: usize, message: &str) {
         let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
         self.line(&format!("T{number} {TOOL_CHANGE_COMMAND} (MSG, {message})"));
@@ -1364,13 +1379,13 @@ impl<'a> Writer<'a> {
 mod tests {
     use super::*;
     use crate::parse::{MotionKind, parse_motion, parse_program};
-    use crate::post::lookup;
     use crate::safety::MAX_LINE_CHARS;
     use dc_cam::{FeedField, Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3, assert_approx_eq};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
     use dc_project::{
-        Operation, OperationId, OriginZ, SpindleControl, ToolChangeMode, ToolId, Units,
+        Operation, OperationId, OriginZ, PostProcessorRef, SpindleControl, ToolChangeMode, ToolId,
+        Units,
     };
 
     const DATE: &str = "2026-10-15";
@@ -1385,8 +1400,13 @@ mod tests {
     /// The sample project with the bundled post-processor `post_id`.
     fn project_with(post_id: &str) -> Project {
         let mut project = sample_project();
-        project.post_processor = lookup(post_id).unwrap();
+        project.post_processor = PostProcessorRef::latest(post_id).unwrap();
         project
+    }
+
+    /// The effective post-processor of `project`.
+    fn post_of(project: &Project) -> PostProcessor {
+        project.post_processor.resolve().unwrap()
     }
 
     /// The sample project's operation, tool, and generated toolpath.
@@ -1405,6 +1425,15 @@ mod tests {
 
     fn emit_text(project: &Project) -> String {
         emit(project, &ops_for(project), DATE).unwrap().0.text
+    }
+
+    /// [`emit_text`] with the definition `post`, which no bundled version
+    /// need have, in place of the project's.
+    fn emit_text_with(project: &Project, post: &PostProcessor) -> String {
+        emit_with(project, post, &ops_for(project), DATE)
+            .unwrap()
+            .0
+            .text
     }
 
     /// Code words of a line: comments removed, upper-cased, split on
@@ -1570,7 +1599,7 @@ mod tests {
         // The outside offset of the sample rectangle has rounded corners;
         // climb on an outside wall runs clockwise, so they are G2.
         let project = project_with("grblhal");
-        assert!(project.post_processor.motion.arc_interpolation);
+        assert!(post_of(&project).motion.arc_interpolation);
         let text = emit_text(&project);
         let arcs = text.lines().filter(|l| has_word(l, "G2")).count();
         let moves = parse_motion(&text).unwrap();
@@ -1591,9 +1620,10 @@ mod tests {
     fn mirroring_axis_map_reverses_arc_direction() {
         // With machine X inverted, the clockwise corners of a climb
         // outside cut are counter-clockwise on the machine.
-        let mut project = project_with("grblhal");
-        project.post_processor.coordinate_system.x_axis = dc_project::Axis::NegX;
-        let moves = parse_motion(&emit_text(&project)).unwrap();
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.coordinate_system.x_axis = dc_project::Axis::NegX;
+        let moves = parse_motion(&emit_text_with(&project, &post)).unwrap();
         assert_eq!(
             moves
                 .iter()
@@ -1607,9 +1637,10 @@ mod tests {
 
     #[test]
     fn arcs_emitted_with_r_when_the_definition_says_so() {
-        let mut project = project_with("grblhal");
-        project.post_processor.motion.arc_format = dc_project::ArcFormat::R;
-        let text = emit_text(&project);
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.motion.arc_format = dc_project::ArcFormat::R;
+        let text = emit_text_with(&project, &post);
         let moves = parse_motion(&text).unwrap();
         let arcs: Vec<_> = moves
             .iter()
@@ -1625,9 +1656,10 @@ mod tests {
 
     #[test]
     fn arcs_flattened_when_not() {
-        let mut project = project_with("grblhal");
-        project.post_processor.motion.arc_interpolation = false;
-        let text = emit_text(&project);
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.motion.arc_interpolation = false;
+        let text = emit_text_with(&project, &post);
         assert!(
             !text.lines().any(|l| has_word(l, "G2") || has_word(l, "G3")),
             "{text}"
@@ -1708,8 +1740,9 @@ mod tests {
                 );
                 assert!(!line.contains(['!', '~', '?']), "{post}: {line:?}");
             }
-            let prefix = &project.post_processor.program.comment_prefix;
-            let suffix = &project.post_processor.program.comment_suffix;
+            let definition = post_of(&project);
+            let prefix = &definition.program.comment_prefix;
+            let suffix = &definition.program.comment_suffix;
             let named: Vec<&str> = text.lines().filter(|l| l.contains("Bad")).collect();
             assert!(
                 named.len() >= 3,
@@ -1756,7 +1789,7 @@ mod tests {
     fn never_emits_m4_or_m7() {
         // grblHAL's definition has M4 and M7; neither is used.
         let project = project_with("grblhal");
-        assert_eq!(project.post_processor.feed_speed.spindle_on_ccw, "M4");
+        assert_eq!(post_of(&project).feed_speed.spindle_on_ccw, "M4");
         let text = emit_text(&project);
         for line in text.lines() {
             for word in ["M4", "M7", "M6", "G53"] {
@@ -1851,7 +1884,7 @@ mod tests {
     /// project's tool-change mode becomes `"m6"`, the one program with a
     /// tool change that [`emit`] writes (#95).
     fn two_tool_ops(project: &mut Project) -> Vec<(ProfileOp, Tool, Toolpath)> {
-        project.post_processor.tool_change.mode = ToolChangeMode::M6;
+        project.post_processor.tool_change_mode = ToolChangeMode::M6;
         project.tools.push(second_tool());
         let mut second = profile_op(project);
         second.id = OperationId::new("o2");
@@ -1890,11 +1923,7 @@ mod tests {
     #[test]
     fn zero_dwell_emits_nothing() {
         let mut project = project_with("grblhal");
-        project
-            .post_processor
-            .feed_speed
-            .spindle_on_dwell
-            .duration_s = 0.0;
+        project.post_processor.spindle_on_dwell_s = 0.0;
         let ops = two_tool_ops(&mut project);
         let text = emit(&project, &ops, DATE).unwrap().0.text;
         assert!(!text.lines().any(|l| has_word(l, "G4")), "{text}");
@@ -1908,8 +1937,8 @@ mod tests {
         for (mm, inch, units) in [(1, 4, Units::Mm), (3, 2, Units::Inch)] {
             let mut project = sample_project();
             project.display_units = units;
-            project.post_processor.number_format.decimal_places.mm = mm;
-            project.post_processor.number_format.decimal_places.inch = inch;
+            project.post_processor.decimal_places.mm = mm;
+            project.post_processor.decimal_places.inch = inch;
             let result = emit(&project, &ops_for(&project), DATE);
             assert!(
                 matches!(result, Err(ExportError::TooFewDecimalPlaces { .. })),
@@ -1944,9 +1973,10 @@ mod tests {
 
     #[test]
     fn line_numbers_when_asked() {
-        let mut project = project_with("grblhal");
-        project.post_processor.program.line_numbers = true;
-        let text = emit_text(&project);
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.program.line_numbers = true;
+        let text = emit_text_with(&project, &post);
         let lines: Vec<&str> = text.lines().collect();
         assert!(lines[0].starts_with("N10 "), "{}", lines[0]);
         assert!(lines[1].starts_with("N20 "), "{}", lines[1]);
@@ -1956,7 +1986,7 @@ mod tests {
     /// router switched on and off by hand.
     fn manual_project(post_id: &str) -> Project {
         let mut project = project_with(post_id);
-        project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+        project.post_processor.spindle_control = SpindleControl::Manual;
         project
     }
 
@@ -1987,14 +2017,14 @@ mod tests {
                 panic!("{post}: manual export without RPM failed: {err:?}");
             }
 
-            project.post_processor.feed_speed.spindle_control = SpindleControl::Automatic;
+            project.post_processor.spindle_control = SpindleControl::Automatic;
             let err = emit(&project, &ops, DATE).unwrap_err();
             assert!(
                 matches!(&err, ExportError::MissingRpm { .. }),
                 "{post}: {err:?}"
             );
 
-            project.post_processor.feed_speed.spindle_control = SpindleControl::Manual;
+            project.post_processor.spindle_control = SpindleControl::Manual;
             ops[0].1.plunge_mm_min = None;
             let err = emit(&project, &ops, DATE).unwrap_err();
             assert!(
@@ -2157,7 +2187,7 @@ mod tests {
     fn tool_change_is_followed_by_a_retract() {
         for control in [SpindleControl::Automatic, SpindleControl::Manual] {
             let mut project = project_with("grblhal");
-            project.post_processor.feed_speed.spindle_control = control;
+            project.post_processor.spindle_control = control;
             let ops = two_tool_ops(&mut project);
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             let lines: Vec<&str> = text.lines().collect();
@@ -2188,7 +2218,7 @@ mod tests {
             ("grbl", 1, SpindleControl::Automatic, vec![]),
         ] {
             let mut project = project_with(post);
-            project.post_processor.feed_speed.spindle_control = control;
+            project.post_processor.spindle_control = control;
             let ops = if tools == 1 {
                 ops_for(&project)
             } else {
@@ -2213,12 +2243,13 @@ mod tests {
     #[test]
     fn manual_messages_are_sanitized() {
         for post in ["grblhal", "grbl"] {
-            let mut project = manual_project(post);
-            project.post_processor.program.line_numbers = true;
-            project.post_processor.program.line_number_increment = 1_000_000_000;
+            let project = manual_project(post);
+            let mut definition = post_of(&project);
+            definition.program.line_numbers = true;
+            definition.program.line_number_increment = 1_000_000_000;
             let mut ops = ops_for(&project);
             ops[0].1.rpm = Some(u32::MAX);
-            let program = emit(&project, &ops, DATE).unwrap().0;
+            let program = emit_with(&project, &definition, &ops, DATE).unwrap().0;
             assert!(!program.pauses.is_empty(), "{post}");
             for pause in &program.pauses {
                 assert_eq!(
@@ -2262,7 +2293,7 @@ mod tests {
                         continue;
                     }
                     let mut project = project_with(post);
-                    project.post_processor.feed_speed.spindle_control = control;
+                    project.post_processor.spindle_control = control;
                     let ops = if tools == 1 {
                         ops_for(&project)
                     } else {
@@ -2350,7 +2381,7 @@ mod tests {
         }
         for control in [SpindleControl::Automatic, SpindleControl::Manual] {
             let mut project = project_with("grblhal");
-            project.post_processor.feed_speed.spindle_control = control;
+            project.post_processor.spindle_control = control;
             let mut ops = two_tool_ops(&mut project);
             ops[1].1.name = "a very long tool name ".repeat(6);
             let program = emit(&project, &ops, DATE).unwrap().0;
@@ -2461,7 +2492,7 @@ mod tests {
         ] {
             let mut project = project_with(post);
             project.display_units = Units::Inch;
-            project.post_processor.feed_speed.spindle_control = control;
+            project.post_processor.spindle_control = control;
             let ops = if post == "grblhal" {
                 two_tool_ops(&mut project)
             } else {
@@ -2488,14 +2519,10 @@ mod tests {
     #[test]
     fn header_without_g90_still_sets_absolute_mode() {
         for post in ["grblhal", "grbl"] {
-            let mut project = project_with(post);
-            project
-                .post_processor
-                .program
-                .header
-                .retain(|l| l.trim() != "G90");
-            let ops = ops_for(&project);
-            let text = emit(&project, &ops, DATE).unwrap().0.text;
+            let project = project_with(post);
+            let mut definition = post_of(&project);
+            definition.program.header.retain(|l| l.trim() != "G90");
+            let text = emit_text_with(&project, &definition);
             let lines: Vec<&str> = text.lines().collect();
             let first_move = (0..lines.len())
                 .find(|&k| code(lines[k]).contains('Z'))
@@ -2521,7 +2548,7 @@ mod tests {
         for (post, tools) in [("grblhal", 1), ("grblhal", 2), ("grbl", 1)] {
             for control in [SpindleControl::Automatic, SpindleControl::Manual] {
                 let mut project = project_with(post);
-                project.post_processor.feed_speed.spindle_control = control;
+                project.post_processor.spindle_control = control;
                 let ops = if tools == 1 {
                     ops_for(&project)
                 } else {
@@ -2641,7 +2668,7 @@ mod tests {
     fn grbl_multi_tool_export_fails() {
         for control in [SpindleControl::Automatic, SpindleControl::Manual] {
             let mut project = project_with("grbl");
-            project.post_processor.feed_speed.spindle_control = control;
+            project.post_processor.spindle_control = control;
             let mut ops = two_tool_ops(&mut project);
             let err = emit(&project, &ops, DATE).unwrap_err();
             assert!(
@@ -2674,7 +2701,7 @@ mod tests {
         for post in ["grblhal", "grbl"] {
             let mut project = project_with(post);
             let ops = two_tool_ops(&mut project);
-            project.post_processor.tool_change.mode = ToolChangeMode::SeparatePrograms;
+            project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
             let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
             assert_eq!(programs.len(), 2, "{post}: one program per tool run");
             for (k, program) in programs.iter().enumerate() {
@@ -2715,7 +2742,7 @@ mod tests {
     fn emit_refuses_tool_change_in_separate_programs_mode() {
         let mut project = project_with("grblhal");
         let ops = two_tool_ops(&mut project);
-        project.post_processor.tool_change.mode = ToolChangeMode::SeparatePrograms;
+        project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
         let err = emit(&project, &ops, DATE).unwrap_err();
         assert!(
             matches!(err, ExportError::ToolChangeNotSupported { .. }),

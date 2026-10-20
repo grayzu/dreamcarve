@@ -6,28 +6,17 @@
 //! (`docs/specs/phase-1/design.md`, "Emission", step 7).
 
 use dc_cam::FeedField;
-use dc_project::{OperationId, ToolId};
+use dc_project::{OperationId, PostProcessorError, ToolId};
 
 /// Why G-code could not be exported. When `emit` returns one of these, no
 /// program is produced.
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
-    /// No bundled post-processor has this id.
-    #[error("post-processor `{id}` is not bundled")]
-    UnknownPostProcessor {
-        /// The id that was asked for.
-        id: String,
-    },
-    /// A bundled definition file failed to parse. Only a broken build can
-    /// produce this; `post::tests::bundled_definitions_validate` guards it.
-    #[error("bundled post-processor definition `{file}` is invalid")]
-    BundledDefinition {
-        /// File name under `definitions/`.
-        file: &'static str,
-        /// The parse failure.
-        #[source]
-        source: serde_json::Error,
-    },
+    /// The project's post-processor names no bundled definition version.
+    /// Loading a project already refuses that, so only a project built in
+    /// code gets here.
+    #[error(transparent)]
+    PostProcessor(#[from] PostProcessorError),
     /// There is nothing to export: no operation is enabled.
     #[error("no enabled operation to export")]
     NoEnabledOperations,

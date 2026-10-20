@@ -336,7 +336,8 @@ mod tests {
         dc_cam::test_support::assert_safe(&toolpath, &project, &op);
         let (program, _) = emit(&project, &[(op, tool, toolpath.clone())], "2026-10-15").unwrap();
 
-        let t = MachineTransform::new(&project).unwrap();
+        let t =
+            MachineTransform::new(&project, &project.post_processor.resolve().unwrap()).unwrap();
         let parsed: Vec<Point3> = parse_motion(&program.text)
             .unwrap()
             .iter()

@@ -44,7 +44,7 @@ listed in the [quick start](../quick-start/first-cut.md#2-create-the-project).
 | Option | Meaning |
 | --- | --- |
 | `-o`, `--output <DCV>` | Where to write the project. Default: the SVG's name with `.dcv`. |
-| `--post <ID>` | Post-processor to embed: `grblhal` (default) or `grbl`. |
+| `--post <ID>` | Post-processor to use, at its latest version: `grblhal` (default) or `grbl`. |
 | `--units <mm\|inch>` | Units the G-code is written in. Default `mm`. |
 
 `init` leaves the values only you can know unset (`null`): the stock
@@ -77,7 +77,7 @@ default ([Projects with more than one tool](post-processors.md#projects-with-mor
 | Option | Meaning |
 | --- | --- |
 | `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). With one program per tool run, its stem and extension name them: `-o job.nc` writes `job-1-T1.nc`, `job-2-T2.nc`, … |
-| `--post <ID>` | Switch the project to another post-processor, save the project with it, then export. The project is checked against the new post-processor, not the old one. |
+| `--post <ID>` | Switch the project to the latest version of this post-processor, with its default settings, save the project with it, then export. With the project's own id, it upgrades to the latest version ([Versions](post-processors.md#versions)). The project is checked against the new post-processor, not the old one. |
 
 Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed

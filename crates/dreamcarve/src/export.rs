@@ -28,7 +28,9 @@ use dc_cam::generate_profile;
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{AxisRange, ExportWarning, Program, emit_programs};
-use dc_project::{Operation, Project, Severity, SourceMap, ToolChangeMode, Units, validate};
+use dc_project::{
+    Operation, PostProcessorRef, Project, Severity, SourceMap, ToolChangeMode, Units, validate,
+};
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
 
@@ -206,8 +208,12 @@ pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> 
 /// Runs `export`.
 pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     let (mut project, mut file) = load_project(&args.dcv)?;
+    // `--post` is how a project changes post-processor or upgrades to a
+    // newer version of its own (#106): an explicit action, reported below.
+    let mut switched_from = None;
     if let Some(id) = &args.post {
-        project.post_processor = lookup_post(id)?;
+        let latest = lookup_post(id)?;
+        switched_from = Some(std::mem::replace(&mut project.post_processor, latest));
         file.post_replaced = true;
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
@@ -255,8 +261,8 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     }
 
     match (programs.as_slice(), outputs.as_slice()) {
-        ([program], [output]) => report(&project, program, output, args),
-        _ => report_runs(&project, &programs, &outputs, args),
+        ([program], [output]) => report(&project, program, output, args, switched_from.as_ref()),
+        _ => report_runs(&project, &programs, &outputs, args, switched_from.as_ref()),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -307,14 +313,20 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// set work zero with before starting (#57), then every pause and tool
 /// change with its line number and message, because the controller or
 /// sender may not show the message (design step 8).
-fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs) {
+fn report(
+    project: &Project,
+    program: &Program,
+    output: &Path,
+    args: &ExportArgs,
+    switched_from: Option<&PostProcessorRef>,
+) {
     println!(
         "Wrote {} ({} lines, post-processor {}).",
         output.display(),
         program.text.lines().count(),
         project.post_processor.id
     );
-    report_post_and_operations(project, args);
+    report_post_and_operations(project, args, switched_from);
     for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
         println!("{line}");
     }
@@ -327,7 +339,7 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
     report_pauses(program, "");
     // #95: the user chose one program with M6; it stops only if the
     // sender lets M6 through or stops for it itself.
-    if project.post_processor.tool_change.mode == ToolChangeMode::M6 && changes_tools(project) {
+    if project.post_processor.tool_change_mode == ToolChangeMode::M6 && changes_tools(project) {
         println!(
             "This program changes tools with M6, so your sender must stop at M6; see \"One program with M6\" in the post-processors chapter."
         );
@@ -337,7 +349,13 @@ fn report(project: &Project, program: &Program, output: &Path, args: &ExportArgs
 /// Prints the export summary of the programs of tool runs (#95): the files
 /// in the order to run them, with what to do before each, then one line
 /// per exported operation, then each program's extents (#62) and pauses.
-fn report_runs(project: &Project, programs: &[Program], outputs: &[PathBuf], args: &ExportArgs) {
+fn report_runs(
+    project: &Project,
+    programs: &[Program],
+    outputs: &[PathBuf],
+    args: &ExportArgs,
+    switched_from: Option<&PostProcessorRef>,
+) {
     println!("Wrote {} programs; run them in this order:", programs.len());
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
         let tool = &program.first_tool;
@@ -356,7 +374,7 @@ fn report_runs(project: &Project, programs: &[Program], outputs: &[PathBuf], arg
         );
     }
     println!("Post-processor {}.", project.post_processor.id);
-    report_post_and_operations(project, args);
+    report_post_and_operations(project, args, switched_from);
     for (program, output) in programs.iter().zip(outputs) {
         println!(
             "{} ({} lines):",
@@ -370,14 +388,26 @@ fn report_runs(project: &Project, programs: &[Program], outputs: &[PathBuf], arg
     }
 }
 
-/// Prints that `--post` updated the project, then one line per exported
+/// Prints that `--post` updated the project, from which post-processor
+/// version to which (`grblhal v1 → v2`, #106), then one line per exported
 /// operation.
-fn report_post_and_operations(project: &Project, args: &ExportArgs) {
-    if args.post.is_some() {
+fn report_post_and_operations(
+    project: &Project,
+    args: &ExportArgs,
+    switched_from: Option<&PostProcessorRef>,
+) {
+    if let Some(old) = switched_from {
+        let new = &project.post_processor;
+        let to = if new.id == old.id {
+            format!("v{}", new.definition_version)
+        } else {
+            format!("{} v{}", new.id, new.definition_version)
+        };
         println!(
-            "Updated {} to use post-processor {}.",
+            "Updated {}: post-processor {} v{} → {to}, with its default settings.",
             args.dcv.display(),
-            project.post_processor.id
+            old.id,
+            old.definition_version
         );
     }
     for Operation::Profile(op) in project.operations.iter().filter(|op| op.enabled()) {
@@ -468,9 +498,13 @@ pub fn tool_radius_mm(project: &Project, program: &Program) -> f64 {
 pub fn describe_extents(project: &Project, program: &Program, radius_mm: f64) -> Vec<String> {
     let extents = &program.extents;
     let units = extents.units;
-    let format = &project.post_processor.number_format;
-    let number =
-        |value: f64| format_number(value, format, units).unwrap_or_else(|_| value.to_string());
+    // The program was emitted with this post-processor, so it resolves.
+    let post = project.post_processor.resolve().ok();
+    let number = |value: f64| {
+        post.as_ref()
+            .and_then(|post| format_number(value, &post.number_format, units).ok())
+            .unwrap_or_else(|| value.to_string())
+    };
     let ranges = |widen: f64, axes: &[(&str, Option<AxisRange>)]| -> Vec<String> {
         axes.iter()
             .filter_map(|(axis, range)| {

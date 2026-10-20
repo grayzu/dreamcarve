@@ -87,7 +87,8 @@ fn project(
         xy: OriginXy::BottomLeft,
         z: OriginZ::StockTop,
     };
-    project.post_processor = dc_gcode::post::lookup("grblhal").expect("grblHAL is bundled");
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("grblhal").expect("grblHAL is bundled");
     let tool = &mut project.tools[0];
     tool.feed_mm_min = Some(1500.0);
     tool.plunge_mm_min = Some(500.0);

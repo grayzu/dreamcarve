@@ -43,8 +43,9 @@ pub const TOLERANCE_MM: f64 = 0.01;
 
 /// How far a written point can sit from the point its program computed:
 /// half a unit in the third decimal place on each of X and Y. Both
-/// programs write millimetres to three places (`grblhal.json` here,
-/// PureCutCNC's builtin `grblhal` definition for the golden files).
+/// programs write millimetres to three places (the bundled grblHAL
+/// definition's default here, PureCutCNC's builtin `grblhal` definition
+/// for the golden files).
 pub const ROUNDING_MM: f64 = 0.0005 * std::f64::consts::SQRT_2;
 
 /// How far apart two written programs' moves may be: [`TOLERANCE_MM`]

@@ -24,7 +24,7 @@ use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Rect, Transfo
 use dc_import::{SvgImport, SvgImportOptions, import_svg};
 use dc_project::{
     CURRENT_VERSION, CutDirection, MachineOrigin, Operation, OperationId, OriginXy, OriginZ,
-    PostProcessor, ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec,
+    PostProcessorRef, ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec,
     Tool, ToolId, ToolKind, Units, validate,
 };
 
@@ -135,7 +135,7 @@ fn default_project(
     name: String,
     import: SvgImport,
     bounds: Rect,
-    post_processor: PostProcessor,
+    post_processor: PostProcessorRef,
     display_units: Units,
 ) -> Project {
     let dx_mm = round_up_mm(STOCK_MARGIN_MM - bounds.min.x);

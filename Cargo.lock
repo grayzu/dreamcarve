@@ -178,7 +178,6 @@ dependencies = [
  "dc-cam",
  "dc-geometry",
  "dc-project",
- "serde_json",
  "thiserror",
 ]
 

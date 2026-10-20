@@ -465,7 +465,7 @@ const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
 /// offsets, `G43.1` tool length, `G38` probing, `G91` or `G93` modes, or
 /// `M8` coolant, could change what the controller does in a way the check
 /// cannot follow, so it is rejected. This also keeps out the words
-/// DreamCarve never sends to GRBL or grblHAL (`definitions/README.md`,
+/// DreamCarve never sends to GRBL or grblHAL (`dc-project/src/definitions/README.md`,
 /// "Verification"): `M4` needs a direction pin or laser mode, `M7` is
 /// optional on both, and `G28`, `G30`, and `G53` move in machine
 /// coordinates. `M6` is accepted only from a definition whose tool change
@@ -1057,7 +1057,7 @@ impl ToolpathArc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emit::emit;
+    use crate::emit::{emit, emit_with};
     use std::f64::consts::FRAC_PI_2;
 
     use dc_cam::{Move, MoveKind, generate_profile};
@@ -1216,7 +1216,7 @@ mod tests {
     /// [`check_text`] with spindle control set to `control`.
     fn check_text_as(text: &str, control: SpindleControl) -> Result<(), ExportError> {
         let (project, _, _) = fixture();
-        check_text_on(text, project.post_processor, control)
+        check_text_on(text, project.post_processor.resolve().unwrap(), control)
     }
 
     /// [`check_text_as`] with the post-processor `post` in place of the
@@ -1226,10 +1226,10 @@ mod tests {
         post: PostProcessor,
         control: SpindleControl,
     ) -> Result<(), ExportError> {
-        let (mut project, op, tool) = fixture();
-        project.post_processor = post;
-        project.post_processor.feed_speed.spindle_control = control;
-        let transform = MachineTransform::new(&project).unwrap();
+        let (project, op, tool) = fixture();
+        let mut post = post;
+        post.feed_speed.spindle_control = control;
+        let transform = MachineTransform::new(&project, &post).unwrap();
         let toolpath = Toolpath::default();
         let lines = text.lines().count() + 1;
         let spans = [OpSpan {
@@ -1240,7 +1240,7 @@ mod tests {
         }];
         check_rules(
             text,
-            &project.post_processor,
+            &post,
             &transform,
             project.stock.thickness_mm.unwrap(),
             &spans,
@@ -1513,7 +1513,7 @@ mod tests {
     fn automatic_rules_unchanged() {
         let (project, _, _) = fixture();
         assert_eq!(
-            project.post_processor.feed_speed.spindle_control,
+            project.post_processor.spindle_control,
             SpindleControl::Automatic
         );
         let ok = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
@@ -1769,7 +1769,7 @@ mod tests {
     /// has one tool, so `M6` and `M61` are refused even on grblHAL.
     #[test]
     fn tool_change_words_need_m6_mode() {
-        let grblhal = crate::post::lookup("grblhal").unwrap();
+        let grblhal = bundled_grblhal();
         assert_eq!(grblhal.tool_change.mode, ToolChangeMode::SeparatePrograms);
         for (text, word) in [
             ("G21 G90\nG54\nG0 Z5\nM5\nT2 M6\n", "M6"),
@@ -1783,10 +1783,18 @@ mod tests {
         }
     }
 
-    /// The bundled grblHAL definition with `tool_change.mode` `"m6"`: the
+    /// The latest bundled grblHAL definition with its default settings.
+    fn bundled_grblhal() -> PostProcessor {
+        dc_project::latest_definition("grblhal")
+            .unwrap()
+            .post_processor()
+            .clone()
+    }
+
+    /// The bundled grblHAL definition with tool-change mode `"m6"`: the
     /// one program with `M6` tool changes (#95).
     fn grblhal_m6() -> PostProcessor {
-        let mut grblhal = crate::post::lookup("grblhal").unwrap();
+        let mut grblhal = bundled_grblhal();
         grblhal.tool_change.mode = ToolChangeMode::M6;
         grblhal
     }
@@ -1823,7 +1831,8 @@ mod tests {
     /// operation with `toolpath`.
     fn check_against(text: &str, toolpath: &Toolpath) -> Result<(), ExportError> {
         let (project, op, tool) = fixture();
-        let transform = MachineTransform::new(&project).unwrap();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
         let spans = [OpSpan {
             op: &op,
             tool: &tool,
@@ -1832,7 +1841,7 @@ mod tests {
         }];
         check(
             text,
-            &project.post_processor,
+            &post,
             &transform,
             &project.stock,
             project.stock.thickness_mm.unwrap(),
@@ -1942,7 +1951,8 @@ mod tests {
         assert!(is_mismatch_at(&result, 3), "{result:?}");
 
         // Through the emitter: flattened, IJ, and R, mirrored or not.
-        let (mut project, op, tool) = fixture();
+        let (project, op, tool) = fixture();
+        let mut post = project.post_processor.resolve().unwrap();
         for (interpolate, format, x_axis) in [
             (false, ArcFormat::Ij, Axis::X),
             (true, ArcFormat::Ij, Axis::X),
@@ -1950,13 +1960,19 @@ mod tests {
             (true, ArcFormat::Ij, Axis::NegX),
             (true, ArcFormat::R, Axis::NegX),
         ] {
-            let motion = &mut project.post_processor.motion;
-            motion.arc_interpolation = interpolate;
-            motion.arc_format = format;
-            project.post_processor.coordinate_system.x_axis = x_axis;
+            post.motion.arc_interpolation = interpolate;
+            post.motion.arc_format = format;
+            post.coordinate_system.x_axis = x_axis;
             let (toolpath, _) = generate_profile(&project, &op).unwrap();
-            emit_one(&project, &op, &tool, toolpath).unwrap();
-            emit_one(&project, &op, &tool, line_then_arc()).unwrap();
+            for tp in [toolpath, line_then_arc()] {
+                emit_with(
+                    &project,
+                    &post,
+                    &[(op.clone(), tool.clone(), tp)],
+                    "2026-10-15",
+                )
+                .unwrap();
+            }
         }
     }
 

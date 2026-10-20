@@ -110,7 +110,7 @@ set is near the top, before the shapes. The file starts like this:
 <!-- doc-test: excerpt coaster.dcv -->
 ```json
 {
-  "version": 6,
+  "version": 7,
   "name": "coaster",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -136,7 +136,9 @@ set is near the top, before the shapes. The file starts like this:
       "step_down_mm": null,
 ```
 
-The operations follow the tools, and after them the shapes.
+The operations follow the tools, then the placed shapes and the
+`post_processor` block, which names grblHAL and holds its settings, and
+last the shapes themselves.
 
 ### The material
 

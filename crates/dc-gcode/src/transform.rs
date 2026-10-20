@@ -21,7 +21,7 @@
 //! covers both bundled definitions.
 
 use dc_geometry::Point3;
-use dc_project::{Axis, CoordinateSystem, OriginXy, OriginZ, Project, Units};
+use dc_project::{Axis, CoordinateSystem, OriginXy, OriginZ, PostProcessor, Project, Units};
 
 use crate::ExportError;
 
@@ -78,15 +78,16 @@ impl Signed {
 }
 
 impl MachineTransform {
-    /// The transform for `project`: its machine origin, its embedded
-    /// post-processor's axis mapping, and its display units as output units.
+    /// The transform for `project`: its machine origin, the axis mapping of
+    /// `post` (the project's effective post-processor), and its display
+    /// units as output units.
     ///
     /// # Errors
     ///
     /// [`ExportError::InvalidAxisMapping`] if two project axes map to the
     /// same machine axis or project Z does not map to machine Z.
-    pub fn new(project: &Project) -> Result<Self, ExportError> {
-        let axes = project.post_processor.coordinate_system;
+    pub fn new(project: &Project, post: &PostProcessor) -> Result<Self, ExportError> {
+        let axes = post.coordinate_system;
         let (x, y, z) = (
             Signed::of(axes.x_axis),
             Signed::of(axes.y_axis),
@@ -99,7 +100,7 @@ impl MachineTransform {
         // program back through this same transform, could not tell.
         if z.axis != MachineAxis::Z || z.sign < 0.0 || x.axis == y.axis || x.axis == MachineAxis::Z
         {
-            return Err(invalid(&project.post_processor.id, axes));
+            return Err(invalid(&post.id, axes));
         }
         let stock = &project.stock;
         let (ox, oy) = match project.origin.xy {
@@ -231,6 +232,11 @@ mod tests {
 
     const TOL: f64 = 1e-9;
 
+    /// The transform for `project` with its own post-processor.
+    fn transform_of(project: &Project) -> Result<MachineTransform, ExportError> {
+        MachineTransform::new(project, &project.post_processor.resolve().unwrap())
+    }
+
     fn assert_point(actual: Point3, expected: Point3) {
         assert_approx_eq!(actual.x, expected.x, TOL);
         assert_approx_eq!(actual.y, expected.y, TOL);
@@ -243,7 +249,7 @@ mod tests {
         let project = sample_project();
         assert_eq!(project.origin.xy, OriginXy::BottomLeft);
         assert_eq!(project.origin.z, OriginZ::StockTop);
-        let t = MachineTransform::new(&project).unwrap();
+        let t = transform_of(&project).unwrap();
         assert!(!t.mirrors_xy());
         for p in [
             Point3::new(0.0, 0.0, 6.0),
@@ -283,40 +289,41 @@ mod tests {
         ];
         for (xy, expected) in cases {
             project.origin.xy = xy;
-            let t = MachineTransform::new(&project).unwrap();
+            let t = transform_of(&project).unwrap();
             assert_point(t.to_machine(Point3::new(10.0, 20.0, 3.0)), expected);
         }
     }
 
     #[test]
     fn axis_inversion_from_definition_applies() {
-        let mut project = sample_project();
-        project.post_processor.coordinate_system = CoordinateSystem {
+        let project = sample_project();
+        let mut post = project.post_processor.resolve().unwrap();
+        post.coordinate_system = CoordinateSystem {
             x_axis: Axis::NegX,
             y_axis: Axis::Y,
             z_axis: Axis::Z,
         };
-        let t = MachineTransform::new(&project).unwrap();
+        let t = MachineTransform::new(&project, &post).unwrap();
         let p = Point3::new(10.0, 20.0, 3.0);
         assert_point(t.to_machine(p), Point3::new(-10.0, 20.0, -3.0));
         assert_point(t.to_project(t.to_machine(p), Units::Mm), p);
         assert!(t.mirrors_xy(), "one inverted axis mirrors the plane");
 
-        project.post_processor.coordinate_system = CoordinateSystem {
+        post.coordinate_system = CoordinateSystem {
             x_axis: Axis::NegX,
             y_axis: Axis::NegY,
             z_axis: Axis::Z,
         };
-        let t = MachineTransform::new(&project).unwrap();
+        let t = MachineTransform::new(&project, &post).unwrap();
         assert_point(t.to_machine(p), Point3::new(-10.0, -20.0, -3.0));
         assert!(!t.mirrors_xy(), "two inversions are a rotation");
 
-        project.post_processor.coordinate_system = CoordinateSystem {
+        post.coordinate_system = CoordinateSystem {
             x_axis: Axis::Y,
             y_axis: Axis::X,
             z_axis: Axis::Z,
         };
-        let t = MachineTransform::new(&project).unwrap();
+        let t = MachineTransform::new(&project, &post).unwrap();
         assert_point(t.to_machine(p), Point3::new(20.0, 10.0, -3.0));
         assert_point(t.to_project(t.to_machine(p), Units::Mm), p);
         assert!(t.mirrors_xy(), "an X/Y swap mirrors the plane");
@@ -324,7 +331,8 @@ mod tests {
 
     #[test]
     fn invalid_axis_mappings_are_rejected() {
-        let mut project = sample_project();
+        let project = sample_project();
+        let mut post = project.post_processor.resolve().unwrap();
         for (x, y, z) in [
             (Axis::X, Axis::X, Axis::Z),
             (Axis::X, Axis::NegX, Axis::Z),
@@ -334,13 +342,13 @@ mod tests {
             // send every retract into the work.
             (Axis::X, Axis::Y, Axis::NegZ),
         ] {
-            project.post_processor.coordinate_system = CoordinateSystem {
+            post.coordinate_system = CoordinateSystem {
                 x_axis: x,
                 y_axis: y,
                 z_axis: z,
             };
             assert!(matches!(
-                MachineTransform::new(&project),
+                MachineTransform::new(&project, &post),
                 Err(ExportError::InvalidAxisMapping { .. })
             ));
         }
@@ -353,7 +361,7 @@ mod tests {
         let mut project = sample_project();
         project.stock.thickness_mm = None;
         assert!(matches!(
-            MachineTransform::new(&project),
+            transform_of(&project),
             Err(ExportError::MissingThickness)
         ));
     }
@@ -362,7 +370,7 @@ mod tests {
     fn inch_output_scales_after_the_transform() {
         let mut project = sample_project();
         project.display_units = Units::Inch;
-        let t = MachineTransform::new(&project).unwrap();
+        let t = transform_of(&project).unwrap();
         assert_eq!(t.output_units(), Units::Inch);
         let p = Point3::new(25.4, 50.8, 6.0 + 25.4);
         assert_point(t.to_machine(p), Point3::new(1.0, 2.0, 1.0));

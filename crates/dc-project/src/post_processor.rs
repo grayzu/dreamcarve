@@ -5,30 +5,43 @@
 // Ported to Rust and modified from PureCutCNC:
 //   src/engine/gcode/types.ts
 
-//! Post-processor definition: how a controller dialect spells G-code.
+//! Post-processors: how a controller dialect spells G-code, which bundled
+//! definitions DreamCarve ships, and what a project stores (#106,
+//! ADR-0004).
 //!
-//! Mirrors PureCutCNC's `MachineDefinitionSchema` field for field, with keys
-//! in `snake_case`. A project embeds its own copy so an app upgrade never
-//! changes what a saved project exports. The bundled definitions live in
-//! `dc-gcode`; the type lives here because `dc-project` cannot depend on
-//! `dc-gcode` (crate direction `dc-geometry → dc-project → dc-gcode`).
+//! [`PostProcessor`] mirrors PureCutCNC's `MachineDefinitionSchema` field
+//! for field, with keys in `snake_case`. It is the effective definition
+//! that `dc-gcode` emits with. A project does not hold one: it holds a
+//! [`PostProcessorRef`], the id and version of a bundled definition plus the
+//! few settings a user may change, and [`PostProcessorRef::resolve`] puts
+//! the two together.
+//!
+//! The bundled definitions are versioned files under `definitions/`,
+//! compiled in with `include_str!` and parsed on first use (see
+//! `definitions/README.md`). A released version never changes, so a
+//! project that names it exports the same bytes after any upgrade. They
+//! live here, not in `dc-gcode`, because loading and validating a project
+//! needs them (an unknown id, the `M6` check, the version 6 migration) and
+//! `dc-project` cannot depend on `dc-gcode` (crate direction
+//! `dc-geometry → dc-project → dc-gcode`).
 //!
 //! Upstream fills five fields with zod defaults when absent (`builtin`,
 //! `program.operation_header`, `motion.arc_interpolation`,
 //! `canned_cycles.chip_break_drill_command`, `canned_cycles.cancel_command`).
-//! Here every field is required, so a saved file shows every setting. An
+//! Here every field is required, so a definition file shows every value. An
 //! `Option` field is required too, `null` when unset (#65): serde would
-//! otherwise read a missing one as `None`, so a schema change could slip in
-//! without a migration (ADR-0002).
+//! otherwise read a missing one as `None`.
 
 use serde::{Deserialize, Deserializer, Serialize, de};
+use serde_json::Value;
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Longest [`PostProcessor::file_extension`] accepted.
 pub const MAX_FILE_EXTENSION_CHARS: usize = 8;
 
-/// Whether `extension` is safe to append to a project's file name. A `.dcv`
-/// embeds its post-processor, so a shared project chooses this value: it
+/// Whether `extension` is safe to append to a project's file name. It is a
+/// setting in the `.dcv`, so a shared project chooses this value: it
 /// must be 1 to [`MAX_FILE_EXTENSION_CHARS`] ASCII letters or digits (never
 /// a path) and not `dcv` in any case, which would replace the project.
 #[must_use]
@@ -39,8 +52,10 @@ pub fn is_safe_file_extension(extension: &str) -> bool {
         && !extension.eq_ignore_ascii_case("dcv")
 }
 
-/// A post-processor definition. Text fields are G-code words or templates
-/// whose `{placeholder}` tokens are filled at export.
+/// A post-processor definition, complete: a bundled definition version with
+/// a project's settings in it ([`PostProcessorRef::resolve`]), which is what
+/// `dc-gcode` emits with. Text fields are G-code words or templates whose
+/// `{placeholder}` tokens are filled at export.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostProcessor {
@@ -362,7 +377,8 @@ pub fn is_m6_line(line: &str) -> bool {
 }
 
 /// How a project whose operations use more than one tool is exported (#95).
-/// A machine setting, so it lives in the post-processor.
+/// A machine setting, so it is a post-processor setting
+/// ([`PostProcessorRef::tool_change_mode`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolChangeMode {
@@ -431,6 +447,371 @@ pub struct Coolant {
 pub struct Stop {
     /// Program-end command, for example `M30`.
     pub program_end_command: String,
+}
+
+/// What a project stores about its post-processor (#106, ADR-0004): which
+/// bundled definition version it uses, and the user's settings. Everything
+/// else in the effective [`PostProcessor`] comes from that definition
+/// version, which is compiled in and never changes once released, so a
+/// saved project exports the same bytes after any upgrade.
+///
+/// [`resolve`](Self::resolve) puts the two together. Every key is
+/// required, and they are written in this order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostProcessorRef {
+    /// The bundled definition's id, for example `grblhal`.
+    pub id: String,
+    /// The bundled definition's version, `<n>` in
+    /// `definitions/<id>/v<n>.json`.
+    pub definition_version: u32,
+    /// Output file extension without the dot, for example `nc`. See
+    /// [`is_safe_file_extension`].
+    pub file_extension: String,
+    /// Whether the program switches the spindle, or pauses for the user to
+    /// switch the router by hand.
+    pub spindle_control: SpindleControl,
+    /// Seconds to wait after every spindle start, so the spindle reaches
+    /// speed before it cuts. `0` emits no dwell.
+    pub spindle_on_dwell_s: f64,
+    /// How a project whose operations use more than one tool is exported
+    /// (#95).
+    pub tool_change_mode: ToolChangeMode,
+    /// Decimal places per output unit.
+    pub decimal_places: DecimalPlaces,
+}
+
+impl PostProcessorRef {
+    /// A reference to the latest bundled version of `id` with that
+    /// version's default settings: what `init` and `export --post` write.
+    ///
+    /// # Errors
+    ///
+    /// As for [`latest_definition`].
+    pub fn latest(id: &str) -> Result<Self, PostProcessorError> {
+        Ok(latest_definition(id)?.default_ref())
+    }
+
+    /// The bundled definition version this reference names.
+    ///
+    /// # Errors
+    ///
+    /// As for [`bundled_definition`].
+    pub fn definition(&self) -> Result<&'static BundledDefinition, PostProcessorError> {
+        bundled_definition(&self.id, self.definition_version)
+    }
+
+    /// The effective post-processor: the definition, with this reference's
+    /// settings in place of the definition's defaults.
+    ///
+    /// # Errors
+    ///
+    /// As for [`bundled_definition`].
+    pub fn resolve(&self) -> Result<PostProcessor, PostProcessorError> {
+        let mut post = self.definition()?.post.clone();
+        post.file_extension.clone_from(&self.file_extension);
+        post.feed_speed.spindle_control = self.spindle_control;
+        post.feed_speed.spindle_on_dwell.duration_s = self.spindle_on_dwell_s;
+        post.tool_change.mode = self.tool_change_mode;
+        post.number_format.decimal_places = self.decimal_places;
+        Ok(post)
+    }
+}
+
+/// Where each setting of a [`PostProcessorRef`] sits in a full
+/// [`PostProcessor`]: its key in the reference and in a definition's
+/// `default_settings`, and its path in the full definition. Up to `.dcv`
+/// version 6 a project held its whole definition, with the settings at
+/// these paths.
+pub(crate) const SETTING_PATHS: [(&str, &[&str]); 5] = [
+    ("file_extension", &["file_extension"]),
+    ("spindle_control", &["feed_speed", "spindle_control"]),
+    (
+        "spindle_on_dwell_s",
+        &["feed_speed", "spindle_on_dwell", "duration_s"],
+    ),
+    ("tool_change_mode", &["tool_change", "mode"]),
+    ("decimal_places", &["number_format", "decimal_places"]),
+];
+
+/// Why a post-processor reference names no bundled definition.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PostProcessorError {
+    /// No bundled definition has this id.
+    #[error("post-processor `{id}` is not bundled; available: {}", known.join(", "))]
+    UnknownId {
+        /// The id asked for.
+        id: String,
+        /// The bundled ids, sorted.
+        known: Vec<String>,
+    },
+    /// The definition is bundled, but not at this version.
+    #[error(
+        "post-processor `{id}` has no definition version {version}; available: {}",
+        available.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+    )]
+    UnknownVersion {
+        /// The definition's id.
+        id: String,
+        /// The version asked for.
+        version: u32,
+        /// The bundled versions of `id`, oldest first.
+        available: Vec<u32>,
+    },
+    /// A bundled definition file is invalid. Only a broken build can
+    /// produce this; `bundled_definitions_parse` guards it.
+    #[error("bundled post-processor definition `{path}` is invalid: {message}")]
+    BundledDefinition {
+        /// The file under `definitions/`.
+        path: &'static str,
+        /// What is wrong.
+        message: String,
+    },
+}
+
+/// One bundled definition file: id, version, path under `definitions/`,
+/// and text.
+type Source = (&'static str, u32, &'static str, &'static str);
+
+/// Every bundled definition version, compiled in, in listing order: by
+/// id, grblHAL first, then oldest version first. A released version is
+/// never edited or removed (ADR-0004, `definitions/README.md`); a change
+/// that would change emitted bytes is a new version file.
+/// `tests::released_definition_versions_are_unchanged` pins each one.
+const SOURCES: [Source; 2] = [
+    (
+        "grblhal",
+        1,
+        "grblhal/v1.json",
+        include_str!("definitions/grblhal/v1.json"),
+    ),
+    (
+        "grbl",
+        1,
+        "grbl/v1.json",
+        include_str!("definitions/grbl/v1.json"),
+    ),
+];
+
+static BUNDLED: OnceLock<Vec<BundledDefinition>> = OnceLock::new();
+
+/// One version of a bundled definition: `definitions/<id>/v<version>.json`.
+///
+/// The file is a [`PostProcessor`] without the settings a project holds
+/// (see [`PostProcessorRef`]), plus a `default_settings` object with them,
+/// which a new project starts from.
+#[derive(Debug)]
+pub struct BundledDefinition {
+    /// The definition's id, for example `grblhal`.
+    pub id: &'static str,
+    /// Its version.
+    pub version: u32,
+    /// Its file under `definitions/`, for example `grblhal/v1.json`.
+    pub path: &'static str,
+    /// The file's text.
+    pub source: &'static str,
+    /// The definition with its default settings.
+    post: PostProcessor,
+    /// The file without `default_settings`: the part a project cannot
+    /// change, as JSON.
+    dialect: Value,
+}
+
+impl BundledDefinition {
+    /// The effective post-processor with this version's default settings.
+    #[must_use]
+    pub fn post_processor(&self) -> &PostProcessor {
+        &self.post
+    }
+
+    /// A reference to this version with its default settings.
+    #[must_use]
+    pub fn default_ref(&self) -> PostProcessorRef {
+        let post = &self.post;
+        PostProcessorRef {
+            id: self.id.to_owned(),
+            definition_version: self.version,
+            file_extension: post.file_extension.clone(),
+            spindle_control: post.feed_speed.spindle_control,
+            spindle_on_dwell_s: post.feed_speed.spindle_on_dwell.duration_s,
+            tool_change_mode: post.tool_change.mode,
+            decimal_places: post.number_format.decimal_places,
+        }
+    }
+
+    /// The file without its `default_settings`, as JSON: every field of the
+    /// definition that a project cannot change.
+    pub(crate) fn dialect(&self) -> &Value {
+        &self.dialect
+    }
+
+    /// Parses one bundled file. Its default settings go where
+    /// [`SETTING_PATHS`] says, and the result must be a valid
+    /// [`PostProcessor`]: a file that also sets one of those fields itself,
+    /// or has any other extra field, is invalid.
+    fn parse((id, version, path, text): Source) -> Result<Self, PostProcessorError> {
+        let (post, dialect) = parse_definition(text)
+            .map_err(|message| PostProcessorError::BundledDefinition { path, message })?;
+        if post.id != id {
+            return Err(PostProcessorError::BundledDefinition {
+                path,
+                message: format!("its id is `{}`, not `{id}`", post.id),
+            });
+        }
+        Ok(Self {
+            id,
+            version,
+            path,
+            source: text,
+            post,
+            dialect,
+        })
+    }
+}
+
+/// Reads definition file `text`: the definition with its default settings,
+/// and the file without them. See [`BundledDefinition::parse`].
+fn parse_definition(text: &str) -> Result<(PostProcessor, Value), String> {
+    let mut dialect: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let Some(Value::Object(mut defaults)) = dialect
+        .as_object_mut()
+        .and_then(|root| root.shift_remove("default_settings"))
+    else {
+        return Err("`default_settings` is missing or not an object".into());
+    };
+    let mut full = dialect.clone();
+    for (key, at) in SETTING_PATHS {
+        let value = defaults
+            .shift_remove(key)
+            .ok_or_else(|| format!("`default_settings.{key}` is missing"))?;
+        place(&mut full, at, value)?;
+    }
+    if let Some(key) = defaults.keys().next() {
+        return Err(format!("unknown field `default_settings.{key}`"));
+    }
+    let post: PostProcessor = serde_json::from_value(full).map_err(|e| e.to_string())?;
+    Ok((post, dialect))
+}
+
+/// Puts `value` at `path` in `root`, which must have every object on the
+/// way and nothing at the end.
+fn place(root: &mut Value, path: &[&str], value: Value) -> Result<(), String> {
+    let Some((last, parents)) = path.split_last() else {
+        return Err("empty setting path".into());
+    };
+    let mut at = root;
+    for key in parents {
+        at = at
+            .get_mut(*key)
+            .ok_or_else(|| format!("`{}` is missing", parents.join(".")))?;
+    }
+    let object = at
+        .as_object_mut()
+        .ok_or_else(|| format!("`{}` is not an object", parents.join(".")))?;
+    if object.contains_key(*last) {
+        return Err(format!(
+            "`{}` is a project setting; it belongs in `default_settings`",
+            path.join(".")
+        ));
+    }
+    object.insert((*last).to_owned(), value);
+    Ok(())
+}
+
+/// Every bundled definition version, in listing order: by id, grblHAL
+/// first, then oldest version first.
+///
+/// # Errors
+///
+/// [`PostProcessorError::BundledDefinition`] if a bundled file is invalid.
+/// A test proves none is, so this only fires on a broken build.
+pub fn bundled_definitions() -> Result<&'static [BundledDefinition], PostProcessorError> {
+    if let Some(bundled) = BUNDLED.get() {
+        return Ok(bundled);
+    }
+    let parsed = SOURCES
+        .into_iter()
+        .map(BundledDefinition::parse)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(BUNDLED.get_or_init(|| parsed))
+}
+
+/// The latest version of every bundled definition, in listing order,
+/// grblHAL first: what `dreamcarve posts` lists.
+///
+/// # Errors
+///
+/// As for [`bundled_definitions`].
+pub fn latest_definitions() -> Result<Vec<&'static BundledDefinition>, PostProcessorError> {
+    let mut latest: Vec<&'static BundledDefinition> = Vec::new();
+    for definition in bundled_definitions()? {
+        match latest.iter_mut().find(|d| d.id == definition.id) {
+            Some(slot) if slot.version < definition.version => *slot = definition,
+            Some(_) => {}
+            None => latest.push(definition),
+        }
+    }
+    Ok(latest)
+}
+
+/// The bundled definition `id` at `version`.
+///
+/// # Errors
+///
+/// [`PostProcessorError::UnknownId`] or
+/// [`PostProcessorError::UnknownVersion`], each listing what is bundled;
+/// [`PostProcessorError::BundledDefinition`] as for
+/// [`bundled_definitions`].
+pub fn bundled_definition(
+    id: &str,
+    version: u32,
+) -> Result<&'static BundledDefinition, PostProcessorError> {
+    let versions: Vec<&'static BundledDefinition> = bundled_definitions()?
+        .iter()
+        .filter(|d| d.id == id)
+        .collect();
+    if versions.is_empty() {
+        return Err(unknown_id(id));
+    }
+    versions
+        .iter()
+        .find(|d| d.version == version)
+        .copied()
+        .ok_or_else(|| PostProcessorError::UnknownVersion {
+            id: id.to_owned(),
+            version,
+            available: versions.iter().map(|d| d.version).collect(),
+        })
+}
+
+/// The latest bundled version of `id`.
+///
+/// # Errors
+///
+/// [`PostProcessorError::UnknownId`], listing the bundled ids;
+/// [`PostProcessorError::BundledDefinition`] as for
+/// [`bundled_definitions`].
+pub fn latest_definition(id: &str) -> Result<&'static BundledDefinition, PostProcessorError> {
+    latest_definitions()?
+        .into_iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| unknown_id(id))
+}
+
+/// [`PostProcessorError::UnknownId`] for `id`, listing the bundled ids
+/// sorted.
+pub(crate) fn unknown_id(id: &str) -> PostProcessorError {
+    let mut known: Vec<String> = Vec::new();
+    for (bundled, ..) in SOURCES {
+        if !known.iter().any(|k| k == bundled) {
+            known.push(bundled.to_owned());
+        }
+    }
+    known.sort();
+    PostProcessorError::UnknownId {
+        id: id.to_owned(),
+        known,
+    }
 }
 
 #[cfg(test)]
@@ -630,5 +1011,193 @@ mod tests {
         assert_eq!(places, DecimalPlaces { mm: 3, inch: 3 });
         let text = serde_json::to_string(&places).unwrap();
         assert_eq!(text, r#"{"mm":3,"inch":3}"#);
+    }
+
+    // #106: a project stores a reference to a bundled definition version
+    // and the user's settings, not the definition.
+
+    /// A version 7 project whose `post_processor` is the GRBL reference
+    /// with the default settings.
+    const V7_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v7/sample.dcv");
+
+    /// The reference block as the project writes it, keys in order.
+    const REFERENCE_BLOCK: &str = r#"{
+  "id": "grbl",
+  "definition_version": 1,
+  "file_extension": "nc",
+  "spindle_control": "automatic",
+  "spindle_on_dwell_s": 3.0,
+  "tool_change_mode": "separate_programs",
+  "decimal_places": {
+    "mm": 3,
+    "inch": 4
+  }
+}"#;
+
+    #[test]
+    fn project_post_processor_round_trips() {
+        let loaded = crate::load(V7_FIXTURE.as_bytes()).unwrap();
+        let block = serde_json::to_string_pretty(&loaded.project.post_processor).unwrap();
+        assert_eq!(block, REFERENCE_BLOCK);
+        assert_eq!(crate::save(&loaded.project).unwrap(), V7_FIXTURE);
+    }
+
+    /// `V7_FIXTURE` with `from` replaced by `to`, loaded.
+    fn load_edited(from: &str, to: &str) -> Result<crate::Loaded, crate::LoadError> {
+        assert!(V7_FIXTURE.contains(from), "the fixture has `{from}`");
+        crate::load(V7_FIXTURE.replacen(from, to, 1).as_bytes())
+    }
+
+    /// The line and column of the first `needle` in `V7_FIXTURE`.
+    fn position_of(needle: &str) -> crate::TextPosition {
+        let (line, text) = V7_FIXTURE
+            .lines()
+            .enumerate()
+            .find(|(_, text)| text.contains(needle))
+            .unwrap();
+        let column = text.find(needle).unwrap() + 1;
+        crate::TextPosition {
+            line: line + 1,
+            column,
+        }
+    }
+
+    #[test]
+    fn missing_post_processor_setting_fails_to_load() {
+        let err = load_edited("    \"spindle_on_dwell_s\": 3.0,\n", "").unwrap_err();
+        let crate::LoadError::Schema { path, at, message } = &err else {
+            panic!("a schema error: {err:?}");
+        };
+        assert_eq!(path, "post_processor", "{err}");
+        // Located at the object it is missing from.
+        let mut object = position_of("\"post_processor\": {");
+        object.column += "\"post_processor\": ".len();
+        assert_eq!(*at, Some(object), "{err}");
+        assert!(message.contains("spindle_on_dwell_s"), "{err}");
+    }
+
+    #[test]
+    fn unknown_post_id_fails_to_load() {
+        let err = load_edited("\"id\": \"grbl\"", "\"id\": \"mach3\"").unwrap_err();
+        let crate::LoadError::Schema { path, at, message } = &err else {
+            panic!("a schema error: {err:?}");
+        };
+        assert_eq!(path, "post_processor.id", "{err}");
+        let value = position_of("\"grbl\",");
+        assert_eq!(*at, Some(value), "{err}");
+        assert!(message.contains("`mach3`"), "{err}");
+        assert!(message.contains("grbl, grblhal"), "{err}");
+    }
+
+    #[test]
+    fn unknown_definition_version_fails_to_load() {
+        let err =
+            load_edited("\"definition_version\": 1", "\"definition_version\": 99").unwrap_err();
+        let crate::LoadError::Schema { path, at, message } = &err else {
+            panic!("a schema error: {err:?}");
+        };
+        assert_eq!(path, "post_processor.definition_version", "{err}");
+        let mut value = position_of("\"definition_version\": 1");
+        value.column += "\"definition_version\": ".len();
+        assert_eq!(*at, Some(value), "{err}");
+        assert!(message.contains("99"), "{err}");
+        assert!(message.contains("`grbl`"), "{err}");
+        assert!(message.ends_with("available: 1"), "{err}");
+    }
+
+    /// The definition that `id`.json on main parsed to, before #106, kept as
+    /// a fixture.
+    fn old_embedded(id: &str) -> PostProcessor {
+        let text = match id {
+            "grblhal" => include_str!("../tests/fixtures/post/grblhal.json"),
+            "grbl" => include_str!("../tests/fixtures/post/grbl.json"),
+            _ => panic!("no fixture for {id}"),
+        };
+        serde_json::from_str(text).unwrap()
+    }
+
+    /// Version 1 of each definition is today's file with the settings moved
+    /// out, so it must resolve, with the default settings, to exactly what
+    /// the file parsed to before: no controller-facing value changed.
+    #[test]
+    fn resolve_matches_old_embedded_definition() {
+        for id in ["grblhal", "grbl"] {
+            let definition = bundled_definition(id, 1).unwrap();
+            let resolved = definition.default_ref().resolve().unwrap();
+            assert_eq!(resolved, old_embedded(id), "{id}");
+        }
+    }
+
+    /// Every bundled version parses, and has the id and path it is listed
+    /// under.
+    #[test]
+    fn bundled_definitions_parse() {
+        let bundled = bundled_definitions().unwrap();
+        assert_eq!(bundled.len(), SOURCES.len());
+        for d in bundled {
+            assert_eq!(d.post_processor().id, d.id, "{}", d.path);
+            assert_eq!(d.path, format!("{}/v{}.json", d.id, d.version));
+        }
+    }
+
+    /// The grblHAL version 1 file with `from` replaced by `to`, parsed.
+    fn parse_edited(from: &str, to: &str) -> Result<(PostProcessor, Value), String> {
+        let text = include_str!("definitions/grblhal/v1.json");
+        assert!(text.contains(from), "the file has `{from}`");
+        parse_definition(&text.replacen(from, to, 1))
+    }
+
+    /// A definition leaves the project's settings to `default_settings`:
+    /// one that sets one itself is invalid, rather than overridden.
+    #[test]
+    fn definition_setting_a_project_setting_is_invalid() {
+        let err = parse_edited("{\n", "{\n  \"file_extension\": \"tap\",\n").unwrap_err();
+        assert!(
+            err.contains("`file_extension` is a project setting"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn definition_default_settings_are_strict() {
+        let err = parse_edited("\"tool_change_mode\": \"separate_programs\",\n", "").unwrap_err();
+        assert!(err.contains("default_settings.tool_change_mode"), "{err}");
+        let err = parse_edited(
+            "\"default_settings\": {\n",
+            "\"default_settings\": {\n    \"line_numbers\": true,\n",
+        )
+        .unwrap_err();
+        assert!(err.contains("default_settings.line_numbers"), "{err}");
+    }
+
+    /// FNV-1a, 64 bit: enough to notice an edit, which is all the pin is
+    /// for. It is not a security measure.
+    fn fnv1a(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| {
+            (hash ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+    }
+
+    /// A released definition version never changes: a project that names it
+    /// must export the same bytes after any upgrade. A change that would
+    /// change emitted bytes is a new version file (`definitions/README.md`,
+    /// "Versions"); pin it here when it is added.
+    #[test]
+    fn released_definition_versions_are_unchanged() {
+        const PINNED: [(&str, u64); 2] = [
+            ("grblhal/v1.json", 0xb466_2fca_9b77_df77),
+            ("grbl/v1.json", 0xe5dc_88e6_fd09_a5a9),
+        ];
+        let bundled = bundled_definitions().unwrap();
+        let paths: Vec<&str> = bundled.iter().map(|d| d.path).collect();
+        let pinned: Vec<&str> = PINNED.iter().map(|&(path, _)| path).collect();
+        assert_eq!(paths, pinned, "every bundled version is pinned");
+        for (definition, (path, hash)) in bundled.iter().zip(PINNED) {
+            assert_eq!(
+                fnv1a(definition.source.as_bytes()),
+                hash,
+                "{path} changed; add a new version instead"
+            );
+        }
     }
 }
