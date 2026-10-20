@@ -104,7 +104,7 @@ pub enum MachiningOrder { FullDepthFirst, PassFirst }   // "full_depth_first" | 
 pub enum Entry {
     Plunge,
     /// Pocket: zigzag inside the region. Profile: along the cut path.
-    Ramp { angle_deg: f64 },                         // init: 5.0; valid (0, 45]
+    Ramp { angle_deg: f64 },                         // init: 15.0; valid (0, 45]
     /// Pocket and Profile (Inside, Outside): a helix in removed material.
     Helix { diameter_fraction: f64, angle_deg: f64 }, // init: 0.8, 5.0; fraction in (0, 1]
 }
@@ -121,7 +121,7 @@ pub enum CornerRelief { None, Dogbone, TBone }       // "none" | "dogbone" | "t_
 pub struct ProfileOp {
     // phase 1 fields unchanged, plus:
     pub machining_order: MachiningOrder,  // migration: full_depth_first
-    pub entry: Entry,                     // migration: plunge
+    pub entry: Entry,                     // migration: plunge; init: ramp 15°
     pub lead: Option<Lead>,               // migration: null
     pub corner_relief: CornerRelief,      // migration: none
 }
@@ -516,24 +516,34 @@ cut direction and cut side.
   ends; run at most `3·D` centred on the target and slid to stay inside;
   zigzag descent at `angle`, final partial run clamped; handoff to the
   target.
-- **Profile ramp:** descend along the block's own cut path from the start
-  vertex, in the cut direction, over the arc length `depth_of_pass /
-  tan(angle)`; if the path is shorter than that, the ramp wraps (continues
-  around a closed path; on an open path it zigzags back and forth along
-  the path). The ramp moves are the path's own moves with Z interpolated
-  (arcs split into chords within the flatten tolerance when Z changes
-  along them); the pass then continues the full lap from where the ramp
-  ended back to it, so the ramped portion is cut again at full depth
-  (VCarve's Smooth ramp). The feed scale of S10 applies.
+- **Profile ramp:** the same zigzag placement, in the Profile's waste
+  domain (below), as PureCutCNC's edge routes do (`edge.ts`,
+  `bandEntryPolicy` with `cutSide: 'internal'` for inside routes and
+  `outsideEntryPolicy` with `'external'` for outside routes; the domain is
+  the same one the lead uses). The ramp ends with a straight handoff to
+  the block's entry point at pass Z.
+- **On line ramp:** an On line Profile removes only its own kerf, so the
+  ramp runs along the cut path itself: from the start vertex, forward
+  along the path for `run = min(3·D, L)` and back, descending at `angle`
+  on each leg until pass Z is reached, the final partial leg clamped;
+  arcs are split into chords within the flatten tolerance while Z
+  changes. The pass then cuts the full path from the start vertex, so
+  the ramped stretch is cut again at full depth (VCarve's Zig Zag ramp).
+  On an open path shorter than one leg the ramp reverses at the path
+  end. The feed scale of S10 applies to every leg.
 - **Fallback chain:** helix → ramp → plunge, each step warning
   `EntryFallback` with `requested` and `used`. A plunge is always
-  possible.
-- **Waste side for Profile:** Inside → the hole's tool-centre region
-  (outer −r) for helix placement; Outside → the stock rectangle minus
-  every target shape grown by `r`, minus every other region's tool-centre
-  path grown by `r` (so the helix never enters a neighbouring part or
-  its kerf); OnLine → no helix (validation error), ramp along the path
-  only.
+  possible. `ramp` is the default for new projects (`init`, the chapter
+  blocks), so a project whose shapes leave no room for a zigzag (a hole
+  barely wider than the tool) will warn on every export until the user
+  sets `plunge`; the warning says so.
+- **Waste domain for Profile:** Inside → the hole's tool-centre region
+  (outer offset by −r); Outside → the stock rectangle minus every target
+  shape grown by `r`, minus every other region's tool-centre path grown
+  by `r` (so neither ramp nor helix enters a neighbouring part or its
+  kerf); On line → no domain: helix is a validation error, ramp runs
+  along the path. Tabs are keep-outs in the domain at every Z below the
+  tab top, as upstream (`tabKeepOutWithin`).
 
 ### Lead-in and lead-out (dc-cam::lead)
 
@@ -797,50 +807,114 @@ Option<Vec<String>> }`.
 
 ### Fusion import (dc-library::fusion)
 
-Autodesk states the `.tools` file is the Fusion `.json` zipped
-(Manufacture help, "Export and import tool libraries") and publishes no
-schema. The reader is written against: the vendor-published libraries at
-RobbJack (`tools.json` "version 36"), the field names in Autodesk's
-post-processor `Tool` class reference (`cam.autodesk.com/posts/reference/
-classTool.html`: `diameter`, `tipDiameter`, `taperAngle`, `numberOfFlutes`,
-`number`, `type`, `unit`), and the maintainer's fixture (open question 1).
-The parser accepts unknown keys everywhere (Fusion adds fields between
-versions) and requires only what it maps.
+Autodesk publishes the tool library format: `cam.autodesk.com/tools/tools/
+Tooling Schema/JSON Schema.zip` holds `FusionToolLibrarySchemas.html` (the
+JSON schema, rendered), `Tool Library Schema Information.docx` (geometry
+parameters per tool type with a JSON snippet each), `sample library.json`
+(version 36, every tool family, 34 tools) and `Sample Metric Tools- With
+Presets.json` (version 14, 235 milling and hole-making tools with
+presets). The `.tools` file is that JSON zipped (`ReadMeFirst.txt`). The
+two sample files become fixtures
+(`tests/fixtures/fusion/autodesk-sample-library.json`,
+`autodesk-sample-metric-presets.json`), with their source and the
+archive's date in a README. The archive carries no license statement, so
+before they are committed the maintainer confirms Autodesk's terms allow
+redistribution; otherwise the fixtures are hand-written subsets that keep
+the schema's structure and the tool types but not Autodesk's data. The parser accepts unknown keys everywhere
+(the schema itself allows additional properties on most objects and new
+versions add fields) and requires only what it maps.
+
+From the schema:
+
+- Root: `{ "version": integer ≥ 11, "data": [ … ] }`. Each item is a
+  Tool (Turning, Milling, Cutting, Depositing, Probe, Hole Making) or an
+  Adaptive Item (holder). `data` missing → `LibraryError::NotAFusionLibrary`.
+- `type` is an enum per family. Milling: `"flat end mill"`, `"ball end
+  mill"`, `"bull nose end mill"`, `"chamfer mill"`, `"radius mill"`,
+  `"tapered mill"`, `"dovetail mill"`, `"face mill"`, `"slot mill"`,
+  `"lollipop mill"`, `"form mill"`, `"thread mill"`, `"circle segment
+  barrel|lens|oval|taper"`. Hole making: `"drill"`, `"spot drill"`,
+  `"counter sink"`, `"counter bore"`, `"reamer"`, `"tap left hand"`,
+  `"tap right hand"`. Turning `"turning *"`, `"probe"`, `"holder"`.
+- `unit`: `"millimeters"` | `"inches"` ("Tool unit").
+- `geometry`: `DC` (cutting diameter, number > 0), `NOF` (flute count,
+  ≥ 0), `TA` (taper angle, "included angle between generatrixes in the
+  axial plane section"), `SIG` (point angle of hole-making tools), `RE`
+  (corner radius), `LCF` (flute length), `tip-diameter`, `tip-length`,
+  `SFDM`, `OAL`, `LB`.
+- `start-values.presets[]`: `name` (required), `guid`, `n` (spindle
+  speed), `v_f` (cutting feedrate), `v_f_plunge` (plunge feedrate),
+  `v_f_ramp`, `v_f_leadIn`, `v_f_leadOut`, `v_f_retract`, `f_z`, `v_c`,
+  `stepdown` and `stepover` (lengths in `unit`), `use-stepdown` and
+  `use-stepover` ("whether the selected preset should override an
+  operation's stepdown/stepover"; `stepover` is required when
+  `use-stepover` is true), `tool-coolant`, `material`.
+- `post-process`: `number`, `length-offset`, `diameter-offset`, `turret`,
+  `manual-tool-change`, `live`, `break-control`, `comment`.
+- `description`, `vendor`, `product-id`, `product-link`, `guid`, `BMC`
+  (body material code), `GRADE`, `holder` (ignored).
+
+Mapping:
 
 1. **Container:** bytes starting `PK` → zip (`zip` crate, MIT); the entry
    named `tools.json` (or the only `.json`) is the document. Otherwise the
    bytes are the document.
-2. **Document:** `{ "version": n, "data": [tool, …] }`. Missing `data` →
-   `LibraryError::NotAFusionLibrary`.
-3. **Per tool:** `type` (string), `unit` (`"millimeters"` | `"inches"`),
-   `description`, `guid`, `geometry { DC, NOF, TA, SIG, … }`,
-   `start-values { presets: [ { name, n, v_f, v_f_plunge, stepdown,
-   stepover, use-stepdown, use-stepover, … } ] }`, `post-process { number
-   }`.
-   - `type` mapping: `"flat end mill"` → `EndMill`; `"ball end mill"` →
-     `BallNose`; `"bull nose end mill"` → `EndMill` (corner radius
-     ignored, noted in the tool name); `"chamfer mill"` → `VBit {
-     included_angle_deg: 2·TA }`; `"engrave mill"`, `"dovetail mill"` →
-     skipped; `"drill"`, `"spot drill"`, `"center drill"` → `Drill`;
-     `"tap*"`, `"thread mill"`, `"face mill"`, `"slot mill"`, `"lollipop
-     mill"`, `"form mill"`, turning and holder entries → `Skipped {
-     reason: UnsupportedType(type) }`. Any other string → `Skipped {
-     UnknownType }`.
-   - Units: `DC` is in the tool's `unit`; converted to mm. Feeds
-     (`v_f`, `v_f_plunge`) are in `unit`/min → mm/min. `n` is RPM.
-     `stepdown` is a length in `unit` → mm, used only if
-     `use-stepdown` is true or absent; `stepover` likewise, converted to
-     a fraction of `DC` (Fusion stores a length). `NOF` → flutes (default
-     1 if absent, with the tool name noting it).
-   - One `Tool` per preset: name `description` for a single preset,
-     `"<description> (<preset name>)"` for several; `source =
-     "fusion:<guid>:<preset index>"` so a re-import recognises it. A tool
-     with no presets imports once with feeds unset. Missing `n`, `v_f` or
-     `v_f_plunge` leave the field `None` (never defaulted; export refuses
-     until set), and the import report says so.
-   - `DC ≤ 0` or absent → `Skipped { NoDiameter }`.
-4. **Report:** `tools import` prints one line per tool: `imported`,
+2. **Per tool, by `type`:** `"flat end mill"`, `"bull nose end mill"`
+   (corner radius `RE` ignored; the tool name gets ` (bull nose r<RE>)`),
+   `"slot mill"` → `EndMill`; `"ball end mill"` → `BallNose`; `"chamfer
+   mill"` → `VBit { included_angle_deg }`; `"drill"`, `"spot drill"`,
+   `"center drill"`, `"counter sink"`, `"counter bore"`, `"reamer"` →
+   `Drill`; every other milling, hole-making, turning, probe and holder
+   type → `Skipped { UnsupportedType(type) }`; a string outside the
+   schema's enums → `Skipped { UnknownType(type) }`.
+   - **Chamfer angle.** The schema text calls `TA` the included angle,
+     while Autodesk's tool-editor help calls its "Taper angle" half the
+     included angle, and the sample chamfer mill (`DC` 12, `TA` 60,
+     `tip-diameter` 8, `LCF` 2.3094) is consistent with neither reading
+     exactly. The importer treats `TA` as the **half** angle (`included =
+     2·TA`), which is what Fusion's own 90° chamfer mills carry (`TA`
+     45), and `fusion::chamfer_mill_angle_matches_fixture` pins it against
+     the maintainer's exported library; if that fixture shows otherwise
+     the constant flips in one place.
+3. **Units:** every length (`DC`, `stepdown`, `stepover`) and feed
+   (`v_f`, `v_f_plunge`) is in `unit` and converted to mm or mm/min; `n`
+   is RPM; `NOF` → flutes (0 or absent → 1, noted in the report).
+   `stepover` becomes `stepover / DC` (a fraction, clamped to (0, 1] with
+   a report note when above 1); `stepdown` → `step_down_mm`. Both only
+   when their `use-*` flag is true or absent.
+4. **Presets:** one `Tool` per preset: name `description` for one preset,
+   `"<description> (<preset name>)"` for several; `source =
+   "fusion:<tool guid>:<preset guid or index>"` so a re-import recognises
+   it. No presets → one tool with feeds unset. Missing `n`, `v_f` or
+   `v_f_plunge` leave the field `None` (never defaulted; export refuses
+   until set), and the report says so. A drill preset usually has
+   `v_f_plunge` and no `v_f` (Autodesk's sample): the tool imports with
+   `feed_mm_min` unset, which Drill never needs but validation reports
+   for a tool a Profile uses.
+5. `DC ≤ 0` or absent → `Skipped { NoDiameter }`.
+6. **Report:** `tools import` prints one line per tool: `imported`,
    `already present`, or `skipped: <reason>`, then the counts.
+
+**Tool numbers** (functional open question 7, still open). What the
+field would do and what it costs:
+
+- Today `T<n>` in a program is the tool's position in `project.tools`,
+  so renumbering happens by reordering the list. Fusion's
+  `post-process.number` and VCarve's "Tool Number" are explicit and
+  stable per tool, which matters for a tool table on LinuxCNC or Mach3
+  (`T5 M6` must match the machine's slot 5) and for a user who keeps
+  "T1 = 1/4 end mill" across every project.
+- Adding `Tool::number: Option<u32>` now: import carries the Fusion
+  number (0 means unset); export uses it when set, else the position;
+  validation refuses duplicates among enabled operations' tools. Cost:
+  one field in v7 (no second migration later), a rule for mixed
+  set/unset projects, and the program names `<stem>-<k>-T<n>` follow
+  it. The GUI later edits the same field.
+- Waiting: nothing to do now; a v8 migration later; users on tool tables
+  reorder `tools` by hand until then.
+- Recommendation: add the optional field in v7 (slice 2), read it on
+  import, use it at export. It is small and the migration cost only
+  grows.
 
 ### Tool library CLI
 
@@ -960,7 +1034,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `entry::helix_diameter_clamped_to_tool_and_warns` (port), `entry::helix_bounded_by_clearance_and_warns` (port), `entry::helix_stays_outside_islands` (port), `entry::helix_descent_revolutions_plus_flat_bottom` (port).
 - `entry::helix_sense_climb_inside_is_ccw`, `entry::helix_sense_climb_outside_is_cw` (re-derived; port of "maps climb/conventional direction" with the sign flipped and a comment saying why).
 - `entry::narrow_slot_falls_back_to_ramp` (port), `entry::no_room_falls_back_to_plunge` (port), `entry::shallow_angle_move_count_is_bounded` (port), `entry::ramp_run_is_capped_at_three_diameters` (port), `entry::ramp_stays_clear_of_boundary` (port), `entry::helix_placed_near_target_not_roomiest_spot` (port, #581).
-- `entry::profile_ramp_descends_along_path_at_angle`, `entry::profile_ramp_wraps_short_closed_path`, `entry::profile_ramp_zigzags_short_open_path`, `entry::profile_lap_recuts_ramped_portion_at_full_depth`.
+- `entry::inside_profile_ramp_zigzags_in_the_hole` (port: `testTheInsideEntryStaysInsideTheOpening`), `entry::outside_profile_ramp_stays_off_part_and_obstacles` (port: `testTheOutsideEntryStaysOffThePartAndItsObstacles`), `entry::every_level_is_entered_through_the_policy` (port), `entry::no_descent_reaches_depth_in_one_plunge` (port), `entry::tabs_are_kept_out_of_the_entry` (port), `entry::unplaceable_entry_falls_back_out_loud` (port), `entry::on_line_ramp_runs_along_the_path_and_back`, `entry::on_line_lap_recuts_ramped_stretch_at_full_depth`, `entry::ramp_default_angle_is_15_degrees`.
 - `entry::outside_profile_helix_avoids_neighbouring_part`.
 - `entry::plunge_is_default_and_unchanged_from_phase_1`.
 
@@ -1002,7 +1076,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 
 **dc-library**
 - `library::round_trip_is_byte_identical`, `library::add_detects_already_present`, `library::find_by_id_then_unique_name`, `library::ambiguous_name_is_error`, `library::validation_rules_from_upstream` (port of `parseToolLibraryFile` rules: positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)).
-- `fusion::zip_and_plain_json_both_read`, `fusion::flat_end_mill_maps_with_geometry_and_preset`, `fusion::inch_tool_converts_to_mm`, `fusion::chamfer_mill_is_v_bit_with_double_taper`, `fusion::drill_types_map_to_drill`, `fusion::two_presets_become_two_tools`, `fusion::no_presets_imports_with_feeds_unset`, `fusion::missing_feed_stays_none`, `fusion::stepover_length_becomes_fraction`, `fusion::use_stepdown_false_leaves_step_down_unset`, `fusion::unsupported_types_skipped_by_name`, `fusion::unknown_keys_are_ignored`, `fusion::not_a_library_is_error`, `fusion::vendor_sample_imports_every_supported_tool` (the RobbJack-style fixture), `fusion::maintainer_sample_imports` (open question 1; `#[ignore = "needs fixtures/fusion-sample.tools, open question 1"]` until supplied).
+- `fusion::zip_and_plain_json_both_read`, `fusion::flat_end_mill_maps_with_geometry_and_preset`, `fusion::inch_tool_converts_to_mm`, `fusion::chamfer_mill_is_v_bit_with_double_taper`, `fusion::drill_types_map_to_drill`, `fusion::two_presets_become_two_tools`, `fusion::no_presets_imports_with_feeds_unset`, `fusion::missing_feed_stays_none`, `fusion::stepover_length_becomes_fraction`, `fusion::use_stepdown_false_leaves_step_down_unset`, `fusion::unsupported_types_skipped_by_name`, `fusion::unknown_keys_are_ignored`, `fusion::not_a_library_is_error`, `fusion::autodesk_sample_library_imports_every_supported_type_and_skips_the_rest` (34-tool fixture: 5 flat end mills, drill, spot drill, counter sink, counter bore, reamer, slot mill import; thread mills, taps, face/form/lollipop/dovetail/tapered mills, turning, probe, holder skipped by name), `fusion::autodesk_presets_sample_imports_235_tools_as_presets` (every preset becomes a tool; drills import with `feed_mm_min` unset), `fusion::chamfer_mill_angle_matches_fixture` (`#[ignore = "needs the maintainer's exported library"]` until supplied), `fusion::schema_version_below_11_is_rejected`.
 
 **dreamcarve (integration, `tests/`)**
 - `cli::plaque_svg_exports_two_programs_in_order` (acceptance 18), `cli::plaque_dxf_exports_same_programs_as_svg`.
@@ -1040,8 +1114,9 @@ Ordered; each is one issue and one PR. Dependencies in brackets.
 8. **Engrave.** Tests: engrave group. [1, 2]
 9. **Entry: helix and zigzag ramp (Pocket).** `entry.rs` port. Tests:
    entry ports. [4]
-10. **Entry on Profile: along-path ramp, helix on the waste side.** Tests:
-    `entry::profile_*`, `entry::outside_profile_helix…`. [1, 9]
+10. **Entry on Profile: zigzag and helix in the waste domain, On line
+    ramp along the path.** Tests: the `entry::*profile*` and
+    `entry::on_line_*` tests. [1, 9]
 11. **Lead-in and lead-out on Profile.** Tests: lead group. [1, 10]
 12. **Corner relief on Pocket and Profile.** Tests: relief group. [4, 10]
 13. **Operation-order warnings.** `order.rs`, CLI printing. Tests: order
@@ -1074,18 +1149,10 @@ unblock everything else.
 
 ## Open questions
 
-The nine questions in `functional.md`, "Open questions", with the
-assumptions the design makes until they are answered:
+Resolved 2026-10-20 (the table in `functional.md`, "Open questions"),
+except:
 
-1. Fusion fixture: `fusion::maintainer_sample_imports` is ignored until
-   the file exists; the importer is built on the vendor-style fixture.
-2. Canned cycles: opt-in, off by default, on every controller.
-3. Config file: TOML at `<config dir>/dreamcarve/config.toml`;
-   `separate_programs` when absent.
-4. `init` leaves Pocket out; the chapter's JSON block says `climb`.
-5. Corner relief on both Pocket and Profile (slice 12 covers both; the
-   Profile half can be split off).
-6. Profile ramp along the path; the zigzag stays Pocket-only.
-7. Tool number remains the list position; Fusion's `number` is not read.
-8. v6 → v7 migration, not serde defaults.
-9. Rest machining in scope as slice 6.
+7. **Tool numbers.** See "Tool numbers" under "Fusion import" for the
+   trade-off and the recommendation (add `Tool::number: Option<u32>` in
+   v7). Until decided, the design keeps list position and the importer
+   does not read `post-process.number`.
