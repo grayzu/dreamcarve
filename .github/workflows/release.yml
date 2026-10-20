@@ -131,6 +131,8 @@ jobs:
         uses: "taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283"
         with:
           "tool": "cargo-about@0.9.2"
+      - name: "Build cargo-about where no prebuilt binary exists"
+        run: "cargo about --version || cargo install --locked --force cargo-about@0.9.2 --features cli"
       - name: "Generate THIRD-PARTY-LICENSES"
         run: "cargo run --locked -p third-party-licenses -- generate"
       - name: Install dist

@@ -10,5 +10,11 @@
   uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
   with:
     tool: cargo-about@0.9.2
+# cargo-about publishes no x86_64-apple-darwin binary. There install-action
+# falls back to cargo-binstall, which builds it without the `cli` feature, so
+# no `cargo-about` binary is installed and the step still passes (v0.1.0's
+# first release run). Build it from source wherever it is missing.
+- name: Build cargo-about where no prebuilt binary exists
+  run: cargo about --version || cargo install --locked --force cargo-about@0.9.2 --features cli
 - name: Generate THIRD-PARTY-LICENSES
   run: cargo run --locked -p third-party-licenses -- generate
