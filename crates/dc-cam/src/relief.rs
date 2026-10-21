@@ -976,9 +976,9 @@ pub(crate) struct ProfileGeometry<'a> {
 /// The relief sites of a Profile on `side`: per region, its outline and
 /// holes with the side the kerf clears (Inside: inside the outline and
 /// outside the holes; Outside: the reverse), and the region's tool-centre
-/// paths. On line has none.
+/// paths. On line, Left and Right have none.
 fn profile_sites(side: Side, geometry: &ProfileGeometry<'_>) -> Vec<Site> {
-    if side == Side::OnLine {
+    if !side.has_waste_area() {
         return Vec::new();
     }
     let inside = side == Side::Inside;
@@ -1031,12 +1031,13 @@ pub(crate) fn profile_notches(
     if op.corner_relief == CornerRelief::None {
         return Ok(Vec::new());
     }
-    if op.side == Side::OnLine {
-        warnings.push(skipped(
-            &op.id,
-            op.corner_relief,
-            ReliefSkippedReason::OnLine,
-        ));
+    let unrelieved = match op.side {
+        Side::OnLine => Some(ReliefSkippedReason::OnLine),
+        Side::Left | Side::Right => Some(ReliefSkippedReason::OpenPath),
+        Side::Inside | Side::Outside => None,
+    };
+    if let Some(reason) = unrelieved {
+        warnings.push(skipped(&op.id, op.corner_relief, reason));
         return Ok(Vec::new());
     }
     let (Some(thickness_mm), Some(depth_mm)) = (project.stock.thickness_mm, op.depth_mm) else {

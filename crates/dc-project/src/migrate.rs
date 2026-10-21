@@ -53,10 +53,16 @@
 //! - **9**: adds `on_holes` to each Profile's `tabs`, set to `true` by the
 //!   migration (#109): a Profile now leaves its holes without tabs unless
 //!   `on_holes` is set, and every outline had tabs before.
+//! - **10**: a Profile's `side` may be `"left"` or `"right"` (#207), which
+//!   cut open paths beside them. No version 9 file holds either, so the
+//!   migration changes only the version; the bump makes an older reader
+//!   refuse a file that uses them.
 //! - **11**: adds the project's placed tabs, `tabs: []` after
 //!   `operations` (#105, ADR-0005). A Profile's `tabs` setting stays as a
 //!   tab request: placing it needs the Profile's tool paths, which only
-//!   `dc-cam` builds, so `dreamcarve` places it when it loads the file.
+//!   `dc-cam` builds, so generation places it before it cuts, and each
+//!   `dreamcarve tabs` command that saves the project writes it as placed
+//!   tabs.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -85,8 +91,7 @@ fn step(from: u32) -> Option<Step> {
         6 => Some(v6_to_v7),
         7 => Some(v7_to_v8),
         8 => Some(v8_to_v9),
-        // TODO(#207): replaced by #207's step when it merges.
-        9 => Some(v9_to_v10_placeholder),
+        9 => Some(v9_to_v10),
         10 => Some(v10_to_v11),
         _ => None,
     }
@@ -440,16 +445,16 @@ fn v8_to_v9(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
     Ok(root)
 }
 
-/// Placeholder for #207's version 9 → 10 step, which lands first.
-#[allow(clippy::unnecessary_wraps, reason = "a migration step")]
-fn v9_to_v10_placeholder(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+/// Version 9 → 10 (#207): Left and Right are new values of an existing
+/// field, so a version 9 file is already a version 10 one.
+fn v9_to_v10(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
 /// Version 10 → 11 (#105): `tabs: []` after `operations`, the project's
 /// placed tabs, none yet. Each Profile's `tabs` setting is left as it is:
-/// it is now a tab request, which `dreamcarve` places when it loads the
-/// project (ADR-0005). Fails if the project already has `tabs`: that is
+/// it is now a tab request, placed when the project is cut or saved by
+/// `dreamcarve tabs` (ADR-0005). Fails if the project already has `tabs`: that is
 /// not a version 10 file.
 fn v10_to_v11(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     if root.contains_key("tabs") {
@@ -615,7 +620,7 @@ fn untag(value: Value, path: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
     use crate::test_support::sample_project;
-    use crate::{OriginXy, SpindleControl, ToolChangeMode, ToolKind, load, save};
+    use crate::{OriginXy, Side, SpindleControl, ToolChangeMode, ToolKind, load, save};
     use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
     use serde_json::json;
 
@@ -1281,6 +1286,39 @@ mod tests {
                 if message.contains("tabs")),
             "{err:?}"
         );
+    }
+
+    /// #207: version 10 only adds the `left` and `right` sides, so the
+    /// migration changes nothing but the version: every version 9 file
+    /// cuts the same. The bump makes a reader of version 9 refuse a file
+    /// that uses the new sides, instead of failing on an unknown side.
+    #[test]
+    fn v9_to_v10_changes_only_the_version() {
+        let root: Value = serde_json::from_slice(V9_FIXTURE).unwrap();
+        let stepped = v9_to_v10(root.as_object().unwrap().clone()).unwrap();
+        assert_eq!(Value::Object(stepped), root);
+        for side in ["inside", "outside", "on_line"] {
+            let mut root = sample_root_at(9);
+            root["operations"][0]["side"] = json!(side);
+            let migrated = migrate(root, 9).unwrap();
+            assert_eq!(migrated["operations"][0]["side"], json!(side));
+        }
+        assert_eq!(
+            migrate(sample_root_at(9), 9).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+    }
+
+    /// #207: the new sides save as `"left"` and `"right"` and load back.
+    #[test]
+    fn left_and_right_sides_round_trip() {
+        for (side, text) in [(Side::Left, "\"left\""), (Side::Right, "\"right\"")] {
+            assert_eq!(serde_json::to_string(&side).unwrap(), text);
+            assert_eq!(serde_json::from_str::<Side>(text).unwrap(), side);
+            let mut p = sample_project();
+            crate::test_support::profile_mut(&mut p).side = side;
+            assert_eq!(load(save(&p).unwrap().as_bytes()).unwrap().project, p);
+        }
     }
 
     #[test]

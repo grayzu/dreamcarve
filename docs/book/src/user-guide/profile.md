@@ -45,7 +45,7 @@ This is the Profile `init` writes, with `depth_mm` and
 | `enabled` | `false` leaves the operation out of the program, with a warning. |
 | `targets` | The ids of the instances to cut. `init` lists every instance with a closed outline. |
 | `tool` | The id of the tool to cut with. |
-| `side` | `"outside"`, `"inside"`, or `"on_line"`. See [Side](#side). |
+| `side` | `"outside"`, `"inside"`, or `"on_line"`; for open paths also `"left"` or `"right"`. See [Side](#side). |
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required:** `init` leaves it `null`, and export refuses until you set it. To cut through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
 | `step_down_mm` | The most to cut in one pass. `null`, as `init` writes it, uses the tool's `step_down_mm`; if both are `null`, `check` reports the tool's as not set and export refuses. More than the tool's diameter is a warning. |
 | `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
@@ -68,6 +68,9 @@ side says where the bit's edge runs:
   drew. Use it to cut a hole or an opening.
 - `"on_line"`: the bit's centre follows the line. The cut is one bit wide,
   centred on the line.
+- `"left"` and `"right"`: for an open path only. The bit runs beside the
+  path, on its left or its right looking from its first vertex to its
+  last. See [Left and right](#left-and-right).
 
 Inside and outside are measured from the part, not from each shape. A shape
 inside another is a hole in it, so on a ring with an outside Profile, the
@@ -126,18 +129,32 @@ leaves a cleaner edge on a hobby router. **Conventional** milling is the
 reverse; it pulls the bit less hard into the material on a machine with
 backlash.
 
+Climb keeps the material you keep on the bit's right as it moves;
+conventional keeps it on the bit's left.
+
 | The bit runs | Climb | Conventional |
 | --- | --- | --- |
 | Outside the outline it cuts | Clockwise | Counter-clockwise |
 | Inside the outline it cuts | Counter-clockwise | Clockwise |
+| `"left"` of an open path | From its first vertex | From its last vertex |
+| `"right"` of an open path | From its last vertex | From its first vertex |
+| `on_line` along an open path | From its last vertex | From its first vertex |
 
 Directions are seen from above, with Y pointing away from you. An outside
 Profile runs outside a part's outline and inside its holes. An `on_line`
-cut counts as outside on a part's outline and inside on a hole. An open
-path has no inside or outside, so the direction picks the end its cut
-starts at: conventional from its first vertex, climb from its last (as
-VCarve does: "Conventional starts cutting at the Start point" and "Climb
-cutting starts cutting at the end point").
+cut counts as outside on a part's outline and inside on a hole.
+
+Beside an open path, `"left"` or `"right"`, the part is on the far side
+of the line from the bit, so climb and conventional mean what they mean
+on an outline. With `"left"` the part is on the bit's right as it runs
+from the first vertex to the last, so that is climb; `"right"` is the
+mirror.
+
+An open path cut `on_line` is a slot: both sides of the bit cut, so
+there is no climb or conventional. There the direction only picks the
+end the cut starts at, as VCarve does:
+"Conventional starts cutting at the Start point" and "Climb cutting
+starts cutting at the end point".
 
 ## Machining order
 
@@ -281,6 +298,69 @@ A 100 mm line cut `on_line` 6 mm deep in 2 mm passes with a 15° ramp and a
 6.35 mm bit: each pass ramps out 19.05 mm along the line and back, then
 cuts the 100 mm to the line's far end, and lifts.
 
+### Left and right
+
+`"left"` and `"right"` cut beside an open path, as VCarve's Profile cuts
+"to the Left" or "to the Right" of an open vector. Left and right are as
+you look along the path from its first vertex to its last, the way you
+drew it. The importers keep the drawing as you see it, so left is the
+left you see in your drawing program; draw the path the other way and
+the sides swap. The bit runs one radius to that side, so its edge follows
+the line: the side it runs on is waste, and the other side is the part,
+which keeps the line you drew. Use it for an edge that is not a closed
+outline, such as a cut across the stock that trims it, or one edge of a
+part.
+
+A 100 mm line drawn from (20, 20) to (120, 20) and cut `"left"` with a
+6.35 mm bit: the bit's centre runs at Y 23.175, from X 20 to X 120 under
+climb, and the material below the line is kept. Cut `"right"`, it runs
+at Y 16.825, from X 120 to X 20 under climb, and the material above is
+kept.
+
+- **Turns.** On the outside of a turn the bit rounds the corner, as an
+  outside cut does; on the inside it stops where its two passes meet, so
+  that corner keeps the bit's radius. A curve tighter than the bit's
+  radius on the cut side leaves no room: that stretch is not cut, and a
+  path with nothing left warns `tool_too_large`.
+- **Ends.** The cut ends square: the bit's centre stops on the line
+  square to the path through its end vertex. Its edge touches the end
+  vertex and reaches one radius past it on the cut side only, so the
+  part side is never touched past the end. VCarve's manual does not say
+  how its open cut ends; this keeps the part as drawn.
+- **Direction** is climb or conventional milling, as on an outline (see
+  [Direction](#direction)): `"left"` climb and `"right"` conventional
+  start beside the first vertex, `"left"` conventional and `"right"`
+  climb beside the last.
+- **Ramps and tabs** are as for `on_line` above, along the path the
+  bit's centre follows: a ramp runs back and forth from the start; tabs
+  are measured from the end beside the first vertex, whichever end the
+  cut starts at. A `helix` entry is an error: the cut removes only its
+  own width. There is no lead (`lead_dropped`) and no corner relief
+  (`relief_skipped`), as VCarve gives an open profile none.
+- **Closed shapes** are not cut: an outline has no first vertex you can
+  see, so its left is not shown in the drawing. Each warns
+  `side_needs_open_path`; cut it in an Inside, Outside or On line
+  operation.
+- **Lines too close.** The bit must not cross another of the operation's
+  lines, nor reach the strip one bit radius wide that a line keeps on its
+  part side. A cut that would is an error, and nothing is exported:
+
+  ``operation `o1` cuts beside `Edge` (instance `i1`, profile 0) and
+  `Edge` (instance `i1`, profile 1), but a cut comes within the 6.35 mm
+  tool's radius of one of them or of the material it keeps, ...``
+
+  Two lines 4 mm apart, or a line drawn twice in opposite directions
+  (each copy keeps what the other cuts), are refused. So is a part drawn
+  as four separate lines and cut on its inside: each line's square end
+  runs onto the next line. Join lines that meet into one path, so the
+  corner is turned, not ended. The same four lines cut on their outside
+  are cut: the part's corners come out sharp, and a little waste is left
+  beyond each one, where neither square end reaches. A line drawn twice the same way is cut once, with
+  `duplicate_shape_dropped`. The same check covers one line against
+  itself, such as a spiral whose cut side faces the part side of the turn
+  beside it.
+
+
 ## Leads
 
 Without a lead, each pass starts and ends on the outline itself: the bit
@@ -340,7 +420,8 @@ not fit where the cut ends is left off (`lead_dropped`, reason `exit`).
 
 **On line.** An On line Profile removes only its own cut, so there is no
 waste beside it for an arc: a `lead` there is not cut, and `lead_dropped`
-says so once for the operation.
+says so once for the operation. The same goes for `"left"` and
+`"right"`, which cut open paths: VCarve gives an open profile no lead.
 
 ## Corner relief
 
@@ -363,7 +444,8 @@ VCarve's ("Create Fillets": Dog-Bone and T-Bone).
 An outside Profile's outward corners need no relief: the bit already cuts
 round them, so a rectangle cut outside gets no notches at all. An On line
 Profile has no waste side to put a notch in: it skips the relief with
-`relief_skipped`.
+`relief_skipped`. So does a `"left"` or `"right"` Profile: an open path
+has no inside or outside corner.
 
 Each notch plunges where the outline's path turned that corner and steps
 down by the **tool's** `step_down_mm` to the operation's depth. The
@@ -441,6 +523,7 @@ These still give a safe program. `check` and `export` print each one as
 | Warning says | Meaning |
 | --- | --- |
 | "... is an open path" | An Inside or Outside target is not a closed outline; it is not cut. See [Open paths](#open-paths). |
+| "... is a closed outline, and Left and Right are sides of an open path ..." | A `"left"` or `"right"` target is a closed outline; it is not cut. See [Left and right](#left-and-right). |
 | "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
 | "... is the same outline in the same place as ..." | Two shapes are the same outline, or the same open path in either direction, in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ...", "tab ... is on ..." | See [Tabs](tabs.md#warnings). |
@@ -464,7 +547,7 @@ for you.
 | "... is set to ... RPM, faster than the 60000 RPM ..." | Warning | The spindle speed is above 60 000 RPM. GRBL and grblHAL run the spindle at its maximum instead, and with manual spindle control the speed is only a hint, so this does not stop export. |
 | "... is ... mm in diameter, larger than the 50 mm ..." | Warning | The tool's `diameter_mm` is above 50 mm. Check it for a typo. |
 | "feed_mm_min is ..., expected a value greater than 0 and at most 20000 mm/min" (or `plunge_mm_min`) | Error | No hobby machine moves faster than 20 000 mm/min, so the value is almost surely a typo. Export fails. |
-| "... cuts with tool ..., a V-bit; an Inside or Outside Profile and a Pocket offset the path by half the diameter ..." | Error | With `side` `"outside"` or `"inside"`, Profile needs a flat end mill (`"cutter": "end_mill"`): it offsets the path by half the diameter, so with a V-bit, ball-nose or engraving bit the part comes out the wrong size. Export fails. With `"on_line"` the bit's centre follows the line, so any cutter is allowed. |
+| "... cuts with tool ..., a V-bit; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter ..." | Error | With `side` `"outside"`, `"inside"`, `"left"` or `"right"`, Profile needs a flat end mill (`"cutter": "end_mill"`): it offsets the path by half the diameter, so with a V-bit, ball-nose or engraving bit the part comes out the wrong size. Export fails. With `"on_line"` the bit's centre follows the line, so any cutter is allowed. |
 | "... is enabled but has no targets ..." | Error | The operation would cut nothing. Add targets or set `enabled` to `false`. |
 
 ### Shapes too close together

@@ -307,6 +307,32 @@ change of tool or side moved every tab and two Profiles of one outline
 each rose over their own tabs only; tabs as placed objects were out of
 scope.)
 
+### Open paths
+
+37. **Left and Right of an open path** (#207; numbered after the #73
+addendum's 27–36). A Profile's `side` may be
+`left` or `right` (format version 10), as VCarve's Profile cuts "to the
+Left, to the Right or On the selected vectors". The tool centre runs one
+radius to that side of each open target, looking along it from its first
+vertex to its last as drawn; the cut ends square on the normals through
+the path's ends, so the bit's edge reaches the end vertex and goes no
+further on the part side. The side the bit runs on is waste and the
+other side is the part: a cut that would cross another of the
+operation's lines, or reach the strip one radius wide that a line keeps
+on its part side, is an error. Direction is the milling mode, as on a
+closed shape: climb keeps the part on the right of travel, so Left climb
+starts beside the first vertex and Right climb beside the last, and
+conventional is the reverse (changed in #287: #207 used On line's
+start-point rule, which made a Left `climb` mill conventional);
+ramps run along the offset path and tabs are measured along it from the
+end beside the first vertex; there is no lead, no corner relief and no
+helix, as VCarve gives open profiles none. Closed targets are skipped
+with `side_needs_open_path`, since a closed path's direction is not
+shown in the drawing. S9 holds the cut to the offset path and clear of
+every line and kept strip. (added in #207: before, an open path could
+be cut only On line, and cutting beside one meant redrawing it a bit
+radius over.)
+
 ## Out of scope
 
 V-Carve and V-bit countersinking (phase 3). Helical boring of holes wider
@@ -315,13 +341,15 @@ seeded offset, engagement-based feed reduction, slot feed reduction,
 corner rounding of toolpaths, wall corner clean-up (PureCutCNC features not
 in VCarve's pocket form; post-1.0 or phase 8). Pocket fill patterns for
 Engrave (VCarve's hatch and offset fill). Straight-line leads. Start depth
-(every operation starts at the stock top). Separate clearance, tool-change
-and park heights (#73; safe Z remains the one height). Drill tip
-compensation and "drill through". Region masks and clamps as obstacles. A GUI, simulation, text,
-toolpath preview images. Reading Vectric, Carveco or Carbide Create tool databases.
-(changed in #105: tabs as placed objects were out of scope, waiting for
-the GUI; the maintainer asked for ready-for-agent work to be picked up,
-so they are capability 26a, placed and edited from the CLI.)
+(every operation starts at the stock top). Drill tip
+compensation and "drill through". Region masks and clamps as obstacles. A
+GUI, simulation, text. Reading Vectric, Carveco or Carbide Create tool
+databases. (changed in the #73 addendum: separate clearance, tool-change
+and park heights and an SVG toolpath preview moved in scope; see "Phase 2
+addendum (#73)".) (changed in #105: tabs as placed objects were out of
+scope, waiting for the GUI; the maintainer asked for ready-for-agent work
+to be picked up, so they are capability 26a, placed and edited from the
+CLI.)
 
 ## Acceptance tests
 
@@ -486,7 +514,7 @@ it, and the CLI check uses the coaster drawn as Béziers,
 design spec, the cutting moves at each Z match PureCutCNC's exported
 G-code within 0.01 mm after start-point alignment; for the two
 multi-part cases the order of shapes is compared too.
-39. **Placed tabs.** A star and its 7 mm hole cut by one Outside Profile
+38a. **Placed tabs.** A star and its 7 mm hole cut by one Outside Profile
 with a 6.35 mm bit, with tabs placed only on the star by `tabs place
 --at`: the hole is cut free (no pass over it rises) and only the star's
 last passes rise over the tabs; the program passes S1–S9. A tab
@@ -635,3 +663,291 @@ the capabilities above and the design spec; the record stays here.
 | 10 | Fusion sample libraries | Autodesk's sample files are reference only, not committed; the fixtures are hand-written in the schema's structure. `TA` is the half angle (a 90° V-bit has `TA` 45), confirmed against IDC Woodcraft's Fusion library. |
 | 8 | `machining_order` migration | A v6 → v7 migration, not a serde default (built as v7 → v8: #106 took v7). |
 | 9 | Rest machining | In scope. |
+
+## Phase 2 addendum (#73)
+
+**Status:** draft. Added 2026-10-21 from the workflow-gap review in #73
+(main @ d3cc0ca, phase 1). The capabilities, acceptance tests and safety
+rules above still hold; this section adds to them, and its numbers
+continue theirs. The design is in `design.md`, "Phase 2 addendum (#73)".
+
+#73 listed eleven gaps. Phase 2 has already closed these:
+
+| #73 item | Closed by |
+| --- | --- |
+| Plunge strategy: ramp and helix entry, lead-in | PRs #159 (Pocket entry), #174 (Profile entry, ramp by default), #185 (arc leads), #228 (descent starts 1 mm above the stock) |
+| Rect tabs step vertically on the wall | `shape: "smooth"` tabs (phase 1, PRs #32, #94) |
+| The jog-blocked tool-change pause | #57 (PR #81) |
+| Tool library, Fusion library import | PRs #143 (library and `tools` CLI), #160 (Fusion `.tools`/`.json` import) |
+| Operation order not checked | PRs #139 (`cut_inside_freed_part`, `tool_change_avoidable`), #274 (`cut_inside_tab_held_part`) |
+| Tabs at manual positions | not here: #105 (placed tabs, with the GUI) |
+
+The rest are specified below, one subsection each, in the order they are
+built (design addendum, "Order and format versions").
+
+### A1. `export --post` keeps your settings (#277)
+
+27. **Switching post-processor keeps customised settings.** Today
+    `export --post <id>` resets all six post-processor settings to the
+    definition's defaults, so a raised `spindle_on_dwell_s` is lost when a
+    project moves from grblHAL v1 to v2. From now on each setting is kept
+    or reset by one rule: a setting still at the old definition's default
+    takes the new definition's default (so grblHAL → LinuxCNC still
+    changes `file_extension` from `nc` to `ngc`); a setting the user
+    changed is kept, unless the new definition cannot use it
+    (`tool_change_mode: "m6"` without an `M6` line, `use_canned_cycles:
+    true` without canned cycles), in which case it is reset and `export`
+    says so, naming the setting, both values and why. The user config's
+    `tool_change_mode` applies only to a setting that is reset.
+    `--reset-settings` restores today's behaviour: every setting from the
+    definition's defaults with the config on top. So `export --post` with
+    the project's own id, to upgrade the version, changes only the
+    version. No format change.
+
+### A2. Comment transliteration (#278)
+
+28. **Names keep their letters.** Text DreamCarve puts in a comment (the
+    project, operation and tool names) is reduced to printable ASCII, as
+    before, but a letter with an accent or a common symbol is
+    transliterated instead of dropped: "Café" is written `Cafe`, not
+    `Caf`; "Ø6 mm" `O6 mm`; "½ in" `1/2 in`; "Straße" `Strasse`; "—" `-`;
+    "°" `deg`. A character with no entry in DreamCarve's table is dropped,
+    as today, and the `( ) ; ! ? ~ { } %` rule is unchanged, so a
+    transliteration never produces one of them. Comments only: no
+    coordinate, word or motion changes. Applies to every post-processor
+    and every definition version.
+
+### A3. Header modal state on grblHAL and GRBL (#279)
+
+29. **Programs cancel stale modes before they move.** grblHAL v3 and GRBL
+    v3 add `G80` (cancel a canned-cycle motion mode) and then `G40`
+    (cancel cutter radius compensation) to the header, after `G94`, so a
+    mode left by MDI, or by a program stopped without `M2`/`M30`, cannot
+    change what the program does. Each was checked against the
+    controller's source (design addendum, A3): both only cancel, and on
+    GRBL, which has neither mode, both are accepted and do nothing, so a
+    GRBL program run on grblHAL is covered too. `G49` (cancel a tool
+    length offset: the `G43.1` cancel) is **not** added on either. Both
+    controllers fold the active offset into the work zero the user sets
+    (`G10 L20`, which senders' "zero Z" sends), so cancelling it after
+    work zero is set moves every Z by the offset and can cut deeper than
+    the drawing. Instead `export` tells grblHAL and GRBL users: "This
+    program does not change the tool length offset (G43.1). If your sender
+    sets one, set it before you set Z zero." New projects get v3; a v2
+    project keeps v2 until `export --post` (which, with A1, keeps its
+    settings).
+
+### A4. Cycle-time estimate (#280)
+
+30. **Export says how long the job takes.** After writing, `export`
+    prints for each program, and in total, an estimate as VCarve's
+    "Estimating Machining Times" makes one
+    (<https://docs.vectric.com/docs/V12.5/VCarvePro/ENU/Help/form/Toolpaths%20Summary/index.html>):
+    feed moves (lines and arcs, at their programmed `F`), dwells (spindle
+    spin-up and Drill `G4`), and rapids at the user's rapid rate, all
+    times a scale factor. The rapid rate and scale factor are machine
+    facts, so they live in the user config (`[estimate] rapid_mm_min`,
+    `scale_factor`, default 1.0); with no rapid rate the estimate gives the
+    rapid distance and leaves its time out rather than guess one. The
+    estimate never changes a program, and it says what it leaves out:
+    acceleration, and the time at pauses and tool changes (it prints their
+    count). For example: `Estimated time: 14 min 5 s (cutting 13 min 40 s,
+    dwells 25 s); 4.3 m of rapids not included: set [estimate]
+    rapid_mm_min in config.toml. Excludes acceleration and 1 pause.`
+
+### A5. Toolpath preview as SVG (#281)
+
+31. **See the toolpaths before phase 4.** `export --preview <file.svg>`
+    and `check --preview <file.svg>` write a picture of every enabled
+    operation's toolpath over the stock and the shapes, at 1:1 in
+    millimetres, seen from above with Y up as drawn. Each operation has a
+    colour and a legend entry with its id and name. Cuts are solid, rapids
+    dashed, a stretch raised over a tab is drawn as a heavy tab mark, and
+    each pass's start is a circle the size of the bit with a tick in the
+    cut direction, so `at_distances` tabs and start points (A9) can be
+    checked. It is the toolpath DreamCarve generated, not the parsed
+    G-code, so arc fitting does not show. `check --preview` writes the
+    file when every operation generates, whatever the warnings; `export
+    --preview` writes it with the programs, all or none.
+
+### A6. Inch input (#282)
+
+32. **Inch projects take inch values.** Any length (`*_mm`) or feed
+    (`*_mm_min`) value in a `.dcv` or a tool library file may be written
+    as a string with its unit, as Fusion reads a value with a unit
+    whatever the document's units ("6.25 in" is always inches,
+    <https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/fusion_Parameter_expression.htm>):
+    `"depth_mm": "0.5 in"`, `"depth_mm": "1 1/4 in"`, `"feed_mm_min": "60
+    in/min"`, `"safe_z_mm": "5 mm"`. A bare number is in the field's unit,
+    as before. DreamCarve converts on load (×25.4, exactly), so the model,
+    every check and every program are unchanged; a command that saves the
+    project (`export --post`, `tools add`) writes millimetre numbers back.
+    The CLI's own lines that state a length (export's per-operation `…
+    deep`, the program extents) use the project's `display_units`, as
+    VCarve's job units do
+    (<https://docs.vectric.com/docs/V9.0/VCarvePro/ENU/Help/Drawing/uiSheetForm%5CJob%20Setup.html>):
+    an inch project's summary says `0.4724 in deep`, not `12 mm deep`.
+    Warning messages stay in millimetres in this addendum (their
+    parameters are named `_mm`). No format change: DreamCarve still writes
+    numbers.
+
+### A7. Separate heights (#283)
+
+33. **Clearance, tool-change and park heights** (`heights` on the
+    project; VCarve Material Setup, "Rapid Z Gaps above Material" and
+    "Home / Start Position",
+    <https://docs.vectric.com/docs/V12.5/VCarvePro/ENU/Help/form/material-setup-flat/index.html>;
+    Fusion "Clearance height",
+    <https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/MFG-REF-CLEARANCE-HEIGHT.htm>,
+    and "Retract height",
+    <https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/MFG-REF-RETRACT-HEIGHT.htm>).
+    Each is optional; unset, the program is as today.
+    - **`clearance_mm`**, above the stock top: the height for moves
+      between parts (feature instances) within an operation, between
+      operations, at a tool change and at the end. Each operation's
+      `safe_z_mm` stays the retract between passes of one part, like
+      Fusion's retract height. It must be at least every enabled
+      operation's `safe_z_mm`.
+    - **`tool_change_machine_z_mm`**, in machine coordinates: before each
+      tool-change stop (`T<n> M6`) and at the end of every program, the
+      program lifts to this machine Z with `G53 G0 Z…`, so the bit clears
+      clamps and is easy to reach. A program-per-tool export ends each
+      program there, which serves as the tool-change height on GRBL. It
+      must be below 0 (both controllers home Z to a negative machine
+      position) and is accepted only on a post-processor whose definition
+      documents `G53` (grblHAL and GRBL in this addendum). The machine must
+      be homed, which DreamCarve cannot check, so `export` says so.
+    - **`park`** `{ "x_mm": …, "y_mm": … }`, in project coordinates: at the
+      end the bit rises to the clearance height (or the last operation's
+      safe Z), rapids to this point, then makes the machine-Z lift if set.
+      This is VCarve's Home position without its Z (the lift above is the
+      Z).
+    Projects from earlier versions get all three unset and export the same
+    bytes. Today's two-tool export, `G0 Z5.000`, `M5`, `Z2.000`, then the
+    stop, becomes `G0 Z<clearance>`, `G53 G0 Z<machine z>`, `M5`, then the
+    stop.
+
+### A8. Profile last pass (#284)
+
+34. **Last pass allowance** (`last_pass` on Profile; VCarve 2D Profile
+    "Last Pass Allowance",
+    <https://docs.vectric.com/docs/V9.5/VCarvePro/ENU/Help/Reference%20Manual/Toolpaths/2D%20Profile%20Toolpath/2D%20Profile%20Toolpath.html>;
+    Fusion 2D Contour "Stock to Leave" and finishing passes,
+    <https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/GUID75B6821B-DE26-4E3B-AF10-4A54131CD9E4.htm>).
+    Every pass but the last leaves `allowance_mm` on the wall; the last
+    pass cuts to size, so it takes a thin, even skin off the whole wall
+    and leaves no step marks. `thickness_mm` (VCarve "Set Last Pass
+    Thickness") sets the depth of that last pass; unset, it is the normal
+    last depth pass. `reverse` (VCarve "Reverse direction") cuts the last
+    pass the other way. The allowance must be more than 0 and at most a
+    third of the bit diameter, as VCarve advises. Inside and Outside only:
+    On line has no wall to leave material on. Unset (`null`) by default,
+    in `init` and in migrated projects.
+
+### A9. Tabs that avoid corners, and start-point control (#285)
+
+35. **Tabs off corners** (`tabs.avoid_corners`). A tab whose stretch (tab
+    width plus bit diameter) would lie on a corner, where the bit's path
+    turns 30° or more within one bit diameter, slides along the path to
+    the nearest place where it does not, never more than half the gap to
+    its neighbours and never onto another tab. One that cannot is left
+    where it was, with a `tab_on_corner` warning naming it. A rotated
+    square's four evenly spaced tabs then sit on its straight sides, not
+    on the arcs round its corners; a circle's tabs never move. Fusion's
+    "Segment" tab positioning places tabs between points of the contour
+    (<https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/MFG-REF-2D-CONTOUR-TABS.htm>);
+    VCarve documents no corner rule, so the 30° rule is DreamCarve's.
+    `init` writes `true`; migrated projects get `false`, so they cut as
+    before.
+36. **Start point** (`start` on Profile; VCarve 2D Profile "Use vector
+    start point" and "Start At", on the page A8 cites; Fusion "Entry
+    Positions"):
+    - `"auto"` (default, and migrated projects): as today. The start
+      follows from the drawing's first vertex, moved by a lead or by an
+      entry that has no room beside a tab.
+    - `"first_vertex"`: each closed outline's cut starts at the point of
+      the bit's path nearest the drawing's first vertex, as VCarve's "Use
+      vector start point" plunges at the shape's first point.
+    - `{ "near": { "x_mm": …, "y_mm": … } }`: each closed outline's cut
+      starts at the point of its bit path nearest that project point, a
+      fixed-point form of VCarve's "Closest on Bounding Box".
+    With `first_vertex` or `near`, a lead arrives at that point or is
+    dropped, an entry with no room there falls back (ramp, then plunge)
+    instead of moving, and `at_distances` tabs are measured from that
+    point, so the user knows where they are. Open paths ignore `start`:
+    their start is the end the cut direction sets (#242).
+
+### Acceptance tests (addendum)
+
+39. **`--post` keeps settings.** A grblHAL v1 project with
+    `spindle_on_dwell_s: 6` exported with `--post grblhal` is saved at the
+    latest grblHAL version with `spindle_on_dwell_s: 6` and every other
+    setting unchanged. With `--post grbl` and `tool_change_mode: "m6"`
+    the mode is reset to `"separate_programs"` and the summary names it
+    and why. `--reset-settings` gives the definition's defaults.
+40. **Transliteration.** A project named "Café Ø6 ½" writes `( Project:
+    Cafe O6 1/2 )` on grblHAL; every byte of every program is printable
+    ASCII; a name made only of unmapped characters writes an empty name,
+    as today.
+41. **Header.** grblHAL v3 and GRBL v3 programs have `G80` then `G40`
+    after `G94`, in the header and in the setup written again after each
+    stop; neither has `G49` or `G43`; the first motion line after each
+    carries its motion word; v2 projects export their v2 bytes.
+42. **Estimate.** A program of one 100 mm `G1` at F600, a 3 s spin-up
+    dwell and 50 mm of rapids reports 10 s cutting and 3 s dwell, leaves
+    the 50 mm out with no rapid rate and adds 1 s with `rapid_mm_min =
+    3000`; `scale_factor = 2` doubles every time; the program bytes are
+    the same with and without the config.
+43. **Preview.** The coaster's preview is one SVG whose viewBox is the
+    stock and whose cut paths are the toolpath's XY with Y flipped
+    (`y_svg = height − y`) within 0.001 mm, with one tab mark per tab per
+    raised pass and one start circle per pass; a CCW arc is drawn with
+    sweep flag 0; the same project gives the same bytes twice.
+44. **Inch input.** `"depth_mm": "0.5 in"` loads as 12.7, `"1 1/4 in"` as
+    31.75 and `"feed_mm_min": "60 in/min"` as 1524; the program equals the
+    one from the millimetre numbers; `"0.5 furlong"` fails naming the
+    field, line and column; an inch project's summary says `0.5000 in
+    deep`.
+45. **Heights.** The two-tool plaque on grblHAL in one program, with
+    `clearance_mm: 20`, `tool_change_machine_z_mm: -5` and `park: {x_mm:
+    0, y_mm: 0}`: links between parts and between operations rise to Z
+    20 (work zero at the stock top) and links between passes of one part
+    to its safe Z; the tool change is `G0 Z20.000`, `G53 G0 Z-5.000`,
+    `M5`, `T2 M6`; the program ends with a rapid to the park point at Z
+    20, then `G53 G0 Z-5.000`, then the footer. On LinuxCNC
+    `tool_change_machine_z_mm` is an error naming the setting; a
+    `clearance_mm` below an enabled operation's `safe_z_mm` is an error;
+    with all three unset the program is byte-identical to before.
+46. **Last pass.** An outside Profile of a 60 × 40 mm rectangle, 12 mm
+    deep in 4 mm passes, with `last_pass: {allowance_mm: 0.5}`: the first
+    two passes run 0.5 mm farther from the part than the third, which is
+    on the phase 1 path. With `thickness_mm: 1` the passes are 4, 8, 11
+    and 12 mm deep and only the 12 mm pass is on the part's path. With
+    `reverse` the last pass runs the other way. An allowance of 2.2 mm
+    with a 6.35 mm bit, or any `last_pass` on an On line Profile, is an
+    error.
+47. **Corners and start.** A 50 mm square rotated 45°, cut outside with 4
+    tabs and `avoid_corners: true`: every tab stretch lies on a straight
+    side; with `false` the tabs are where they were. The coaster's program
+    is byte-identical either way. `start: {near: {x_mm: 0, y_mm: 0}}`
+    starts each outline's cut at its path point nearest the origin, and
+    `at_distances: [10]` puts the tab 10 mm along the path from there.
+
+### Safety (addendum)
+
+- **S16 Machine-coordinate moves.** A program writes `G53` only as `G53
+  G0 Z<tool_change_machine_z_mm>`, alone on its line, only on a
+  definition that documents `G53`, only when the project sets the
+  height, and only before a tool-change stop or at the program end, at
+  the XY where the bit already is, after a retract to at least safe Z.
+  The safety pass treats work Z as unknown after it, as after `M0` (S4),
+  so the next XY rapid needs a retract in work coordinates first. It
+  refuses every other `G53`.
+- **S2 and S6, changed.** S6's "only other motion in an operation" adds
+  the rise to the clearance height before an operation's first move and
+  after its last. After the last operation a program may rapid, at or
+  above the clearance height (safe Z if unset), to the park point, then
+  make the S16 lift; S2 holds for that rapid. A link between parts rises
+  to the clearance height; a link between passes of one part, to safe Z.
+- **S9 with a last pass.** Every pass but the last keeps `allowance_mm`
+  more than `r` from the part; the last keeps `r`, as now.

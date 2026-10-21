@@ -79,7 +79,7 @@ header.
 ### dc-project (format version 11)
 
 ```rust
-pub const CURRENT_VERSION: u32 = 11;  // #106 took 7 (slice 2, #117); #109 took 9; #105 took 11
+pub const CURRENT_VERSION: u32 = 11;  // #106 took 7 (slice 2, #117); #109 took 9; #207 took 10; #105 took 11
 
 pub struct Project {
     // phase 1 fields unchanged, plus:
@@ -248,6 +248,17 @@ hole's slug is waste, and holding it is extra hand work. (changed in
 hole too small for tabs took two operations, and in the wrong order the
 hole was cut in a loose part.)
 
+**Migration v9 → v10** (`migrate::v9_to_v10`, #207): `Side` gains
+`Left` and `Right` (`"left"`, `"right"`), which no version 9 file holds,
+so the step is the identity and only `version` changes. The bump is what
+ADR-0002 asks for: a version 9 reader refuses a file that uses the new
+sides with `NewerVersion` instead of a schema error on an unknown side.
+The fixture `crates/dc-project/tests/fixtures/dcv/v9/sample.dcv` loads as
+the sample project (`migrate::version_9_fixture_loads`,
+`migrate::v9_to_v10_changes_only_the_version`,
+`migrate::left_and_right_sides_round_trip`). See "Profile left and right
+of an open path".
+
 **Migration v10 → v11** (`migrate::v10_to_v11`, #105, ADR-0005): add
 `"tabs": []` right after `operations`, and change nothing else. A
 Profile's `tabs` stays as a tab request: placing it needs the Profile's
@@ -290,8 +301,8 @@ outside (0, 1] on the tool or operation; a Pocket or Engrave with no
 step-down on operation or tool; a Drill whose `peck_depth_mm` is unset
 when the tool has no step-down; a `Lead` radius ≤ 0 or sweep outside
 (0, 180]; an `Entry::Ramp` angle outside (0, 45]; a `Helix` fraction
-outside (0, 1]; an `Entry::Helix` angle outside (0, 45]; `Entry::Helix` on a `Side::OnLine` Profile
-(`Problem::HelixNeedsWasteSide`); `use_canned_cycles: true` on a
+outside (0, 1]; an `Entry::Helix` angle outside (0, 45]; `Entry::Helix` on a `Side::OnLine`, `Side::Left` or `Side::Right`
+Profile (`Problem::HelixNeedsWasteSide`, Left and Right since #207); `use_canned_cycles: true` on a
 definition whose `canned_cycles` is `null`; `tool_change.mode: "m6"`
 without an `M6` line (phase 1). Warnings: a Drill whose tool is not
 `ToolKind::Drill` or `EndMill` (`Problem::DrillCutterUnusual`); a Pocket
@@ -475,7 +486,10 @@ see "Profile bands".) No cut runs on a line of a region whose outline,
 offset inward by `r` less the slack, is empty: the cut would remove the
 whole part. (changed in #223: a cut round a part smaller than the bit
 passed, because it stays on its line and the part has no stretches far
-apart along it; dc-cam now refuses it, see "Profile bands".) The notch rule applies Inside and Outside,
+apart along it; dc-cam now refuses it, see "Profile bands".) Left and
+Right stay on a target open path offset by `r` to their side, at least
+`r` from every open path of the targets and from every path's kept edge
+(added in #207, see "Profile left and right of an open path"). The notch rule applies Inside and Outside,
 so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
 outline on its waste side. It passes even where an outline of another
@@ -1474,6 +1488,124 @@ stretch near the meeting point is set aside. That stretch is `√2·d`, not
 a tool radius: a slot square to the edge is within `d` of it for its
 first `d`, so a reach of `r` would refuse every slot from the edge.)
 
+### Profile left and right of an open path (dc-cam::profile) (added in #207)
+
+VCarve's 2D Profile cuts an open vector "to the Left, to the Right or On"
+it ("Machining Open Vectors", V9.5 reference manual). On came in #175;
+`Side::Left` and `Side::Right` add the other two. They are new `Side`
+values rather than Inside and Outside reused, so `outside` keeps one
+meaning and the labels are VCarve's.
+
+- **Which side.** Left is to the left looking along the path from its
+  first vertex to its last, as drawn (VCarve: "Looking along the
+  vector(s) from the green node indicates the direction"). Internal
+  geometry is Y-up (ADR-0001), so for a segment direction `(dx, dy)` the
+  left normal is `(−dy, dx)`. The SVG and DXF importers keep the drawing
+  as seen, so left is the left the user sees.
+  (`profile::open_path_left_offsets_to_the_left`,
+  `profile::open_path_right_offsets_to_the_right`, both with the path
+  drawn both ways; `cli::left_profile_of_an_svg_line_exports_on_its_left`
+  pins it through the SVG importer.)
+- **Offset.** `dc_geometry::offset_open(path, left_mm)`, cavalier_contours'
+  open-polyline parallel offset (positive to the left of travel, pinned
+  by `offset::open_offset_moves_left_of_travel_and_ends_square`), by `+r`
+  for Left and `−r` for Right. An arc keeps its centre and its radius
+  grows or shrinks by `r`; a turn away from the tool's side is a round
+  join about the vertex, a turn toward it is trimmed where the offset
+  edges cross; an arc of radius `r` or less on the tool's side collapses,
+  and every stretch closer than `r` to any part of the path is dropped,
+  so the result is zero or more pieces, each run in the path's direction.
+  A path with none warns `ToolTooLarge`.
+- **Ends: square, on the end normals.** The tool centre starts and stops
+  on the normal through each end vertex, `r` from it. The cutter's edge
+  touches the end vertex and reaches `r` past it along the line on the
+  waste side only; nothing on the part side past the end is touched.
+  VCarve's documentation does not say how its open offset ends (an open
+  question, to confirm against VCarve itself). Square ends are what the
+  raw offset gives, keep the cut to the drawn length, and make a part
+  drawn as separate lines meet at its outer corners with no gouge, while
+  a round extension would cut `r` further along the line. The
+  alternatives were rejected: stopping `r` short leaves a nib at the end,
+  and wrapping round the end vertex cuts into the part side past it.
+- **Closed targets** are skipped with `Warning::SideNeedsOpenPath { shape }`
+  (`side_needs_open_path`), not mapped to Inside or Outside by winding:
+  the drawing does not show a closed path's direction
+  (`profile::left_right_on_closed_target_is_skipped_with_warning`). An
+  open target of an Inside or Outside Profile keeps `OpenPathSkipped`,
+  whose message now names Left and Right. Validation's `OpenProfile` is
+  not reported for a definition an enabled Left or Right Profile targets.
+  O8 (`order::targets_of`) reads a Left or Right Profile's open paths
+  and none of its closed outlines.
+- **Direction** is the milling mode, as for closed shapes, on each
+  piece (`profile::open_runs_reversed`). The spindle turns clockwise from
+  above, so climb keeps the part on the right of travel
+  (`traversal_is_ccw`'s rule). The tool runs on the waste side and the
+  part lies beyond the path, so:
+
+  | Side | Climb starts beside | Conventional starts beside |
+  | --- | --- | --- |
+  | Left | the first vertex | the last vertex |
+  | Right | the last vertex | the first vertex |
+  | On line (#242) | the last vertex | the first vertex |
+
+  With Left, travel from the first vertex keeps the part on the tool's
+  right, which is climb; Right is the mirror
+  (`profile::left_climb_keeps_the_part_on_the_right_of_travel`,
+  `profile::right_climb_keeps_the_part_on_the_right_of_travel`,
+  `profile::left_conventional_is_the_reverse`, each with the line drawn
+  both ways). VCarve's start-point rule ("Conventional starts cutting at
+  the Start point Climb cutting starts cutting at the end point") is kept
+  for On line only, where both flanks cut and no milling mode exists.
+  (changed in #287: #207 applied VCarve's start-point rule on every side,
+  so a Left cut named `climb` milled conventional and the other way
+  round; on a Left or Right cut only one flank meets kept material, so
+  climb and conventional are physical and must mean what they mean on a
+  closed shape, and in VCarve's and Fusion's milling-mode options.)
+- **Entry, tabs, leads, relief** as for On line open paths: a ramp runs
+  `entry::along_path` on the offset piece; a helix is
+  `HelixNeedsWasteSide` (validation and generator), there being no waste
+  domain; tabs are `PathEnds::Open`, measured along each piece from the
+  end beside the first vertex as drawn; no lead
+  (`LeadDropped { reason: open_path }`, VCarve: "Leads cannot be added to
+  open profile toolpaths") and no relief
+  (`ReliefSkipped { reason: open_path }`, VCarve: "Sharp External Corner
+  options do not apply"); a piece frees nothing
+  (`profile::left_right_ramp_and_tabs`). An open path drawn twice the
+  same way is cut once (`DuplicateShapeDropped`); drawn the other way it
+  is the other side, so it is not a duplicate.
+- **Bands.** The side the cutter runs on is waste, the other side is the
+  part, so #192's rule applies to the kept side: each tool-centre piece
+  keeps `r` (less `EPS_MM`) from every other open path of the operation
+  (crossing it would cut what that line keeps) and from every path's
+  kept edge, the path offset by `r` to its other side (reaching it would
+  cut the strip one radius wide each line keeps beside it). A path is
+  held to its own kept edge too, so a spiral or hairpin whose cut side
+  faces the part side of another stretch is caught; its own line it keeps
+  by construction. Lines that meet are not set aside as #210's are: a
+  square end running onto the next line of a part drawn as separate
+  lines, cut on its inside, cuts into it. A violation is
+  `CamError::CutsIntoKeptSide { op, shape, other, diameter_mm }`, the
+  shapes in drawing order and possibly the same path; an error, not a
+  warning, as #192, #199 and #210 decided for cuts into kept material
+  (`profile::left_right_cut_into_the_kept_side_is_refused`). D6's
+  `ToolpathsOverlap` is not run for Left and Right: its condition, a path
+  within `r` of another shape's line, is already this error.
+- **S9** (`Material::SideProfile`): every cut's ends and middle lie within
+  the slack of one of the targets' open paths offset by `r` to the side
+  (`offset_open`, computed from the project, not taken from dc-cam), and
+  the whole cut keeps `r` less the slack from every open path and every
+  kept edge, closed targets ignored
+  (`safety::left_right_cut_off_its_path_fails_s9`; the property test
+  `random_valid_left_right_profiles_never_panic_and_pass_safety`).
+
+(changed in #207: an open path could be cut only On line, so cutting
+beside a line, as VCarve's Left and Right do, needed the line redrawn one
+bit radius over. Issue #207's design comment is the source of these
+rules; the strip rule was added in implementation, because a cut that
+only keeps `r` from other lines still passes when it lies wholly on
+another line's kept side, as a line drawn twice in opposite directions
+shows.)
+
 ### Corner relief (dc-cam::relief)
 
 Ported from `cornerRelief.ts`.
@@ -2247,7 +2379,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `placed_tabs::tab_no_enabled_operation_crosses_warns` (no Profile, only a disabled Profile, only a Pocket: `tab_not_crossed`; a crossed tab is quiet).
 - `placed_tabs::tab_follows_its_instance_when_it_moves`, `placed_tabs::two_profiles_on_one_outline_both_rise_over_its_tabs`, `placed_tabs::tabs_of_different_heights_rise_each_to_its_own_top`.
 - `placed_tabs::place_keeps_the_rules_for_holes_and_short_outlines`, `placed_tabs::tab_on_a_hole_is_cut_and_warns`, `placed_tabs::place_does_not_place_a_tab_twice`, `placed_tabs::place_needs_a_profile_of_the_project`, `placed_tabs::place_on_outlines_puts_a_tab_at_each_distance`.
-- `profile::star_with_tabs_placed_only_on_the_star_lifts_only_on_the_star` (acceptance 39).
+- `profile::star_with_tabs_placed_only_on_the_star_lifts_only_on_the_star` (acceptance 38a).
 - `safety::placed_tab_programs_pass_s1_to_s9`; the golden harness checks that every golden case with tabs cuts the same once its tabs are placed.
 - `cli::version_9_tab_settings_export_byte_identical_programs` (the tabs-migration corpus, as loaded and after `tabs place`), `cli::init_asks_for_four_tabs_that_tabs_place_writes`, `cli::tabs_place_list_and_clear`, `cli::tabs_place_at_puts_tabs_along_the_outline`, `cli::tabs_place_refuses_what_it_cannot_place`, `cli::check_warns_tab_not_crossed`.
 
@@ -2315,6 +2447,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-cam — profile**
 - `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221), `profile::on_line_part_smaller_than_the_bit_is_refused`, `profile::on_line_part_just_larger_than_the_bit_is_cut`, `safety::on_line_part_smaller_than_the_bit_fails_s9` (#223).
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
+- `profile::open_path_left_offsets_to_the_left`, `profile::open_path_right_offsets_to_the_right`, `profile::left_right_on_closed_target_is_skipped_with_warning`, `profile::left_right_ramp_and_tabs`, `profile::left_right_cut_into_the_kept_side_is_refused`, `profile::left_right_tool_too_large_for_a_tight_arc_warns`, `offset::open_offset_moves_left_of_travel_and_ends_square`, `offset::open_offset_rounds_outer_turns_and_trims_inner_ones`, `offset::open_offset_of_a_tight_arc_toward_its_centre_vanishes`, `safety::left_right_cut_off_its_path_fails_s9`, `cli::left_profile_of_an_svg_line_exports_on_its_left` (#207). `profile::left_climb_keeps_the_part_on_the_right_of_travel`, `profile::right_climb_keeps_the_part_on_the_right_of_travel`, `profile::left_conventional_is_the_reverse` (#287, replacing #207's `profile::left_right_direction_follows_vcarve`).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
 **dc-cam — overlap**
@@ -2428,3 +2561,448 @@ unblock everything else.
 
 None. All resolved 2026-10-20; the record is the table in
 `functional.md`, "Open questions".
+
+## Phase 2 addendum (#73)
+
+**Status:** draft. The design of the capabilities in `functional.md`,
+"Phase 2 addendum (#73)" (A1–A9, capabilities 27–36, acceptance 39–47,
+S16). Everything above still holds; each subsection says what it changes.
+
+### Order and format versions
+
+One issue per subsection, built in this order. Three of them add
+persisted fields, so each bumps the `.dcv` format version once, and only
+one agent bumps it at a time: #207 takes version 10 and #105 version 11,
+then A7, A8 and A9 take 12, 13 and 14 in that order. Each bumping issue
+starts only after the issue holding the version before it has merged. If
+#105 has not merged when A7 is picked up, the maintainer decides whether
+A7 takes 11; the versions after it shift by one and this table is
+updated in the same PR. The other six change no persisted field.
+
+| Item | Issue | Model change | `.dcv` version | Depends on |
+| --- | --- | --- | --- | --- |
+| A1 `export --post` keeps settings | #277 | none | — | — |
+| A2 Comment transliteration | #278 | none | — | — |
+| A3 Header modal state | #279 | definitions `grblhal/v3`, `grbl/v3` | — | A1 (the upgrade it prompts keeps settings) |
+| A4 Cycle-time estimate | #280 | user config `[estimate]` | — | — |
+| A5 SVG toolpath preview | #281 | none | — | — |
+| A6 Inch input | #282 | reader only | — | — |
+| A7 Separate heights | #283 | `Project::heights`; definition field `work_coordinates.machine_command` | 12 | #105 (v11), A3 |
+| A8 Profile last pass | #284 | `ProfileOp::last_pass` | 13 | A7 |
+| A9 Tab corners, start point | #285 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
+
+A definition's own version (`grblhal/v3`) is separate from the `.dcv`
+version and follows `definitions/README.md`, "Versions". A3 adds the only
+new definition versions; A7's definition field is a schema-wide field,
+added in place to every released version (README, "Versions").
+
+### A1. `export --post` keeps settings (dreamcarve::export, dc-project)
+
+`dc-project::post_processor` gains
+
+```rust
+/// The latest version of `id` with `old`'s settings carried over by the
+/// rule in functional capability 27.
+pub fn switch_post(old: &PostProcessorRef, id: &str) -> Result<(PostProcessorRef, Vec<SettingReset>), PostProcessorError>;
+pub struct SettingReset { pub setting: &'static str, pub from: String, pub to: String, pub reason: ResetReason }
+pub enum ResetReason { NoM6, NoCannedCycles }
+```
+
+For each of the six settings: if `old`'s value equals the default of the
+definition version `old` names, take the new version's default;
+otherwise keep it, unless it is invalid on the new definition (the same
+rules `validate` applies: `"m6"` needs an `M6` line, `use_canned_cycles`
+needs `canned_cycles`), in which case take the new default and record a
+`SettingReset`. The CLI applies the config's `tool_change_mode` only to a
+setting the rule set from a default or reset. `--reset-settings` (only
+with `--post`) keeps today's path: `PostProcessorRef::latest` plus
+`config::seed_post`. The summary prints `Updated <dcv>: post-processor
+grblhal v1 → v3, keeping your settings.` and one line per reset.
+
+Tests (`dc-project`): `post_processor::switch_keeps_changed_dwell`,
+`switch_takes_new_default_for_default_extension` (grblHAL `nc` →
+LinuxCNC `ngc`), `switch_keeps_changed_extension`,
+`switch_resets_m6_without_m6_line` (grblHAL `"m6"` → GRBL, with
+`ResetReason::NoM6`), `switch_resets_canned_cycles_without_them`,
+`switch_same_id_changes_only_version`. CLI: `cli::export_post_keeps_dwell`
+(acceptance 39), `cli::export_post_reports_reset_setting`,
+`cli::export_post_reset_settings_restores_defaults`,
+`cli::export_post_config_applies_only_to_reset_settings`.
+
+### A2. Comment transliteration (dc-gcode::ascii)
+
+`sanitize_comment` (`emit.rs`) maps each character through
+`ascii::transliterate(c) -> Option<&'static str>` before its existing
+filter. The table is DreamCarve's, written by hand and reviewed, with no
+new dependency: Latin-1 Supplement U+00A0–U+00FF and Latin Extended-A
+U+0100–U+017F (`é` → `e`, `Ø` → `O`, `ß` → `ss`, `Æ` → `AE`, `Œ` → `OE`),
+the General Punctuation dashes, quotes and ellipsis U+2010–U+2026 (`—` →
+`-`, `“` → `"`, `…` → `...`), and a few symbols a workshop writes: `°` →
+`deg`, `×` → `x`, `±` → `+-`, `µ` → `u`, `²` → `2`, `³` → `3`, `¼` `½`
+`¾` → `1/4` `1/2` `3/4`, `™` → `TM`. No entry maps to `( ) ; ! ? ~ { } %`
+(a test checks the whole table), and unmapped characters are dropped as
+today. The length cap counts the transliterated text. `deunicode`
+(BSD-3-Clause) was considered: its table covers scripts whose output
+nobody here can check, and the few hundred entries above cover the names
+the review saw. The rule is the emitter's, so it applies to every
+definition version; it changes comment bytes only, for names that hold
+such characters, and CHANGELOG lists it under "Changed".
+`definitions/README.md` ("Verification", the emitter rules paragraph) is
+updated to say so.
+
+Tests (`dc-gcode`): `ascii::table_never_produces_comment_specials`,
+`ascii::latin1_letters_lose_accents`, `ascii::fractions_and_symbols_spell_out`,
+`emit::comment_text_transliterates` (acceptance 40),
+`emit::comment_text_drops_unmapped`, and the existing
+`emit::comment_text_is_sanitized` and `comment_text_is_truncated`
+unchanged.
+
+### A3. Header modal state (dc-project/src/definitions, grblHAL v3 and GRBL v3)
+
+`grblhal/v3.json` and `grbl/v3.json` are version 2 of each with two
+header lines added after `G94`: `G80`, then `G40`. Added to `SOURCES` and
+pinned; `init` and `export --post` take them; v1 and v2 are unchanged. The
+emitter already writes the header's modal lines again after every stop
+(#55), in header order, and writes a motion word on the first move after
+setup, which `G80` requires. `definitions/README.md` gets a section
+"Header modal state (`grblhal/v3.json`, `grbl/v3.json`)" with this
+table. Sources: `grblHAL/core` at
+`4ec1ae44b857a70d2f9298344feac4b43ed0eb6b` and `gnea/grbl` at
+`bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e` (v1.1h), the commits the
+README already cites; line numbers are at those commits.
+
+| Code | grblHAL | GRBL | Decision |
+| --- | --- | --- | --- |
+| `G80` | `gcode.c` 1592-1597: sets motion mode `None` and clears `canned_cycle_active`. Canned cycles `G73`, `G81`–`G89` exist (1613-1620), so a cycle mode can be left by MDI or by a program stopped without `M2`/`M30` (program end clears it, 5031-5033). Its only error is an axis word on a line in `G80` mode (3335-3339); the header line has none, and the next motion line carries `G0`/`G1`. | `gcode.c` 169-171 with `gcode.h` 77 (`MOTION_MODE_NONE 80`): sets motion mode none. GRBL has no canned cycles (group 1 `G81`–`G89` is under "Not supported", `gcode.c` 1137, 1150), so it cancels nothing there; its only error is the same axis-word rule (646-649). | Added on both. Harmless on both; useful on grblHAL, and a GRBL program also runs on grblHAL. |
+| `G40` | `gcode.c` 1662-1668: always accepted, "since it often appear in g-code program headers to setup defaults". With `CUTTER_COMP_ENABLE` (default `Off`, `config.h` 226-227) it turns compensation off, and "A standalone G40 is modal-only" (2852); in a block while a canned cycle is active it fails with `Status_CutterCompConflict` (2856-2861), so it is written after `G80`. Program end also turns compensation off (5039-5043). | `gcode.c` 203-208 and 483-486: accepted and does nothing, "only for the purpose to not error when G40 is sent with a g-code program header". | Added on both, after `G80`. |
+| `G49` (cancels `G43.1`) | `gcode.c` 1670-1677 and 969-971: sets the tool length offset to 0. The offset survives program end (group 8 is not reset, 5023-5026) and a soft reset (`gc_init` 789-793 keeps it), and `$341` modes 1–3 set one after a touch-off (`tool_change.c` 81, 345-346). But `G10 L20`, which sets work zero, subtracts the active offset: "WCS = MPos - G92 - TLO - WPos" (`gcode.c` 3095-3098). | `gcode.c` 209-224, 984-993: sets the offset to 0. It survives program end (1092-1095) but not a reset (`gc_init` 42-44 clears all state). `G10 L20` and `G92` subtract it (550-553, 568-571). | **Not added on either.** If the offset was active when the user set Z zero, `G49` moves every Z by it, down when it was positive. The offset is part of the zero the user set, so the program leaves it alone and `export` says so (functional 29). |
+| `G43`, `G43.2` | Need a tool table (`gcode.c` 1678-1681; `N_TOOLS` default 0, `config.h` 548). | Unsupported (`gcode.c` 220). | Not added (and DreamCarve writes no tool table, as for the slice 17 definitions). |
+
+`export` prints the tool-length line of functional capability 29 for any
+program whose definition id is `grblhal` or `grbl`.
+
+**Open question for the maintainer (not part of A3).** The LinuxCNC,
+Mach3 and UCCNC headers (slice 17) carry `G49`. LinuxCNC's touch-off is
+also `G10 L20` from the current position, which includes an active `G43`
+offset, so the same shift applies there if a user zeroes Z with an offset
+active. DreamCarve's documented workflow (set Z zero with each bit, no
+`G43`) avoids it, and those headers follow each controller's documented
+preamble; whether to keep `G49` there needs its own check against each
+controller's `G10 L20`.
+
+Tests (`dc-gcode` `post` and `emit`): `post::grbl_v3_header_cancels_modes`
+(v3 = v2 plus `G80`, `G40` in that order after `G94`, for both),
+`post::no_header_cancels_tool_length_offset` (no `G49`/`G43` in any
+grblHAL or GRBL version), `emit::setup_after_stop_repeats_g80_g40`,
+`emit::first_motion_after_g80_has_motion_word`,
+`post::released_definition_versions_are_unchanged` (v3 pinned),
+`cli::export_grblhal_prints_tool_length_note`,
+`cli::v2_project_exports_v2_bytes` (acceptance 41).
+
+### A4. Cycle-time estimate (dc-gcode::estimate)
+
+```rust
+pub struct Estimate { pub feed_s: f64, pub dwell_s: f64, pub feed_mm: f64, pub rapid_mm: f64, pub stops: usize }
+pub fn estimate(program: &Program, post: &PostProcessor) -> Result<Estimate, ExportError>;
+```
+
+It walks the moves the safety parser reads from the program text, so it
+times what is written (fitted arcs, canned-cycle expansions, dwells):
+`G1` length and `G2`/`G3` length (arc length, with its Z change, as a
+helix) at the modal `F`; `G4 P` in the definition's dwell units; `G0`
+3D length, untimed; `M0`, `M1`, `M6` counted as stops. Program units are
+converted to mm. Adapted from PureCutCNC's `feedControlledTimeSeconds`
+(`src/engine/operationBooklet/report.ts`), which times feed moves and
+reports rapid distance apart; that file is the attribution source. The
+CLI reads `[estimate]` from the user config (`rapid_mm_min`: finite and
+above 0; `scale_factor`: finite and above 0, default 1.0; an invalid
+value is an error naming the file, line and column, as for other keys)
+and prints the line of capability 30 per program and a total. This
+widens "Only `init` and `export --post` read the config": `export` also
+reads `[estimate]`, for the printed estimate only, never for a program.
+
+Tests: `estimate::line_time_is_length_over_feed`,
+`estimate::arc_time_uses_arc_length`, `estimate::helix_time_includes_z`,
+`estimate::dwell_respects_definition_units` (UCCNC milliseconds),
+`estimate::inch_program_converts`, `estimate::rapids_are_distance_only`,
+`estimate::stops_are_counted`; CLI `cli::export_prints_estimate`
+(acceptance 42), `cli::estimate_with_rapid_rate`,
+`cli::estimate_scale_factor_multiplies`,
+`cli::estimate_config_does_not_change_program`,
+`config::estimate_rejects_non_positive_rate`.
+
+### A5. SVG toolpath preview (dreamcarve::preview)
+
+```rust
+/// A deterministic SVG of the project's stock, shapes and each
+/// enabled operation's toolpath, in mm, Y flipped for display.
+pub fn render(project: &Project, ops: &[(&Operation, &Tool, &Toolpath)]) -> String;
+```
+
+In the CLI crate, the only user until the phase 4 GUI draws toolpaths
+itself. Ported from PureCutCNC's `src/engine/designPrint/svg.ts`
+(`buildStock`, `buildFeatures`, `buildToolpaths`, `fmt`, `escapeXml`),
+with the upstream header; the page scaffolding is dropped.
+
+- **Frame.** `width="<W>mm" height="<H>mm" viewBox="0 0 W H"`, the stock.
+  ADR-0001: the renderer is where the flip happens, `y_svg = H − y`, done
+  on each coordinate (no `transform`), so the file reads in drawing
+  terms. Numbers have three decimals; no date or random id, so the bytes
+  depend on the project only.
+- **Content.** The stock rectangle; each instance's profiles, thin
+  black; per enabled operation a `<g id="<op id>">` in a colour from a
+  fixed 8-colour palette by operation index. Cutting moves as one path
+  per run between rapids; `Linear` as `L`, arcs as `A r r 0 large sweep x
+  y` with sweep 0 for `ArcCcw` and 1 for `ArcCw` (Y-up CCW looks CCW
+  after the flip, which is SVG's negative direction), split at 180°.
+  Rapids dashed grey. A level cutting move above the lowest Z of its
+  run is "over a tab": drawn again with a heavy stroke. The first point
+  of each run's descent gets a circle of the bit's diameter and a tick
+  one diameter long along the first cutting move. A Drill's plunges are
+  circles of the bit diameter. A legend lists op id, name and colour.
+- **CLI.** `--preview <file.svg>` on `export` (staged and committed with
+  the programs, all or none) and on `check` (written when every
+  operation generated; a `.dcv` path or a program path is refused).
+
+Tests (`dreamcarve` unit and CLI): `preview::flips_y_once`,
+`preview::ccw_arc_has_sweep_zero`, `preview::arc_over_180_is_split`,
+`preview::tab_marks_raised_level_moves`, `preview::start_circle_per_run`,
+`preview::escapes_names`, `preview::is_deterministic`,
+`cli::export_preview_coaster` (acceptance 43),
+`cli::check_preview_writes_file`, `cli::export_preview_refuses_dcv_path`.
+
+### A6. Inch input (dc-project::units_input)
+
+A serde helper for every persisted length and rate: `#[serde(deserialize_with
+= "units_input::mm")]` on each `f64` field named `*_mm` (and
+`units_input::opt_mm` on `Option<f64>`), `units_input::mm_min` on
+`*_mm_min`, in `model.rs` (and so in the tool library, which stores
+`Tool`). A JSON number is taken as is. A JSON string must match `<number>
+<unit>`, whitespace optional: `<number>` is a decimal (optional sign),
+`a/b`, or `w a/b`; length units `mm`, `in`; rate units `mm/min`,
+`in/min`. The value is `n × 25.4` (`in`) or `n`, an `f64` product, so
+loading is deterministic. Any other string is a serde error, which the
+existing locator reports with the field, line and column. Validation
+then runs on the millimetre value as before. `save` is unchanged, so a
+saved file has numbers. Fields with other units (`angle_deg`,
+`step_over_fraction`, `rpm`, `dwell_s`) take numbers only.
+
+No format bump: ADR-0002's version describes what DreamCarve writes,
+which does not change. A file with a unit string, read by an older
+DreamCarve, fails at that field with a located type error, as any
+malformed value does.
+
+The CLI's summary formats a length with the project's `display_units`
+and that unit's `decimal_places`; the extents already use the program's
+units.
+
+Tests (`dc-project`): `units_input::inch_string_converts_exactly`,
+`units_input::fraction_and_mixed_number`, `units_input::rate_in_per_min`,
+`units_input::bare_number_is_mm`, `units_input::unknown_unit_is_located`,
+`units_input::length_unit_on_rate_field_is_error`,
+`serialize::save_writes_numbers_after_unit_input`; CLI
+`cli::inch_input_exports_same_program` (acceptance 44),
+`cli::inch_project_summary_in_inches`.
+
+### A7. Separate heights (format version 12)
+
+```rust
+pub struct Project { /* … */ pub heights: Heights }   // after `origin`
+pub struct Heights {
+    /// Above the stock top, mm. Links between instances, between operations, tool changes, the end.
+    pub clearance_mm: Option<f64>,
+    /// Machine Z for `G53 G0 Z`, mm (written in program units). Before every tool-change stop and at every program end.
+    pub tool_change_machine_z_mm: Option<f64>,
+    /// End position, project coordinates.
+    pub park: Option<ParkXy>,
+}
+pub struct ParkXy { pub x_mm: f64, pub y_mm: f64 }
+// definition schema, `work_coordinates`:
+pub machine_command: Option<String>,   // "G53" or null
+```
+
+**Migration v11 → v12** (`migrate::v11_to_v12`): add `heights` with three
+`null`s after `origin`; fails if the key is there. Fixture
+`crates/dc-project/tests/fixtures/dcv/v11/sample.dcv`; its program is
+byte-identical after migration. `init` writes the three `null`s.
+
+**Definition field.** `work_coordinates.machine_command` is added in
+place to every released version: `"G53"` on grblHAL v1–v3 and GRBL v1–v3,
+`null` on LinuxCNC, Mach3, UCCNC and generic v1, all re-pinned. No bytes
+change, since nothing writes it unless the project sets the height. The
+README cites, for grblHAL, `gcode.c` 1543-1545 (`G53` is non-modal group
+0) and 3317-3325 (it needs `G0` or `G1` in the block, and fails with
+cutter compensation on); for GRBL, `gcode.c` 154-156 and 635-640 (the same
+two rules). Both move to the given machine coordinate ignoring work and
+tool offsets. The homed envelope is negative: grblHAL
+`machine_limits.c` 116-140 (with hard limits on, the top is
+`−pulloff`), GRBL `limits.c` 382 (Z homes to `−pulloff`) and `system.c`
+348 (soft limits allow `[max_travel, 0]`). So the validation rule is
+`tool_change_machine_z_mm < 0`, and the chapter says to stay at least the
+pull-off below 0. The four other controllers' documents were not checked
+for `G53` for this addendum, so they stay `null` until a follow-up cites
+the section for each (as the slice 17 tables do) and sets it.
+
+**Validation** (errors): `clearance_mm` below any enabled operation's
+`safe_z_mm` (`Problem::ClearanceBelowSafeZ`, at the field, naming the
+operation); `tool_change_machine_z_mm` ≥ 0 or not finite
+(`Problem::MachineZNotBelowHome`); set on a definition whose
+`machine_command` is `null` (`Problem::MachineZNeedsG53`, naming the
+post-processor); `park` not finite or beyond the ±6000 mm bound (#75).
+
+**Sequence.** `SequenceInput` gains `clearance_z_mm: f64` (the clearance
+height in project space, or `safe_z_mm` when unset). A link between
+blocks of different instances retracts to it; a link within one
+instance (passes, holes, notches) to `safe_z_mm`; stay-down links inside
+cleared material are unchanged (O3).
+
+**Emitter.** The retract before an operation's first move, after its
+last, and around a tool change goes to the clearance height. Before the
+first stop of a tool change (the router-off pause, or `M5` and `T<n> M6`)
+and before the footer, when `tool_change_machine_z_mm` is set, it writes
+`<machine_command> G0 Z<v>` in program units, marks motion modal `G0` and
+work Z unknown. At the end, before that lift: rapid at the clearance
+height (or the last operation's safe Z) to `park` if set. XY moves before
+the lift, at a work Z the safety pass can check, rather than after it.
+`export` prints `Before you start: home the machine; this program moves to
+machine Z <v> (G53).` when the program has a lift. The README's "Tool
+changes" paragraph "The tool-change height is not set" is replaced.
+
+**Safety** (`dc-gcode::safety`, `parse`): S16 as in the functional spec;
+the parser reads `G53 G0 Z` lines and refuses any other `G53`; S6 accepts
+the clearance rises and the end sequence; S7 is unaffected (the park
+rapid is not a cut).
+
+Tests: `migrate::v11_to_v12_adds_null_heights`,
+`migrate::version_11_fixture_loads`,
+`validate::clearance_below_safe_z_is_error`,
+`validate::machine_z_must_be_below_zero`,
+`validate::machine_z_needs_g53_definition`,
+`sequence::links_between_instances_rise_to_clearance`,
+`sequence::passes_of_one_instance_link_at_safe_z`,
+`emit::tool_change_lifts_to_machine_z_before_m6`,
+`emit::program_ends_at_park_then_machine_z`,
+`emit::machine_z_written_in_inch_units`,
+`emit::unset_heights_are_byte_identical`,
+`safety::g53_only_z_alone`, `safety::xy_rapid_after_g53_needs_retract`,
+`safety::g53_refused_without_height`, `post::machine_command_cited`,
+`cli::heights_plaque_one_program` (acceptance 45),
+`cli::export_prints_home_note`.
+
+### A8. Profile last pass (format version 13)
+
+```rust
+pub struct ProfileOp { /* … */ pub last_pass: Option<LastPass> }  // after `corner_relief`
+pub struct LastPass {
+    pub allowance_mm: f64,          // (0, D/3]
+    pub thickness_mm: Option<f64>,  // (0, depth_mm]; None = the normal last pass
+    pub reverse: bool,
+}
+```
+
+**Migration v12 → v13**: `last_pass: null` on every Profile. Fixture
+`dcv/v12/sample.dcv`. `init` writes `null`.
+
+**Validation** (errors): `allowance_mm` not in (0, D/3]
+(`Problem::LastPassAllowance`, naming the bit diameter and the limit);
+`thickness_mm` not in (0, depth]; `last_pass` on `Side::OnLine`
+(`Problem::LastPassNeedsSide`).
+
+**Algorithm** (`dc-cam::profile`).
+
+1. **Depths.** With `thickness_mm = t`, `pass_z_mm` runs to `depth − t`,
+   then one pass at `depth`; without, the usual depths.
+2. **Paths.** Each outline gets two tool-centre paths: the final path,
+   at `r` as now, and the allowance path, at `r + a` on the waste side
+   (the same offset call with the larger distance). Passes but the last
+   cut the allowance path; the last cuts the final path, in the opposite
+   direction when `reverse`. The band and narrowness checks
+   (#192, #199, #223) run with `D + 2a` for the allowance path, so a band
+   that fits the bit but not the allowance is refused, naming it.
+3. **Tabs** are laid out on the final path (the tabs left on the part).
+   On the allowance path each tab stretch is the nearest-point projection
+   of the final stretch's ends, widened by `a` each way, so the raised
+   stretch covers the same tab.
+4. **Entry and lead** are planned per path, each in its own domain; the
+   last pass descends where the allowance passes have already cut to
+   `depth − t` (its XY is within `a < r` of their path), so S2's rapid
+   down stops 1 mm above that floor.
+5. **Relief** is planned on the final path, as now; its notches are in
+   waste beyond the allowance.
+6. The last pass is the block that `frees`; `pass_first` orders by pass
+   index as now.
+
+S9 in the safety pass is unchanged: the allowance passes keep more than
+`r` from the part, which it already accepts. The generator tests hold
+them to `r + a`.
+
+Tests: `migrate::v12_to_v13_adds_null_last_pass`,
+`validate::last_pass_allowance_limit`, `validate::last_pass_on_line_is_error`,
+`validate::last_pass_thickness_range`,
+`profile::last_pass_allowance_offsets_earlier_passes` (acceptance 46),
+`profile::last_pass_thickness_adds_final_depth`,
+`profile::last_pass_reverse_flips_direction`,
+`profile::last_pass_tabs_cover_same_stretch`,
+`profile::last_pass_band_too_narrow_for_allowance`,
+`profile::last_pass_inside_rectangle`, `profile::no_last_pass_is_byte_identical`,
+`safety::last_pass_program_passes_s9`.
+
+### A9. Tabs off corners and start point (format version 14)
+
+```rust
+pub struct TabSpec { /* … */ pub avoid_corners: bool }   // init true; migration false
+pub struct ProfileOp { /* … */ pub start: StartAt }      // init and migration "auto"
+pub enum StartAt { Auto, FirstVertex, Near { x_mm: f64, y_mm: f64 } }  // "auto" | "first_vertex" | { "near": { … } }
+pub const TAB_CORNER_TURN_DEG: f64 = 30.0;              // dc-cam::tabs
+```
+
+**Migration v13 → v14**: `avoid_corners: false` at the end of every
+non-null `tabs`, `start: "auto"` after `last_pass` on every Profile.
+Fixture `dcv/v13/sample.dcv`, byte-identical program.
+
+**Corners** (`dc-cam::tabs`, after `Tabs::fit` places the tabs and before
+the coverage rule of #109). The turn of a stretch of path is the sum of
+the absolute tangent turns in it: each vertex's turn plus each arc's
+sweep. A position is on a corner when some window one bit diameter long,
+inside the tab's stretch widened by half a diameter each side, turns at
+least `TAB_CORNER_TURN_DEG`. Each tab on a corner, in path order, moves to
+the nearest position along the path (forward first on a tie) that is not
+on a corner, whose stretch does not overlap another tab's (as already
+placed), and that is at most half the gap to each neighbour away; on an
+open path it never passes an end. None: it stays, with `Warning::TabOnCorner
+(op, instance, instance_name, profile, distance_mm)`. The search is exact
+over the path's corner intervals, not sampled: the allowed set is the
+path minus each corner window grown by the half-stretch, and the move is
+to its nearest end. A circle of radius `R` turns `D/R` radians per window,
+under 30° for `R > 1.91 D`, so the coaster's tabs never move.
+
+**Start** (`dc-cam::profile`, the seam step that #176 and leads use).
+`FirstVertex` and `Near` set each closed outline's seam to the distance
+along its tool-centre path of the point nearest the target (the drawn
+first vertex, transformed, or the given point; the lowest distance on a
+tie). The path is reseamed there before the tab layout, so `at_distances`
+count from it and `count` spaces from it; #176's move is skipped (an
+entry that does not fit falls back ramp → plunge, warned); a lead is
+planned at that one arrival (its radius and sweep ladders still apply)
+or dropped with `LeadDropped (no_room)`. `Auto` is the code path of
+today. Open paths ignore it.
+
+Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
+`tabs::rotated_square_tabs_leave_corners` (acceptance 47),
+`tabs::circle_tabs_never_move`, `tabs::tab_never_moves_past_half_gap`,
+`tabs::blocked_tab_warns_tab_on_corner`, `tabs::open_path_tab_stops_at_end`,
+`tabs::avoid_corners_false_is_byte_identical`,
+`profile::start_near_point_seams_nearest`,
+`profile::start_first_vertex_seams_at_vertex`,
+`profile::at_distances_count_from_explicit_start`,
+`profile::explicit_start_entry_falls_back_not_moves`,
+`profile::explicit_start_lead_dropped_when_no_room`,
+`profile::open_path_ignores_start`, `cli::corners_and_start_rotated_square`.
+
+### Documentation (every item)
+
+Each issue updates, in its PR, the chapters it touches (`profile.md`,
+`tabs.md`, `post-processors.md`, `project-file.md` with every new field
+and version, `configuration.md`, `warnings.md` for `tab_on_corner`,
+`safety.md` for S16), the definitions README where a definition changes,
+and CHANGELOG.

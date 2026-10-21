@@ -436,7 +436,8 @@ pub enum CornerRelief {
     TBone,
 }
 
-/// A profile operation: cuts inside, outside or on closed outlines.
+/// A profile operation: cuts inside, outside or on closed outlines, along
+/// open paths, or to the left or right of open paths.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileOp {
@@ -662,7 +663,10 @@ pub struct EngraveOp {
     pub safe_z_mm: f64,
 }
 
-/// Which side of an outline a profile cuts on.
+/// Which side of an outline a profile cuts on. Inside, Outside and On
+/// line cut closed outlines; On line also cuts open paths along them, and
+/// Left and Right cut open paths beside them (#207, as VCarve's Profile of
+/// an open vector), skipping closed outlines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Side {
@@ -672,6 +676,37 @@ pub enum Side {
     Outside,
     /// Tool centre on the outline.
     OnLine,
+    /// Tool centre one tool radius to the left of an open path, looking
+    /// along it from its first vertex to its last (in Y-up, the normal
+    /// `(−dy, dx)` of a segment's direction `(dx, dy)`). Saved as
+    /// `"left"`; from format version 10.
+    Left,
+    /// Tool centre one tool radius to the right of an open path: Left
+    /// mirrored. Saved as `"right"`; from format version 10.
+    Right,
+}
+
+impl Side {
+    /// True for Left and Right, the sides of an open path: they cut open
+    /// paths only and skip closed outlines.
+    #[must_use]
+    pub const fn is_open_path_side(self) -> bool {
+        matches!(self, Self::Left | Self::Right)
+    }
+
+    /// True for the sides that cut open paths: On line, Left and Right.
+    #[must_use]
+    pub const fn cuts_open_paths(self) -> bool {
+        matches!(self, Self::OnLine | Self::Left | Self::Right)
+    }
+
+    /// True for Inside and Outside, the sides whose cut has a waste area
+    /// beside it for a helix entry, a lead or a relief notch. On line,
+    /// Left and Right remove only their kerf.
+    #[must_use]
+    pub const fn has_waste_area(self) -> bool {
+        matches!(self, Self::Inside | Self::Outside)
+    }
 }
 
 /// Milling direction relative to the clockwise spindle.

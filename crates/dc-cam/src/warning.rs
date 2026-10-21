@@ -21,6 +21,10 @@ pub enum WarningCode {
     /// Outside Profile cannot cut, or an open path with no length on an On
     /// line Profile (#175); it was skipped.
     OpenPathSkipped,
+    /// A target shape is a closed outline, which a Left or Right Profile
+    /// does not cut: those are sides of an open path (#207). It was
+    /// skipped.
+    SideNeedsOpenPath,
     /// The tool does not fit: the tool-centre offset of a shape vanished,
     /// so that shape was not cut.
     ToolTooLarge,
@@ -128,6 +132,7 @@ impl WarningCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::OpenPathSkipped => "open_path_skipped",
+            Self::SideNeedsOpenPath => "side_needs_open_path",
             Self::ToolTooLarge => "tool_too_large",
             Self::DuplicateShapeDropped => "duplicate_shape_dropped",
             Self::TabsOverlap => "tabs_overlap",
@@ -204,6 +209,9 @@ pub enum LeadDroppedReason {
     /// An On line Profile has no waste side for a lead, so the operation
     /// cuts without one.
     OnLine,
+    /// A Left or Right Profile cuts open paths, which VCarve gives no lead
+    /// either (#207), so the operation cuts without one.
+    OpenPath,
 }
 
 /// Why an operation's corner relief was not cut at all
@@ -214,6 +222,9 @@ pub enum ReliefSkippedReason {
     NoStepDown,
     /// An On line Profile has no waste side to put a notch in.
     OnLine,
+    /// A Left or Right Profile cuts open paths, whose corners have no
+    /// inside or outside to relieve (#207).
+    OpenPath,
 }
 
 /// Why a corner's notch does not fit it ([`Warning::ReliefCornerTooTight`]).
@@ -238,6 +249,11 @@ pub enum Warning {
         shape: ShapeRef,
         /// Why it cannot be cut.
         reason: OpenPathReason,
+    },
+    /// [`WarningCode::SideNeedsOpenPath`].
+    SideNeedsOpenPath {
+        /// The closed outline.
+        shape: ShapeRef,
     },
     /// [`WarningCode::ToolTooLarge`].
     ToolTooLarge {
@@ -557,6 +573,7 @@ impl Warning {
     pub const fn code(&self) -> WarningCode {
         match self {
             Self::OpenPathSkipped { .. } => WarningCode::OpenPathSkipped,
+            Self::SideNeedsOpenPath { .. } => WarningCode::SideNeedsOpenPath,
             Self::ToolTooLarge { .. } => WarningCode::ToolTooLarge,
             Self::DuplicateShapeDropped { .. } => WarningCode::DuplicateShapeDropped,
             Self::TabsOverlap { .. } => WarningCode::TabsOverlap,
@@ -612,6 +629,7 @@ impl Warning {
             | Self::DrillRetractBelowStockTop { op, .. }
             | Self::RestOfClearsNothing { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
+            | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
             | Self::DuplicateShapeDropped { .. }
             | Self::TabNotCrossed { .. }
@@ -736,7 +754,11 @@ impl fmt::Display for Warning {
                 reason: OpenPathReason::NoSide,
             } => write!(
                 f,
-                "{shape} is an open path, which has no inside or outside, so it is not cut; an On line Profile or an Engrave cuts along it"
+                "{shape} is an open path, which has no inside or outside, so it is not cut; an On line, Left or Right Profile or an Engrave cuts along it"
+            ),
+            Self::SideNeedsOpenPath { shape } => write!(
+                f,
+                "{shape} is a closed outline, and Left and Right are sides of an open path, so it is not cut; cut it Inside, Outside or On line"
             ),
             Self::ToolTooLarge {
                 shape,
@@ -968,6 +990,10 @@ impl fmt::Display for Warning {
                         f,
                         "operation `{op}` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside"
                     ),
+                    LeadDroppedReason::OpenPath => write!(
+                        f,
+                        "operation `{op}` cuts beside open paths, which take no lead, so it cuts without one; remove the lead"
+                    ),
                     LeadDroppedReason::Exit => write!(
                         f,
                         "there is no room for a lead-out arc where the cut on {shape} ends, so it stops on the outline"
@@ -986,6 +1012,10 @@ impl fmt::Display for Warning {
                     ReliefSkippedReason::OnLine => write!(
                         f,
                         "corner relief `{requested}` is skipped: an On line Profile has no waste side to cut a notch into, so no corners were relieved"
+                    ),
+                    ReliefSkippedReason::OpenPath => write!(
+                        f,
+                        "corner relief `{requested}` is skipped: a Left or Right Profile cuts open paths, whose corners have no inside or outside to relieve, so no corners were relieved"
                     ),
                     ReliefSkippedReason::NoStepDown => write!(
                         f,
@@ -1151,7 +1181,11 @@ mod tests {
                     shape: shape(),
                     reason: OpenPathReason::NoSide,
                 },
-                "`Shape` (instance `i1`, profile 2) is an open path, which has no inside or outside, so it is not cut; an On line Profile or an Engrave cuts along it",
+                "`Shape` (instance `i1`, profile 2) is an open path, which has no inside or outside, so it is not cut; an On line, Left or Right Profile or an Engrave cuts along it",
+            ),
+            (
+                Warning::SideNeedsOpenPath { shape: shape() },
+                "`Shape` (instance `i1`, profile 2) is a closed outline, and Left and Right are sides of an open path, so it is not cut; cut it Inside, Outside or On line",
             ),
             (
                 Warning::OpenPathSkipped {
@@ -1451,6 +1485,14 @@ mod tests {
                 "operation `o1` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside",
             ),
             (
+                Warning::LeadDropped {
+                    op: op(),
+                    shape: None,
+                    reason: LeadDroppedReason::OpenPath,
+                },
+                "operation `o1` cuts beside open paths, which take no lead, so it cuts without one; remove the lead",
+            ),
+            (
                 Warning::ReliefSkipped {
                     op: op(),
                     requested: CornerRelief::Dogbone,
@@ -1465,6 +1507,14 @@ mod tests {
                     reason: ReliefSkippedReason::OnLine,
                 },
                 "corner relief `t_bone` is skipped: an On line Profile has no waste side to cut a notch into, so no corners were relieved",
+            ),
+            (
+                Warning::ReliefSkipped {
+                    op: op(),
+                    requested: CornerRelief::Dogbone,
+                    reason: ReliefSkippedReason::OpenPath,
+                },
+                "corner relief `dogbone` is skipped: a Left or Right Profile cuts open paths, whose corners have no inside or outside to relieve, so no corners were relieved",
             ),
             (
                 Warning::ReliefCornerTooTight {
@@ -1592,7 +1642,8 @@ mod tests {
     const fn next_code(code: WarningCode) -> Option<WarningCode> {
         use WarningCode as C;
         Some(match code {
-            C::OpenPathSkipped => C::ToolTooLarge,
+            C::OpenPathSkipped => C::SideNeedsOpenPath,
+            C::SideNeedsOpenPath => C::ToolTooLarge,
             C::ToolTooLarge => C::DuplicateShapeDropped,
             C::DuplicateShapeDropped => C::TabsOverlap,
             C::TabsOverlap => C::TabsOutsideCutRange,
@@ -1637,6 +1688,7 @@ mod tests {
             let names_op = !matches!(
                 c,
                 WarningCode::OpenPathSkipped
+                    | WarningCode::SideNeedsOpenPath
                     | WarningCode::ToolTooLarge
                     | WarningCode::DuplicateShapeDropped
                     | WarningCode::TabNotCrossed
@@ -1653,7 +1705,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 27);
+        assert_eq!(count, 28);
     }
 
     #[test]

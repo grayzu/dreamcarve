@@ -216,11 +216,12 @@ pub enum CamError {
         /// The angle given, degrees.
         angle_deg: f64,
     },
-    /// A helix entry on an On line Profile, which removes nothing but its
-    /// own kerf, so no material is there to helix in. Validation reports
-    /// it (`helix_needs_waste_side`); the generator refuses it too.
+    /// A helix entry on an On line, Left or Right Profile, which removes
+    /// nothing but its own kerf, so no material is there to helix in.
+    /// Validation reports it (`helix_needs_waste_side`); the generator
+    /// refuses it too.
     #[error(
-        "operation `{op}` cuts on the line and asks for a helix entry; a helix needs waste beside the cut, so use ramp or plunge"
+        "operation `{op}` cuts on the line or beside an open path and asks for a helix entry; a helix needs waste beside the cut, so use ramp or plunge"
     )]
     HelixNeedsWasteSide {
         /// The operation.
@@ -393,6 +394,26 @@ pub enum CamError {
         op: OperationId,
         /// The part's outline.
         shape: ShapeRef,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
+    /// A Left or Right Profile's cut beside one open path comes within the
+    /// tool radius of another line of the operation, or of the strip one
+    /// radius wide that a line keeps on the side away from its own cut
+    /// (#207): the bit would cut into material the drawing keeps. `shape`
+    /// and `other` are in drawing order and may be the same path, whose
+    /// cut reaches what it keeps further along. `other` is boxed to keep
+    /// the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape} and {other}, but a cut comes within the {diameter_mm} mm tool's radius of one of them or of the material it keeps, so the bit would cut into the part; join lines that meet into one path, move them apart, or check which side each is cut on; no toolpath was produced"
+    )]
+    CutsIntoKeptSide {
+        /// The operation.
+        op: OperationId,
+        /// One of the two paths, the one drawn first.
+        shape: ShapeRef,
+        /// The other path.
+        other: Box<ShapeRef>,
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },

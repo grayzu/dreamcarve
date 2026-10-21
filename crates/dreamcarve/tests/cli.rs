@@ -1085,6 +1085,77 @@ mod golden {
     }
 }
 
+/// The filled-in coaster with post-processor `id` at version 1, as a
+/// project saved before #286 names it.
+fn coaster_at_v1(dir: &Path, id: &str) {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::bundled_definition(id, 1)
+        .expect("version 1 is bundled")
+        .default_ref();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+}
+
+/// #286, ADR-0004: a project that names version 1 of LinuxCNC exports the
+/// bytes it did before version 2 took `G49` out of the header
+/// (`tests/expected/coaster-linuxcnc-v1.ngc`, the golden program as it was
+/// captured with version 1).
+#[test]
+fn linuxcnc_v1_project_still_exports_byte_identically() {
+    let dir = work_dir("linuxcnc_v1_project_still_exports_byte_identically");
+    coaster_at_v1(&dir, "linuxcnc");
+    assert_exports_match(&dir, &[], &[("coaster.ngc", "coaster-linuxcnc-v1.ngc")]);
+}
+
+/// #286: the same for Mach3 and UCCNC, whose version 2 also drops `G49`.
+#[test]
+fn mach3_and_uccnc_v1_projects_still_export_byte_identically() {
+    for (id, program, expected) in [
+        ("mach3", "coaster.tap", "coaster-mach3-v1.tap"),
+        ("uccnc", "coaster.txt", "coaster-uccnc-v1.txt"),
+    ] {
+        let dir = work_dir(&format!("v1_project_still_exports_byte_identically_{id}"));
+        coaster_at_v1(&dir, id);
+        assert_exports_match(&dir, &[], &[(program, expected)]);
+    }
+}
+
+/// #286: `export --post` upgrades a version 1 LinuxCNC, Mach3 or UCCNC
+/// project to version 2, and the only line that changes is the header's
+/// modal line, which loses `G49` (Mach3 numbers every line, so its line
+/// numbers stay the same).
+#[test]
+fn slice17_v1_project_upgrades_to_v2_without_g49() {
+    for (id, program) in [
+        ("linuxcnc", "coaster.ngc"),
+        ("mach3", "coaster.tap"),
+        ("uccnc", "coaster.txt"),
+    ] {
+        let dir = work_dir(&format!("slice17_v1_project_upgrades_{id}"));
+        coaster_at_v1(&dir, id);
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let v1 = std::fs::read_to_string(dir.join(program)).expect("program written");
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v1 → v2,")),
+            "{id}: {report}"
+        );
+        let v2 = std::fs::read_to_string(dir.join(program)).expect("program rewritten");
+        assert!(!v2.contains("G49"), "{id}:\n{v2}");
+        let expected: Vec<String> = v1.lines().map(|l| l.replace(" G49", "")).collect();
+        let actual: Vec<&str> = v2.lines().collect();
+        assert_eq!(actual, expected, "{id}: only G49 leaves the program");
+        assert_ne!(v1, v2, "{id}: v1 had G49");
+    }
+}
+
 // Phase 2, #117: format version 8.
 
 /// A fresh project carries every phase 2 field at the value that cuts as
@@ -1099,6 +1170,7 @@ fn init_writes_phase_2_defaults() {
     let text = std::fs::read_to_string(&dcv).expect("dcv readable");
     let version = format!("\"version\": {},", dc_project::CURRENT_VERSION);
     assert!(text.contains(&version), "{text}");
+    assert!(text.contains("\"on_holes\": false"), "{text}");
     assert!(text.contains("\"arc_fit_tolerance_mm\": 0.01,"), "{text}");
     assert!(text.contains("\"number\": null,"), "{text}");
     assert!(text.contains("\"lead\": null,"), "{text}");
@@ -5596,5 +5668,77 @@ fn check_warns_tab_not_crossed() {
             "tab `tab1` on `coaster` (instance `i1`, profile 0) is crossed by no enabled Profile operation"
         ),
         "{report}"
+    );
+}
+
+/// #207: an SVG line from (20, 30) to (80, 30), drawn left to right, cut
+/// Left: the cut runs on the side the drawing shows as the line's left
+/// (up the page), which after the importer's flip to Y-up (ADR-0001) is
+/// one bit radius above the placed line. `check` reports nothing about the
+/// open path, `export` passes the safety pass (S9 holds the cut to its
+/// offset path), and climb starts at the end beside the first vertex,
+/// keeping the part (below the line) on the right of travel (#287).
+#[test]
+fn left_profile_of_an_svg_line_exports_on_its_left() {
+    let dir = work_dir("left_profile_of_an_svg_line_exports_on_its_left");
+    std::fs::write(
+        dir.join("edge.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="edge" d="M 20 30 L 80 30"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "edge.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("edge.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let targets = project.instances.iter().map(|i| i.id.clone()).collect();
+    let op = as_profile_mut(&mut project.operations[0]);
+    // `init` targets closed outlines only.
+    op.targets = targets;
+    op.side = Side::Left;
+    op.direction = dc_project::CutDirection::Climb;
+    op.tabs = None;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let line = placed_vertices(&project, "edge");
+    let [(x0, y0), (x1, y1)] = line[..] else {
+        panic!("a two-point line: {line:?}");
+    };
+    assert!(
+        x0 < x1 && (y0 - y1).abs() <= 1e-9,
+        "still drawn left to right: {line:?}"
+    );
+
+    let check = run(&dir, &["check", "edge.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "check: {report}");
+    assert!(report.contains("0 error(s)"), "{report}");
+    assert!(!report.contains("open_profile"), "{report}");
+    let out = run(&dir, &["export", "edge.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("edge.nc")).expect("edge.nc written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let cuts: Vec<&MachineMove> = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && moves_xy(m))
+        .collect();
+    assert!(!cuts.is_empty(), "the program cuts: {program}");
+    for m in &cuts {
+        let (x, y) = (m.to.x.expect("X known"), m.to.y.expect("Y known"));
+        assert!(
+            (y - (y0 + BIT_RADIUS_MM)).abs() <= 1e-3,
+            "cut off the line's left: {m:?}"
+        );
+        assert!(
+            x >= x0 - 1e-3 && x <= x1 + 1e-3,
+            "cut past the line's ends: {m:?}"
+        );
+    }
+    let first = cuts[0];
+    assert!(
+        (first.from.x.expect("X known") - x0).abs() <= 1e-3,
+        "climb starts beside the first vertex: {first:?}"
     );
 }

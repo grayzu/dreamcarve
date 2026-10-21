@@ -37,7 +37,7 @@ use crate::warning::{OpenPathReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
     distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point, nest,
-    offset, point_segment_distance_mm,
+    offset, offset_open, point_segment_distance_mm,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, TabId, Tool,
@@ -84,6 +84,27 @@ pub fn traversal_is_ccw(wall: Wall, direction: CutDirection) -> bool {
     }
 }
 
+/// The open-path direction rule: true when an open path cut on `side`
+/// with `direction` runs from its last vertex to its first.
+///
+/// Left and Right (#207) cut one flank of the bit against kept material,
+/// so `direction` is the milling mode, as in [`traversal_is_ccw`]: climb
+/// keeps the part on the right of travel (#287). Left runs the tool to the
+/// path's left with the part beyond the path, which is on the tool's right
+/// going from the first vertex to the last; Right is the mirror. On line
+/// cuts with both flanks, so no milling mode exists and `direction` picks
+/// the starting end as VCarve's does (#242): "Conventional starts cutting
+/// at the Start point Climb cutting starts cutting at the end point".
+fn open_runs_reversed(side: Side, direction: CutDirection) -> bool {
+    let climb = direction == CutDirection::Climb;
+    match side {
+        Side::Left => !climb,
+        Side::Right | Side::OnLine => climb,
+        // Never asked: Inside and Outside cut no open path.
+        Side::Inside | Side::Outside => climb,
+    }
+}
+
 /// A contour's place in its region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -106,6 +127,8 @@ fn placement(side: Side, role: Role) -> (Offset, Wall) {
         (Side::Outside, Role::Hole) | (Side::Inside, Role::Outer) => (Offset::Shrink, Wall::Inside),
         (Side::OnLine, Role::Outer) => (Offset::None, Wall::Outside),
         (Side::OnLine, Role::Hole) => (Offset::None, Wall::Inside),
+        // Never asked: Left and Right cut no closed outline (#207).
+        (Side::Left | Side::Right, _) => (Offset::None, Wall::Outside),
     }
 }
 
@@ -213,6 +236,22 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// Outside skip open paths ([`Warning::OpenPathSkipped`]), as they
 /// have no side.
 ///
+/// A Left or Right Profile (#207, as VCarve's Profile to the left or right
+/// of an open vector) cuts open paths only, each offset by the tool radius
+/// to that side looking from its first vertex to its last
+/// ([`offset_open`]: round on the outside of a turn, trimmed on the
+/// inside, ending square on the normals through the path's ends), and
+/// skips closed targets with [`Warning::SideNeedsOpenPath`]. A path whose
+/// offset vanishes warns [`Warning::ToolTooLarge`]. Direction is the
+/// milling mode (#287): climb keeps the part on the right of travel, so
+/// Left climb runs from the end beside the first vertex and Right climb
+/// from the end beside the last; conventional is the reverse. Ramp and
+/// tabs are On line's, along the offset path; it has no lead or relief
+/// and frees nothing. A cut that comes within the radius of another of its
+/// lines, or of the strip a line keeps, fails with
+/// [`CamError::CutsIntoKeptSide`]; D6's overlap warning, whose condition
+/// that is, does not apply.
+///
 /// Open paths Inside and Outside, shapes the tool cannot fit, and
 /// duplicate shapes (closed, or open paths drawn twice either way, #221)
 /// are skipped with a [`Warning`]. Shapes in different
@@ -277,7 +316,7 @@ pub fn generate_profile(
         });
     }
     entry::check(&op.id, &op.entry)?;
-    if op.side == Side::OnLine && matches!(op.entry, Entry::Helix { .. }) {
+    if !op.side.has_waste_area() && matches!(op.entry, Entry::Helix { .. }) {
         return Err(CamError::HelixNeedsWasteSide { op: op.id.clone() });
     }
     let step_down_mm =
@@ -319,7 +358,7 @@ pub fn generate_profile(
     // #175: On line cuts open paths too; Inside and Outside skip them.
     let (shapes, open_paths, regions) = target_geometry(project, op, &mut warnings)?;
     let radius_mm = tool.diameter_mm / 2.0;
-    let reversed_open = op.direction == CutDirection::Climb;
+    let reversed_open = open_runs_reversed(op.side, op.direction);
     let placed = centre_paths(
         op,
         tool,
@@ -394,8 +433,10 @@ pub fn generate_profile(
     let lead = op.lead.as_ref();
     if let Some(lead) = lead {
         lead::check(&op.id, lead)?;
-        if op.side == Side::OnLine {
-            warnings.push(lead::on_line_warning(&op.id));
+        match op.side {
+            Side::OnLine => warnings.push(lead::on_line_warning(&op.id)),
+            Side::Left | Side::Right => warnings.push(lead::open_path_warning(&op.id)),
+            Side::Inside | Side::Outside => {}
         }
     }
     // The waste domains, which the entries and the leads both use.
@@ -609,15 +650,19 @@ pub fn generate_profile(
         .filter_map(|&i| paths.get(i))
         .map(|(path, shape)| (path, Some(*shape)))
         .collect();
-    warnings.extend(overlap_warnings(
-        &cut_paths,
-        &shapes,
-        &open_paths,
-        &regions,
-        op.side,
-        tool,
-        project.flatten_tolerance_mm,
-    ));
+    // #207: a Left or Right cut that comes within the radius of another
+    // line, D6's condition, was refused above (`check_kept_sides`).
+    if !op.side.is_open_path_side() {
+        warnings.extend(overlap_warnings(
+            &cut_paths,
+            &shapes,
+            &open_paths,
+            &regions,
+            op.side,
+            tool,
+            project.flatten_tolerance_mm,
+        ));
+    }
 
     // Corner relief among each shape's own passes, never after the pass
     // that frees it (`crate::relief`, #189); a freeing pass's notches are
@@ -665,9 +710,17 @@ fn target_geometry(
     op: &ProfileOp,
     warnings: &mut Vec<Warning>,
 ) -> Result<TargetGeometry, CamError> {
+    // #207: Left and Right cut open paths only and skip closed outlines.
     let mut open_paths = Vec::new();
-    let keep_open = (op.side == Side::OnLine).then_some(&mut open_paths);
-    let shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, warnings)?;
+    let keep_open = op.side.cuts_open_paths().then_some(&mut open_paths);
+    let mut shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, warnings)?;
+    if op.side.is_open_path_side() {
+        warnings.extend(
+            shapes
+                .drain(..)
+                .map(|(shape, _)| Warning::SideNeedsOpenPath { shape }),
+        );
+    }
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
     for warning in nest_warnings {
@@ -684,7 +737,9 @@ fn target_geometry(
         }
     }
     // #221: an open path drawn twice is cut once, as a closed shape is.
-    let open_paths = drop_duplicate_paths(open_paths, warnings);
+    // #207: drawn the other way, its left is the other side, so under Left
+    // and Right only a copy drawn the same way repeats it.
+    let open_paths = drop_duplicate_paths(open_paths, !op.side.is_open_path_side(), warnings);
     Ok((shapes, open_paths, regions))
 }
 
@@ -750,19 +805,46 @@ fn centre_paths<'s>(
         }
     }
     check_open_bands(op, tool, regions, shapes, open_paths, tolerance_mm)?;
-    // #175: an open path is cut On line as drawn. #242: from its first
-    // vertex under conventional and from its last under climb, as VCarve
-    // ("Conventional starts cutting at the Start point Climb cutting
-    // starts cutting at the end point"). It bounds no region, so no
-    // containment and no waste domain; its wall is never asked.
-    let reversed_open = op.direction == CutDirection::Climb;
+    // #207: Left and Right cut each open path offset by the radius to that
+    // side, looking from its first vertex to its last; a path whose
+    // offset vanishes is not cut. The cut keeps the radius from every
+    // other line and from the strip each line keeps.
+    let side_mm = match op.side {
+        Side::Left => Some(radius_mm),
+        Side::Right => Some(-radius_mm),
+        Side::Inside | Side::Outside | Side::OnLine => None,
+    };
+    let mut open_centres: Vec<(&ShapeRef, Vec<Polyline>)> = Vec::with_capacity(open_paths.len());
     for (shape, path) in open_paths {
-        let path = if reversed_open {
-            path.reversed()
-        } else {
-            path.clone()
+        let centres = match side_mm {
+            Some(left_mm) => offset_open(path, left_mm),
+            None => vec![path.clone()],
         };
-        placed.push((path, shape, Wall::Outside, regions.len(), false));
+        if centres.is_empty() {
+            warnings.push(Warning::ToolTooLarge {
+                shape: shape.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
+                diameter_mm: tool.diameter_mm,
+            });
+            continue;
+        }
+        open_centres.push((shape, centres));
+    }
+    if let Some(left_mm) = side_mm {
+        check_kept_sides(op, tool, open_paths, &open_centres, left_mm)?;
+    }
+    // #175: an open path is cut On line as drawn, from the end
+    // `open_runs_reversed` picks (#242 On line, #287 Left and Right); a
+    // Left or Right offset of one (#207) from the end beside that vertex.
+    // It bounds no region, so no containment and no waste domain; its
+    // wall is never asked.
+    let reversed_open = open_runs_reversed(op.side, op.direction);
+    for (shape, centres) in open_centres {
+        for path in centres {
+            let path = if reversed_open { path.reversed() } else { path };
+            placed.push((path, shape, Wall::Outside, regions.len(), false));
+        }
     }
     // Drawing order is the order the targets were resolved in: target,
     // then profile. Stable, so the loops of one shape keep their offset
@@ -1026,7 +1108,7 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
     let holes: Vec<bool> = centres.iter().map(|(_, _, _, _, hole)| *hole).collect();
     let paths: Vec<(Polyline, &ShapeRef)> =
         centres.into_iter().map(|(p, s, _, _, _)| (p, s)).collect();
-    let reversed_open = op.direction == CutDirection::Climb;
+    let reversed_open = open_runs_reversed(op.side, op.direction);
     let plan = plan_tabs(
         project,
         op,
@@ -1090,7 +1172,8 @@ fn check_band(
     let reach_mm = match side {
         Side::Inside => tool.diameter_mm / 2.0,
         Side::OnLine => tool.diameter_mm,
-        Side::Outside => return Ok(()),
+        // Left and Right cut no closed outline (#207).
+        Side::Outside | Side::Left | Side::Right => return Ok(()),
     };
     for (line, b) in region_shapes(region, shapes).filter(|(l, _)| *l != contour) {
         if !centres
@@ -1184,17 +1267,21 @@ fn check_self_band(
 }
 
 /// #221: `open` without the paths that repeat an earlier one exactly,
-/// the same vertices in the same or the reverse direction, each dropped
-/// with [`Warning::DuplicateShapeDropped`] naming the one kept, as
-/// `nest` drops a closed shape drawn twice.
+/// the same vertices in the same direction or, when `either_way`, the
+/// reverse direction, each dropped with [`Warning::DuplicateShapeDropped`]
+/// naming the one kept, as `nest` drops a closed shape drawn twice.
 fn drop_duplicate_paths(
     open: Vec<(ShapeRef, Polyline)>,
+    either_way: bool,
     warnings: &mut Vec<Warning>,
 ) -> Vec<(ShapeRef, Polyline)> {
     let mut kept: Vec<(ShapeRef, Polyline)> = Vec::with_capacity(open.len());
     for (shape, path) in open {
         let reversed = path.reversed();
-        match kept.iter().find(|(_, k)| *k == path || *k == reversed) {
+        match kept
+            .iter()
+            .find(|(_, k)| *k == path || (either_way && *k == reversed))
+        {
             Some((original, _)) => warnings.push(Warning::DuplicateShapeDropped {
                 shape,
                 duplicate_of: original.clone(),
@@ -1203,6 +1290,60 @@ fn drop_duplicate_paths(
         }
     }
     kept
+}
+
+/// #207: the band rule for a Left or Right Profile. The side its cutter
+/// runs on is waste and the other side is the part, so the bit must not
+/// cross another line of the operation, nor reach the material a line
+/// keeps beside it. Each path of `centres` (the open paths `open` offset
+/// by `left_mm`, as cut) must keep the tool radius (less [`EPS_MM`]) from
+/// every other line of `open`, and from every line's kept edge: the line
+/// offset by the radius to its other side, so the strip one radius wide
+/// beside it is never cut. A path is held to its own kept edge too, which
+/// catches a spiral or hairpin whose cut reaches what the line keeps
+/// further along; it keeps its own line by construction
+/// ([`offset_open`]). Lines that meet are not set aside, unlike On line's
+/// #210: a square end that runs onto the next line of a part drawn as
+/// separate lines cuts into it. [`CamError::CutsIntoKeptSide`], the
+/// shapes in drawing order.
+fn check_kept_sides(
+    op: &ProfileOp,
+    tool: &Tool,
+    open: &[(ShapeRef, Polyline)],
+    centres: &[(&ShapeRef, Vec<Polyline>)],
+    left_mm: f64,
+) -> Result<(), CamError> {
+    let radius_mm = left_mm.abs();
+    let kept: Vec<(&ShapeRef, &Polyline, Vec<Polyline>)> = open
+        .iter()
+        .map(|(shape, line)| (shape, line, offset_open(line, -left_mm)))
+        .collect();
+    let drawn = |s: &ShapeRef| (op.targets.iter().position(|t| *t == s.instance), s.profile);
+    for &(shape, ref pieces) in centres {
+        for &(other, line, ref edges) in &kept {
+            let crosses = other != shape && pieces.iter().any(|c| within(c, line, radius_mm));
+            let enters = || {
+                pieces
+                    .iter()
+                    .any(|c| edges.iter().any(|e| within(c, e, radius_mm)))
+            };
+            if !crosses && !enters() {
+                continue;
+            }
+            let (first, second) = if drawn(shape) <= drawn(other) {
+                (shape, other)
+            } else {
+                (other, shape)
+            };
+            return Err(CamError::CutsIntoKeptSide {
+                op: op.id.clone(),
+                shape: first.clone(),
+                other: Box::new(second.clone()),
+                diameter_mm: tool.diameter_mm,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// How far from a point where two lines of one region meet their On line
@@ -3638,6 +3779,466 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── #207: Left and Right of an open path ──
+
+    /// The 6.35 mm tool's radius.
+    const R_MM: f64 = 6.35 / 2.0;
+
+    /// A Profile of `p` on `side`, `direction`, with `edit` applied.
+    fn sided_op(
+        p: &Project,
+        side: Side,
+        direction: CutDirection,
+        edit: impl FnOnce(&mut ProfileOp),
+    ) -> ProfileOp {
+        let mut op = profile_op(p, side, direction);
+        edit(&mut op);
+        op
+    }
+
+    /// Checks that every lap of `tp` runs at `fixed` across (Y when
+    /// `along_x`, else X), from `start` to `end` along the other axis.
+    fn assert_laps_run(
+        tp: &Toolpath,
+        along_x: bool,
+        fixed: f64,
+        (start, end): (f64, f64),
+        case: &str,
+    ) {
+        let split = |q: Point| if along_x { (q.y, q.x) } else { (q.x, q.y) };
+        let laps = laps(tp);
+        assert_eq!(laps.len(), PASS_Z_MM.len(), "{case}: {laps:?}");
+        for (lap, z) in laps.iter().zip(PASS_Z_MM) {
+            assert_approx_eq!(lap.z_mm, z, TOL);
+            for &q in &lap.points {
+                assert!(
+                    (split(q).0 - fixed).abs() <= TOL,
+                    "{case}: {q:?} is off {fixed}"
+                );
+            }
+            let first = lap.points[0];
+            let last = lap.points[lap.points.len() - 1];
+            assert!(
+                (split(first).1 - start).abs() <= TOL,
+                "{case}: starts at {first:?}"
+            );
+            assert!(
+                (split(last).1 - end).abs() <= TOL,
+                "{case}: ends at {last:?}"
+            );
+        }
+    }
+
+    /// #207: Left puts the tool centre one radius to the left of the path,
+    /// looking from its first vertex to its last: in Y-up the normal
+    /// `(−dy, dx)`. The line from (20, 20) to (120, 20) is cut at Y 20 + r
+    /// over its whole length, the cut ending square on the normals through
+    /// its ends; drawn the other way, its left is −Y; drawn upward, −X.
+    /// Climb, so each pass runs from the first vertex (#287).
+    #[test]
+    fn open_path_left_offsets_to_the_left() {
+        let climb = CutDirection::Climb;
+        let p = line_project();
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Left, climb));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_laps_run(&tp, true, 20.0 + R_MM, (20.0, 120.0), "left, drawn +X");
+
+        let back = back_line_project();
+        let (tp, _) = generate(&back, &profile_op(&back, Side::Left, climb));
+        assert_laps_run(&tp, true, 20.0 - R_MM, (120.0, 20.0), "left, drawn −X");
+
+        let up = project(
+            vec![open(&[(0.0, 0.0), (0.0, 50.0)])],
+            &[("i1", at_20_20())],
+        );
+        let (tp, _) = generate(&up, &profile_op(&up, Side::Left, climb));
+        assert_laps_run(&tp, false, 20.0 - R_MM, (20.0, 70.0), "left, drawn +Y");
+    }
+
+    /// #207: Right is the mirror of Left: the tool centre one radius to
+    /// the right of the path as drawn, `(dy, −dx)`. Conventional, so each
+    /// pass runs from the first vertex (#287).
+    #[test]
+    fn open_path_right_offsets_to_the_right() {
+        let conventional = CutDirection::Conventional;
+        let p = line_project();
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Right, conventional));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_laps_run(&tp, true, 20.0 - R_MM, (20.0, 120.0), "right, drawn +X");
+
+        let back = back_line_project();
+        let (tp, _) = generate(&back, &profile_op(&back, Side::Right, conventional));
+        assert_laps_run(&tp, true, 20.0 + R_MM, (120.0, 20.0), "right, drawn −X");
+
+        let up = project(
+            vec![open(&[(0.0, 0.0), (0.0, 50.0)])],
+            &[("i1", at_20_20())],
+        );
+        let (tp, _) = generate(&up, &profile_op(&up, Side::Right, conventional));
+        assert_laps_run(&tp, false, 20.0 + R_MM, (20.0, 70.0), "right, drawn +Y");
+    }
+
+    /// #207: Left and Right are sides of an open path only. A closed
+    /// target is skipped with `side_needs_open_path` naming it, not
+    /// mapped to Inside or Outside by its winding, which the drawing does
+    /// not show; the open paths are cut. Inside and Outside still skip
+    /// open paths, and their warning now names Left and Right too.
+    #[test]
+    fn left_right_on_closed_target_is_skipped_with_warning() {
+        let line = open(&[(0.0, 70.0), (100.0, 70.0)]);
+        let p = project(vec![rect_100x50(), line], &[("i1", at_20_20())]);
+        for side in [Side::Left, Side::Right] {
+            let (tp, warnings) = generate(&p, &profile_op(&p, side, CutDirection::Climb));
+            assert_eq!(
+                codes(&warnings),
+                vec![WarningCode::SideNeedsOpenPath],
+                "{side:?}"
+            );
+            let Warning::SideNeedsOpenPath { shape } = &warnings[0] else {
+                panic!("{:?}", warnings[0]);
+            };
+            assert_eq!(shape.profile, 0);
+            let message = warnings[0].to_string();
+            assert!(message.contains("closed"), "{message}");
+            assert!(message.contains("profile 0"), "{message}");
+            assert_eq!(laps(&tp).len(), PASS_Z_MM.len(), "{side:?}: only the line");
+        }
+        let rect = rect_project();
+        let (tp, warnings) = generate(&rect, &profile_op(&rect, Side::Left, CutDirection::Climb));
+        assert_eq!(codes(&warnings), vec![WarningCode::SideNeedsOpenPath]);
+        assert!(tp.moves.is_empty(), "nothing is cut");
+
+        let (_, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+        let message = warnings[0].to_string();
+        assert!(
+            message.contains("Left") && message.contains("Right"),
+            "{message}"
+        );
+    }
+
+    /// The 100 mm line of [`line_project`] drawn the other way, from
+    /// (120, 20) to (20, 20).
+    fn back_line_project() -> Project {
+        project(
+            vec![open(&[(100.0, 0.0), (0.0, 0.0)])],
+            &[("i1", at_20_20())],
+        )
+    }
+
+    /// Checks that `p`'s line along Y 20, cut on `side` with `direction`,
+    /// runs every pass at `y` from X `start` to X `end`, plunging at
+    /// `start`, and that the line, with the part beyond it, lies on the
+    /// right of every cutting move when `part_on_right` and on its left
+    /// otherwise.
+    fn assert_side_cut(
+        p: &Project,
+        (side, direction): (Side, CutDirection),
+        y: f64,
+        (start, end): (f64, f64),
+        part_on_right: bool,
+    ) {
+        let case = format!("{side:?} {direction:?}, {start} to {end}");
+        let (tp, warnings) = generate(p, &profile_op(p, side, direction));
+        assert!(warnings.is_empty(), "{case}: {warnings:?}");
+        assert_laps_run(&tp, true, y, (start, end), &case);
+        let cuts = xy_cuts(&tp);
+        assert!(!cuts.is_empty(), "{case}");
+        let toward = (end - start).signum();
+        for (from, mv) in cuts {
+            let (dx, dy) = (mv.to.x - from.x, mv.to.y - from.y);
+            assert!(dx * toward > 0.0, "{case}: {mv:?}");
+            // The cross product of travel `(dx, dy)` with the way to the
+            // line, `(0, 20 − y)`, is negative when the line is on the
+            // right of travel; the cut is level, so `dy` is zero.
+            assert!(dy.abs() <= TOL, "{case}: {mv:?}");
+            let cross = dx * (20.0 - from.y);
+            assert_eq!(cross < 0.0, part_on_right, "{case}: {mv:?}");
+        }
+        let plunges = plunges_below_top(&tp);
+        assert!(!plunges.is_empty(), "{case}");
+        for (from, _) in plunges {
+            assert!(
+                from.xy().distance_to(Point::new(start, y)) <= TOL,
+                "{case}: plunge at {from:?}"
+            );
+        }
+    }
+
+    /// #287: on a Left cut only the bit's flank toward the line meets kept
+    /// material, so `direction` is the milling mode, as for closed shapes:
+    /// the spindle turns clockwise from above, so climb keeps the part on
+    /// the right of travel. The tool runs left of the line and the part is
+    /// beyond the line, so climb runs from the end beside the first vertex
+    /// to the end beside the last. The line from (20, 20) to (120, 20) is
+    /// cut at Y 20 + r moving +X, the part (below) on its right; drawn the
+    /// other way, at Y 20 − r moving −X, the part (above) on its right.
+    #[test]
+    fn left_climb_keeps_the_part_on_the_right_of_travel() {
+        let climb = (Side::Left, CutDirection::Climb);
+        assert_side_cut(&line_project(), climb, 20.0 + R_MM, (20.0, 120.0), true);
+        let back = back_line_project();
+        assert_side_cut(&back, climb, 20.0 - R_MM, (120.0, 20.0), true);
+    }
+
+    /// #287: on a Right cut the part is on the line's left, so climb, the
+    /// part on the right of travel, runs from the end beside the last
+    /// vertex to the end beside the first: at Y 20 − r moving −X, the part
+    /// (above) on its right; drawn the other way, at Y 20 + r moving +X.
+    #[test]
+    fn right_climb_keeps_the_part_on_the_right_of_travel() {
+        let climb = (Side::Right, CutDirection::Climb);
+        assert_side_cut(&line_project(), climb, 20.0 - R_MM, (120.0, 20.0), true);
+        let back = back_line_project();
+        assert_side_cut(&back, climb, 20.0 + R_MM, (20.0, 120.0), true);
+    }
+
+    /// #287: conventional is the reverse of climb, the part on the left
+    /// of travel: Left conventional runs from the end beside the last
+    /// vertex, Right conventional from the end beside the first.
+    #[test]
+    fn left_conventional_is_the_reverse() {
+        let p = line_project();
+        let left = (Side::Left, CutDirection::Conventional);
+        assert_side_cut(&p, left, 20.0 + R_MM, (120.0, 20.0), false);
+        let back = back_line_project();
+        assert_side_cut(&back, left, 20.0 - R_MM, (20.0, 120.0), false);
+        let right = (Side::Right, CutDirection::Conventional);
+        assert_side_cut(&p, right, 20.0 - R_MM, (20.0, 120.0), false);
+        assert_side_cut(&back, right, 20.0 + R_MM, (120.0, 20.0), false);
+    }
+
+    /// #207: VCarve allows ramps and tabs on open profile toolpaths, and
+    /// no leads. A Left or Right ramp runs back and forth along the offset
+    /// path, as On line's runs along the line (acceptance 26), within
+    /// three diameters of its start; tabs are measured along the offset
+    /// path from the end beside the first vertex as drawn, whichever end
+    /// the cut starts at. A lead warns `lead_dropped` and corner relief
+    /// `relief_skipped`, both for an open path, and a helix, which needs a
+    /// waste area, is refused.
+    #[test]
+    fn left_right_ramp_and_tabs() {
+        let p = line_project();
+        // The direction that starts beside the first vertex (#287).
+        for (side, y, forward) in [
+            (Side::Left, 20.0 + R_MM, CutDirection::Climb),
+            (Side::Right, 20.0 - R_MM, CutDirection::Conventional),
+        ] {
+            let op = sided_op(&p, side, forward, |op| {
+                op.entry = Entry::Ramp { angle_deg: 5.0 };
+            });
+            let (tp, warnings) = generate(&p, &op);
+            assert!(warnings.is_empty(), "{side:?}: {warnings:?}");
+            let ramp: Vec<(Point3, Move)> = tp
+                .moves
+                .windows(2)
+                .filter(|w| {
+                    !w[1].is_rapid()
+                        && w[1].to.z < w[0].to.z - EPS_MM
+                        && w[0].to.xy().distance_to(w[1].to.xy()) > EPS_MM
+                })
+                .map(|w| (w[0].to, w[1]))
+                .collect();
+            assert!(!ramp.is_empty(), "{side:?}");
+            let mut turned = false;
+            for pair in ramp.windows(2) {
+                turned |= (pair[0].1.to.x - pair[0].0.x) * (pair[1].1.to.x - pair[1].0.x) < 0.0;
+            }
+            assert!(turned, "{side:?}: back and forth: {ramp:?}");
+            for (_, mv) in &ramp {
+                assert_approx_eq!(mv.to.y, y, TOL);
+                assert!(
+                    mv.to.x >= 20.0 - TOL && mv.to.x <= 20.0 + 3.0 * 6.35 + TOL,
+                    "{side:?}: {mv:?}"
+                );
+            }
+
+            for direction in [CutDirection::Climb, CutDirection::Conventional] {
+                let op = sided_op(&p, side, direction, |op| {
+                    op.tabs = Some(tab_at(30.0, TabShape::Rect));
+                });
+                let (tp, warnings) = generate(&p, &op);
+                assert!(warnings.is_empty(), "{side:?} {direction:?}: {warnings:?}");
+                let (held, length_mm) = held_at_tab_top(&tp);
+                assert_approx_eq!(length_mm, 2.0 * TAB_SPAN_MM, 1e-6);
+                for (a, b) in held {
+                    for q in [a, b] {
+                        assert!(
+                            (q.x - 50.0).abs() <= TAB_SPAN_MM / 2.0 + TOL && (q.y - y).abs() <= TOL,
+                            "{side:?} {direction:?}: {q:?}"
+                        );
+                    }
+                }
+            }
+
+            let op = sided_op(&p, side, CutDirection::Climb, |op| {
+                op.lead = Some(Lead {
+                    radius_mm: 4.0,
+                    sweep_deg: 90.0,
+                    lead_out: true,
+                    overcut_mm: 0.0,
+                });
+                op.corner_relief = CornerRelief::Dogbone;
+            });
+            let (_, warnings) = generate(&p, &op);
+            assert_eq!(
+                codes(&warnings),
+                vec![WarningCode::LeadDropped, WarningCode::ReliefSkipped],
+                "{side:?}"
+            );
+            assert!(matches!(
+                warnings[0],
+                Warning::LeadDropped {
+                    reason: crate::warning::LeadDroppedReason::OpenPath,
+                    ..
+                }
+            ));
+            assert!(matches!(
+                warnings[1],
+                Warning::ReliefSkipped {
+                    reason: crate::warning::ReliefSkippedReason::OpenPath,
+                    ..
+                }
+            ));
+
+            let op = sided_op(&p, side, CutDirection::Climb, |op| {
+                op.entry = Entry::Helix {
+                    diameter_fraction: 0.8,
+                    angle_deg: 5.0,
+                };
+            });
+            let err = generate_profile(&p, &op).unwrap_err();
+            assert!(
+                matches!(err, CamError::HelixNeedsWasteSide { .. }),
+                "{side:?}: {err:?}"
+            );
+        }
+    }
+
+    /// #207: the side a Left or Right cut runs on is waste, the other side
+    /// is the part. A cut that comes within the tool radius of another
+    /// line of the operation crosses into what that line keeps; one that
+    /// comes within the radius of the strip one radius wide that a line
+    /// keeps beside it (its kept edge) cuts into it too. Both are refused
+    /// with `CutsIntoKeptSide`, the shapes in drawing order: two lines
+    /// 4 mm apart, two lines 5 mm apart whose cut sides face each other,
+    /// a line drawn twice in opposite directions (each copy keeps what the
+    /// other cuts), and a square of four separate lines cut on its
+    /// inside, where each line's square end runs onto the next. The same
+    /// square cut on its outside, lines 20 mm apart and the line drawn
+    /// twice the same way (dropped as a duplicate) are cut.
+    #[test]
+    fn left_right_cut_into_the_kept_side_is_refused() {
+        let square = |clockwise: bool| {
+            let mut corners = [(0.0, 0.0), (40.0, 0.0), (40.0, 40.0), (0.0, 40.0)];
+            if clockwise {
+                corners.reverse();
+            }
+            (0..4)
+                .map(|k| open(&[corners[k], corners[(k + 1) % 4]]))
+                .collect::<Vec<_>>()
+        };
+        let line = |from: (f64, f64), to: (f64, f64)| open(&[from, to]);
+        let refused: Vec<(&str, Vec<Polyline>, Side)> = vec![
+            (
+                "4 mm apart",
+                vec![
+                    line((0.0, 0.0), (100.0, 0.0)),
+                    line((0.0, 4.0), (100.0, 4.0)),
+                ],
+                Side::Left,
+            ),
+            (
+                "facing cuts 5 mm apart",
+                vec![
+                    line((0.0, 0.0), (100.0, 0.0)),
+                    line((100.0, 5.0), (0.0, 5.0)),
+                ],
+                Side::Left,
+            ),
+            (
+                "drawn twice, opposite ways",
+                vec![
+                    line((0.0, 0.0), (100.0, 0.0)),
+                    line((100.0, 0.0), (0.0, 0.0)),
+                ],
+                Side::Right,
+            ),
+            ("a square of lines, inside", square(false), Side::Left),
+        ];
+        for (case, profiles, side) in refused {
+            let p = project(profiles, &[("i1", at_20_20())]);
+            let err =
+                generate_profile(&p, &profile_op(&p, side, CutDirection::Climb)).expect_err(case);
+            let CamError::CutsIntoKeptSide {
+                shape,
+                other,
+                diameter_mm,
+                ..
+            } = &err
+            else {
+                panic!("{case}: expected CutsIntoKeptSide, got {err:?}");
+            };
+            assert!(
+                shape.profile < other.profile,
+                "{case}: drawing order {err:?}"
+            );
+            assert_approx_eq!(*diameter_mm, 6.35, TOL);
+        }
+        let cut: Vec<(&str, Vec<Polyline>, Side, usize)> = vec![
+            ("a square of lines, outside", square(false), Side::Right, 4),
+            (
+                "a square of lines drawn clockwise, outside",
+                square(true),
+                Side::Left,
+                4,
+            ),
+            (
+                "20 mm apart",
+                vec![
+                    line((0.0, 0.0), (100.0, 0.0)),
+                    line((0.0, 20.0), (100.0, 20.0)),
+                ],
+                Side::Left,
+                2,
+            ),
+        ];
+        for (case, profiles, side, lines) in cut {
+            let p = project(profiles, &[("i1", at_20_20())]);
+            let (tp, warnings) = generate(&p, &profile_op(&p, side, CutDirection::Climb));
+            assert!(warnings.is_empty(), "{case}: {warnings:?}");
+            assert_eq!(laps(&tp).len(), lines * PASS_Z_MM.len(), "{case}");
+        }
+        let twice = project(
+            vec![
+                line((0.0, 0.0), (100.0, 0.0)),
+                line((0.0, 0.0), (100.0, 0.0)),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let (tp, warnings) = generate(&twice, &profile_op(&twice, Side::Left, CutDirection::Climb));
+        assert_eq!(codes(&warnings), vec![WarningCode::DuplicateShapeDropped]);
+        assert_eq!(laps(&tp).len(), PASS_Z_MM.len());
+    }
+
+    /// #207: an offset that vanishes leaves nothing to cut: a half circle
+    /// of radius 2 mm cut on the side its centre lies on, with a 6.35 mm
+    /// bit, warns `tool_too_large` and is not cut. Cut on its other side
+    /// it is.
+    #[test]
+    fn left_right_tool_too_large_for_a_tight_arc_warns() {
+        let arc = Polyline::new(
+            vec![Vertex::new(52.0, 25.0, 1.0), Vertex::line(48.0, 25.0)],
+            false,
+        );
+        let p = project(vec![arc], &[("i1", at_20_20())]);
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Left, CutDirection::Climb));
+        assert_eq!(codes(&warnings), vec![WarningCode::ToolTooLarge]);
+        assert!(tp.moves.is_empty());
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Right, CutDirection::Climb));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(laps(&tp).len(), PASS_Z_MM.len());
     }
 
     // ── #210: an open path in a part, beside the part's own lines ──

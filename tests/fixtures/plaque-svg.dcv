@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 11,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -151,6 +151,7 @@
       "safe_z_mm": 15.0
     }
   ],
+  "tabs": [],
   "instances": [
     {
       "id": "i1",
