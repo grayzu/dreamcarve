@@ -85,6 +85,12 @@ pub enum WarningCode {
     /// part (`docs/specs/phase-2/design.md`, "Operation-order warnings";
     /// research O8).
     CutInsideFreedPart,
+    /// A target of this operation lies inside an outline an earlier
+    /// Profile cuts through the stock round with tabs, so the cut would
+    /// run in a part held only by those tabs, which can flex, chatter or
+    /// break one (`docs/specs/phase-2/design.md`, "Operation-order
+    /// warnings"; #269).
+    CutInsideTabHeldPart,
     /// A tool is used by operations that do not run one after another, so
     /// it is fitted more than once. Operations are never reordered (D7);
     /// this is a hint.
@@ -131,6 +137,7 @@ impl WarningCode {
             Self::ReliefCornerNotCut => "relief_corner_not_cut",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
+            Self::CutInsideTabHeldPart => "cut_inside_tab_held_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
             Self::DrillTargetNotCircle => "drill_target_not_circle",
             Self::DrillToolWiderThanHole => "drill_tool_wider_than_hole",
@@ -445,6 +452,18 @@ pub enum Warning {
         /// The outline the earlier operation frees.
         freed: ShapeRef,
     },
+    /// [`WarningCode::CutInsideTabHeldPart`].
+    CutInsideTabHeldPart {
+        /// This operation.
+        op: OperationId,
+        /// The earlier Profile whose tabs alone hold the part.
+        earlier_op: OperationId,
+        /// The shape this operation cuts.
+        shape: ShapeRef,
+        /// The innermost outline round `shape` that the earlier Profile
+        /// cuts through the stock with tabs.
+        held: ShapeRef,
+    },
     /// [`WarningCode::ToolChangeAvoidable`].
     ToolChangeAvoidable {
         /// The tool's id.
@@ -526,6 +545,7 @@ impl Warning {
             Self::ReliefCornerNotCut { .. } => WarningCode::ReliefCornerNotCut,
             Self::EngravePathDegenerate { .. } => WarningCode::EngravePathDegenerate,
             Self::CutInsideFreedPart { .. } => WarningCode::CutInsideFreedPart,
+            Self::CutInsideTabHeldPart { .. } => WarningCode::CutInsideTabHeldPart,
             Self::ToolChangeAvoidable { .. } => WarningCode::ToolChangeAvoidable,
             Self::DrillTargetNotCircle { .. } => WarningCode::DrillTargetNotCircle,
             Self::DrillToolWiderThanHole { .. } => WarningCode::DrillToolWiderThanHole,
@@ -553,6 +573,7 @@ impl Warning {
             | Self::ReliefCornerNotCut { op, .. }
             | Self::EngravePathDegenerate { op, .. }
             | Self::CutInsideFreedPart { op, .. }
+            | Self::CutInsideTabHeldPart { op, .. }
             | Self::DrillTargetNotCircle { op, .. }
             | Self::DrillToolWiderThanHole { op, .. }
             | Self::DrillPeckDeeperThanHole { op, .. }
@@ -949,6 +970,15 @@ impl fmt::Display for Warning {
             } => write!(
                 f,
                 "{shape} lies inside {freed}, which operation `{earlier_op}` cuts free of the stock first, so this cut would run in a loose part; move this operation before `{earlier_op}`, or hold that part with tabs"
+            ),
+            Self::CutInsideTabHeldPart {
+                earlier_op,
+                shape,
+                held,
+                ..
+            } => write!(
+                f,
+                "{shape} lies inside {held}, which operation `{earlier_op}` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `{earlier_op}`, or, for a hole, cut it in the same operation as its part, which cuts holes first"
             ),
             Self::ToolChangeAvoidable { tool_id, tool, ops } => {
                 let ops = ops
@@ -1375,6 +1405,19 @@ mod tests {
                 "`Shape` (instance `i1`, profile 2) lies inside `Outline` (instance `i0`, profile 0), which operation `o0` cuts free of the stock first, so this cut would run in a loose part; move this operation before `o0`, or hold that part with tabs",
             ),
             (
+                Warning::CutInsideTabHeldPart {
+                    op: op(),
+                    earlier_op: "o0".into(),
+                    shape: shape(),
+                    held: ShapeRef {
+                        instance: "i0".into(),
+                        instance_name: "Outline".to_owned(),
+                        profile: 0,
+                    },
+                },
+                "`Shape` (instance `i1`, profile 2) lies inside `Outline` (instance `i0`, profile 0), which operation `o0` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `o0`, or, for a hole, cut it in the same operation as its part, which cuts holes first",
+            ),
+            (
                 Warning::ToolChangeAvoidable {
                     tool_id: "t1".into(),
                     tool: "6.35 mm upcut".to_owned(),
@@ -1455,7 +1498,8 @@ mod tests {
             C::ReliefCornerTooTight => C::ReliefCornerNotCut,
             C::ReliefCornerNotCut => C::EngravePathDegenerate,
             C::EngravePathDegenerate => C::CutInsideFreedPart,
-            C::CutInsideFreedPart => C::ToolChangeAvoidable,
+            C::CutInsideFreedPart => C::CutInsideTabHeldPart,
+            C::CutInsideTabHeldPart => C::ToolChangeAvoidable,
             C::ToolChangeAvoidable => C::DrillTargetNotCircle,
             C::DrillTargetNotCircle => C::DrillToolWiderThanHole,
             C::DrillToolWiderThanHole => C::DrillPeckDeeperThanHole,
@@ -1495,7 +1539,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 24);
+        assert_eq!(count, 25);
     }
 
     #[test]

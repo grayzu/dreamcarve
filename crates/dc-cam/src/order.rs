@@ -575,7 +575,8 @@ mod tests {
     }
 
     /// Tabs hold the part after the final pass, so a Profile with tabs
-    /// frees nothing: the later operation cuts a held part.
+    /// frees nothing: the later operation cuts a held part (which
+    /// `cut_inside_tab_held_part_warns` covers, #269).
     #[test]
     fn tabs_hold_the_part_so_nothing_is_freed() {
         let mut project = part_and_hole();
@@ -589,6 +590,190 @@ mod tests {
         assert!(
             with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
             "quiet: {warnings:?}"
+        );
+    }
+
+    /// The operation, earlier operation, shape and held outline of a
+    /// `cut_inside_tab_held_part` warning.
+    fn held_of(w: &Warning) -> (&str, &str, &ShapeRef, &ShapeRef) {
+        let Warning::CutInsideTabHeldPart {
+            op,
+            earlier_op,
+            shape,
+            held,
+        } = w
+        else {
+            panic!("{w:?}");
+        };
+        (op.as_str(), earlier_op.as_str(), shape, held)
+    }
+
+    /// The `(op, earlier_op, shape instance, held instance)` of every
+    /// `cut_inside_tab_held_part` warning in `warnings`, in order.
+    fn held_cuts(warnings: &[Warning]) -> Vec<(&str, &str, &str, &str)> {
+        with_code(warnings, WarningCode::CutInsideTabHeldPart)
+            .into_iter()
+            .map(held_of)
+            .map(|(op, earlier, shape, held)| {
+                (op, earlier, shape.instance.as_str(), held.instance.as_str())
+            })
+            .collect()
+    }
+
+    /// #269: the two-operation star of `tests/manual/star_with_hole`
+    /// redrawn. An Outside Profile through the stock with tabs on the
+    /// rectangle holds it by its tabs only; a later Inside Profile of the
+    /// circle inside it cuts that tab-held part, so exactly one
+    /// `cut_inside_tab_held_part` names both operations and both shapes.
+    /// The rectangle is held, not freed, so `cut_inside_freed_part` stays
+    /// quiet. The message says what to do: move the operation earlier, or
+    /// cut the hole with its part in one operation (#109).
+    #[test]
+    fn cut_inside_tab_held_part_warns() {
+        let mut project = part_and_hole();
+        let mut outline = profile("o1", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        project.operations = vec![
+            Operation::Profile(outline),
+            Operation::Profile(profile("o2", "i2", Side::Inside, 6.0)),
+        ];
+        let warnings = check_all(&project);
+        assert!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
+            "the tabs hold the part: {warnings:?}"
+        );
+        let found = with_code(&warnings, WarningCode::CutInsideTabHeldPart);
+        assert_eq!(found.len(), 1, "one warning: {warnings:?}");
+        let w = found[0];
+        let (op, earlier_op, shape, held) = held_of(w);
+        assert_eq!((op, earlier_op), ("o2", "o1"));
+        assert_eq!(
+            (
+                shape.instance.as_str(),
+                shape.instance_name.as_str(),
+                shape.profile
+            ),
+            ("i2", "Hole", 0)
+        );
+        assert_eq!(
+            (
+                held.instance.as_str(),
+                held.instance_name.as_str(),
+                held.profile
+            ),
+            ("i1", "Rectangle 1", 0)
+        );
+        assert_eq!(w.op().map(OperationId::as_str), Some("o2"));
+        let text = w.to_string();
+        assert!(text.contains("`o1`"), "names the earlier operation: {text}");
+        assert!(text.contains("`Hole`"), "names the shape: {text}");
+        assert!(
+            text.contains("`Rectangle 1`"),
+            "names the held outline: {text}"
+        );
+        assert!(text.contains("tabs"), "says the tabs hold it: {text}");
+        assert!(
+            text.contains("move this operation before `o1`"),
+            "suggests cutting inside first: {text}"
+        );
+        assert!(
+            text.contains("same operation"),
+            "suggests one operation for the part and its hole: {text}"
+        );
+    }
+
+    /// #269: a Pocket and an Engrave of an open line inside the tab-held
+    /// rectangle warn too, as for a freed part (#206). A Profile with tabs
+    /// that stops above the stock bottom leaves the part in the stock, so
+    /// it holds nothing by its tabs alone.
+    #[test]
+    fn any_cut_inside_tab_held_part_warns() {
+        let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
+        let mut outline = profile("o1", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        project.operations = vec![
+            Operation::Profile(outline.clone()),
+            Operation::Pocket(pocket("o2", "i2")),
+            Operation::Engrave(engrave("o3", "i3", 1.0)),
+        ];
+        let warnings = check_all(&project);
+        assert_eq!(
+            held_cuts(&warnings),
+            vec![("o2", "o1", "i2", "i1"), ("o3", "o1", "i3", "i1")],
+            "{warnings:?}"
+        );
+
+        outline.depth_mm = Some(3.0);
+        project.operations[0] = Operation::Profile(outline);
+        let warnings = check_all(&project);
+        assert!(held_cuts(&warnings).is_empty(), "not through: {warnings:?}");
+    }
+
+    /// #269: the hole first, then the tabbed outline. The outline is not
+    /// inside the hole, so nothing is cut in a tab-held part, and nothing
+    /// in a freed one.
+    #[test]
+    fn inside_first_is_quiet() {
+        let mut project = part_and_hole();
+        let mut outline = profile("o2", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        project.operations = vec![
+            Operation::Profile(profile("o1", "i2", Side::Inside, 6.0)),
+            Operation::Profile(outline),
+        ];
+        let warnings = check_all(&project);
+        for code in [
+            WarningCode::CutInsideTabHeldPart,
+            WarningCode::CutInsideFreedPart,
+        ] {
+            assert!(
+                with_code(&warnings, code).is_empty(),
+                "{code}: {warnings:?}"
+            );
+        }
+    }
+
+    /// #269, #109: one tabbed Profile of the rectangle and its hole cuts
+    /// the hole first, inside its own operation, so neither order warning
+    /// fires.
+    #[test]
+    fn one_operation_part_and_hole_is_quiet() {
+        let mut project = part_and_hole();
+        let mut both = profile("o1", "i1", Side::Outside, 6.0);
+        both.targets.push(InstanceId::new("i2"));
+        both.tabs = Some(four_tabs());
+        project.operations = vec![Operation::Profile(both)];
+        let warnings = check_all(&project);
+        for code in [
+            WarningCode::CutInsideTabHeldPart,
+            WarningCode::CutInsideFreedPart,
+        ] {
+            assert!(
+                with_code(&warnings, code).is_empty(),
+                "{code}: {warnings:?}"
+            );
+        }
+    }
+
+    /// #269: a cut on a hole's slug that the hole's own tabs hold (two of
+    /// four fit the 24 mm hole's path, `on_holes`) names the hole, the
+    /// innermost tab-held outline round it, not the part. A slug the
+    /// tabbed Profile cuts free warns `cut_inside_freed_part` alone: the
+    /// slug is loose, whatever holds the part round it.
+    #[test]
+    fn tab_held_warning_names_the_innermost_outline() {
+        let warnings = check_all(&slug_cut_after(true, 12.0));
+        assert_eq!(
+            held_cuts(&warnings),
+            vec![("o2", "o1", "i3", "i2")],
+            "{warnings:?}"
+        );
+        let warnings = check_all(&slug_cut_after(false, 5.0));
+        assert!(held_cuts(&warnings).is_empty(), "freed slug: {warnings:?}");
+        assert_eq!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).len(),
+            1,
+            "{warnings:?}"
         );
     }
 
