@@ -3618,6 +3618,65 @@ mod tests {
         }
     }
 
+    /// S9 on a raster Pocket whose wall curves inward (#218): an L, whose
+    /// reflex corner rounds the tool-centre region by the tool radius, and
+    /// a rect with a half-disc bay of radius 15 pushed in from its top.
+    /// With a wall pass the links between line ends against those arcs
+    /// follow the tool-centre ring, and the program passes, with an
+    /// allowance too, at several angles.
+    #[test]
+    fn raster_edge_links_along_a_concave_wall_pass_s9() {
+        use dc_geometry::{Polyline, Vertex};
+        let l_shape = Polyline::new(
+            [
+                (0.0, 0.0),
+                (100.0, 0.0),
+                (100.0, 25.0),
+                (50.0, 25.0),
+                (50.0, 50.0),
+                (0.0, 50.0),
+            ]
+            .into_iter()
+            .map(|(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        );
+        let bay = Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(100.0, 0.0),
+                Vertex::line(100.0, 50.0),
+                Vertex::new(65.0, 50.0, -1.0),
+                Vertex::line(35.0, 50.0),
+                Vertex::line(0.0, 50.0),
+            ],
+            true,
+        );
+        for outline in [l_shape, bay] {
+            for allowance_mm in [0.0, 0.5] {
+                let (mut project, op) = island_pocket(dc_project::Entry::Plunge, allowance_mm);
+                if let Some(def) = project.definitions.values_mut().next() {
+                    def.profiles = vec![outline.clone()];
+                }
+                for angle_deg in [0.0, 45.0, 90.0] {
+                    for wall_pass in [dc_project::WallPass::Last, dc_project::WallPass::First] {
+                        let op = dc_project::PocketOp {
+                            strategy: dc_project::ClearanceStrategy::Raster { angle_deg },
+                            wall_pass,
+                            ..op.clone()
+                        };
+                        project.operations = vec![Operation::Pocket(op.clone())];
+                        let text = emit_pocket(&project, &op, None);
+                        assert!(
+                            text.is_ok(),
+                            "{allowance_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// S9 alone on hand-written `text`, as operation `op` of `project` with
     /// the project's tool.
     fn check_material_text(
