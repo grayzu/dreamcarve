@@ -25,14 +25,7 @@ allow = [
     "Unicode-3.0",
 ]
 # MPL-2.0 is allowed only per crate, with a comment, after review.
-exceptions = [
-    # `option-ext` comes with `directories` (via `dirs-sys`), the config
-    # directory lookup in the `dreamcarve` binary. MPL-2.0 is a file-level
-    # copyleft: it covers that crate's own source files, which are used
-    # unmodified and stay available from crates.io; no DreamCarve file is
-    # affected. Listed in NOTICE.
-    { crate = "option-ext", allow = ["MPL-2.0"] },
-]
+exceptions = []
 confidence-threshold = 0.9
 
 [bans]

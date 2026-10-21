@@ -23,11 +23,13 @@ settings:
 | | Config directory |
 | --- | --- |
 | macOS | `~/Library/Application Support/dreamcarve` |
-| Linux | `~/.config/dreamcarve` (or `$XDG_CONFIG_HOME/dreamcarve`) |
+| Linux and others | `$XDG_CONFIG_HOME/dreamcarve`, or `~/.config/dreamcarve` when `XDG_CONFIG_HOME` is not set |
 | Windows | `%APPDATA%\dreamcarve` (for example `C:\Users\you\AppData\Roaming\dreamcarve`) |
 
-DreamCarve does not create the directory or the files; make them when you
-want to set something.
+These come from the environment (`HOME`, `XDG_CONFIG_HOME`, `APPDATA`); if
+the one your platform needs is not set, commands that need the directory
+stop with an error naming it. DreamCarve does not create the directory or
+the files; make them when you want to set something.
 
 To use another directory, set the environment variable
 `DREAMCARVE_CONFIG_DIR` to it. Everything, the config file and the tool

@@ -54,10 +54,6 @@ generated from Cargo.lock at release time.
   Copyright (c) 2024 iShape-Rust
 - i_key_sort 0.12 (MIT), https://github.com/iShape-Rust/iKeySort
   Copyright (c) 2024 iShape-Rust
-- option-ext 0.2 (MPL-2.0), https://github.com/soc/option-ext
-  A dependency of the `directories` crate, used unmodified in the
-  dreamcarve binary. Its source is available from crates.io and the URL
-  above; its license covers its own files only (MPL-2.0 §1.5, §3.3).
 
 When a third-party component is added, list it here with its name, version,
 license, and source URL if its license requires attribution.

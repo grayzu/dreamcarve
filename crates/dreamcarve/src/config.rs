@@ -10,8 +10,14 @@
 //! 19). Nothing else reads the file: a plain `export` works from the
 //! project alone, so a project exports the same on every machine.
 //! `<config dir>/tools.json` is the tool library (slice 20). `<config dir>`
-//! is the platform's config directory for `dreamcarve` (`directories`), or
-//! `DREAMCARVE_CONFIG_DIR` when that is set.
+//! is `DREAMCARVE_CONFIG_DIR` when that is set; otherwise the platform's
+//! usual place, read from the environment with std alone (no crate for
+//! it: the `directories` crate would bring in an MPL-2.0 dependency):
+//! macOS `$HOME/Library/Application Support/dreamcarve`, Windows
+//! `%APPDATA%\dreamcarve`, Linux and everything else
+//! `$XDG_CONFIG_HOME/dreamcarve`, or `$HOME/.config/dreamcarve` when
+//! `XDG_CONFIG_HOME` is unset. A missing `HOME` or `APPDATA` is an error
+//! naming the variable.
 //!
 //! A missing file is the defaults. A file that does not parse, or has a
 //! key DreamCarve does not know, is an error naming the file, line and
@@ -23,7 +29,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dc_project::{PostProcessorRef, ToolChangeMode};
-use directories::ProjectDirs;
 use serde::Deserialize;
 
 use crate::cli::{ConfigCommand, Failure};
@@ -82,14 +87,7 @@ impl Paths {
     pub fn resolve(override_dir: Option<&OsStr>) -> Result<Self, Failure> {
         match override_dir {
             Some(dir) if !dir.is_empty() => Ok(Self::in_dir(PathBuf::from(dir))),
-            _ => ProjectDirs::from("", "", "dreamcarve")
-                .map(|dirs| Self::in_dir(dirs.config_dir().to_path_buf()))
-                .ok_or_else(|| {
-                    Failure::error(format!(
-                        "cannot find the user config directory (no home directory); set \
-                         {CONFIG_DIR_VAR} to the directory to use"
-                    ))
-                }),
+            _ => platform_dir().map(Self::in_dir),
         }
     }
 
@@ -97,6 +95,44 @@ impl Paths {
     pub fn from_env() -> Result<Self, Failure> {
         Self::resolve(std::env::var_os(CONFIG_DIR_VAR).as_deref())
     }
+}
+
+/// The directory name under the platform's config directory.
+const APP_DIR_NAME: &str = "dreamcarve";
+
+/// The platform's config directory for DreamCarve, from the environment
+/// (module doc). An unset or empty base variable is an error naming it.
+fn platform_dir() -> Result<PathBuf, Failure> {
+    if cfg!(target_os = "windows") {
+        Ok(base_dir("APPDATA")?.join(APP_DIR_NAME))
+    } else if cfg!(target_os = "macos") {
+        Ok(base_dir("HOME")?
+            .join("Library")
+            .join("Application Support")
+            .join(APP_DIR_NAME))
+    } else {
+        match env_path("XDG_CONFIG_HOME") {
+            Some(xdg) => Ok(xdg.join(APP_DIR_NAME)),
+            None => Ok(base_dir("HOME")?.join(".config").join(APP_DIR_NAME)),
+        }
+    }
+}
+
+/// Environment variable `var` as a path, `None` when unset or empty.
+fn env_path(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Environment variable `var` as a path; unset or empty is an error.
+fn base_dir(var: &str) -> Result<PathBuf, Failure> {
+    env_path(var).ok_or_else(|| {
+        Failure::error(format!(
+            "cannot find the user config directory: {var} is not set; set it, or set \
+             {CONFIG_DIR_VAR} to the directory to use"
+        ))
+    })
 }
 
 /// Reads the config file of `paths`; a missing file is the defaults.

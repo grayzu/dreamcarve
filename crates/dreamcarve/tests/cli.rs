@@ -2431,50 +2431,83 @@ fn config_path_prints_locations() {
     assert_eq!(lines, expected("exists"));
 }
 
-/// `DREAMCARVE_CONFIG_DIR` replaces the platform directory, which is the
-/// `directories` crate's config directory for `dreamcarve` under the
-/// user's home (design, "User config (CLI only)").
+/// The first line of `config path`, the config directory, run with the
+/// environment edits `edit` makes.
+fn config_dir_line(dir: &Path, edit: impl FnOnce(&mut Command)) -> Output {
+    let mut cmd = command(dir);
+    cmd.env_remove(CONFIG_DIR_VAR).env_remove("XDG_CONFIG_HOME");
+    edit(&mut cmd);
+    cmd.args(["config", "path"]).output().expect("binary runs")
+}
+
+/// `DREAMCARVE_CONFIG_DIR` replaces the platform directory, which comes
+/// from the environment: macOS `$HOME/Library/Application Support`,
+/// Windows `%APPDATA%`, elsewhere `$XDG_CONFIG_HOME` or `$HOME/.config`,
+/// each with `dreamcarve` under it (design, "User config (CLI only)"). A
+/// missing base variable is an error naming it.
 #[test]
 fn config_dir_env_override() {
     let dir = work_dir("config_dir_env_override");
     let custom = dir.join("elsewhere");
-    let out = command(&dir)
-        .env(CONFIG_DIR_VAR, &custom)
-        .args(["config", "path"])
-        .output()
-        .expect("binary runs");
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env(CONFIG_DIR_VAR, &custom);
+    });
     assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
     assert_eq!(
         stdout(&out).lines().next().unwrap_or_default(),
         format!("Config directory: {} (not found)", custom.display())
     );
 
-    // Without the override: the platform directory under the home set for
-    // this run. Windows resolves it through the Known Folder API, not an
-    // environment variable, so only the override is checked there.
-    let home = dir.join("home");
-    std::fs::create_dir_all(&home).expect("home created");
-    let out = command(&dir)
-        .env_remove(CONFIG_DIR_VAR)
-        .env("HOME", &home)
-        .env_remove("XDG_CONFIG_HOME")
-        .args(["config", "path"])
-        .output()
-        .expect("binary runs");
-    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
-    let platform: Option<PathBuf> = if cfg!(target_os = "macos") {
-        Some(home.join("Library/Application Support/dreamcarve"))
-    } else if cfg!(target_os = "linux") {
-        Some(home.join(".config/dreamcarve"))
+    // Without the override: the platform directory under the base set for
+    // this run.
+    let base = dir.join("base");
+    let (var, platform) = if cfg!(target_os = "windows") {
+        ("APPDATA", base.join("dreamcarve"))
+    } else if cfg!(target_os = "macos") {
+        (
+            "HOME",
+            base.join("Library")
+                .join("Application Support")
+                .join("dreamcarve"),
+        )
     } else {
-        None
+        ("HOME", base.join(".config").join("dreamcarve"))
     };
-    if let Some(platform) = platform {
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env(var, &base);
+    });
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    assert_eq!(
+        stdout(&out).lines().next().unwrap_or_default(),
+        format!("Config directory: {} (not found)", platform.display())
+    );
+
+    // Where XDG applies, `XDG_CONFIG_HOME` beats `$HOME/.config`.
+    if !cfg!(any(target_os = "windows", target_os = "macos")) {
+        let xdg = dir.join("xdg");
+        let out = config_dir_line(&dir, |cmd| {
+            cmd.env(var, &base).env("XDG_CONFIG_HOME", &xdg);
+        });
+        assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
         assert_eq!(
             stdout(&out).lines().next().unwrap_or_default(),
-            format!("Config directory: {} (not found)", platform.display())
+            format!(
+                "Config directory: {} (not found)",
+                xdg.join("dreamcarve").display()
+            )
         );
     }
+
+    // No base variable and no override: an error naming the variable.
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env_remove(var);
+    });
+    assert_eq!(out.status.code(), Some(1), "config path: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains(var) && stderr(&out).contains(CONFIG_DIR_VAR),
+        "{}",
+        stderr(&out)
+    );
 }
 
 /// A config file that does not parse fails the commands that read it,

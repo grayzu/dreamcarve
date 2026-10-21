@@ -22,8 +22,7 @@ dc-gcode.workspace = true
 dc-geometry.workspace = true
 dc-import.workspace = true
 dc-project.workspace = true
-# The user config file and directory (`src/config.rs`).
-directories.workspace = true
+# The user config file (`src/config.rs`).
 serde.workspace = true
 toml.workspace = true
 
