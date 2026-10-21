@@ -3902,6 +3902,135 @@ mod tests {
         }
     }
 
+    /// #221: S9 refuses what `generate_profile` refuses for a line closer
+    /// than the bit to itself. On line, with the sample rectangle (X 10 to
+    /// 60, Y 10 to 40, drawn at the origin): an open U in the part with
+    /// legs 2 mm apart is refused by the generator, and a hand-written cut
+    /// along it fails at its plunge, although it is on a target line: the
+    /// cuts of the two legs would cut through the part between them. Legs
+    /// 8 mm apart pass. An outline with a 3 mm neck fails the same way;
+    /// one with a 3 mm notch passes, as the generator cuts it, because the
+    /// notch between its stretches is waste. The generated programs of
+    /// the wide U, a 60° V and the notched outline pass.
+    #[test]
+    fn on_line_hairpin_fails_s9() {
+        use dc_geometry::{Polyline, Vertex};
+        let polyline = |points: &[(f64, f64)], closed: bool| {
+            Polyline::new(
+                points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+                closed,
+            )
+        };
+        // The sample's definition with `profiles`, the rectangle kept when
+        // `in_rect`.
+        let with = |profiles: Vec<Polyline>, in_rect: bool| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                if !in_rect {
+                    def.profiles.clear();
+                }
+                def.profiles.extend(profiles);
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = dc_project::Side::OnLine;
+            op.tabs = None;
+            let op = op.clone();
+            (project, op)
+        };
+        // A cut through `points`, drawn: project = drawn + 10.
+        let cut = |points: &[(f64, f64)]| {
+            let mut text = format!(
+                "G21 G90\nG54\nG0 Z5\nX{} Y{}\nG1 Z-1 F300\n",
+                points[0].0 + 10.0,
+                points[0].1 + 10.0
+            );
+            for (x, y) in &points[1..] {
+                text.push_str(&format!("X{} Y{} F1000\n", x + 10.0, y + 10.0));
+            }
+            text.push_str("G0 Z5\n");
+            text
+        };
+        let fails_at_plunge = |text: &str, project: &Project, op: &Operation, case: &str| {
+            let err = check_material_text(text, project, op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+                "{case}: {err:?}"
+            );
+        };
+
+        let narrow_u = [(15.0, 8.0), (15.0, 22.0), (17.0, 22.0), (17.0, 8.0)];
+        let (project, op) = with(vec![polyline(&narrow_u, false)], true);
+        let refused = generate_profile(&project, &op);
+        assert!(
+            matches!(
+                &refused,
+                Err(dc_cam::CamError::BandNarrowerThanTool { shape, other, .. })
+                    if shape == &**other
+            ),
+            "{refused:?}"
+        );
+        fails_at_plunge(&cut(&narrow_u), &project, &Operation::Profile(op), "U");
+
+        let wide_u = [(15.0, 8.0), (15.0, 22.0), (23.0, 22.0), (23.0, 8.0)];
+        let (project, op) = with(vec![polyline(&wide_u, false)], true);
+        check_material_text(&cut(&wide_u), &project, &Operation::Profile(op)).unwrap();
+
+        let dumbbell = [
+            (0.0, 0.0),
+            (20.0, 0.0),
+            (20.0, 13.5),
+            (30.0, 13.5),
+            (30.0, 0.0),
+            (50.0, 0.0),
+            (50.0, 30.0),
+            (30.0, 30.0),
+            (30.0, 16.5),
+            (20.0, 16.5),
+            (20.0, 30.0),
+            (0.0, 30.0),
+        ];
+        let (project, op) = with(vec![polyline(&dumbbell, true)], false);
+        let op = Operation::Profile(op);
+        fails_at_plunge(&cut(&[(20.0, 13.5), (30.0, 13.5)]), &project, &op, "neck");
+
+        let notched = [
+            (0.0, 0.0),
+            (50.0, 0.0),
+            (50.0, 30.0),
+            (26.5, 30.0),
+            (26.5, 15.0),
+            (23.5, 15.0),
+            (23.5, 30.0),
+            (0.0, 30.0),
+        ];
+        let (project, op) = with(vec![polyline(&notched, true)], false);
+        let along_notch = cut(&[(26.5, 30.0), (26.5, 15.0), (23.5, 15.0), (23.5, 30.0)]);
+        check_material_text(&along_notch, &project, &Operation::Profile(op)).unwrap();
+
+        let v = [
+            (25.0 - 15.0 * 30_f64.to_radians().tan(), 7.0),
+            (25.0, 22.0),
+            (25.0 + 15.0 * 30_f64.to_radians().tan(), 7.0),
+        ];
+        let drawings = [
+            (vec![polyline(&wide_u, false)], true),
+            (vec![polyline(&v, false)], true),
+            (vec![polyline(&notched, true)], false),
+        ];
+        for (profiles, in_rect) in drawings {
+            let (project, mut op) = with(profiles, in_rect);
+            op.entry = dc_project::Entry::Ramp { angle_deg: 15.0 };
+            let (toolpath, _) = generate_profile(&project, &op).unwrap();
+            let op = Operation::Profile(op);
+            emit(
+                &project,
+                &[(op, project.tools[0].clone(), toolpath).into()],
+                "2026-10-21",
+            )
+            .unwrap_or_else(|e| panic!("{project:?}: {e}"));
+        }
+    }
+
     /// The generated sample Profile with `edit` applied, emitted: tabs and
     /// whatever entry, lead and relief `edit` sets.
     fn emit_profile(edit: impl FnOnce(&mut dc_project::ProfileOp)) -> Result<String, ExportError> {
