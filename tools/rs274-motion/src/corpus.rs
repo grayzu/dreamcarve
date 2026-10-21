@@ -5,7 +5,8 @@
 //! UCCNC and generic program, and the quick-start plaque exported
 //! in-process for each of those controllers, with the variants that
 //! exercise what a coaster does not: canned cycles (`G81`, `G82` with
-//! `G98`), a `G53` machine-Z lift, and an inch program.
+//! `G98`), a `G53` machine-Z lift, the same with manual spindle control
+//! (`M0` pauses, one right after the lift), and an inch program.
 
 use std::fs;
 use std::io;
@@ -14,8 +15,8 @@ use std::path::{Path, PathBuf};
 use dc_cam::{generate_drill, generate_engrave, generate_pocket, generate_profile};
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
 use dc_project::{
-    DrillCycle, Heights, Operation, ParkXy, PostProcessor, PostProcessorRef, Project, Units,
-    bundled_definition, latest_definition, load,
+    DrillCycle, Heights, Operation, ParkXy, PostProcessor, PostProcessorRef, Project,
+    SpindleControl, Units, bundled_definition, latest_definition, load,
 };
 
 /// The definitions whose programs `rs274` can read, with the bridge.
@@ -216,7 +217,13 @@ fn variants(plaque: &Project, id: &str) -> Result<Vec<(&'static str, Project)>, 
                 y_mm: 0.0,
             }),
         };
-        out.push(("machine-z", p));
+        out.push(("machine-z", p.clone()));
+        // With manual spindle control, `M0` pauses: one to turn the
+        // router on, and one to turn it off right after the lift, so a
+        // full simulation sees the tool at the lift's machine Z while
+        // paused (issue #328).
+        p.post_processor.spindle_control = SpindleControl::Manual;
+        out.push(("manual-machine-z", p));
     }
     if matches!(id, "linuxcnc" | "uccnc") {
         let mut p = base;

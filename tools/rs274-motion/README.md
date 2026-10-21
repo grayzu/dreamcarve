@@ -90,8 +90,9 @@ inches. With no offset, a `G53` move looks like any other move.
   write.
 - The quick-start plaque, exported in-process for each controller. It
   goes out plain, with `G81` and with `G82` canned cycles (LinuxCNC and
-  Mach3), with a `G53` lift (LinuxCNC), and in inches (LinuxCNC and
-  UCCNC).
+  Mach3), with a `G53` lift (LinuxCNC), with the lift and manual spindle
+  control, whose `M0` pauses `tools/linuxcnc-sim` resumes (LinuxCNC), and
+  in inches (LinuxCNC and UCCNC).
 
 `corpus_covers_each_controller_and_feature` fails if an export change
 drops any of these features from the corpus.
