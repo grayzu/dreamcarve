@@ -349,7 +349,7 @@ impl<'a> Walker<'a> {
         // kurbo transforms the arc exactly (an ellipse under an affine map
         // is an ellipse), so the Bézier approximation and the flattening
         // both happen in millimetres.
-        let mut path = (transform.as_kurbo() * arc).to_path(self.tolerance_mm);
+        let mut path = (kurbo::Affine::new(transform.coeffs()) * arc).to_path(self.tolerance_mm);
         if full {
             path.close_path();
         }
@@ -459,7 +459,8 @@ impl<'a> Walker<'a> {
         match transform.apply_polyline(&polyline) {
             Ok(placed) => self.add_mm_polyline(placed, layer, kind),
             Err(GeometryError::ArcUnderNonUniformTransform) => {
-                let path = transform.as_kurbo() * to_bez_path(&polyline, self.tolerance_mm);
+                let path = kurbo::Affine::new(transform.coeffs())
+                    * to_bez_path(&polyline, self.tolerance_mm);
                 self.add_path(path, layer)
             }
             Err(GeometryError::CoordinateOutOfRange { limit_mm, .. }) => {

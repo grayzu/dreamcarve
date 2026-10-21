@@ -116,12 +116,6 @@ pub enum GeometryError {
         /// Input position of the later contour.
         second: usize,
     },
-    /// An offset by `delta_mm` consumed the whole contour.
-    #[error("offset by {delta_mm} mm leaves nothing of the contour")]
-    OffsetVanished {
-        /// The requested offset distance, millimetres.
-        delta_mm: f64,
-    },
     /// A non-uniform transform would turn a circular arc into an ellipse,
     /// which a bulge cannot represent.
     #[error("transform does not preserve circular arcs (non-uniform scale or shear)")]
