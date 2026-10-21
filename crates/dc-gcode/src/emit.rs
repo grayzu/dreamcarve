@@ -1166,14 +1166,17 @@ thread_local! {
 }
 
 /// Most straight moves one flattened arc becomes.
-const MAX_ARC_SEGMENTS: f64 = 100_000.0;
+const MAX_ARC_SEGMENTS: u32 = 100_000;
 
 /// Arcs are written with at most this sweep in R format, where a
 /// half-circle leaves the controller unable to place the centre.
 const MAX_R_ARC_SWEEP_RAD: f64 = FRAC_PI_2;
 
-/// An arc whose sweep or radius is below these is drawn as a straight move.
+/// An arc whose sweep is below this is drawn as a straight move.
 const MIN_ARC_SWEEP_RAD: f64 = 1e-9;
+
+/// An arc whose radius is below this is drawn as a straight move.
+const MIN_ARC_RADIUS_MM: f64 = 1e-9;
 
 /// GRBL and grblHAL (`gcode.c`, arc radius check) accept an I/J arc when
 /// its start and end radii differ by at most 0.005 mm, or by at most
@@ -1514,7 +1517,7 @@ impl ArcGeometry {
             end_angle_rad - start_angle_rad
         };
         let sweep_rad = turn.rem_euclid(TAU);
-        (radius_mm > MIN_ARC_SWEEP_RAD && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
+        (radius_mm > MIN_ARC_RADIUS_MM && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
             start,
             end,
             centre,
@@ -1567,7 +1570,7 @@ fn segment_count(count: f64) -> usize {
     if count.is_nan() {
         return 1;
     }
-    count.ceil().clamp(1.0, MAX_ARC_SEGMENTS) as usize
+    count.ceil().clamp(1.0, f64::from(MAX_ARC_SEGMENTS)) as usize
 }
 
 /// What writing a toolpath had to change for the controller's sake.

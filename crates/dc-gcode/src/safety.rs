@@ -447,7 +447,7 @@ fn check_rules(
                     return Err(ExportError::SpindleNotUpToSpeed { line });
                 }
             }
-            check_feed(mv, &limits, 2.0 * tolerance_mm)?;
+            check_feed(mv, &limits, 2.0 * feed_quantum_mm_min(post, mv.units))?;
             check_descent_rate(mv, &limits, transform, tolerance_mm)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
@@ -659,6 +659,13 @@ fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// One output unit in the last written decimal place of a feed, in
+/// mm/min. A feed is written with the same number format as a length, so
+/// this is [`quantum_mm`]'s number in rate units.
+fn feed_quantum_mm_min(post: &PostProcessor, units: Units) -> f64 {
+    quantum_mm(post, units)
 }
 
 /// One output unit in the last written decimal place, in mm.
@@ -1679,9 +1686,13 @@ struct ToolpathArc {
     clockwise: bool,
 }
 
-/// An arc whose radius or sweep is below this is written as a straight
-/// move (`emit`, `ArcGeometry::new`).
+/// An arc whose sweep is below this is written as a straight move
+/// (`emit`, `ArcGeometry::new`).
 const MIN_ARC_SWEEP_RAD: f64 = 1e-9;
+
+/// An arc whose radius is below this is written as a straight move
+/// (`emit`, `ArcGeometry::new`).
+const MIN_ARC_RADIUS_MM: f64 = 1e-9;
 
 impl ToolpathArc {
     /// The arc from `start` to `end` about `centre`, or `None` if `emit`
@@ -1696,7 +1707,7 @@ impl ToolpathArc {
             end_rad - start_rad
         };
         let sweep_rad = turn.rem_euclid(TAU);
-        (radius_mm > MIN_ARC_SWEEP_RAD && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
+        (radius_mm > MIN_ARC_RADIUS_MM && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
             start,
             end,
             centre,
