@@ -506,6 +506,92 @@ mod tests {
         assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
     }
 
+    /// An open polyline through `points`.
+    fn open(points: &[(f64, f64)]) -> Polyline {
+        Polyline::new(
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+            false,
+        )
+    }
+
+    /// #224: one open path in the waste whose stretches far apart along it
+    /// come closer than the tool radius warns `toolpaths_overlap` against
+    /// itself, as two separate paths there do: a U with legs 2 mm apart,
+    /// and a square spiral whose turns are 2 mm apart, both on bare stock
+    /// beside the part. `shape` and `other` are the same path and `gap_mm`
+    /// the narrowest gap. Only the radius counts, as for two paths: a U
+    /// with legs 4 mm apart (closer than the 6 mm bit, wider than its
+    /// radius) is quiet.
+    #[test]
+    fn self_close_open_path_in_the_waste_warns() {
+        let spiral = open(&[
+            (100.0, 100.0),
+            (130.0, 100.0),
+            (130.0, 130.0),
+            (100.0, 130.0),
+            (100.0, 102.0),
+            (128.0, 102.0),
+            (128.0, 128.0),
+            (102.0, 128.0),
+        ]);
+        let cases = [
+            (
+                "a 2 mm U",
+                open(&[(100.0, 20.0), (100.0, 60.0), (102.0, 60.0), (102.0, 20.0)]),
+            ),
+            ("a 2 mm spiral", spiral),
+        ];
+        for (case, path) in cases {
+            let p = square_and_lines(&[("l", path)]);
+            let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
+            let found = overlaps(&warnings);
+            assert_eq!(found.len(), 1, "{case}: {warnings:?}");
+            let w = found[0];
+            assert_eq!(named(w), ("l", "l"), "{case}");
+            assert_eq!(w.param("profile"), Some("0"), "{case}");
+            assert_eq!(w.param("other_profile"), Some("0"), "{case}");
+            assert_eq!(w.param("needed_mm"), Some("3"), "{case}");
+            assert!((gap_mm(w) - 2.0).abs() < TOL, "{case}: {w:?}");
+        }
+        let wide = square_and_lines(&[(
+            "l",
+            open(&[(100.0, 20.0), (100.0, 60.0), (104.0, 60.0), (104.0, 20.0)]),
+        )]);
+        let (_, warnings) = generate_profile(&wide, &profile_op(&wide, Side::OnLine)).unwrap();
+        assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    /// #224: a smooth curve, an L and a 60° V in the waste never come
+    /// within the radius of themselves away from their neighbouring
+    /// stretches and corners, so they are quiet.
+    #[test]
+    fn open_curve_in_the_waste_does_not_warn_against_itself() {
+        let arc: Vec<(f64, f64)> = (0..=90)
+            .map(|k| {
+                let a = f64::from(180 - 2 * k).to_radians();
+                (150.0 + 15.0 * a.cos(), 100.0 + 15.0 * a.sin())
+            })
+            .collect();
+        let half = 30_f64.to_radians();
+        let cases = [
+            ("a half circle", open(&arc)),
+            ("an L", open(&[(100.0, 20.0), (100.0, 60.0), (140.0, 60.0)])),
+            (
+                "a 60° V",
+                open(&[
+                    (150.0 - 30.0 * half.sin(), 150.0 - 30.0 * half.cos()),
+                    (150.0, 150.0),
+                    (150.0 + 30.0 * half.sin(), 150.0 - 30.0 * half.cos()),
+                ]),
+            ),
+        ];
+        for (case, path) in cases {
+            let p = square_and_lines(&[("l", path)]);
+            let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
+            assert!(overlaps(&warnings).is_empty(), "{case}: {warnings:?}");
+        }
+    }
+
     #[test]
     fn overlap_warning_is_deterministic() {
         let xs = [("a", 20.0), ("b", 42.0), ("c", 64.0), ("d", 86.0)];

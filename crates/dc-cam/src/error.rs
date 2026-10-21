@@ -371,6 +371,21 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
+    /// An On line Profile's part is narrower than the tool everywhere: every
+    /// point of it lies within the tool radius of its lines (the part
+    /// shrunk by the radius is empty), so the cut along them removes the
+    /// whole part (#223). `shape` is the part's outline.
+    #[error(
+        "operation `{op}` cuts {shape} On line, but the part is nowhere as wide as its {diameter_mm} mm tool, so the bit would remove the whole part; cut it Outside, or use Engrave to mark it; no toolpath was produced"
+    )]
+    PartNarrowerThanTool {
+        /// The operation.
+        op: OperationId,
+        /// The part's outline.
+        shape: ShapeRef,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
     #[error("shape {shape} cannot be cut: {source}")]

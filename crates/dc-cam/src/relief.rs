@@ -1743,6 +1743,40 @@ mod tests {
         }
     }
 
+    /// #215: from the first corner of a square, the two next to it are
+    /// equally near. A later one nearer by less than
+    /// [`crate::sequence::NEAREST_TIE_MM`] (the 1e-6 mm an `f32` import
+    /// moves a coordinate) is still a tie, taken in drawing order, so the
+    /// noisy square's notches are cut in the clean square's order.
+    #[test]
+    fn equidistant_corners_follow_drawing_order_despite_noise() {
+        let (clean, _) = collect(&op_id(), Style::Dogbone, R, &square_site(), 0.01);
+        assert_eq!(clean.len(), 4);
+        let start = clean[0].descend;
+        let order = |corners: Vec<ReliefCorner>| -> Vec<Point> {
+            nearest_neighbour(corners, start)
+                .iter()
+                .map(|c| c.geometry.corner)
+                .collect()
+        };
+        let expected = order(clean.clone());
+        for noise_mm in [1e-6, 1e-4, 0.9 * crate::sequence::NEAREST_TIE_MM] {
+            // Each of the two neighbours in turn moved nearer the start.
+            for moved in [1, 3] {
+                let mut noisy = clean.clone();
+                let towards = (start - noisy[moved].descend)
+                    .normalized()
+                    .unwrap_or(Vec2::new(0.0, 0.0));
+                noisy[moved].descend = noisy[moved].descend + towards * noise_mm;
+                assert_eq!(
+                    order(noisy),
+                    expected,
+                    "corner {moved} {noise_mm} mm nearer"
+                );
+            }
+        }
+    }
+
     /// Upstream: "a cleared-outside loop relieves its concave corners
     /// only".
     #[test]

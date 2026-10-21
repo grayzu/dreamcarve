@@ -25,6 +25,16 @@ use crate::toolpath::{Move, Toolpath};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Region, union};
 use dc_project::MachiningOrder;
 
+/// Two nearest-first candidates whose distances differ by no more than
+/// this, mm, are equally near, and the one first in drawing order is
+/// taken (#215). It is the finest step a post-processor writes in mm
+/// (0.001), so candidates closer than it cannot be told apart in a
+/// program, and it is more than the noise an `f32` import adds to a
+/// distance between points within about 2 m of the origin (`2⁻²⁴`
+/// relative, twice over), so an SVG and a DXF of one drawing give one
+/// order.
+pub(crate) const NEAREST_TIE_MM: f64 = 1e-3;
+
 /// Everything [`sequence`] needs, in project space (mm, Y-up, Z-up).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SequenceInput<'a> {
@@ -1083,6 +1093,39 @@ mod tests {
                 let tp = run(&input(blocks.clone(), order, &[]));
                 assert_eq!(names(&visits(&tp, &blocks)), expected, "{order:?}");
             }
+        }
+    }
+
+    /// #215: two shapes nearer each other than [`NEAREST_TIE_MM`] in their
+    /// distance from the current exit are a tie, kept in drawing order, so
+    /// the 1e-6 mm noise of an `f32` import does not pick the later one.
+    #[test]
+    fn equidistant_shapes_within_tolerance_keep_drawing_order() {
+        let a = squares("a", 0.0, 0.0, 10.0, 1);
+        for noise_mm in [1e-6, 1e-4, 0.9 * NEAREST_TIE_MM] {
+            let b = squares("b", 30.0, 0.0, 10.0, 1);
+            let c = squares("c", -30.0 + noise_mm, 0.0, 10.0, 1);
+            for (blocks, expected) in [
+                ([a.clone(), b.clone(), c.clone()].concat(), ["a", "b", "c"]),
+                ([a.clone(), c.clone(), b.clone()].concat(), ["a", "c", "b"]),
+            ] {
+                for order in BOTH {
+                    let tp = run(&input(blocks.clone(), order, &[]));
+                    assert_eq!(
+                        names(&visits(&tp, &blocks)),
+                        expected,
+                        "{order:?}, c {noise_mm} mm nearer"
+                    );
+                }
+            }
+        }
+        // Nearer by more than the tolerance is nearer.
+        let b = squares("b", 30.0, 0.0, 10.0, 1);
+        let c = squares("c", -30.0 + 2.0 * NEAREST_TIE_MM, 0.0, 10.0, 1);
+        let blocks = [a, b, c].concat();
+        for order in BOTH {
+            let tp = run(&input(blocks.clone(), order, &[]));
+            assert_eq!(names(&visits(&tp, &blocks)), ["a", "c", "b"], "{order:?}");
         }
     }
 

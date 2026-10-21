@@ -4031,6 +4031,62 @@ mod tests {
         }
     }
 
+    /// #223: S9 refuses what `generate_profile` refuses for a part the bit
+    /// removes whole. On line, a 3 mm square part (drawn at (20, 10), so
+    /// X 30 to 33, Y 20 to 23) is refused by the generator
+    /// (`PartNarrowerThanTool`), and a hand-written cut round it fails at
+    /// its plunge, although it is on the part's line. A 7 mm square passes,
+    /// hand-written and generated.
+    #[test]
+    fn on_line_part_smaller_than_the_bit_fails_s9() {
+        let square = |size_mm: f64| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles = vec![dc_geometry::Polyline::rect(
+                    dc_geometry::Point::new(20.0, 10.0),
+                    size_mm,
+                    size_mm,
+                )];
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = dc_project::Side::OnLine;
+            op.tabs = None;
+            let op = op.clone();
+            (project, op)
+        };
+        // Round the square from its lower-left corner, project space.
+        let cut = |size_mm: f64| {
+            let (x0, y0) = (30.0, 20.0);
+            let (x1, y1) = (x0 + size_mm, y0 + size_mm);
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX{x0} Y{y0}\nG1 Z-1 F300\nX{x1} F1000\nY{y1}\nX{x0}\nY{y0}\nG0 Z5\n"
+            )
+        };
+
+        let (small, op) = square(3.0);
+        let refused = generate_profile(&small, &op);
+        assert!(
+            matches!(refused, Err(dc_cam::CamError::PartNarrowerThanTool { .. })),
+            "{refused:?}"
+        );
+        let op = Operation::Profile(op);
+        let err = check_material_text(&cut(3.0), &small, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+            "the plunge on the 3 mm square: {err:?}"
+        );
+
+        let (large, op) = square(7.0);
+        check_material_text(&cut(7.0), &large, &Operation::Profile(op.clone())).unwrap();
+        let (toolpath, _) = generate_profile(&large, &op).unwrap();
+        emit(
+            &large,
+            &[(Operation::Profile(op), large.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
+    }
+
     /// The generated sample Profile with `edit` applied, emitted: tabs and
     /// whatever entry, lead and relief `edit` sets.
     fn emit_profile(edit: impl FnOnce(&mut dc_project::ProfileOp)) -> Result<String, ExportError> {
