@@ -19,9 +19,21 @@ bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
   "direction": "climb",
   "through_cut_allowance_mm": 0.2,
   "safe_z_mm": 5.0,
-  "tabs": { … }
+  "tabs": {
+    "placement": { "kind": "count", "count": 4 },
+    "width_mm": 8.0,
+    "height_mm": 3.0,
+    "shape": "rect"
+  },
+  "machining_order": "full_depth_first",
+  "entry": { "ramp": { "angle_deg": 15.0 } },
+  "lead": null,
+  "corner_relief": "none"
 }
 ```
+
+This is the Profile `init` writes, with `depth_mm` and
+`through_cut_allowance_mm` set for 11.8 mm stock.
 
 ## Settings
 
@@ -38,7 +50,7 @@ bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
 | `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. 0 by default. See [Cutting through](#cutting-through). |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
-| `tabs` | Holding tabs, or `null` for none. See [Tabs](tabs.md). |
+| `tabs` | Tabs that hold the part to the stock, or `null` for none. See [Tabs](tabs.md). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](#machining-order). |
 | `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
 | `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
@@ -128,27 +140,15 @@ VCarve does).
 ## Machining order
 
 `machining_order` says how the passes of several shapes are interleaved:
-
-- `"full_depth_first"` (the default, and how `init` writes it): each shape
-  is cut to its full depth before the tool moves to the next shape.
-- `"pass_first"`: the first pass is cut on every shape, then the second
-  pass on every shape, and so on to the final depth.
-
-Full depth first keeps the tool on one shape, so there are fewer moves
-between shapes. Pass first keeps every part held by full-thickness material
-until the final pass, which can matter for small parts or thin stock.
-Either way the same cuts are made at the same depths; only their order
-changes, and an operation with one shape cuts exactly the same under both.
-
-Within an operation the shapes are visited nearest first: the first shape
-in the drawing is cut first, then whichever uncut shape starts nearest to
-where the last cut ended, and so on. Under pass first each pass starts from
-where the previous pass ended, so successive passes tend to run in opposite
-directions. Two shapes equally near are taken in drawing order. One rule
-overrides nearness: a shape is always cut before any shape that encloses
-it (a hole before its outline, a part inside a hole before that hole), so a
-part is freed only by its last contour. See [Shapes and holes, rule
-6](shapes-and-holes.md#6-order-follows-the-drawing).
+`"full_depth_first"` (the default, and how `init` writes it) cuts each
+shape to full depth before the next; `"pass_first"` cuts each pass on
+every shape before the next, deeper pass. Shapes are visited nearest
+first from the first one drawn, and a shape is always cut before any shape
+that encloses it: a hole before its outline, a part inside a hole before
+that hole, so a part is freed only by its last contour. The same cuts are
+made either way, and an operation with one shape cuts exactly the same
+under both. See [Machining order and operation
+order](machining-order.md).
 
 ## Entry
 
@@ -371,30 +371,15 @@ An inside Profile of a 40 × 30 mm rectangle with a 6.35 mm bit and
 the bisector, the same four a Pocket of that rectangle gets; an outside
 Profile of an L-shaped part gets one, in the inside corner of the L.
 
-## Cut order between operations
+## Order of operations
 
 Operations run in the order the project lists them, whichever tools they
-use: DreamCarve never reorders them or groups them by tool, because the
-order carries intent it cannot infer (rough before finish, holes before
-the outline that frees the part). Two checks look at that order and warn
-when it is probably wrong; the program is still written as listed.
-
-- A Profile through the stock with no tabs cuts its parts free. Any
-  operation after it that cuts a shape inside one of those outlines, a
-  hole, a pocket, an engraving, runs in a loose part, and `check` warns
-  `cut_inside_freed_part`, naming both operations and the shape. An open
-  path an Engrave or an `on_line` Profile cuts counts when all of it lies
-  inside the outline; one that crosses the outline does not. Cutting
-  the hole inside a part first and the outline last is quiet, as is the
-  same order with tabs on the outline. An Inside Profile through the stock
-  frees the slug inside its outline, so a cut inside that hole warns too.
-- When one tool's operations are separated by another tool's (T1, T2,
-  T1), the tool is fitted twice. `check` hints `tool_change_avoidable`,
-  listing the operations, so you can put them together if the cut order
-  allows.
-
-See [Warnings](warnings.md#cut-order-between-operations) for the messages
-and what to do.
+use; DreamCarve never reorders them or groups them by tool. `check` warns
+`cut_inside_freed_part` when an operation cuts inside a part an earlier
+Profile without tabs has already cut free, and hints
+`tool_change_avoidable` when one tool's operations are split by another's.
+The program is still written as listed. See [Machining order and
+operation order](machining-order.md#checks-on-the-operation-order).
 
 ## What the program does
 
@@ -402,7 +387,7 @@ For each part, the holes are cut first and the outline last, so a part cut
 through is freed only at the end. A part inside another part's hole is cut
 before that hole, however deep the nesting, so it is never cut out of loose
 waste. Otherwise shapes are visited nearest first, starting from the first
-one drawn (see [Machining order](#machining-order)). For each outline:
+one drawn (see [Machining order](machining-order.md)). For each outline:
 
 1. Rapid to safe Z, then to the start of the outline (or of its helix).
 2. Go down to the first pass by the [entry](#entry): ramp, helix or
@@ -433,6 +418,7 @@ These still give a safe program. `check` and `export` print each one as
 | "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
 | "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
+| "there is no room for a `helix` entry ...", "the helix entry in ... is ... smaller than ..." | See [Entry](#entry), "When it does not fit". |
 | "the lead arc on ... is ... smaller than ...", "there is no room for a lead-in arc ..." | See [Leads](#leads). |
 | "the tool paths of ... and ... cut into each other" | Two shapes are closer than the bit needs to cut between them, so cutting one gouges the other. See below. |
 | "corner relief ... is skipped", "the corner of ... is not relieved" | See [Corner relief](#corner-relief). |

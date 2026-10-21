@@ -58,7 +58,7 @@ is free, the pocket would be cut in a loose part (`check` warns
 | `rest_of` | `null`, or the id of an earlier Pocket of the same targets whose leftovers this one clears. See [Rest machining](#rest-machining). |
 | `entry` | How the bit gets down to each pass: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`. See [Entry](#entry). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
-| `machining_order` | `"full_depth_first"` or `"pass_first"`, as for [Profile](profile.md#machining-order). |
+| `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](machining-order.md#machining-order). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. A pocket deeper than the stock needs it, as a through cut does. |
 | `safe_z_mm` | The height above the stock top for moves between cuts. |
 
@@ -251,7 +251,7 @@ material the pocket removes: the [safety](#safety) check covers it.
 ## Allowance
 
 `allowance_mm` leaves that much material on every wall and round every
-island, for a finishing pass to take off later (VCarve's "Pocket
+island, for a finishing Pocket to take off later (VCarve's "Pocket
 Allowance"; the sign is VCarve's: a positive value leaves material). The
 bit's centre stays its radius plus the allowance from the wall, so the
 wall ring, the clearing rings or raster lines, and the ramp or helix all
@@ -298,10 +298,10 @@ each narrow slot, overlapping the cleared area by up to its own width so
 no ridge is left at the edge. It does not run along the inner edge of
 that band, where its bit would only touch air the earlier Pocket cleared.
 
-**Safety.** The rest Pocket is checked exactly as any Pocket: its cut
+**Safety.** A rest machining Pocket is checked exactly as any Pocket: its cut
 stays inside its own shape, the allowance off the walls and out of every
 island (safety rule S14). If the earlier Pocket's settings were wrong,
-the rest Pocket cuts more air or leaves material; it never cuts outside
+the rest machining Pocket cuts more air or leaves material; it never cuts outside
 the shape.
 
 **When there is nothing to do.** If this Pocket's bit reaches nothing the

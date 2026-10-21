@@ -74,14 +74,14 @@ wood with a brad-point or twist drill that clears its own chips.
 
 ### Peck
 
-`{ "peck": { "peck_depth_mm": 4.0, "retract": "full" } }` drills in steps
+`{ "peck": { "peck_depth_mm": 4.0, "retract": "full" } }` drills in pecks
 of `peck_depth_mm`, lifting between them to clear the chips and let the
-bit cool. The steps are counted from the
+bit cool. The pecks are counted from the
 [retract height](#retract-height), where each hole starts, as a
-controller's own peck cycle (`G83`, `G73`) counts them. The first step
+controller's own peck cycle (`G83`, `G73`) counts them. The first peck
 starts in the air, so it cuts `peck_depth_mm` less `retract_mm` into the
-material; every later step goes one full `peck_depth_mm` deeper, and the
-last one may be shorter. No step ever goes more than `peck_depth_mm`
+material; every later peck goes one full `peck_depth_mm` deeper, and the
+last one may be shorter. No peck ever goes more than `peck_depth_mm`
 below the depth already drilled.
 
 With `retract_mm: 1`, 12 mm in 4 mm pecks is four plunges: to 3, 7 and
@@ -143,7 +143,8 @@ outlines). From each hole the bit goes to the nearest hole not yet
 drilled; two holes the same distance away are taken in drawing order. The
 result is the same every time you export. `machining_order` does not
 apply: each hole is one plunge or one set of pecks, drilled to depth
-before the bit moves on.
+before the bit moves on. See [Machining order and operation
+order](machining-order.md).
 
 ## What the program does
 
