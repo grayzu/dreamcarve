@@ -120,7 +120,9 @@ pub(super) fn path_entries(
     let n = setup.paths.len();
     match (op.side, &op.entry) {
         (_, Entry::Plunge) => (0..n).map(|_| None).collect(),
-        (Side::OnLine, Entry::Ramp { angle_deg }) => setup
+        // #207: Left and Right ramp along their offset path as On line
+        // ramps along its line.
+        (Side::OnLine | Side::Left | Side::Right, Entry::Ramp { angle_deg }) => setup
             .layouts
             .iter()
             .map(|layout| {
@@ -135,7 +137,9 @@ pub(super) fn path_entries(
             })
             .collect(),
         // Refused before this is reached; a plunge if it ever is.
-        (Side::OnLine, Entry::Helix { .. }) => (0..n).map(|_| None).collect(),
+        (Side::OnLine | Side::Left | Side::Right, Entry::Helix { .. }) => {
+            (0..n).map(|_| None).collect()
+        }
         (Side::Inside | Side::Outside, _) => (0..n)
             .map(|i| {
                 let (domain, target) = (domains.get(i)?, targets.get(i)?);
@@ -190,8 +194,8 @@ pub(super) fn tab_seams(
         return none();
     }
     let along = match (setup.op.side, &setup.op.entry) {
-        (Side::OnLine, Entry::Ramp { angle_deg }) => Some(*angle_deg),
-        (Side::OnLine, _) => return none(),
+        (Side::OnLine | Side::Left | Side::Right, Entry::Ramp { angle_deg }) => Some(*angle_deg),
+        (Side::OnLine | Side::Left | Side::Right, _) => return none(),
         _ => None,
     };
     setup
@@ -265,9 +269,10 @@ fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
 
 /// Inside and Outside: each path's waste domain ([`waste::domains`]) and,
 /// when some pass is below the tab top, that domain less every path's tab
-/// keep-outs ([`waste::tab_keep_out`]). Empty for On line.
+/// keep-outs ([`waste::tab_keep_out`]). Empty for On line, Left and
+/// Right, which have no waste area.
 pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
-    if setup.op.side == Side::OnLine {
+    if !setup.op.side.has_waste_area() {
         return Vec::new();
     }
     let radius_mm = tool_for(setup, 0).diameter_mm / 2.0;

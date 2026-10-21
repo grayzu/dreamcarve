@@ -448,7 +448,23 @@ fn lead() -> impl Strategy<Value = Option<Lead>> {
 /// A random valid Profile project.
 pub fn profile_project() -> impl Strategy<Value = Project> {
     let side = prop_oneof![Just(Side::Inside), Just(Side::Outside), Just(Side::OnLine)];
-    (setup(end_mill(), false), side)
+    profile_project_of(side.boxed(), false)
+}
+
+/// A random valid Left or Right Profile project (#207), of closed outlines
+/// (which it skips) and open paths with arcs.
+pub fn open_side_profile_project() -> impl Strategy<Value = Project> {
+    let side = prop_oneof![Just(Side::Left), Just(Side::Right)];
+    profile_project_of(side.boxed(), true)
+}
+
+/// A random valid Profile project on one of `sides`, with open paths in
+/// its drawing when `with_open_paths`.
+fn profile_project_of(
+    sides: BoxedStrategy<Side>,
+    with_open_paths: bool,
+) -> impl Strategy<Value = Project> {
+    (setup(end_mill(), with_open_paths), sides)
         .prop_flat_map(|(setup, side)| {
             (
                 Just(setup),
@@ -457,7 +473,7 @@ pub fn profile_project() -> impl Strategy<Value = Project> {
                 (
                     tabs(),
                     order(),
-                    entry(side != Side::OnLine),
+                    entry(side.has_waste_area()),
                     lead(),
                     relief(),
                 ),

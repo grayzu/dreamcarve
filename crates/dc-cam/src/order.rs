@@ -18,7 +18,7 @@ use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{Operation, OperationId, Project, Side, ToolId};
+use dc_project::{Operation, OperationId, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -234,17 +234,24 @@ fn lies_inside(inner: &Contour, outer: &Contour) -> bool {
 }
 
 /// Every profile of every target instance of `op` that `op` cuts, placed
-/// in project space, in target then profile order: every closed profile,
-/// and the open paths an Engrave or an On line Profile cuts along (#175,
-/// #206). Other operations skip open paths, so they are left out, as are
+/// in project space, in target then profile order: every closed profile
+/// (none for a Left or Right Profile, which skips them, #207), and the
+/// open paths an Engrave or an On line, Left or Right Profile cuts along
+/// or beside (#175, #206, #207). Other operations skip open paths, so they
+/// are left out, as are
 /// open paths with no length and anything validation already rejects (a
 /// missing instance or definition, a degenerate outline): this check only
 /// warns.
 fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
     let cuts_open = match op {
         Operation::Engrave(_) => true,
-        Operation::Profile(profile) => profile.side == Side::OnLine,
+        Operation::Profile(profile) => profile.side.cuts_open_paths(),
         Operation::Pocket(_) | Operation::Drill(_) => false,
+    };
+    // #207: Left and Right skip closed outlines.
+    let cuts_closed = match op {
+        Operation::Profile(profile) => !profile.side.is_open_path_side(),
+        Operation::Pocket(_) | Operation::Drill(_) | Operation::Engrave(_) => true,
     };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
@@ -256,6 +263,9 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
         };
         for (profile, polyline) in definition.profiles.iter().enumerate() {
             let target = if polyline.is_closed() {
+                if !cuts_closed {
+                    continue;
+                }
                 instance
                     .transform
                     .apply_polyline(polyline)
@@ -1012,7 +1022,10 @@ mod tests {
     /// #206, O8: an Engrave and an On line Profile of an open line inside
     /// the rectangle, after an Outside Profile freed it, both cut in a
     /// loose part. An Inside Profile of the line cuts nothing there (it
-    /// skips open paths), so it is quiet.
+    /// skips open paths), so it is quiet. #207: a Left Profile of the line
+    /// cuts beside it, in the loose part too; a Left Profile of the
+    /// rectangle through the stock cuts nothing (it skips closed shapes),
+    /// so it frees nothing and the Engrave after it is quiet.
     #[test]
     fn open_path_inside_freed_part_warns() {
         let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
@@ -1021,11 +1034,26 @@ mod tests {
             Operation::Engrave(engrave("o2", "i3", 1.0)),
             Operation::Profile(profile("o3", "i3", Side::OnLine, 1.0)),
             Operation::Profile(profile("o4", "i3", Side::Inside, 1.0)),
+            Operation::Profile(profile("o5", "i3", Side::Left, 1.0)),
         ];
         let warnings = check_all(&project);
         let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
         let ops: Vec<_> = found.iter().map(|w| ops_of(w)).collect();
-        assert_eq!(ops, vec![("o2", "o1"), ("o3", "o1")], "{warnings:?}");
+        assert_eq!(
+            ops,
+            vec![("o2", "o1"), ("o3", "o1"), ("o5", "o1")],
+            "{warnings:?}"
+        );
+        let mut skipped = part_and_line((20.0, 15.0), (50.0, 15.0));
+        skipped.operations = vec![
+            Operation::Profile(profile("o1", "i1", Side::Left, 6.0)),
+            Operation::Engrave(engrave("o2", "i3", 1.0)),
+        ];
+        let quiet = check_all(&skipped);
+        assert!(
+            with_code(&quiet, WarningCode::CutInsideFreedPart).is_empty(),
+            "{quiet:?}"
+        );
         for w in found {
             let (_, _, shape, freed) = freed_of(w);
             assert_eq!(
