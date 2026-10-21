@@ -1197,15 +1197,18 @@ mod tests {
 
     #[test]
     fn unknown_post_id_fails_to_load() {
-        let err = load_edited("\"id\": \"grbl\"", "\"id\": \"mach3\"").unwrap_err();
+        let err = load_edited("\"id\": \"grbl\"", "\"id\": \"fanuc\"").unwrap_err();
         let crate::LoadError::Schema { path, at, message } = &err else {
             panic!("a schema error: {err:?}");
         };
         assert_eq!(path, "post_processor.id", "{err}");
         let value = position_of("\"grbl\",");
         assert_eq!(*at, Some(value), "{err}");
-        assert!(message.contains("`mach3`"), "{err}");
-        assert!(message.contains("grbl, grblhal"), "{err}");
+        assert!(message.contains("`fanuc`"), "{err}");
+        assert!(
+            message.contains("generic, grbl, grblhal, linuxcnc, mach3, uccnc"),
+            "{err}"
+        );
     }
 
     #[test]

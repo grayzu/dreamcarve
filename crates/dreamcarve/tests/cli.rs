@@ -728,10 +728,11 @@ fn self_intersecting_target_fails_check() {
     assert!(!dir.join("part.nc").exists(), "no program is written");
 }
 
-/// Capability 5: both bundled post-processors are listed by id, grblHAL
-/// first, as `dc_project::latest_definitions` orders them.
+/// Capability 5 and phase 2 capability 23: the six bundled
+/// post-processors are listed by id, grblHAL first, as
+/// `dc_project::latest_definitions` orders them, each with its name.
 #[test]
-fn posts_lists_grblhal_and_grbl() {
+fn posts_lists_six() {
     let out = dreamcarve().arg("posts").output().expect("binary runs");
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     let stdout = stdout(&out);
@@ -739,7 +740,206 @@ fn posts_lists_grblhal_and_grbl() {
         .lines()
         .filter_map(|l| l.split_whitespace().next())
         .collect();
-    assert_eq!(ids, ["grblhal", "grbl"], "stdout was: {stdout}");
+    assert_eq!(
+        ids,
+        ["grblhal", "grbl", "linuxcnc", "mach3", "uccnc", "generic"],
+        "stdout was: {stdout}"
+    );
+    for name in [
+        "grblHAL",
+        "GRBL 1.1",
+        "LinuxCNC",
+        "Mach3",
+        "UCCNC",
+        "Generic RS274/NGC",
+    ] {
+        assert!(stdout.contains(name), "{name} in {stdout}");
+    }
+}
+
+/// The coaster with four 8 mm holes inside it, drilled through with the
+/// `simple` cycle, on post-processor `post`, with canned cycles
+/// `canned`. Returns the exported program.
+fn coaster_with_holes(name: &str, post: &str, canned: bool) -> String {
+    let dir = work_dir(name);
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    let out = run(&dir, &["init", "coaster.svg", "--post", post]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("coaster.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let hole = FeatureDefinition {
+        id: DefinitionId::new("hole"),
+        name: "Hole".into(),
+        profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 4.0)],
+    };
+    let mut targets = Vec::new();
+    for (k, (x, y)) in [(35.0, 35.0), (65.0, 35.0), (65.0, 65.0), (35.0, 65.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let id = InstanceId::new(format!("hole{}", k + 1));
+        project.instances.push(FeatureInstance {
+            id: id.clone(),
+            definition: hole.id.clone(),
+            transform: Transform::translate(x, y),
+            name: format!("Hole {}", k + 1),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(MEASURED_THICKNESS_MM),
+            z_bottom_mm: Some(0.0),
+        });
+        targets.push(id);
+    }
+    project.definitions.insert(hole.id.clone(), hole);
+    let mut drill = sample_drill();
+    drill.id = OperationId::new("o2");
+    drill.targets = targets;
+    drill.tool = project.operations[0].tool().clone();
+    drill.cycle = DrillCycle::Simple;
+    drill.dwell_s = 0.0;
+    drill.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
+    drill.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
+    // The holes are inside the part, so they are cut before it is freed.
+    project.operations.insert(0, Operation::Drill(drill));
+    project.post_processor.use_canned_cycles = canned;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    let report = stderr(&out);
+    assert_eq!(out.status.code(), Some(0), "export: {report}");
+    assert!(!report.contains("canned_cycle_expanded"), "{report}");
+    let extension = &project.post_processor.file_extension;
+    std::fs::read_to_string(dir.join(format!("coaster.{extension}"))).expect("program written")
+}
+
+/// The code words of `line`, outside comments, upper-cased.
+fn code_words(line: &str) -> Vec<String> {
+    let mut code = String::new();
+    let mut in_comment = false;
+    for c in line.chars() {
+        match c {
+            '(' => in_comment = true,
+            ')' => in_comment = false,
+            c if !in_comment => code.push(c),
+            _ => {}
+        }
+    }
+    code.split_whitespace().map(str::to_uppercase).collect()
+}
+
+/// What the machine does for `text`, canned cycles expanded as the
+/// definition `post` states: each move's kind and end, and each cut's
+/// feed. Moves that go nowhere are left out.
+fn machine_motion(text: &str, post: &str) -> Vec<String> {
+    let resolved = dc_project::PostProcessorRef::latest(post)
+        .expect("bundled")
+        .resolve()
+        .expect("resolves");
+    dc_gcode::parse_motion_with(text, &dc_gcode::CycleModel::of(&resolved))
+        .expect("program parses")
+        .into_iter()
+        .filter(|m| m.from != m.to)
+        .map(|m| {
+            let feed = if m.kind.is_cut() { m.feed } else { None };
+            format!("{:?} {:?} {:?}", m.kind, m.to, feed)
+        })
+        .collect()
+}
+
+/// Acceptance 24 on the real LinuxCNC definition (slice 17, #164): with
+/// canned cycles on, the simple Drill is one `G81` line per hole after
+/// `G98`, then `G80`, and the program's motion, read back as LinuxCNC
+/// performs the cycles, is the plain-moves program's. With canned cycles
+/// off no cycle word appears (the header's `G80` only cancels one).
+#[test]
+fn canned_cycles_linuxcnc_opt_in() {
+    let canned = coaster_with_holes("canned_cycles_linuxcnc_on", "linuxcnc", true);
+    let plain = coaster_with_holes("canned_cycles_linuxcnc_off", "linuxcnc", false);
+    let lines: Vec<Vec<String>> = canned.lines().map(code_words).collect();
+    let has = |line: &[String], word: &str| line.iter().any(|w| w == word);
+    let g81: Vec<usize> = (0..lines.len())
+        .filter(|&i| has(&lines[i], "G81"))
+        .collect();
+    assert_eq!(g81.len(), 1, "G81 is modal, written once:\n{canned}");
+    let cycle_lines: Vec<usize> = (g81[0]..lines.len())
+        .take_while(|&i| !has(&lines[i], "G80"))
+        .filter(|&i| lines[i].iter().any(|w| w.starts_with('X')))
+        .collect();
+    assert_eq!(cycle_lines.len(), 4, "one line per hole:\n{canned}");
+    assert!(has(&lines[g81[0] - 1], "G98"), "G98 first:\n{canned}");
+    let after = cycle_lines.last().copied().unwrap_or_default() + 1;
+    assert!(
+        lines.get(after).is_some_and(|l| has(l, "G80")),
+        "G80 last:\n{canned}"
+    );
+    assert_eq!(
+        machine_motion(&canned, "linuxcnc"),
+        machine_motion(&plain, "linuxcnc"),
+        "canned:\n{canned}\nplain:\n{plain}"
+    );
+    for line in plain.lines().map(code_words) {
+        for cycle in ["G73", "G81", "G82", "G83", "G98", "G99"] {
+            assert!(!has(&line, cycle), "{cycle} with cycles off:\n{plain}");
+        }
+    }
+}
+
+/// `tests/golden/post-<id>-coaster` (design spec, "Test plan → golden"):
+/// the quick-start coaster exported for each slice 17 post-processor. The
+/// committed program was captured from DreamCarve after its definition was
+/// checked against the controller's documentation (each case's README),
+/// not from PureCutCNC. Its motion must be the grblHAL coaster's
+/// (`tests/expected/coaster-grblhal.nc`, acceptance 36).
+mod golden {
+    use super::*;
+
+    fn check(id: &str, extension: &str) {
+        let dir = work_dir(&format!("golden_post_{id}_coaster"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let program = std::fs::read_to_string(dir.join(format!("coaster.{extension}")))
+            .expect("program written");
+        let case = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../tests/golden/post-{id}-coaster"));
+        let expected = std::fs::read_to_string(case.join(format!("program.{extension}")))
+            .expect("golden program present");
+        assert!(
+            program == expected,
+            "the {id} coaster differs from tests/golden/post-{id}-coaster:\n{program}"
+        );
+        let hal = include_str!("expected/coaster-grblhal.nc");
+        assert_eq!(
+            machine_motion(&program, id),
+            machine_motion(hal, "grblhal"),
+            "{id}: motion differs from grblHAL's"
+        );
+    }
+
+    #[test]
+    fn post_linuxcnc_coaster() {
+        check("linuxcnc", "ngc");
+    }
+
+    #[test]
+    fn post_mach3_coaster() {
+        check("mach3", "tap");
+    }
+
+    #[test]
+    fn post_uccnc_coaster() {
+        check("uccnc", "txt");
+    }
+
+    #[test]
+    fn post_generic_coaster() {
+        check("generic", "nc");
+    }
 }
 
 // Phase 2, #117: format version 8.

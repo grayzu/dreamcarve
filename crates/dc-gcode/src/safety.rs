@@ -1816,7 +1816,11 @@ mod tests {
             ("G10 L20 P1 Z0", "G10"),
             ("G43.1 Z5", "G43.1"),
             ("G38.2 Z-10 F100", "G38.2"),
-            ("G91.1", "G91.1"),
+            ("G90.1", "G90.1"),
+            ("G41", "G41"),
+            ("G43", "G43"),
+            // A canned cycle with canned cycles off (#154).
+            ("G81", "G81"),
             ("M8", "M8"),
         ] {
             let text = format!("G21 G90\nG54\nG0 Z11\n{code}\n");
@@ -1832,6 +1836,54 @@ mod tests {
         ] {
             assert!(check_text(text).is_ok(), "{text}");
         }
+    }
+
+    /// #154: the LinuxCNC and Mach3 headers cancel cutter compensation
+    /// (`G40`), tool length offset (`G49`) and any canned cycle (`G80`),
+    /// and select incremental arc centres (`G91.1`). Each only sets modal
+    /// state, to what DreamCarve already assumes, so they pass with canned
+    /// cycles off.
+    #[test]
+    fn header_cancel_codes_are_accepted() {
+        for text in [
+            "G90 G17 G40 G49 G80 G94\nG21\nG54\nG0 Z11\nM30\n",
+            "G90 G94 G17 G40 G49 G80\nG91.1\nG21\nG54\nG0 Z11\nM30\n",
+        ] {
+            assert!(check_text(text).is_ok(), "{text}: {:?}", check_text(text));
+        }
+    }
+
+    /// RS274/NGC (NIST IR 6556, 3.1) and Mach3 (Using Mach3Mill 1.84,
+    /// 10.5.5): a line holding only `%` delimits the program and is not
+    /// run.
+    #[test]
+    fn percent_line_is_a_delimiter() {
+        let text = "%\nG21 G90\nG54\nG0 Z11\nM30\n";
+        assert!(check_text(text).is_ok(), "{:?}", check_text(text));
+        let err = check_text("G21 G90 %\nG54\n").unwrap_err();
+        assert!(
+            matches!(err, ExportError::Unparseable { line: 1, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// UCCNC has no `G20`/`G21` and reads lengths in its profile's units
+    /// (the definitions README): on a definition without units commands,
+    /// S5 does not ask for one. On one with them it still does.
+    #[test]
+    fn units_word_not_required_where_the_controller_has_none() {
+        let text = "G90 G17 G40 G49 G80 G94\nG54\nG0 Z11\nM30\n";
+        let uccnc = dc_project::PostProcessorRef::latest("uccnc")
+            .unwrap()
+            .resolve()
+            .unwrap();
+        let ok = check_text_on(text, uccnc, SpindleControl::Automatic);
+        assert!(ok.is_ok(), "{ok:?}");
+        let err = check_text(text).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MissingSetup { what } if what.contains("units")),
+            "{err:?}"
+        );
     }
 
     #[test]

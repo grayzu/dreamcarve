@@ -28,8 +28,11 @@ fn every_version() -> Vec<(String, &'static PostProcessor)> {
         .collect()
 }
 
+/// Design spec, "Post-processor definitions": six controllers, in the
+/// order `dreamcarve posts` lists them, each version a valid file under
+/// its id.
 #[test]
-fn bundled_definitions_validate() {
+fn six_definitions_validate() {
     let all = bundled_definitions().unwrap();
     assert!(!all.is_empty());
     for d in all {
@@ -38,7 +41,10 @@ fn bundled_definitions_validate() {
         assert!(d.post_processor().builtin, "{}", d.path);
     }
     let ids: Vec<&str> = latest_definitions().unwrap().iter().map(|d| d.id).collect();
-    assert_eq!(ids, ["grblhal", "grbl"]);
+    assert_eq!(
+        ids,
+        ["grblhal", "grbl", "linuxcnc", "mach3", "uccnc", "generic"]
+    );
 }
 
 #[test]
@@ -95,7 +101,11 @@ fn bundled_headers_set_modal_state() {
         for word in ["G90", "G17", "G94"] {
             assert!(has_word(h, word), "{label} header lacks {word}");
         }
-        assert!(h.iter().any(|l| l == "{unitsCommand}"), "{label}");
+        // UCCNC has no G20/G21 (its manual's code list; the README's
+        // UCCNC section): a definition without units commands writes none.
+        if post.units.mm_command.is_some() || post.units.inch_command.is_some() {
+            assert!(h.iter().any(|l| l == "{unitsCommand}"), "{label}");
+        }
     }
 }
 
@@ -228,6 +238,8 @@ fn bundled_definitions_dwell_three_seconds_after_spindle_on() {
 fn bundled_line_number_increments_are_positive() {
     for (label, post) in every_version() {
         assert!(post.program.line_number_increment > 0, "{label}");
+        // RS274/NGC and Mach3 allow five digits, `N0` to `N99999`.
+        assert!(post.program.line_number_increment <= 99_999, "{label}");
     }
 }
 
@@ -272,10 +284,14 @@ fn latest_definition_by_id() {
     let name = |id| &latest_definition(id).unwrap().post_processor().name;
     assert_eq!(name("grblhal"), "grblHAL");
     assert_eq!(name("grbl"), "GRBL 1.1");
-    let err = latest_definition("mach3").unwrap_err();
+    assert_eq!(name("linuxcnc"), "LinuxCNC");
+    assert_eq!(name("mach3"), "Mach3");
+    assert_eq!(name("uccnc"), "UCCNC");
+    assert_eq!(name("generic"), "Generic RS274/NGC");
+    let err = latest_definition("fanuc").unwrap_err();
     assert_eq!(
         err.to_string(),
-        "post-processor `mach3` is not bundled; available: grbl, grblhal"
+        "post-processor `fanuc` is not bundled; available: generic, grbl, grblhal, linuxcnc, mach3, uccnc"
     );
 }
 
@@ -322,4 +338,373 @@ fn grbl_and_grblhal_differ_in_dialect() {
     assert_eq!(grbl.program.comment_prefix, ";");
     assert!(hal.coolant.is_some());
     assert!(grbl.coolant.is_none());
+}
+
+// Slice 17 (#164): LinuxCNC, Mach3, UCCNC and generic RS274/NGC, each
+// line checked against the controller's own documentation
+// (`dc-project/src/definitions/README.md`, one section per controller).
+
+/// The definitions slice 17 added, each with a README section that cites
+/// every line.
+const VERIFIED: [&str; 4] = ["linuxcnc", "mach3", "uccnc", "generic"];
+
+/// The latest version of `id`, with its default settings.
+fn latest(id: &str) -> &'static PostProcessor {
+    latest_definition(id).unwrap().post_processor()
+}
+
+/// The sample project's Profile, emitted on the latest `id`: the
+/// program's text and the export's warnings.
+fn sample_program(id: &str) -> (String, Vec<crate::ExportWarning>) {
+    let mut project = dc_project::test_support::sample_project();
+    project.post_processor = dc_project::PostProcessorRef::latest(id).unwrap();
+    let Some(dc_project::Operation::Profile(op)) = project.operations.first().cloned() else {
+        panic!("sample project has a profile operation");
+    };
+    let tool = project.tools[0].clone();
+    let (toolpath, _) = dc_cam::generate_profile(&project, &op).unwrap();
+    let ops = [(dc_project::Operation::Profile(op), tool, toolpath).into()];
+    let (program, warnings) = crate::emit(&project, &ops, "2026-10-15").unwrap();
+    (program.text, warnings)
+}
+
+/// What the machine does for `text`: each move's kind, end point and
+/// centre words, and the feed of every cut, in program order.
+fn motion(text: &str) -> Vec<String> {
+    crate::parse_motion(text)
+        .unwrap()
+        .into_iter()
+        .map(|m| {
+            let feed = if m.kind.is_cut() { m.feed } else { None };
+            format!(
+                "{:?} {:?} {:?} {:?} {:?}",
+                m.kind, m.to, m.arc, feed, m.units
+            )
+        })
+        .collect()
+}
+
+/// Functional acceptance 36 (and 13 across all six): the same project on
+/// LinuxCNC, Mach3, UCCNC and generic makes exactly the moves it makes on
+/// grblHAL, at the same feeds and spindle speed; only dialect lines
+/// differ.
+#[test]
+fn linuxcnc_mach3_uccnc_generic_differ_only_in_dialect() {
+    let (hal, _) = sample_program("grblhal");
+    let reference = motion(&hal);
+    assert!(reference.iter().any(|m| m.starts_with("Linear")), "{hal}");
+    let spindle = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(words)
+            .filter(|w| w.iter().any(|w| w == "M3" || w == "M5"))
+            .map(|w| {
+                w.into_iter()
+                    .filter(|w| !w.starts_with('N'))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect()
+    };
+    for id in VERIFIED {
+        let (text, _) = sample_program(id);
+        assert_eq!(motion(&text), reference, "{id}:\n{text}");
+        assert_eq!(spindle(&text), spindle(&hal), "{id}:\n{text}");
+        assert_ne!(text, hal, "{id}: the dialect differs");
+    }
+}
+
+/// Acceptance 36: Mach3 numbers every line, `N10` up in tens, after the
+/// `%` that opens the program, which a line number would hide (Using
+/// Mach3Mill 1.84, 10.5.5: a line that *starts* with `%` is skipped).
+#[test]
+fn mach3_numbers_every_line() {
+    let (text, _) = sample_program("mach3");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.first(), Some(&"%"), "{text}");
+    for (k, line) in lines.iter().skip(1).enumerate() {
+        let n = format!("N{} ", 10 * (k + 1));
+        assert!(line.starts_with(&n), "line {}: {line}", k + 2);
+    }
+}
+
+/// UCCNC's manual documents no line numbers, no `%` and no `G20`/`G21`
+/// (its code list goes from `G19` to `G28`): lengths are in the units of
+/// the machine's profile. So its programs have none of these, and the
+/// export says which units the program is in.
+#[test]
+fn uccnc_writes_no_line_numbers_percent_or_units_word() {
+    let (text, warnings) = sample_program("uccnc");
+    for line in text.lines() {
+        let w = words(line);
+        assert!(!w.iter().any(|w| w.starts_with('N')), "{line}");
+        assert_ne!(line.trim(), "%");
+        assert!(!w.iter().any(|w| w == "G20" || w == "G21"), "{line}");
+    }
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.code() == "units_set_by_controller"),
+        "{warnings:?}"
+    );
+}
+
+/// Acceptance 36: generic writes no trailing zeros (`10.5`, not
+/// `10.500`; RS274/NGC, NIST IR 6556, 3.3.2.1: they "are allowed but not
+/// required"). grblHAL keeps them, for contrast.
+#[test]
+fn generic_strips_trailing_zeros() {
+    let numbers = |text: &str| -> Vec<String> {
+        text.lines()
+            .flat_map(words)
+            .filter_map(|w| w.get(1..).map(str::to_owned))
+            .filter(|n| n.contains('.'))
+            .collect()
+    };
+    let (text, _) = sample_program("generic");
+    let generic = numbers(&text);
+    assert!(!generic.is_empty(), "{text}");
+    for n in &generic {
+        assert!(!n.ends_with('0') && !n.ends_with('.'), "{n} in\n{text}");
+    }
+    let (hal, _) = sample_program("grblhal");
+    assert!(numbers(&hal).iter().any(|n| n.ends_with('0')), "{hal}");
+}
+
+/// The sample project with a second tool and a Profile using it, on
+/// `id`, in `"m6"` mode.
+fn two_tools_in_m6_mode(id: &str) -> (dc_project::Project, Vec<crate::EmitOp>) {
+    let mut project = dc_project::test_support::sample_project();
+    project.post_processor = dc_project::PostProcessorRef::latest(id).unwrap();
+    project.post_processor.tool_change_mode = ToolChangeMode::M6;
+    let Some(dc_project::Operation::Profile(first)) = project.operations.first().cloned() else {
+        panic!("sample project has a profile operation");
+    };
+    let mut tool = project.tools[0].clone();
+    tool.id = dc_project::ToolId::new("t2");
+    tool.name = "Second".into();
+    project.tools.push(tool.clone());
+    let mut second = first.clone();
+    second.id = dc_project::OperationId::new("o2");
+    second.tool = tool.id.clone();
+    project
+        .operations
+        .push(dc_project::Operation::Profile(second.clone()));
+    let mut ops = Vec::new();
+    for (op, tool) in [(first, project.tools[0].clone()), (second, tool)] {
+        let (toolpath, _) = dc_cam::generate_profile(&project, &op).unwrap();
+        ops.push((dc_project::Operation::Profile(op), tool, toolpath).into());
+    }
+    (project, ops)
+}
+
+/// Whether `"m6"` is refused on `id`: by validation, at the field, and by
+/// the emitter, which trusts no caller.
+fn assert_refuses_m6_mode(id: &str) {
+    let (project, ops) = two_tools_in_m6_mode(id);
+    assert!(!latest(id).tool_change.has_m6(), "{id}");
+    let problems = dc_project::validate(&project);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.code() == "tool_change_mode_needs_m6"),
+        "{id}: {problems:?}"
+    );
+    let err = crate::emit(&project, &ops, "2026-10-15").unwrap_err();
+    assert!(err.to_string().contains(&format!("`{id}`")), "{id}: {err}");
+}
+
+/// Design spec, "Post-processor definitions": generic has no `M6` (its
+/// tool change is `M5`, `M0`), so `"m6"` is refused.
+#[test]
+fn generic_refuses_m6_mode() {
+    assert_refuses_m6_mode("generic");
+}
+
+/// No new definition can stop for a tool change where the user can set Z
+/// zero, as `"m6"` needs: LinuxCNC's `M6` waits in a dialog that offers
+/// no touch-off and, with no changer configured, does not stop at all;
+/// Mach3's and UCCNC's `M6` depend on a setting one of whose values ignores
+/// it. See the README's sections. One program per tool run works on all.
+#[test]
+fn linuxcnc_mach3_uccnc_refuse_m6_mode() {
+    for id in ["linuxcnc", "mach3", "uccnc"] {
+        assert_refuses_m6_mode(id);
+    }
+}
+
+/// Every line of `post` that reaches the program, or could: header,
+/// operation header, footer, tool change, program end, and the single
+/// commands.
+fn every_line(post: &PostProcessor) -> Vec<String> {
+    let p = &post.program;
+    let fs = &post.feed_speed;
+    let mut lines: Vec<String> = p
+        .header
+        .iter()
+        .chain(&p.operation_header)
+        .chain(&p.footer)
+        .chain(&post.tool_change.commands)
+        .cloned()
+        .collect();
+    lines.extend([
+        post.stop.program_end_command.clone(),
+        fs.spindle_on_cw.clone(),
+        fs.spindle_off.clone(),
+        fs.spindle_on_dwell.command.clone(),
+        post.motion.rapid_command.clone(),
+        post.motion.linear_command.clone(),
+        post.motion.cw_arc_command.clone(),
+        post.motion.ccw_arc_command.clone(),
+    ]);
+    lines.extend(post.units.mm_command.clone());
+    lines.extend(post.units.inch_command.clone());
+    lines.extend(post.work_coordinates.select_command.clone());
+    if let Some(c) = &post.canned_cycles {
+        lines.extend(
+            [
+                &c.drill_command,
+                &c.drill_with_dwell_command,
+                &c.peck_drill_command,
+                &c.chip_break_drill_command,
+            ]
+            .into_iter()
+            .flatten()
+            .cloned(),
+        );
+        lines.push(c.cancel_command.clone());
+    }
+    lines
+}
+
+/// Design spec, "Post-processor definitions": no tool length offsets.
+/// `G43 H` needs a tool table DreamCarve does not write, and the user
+/// sets Z zero with each bit instead.
+#[test]
+fn no_definition_has_g43() {
+    for (label, post) in every_version() {
+        for line in every_line(post) {
+            assert!(
+                !words(&line).iter().any(|w| w.starts_with("G43")),
+                "{label}: {line}"
+            );
+        }
+    }
+}
+
+/// The definitions README, whose per-controller sections cite a source
+/// for every line.
+const README: &str = include_str!("../../dc-project/src/definitions/README.md");
+
+/// The README section whose `## ` heading names `path` in backticks, up
+/// to the next `## ` heading.
+fn readme_section(path: &str) -> &'static str {
+    let tag = format!("`{path}`");
+    let start = README
+        .match_indices("\n## ")
+        .map(|(i, _)| i + 1)
+        .find(|&i| README[i..].lines().next().is_some_and(|h| h.contains(&tag)))
+        .unwrap_or_else(|| panic!("no README section for {path}"));
+    let rest = &README[start..];
+    let end = rest[3..].find("\n## ").map_or(rest.len(), |i| i + 4);
+    &rest[..end]
+}
+
+/// AGENTS.md, "Reference implementation": controller-facing data is
+/// verified against the controller's documentation, with the source cited.
+/// Each line of each slice 17 definition appears, in backticks, in the
+/// README section for its file, whose table gives the source.
+#[test]
+fn every_definition_line_is_cited_in_readme() {
+    for id in VERIFIED {
+        let definition = latest_definition(id).unwrap();
+        let section = readme_section(definition.path);
+        for line in every_line(definition.post_processor()) {
+            assert!(
+                section.contains(&format!("`{line}`")),
+                "{}: `{line}` is not cited",
+                definition.path
+            );
+        }
+    }
+}
+
+/// LinuxCNC acts on comments that start with a keyword: `(MSG,`,
+/// `(DEBUG,`, `(PRINT,`, `(LOG,`, `(LOGOPEN,file)`, which truncates the
+/// file, and `(PROBEOPEN file)` (LinuxCNC G-code overview, "Messages",
+/// "Logging", "Probe Logging"). A project, operation or tool name is the
+/// user's text, so no template of a new definition starts a comment with
+/// one.
+#[test]
+fn user_text_never_starts_a_comment() {
+    for id in VERIFIED {
+        let post = latest(id);
+        let p = &post.program;
+        let templates = p
+            .header
+            .iter()
+            .chain(&p.operation_header)
+            .chain(&p.footer)
+            .chain(&post.tool_change.commands);
+        for line in templates {
+            for (i, _) in line.match_indices(['(', ';']) {
+                let after = line[i + 1..].trim_start();
+                assert!(!after.starts_with('{'), "{id}: {line}");
+            }
+        }
+    }
+}
+
+/// Design spec, "Canned cycles": a definition has a cycle's command only
+/// where the controller's documentation states the motion. LinuxCNC and
+/// Mach3 document `G81` and `G82` with `G98`. How far `G83` re-enters and
+/// `G73` lifts is a setting on LinuxCNC 2.10, Mach3 and UCCNC, or not
+/// documented, so neither is written. UCCNC's `G81` text has no move to
+/// the R plane, so it has none; generic has none.
+#[test]
+fn canned_cycles_only_where_documented() {
+    for id in ["linuxcnc", "mach3"] {
+        let c = latest(id).canned_cycles.as_ref().unwrap();
+        assert_eq!(c.drill_command.as_deref(), Some("G81"), "{id}");
+        assert_eq!(c.drill_with_dwell_command.as_deref(), Some("G82"), "{id}");
+        assert_eq!(c.peck_drill_command, None, "{id}");
+        assert_eq!(c.chip_break_drill_command, None, "{id}");
+        assert_eq!(c.reentry_gap_mm, None, "{id}");
+        assert_eq!(c.retract_mode, Some(dc_project::RetractMode::G98), "{id}");
+        assert_eq!(c.cancel_command, "G80", "{id}");
+    }
+    for id in ["uccnc", "generic"] {
+        assert!(latest(id).canned_cycles.is_none(), "{id}");
+    }
+}
+
+/// The dialect facts each README section records.
+#[test]
+fn dialect_facts_per_controller() {
+    use dc_project::DwellUnits::{Milliseconds, Seconds};
+    for (id, extension, end, numbered, dwell) in [
+        ("linuxcnc", "ngc", "M2", false, Seconds),
+        ("mach3", "tap", "M30", true, Seconds),
+        ("uccnc", "txt", "M30", false, Milliseconds),
+        ("generic", "nc", "M30", false, Seconds),
+    ] {
+        let post = latest(id);
+        assert_eq!(post.file_extension, extension, "{id}");
+        assert_eq!(post.stop.program_end_command, end, "{id}");
+        assert_eq!(post.program.line_numbers, numbered, "{id}");
+        assert_eq!(post.feed_speed.spindle_on_dwell.units, dwell, "{id}");
+        assert_eq!(post.program.comment_prefix, "(", "{id}");
+        assert_eq!(post.number_format.trailing_zeros, id != "generic", "{id}");
+    }
+    // Incremental arc centres, which DreamCarve writes, are a setting on
+    // Mach3 and a mode a previous program may leave on LinuxCNC, so both
+    // headers select them.
+    for id in ["linuxcnc", "mach3"] {
+        assert!(has_word(&latest(id).program.header, "G91.1"), "{id}");
+    }
+    assert_eq!(
+        latest("mach3").program.header.first().map(String::as_str),
+        Some("%")
+    );
+    assert!(latest("uccnc").units.mm_command.is_none());
+    assert!(latest("uccnc").units.inch_command.is_none());
 }

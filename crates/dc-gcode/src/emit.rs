@@ -3638,9 +3638,9 @@ mod tests {
         assert_eq!(line_after_plunge(&program.text), "G4 P0.500");
     }
 
-    /// Mach3 takes `G4 P` in milliseconds (design spec, "Post-processor
-    /// definitions"); a definition whose dwell `units` are milliseconds
-    /// gets the same dwell as `P500`.
+    /// Some controllers take `G4 P` in milliseconds (UCCNC; design spec,
+    /// "Post-processor definitions"); a definition whose dwell `units` are
+    /// milliseconds gets the same dwell as `P500`.
     #[test]
     fn dwell_in_milliseconds_when_the_post_says_so() {
         let project = project_with("grblhal");
@@ -3648,6 +3648,55 @@ mod tests {
         post.feed_speed.spindle_on_dwell.units = dc_project::DwellUnits::Milliseconds;
         let (program, _) = emit_with(&project, &post, &drill_ops(&project), DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P500");
+    }
+
+    /// UCCNC's `G4 P` is milliseconds by default (UCCNC user's manual,
+    /// "Dwell : G4", and General settings, "Measure dwell in seconds
+    /// instead of msec"), so the 3 s spin-up is `G4 P3000` and a Drill's
+    /// 0.5 s dwell `G4 P500`. The design spec expected this of Mach3, whose
+    /// manual documents seconds; see the definitions README.
+    #[test]
+    fn uccnc_dwell_is_milliseconds() {
+        let project = project_with("uccnc");
+        let text = emit_text(&project);
+        assert!(text.lines().any(|l| code(l) == "G4 P3000"), "{text}");
+        let (program, _) = emit(&project, &drill_ops(&project), DATE).unwrap();
+        assert_eq!(line_after_plunge(&program.text), "G4 P500");
+        let mach3 = emit_text(&project_with("mach3"));
+        assert!(
+            mach3.lines().any(|l| code(l).ends_with("G4 P3.000")),
+            "{mach3}"
+        );
+    }
+
+    /// Mach3 skips a line that starts with `%` (Using Mach3Mill 1.84,
+    /// 10.5.5), so the opening `%` gets no line number; the next line is
+    /// `N10`.
+    #[test]
+    fn percent_line_has_no_line_number() {
+        let text = emit_text(&project_with("mach3"));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "%", "{text}");
+        assert!(lines[1].starts_with("N10 "), "{text}");
+    }
+
+    /// RS274/NGC (NIST IR 6556, 3.3.1) and Mach3 (Using Mach3Mill 1.84,
+    /// 10.5.1) take line numbers of at most five digits, and Mach3 says
+    /// they "may be repeated or used out of order": after `N99999` the
+    /// numbers start again from the increment.
+    #[test]
+    fn line_numbers_wrap_after_five_digits() {
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.program.line_numbers = true;
+        post.program.line_number_increment = 40_000;
+        let text = emit_text_with(&project, &post);
+        let numbers: Vec<&str> = text
+            .lines()
+            .take(4)
+            .filter_map(|l| l.split_whitespace().next())
+            .collect();
+        assert_eq!(numbers, ["N40000", "N80000", "N40000", "N80000"], "{text}");
     }
 
     // Canned cycles (`docs/specs/phase-2/design.md`, "Canned cycles";
