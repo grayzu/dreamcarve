@@ -5,15 +5,16 @@
 //! Operation-order warnings (dc-cam::order)"; `docs/research/toolpath-ordering.md`
 //! §5.5, invariant O8, decision D7). Operations always run in the order the
 //! project lists them; this module never reorders, it only says when that
-//! order cuts inside a part an earlier operation has already freed, and when
-//! a tool is fitted more than once because its operations are not adjacent.
+//! order cuts inside a part an earlier operation has already freed or left
+//! held only by tabs (#269), and when a tool is fitted more than once
+//! because its operations are not adjacent.
 //!
 //! Nothing here depends on Y-up or Y-down: containment is symmetric under
 //! the flip.
 
 use crate::error::ShapeRef;
 use crate::overlap::region_holds_path;
-use crate::profile::{same_contour, untabbed_outlines};
+use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
@@ -31,6 +32,10 @@ use dc_project::{Operation, OperationId, Project, Side, ToolId};
 ///   the stock, by operation order, then target order, then the freeing
 ///   operation's order. Targets are closed outlines, and the open paths
 ///   an Engrave or an On line Profile cuts (#206);
+/// - in the same order, [`Warning::CutInsideTabHeldPart`] for every such
+///   target that lies inside an outline an earlier Profile cut through the
+///   stock round with tabs, naming the innermost such outline, unless the
+///   same earlier operation freed an outline round it (#269);
 /// - [`Warning::ToolChangeAvoidable`] once per tool that the enabled
 ///   operations, in order, use again after a different tool, by the
 ///   tool's first use.
@@ -68,6 +73,32 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
                         shape: shape.clone(),
                         freed: freed_shape.clone(),
                     });
+                    // A loose piece is the worse news; the tabs round it
+                    // do not hold it.
+                    continue;
+                }
+                let held = targets.get(i).and_then(|outlines| {
+                    outlines
+                        .iter()
+                        .filter_map(|(s, o)| match o {
+                            Target::Outline(outline)
+                                if frees.holds_by_tabs(s) && target.lies_inside(outline) =>
+                            {
+                                Some((s, outline.signed_area_mm2().abs()))
+                            }
+                            _ => None,
+                        })
+                        // Nested outlines round one target: the smallest is
+                        // the innermost, the piece the cut is on.
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                });
+                if let Some((held_shape, _)) = held {
+                    warnings.push(Warning::CutInsideTabHeldPart {
+                        op: later.id().clone(),
+                        earlier_op: earlier.id().clone(),
+                        shape: shape.clone(),
+                        held: held_shape.clone(),
+                    });
                 }
             }
         }
@@ -76,16 +107,16 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
     warnings
 }
 
-/// The target outlines an operation leaves loose, with whatever is inside
-/// them.
+/// The target outlines an operation leaves loose, or held only by tabs,
+/// with whatever is inside them.
 enum Freed {
     /// None: not a Profile, or one that stops above the stock bottom.
     Nothing,
     /// Every outline: a Profile through the stock with no tabs.
     All,
-    /// These outlines of a tabbed Profile through the stock: the ones its
-    /// tabs leave untabbed (#109).
-    Only(Vec<ShapeRef>),
+    /// The outlines a tabbed Profile through the stock cuts, each loose
+    /// when its tabs leave it untabbed (#109), else held by them (#269).
+    Tabbed(Vec<(ShapeRef, Hold)>),
 }
 
 impl Freed {
@@ -94,7 +125,19 @@ impl Freed {
         match self {
             Self::Nothing => false,
             Self::All => true,
-            Self::Only(shapes) => shapes.contains(shape),
+            Self::Tabbed(outlines) => outlines
+                .iter()
+                .any(|(s, hold)| s == shape && *hold == Hold::Free),
+        }
+    }
+
+    /// True when outline `shape` is held only by its tabs.
+    fn holds_by_tabs(&self, shape: &ShapeRef) -> bool {
+        match self {
+            Self::Nothing | Self::All => false,
+            Self::Tabbed(outlines) => outlines
+                .iter()
+                .any(|(s, hold)| s == shape && *hold == Hold::Tabs),
         }
     }
 }
@@ -106,6 +149,7 @@ impl Freed {
 /// Inside frees the hole's slug. Tabs hold an outline through the final
 /// pass, so a tabbed Profile frees only the outlines it cuts with no tab:
 /// its holes unless `on_holes`, and outlines too short for one (#109).
+/// The outlines it cuts with tabs are held only by them (#269).
 fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
     let Operation::Profile(profile) = op else {
         return Freed::Nothing;
@@ -117,7 +161,7 @@ fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
     match (through, &profile.tabs) {
         (false, _) => Freed::Nothing,
         (true, None) => Freed::All,
-        (true, Some(_)) => Freed::Only(untabbed_outlines(project, profile)),
+        (true, Some(_)) => Freed::Tabbed(cut_outlines(project, profile)),
     }
 }
 

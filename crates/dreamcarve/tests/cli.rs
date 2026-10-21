@@ -1692,7 +1692,9 @@ fn drill_exports_and_passes_safety() {
     drill.dwell_s = 0.25;
     drill.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
     drill.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
-    project.operations.push(Operation::Drill(drill));
+    // Drilled before the tabbed cut-out, while the stock still holds the
+    // coaster: after it, the hole would be cut in a tab-held part (#269).
+    project.operations.insert(0, Operation::Drill(drill));
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
     let check = run(&dir, &["check", "coaster.dcv"]);

@@ -134,7 +134,8 @@ only), the list shows each tool change instead, such as
 Runs everything `export` does except writing the file, and prints every
 error and warning. It also lists open paths that no operation cuts,
 and warns when the order of the operations cuts inside a part an earlier
-operation has already cut free, or fits a tool more than once. Each
+operation has already cut free or left held only by tabs, or fits a tool
+more than once. Each
 warning starts with its code, as in `warning: cut_inside_freed_part: …`;
 the [Warnings](warnings.md) chapter lists them all. Warnings do not fail
 `check`; only errors do.

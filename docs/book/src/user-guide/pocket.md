@@ -37,7 +37,8 @@ Profile. A complete Pocket:
 
 Put a Pocket **before** the Profile that cuts the part out: once the part
 is free, the pocket would be cut in a loose part (`check` warns
-`cut_inside_freed_part`).
+`cut_inside_freed_part`), or with tabs, in a part held only by them
+(`cut_inside_tab_held_part`).
 
 ## Settings
 

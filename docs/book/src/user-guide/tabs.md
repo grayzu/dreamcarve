@@ -184,11 +184,15 @@ because every outline had tabs then, so it cuts as it did.
 
 Splitting a part and its holes into two operations still works, but
 operations run in the order they are listed, so put the holes first.
-Cut after the part, a hole is cut in a part held only by its tabs, or in
-a loose part if it has none, which `check` warns as
-`cut_inside_freed_part`. A hole cut on its own operation is not a hole
-to DreamCarve (holes are found only among one operation's targets), so
-cut it `"inside"`.
+Cut after the part, a hole is cut in a part held only by its tabs, which
+is less rigid than the uncut stock: the part can flex or chatter, and the
+cut can break a tab. `check` warns this as `cut_inside_tab_held_part`
+(and as `cut_inside_freed_part` when the part has no tabs, so is loose).
+A project from before format version 9 that cut the part first and its
+hole second warns so when opened: move the hole's operation first, or
+add the hole to the part's operation and delete its own. A hole cut on
+its own operation is not a hole to DreamCarve (holes are found only
+among one operation's targets), so cut it `"inside"`.
 
 Placing tabs on the part by hand, one at a time, is planned
 ([#105](https://github.com/grayzu/dreamcarve/issues/105)).
