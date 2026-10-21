@@ -22,19 +22,45 @@
 //!   costs a thousand such tests, not the union of a thousand swept
 //!   capsules that `dc_cam::footprint` builds (#158). Rest machining is
 //!   held to its own region the same way (S14).
-//! - **Pocket corner relief, the notch rule** (slice 12): a Pocket with
-//!   `corner_relief` cuts dogbone or T-bone notches past its walls on
-//!   purpose, so a straight cut that fails the clearance above is still in
-//!   the material when it lies in a corner's relief zone. A corner is a
-//!   vertex of a region's outline or island where the outline turns toward
-//!   the pocket by more than 15° between two edges at least the tool's
-//!   diameter long (`dc_cam`'s corner test, re-derived here from the
-//!   project). The zone is the corner's wedge, between its two edge lines,
-//!   at least `r` from the corner (the cutter at most touches it) and at
-//!   most `(r + allowance) / sin(θ/2)` from it (the tool-centre path's
-//!   miter point, where a notch starts); the cut must also keep its
-//!   clearance from every other edge. So a notch can bite at most `r` past
-//!   one of its corner's two walls, and nowhere else.
+//! - **Corner relief, the notch rule** (slice 12; Profile since #177): a
+//!   Pocket or an inside or outside Profile with `corner_relief` cuts
+//!   dogbone or T-bone notches past its walls on purpose, so a straight cut
+//!   that fails the clearance above is still in the material when it lies
+//!   in a corner's relief zone. A corner is a vertex of a target outline
+//!   where the outline turns toward the waste by more than 15° between two
+//!   edges at least the tool's diameter long (`dc_cam`'s corner test,
+//!   re-derived here from the project). The zone is the corner's wedge,
+//!   between its two edge lines, at least `r` from the corner (the cutter
+//!   at most touches it) and at most `(r + allowance) / sin(θ/2)` from it
+//!   (the tool-centre path's miter point, where a notch starts); the cut
+//!   must also keep its clearance from every other edge. So a notch can
+//!   bite at most `r` past one of its corner's two walls, and nowhere else.
+//! - **Profile** (#177): the waste the Profile removes, from its targets'
+//!   closed profiles nested as `dc_cam::generate_profile` nests them, and
+//!   every cutting move is held to it: laps, tab rises, ramp and helix
+//!   descents, lead arcs and overcuts, and notches.
+//!   - **Inside:** as a Pocket with no allowance: the tool centre stays in
+//!     a target region (the hole being cut, outside its islands), at least
+//!     `r` from its walls, so no cut enters the part around the hole or an
+//!     island left in it.
+//!   - **Outside:** the reverse: the tool centre stays outside every
+//!     target region (the parts; a part's own holes are waste), at least
+//!     `r` from every outline, so a ramp, helix or lead arc enters neither
+//!     its own part nor a neighbour. The stock edge is S7's.
+//!   - **On line:** as an Engrave: the tool centre stays on a target's
+//!     line. The On line ramp runs along the line; there is no lead or
+//!     notch.
+//!   - **A lap** of one outline, a cut that runs at the tool radius from
+//!     it on its waste side, passes even where another outline comes
+//!     nearer than the radius. That cut is the outline's offset, which S6
+//!     holds the program to, and the gouge into the other shape is the one
+//!     `dc_cam`'s overlap check warns about (`toolpaths_overlap`): the
+//!     project asked for two shapes closer than the bit, and phase 1 decided
+//!     to warn there, not to refuse. Entries, leads and notches never run
+//!     along an outline at the radius, so the lap rule never lets one
+//!     through. dc-cam's waste domain also keeps entries out of other
+//!     shapes' kerfs; that is waste too, so S9 does not hold the program
+//!     to it.
 //! - **Drill:** every cut stays inside one of the Drill's holes, the
 //!   closed targets that are circles ([`dc_geometry::as_circle`], as
 //!   `dc_cam::generate_drill` finds them): its ends and middle lie within
@@ -42,10 +68,6 @@
 //!   hole it drills.
 //! - **Engrave:** the tool centre stays on the line: every cut's ends and
 //!   middle lie on one of the Engrave's target paths.
-//! - **Profile:** nothing more is checked here. Its cuts are its targets
-//!   offset by the tool radius, which S6 holds the program to; S7 keeps
-//!   them on the stock; and dc-cam's overlap check keeps one shape's cut
-//!   out of another's part.
 //!
 //! A move is allowed to depart from where the toolpath put it by what the
 //! program may already differ by: one unit in the last written place (the
@@ -53,12 +75,20 @@
 //! the tool-centre outlines and raster ends the generator flattens), and
 //! the arc-fit tolerance when arc fitting is on (a run of chords written
 //! as an arc, S12).
+//!
+//! **Cost.** Every move is tested only against the outline segments whose
+//! bounds come within the clearance of its own, and for an outside
+//! Profile only against the parts whose bounds do; the lap rule runs only
+//! for a move the plain rule rejects. A 20-part outside Profile with
+//! ramps, leads and tabs checks in a few milliseconds (#177).
+
+use std::ops::Range;
 
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, Vec2, as_circle, nest,
     point_segment_distance_mm, segment_distance_mm,
 };
-use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project};
+use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side};
 
 use crate::ExportError;
 use crate::parse::{Block, MachineMove, MotionKind};
@@ -68,15 +98,25 @@ use crate::transform::MachineTransform;
 /// The material one operation may cut, worked out from the project.
 #[derive(Debug, Clone)]
 pub(crate) enum Material {
-    /// A Profile: S6, S7 and dc-cam's overlap check cover it.
-    Profile,
-    /// A Pocket's regions, each with its outline segments.
-    Pocket {
+    /// A Pocket's regions, or an inside Profile's: the tool centre stays
+    /// inside one, clear of its walls.
+    Inside {
         /// The regions, outer and islands, from the targets' closed
         /// profiles.
         areas: Vec<Area>,
-        /// The allowance left on every wall and island, mm.
+        /// The allowance left on every wall and island, mm; 0 for a
+        /// Profile.
         allowance_mm: f64,
+        /// Corner relief is on, so the notch rule applies.
+        relief: bool,
+        /// A Profile: the lap rule applies.
+        laps: bool,
+    },
+    /// An outside Profile's parts: the tool centre stays outside every
+    /// one, clear of its outlines.
+    Outside {
+        /// The parts, outer and holes, from the targets' closed profiles.
+        areas: Vec<Area>,
         /// Corner relief is on, so the notch rule applies.
         relief: bool,
     },
@@ -85,8 +125,8 @@ pub(crate) enum Material {
         /// Each hole.
         holes: Vec<(Point, f64)>,
     },
-    /// An Engrave's target paths, as segments.
-    Engrave {
+    /// An Engrave's target paths, or an On line Profile's, as segments.
+    OnLine {
         /// Every segment of every path.
         edges: Vec<Edge>,
     },
@@ -94,22 +134,41 @@ pub(crate) enum Material {
     /// cuts (an unknown instance, crossing outlines, an invalid
     /// allowance): no cut is in the material, fail-closed.
     Unresolved,
+    /// Tests of the other rules on hand-written programs: S9 is not
+    /// checked.
+    #[cfg(test)]
+    Unchecked,
 }
 
-/// One region, its outline segments, and the corners a relief notch may
-/// cut into.
+/// One region, its outline segments, the corners a relief notch may cut
+/// into, and its loops.
 #[derive(Debug, Clone)]
 pub(crate) struct Area {
     region: Region,
+    /// Every loop's segments, each loop wound with the waste on its left.
     edges: Vec<Edge>,
     corners: Vec<Corner>,
+    loops: Vec<Loop>,
+    /// The bounds of every edge.
+    bounds: Rect,
 }
 
-/// The least turn toward the pocket at a vertex that makes it a corner
+/// One outline of an [`Area`], for the lap rule.
+#[derive(Debug, Clone)]
+struct Loop {
+    /// Its segments in [`Area::edges`].
+    edges: Range<usize>,
+    /// The loop alone, to tell its sides apart.
+    alone: Option<Region>,
+    /// The waste is inside the loop.
+    waste_inside: bool,
+}
+
+/// The least turn toward the waste at a vertex that makes it a corner
 /// for the notch rule: 15°, as `dc_cam`'s relief.
 const CORNER_MIN_TURN_RAD: f64 = std::f64::consts::PI / 12.0;
 
-/// A corner of a Pocket's area, for the notch rule.
+/// A corner of an area, for the notch rule.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Corner {
     /// The corner, mm.
@@ -120,7 +179,7 @@ pub(crate) struct Corner {
     edge_b: Vec2,
     /// The shorter edge's length, mm.
     shorter_mm: f64,
-    /// The sine of half the interior angle on the pocket side.
+    /// The sine of half the interior angle on the waste side.
     sin_half: f64,
     /// The indices in [`Area::edges`] of the two edges.
     edges: [usize; 2],
@@ -136,7 +195,7 @@ impl Corner {
     }
 }
 
-/// The corners of `polyline`, a closed loop with the pocket on its left,
+/// The corners of `polyline`, a closed loop with the waste on its left,
 /// whose segments are `edges[base..]` in order.
 fn corners_of(polyline: &Polyline, base: usize) -> Vec<Corner> {
     let segments: Vec<Segment> = polyline.segments().collect();
@@ -172,8 +231,8 @@ fn corners_of(polyline: &Polyline, base: usize) -> Vec<Corner> {
     out
 }
 
-/// S9's notch rule for one Pocket: its tool's radius, its allowance, and
-/// the slack a written move may depart by.
+/// S9's notch rule for one operation: its tool's radius, its allowance,
+/// and the slack a written move may depart by.
 #[derive(Debug, Clone, Copy)]
 struct Notch {
     radius_mm: f64,
@@ -184,28 +243,36 @@ struct Notch {
 impl Notch {
     /// Whether straight tool-centre path `path`, which comes nearer a wall
     /// of `area` than `clearance_mm`, is a relief notch: it lies in the
-    /// relief zone of one of the area's corners (module docs).
-    fn allows(self, area: &Area, path: Segment, clearance_mm: f64) -> bool {
+    /// relief zone of one of the area's corners on the edges `scope`
+    /// (module docs), clear of the scope's other edges.
+    fn allows(self, area: &Area, scope: &Range<usize>, path: Segment, clearance_mm: f64) -> bool {
         if !path.is_line() {
             return false;
         }
         let (r, slack) = (self.radius_mm, self.slack_mm);
         let bounds = bounds_of(path);
-        area.corners.iter().any(|c| {
-            let reach_mm = (r + self.allowance_mm) / c.sin_half + slack;
-            c.shorter_mm >= 2.0 * r - slack
-                && c.in_wedge(path.start, slack)
-                && c.in_wedge(path.end, slack)
-                && path.start.distance_to(c.at) <= reach_mm
-                && path.end.distance_to(c.at) <= reach_mm
-                && point_segment_distance_mm(path, c.at) >= r - slack
-                && area
-                    .edges
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, e)| !c.edges.contains(i) && near(bounds, e.bounds, clearance_mm))
-                    .all(|(_, e)| segment_distance_mm(path, e.segment) >= clearance_mm)
-        })
+        area.corners
+            .iter()
+            .filter(|c| c.edges.iter().all(|e| scope.contains(e)))
+            .any(|c| {
+                let reach_mm = (r + self.allowance_mm) / c.sin_half + slack;
+                c.shorter_mm >= 2.0 * r - slack
+                    && c.in_wedge(path.start, slack)
+                    && c.in_wedge(path.end, slack)
+                    && path.start.distance_to(c.at) <= reach_mm
+                    && path.end.distance_to(c.at) <= reach_mm
+                    && point_segment_distance_mm(path, c.at) >= r - slack
+                    && area
+                        .edges
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, e)| {
+                            scope.contains(i)
+                                && !c.edges.contains(i)
+                                && near(bounds, e.bounds, clearance_mm)
+                        })
+                        .all(|(_, e)| segment_distance_mm(path, e.segment) >= clearance_mm)
+            })
     }
 }
 
@@ -249,56 +316,112 @@ fn near(a: Rect, b: Rect, margin_mm: f64) -> bool {
         && b.min.y <= a.max.y + margin_mm
 }
 
+/// The closed paths of `targets`, nested into regions as the generators
+/// nest them; `None` when a target does not resolve or outlines cross.
+fn regions_of(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>> {
+    let contours: Option<Vec<Contour>> = placed(project, targets)?
+        .into_iter()
+        .filter(Polyline::is_closed)
+        .map(|p| Contour::new(p).ok())
+        .collect();
+    let (regions, _) = nest(contours?).ok()?;
+    Some(regions)
+}
+
+/// `regions` as areas, each loop wound with the waste on its left: the
+/// outline counter-clockwise and the islands clockwise when the waste is
+/// inside the regions (`waste_inside`: a Pocket, an inside Profile), the
+/// reverse when it is outside them (an outside Profile).
+fn areas_of(regions: Vec<Region>, waste_inside: bool) -> Vec<Area> {
+    regions
+        .into_iter()
+        .map(|region| {
+            let mut edges = Vec::new();
+            let mut corners = Vec::new();
+            let mut loops = Vec::new();
+            let contours = std::iter::once((region.outer(), waste_inside))
+                .chain(region.holes().iter().map(|h| (h, !waste_inside)));
+            for (contour, inside) in contours {
+                let polyline = if contour.is_ccw() == inside {
+                    contour.polyline().clone()
+                } else {
+                    contour.polyline().reversed()
+                };
+                let start = edges.len();
+                corners.extend(corners_of(&polyline, start));
+                edges.extend(edges_of(&polyline));
+                loops.push(Loop {
+                    edges: start..edges.len(),
+                    alone: nest(vec![contour.clone()])
+                        .ok()
+                        .and_then(|(r, _)| r.into_iter().next()),
+                    waste_inside: inside,
+                });
+            }
+            let bounds = edges
+                .iter()
+                .map(|e| e.bounds)
+                .reduce(|a, b| a.including(b.min).including(b.max))
+                .unwrap_or_else(|| Rect::from_point(Point::new(0.0, 0.0)));
+            Area {
+                region,
+                edges,
+                corners,
+                loops,
+                bounds,
+            }
+        })
+        .collect()
+}
+
 impl Material {
     /// The material `op` may cut in `project`.
     pub(crate) fn of(project: &Project, op: &Operation) -> Self {
         match op {
-            Operation::Profile(_) => Self::Profile,
+            Operation::Profile(profile) => {
+                let relief = profile.corner_relief != CornerRelief::None;
+                match profile.side {
+                    Side::OnLine => match placed(project, &profile.targets) {
+                        Some(paths) => Self::OnLine {
+                            edges: paths
+                                .iter()
+                                .filter(|p| p.is_closed())
+                                .flat_map(edges_of)
+                                .collect(),
+                        },
+                        None => Self::Unresolved,
+                    },
+                    Side::Inside => match regions_of(project, &profile.targets) {
+                        Some(regions) => Self::Inside {
+                            areas: areas_of(regions, true),
+                            allowance_mm: 0.0,
+                            relief,
+                            laps: true,
+                        },
+                        None => Self::Unresolved,
+                    },
+                    Side::Outside => match regions_of(project, &profile.targets) {
+                        Some(regions) => Self::Outside {
+                            areas: areas_of(regions, false),
+                            relief,
+                        },
+                        None => Self::Unresolved,
+                    },
+                }
+            }
             Operation::Pocket(pocket) => {
                 let allowance_mm = pocket.allowance_mm;
                 if !(allowance_mm.is_finite() && allowance_mm >= 0.0) {
                     return Self::Unresolved;
                 }
-                let Some(paths) = placed(project, &pocket.targets) else {
-                    return Self::Unresolved;
-                };
-                let contours: Option<Vec<Contour>> = paths
-                    .into_iter()
-                    .filter(Polyline::is_closed)
-                    .map(|p| Contour::new(p).ok())
-                    .collect();
-                let Some(Ok((regions, _))) = contours.map(nest) else {
-                    return Self::Unresolved;
-                };
-                let areas = regions
-                    .into_iter()
-                    .map(|region| {
-                        let mut edges = Vec::new();
-                        let mut corners = Vec::new();
-                        // Each loop wound with the pocket on its left: the
-                        // outline counter-clockwise, islands clockwise.
-                        let loops = std::iter::once((region.outer(), true))
-                            .chain(region.holes().iter().map(|h| (h, false)));
-                        for (contour, pocket_inside) in loops {
-                            let polyline = if contour.is_ccw() == pocket_inside {
-                                contour.polyline().clone()
-                            } else {
-                                contour.polyline().reversed()
-                            };
-                            corners.extend(corners_of(&polyline, edges.len()));
-                            edges.extend(edges_of(&polyline));
-                        }
-                        Area {
-                            region,
-                            edges,
-                            corners,
-                        }
-                    })
-                    .collect();
-                Self::Pocket {
-                    areas,
-                    allowance_mm,
-                    relief: pocket.corner_relief != CornerRelief::None,
+                match regions_of(project, &pocket.targets) {
+                    Some(regions) => Self::Inside {
+                        areas: areas_of(regions, true),
+                        allowance_mm,
+                        relief: pocket.corner_relief != CornerRelief::None,
+                        laps: false,
+                    },
+                    None => Self::Unresolved,
                 }
             }
             Operation::Drill(drill) => match placed(project, &drill.targets) {
@@ -312,7 +435,7 @@ impl Material {
                 None => Self::Unresolved,
             },
             Operation::Engrave(engrave) => match placed(project, &engrave.targets) {
-                Some(paths) => Self::Engrave {
+                Some(paths) => Self::OnLine {
                     edges: paths.iter().flat_map(edges_of).collect(),
                 },
                 None => Self::Unresolved,
@@ -349,12 +472,13 @@ pub(crate) fn check(
     tolerances: Tolerances,
     span: &OpSpan<'_>,
 ) -> Result<(), ExportError> {
-    if matches!(span.material, Material::Profile) {
+    #[cfg(test)]
+    if matches!(span.material, Material::Unchecked) {
         return Ok(());
     }
     let radius_mm = span.tool.diameter_mm / 2.0;
     let departure_mm = tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM;
-    // The Pocket region the last cut ended in, and where.
+    // The region the last cut ended in, and where.
     let mut last: Option<(usize, Point)> = None;
     let moves = blocks
         .iter()
@@ -368,12 +492,14 @@ pub(crate) fn check(
         let slack_mm = quantum_mm(post, mv.units) + departure_mm;
         let path = project_path(mv, transform);
         let inside = path.is_some_and(|path| match span.material {
-            Material::Profile => true,
+            #[cfg(test)]
+            Material::Unchecked => true,
             Material::Unresolved => false,
-            Material::Pocket {
+            Material::Inside {
                 areas,
                 allowance_mm,
                 relief,
+                laps,
             } => {
                 let clearance_mm = radius_mm + allowance_mm - slack_mm;
                 let notch = relief.then_some(Notch {
@@ -381,14 +507,25 @@ pub(crate) fn check(
                     allowance_mm: *allowance_mm,
                     slack_mm,
                 });
-                in_pocket(areas, path, clearance_mm, notch, &mut last)
+                in_regions(areas, path, clearance_mm, notch, &mut last)
+                    || (*laps && is_lap(areas, path, clearance_mm, radius_mm + slack_mm, notch))
+            }
+            Material::Outside { areas, relief } => {
+                let clearance_mm = radius_mm - slack_mm;
+                let notch = relief.then_some(Notch {
+                    radius_mm,
+                    allowance_mm: 0.0,
+                    slack_mm,
+                });
+                outside_regions(areas, path, clearance_mm, notch)
+                    || is_lap(areas, path, clearance_mm, radius_mm + slack_mm, notch)
             }
             Material::Drill { holes } => points_of(path).iter().all(|&p| {
                 holes
                     .iter()
                     .any(|(centre, r)| p.distance_to(*centre) <= r + slack_mm)
             }),
-            Material::Engrave { edges } => {
+            Material::OnLine { edges } => {
                 points_of(path).iter().all(|&p| on_line(edges, p, slack_mm))
             }
         });
@@ -402,12 +539,33 @@ pub(crate) fn check(
     Ok(())
 }
 
+/// Whether tool-centre path `path` keeps `clearance_mm` from the edges
+/// `scope` of `area`, or is a relief notch at one of their corners when
+/// `notch` is set.
+fn walls_allow(
+    area: &Area,
+    scope: &Range<usize>,
+    path: Segment,
+    clearance_mm: f64,
+    notch: Option<Notch>,
+) -> bool {
+    let bounds = bounds_of(path);
+    let clear = area
+        .edges
+        .get(scope.clone())
+        .unwrap_or_default()
+        .iter()
+        .filter(|e| near(bounds, e.bounds, clearance_mm))
+        .all(|e| segment_distance_mm(path, e.segment) >= clearance_mm);
+    clear || notch.is_some_and(|n| n.allows(area, scope, path, clearance_mm))
+}
+
 /// Whether tool-centre path `path` lies in one of `areas`, at least
 /// `clearance_mm` from its outline and its islands', or is a relief notch
 /// when `notch` is set. The area is the one the last cut ended in, if
 /// `path` starts there (`last`), else the one that holds its start; `last`
 /// is updated to where `path` ends.
-fn in_pocket(
+fn in_regions(
     areas: &[Area],
     path: Segment,
     clearance_mm: f64,
@@ -421,17 +579,60 @@ fn in_pocket(
             .position(|a| a.region.contains_point(path.start)),
     };
     let Some((index, area)) = index.and_then(|i| Some((i, areas.get(i)?))) else {
+        *last = None;
         return false;
     };
-    let bounds = bounds_of(path);
-    let clear = area
-        .edges
-        .iter()
-        .filter(|e| near(bounds, e.bounds, clearance_mm))
-        .all(|e| segment_distance_mm(path, e.segment) >= clearance_mm)
-        || notch.is_some_and(|n| n.allows(area, path, clearance_mm));
+    let clear = walls_allow(area, &(0..area.edges.len()), path, clearance_mm, notch);
     *last = clear.then_some((index, path.end));
     clear
+}
+
+/// Whether tool-centre path `path` lies outside every one of `areas`, at
+/// least `clearance_mm` from all their outlines, or is a relief notch at
+/// one of their corners when `notch` is set. Only the areas whose bounds
+/// come within the clearance of the path's are looked at: the path cannot
+/// be in or near the others.
+fn outside_regions(areas: &[Area], path: Segment, clearance_mm: f64, notch: Option<Notch>) -> bool {
+    let bounds = bounds_of(path);
+    areas
+        .iter()
+        .filter(|a| near(bounds, a.bounds, clearance_mm.max(0.0)))
+        .all(|a| {
+            !a.region.contains_point(path.start)
+                && walls_allow(a, &(0..a.edges.len()), path, clearance_mm, notch)
+        })
+}
+
+/// The lap rule (module docs): whether tool-centre path `path` runs along
+/// one loop of `areas`, its ends and middle within `reach_mm` of it and
+/// clear of it (or a notch at one of its corners), on its waste side. Other
+/// outlines are not looked at.
+fn is_lap(
+    areas: &[Area],
+    path: Segment,
+    clearance_mm: f64,
+    reach_mm: f64,
+    notch: Option<Notch>,
+) -> bool {
+    let bounds = bounds_of(path);
+    let points = points_of(path);
+    areas
+        .iter()
+        .filter(|a| near(bounds, a.bounds, reach_mm))
+        .any(|area| {
+            area.loops.iter().any(|l| {
+                let edges = area.edges.get(l.edges.clone()).unwrap_or_default();
+                points.iter().all(|&p| {
+                    edges
+                        .iter()
+                        .any(|e| point_segment_distance_mm(e.segment, p) <= reach_mm)
+                }) && l
+                    .alone
+                    .as_ref()
+                    .is_some_and(|r| r.contains_point(path.start) == l.waste_inside)
+                    && walls_allow(area, &l.edges, path, clearance_mm, notch)
+            })
+        })
 }
 
 /// Whether `p` lies within `slack_mm` of one of `edges`.
