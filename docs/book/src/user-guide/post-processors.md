@@ -567,8 +567,9 @@ first hole at the clearance height before `G98`, so every cycle returns to
 the clearance height ([Drill: canned cycles](drill.md#canned-cycles)). A
 Drill that crosses between some holes at the clearance height and between
 others at safe Z (separate parts and a part with several holes) is written
-as plain moves, with the warning `canned_cycle_expanded`
-(`clearance_height`): `G98` returns every hole to one height.
+as one `G98` series per part, each from safe Z and ended by `G80`, with the
+rise to the clearance height between them: `G98` returns every hole of a
+series to one height.
 
 ## grblHAL and GRBL compared
 
@@ -734,7 +735,9 @@ What is written, and when DreamCarve writes plain moves instead, is in
 
 - `G98` once, so the bit returns to safe Z after every hole, one cycle
   line per hole with `X Y Z R` and `Q` or `P`, `F` on the first, and `G80`
-  at the end.
+  at the end. With a clearance height, the cycles start from it, or there
+  is one such series per part when the Drill also has parts with several
+  holes.
 - `export` reads every cycle line back as the moves the controller makes,
   from the controller's documentation, and checks those moves with the
   same safety rules as plain moves, and against the Drill's own moves

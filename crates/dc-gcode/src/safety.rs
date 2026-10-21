@@ -17,7 +17,9 @@
 //! as the moves the controller makes for it. The parser expands each one
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
 //! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
-//! the motion the machine makes.
+//! the motion the machine makes. A series of cycles must end with `G80`
+//! before any other motion (#314): the parser models `G98`'s return level
+//! only from one `G80` to the next.
 //!
 //! S16 (#283; `docs/specs/phase-2/functional.md`, "Safety (addendum)"):
 //! the parser reads `G53 G0 Z` lines as machine-coordinate lifts and
@@ -4290,6 +4292,84 @@ mod tests {
         );
         let both = "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ5\nZ1\nG1 Z-3 F300\nG0 Z5\nZ10\nX60 Y50\nZ5\nZ1\nG1 Z-3\nG0 Z5\nM5\n";
         check_drill_at_clearance(both, &linked, &post).unwrap();
+    }
+
+    /// The sequencer's Drill toolpath for a hole at X 50, its own part,
+    /// then a part with holes at X 60 and X 70 (Y 50), with the clearance
+    /// height [`CLEARANCE_Z_MM`]: each hole goes down from safe Z (11) to
+    /// the retract plane (7), plunges to 3 mm and goes out to safe Z; the
+    /// tool rises to the clearance height between the parts, comes down
+    /// to safe Z over X 60, and crosses to X 70 at safe Z.
+    fn holes_of_two_parts() -> Toolpath {
+        let at = |x: f64, z: f64| Point3::new(x, 50.0, z);
+        let hole = |x: f64| {
+            [
+                Move::rapid(at(x, 7.0)),
+                Move::linear(at(x, 3.0), 300.0),
+                Move::rapid(at(x, 11.0)),
+            ]
+        };
+        let mut moves = vec![Move::rapid(at(50.0, 11.0))];
+        moves.extend(hole(50.0));
+        moves.extend([
+            Move::rapid(at(50.0, CLEARANCE_Z_MM)),
+            Move::rapid(at(60.0, CLEARANCE_Z_MM)),
+            Move::rapid(at(60.0, 11.0)),
+        ]);
+        moves.extend(hole(60.0));
+        moves.push(Move::rapid(at(70.0, 11.0)));
+        moves.extend(hole(70.0));
+        Toolpath { moves }
+    }
+
+    /// The program `emit` writes for [`holes_of_two_parts`] on the
+    /// fixture (work Z: safe Z 5, clearance 10): a `G98` series per part,
+    /// each from safe Z over its first hole and closed by `G80`, the rise
+    /// to the clearance height between them. `second` is what comes
+    /// between the crossing to X 60 and the second series' first cycle,
+    /// `close` what closes the first series.
+    fn series_per_part_program(close: &str, second: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ5\nG98\n\
+             G81 X50 Y50 Z-3 R1 F300\n{close}G0 Z10\nX60\n{second}\
+             G81 X60 Y50 Z-3 R1 F300\nX70 Y50 Z-3 R1\nG80\nG0 Z10\nM5\n"
+        )
+    }
+
+    /// #314, S11: a Drill linked at both heights, written as one `G98`
+    /// series per part. `G80`, and any motion that is not a cycle, ends a
+    /// series, and the next cycle starts a new one from the Z it is at
+    /// (LinuxCNC `interp_convert.cc` 3818-3819, `interp_cycles.cc`
+    /// 926-931), here safe Z, so the second series returns both holes of
+    /// its part to safe Z and crosses between them there. The expansion is
+    /// the toolpath move for move: the program passes. It fails when the
+    /// first series lacks the `G80` before the rise (unparseable: S11
+    /// models no series ended by other motion), when the second series
+    /// starts from the clearance height (no `Z5` before its `G98`: `G98`
+    /// then returns to Z 10, and the pair is crossed there), and with
+    /// `G99`, which returns to `R`, below safe Z.
+    #[test]
+    fn series_per_part_match_the_toolpath() {
+        let post = canned(Some(0.5));
+        let toolpath = holes_of_two_parts();
+        let text = series_per_part_program("G80\n", "Z5\nG98\n");
+        check_drill_at_clearance(&text, &toolpath, &post).unwrap();
+
+        let no_cancel = series_per_part_program("", "Z5\nG98\n");
+        let result = check_drill_at_clearance(&no_cancel, &toolpath, &post);
+        assert!(
+            matches!(result, Err(ExportError::Unparseable { line: 10, .. })),
+            "no G80 before the rise: {result:?}"
+        );
+        let from_clearance = series_per_part_program("G80\n", "G98\n");
+        let result = check_drill_at_clearance(&from_clearance, &toolpath, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "second series from the clearance height: {result:?}"
+        );
+        let g99 = series_per_part_program("G80\n", "Z5\nG99\n");
+        let result = check_drill_at_clearance(&g99, &toolpath, &post);
+        assert!(result.is_err(), "G99: {result:?}");
     }
 
     /// S1 on the expansion: a `G81` whose bottom is below the stock bottom

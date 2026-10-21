@@ -837,7 +837,7 @@ updated 2026-10-17) and the source on branch `2.9`, with `master` at
 | `M5` (footer, tool change) | [M] `#mcode:m3-m4-m5` | S4: the footer stops the spindle; `M2` does too, but S4 is checked on the text. |
 | `M0` (tool change, never written) | [M] `#mcode:m0-m1`: "pause a running program temporarily" | See the rules above. |
 | `M2` | [M] `#mcode:m2-m30`: "M2 - end the program"; both reset G54, G17, G90, G94, G40, M5, G1, M9 | Ends the program. `M30` would also "exchange pallet shuttles". Acceptance 36. |
-| `G81`, `G82`, `G80`, `G98` (canned cycles) | [G] `#gcode:g81`, `#gcode:g82` ("Dwell for the P number of seconds"), `#gcode:g80`, `#gcode:g98-g99`, `#gcode:preliminary-motion` | The motion `dc_gcode::canned` models: rapid to R, feed to Z, dwell, rapid to the initial Z (or R if higher). `P` is in seconds, as for `G4`. Written only with `use_canned_cycles`. The initial Z, from a clearance height too: see "Canned cycles from the clearance height" below. |
+| `G81`, `G82`, `G80`, `G98` (canned cycles) | [G] `#gcode:g81`, `#gcode:g82` ("Dwell for the P number of seconds"), `#gcode:g80`, `#gcode:g98-g99`, `#gcode:preliminary-motion` | The motion `dc_gcode::canned` models: rapid to R, feed to Z, dwell, rapid to the initial Z (or R if higher). `P` is in seconds, as for `G4`. Written only with `use_canned_cycles`. The initial Z, from a clearance height too: see "Canned cycles from the clearance height" and "A series per part" below. |
 | `G83`, `G73`: `null`; `reentry_gap_mm`: `null` | [G] `#gcode:g83` ("Rapid move back down to the current hole bottom, less .010 of an inch or 0.254 mm"), `#gcode:g73` ("Rapid up .010 of an inch or 0.254 mm"); [SRC] 2.9 `interp_internal.hh` L54-55 (`G83_RAPID_DELTA 0.010`, inches) and `interp_cycles.cc` L157-159, L221-223; master `interp_cycles.cc` L157, L218 and `rs274ngc_pre.cc` L851-855, L946-948 | In 2.9 both cycles back off 0.254 mm. In master (2.10) the distance is `[RS274NGC] G83_PECK_CLEARANCE` and `G73_PECK_CLEARANCE`, default 1 mm (0.050 in), in machine units, or a `D` word, and the master docs still say 0.010 in. The program cannot know which, so peck Drills are written as plain moves (design spec, "Chip-break re-entry"). |
 | File extension `ngc` | [O] "Logging": LinuxCNC's own examples are `.ngc` (`nc_files/examples/smartprobe.ngc`); "File Requirements" asks only for a plain text file | PureCutCNC's choice and LinuxCNC's convention. |
 | Coolant `M8`, `M7`, `M9` | [M] `#mcode:m7-m8-m9` | Unused (never emitted); kept from PureCutCNC. |
@@ -895,11 +895,45 @@ straight from the bottom back up, where the plain moves stop at safe Z.
 The motion is the same; the safety pass (S11, S6) takes rapids along one
 vertical line in one direction as one, only in a Drill written as cycles.
 A Drill that crosses between some holes at the clearance height and
-between others at safe Z (holes of one part) cannot be one `G98` series,
-and is written as plain moves (`canned_cycle_expanded`,
-`clearance_height`). Ending the series with `G80` and starting a new one
-per part would follow it, at the cost of a `G80`, a rise and a `G98` per
-part; it is not done yet (#314).
+between others at safe Z (holes of one part) cannot be one `G98` series;
+it is written as one series per part (next section).
+
+### A series per part (#314)
+
+A Drill with separate parts and a part of several holes (a compound SVG
+path, a DXF block of circles) crosses between parts at the clearance
+height and between the holes of one part at safe Z. It is written as one
+`G98` series per run of holes linked at safe Z: a rapid over the run's
+first hole at safe Z (`G0 Z<safe>` after the crossing), `G98`, the cycle
+lines, `G80`; then `G0 Z<clearance>`, the crossing at the clearance
+height, and the next series. Each series returns its holes to safe Z,
+and its motion is the plain program's, move for move. It relies on these,
+checked on 2026-10-21 against LinuxCNC branch `2.9` at
+`a33293f46575c809e082e0806e79ab996f982513` (`src/emc/rs274ngc/`) and
+[G], and against [MILL]:
+
+| Behaviour | LinuxCNC | Mach3 |
+| --- | --- | --- |
+| After `G80` the next cycle starts a new series, whose initial level is the Z the tool is at. | [G] `#gcode:g98-g99`: "The initial (G98) plane is reset any time cycle motion mode is abandoned, whether explicitly (G80) or implicitly (any motion code that is not a cycle)". [SRC] `interp_convert.cc` 3818-3819, in `convert_motion`, which also runs `G80` (3834-3838): a motion that is not a cycle (`interp_internal.hh` 837-838) clears `cycle_il_flag`; `interp_cycles.cc` 926-931: the next cycle then stores the current Z as `cycle_il`. The `G0` lines between the series reset it too. | [MILL] 10.7.29: "the position that axis was in just before the canned cycle started". The manual does not say when that position is taken again (10.7.23 says only that `G80` ensures "no axis motion will occur"). DreamCarve does not rely on it: each series is preceded by `G0 Z<safe>` over its first hole, and every hole of it returns to safe Z, so every line of every series starts at safe Z. Read as the line, as the series, or as the first series of the Drill, the level is safe Z. |
+| A new series needs its words again. | [SRC] `interp_cycles.cc` 729-734: without `R`, a cycle that is not the current motion mode is an error (after `G80` it is not); 920-923: so is one without `Z`; 724: the feed must not be 0 (`F` is modal, and is written again anyway). [G] `#gcode:canned-cycle-errors`: "the Z number is missing and the same canned cycle was not already active". | [MILL] 10.7.24: "we will call a number "sticky" if, when the same cycle is used on several lines of code in a row, the number must be used the first time ... The R number is always sticky"; "it is an error if the Z number is missing and the same canned cycle was not already active". |
+| `G0` after `G80` is a plain rapid; `G80` leaves no motion mode. | [G] `#gcode:g80`: "the programmer must turn motion back on with G0 ... or any other motion mode G word". | [MILL] 10.7.23: "It is an error if: Axis words are programmed when G80 is active". |
+
+So every series writes every word again: the cycle code, `X Y Z R`, `Q`
+or `P`, and `F` on its first line, after `G98`. The rise after `G80` is
+`G0 Z<clearance>`, with its `G0`.
+
+`G99` is not used. It returns each hole to `R` ([G] `#gcode:g98-g99`;
+[MILL] 10.7.29, option 1), which is the retract plane, below safe Z
+unless `retract_mm` reaches it; the toolpath crosses between the holes
+of a part at safe Z, and S2 refuses a crossing below it. Where `R` is safe
+Z, `G98` from safe Z returns there too, so `G99` would add nothing.
+
+LinuxCNC also ends a series at any other motion word, without `G80`
+([G] `#gcode:g80`, `interp_convert.cc` 3818-3819). Mach3Mill does not say
+whether that resets the `G98` level, so the safety pass refuses any
+motion, or a `G53` lift, while a cycle is the motion mode
+(`parse::a_series_of_cycles_ends_with_g80`): every series must end with
+`G80`, which DreamCarve always writes.
 
 Not checked on a real LinuxCNC: whether a configuration with a
 spindle-at-speed signal (`spindle.0.at-speed`) makes the 3 s dwell
@@ -943,7 +977,7 @@ and was not read.
 | `M5` (footer, tool change) | [MILL] 10.8.2: "To stop the spindle from turning, program M5" | S4. `M30` resets the spindle only "depending on the options chosen on the Configure>Logic dialog" (10.8.1). |
 | `M0` (tool change, never written) | [MILL] 10.8.1: "To stop a running program temporarily (regardless of the setting of the optional stop switch), program M0." | PureCutCNC's pause was `M1`, which stops "only if the optional stop switch is on". DreamCarve's own pauses are always `M0`. |
 | `M30` | [MILL] 10.8.1: "M30 'rewinds' the G-code file" | Ends the program. |
-| `G81`, `G82`, `G80`, `G98` (canned cycles) | [MILL] 10.7.24.1 "Preliminary and In-Between Motion", 10.7.24.2 "G81 Cycle", 10.7.24.3 "G82 Cycle" ("Dwell for the P number of seconds"), 10.7.29 (G98, G99), 10.7.23 (G80) | The same motion as RS274/NGC, which `dc_gcode::canned` models. From a clearance height: see "Canned cycles from the clearance height" under LinuxCNC. |
+| `G81`, `G82`, `G80`, `G98` (canned cycles) | [MILL] 10.7.24.1 "Preliminary and In-Between Motion", 10.7.24.2 "G81 Cycle", 10.7.24.3 "G82 Cycle" ("Dwell for the P number of seconds"), 10.7.29 (G98, G99), 10.7.23 (G80) | The same motion as RS274/NGC, which `dc_gcode::canned` models. From a clearance height, and a series per part: see "Canned cycles from the clearance height" and "A series per part" under LinuxCNC. |
 | `G83`, `G73`: `null`; `reentry_gap_mm`: `null` | [MILL] 10.7.24.4 (G83: "Rapid back down to the current hole bottom, backed off a bit"), 10.7.22 (G73: "Rapid back out by the distance defined in the G73 Pullback DRO on the Settings screen") | "A bit" is not a number, and the `G73` lift is a user setting. Peck Drills are plain moves. |
 | File extension `tap` | [MILL] 8.2.4: "It is conventional to save the generated G-code file with a .TAP extension but this is not required" | The extension Mach3 users and other CAM programs use. |
 | Coolant `M8`, `M7`, `M9` | [MILL] 10.8.4 | Unused. |

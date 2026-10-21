@@ -2011,7 +2011,8 @@ chip_break_drill_command`): rapid to the first hole's XY at safe Z (Z
 first, then XY, as phase 1 rapids), write `retract_mode` (`G98`: return to
 the initial Z, which is safe Z) once (changed in #305: at the clearance
 height, when the project sets one and every link between holes is at it;
-see "As built (#283)"), then one line per hole: the command
+changed in #314: once per part when the links are at both heights; see
+"As built (#283)"), then one line per hole: the command
 word (modal), `X Y`, `Z` (bottom, machine coordinates), `R` (retract
 plane), `Q` (peck for `G83`/`G73`), `P` (dwell seconds for `G82`), `F`
 (plunge rate, once). Every line carries its own `Z`, `R` and `Q`/`P`,
@@ -2067,7 +2068,10 @@ partway along one rapid of the controller's in Z alone at its XY, when
 the toolpath goes on the same way along that line by a rapid in Z alone,
 or ends there going up (changed in #305: cycles from the clearance height
 go straight from it to `R` and from the bottom back to it, where the
-toolpath stops at safe Z).
+toolpath stops at safe Z). A series of cycles ends with `G80`: any other
+motion, or a `G53` lift, while a cycle is the motion mode is
+unparseable, and the next cycle after `G80` starts a new series from the
+Z it is at (changed in #314: other motion also ended a series).
 Only controllers whose documentation states these semantics get
 canned-cycle commands in their definition.
 
@@ -3022,7 +3026,8 @@ above:
   `CannedExpansion::ClearanceHeight`. Holes of one instance keep cycles.
   (Changed in #305: such a Drill is written as cycles from the clearance
   height; see the next item. Only a Drill whose links are at both
-  heights is still written as moves with that reason.)
+  heights is still written as moves with that reason. Changed in #314:
+  that Drill is written as a series per part; see the item after next.)
 - Canned cycles from the clearance height (#305). `G98` returns each hole
   to the Z before the first cycle of the series (LinuxCNC 2.9
   `interp_cycles.cc` 926-931 and 976, the initial level `cycle_il`, reset
@@ -3053,6 +3058,38 @@ above:
   `emit::clearance_height_expands_canned_cycles` (links at both heights),
   `safety::canned_cycles_from_clearance_match_the_toolpath`,
   `safety::vertical_rapids_join_only_along_a_cycle_rapid`.
+- A series per part (#314). A Drill linked at the clearance height
+  between parts and at safe Z between the holes of one part is written as
+  one `G98` series per run of holes linked at safe Z. Each series is a
+  rapid over its first hole at safe Z, `G98`, its cycle lines (the code,
+  `X Y Z R`, `Q`/`P` and `F` on the first line again), and `G80`; between
+  series the tool rises with `G0 Z<clearance>`, crosses at it and comes
+  down to safe Z. `G80`, like any motion that is not a cycle, resets the
+  initial level (LinuxCNC `interp_convert.cc` 3818-3819 in
+  `convert_motion`, which runs `G80` too; [G] `#gcode:g98-g99`), and a
+  new series needs its `Z` and `R` again (`interp_cycles.cc` 729-734,
+  920-923; Mach3Mill 10.7.24, sticky numbers). Every line of every series
+  starts at safe Z, so Mach3Mill 10.7.29's "just before the canned cycle
+  started" gives safe Z however it is read. The motion is the plain
+  program's move for move: the toolpath already stops at safe Z on the
+  way down from the clearance height, so nothing is joined. `G99` is not
+  used: it returns to `R`, below safe Z. `canned_plan` splits the holes at
+  each link at the clearance height (`CycleLines::series`), and
+  `expansion_is_toolpath` adds the rise after a series and the descent
+  to safe Z before the next. Links at any other height keep the fallback
+  (`ClearanceHeight`); a Drill from `generate_drill` never has them. The
+  parser refuses any motion or `G53` lift while a cycle is the motion
+  mode, so S11 never relies on a series ended without `G80`, which
+  Mach3Mill does not document. Tests:
+  `emit::canned_series_per_part_at_the_clearance_height` (`G81`, `G82`,
+  `G83`, `G73` on the test definition: four series, crossings at Z 20
+  between parts and at Z 5 within the pair, the same pecks, the plain
+  program's motion), `emit::canned_series_per_part_on_linuxcnc_and_mach3`
+  (mm and inch, and with #306's lift on LinuxCNC),
+  `emit::clearance_height_expands_canned_cycles` (links at a third
+  height), `safety::series_per_part_match_the_toolpath` (refuses a series
+  without its `G80`, one from the clearance height, and `G99`),
+  `parse::a_series_of_cycles_ends_with_g80`.
 - Corner relief. A Pocket's notches, sequenced one corner at a time after
   its main path, are reached at the clearance height when the corner is of
   another instance than the one before, and the first one always (where
