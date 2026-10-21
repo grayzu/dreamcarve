@@ -384,6 +384,7 @@ mod tests {
             plunge_mm_min: 200.0,
             direction: CutDirection::Conventional,
             side: CutSide::Internal,
+            quantum_mm: 0.001,
         }
     }
 

@@ -446,6 +446,10 @@ pub fn generate_profile(
             (Some((layout, overlapped)), reduced)
         })
         .unzip();
+    let quantum_mm = project
+        .post_processor
+        .decimal_places
+        .quantum_mm(project.display_units);
     let entry_tool = |wall: Wall| EntryTool {
         diameter_mm: tool.diameter_mm,
         feed_mm_min: rates.feed_mm_min,
@@ -455,6 +459,7 @@ pub fn generate_profile(
             Wall::Inside => CutSide::Internal,
             Wall::Outside => CutSide::External,
         },
+        quantum_mm,
     };
     let setup = EntrySetup {
         op,

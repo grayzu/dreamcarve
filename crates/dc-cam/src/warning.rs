@@ -857,6 +857,9 @@ impl fmt::Display for Warning {
                     FallbackReason::NoRoom => {
                         format!("there is no room for a `{requested}` entry in")
                     }
+                    FallbackReason::TooSmall => format!(
+                        "a `{requested}` entry this small has moves too short for the program's decimal places in"
+                    ),
                 };
                 let (used, advice) = match used {
                     EntryKind::Ramp => ("a zigzag ramp", ""),
@@ -1294,6 +1297,16 @@ mod tests {
                     reason: FallbackReason::TooManyMoves,
                 },
                 "a `ramp` entry at this angle would take too many moves to reach depth in `Shape` (instance `i1`, profile 2), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning",
+            ),
+            (
+                Warning::EntryFallback {
+                    op: op(),
+                    shape: shape(),
+                    requested: EntryKind::Helix,
+                    used: EntryKind::Ramp,
+                    reason: FallbackReason::TooSmall,
+                },
+                "a `helix` entry this small has moves too short for the program's decimal places in `Shape` (instance `i1`, profile 2), so its passes start with a zigzag ramp instead",
             ),
             (
                 Warning::HelixDiameterReduced {

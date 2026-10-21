@@ -187,15 +187,20 @@ pub enum FallbackReason {
     /// It fits, but at its angle the depth would take more than
     /// [`MAX_DESCENT_MOVES`] moves.
     TooManyMoves,
+    /// A helix whose descending moves the program cannot write: each
+    /// would fall less than one unit in its last place, or run less than
+    /// √2 units in XY, so its ends round to one Z or one XY (#265).
+    TooSmall,
 }
 
 impl FallbackReason {
-    /// The name warnings use: `no_room`, `too_many_moves`.
+    /// The name warnings use: `no_room`, `too_many_moves`, `too_small`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoRoom => "no_room",
             Self::TooManyMoves => "too_many_moves",
+            Self::TooSmall => "too_small",
         }
     }
 }
@@ -276,6 +281,12 @@ pub struct EntryTool {
     pub direction: CutDirection,
     /// Inside a wall or outside a boss, for the helix sense.
     pub side: CutSide,
+    /// One unit in the last place the program writes, mm (the project's
+    /// decimal places in its display units,
+    /// `DecimalPlaces::quantum_mm`). A helix whose descending moves would
+    /// fall less than this, or run less than √2 of it in XY, is not cut
+    /// (#265).
+    pub quantum_mm: f64,
 }
 
 /// Requested and used helix diameters, mm (the diameter of the path the
@@ -424,8 +435,10 @@ impl EntryPlan {
     /// the target if the helix does not end on it), else the ramp (zigzag,
     /// the last run cut short at `z_mm`, then the handoff), else a plunge.
     /// A placed helix or ramp that would need more than
-    /// [`MAX_DESCENT_MOVES`] descending moves falls through too. With no
-    /// depth to descend the descent is empty.
+    /// [`MAX_DESCENT_MOVES`] descending moves falls through too, and so
+    /// does a helix whose chords the program cannot write
+    /// ([`FallbackReason::TooSmall`]). With no depth to descend the
+    /// descent is empty.
     #[must_use]
     pub fn descend(&self, start_z_mm: f64, z_mm: f64) -> Descent {
         self.descend_with(start_z_mm, z_mm, None)
@@ -458,6 +471,17 @@ impl EntryPlan {
         } else if self.requested == EntryKind::Helix {
             match self.helix {
                 Some(h) => match helix_move_count(depth_mm, h.radius_mm, self.angle_deg) {
+                    Some(n)
+                        if !helix_writable(
+                            depth_mm,
+                            h.radius_mm,
+                            self.angle_deg,
+                            n,
+                            self.tool.quantum_mm,
+                        ) =>
+                    {
+                        reason = Some(FallbackReason::TooSmall);
+                    }
                     Some(n) => {
                         let (from, moves) = self.emit_helix(&h, n, start_z_mm, z_mm);
                         descent.from = from;
@@ -692,6 +716,30 @@ fn helix_move_count(depth_mm: f64, radius_mm: f64, angle_deg: f64) -> Option<usi
         return None;
     }
     count_within_cap(depth_mm.max(0.0) / pitch_mm * HELIX_SEGMENTS_PER_REV as f64)
+}
+
+/// Whether a helix of `radius_mm` at `angle_deg` cut in `n` chords over
+/// `depth_mm` can be written by a program whose last place is
+/// `quantum_mm`: every chord falls at least one unit and runs at least
+/// √2 units in XY (#265). Two numbers a unit or more apart round apart, so
+/// each chord's ends are written at two Z values and two XY points, and
+/// the move keeps its slope: written level, it would run at the
+/// plunge-limited feed, which is neither of the tool's rates (S3);
+/// written straight down, faster than the plunge rate (S10). A helix that
+/// small removes nothing a ramp or plunge would not.
+fn helix_writable(
+    depth_mm: f64,
+    radius_mm: f64,
+    angle_deg: f64,
+    n: usize,
+    quantum_mm: f64,
+) -> bool {
+    let pitch_mm = helix_pitch_mm(2.0 * radius_mm, angle_deg);
+    let steps = n as f64;
+    let drop_mm = depth_mm / steps;
+    let turn_rad = depth_mm / pitch_mm * TAU / steps;
+    let run_mm = 2.0 * radius_mm * (turn_rad / 2.0).sin();
+    drop_mm >= quantum_mm && run_mm >= std::f64::consts::SQRT_2 * quantum_mm
 }
 
 /// Runs of the ramp `r` over `depth_mm`, or `None` over
@@ -1458,6 +1506,7 @@ mod tests {
             plunge_mm_min: PLUNGE,
             direction: CutDirection::Conventional,
             side: CutSide::Internal,
+            quantum_mm: 0.001,
         }
     }
 
@@ -1911,6 +1960,67 @@ mod tests {
             );
         }
         assert_approx_eq!(drops.iter().sum::<f64>(), depth_mm, 1e-9);
+    }
+
+    /// #265 (found by the dc-gcode Profile property, `PROPTEST_RNG_SEED=108`):
+    /// a 0.05 helix of a 0.5508 mm tool is 0.0275 mm across; at 14.14°
+    /// each of its chords falls 0.00045 mm over 0.0018 mm, less than one
+    /// unit of a 3-place mm program either way, so most are written level
+    /// at the plunge-limited feed, which S3 refuses. Such a helix is not
+    /// cut: the chain falls back to the ramp, reason `too_small`. The same
+    /// tool's 0.8 helix (0.44 mm across) is a helix, every chord of it
+    /// falling at least a unit and running at least √2 units in XY, so its
+    /// ends round apart on both counts.
+    #[test]
+    fn tiny_helix_chords_are_writable() {
+        let quantum_mm = 0.001;
+        let small = EntryTool {
+            diameter_mm: 0.550_832_666_619_620_7,
+            feed_mm_min: 3_840.280_223_564_292_6,
+            plunge_mm_min: 645.988_501_885_48,
+            ..tool()
+        };
+        let domain = EntryDomain::new(
+            &[rectangle(20.0, 20.0)],
+            small.diameter_mm,
+            FLATTEN_TOLERANCE_DEFAULT_MM,
+        );
+        let target = Point::new(10.0, 10.0);
+        let (start_z, z) = (1.436_449_925_824_323_2, 0.0);
+        let d = synthesize(
+            &domain,
+            &helix(0.05, 14.137_048_663_595_39),
+            target,
+            start_z,
+            z,
+            &small,
+        );
+        assert_eq!(d.used, EntryKind::Ramp, "{:?}", d.reason);
+        assert!(d.fell_back());
+        assert_eq!(d.reason.map(FallbackReason::as_str), Some("too_small"));
+        assert_ends_at_target(&d, (10.0, 10.0), z);
+
+        let d = synthesize(
+            &domain,
+            &helix(0.8, 14.137_048_663_595_39),
+            target,
+            start_z,
+            z,
+            &small,
+        );
+        assert_eq!(d.used, EntryKind::Helix, "{:?}", d.reason);
+        let sloped: Vec<(Point3, Move)> = steps(&d, start_z)
+            .into_iter()
+            .filter(|(from, mv)| descends(*from, mv))
+            .collect();
+        assert!(!sloped.is_empty());
+        for (i, (from, mv)) in sloped.iter().enumerate() {
+            let (drop, run) = (from.z - mv.to.z, xy_len(*from, mv.to));
+            assert!(
+                drop >= quantum_mm && run >= std::f64::consts::SQRT_2 * quantum_mm,
+                "chord {i} falls {drop} mm over {run} mm"
+            );
+        }
     }
 
     /// Entry must not score the wall the finish pass leaves, so every ramp

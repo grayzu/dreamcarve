@@ -133,11 +133,8 @@ proptest! {
     }
 
     /// Pocket: offset and raster at any angle, any wall pass, allowance,
-    /// step-over, entry (plunge, ramp, helix) and corner relief. Ignored
-    /// until #262: arc fitting a tiny helix's flat revolution fails S12 in
-    /// an inch program (the committed seed `9cea68b9…`).
+    /// step-over, entry (plunge, ramp, helix) and corner relief.
     #[test]
-    #[ignore = "#262"]
     fn random_valid_pockets_never_panic_and_pass_safety(project in projects::pocket_project()) {
         exports_safely(&project)?;
     }

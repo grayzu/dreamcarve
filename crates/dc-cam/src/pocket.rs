@@ -259,6 +259,10 @@ pub fn generate_pocket(
         plunge_mm_min: rates.plunge_mm_min,
         direction: op.direction,
         side: CutSide::Internal,
+        quantum_mm: project
+            .post_processor
+            .decimal_places
+            .quantum_mm(project.display_units),
     };
     let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();

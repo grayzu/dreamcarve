@@ -38,7 +38,6 @@ use dc_project::{
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
 use crate::emit::{changes_tools_in_program, controller_sets_units};
-use crate::format::decimal_places;
 use crate::material::{self, Material};
 use crate::parse::{
     Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
@@ -668,10 +667,10 @@ fn feed_quantum_mm_min(post: &PostProcessor, units: Units) -> f64 {
     quantum_mm(post, units)
 }
 
-/// One output unit in the last written decimal place, in mm.
+/// One output unit in the last written decimal place, in mm: the one
+/// `dc_cam::entry` keeps a helix's moves above (#265).
 pub(crate) fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
-    let places = decimal_places(&post.number_format, units);
-    10f64.powi(-i32::from(places)) * mm_per_unit(units)
+    post.number_format.decimal_places.quantum_mm(units)
 }
 
 /// The rules in force on one line, project space, mm.
@@ -1594,21 +1593,18 @@ fn match_fitted_arc(
             }
         }
         // #226: the chain stays within the allowance of the move along its
-        // whole length, not only at its ends: over every piece the move
-        // spans, the piece's farthest point from the move's chord (for a
-        // straight move between points on the circle, its sagitta).
+        // whole length, not only at its ends: over the part of every piece
+        // between the move's ends, the farthest point from the move's
+        // chord (for a straight move between points on the circle, its
+        // sagitta). Each end is placed on each piece, not assumed to lie
+        // before or past it (#262): a vertex up to the angle slack past a
+        // piece's end counts as on that piece, and on a circle so small
+        // that the slack is a whole chord it lies inside the next piece,
+        // whose part before it the move does not span.
         for k in first_piece..=piece {
             let current = pieces.get(k)?;
-            let from_rad = if k == first_piece {
-                current.clamped_turn(vertex.xy())
-            } else {
-                0.0
-            };
-            let to_rad = if k == piece {
-                current.clamped_turn(mv.to.xy())
-            } else {
-                current.sweep_rad
-            };
+            let from_rad = current.clamped_turn(vertex.xy());
+            let to_rad = current.clamped_turn(mv.to.xy());
             if to_rad > from_rad
                 && current.deviation_mm(from_rad, to_rad, vertex.xy(), mv.to.xy()) > allowed_mm
             {
@@ -3465,6 +3461,47 @@ mod tests {
             check_against_with(&text, &toolpath, Some(0.01))
                 .unwrap_or_else(|e| panic!("{n} chords, two arcs: {e:?}"));
         }
+    }
+
+    /// #262: a move that spans the end of one piece and the start of the
+    /// next is held to the part of both pieces between its ends. A 20°
+    /// chord from 40° to 60° under two `G3` pieces meeting at 50° bows
+    /// 0.15 mm off its arc, so S12 refuses the chain; with that stretch in
+    /// 2° chords too it passes. (Each end of a move is placed on each
+    /// piece; the fix for #262 must not stop measuring across the joint.)
+    #[test]
+    fn chord_across_a_piece_end_is_measured_on_both_pieces() {
+        let on_circle = |deg: f64| {
+            let a = deg.to_radians();
+            Point3::new(50.0 + 10.0 * a.cos(), 50.0 + 10.0 * a.sin(), 5.0)
+        };
+        let toolpath = |long_chord: bool| {
+            let mut moves = vec![
+                Move::rapid(Point3::new(60.0, 50.0, 11.0)),
+                Move::linear(Point3::new(60.0, 50.0, 5.0), 300.0),
+            ];
+            let mut deg = 0_u32;
+            while deg < 90 {
+                deg += if long_chord && deg == 40 { 20 } else { 2 };
+                moves.push(Move::linear(on_circle(f64::from(deg)), 1000.0));
+            }
+            moves.push(Move::rapid(Point3::new(50.0, 60.0, 11.0)));
+            Toolpath { moves }
+        };
+        let joint = on_circle(50.0);
+        let text = chord_run_text(&format!(
+            "G3 X{:.3} Y{:.3} I-10 J0 F1000\nX50 Y60 I{:.3} J{:.3}\n",
+            joint.x,
+            joint.y,
+            50.0 - joint.x,
+            50.0 - joint.y,
+        ));
+        let result = check_against_with(&text, &toolpath(true), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        check_against_with(&text, &toolpath(false), Some(0.01)).unwrap();
     }
 
     // S11: canned cycles (`docs/specs/phase-2/design.md`, "S11 expansion").
