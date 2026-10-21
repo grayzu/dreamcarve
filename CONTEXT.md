@@ -63,7 +63,8 @@ _Avoid_: Job, cut, pass (a pass is one depth step inside an operation)
 
 **Profile**:
 An operation that cuts along a closed shape's outline, inside, outside or on
-the line, optionally leaving holding tabs.
+the line, optionally leaving holding tabs. On the line it also cuts open
+paths.
 _Avoid_: Contour, edge route, outline cut
 _PureCutCNC_: Edge Route
 

@@ -145,6 +145,7 @@ impl Tabs {
             length_mm: l,
             spans: Vec::new(),
             full: false,
+            closed: true,
         };
         let centres = tab_centres_mm(&self.placement, l);
         if centres.is_empty() {
@@ -192,6 +193,51 @@ impl Tabs {
         (layout, overlap)
     }
 
+    /// [`Tabs::layout`] for an open path `path_length_mm` long (#175),
+    /// tabs centred at distances from the path's first vertex as drawn.
+    /// Spans do not wrap: each is cut short at the path's ends. With
+    /// `reversed`, the path is cut from its last vertex, and the spans are
+    /// measured from there, so the tabs stay where they were drawn.
+    pub(crate) fn layout_open(&self, path_length_mm: f64, reversed: bool) -> (PathTabs, bool) {
+        let l = path_length_mm;
+        let mut layout = PathTabs {
+            length_mm: l,
+            spans: Vec::new(),
+            full: false,
+            closed: false,
+        };
+        let half = self.span_mm / 2.0;
+        let mut ranges: Vec<(f64, f64)> = tab_centres_mm(&self.placement, l)
+            .into_iter()
+            .map(|c| ((c - half).max(0.0), (c + half).min(l)))
+            .collect();
+        ranges.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut overlap = false;
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (start, end) in ranges {
+            match merged.last_mut() {
+                Some(last) if start <= last.1 + EPS_MM => {
+                    overlap = true;
+                    last.1 = last.1.max(end);
+                }
+                _ => merged.push((start, end)),
+            }
+        }
+        layout.full = merged.iter().any(|(s, e)| *s <= EPS_MM && *e >= l - EPS_MM);
+        overlap |= layout.full;
+        layout.spans = merged
+            .into_iter()
+            .map(|(start, end)| Span {
+                start_mm: if reversed { l - end } else { start },
+                length_mm: end - start,
+            })
+            .collect();
+        if reversed {
+            layout.spans.reverse();
+        }
+        (layout, overlap)
+    }
+
     /// The tab top, mm above the stock bottom: a pass below it rises over
     /// the tabs.
     pub(crate) fn top_z_mm(&self) -> f64 {
@@ -214,13 +260,16 @@ struct Span {
     length_mm: f64,
 }
 
-/// The merged tab spans on one closed tool-centre path.
+/// The merged tab spans on one tool-centre path.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PathTabs {
     length_mm: f64,
     spans: Vec<Span>,
     /// The spans cover the whole path.
     full: bool,
+    /// The path is closed, so a span may run through its start. An open
+    /// path's spans lie within it ([`Tabs::layout_open`]).
+    closed: bool,
 }
 
 /// Where a point along a tabbed path lies.
@@ -256,6 +305,7 @@ impl PathTabs {
                 })
                 .collect(),
             full: self.full,
+            closed: self.closed,
         }
     }
 
@@ -270,12 +320,47 @@ impl PathTabs {
         let mut clear = self.length_mm;
         for span in &self.spans {
             let end = span.start_mm + span.length_mm;
-            if span.start_mm <= EPS_MM || end >= self.length_mm - EPS_MM {
+            let wraps = self.closed && end >= self.length_mm - EPS_MM;
+            if span.start_mm <= EPS_MM || wraps {
                 return 0.0;
             }
             clear = clear.min(span.start_mm);
         }
         clear
+    }
+
+    /// The length of the path the spans are laid on, mm.
+    pub(crate) fn length_mm(&self) -> f64 {
+        self.length_mm
+    }
+
+    /// The stretches of a closed path no span raises, as `(start, length)`
+    /// mm along it, the start in `[0, L)` and a stretch possibly running
+    /// through the path start: longest first, then nearest the start.
+    /// Empty when the spans cover the path, or the path is open; the whole
+    /// path from its start when there are no spans.
+    pub(crate) fn gaps_mm(&self) -> Vec<(f64, f64)> {
+        let l = self.length_mm;
+        if self.full || !self.closed || l <= EPS_MM {
+            return Vec::new();
+        }
+        let mut spans = self.spans.clone();
+        spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
+        let mut gaps: Vec<(f64, f64)> = spans
+            .iter()
+            .zip(spans.iter().cycle().skip(1))
+            .map(|(a, b)| {
+                let end = a.start_mm + a.length_mm;
+                let length = (b.start_mm - end).rem_euclid(l);
+                (end.rem_euclid(l), length)
+            })
+            .filter(|(_, length)| *length > EPS_MM)
+            .collect();
+        if spans.is_empty() {
+            gaps.push((0.0, l));
+        }
+        gaps.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.total_cmp(&b.0)));
+        gaps
     }
 
     /// Where along the path the tabs' material stands, mm, as `(from, to)`
@@ -302,8 +387,12 @@ impl PathTabs {
         }
         let ramp_mm = tabs.ramp_mm();
         for span in &self.spans {
-            let t = (distance_mm - span.start_mm).rem_euclid(self.length_mm);
-            if t >= span.length_mm {
+            let t = if self.closed {
+                (distance_mm - span.start_mm).rem_euclid(self.length_mm)
+            } else {
+                distance_mm - span.start_mm
+            };
+            if !(0.0..span.length_mm).contains(&t) {
                 continue;
             }
             return match tabs.shape {
@@ -348,8 +437,10 @@ impl PathTabs {
                 out.push(end - ramp_mm);
             }
         }
-        for d in &mut out {
-            *d = d.rem_euclid(self.length_mm);
+        if self.closed {
+            for d in &mut out {
+                *d = d.rem_euclid(self.length_mm);
+            }
         }
         out
     }
@@ -473,12 +564,13 @@ pub(crate) struct LapCuts {
     /// covers the path start.
     pub start_z_mm: f64,
     /// The lap's moves from the start point at `start_z_mm` back to the
-    /// start point.
+    /// start point (to the last vertex of an open path).
     pub moves: Vec<Move>,
 }
 
 /// One lap of `path` at `z_mm`, from the path start at
-/// [`LapCuts::start_z_mm`] back to the path start. Where `tabs` is given
+/// [`LapCuts::start_z_mm`] back to the path start (to its last vertex for
+/// an open path, #175). Where `tabs` is given
 /// and `z_mm` lies below the tab top, the lap rises over each tab span:
 /// rect tabs with a vertical lift, a traverse at the tab top, and a
 /// vertical descent; smooth tabs along straight ramps either side of a hold

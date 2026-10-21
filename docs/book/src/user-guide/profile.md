@@ -1,8 +1,9 @@
 # Profile operation
 
 A **Profile** cuts along the outline of closed shapes: to cut a part out of
-the stock, or to cut a hole through it. To follow a line with the bit's
-centre on it, open or closed, use [Engrave](engrave.md).
+the stock, or to cut a hole through it. An `on_line` Profile also cuts
+along open paths ([Open paths](#open-paths)). To follow a line with the
+bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
 
 ```json
 {
@@ -119,7 +120,10 @@ backlash.
 
 Directions are seen from above, with Y pointing away from you. An outside
 Profile runs outside a part's outline and inside its holes. An `on_line`
-cut counts as outside on a part's outline and inside on a hole.
+cut counts as outside on a part's outline and inside on a hole. An open
+path has no inside or outside, so the direction picks the end its cut
+starts at: climb from its first vertex, conventional from its last (as
+VCarve does).
 
 ## Machining order
 
@@ -196,8 +200,15 @@ the bit does not ramp down through air it has already cut.
 
 **Tabs.** On every pass below the tab top, the ramp or helix keeps clear
 of the tabs, and an On line ramp stops short of the first tab. When a tab
-covers the start of the outline the bit plunges there, as without an
-entry, and `entry_fallback` says so.
+covers the start of the outline, or sits so close after it that the ramp
+or helix has no room, the cut starts somewhere else: in the middle of the
+longest stretch between tabs where the entry fits, then the next longest,
+and so on. That start is used on every pass, and the tabs stay where you
+put them: their distances are still measured from where the outline
+started. Only when no stretch has room (or on an open path, whose start
+cannot move) does the bit plunge there, as without an entry, and
+`entry_fallback` says so. A Profile with a [lead](#leads) starts where
+the lead arrives instead, which is already off the tabs.
 
 **Feed rate.** A ramp or helix moves at the tool's feed rate, except that
 its speed straight down is never faster than the plunge rate: when
@@ -213,6 +224,34 @@ that does not fit, as in a hole barely wider than the bit (a 7 mm hole
 with a 6.35 mm bit), falls back to a plunge. Each fallback warns
 `entry_fallback`, naming the shape and both entries. A shape that can
 only be plunged warns on every export until its `entry` is `"plunge"`.
+
+## Open paths
+
+An open path (a line, an arc, a polyline that does not return to its
+start) has no inside or outside, so an Inside or Outside Profile skips it
+with `open_path_skipped`. An `on_line` Profile cuts it, as VCarve's
+Profile "On" cuts an open vector: a slot one bit wide centred on the
+line.
+
+- Each pass runs the whole path at the pass depth, from its first vertex
+  to its last under climb, or from its last to its first under
+  conventional. Then the bit lifts to safe Z and goes back to the start
+  for the next pass.
+- A ramp runs back and forth along the path from the start, as on a
+  closed outline, turning at the path's end when the path is shorter than
+  three bit diameters. A later pass first comes straight down the slot
+  the pass above cut, at the plunge rate, to that pass's depth, then
+  ramps from there.
+- [Tabs](tabs.md) are placed by distance from the path's first vertex as
+  you drew it, whichever end the cut starts at, and stop at the path's
+  ends. A tab over the start of the cut makes the bit plunge there with
+  `entry_fallback`: an open path's start cannot move.
+- There is no lead (`lead_dropped`, as for any On line Profile) and no
+  corner relief (`relief_skipped`), and an open path frees nothing.
+
+A 100 mm line cut `on_line` 6 mm deep in 2 mm passes with a 15° ramp and a
+6.35 mm bit: each pass ramps out 19.05 mm along the line and back, then
+cuts the 100 mm to the line's far end, and lifts.
 
 ## Leads
 
@@ -379,7 +418,7 @@ These still give a safe program. `check` and `export` print each one as
 
 | Warning says | Meaning |
 | --- | --- |
-| "... is an open path" | A target is not a closed outline; it is not cut. |
+| "... is an open path" | An Inside or Outside target is not a closed outline; it is not cut. See [Open paths](#open-paths). |
 | "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
 | "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
