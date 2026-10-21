@@ -1497,8 +1497,12 @@ mod tests {
         let (toolpath, warnings) = generate_profile(project, &op).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         dc_cam::test_support::assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
-        let (program, warnings) =
-            emit(project, &[(op, tool, toolpath.clone())], "2026-10-15").unwrap();
+        let (program, warnings) = emit(
+            project,
+            &[(Operation::Profile(op), tool, toolpath.clone())],
+            "2026-10-15",
+        )
+        .unwrap();
         (program.text, warnings, toolpath)
     }
 

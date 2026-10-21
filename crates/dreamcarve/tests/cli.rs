@@ -2900,6 +2900,10 @@ fn engrave_exports_and_passes_safety() {
     let report = format!("{}{}", stdout(&check), stderr(&check));
     assert_eq!(check.status.code(), Some(0), "check: {report}");
     assert!(report.contains("0 error(s)"), "{report}");
+    assert!(
+        !report.contains("open_profile"),
+        "the engraved open path is not reported as never cut: {report}"
+    );
     let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
     let program = std::fs::read_to_string(dir.join("plaque.nc")).expect("plaque.nc written");

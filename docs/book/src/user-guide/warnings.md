@@ -40,6 +40,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `tabs_overlap` | "tabs on … touch or overlap on its … mm tool path, so they were joined into longer tabs" | Too many or too wide tabs for the outline. Use fewer or narrower tabs ([Tabs](tabs.md#warnings)). |
 | `tabs_outside_cut_range` | "the tab top is … mm above the stock bottom, but the deepest pass stops at … mm" or "… higher than the … mm stock top" | The tabs are above every pass (they change nothing) or above the stock top (every pass lifts over them). Lower `height_mm` ([Tabs](tabs.md#warnings)). |
 | `tabs_cover_most_of_contour` | "tabs on … cover more than half of its tool path …, so the part or hole may not cut free" | The tabs leave less than half the outline cut. The message suggests a count or width; or remove tabs from a small hole ([Tabs](tabs.md#warnings)). |
+| `engrave_path_degenerate` | "… has fewer than two distinct points, so there is nothing to engrave; it is skipped" | An Engrave target is a single point, or all its points are in one place. Delete it from the drawing ([Engrave](engrave.md#warnings)). |
 | `toolpaths_overlap` | "the tool paths of … and … cut into each other: the shapes are … mm apart" | Two shapes in one operation are closer than the bit needs between them. Move them apart or use a smaller bit ([Profile: shapes too close together](profile.md#shapes-too-close-together)). |
 
 ## Export
@@ -61,14 +62,14 @@ file](project-file.md).
 | --- | --- | --- |
 | `operation_disabled` | "operation … is disabled and will not be exported" | As intended, or set `enabled` to `true`. |
 | `unused_tool` | "tool … is defined but not used by any enabled operation" | Remove the tool, or target it from an operation. Its unset rates are not reported. |
-| `open_profile` | "… is an open path; Profile cuts only closed shapes, so it is not cut" | A drawing has an open path. Close it, or ignore the warning if it is a guide line. |
+| `open_profile` | "… is an open path; Profile cuts only closed shapes, so it is not cut" | A drawing has an open path. Close it, ignore the warning if it is a guide line, or cut it with an [Engrave](engrave.md). Not reported for a drawing an enabled Engrave targets. |
 | `step_down_above_diameter` | "… cuts … mm per pass, deeper than the … mm diameter of tool …" | Passes deeper than the bit is wide can break it. Lower `step_down_mm` on the operation or tool. |
 | `plunge_above_feed` | "… plunges at … mm/min, faster than it cuts" | `plunge_mm_min` is above `feed_mm_min`; they may be swapped. |
 | `spindle_speed_high` | "… is set to … RPM, faster than the 60000 RPM …" | Check `rpm` for a typo. |
 | `large_diameter` | "… is … mm in diameter, larger than the 50 mm …" | Check `diameter_mm` for a typo. |
 | `drill_cutter_unusual` | "… drills with tool …, which makes a cone rather than a flat-bottomed hole" | Drill with a drill or an end mill, or accept the cone. |
 | `relief_needs_step_down` | "… asks for corner relief, but tool … has no step_down_mm" | Set the tool's `step_down_mm`; until then the relief is skipped. |
-| `engrave_deeper_than_cone` | "… engraves … mm deep with tool …, whose cone is only … mm tall" | Use a shallower depth or a wider V-bit; below the cone the shank cuts. |
+| `engrave_deeper_than_cone` | "… engraves … mm deep with tool …, whose cone is only … mm tall" | Use a shallower depth or a wider V-bit; below the cone the shank cuts ([Engrave: V-bits](engrave.md#v-bits)). |
 
 ## Import
 
