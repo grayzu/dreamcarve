@@ -268,6 +268,28 @@ a star with 4 tabs and its 7 mm hole, with a 6.35 mm bit, no longer
 needs a second operation. (changed in #109: one setting tabbed every
 outline, and too-short outlines kept tabs covering most of them.)
 
+### Open paths
+
+27. **Left and Right of an open path** (#207). A Profile's `side` may be
+`left` or `right` (format version 10), as VCarve's Profile cuts "to the
+Left, to the Right or On the selected vectors". The tool centre runs one
+radius to that side of each open target, looking along it from its first
+vertex to its last as drawn; the cut ends square on the normals through
+the path's ends, so the bit's edge reaches the end vertex and goes no
+further on the part side. The side the bit runs on is waste and the
+other side is the part: a cut that would cross another of the
+operation's lines, or reach the strip one radius wide that a line keeps
+on its part side, is an error. Direction is as for On line open paths
+(conventional starts beside the first vertex, climb beside the last);
+ramps run along the offset path and tabs are measured along it from the
+end beside the first vertex; there is no lead, no corner relief and no
+helix, as VCarve gives open profiles none. Closed targets are skipped
+with `side_needs_open_path`, since a closed path's direction is not
+shown in the drawing. S9 holds the cut to the offset path and clear of
+every line and kept strip. (added in #207: before, an open path could
+be cut only On line, and cutting beside one meant redrawing it a bit
+radius over.)
+
 ## Out of scope
 
 V-Carve and V-bit countersinking (phase 3). Helical boring of holes wider
