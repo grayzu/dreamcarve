@@ -182,6 +182,20 @@ pub enum CamError {
         /// The allowed range, as the user reads it.
         range: &'static str,
     },
+    /// The operation's lead has a radius that is not more than 0, a sweep
+    /// outside (0, 180] degrees, or a negative overcut. Validation rejects
+    /// each; the generator does not trust its callers.
+    #[error("operation `{op}` has lead {field} {value}; it must be {range}")]
+    InvalidLead {
+        /// The operation.
+        op: OperationId,
+        /// `radius_mm`, `sweep_deg` or `overcut_mm`.
+        field: &'static str,
+        /// The value set.
+        value: f64,
+        /// The allowed range, as the user reads it.
+        range: &'static str,
+    },
     /// A raster Pocket's angle is not a number of degrees in [0, 180).
     /// Validation reports it at `strategy.raster.angle_deg`; the generator
     /// refuses it too rather than guess what was meant.
