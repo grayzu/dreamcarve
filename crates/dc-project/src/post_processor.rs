@@ -670,6 +670,13 @@ const SOURCES: [Source; 8] = [
     ),
 ];
 
+/// [`SOURCES`] parsed, once per process. The one exception to "no global
+/// state in `dc-*`" (`docs/rust-guidelines.md`): a cache of data compiled
+/// into the binary, written once and read-only after. It is not state a
+/// caller can change, and every call sees the same value, so results stay
+/// pure functions of their inputs. It lets [`bundled_definitions`] hand
+/// out `&'static` definitions without parsing six files on every project
+/// load (#71).
 static BUNDLED: OnceLock<Vec<BundledDefinition>> = OnceLock::new();
 
 /// One version of a bundled definition: `definitions/<id>/v<version>.json`.

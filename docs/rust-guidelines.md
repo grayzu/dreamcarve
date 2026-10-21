@@ -64,6 +64,10 @@ nothing else.
   `eprintln!`, or logging macros in `dc-*`.
 - Nothing GUI-specific (egui, wgpu, winit types) appears in a `dc-*` crate.
   The GUI adapts engine types at its own edge.
+- `dc-geometry`'s API uses its own types. The one exception is
+  `flatten(&kurbo::BezPath, …)`, the importers' curve form: SVG and DXF
+  curves are kurbo paths until they are flattened. `kurbo` is a workspace
+  dependency, so both sides name one version (#71).
 
 ## Errors and warnings
 
@@ -160,7 +164,10 @@ nothing else.
   return owned results. No `&mut` to a caller's data in the engine; callers
   decide what to replace.
 - No `Rc<RefCell<_>>`, no `static mut`, no global state in `dc-*`. State
-  travels as parameters.
+  travels as parameters. The one exception is a `OnceLock` cache of data
+  compiled into the binary, set once and read-only after, which no caller
+  can change: `dc-project`'s parsed bundled post-processor definitions
+  (#71).
 - No `async` and no runtime in `dc-*`. The GUI runs the synchronous engine on
   a worker thread and passes results back over a channel.
 
