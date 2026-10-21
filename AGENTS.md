@@ -78,7 +78,8 @@ DreamCarve is Apache-2.0. Apache-2.0 §4 sets these obligations for derived code
 Cargo workspace. Library crates are prefixed `dc-`; the CLI binary is
 `dreamcarve`. `crates/dc-geometry` (primitives, offsets), `dc-project` (data
 model, `.dcv` serialization), `dc-cam` (toolpath generators), `dc-gcode`
-(post-processors), `dc-import` (SVG, DXF). `tools/` holds dev-only tools,
+(post-processors), `dc-import` (SVG, DXF), `dc-library` (tool library).
+`tools/` holds dev-only tools,
 `tests/golden/` holds PureCutCNC outputs that `cargo test` compares against.
 The design spec of each phase is the authority on where new code goes.
 

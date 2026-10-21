@@ -23,5 +23,5 @@ pub mod library;
 pub use error::LibraryError;
 pub use library::{
     AddOutcome, LIBRARY_VERSION, Library, LibraryTool, LibraryToolId, add, find, load, remove,
-    save, validate_tool,
+    replace, save, validate_tool,
 };

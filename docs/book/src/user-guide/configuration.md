@@ -1,8 +1,8 @@
 # Configuration
 
 DreamCarve keeps a small amount of per-user configuration outside your
-projects: defaults for new projects, and (from the tool library feature on)
-your tool library. A project file never depends on it: everything a
+projects: defaults for new projects, and your
+[tool library](tool-library.md). A project file never depends on it: everything a
 project exports with is in the `.dcv`, so a project exports the same on
 any machine.
 
@@ -28,8 +28,10 @@ settings:
 
 These come from the environment (`HOME`, `XDG_CONFIG_HOME`, `APPDATA`); if
 the one your platform needs is not set, commands that need the directory
-stop with an error naming it. DreamCarve does not create the directory or
-the files; make them when you want to set something.
+stop with an error naming it. DreamCarve never creates `config.toml`; make
+it when you want to set something. The first `dreamcarve tools` command
+that changes the tool library creates `tools.json`, and the directory if
+it is missing.
 
 To use another directory, set the environment variable
 `DREAMCARVE_CONFIG_DIR` to it. Everything, the config file and the tool

@@ -104,7 +104,7 @@ pub struct LibraryTool {
     pub tool: Tool,
 }
 
-/// What [`add`] did.
+/// What [`add`] or [`replace`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddOutcome {
     /// The tool was added under this id. Its name may have gained a
@@ -113,21 +113,64 @@ pub enum AddOutcome {
         /// The new tool's id.
         id: LibraryToolId,
     },
-    /// A tool with the same fields (ignoring ids) is already in the
-    /// library; nothing changed.
+    /// A tool with the same fields (ignoring ids, and a ` (n)` suffix
+    /// [`add`] gave its name) is already in the library; nothing changed.
     AlreadyPresent {
         /// The id of the existing tool.
+        id: LibraryToolId,
+    },
+    /// [`replace`] overwrote the tool with the same source, keeping its id.
+    Replaced {
+        /// The id of the overwritten tool.
         id: LibraryToolId,
     },
 }
 
 /// Parses library bytes: JSON, `version` read and checked against
 /// [`LIBRARY_VERSION`], then deserialized strictly (unknown fields and
-/// missing fields both fail), then every tool validated ([`validate_tool`])
-/// and ids checked for duplicates.
+/// missing fields both fail), then ids checked for duplicates and every
+/// tool validated ([`validate_tool`]). Each tool's own `id` is set to its
+/// library id.
 pub fn load(bytes: &[u8]) -> Result<Library, LibraryError> {
-    let _ = bytes;
-    unimplemented!("slice 20")
+    let root: Value = serde_json::from_slice(bytes).map_err(|e| LibraryError::Json {
+        line: e.line(),
+        column: e.column(),
+        message: e.to_string(),
+    })?;
+    let obj = root.as_object().ok_or(LibraryError::NotAnObject)?;
+    let value = obj.get("version").ok_or(LibraryError::MissingVersion)?;
+    let version = value
+        .as_u64()
+        .and_then(|v| u32::try_from(v).ok())
+        .filter(|&v| v >= 1)
+        .ok_or_else(|| LibraryError::InvalidVersion {
+            found: value.to_string(),
+        })?;
+    if version > LIBRARY_VERSION {
+        return Err(LibraryError::NewerVersion {
+            found: version,
+            supported: LIBRARY_VERSION,
+        });
+    }
+    let mut lib: Library = serde_path_to_error::deserialize(&root).map_err(|e| {
+        let path = e.path().to_string();
+        LibraryError::Schema {
+            path: if path == "." { String::new() } else { path },
+            message: e.inner().to_string(),
+        }
+    })?;
+    for (k, entry) in lib.tools.iter().enumerate() {
+        if lib.tools.iter().take(k).any(|other| other.id == entry.id) {
+            return Err(LibraryError::DuplicateId {
+                id: entry.id.clone(),
+            });
+        }
+    }
+    for entry in &mut lib.tools {
+        entry.tool.id = ToolId::new(entry.id.as_str());
+        validate_tool(&entry.id, &entry.tool)?;
+    }
+    Ok(lib)
 }
 
 /// Serializes the library as its file text: pretty JSON, keys in
@@ -136,45 +179,269 @@ pub fn load(bytes: &[u8]) -> Result<Library, LibraryError> {
 /// Fails rather than writing a NaN or infinity, which serde_json would
 /// silently turn into `null`.
 pub fn save(lib: &Library) -> Result<String, LibraryError> {
-    let _ = lib;
-    unimplemented!("slice 20")
+    for entry in &lib.tools {
+        if let Some(field) = non_finite_field(&entry.tool) {
+            return Err(LibraryError::NonFinite {
+                id: entry.id.clone(),
+                name: entry.tool.name.clone(),
+                field: field.into(),
+            });
+        }
+    }
+    let mut text = serde_json::to_string_pretty(lib).map_err(|e| LibraryError::Serialize {
+        message: e.to_string(),
+    })?;
+    text.push('\n');
+    Ok(text)
+}
+
+/// The first of `tool`'s numbers that is NaN or infinite, by field name.
+fn non_finite_field(tool: &Tool) -> Option<&'static str> {
+    let angle = match tool.cutter {
+        ToolKind::VBit { included_angle_deg } => Some(included_angle_deg),
+        _ => None,
+    };
+    [
+        ("diameter_mm", Some(tool.diameter_mm)),
+        ("cutter.v_bit.included_angle_deg", angle),
+        ("feed_mm_min", tool.feed_mm_min),
+        ("plunge_mm_min", tool.plunge_mm_min),
+        ("step_down_mm", tool.step_down_mm),
+        ("step_over_fraction", tool.step_over_fraction),
+    ]
+    .into_iter()
+    .find_map(|(field, value)| value.filter(|v| !v.is_finite()).map(|_| field))
 }
 
 /// Checks the validation rules (module docs) on `tool`, which would be
-/// stored under `id`; the error names both.
+/// stored under `id`; the error names both and the field.
 pub fn validate_tool(id: &LibraryToolId, tool: &Tool) -> Result<(), LibraryError> {
-    let _ = (id, tool);
-    unimplemented!("slice 20")
+    let invalid = |field: &str, message: String| LibraryError::InvalidTool {
+        id: id.clone(),
+        name: tool.name.clone(),
+        field: field.into(),
+        message,
+    };
+    if let Some(field) = non_finite_field(tool) {
+        return Err(LibraryError::NonFinite {
+            id: id.clone(),
+            name: tool.name.clone(),
+            field: field.into(),
+        });
+    }
+    if tool.name.trim().is_empty() {
+        return Err(invalid("name", "must not be empty".into()));
+    }
+    // Upstream: `diameter > 0`.
+    if tool.diameter_mm <= 0.0 {
+        return Err(invalid(
+            "diameter_mm",
+            format!("must be greater than 0, got {}", tool.diameter_mm),
+        ));
+    }
+    // Upstream: `flutes >= 1`.
+    if tool.flutes == 0 {
+        return Err(invalid("flutes", "must be 1 or more, got 0".into()));
+    }
+    // Upstream: `vBitAngle > 0 && vBitAngle < 180`.
+    if let ToolKind::VBit { included_angle_deg } = tool.cutter
+        && !(included_angle_deg > 0.0 && included_angle_deg < 180.0)
+    {
+        return Err(invalid(
+            "cutter.v_bit.included_angle_deg",
+            format!("must be between 0 and 180 (exclusive), got {included_angle_deg}"),
+        ));
+    }
+    // Upstream: `defaultStepover > 0 && defaultStepover <= 1`.
+    if let Some(fraction) = tool.step_over_fraction
+        && !(fraction > 0.0 && fraction <= 1.0)
+    {
+        return Err(invalid(
+            "step_over_fraction",
+            format!("must be greater than 0 and at most 1, got {fraction}"),
+        ));
+    }
+    // Upstream requires these positive; here they may be unset, as in a
+    // project, but a set value must be positive.
+    for (field, value) in [
+        ("feed_mm_min", tool.feed_mm_min),
+        ("plunge_mm_min", tool.plunge_mm_min),
+        ("step_down_mm", tool.step_down_mm),
+    ] {
+        if let Some(value) = value
+            && value <= 0.0
+        {
+            return Err(invalid(
+                field,
+                format!("must be greater than 0, got {value}"),
+            ));
+        }
+    }
+    if tool.rpm == Some(0) {
+        return Err(invalid("rpm", "must be greater than 0, got 0".into()));
+    }
+    if tool.number == Some(0) {
+        return Err(invalid("number", "must be 1 or more, got 0".into()));
+    }
+    Ok(())
 }
 
-/// Adds `tool` to the library under the next free `lt<n>` id, with
-/// `source` saying where it came from. The tool's own `id` is ignored.
-/// When a tool with the same fields (ids aside) is already there, nothing
-/// changes and the outcome names it. When a different tool already has
-/// the same name, the new one is stored as `<name> (2)` (then ` (3)`, …),
-/// so [`find`] by name stays unambiguous. A tool that fails
-/// [`validate_tool`] is an error and is not added.
+/// The prefix of library tool ids.
+const ID_PREFIX: &str = "lt";
+
+/// The id after the highest `lt<n>` in the library: `lt1` for an empty
+/// one. Gaps left by [`remove`] are not refilled.
+fn next_id(lib: &Library) -> LibraryToolId {
+    let highest = lib
+        .tools
+        .iter()
+        .filter_map(|t| t.id.as_str().strip_prefix(ID_PREFIX)?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0);
+    LibraryToolId::new(format!("{ID_PREFIX}{}", highest.saturating_add(1)))
+}
+
+/// Whether `stored`, a name in the library, is `name` or `name` with the
+/// ` (n)` suffix [`add`] gives a name already taken.
+fn is_name_or_suffixed(stored: &str, name: &str) -> bool {
+    stored == name
+        || stored
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix(" ("))
+            .and_then(|rest| rest.strip_suffix(')'))
+            .is_some_and(|n| n.parse::<u32>().is_ok_and(|n| n >= 2))
+}
+
+/// Whether `existing` is `tool`: equal in every field but the id, and in
+/// the name up to a ` (n)` suffix.
+fn same_tool(existing: &Tool, tool: &Tool) -> bool {
+    is_name_or_suffixed(&existing.name, &tool.name)
+        && Tool {
+            id: existing.id.clone(),
+            name: existing.name.clone(),
+            ..tool.clone()
+        } == *existing
+}
+
+/// `name`, or the first `name (n)` from 2 up that no tool other than
+/// `except` has.
+fn unique_name(lib: &Library, name: &str, except: Option<&LibraryToolId>) -> String {
+    let taken = |candidate: &str| {
+        lib.tools
+            .iter()
+            .any(|t| Some(&t.id) != except && t.tool.name == candidate)
+    };
+    if !taken(name) {
+        return name.to_owned();
+    }
+    (2_u32..)
+        .map(|n| format!("{name} ({n})"))
+        .find(|candidate| !taken(candidate))
+        .unwrap_or_else(|| name.to_owned())
+}
+
+/// Adds `tool` to the library under the next `lt<n>` id, with `source`
+/// saying where it came from. The tool's own `id` is ignored. When the
+/// same tool (ids aside, and up to a ` (n)` name suffix) is already
+/// there, whatever its source, nothing changes and the outcome names it.
+/// When a different tool already has the same name, the new one is stored
+/// as `<name> (2)` (then ` (3)`, …), so [`find`] by name stays
+/// unambiguous. A tool that fails [`validate_tool`] is an error and is
+/// not added.
 pub fn add(
     lib: &mut Library,
     tool: Tool,
     source: Option<String>,
 ) -> Result<AddOutcome, LibraryError> {
-    let _ = (lib, tool, source);
-    unimplemented!("slice 20")
+    let id = next_id(lib);
+    validate_tool(&id, &tool)?;
+    if let Some(existing) = lib.tools.iter().find(|t| same_tool(&t.tool, &tool)) {
+        return Ok(AddOutcome::AlreadyPresent {
+            id: existing.id.clone(),
+        });
+    }
+    let name = unique_name(lib, &tool.name, None);
+    lib.tools.push(LibraryTool {
+        id: id.clone(),
+        source,
+        tool: Tool {
+            id: ToolId::new(id.as_str()),
+            name,
+            ..tool
+        },
+    });
+    Ok(AddOutcome::Added { id })
+}
+
+/// [`add`], except that a tool whose `source` is set and equal to that of
+/// a library tool overwrites that tool in place, keeping its id, instead
+/// of being added beside it (`tools import --replace`). The same tool is
+/// still [`AddOutcome::AlreadyPresent`].
+pub fn replace(
+    lib: &mut Library,
+    tool: Tool,
+    source: Option<String>,
+) -> Result<AddOutcome, LibraryError> {
+    let index = source
+        .as_ref()
+        .and_then(|s| lib.tools.iter().position(|t| t.source.as_ref() == Some(s)));
+    let Some(existing) = index.and_then(|index| lib.tools.get(index)) else {
+        return add(lib, tool, source);
+    };
+    let id = existing.id.clone();
+    validate_tool(&id, &tool)?;
+    if same_tool(&existing.tool, &tool) {
+        return Ok(AddOutcome::AlreadyPresent { id });
+    }
+    let name = unique_name(lib, &tool.name, Some(&id));
+    if let Some(slot) = index.and_then(|index| lib.tools.get_mut(index)) {
+        slot.tool = Tool {
+            id: ToolId::new(id.as_str()),
+            name,
+            ..tool
+        };
+    }
+    Ok(AddOutcome::Replaced { id })
 }
 
 /// The tool whose id is `key`, else the one tool whose name is `key`. A
 /// name shared by several tools is [`LibraryError::Ambiguous`], listing
 /// them; no match is [`LibraryError::NotFound`].
 pub fn find<'a>(lib: &'a Library, key: &str) -> Result<&'a LibraryTool, LibraryError> {
-    let _ = (lib, key);
-    unimplemented!("slice 20")
+    let index = position(lib, key)?;
+    lib.tools.get(index).ok_or_else(|| LibraryError::NotFound {
+        key: key.to_owned(),
+    })
+}
+
+/// The index of the tool [`find`] returns.
+fn position(lib: &Library, key: &str) -> Result<usize, LibraryError> {
+    if let Some(index) = lib.tools.iter().position(|t| t.id.as_str() == key) {
+        return Ok(index);
+    }
+    let named: Vec<&LibraryTool> = lib.tools.iter().filter(|t| t.tool.name == key).collect();
+    match named.as_slice() {
+        [] => Err(LibraryError::NotFound {
+            key: key.to_owned(),
+        }),
+        [only] => lib
+            .tools
+            .iter()
+            .position(|t| t.id == only.id)
+            .ok_or_else(|| LibraryError::NotFound {
+                key: key.to_owned(),
+            }),
+        _ => Err(LibraryError::Ambiguous {
+            key: key.to_owned(),
+            matches: named.iter().map(|t| format!("`{}`", t.id)).collect(),
+        }),
+    }
 }
 
 /// Removes and returns the tool [`find`] would return for `key`.
 pub fn remove(lib: &mut Library, key: &str) -> Result<LibraryTool, LibraryError> {
-    let _ = (lib, key);
-    unimplemented!("slice 20")
+    let index = position(lib, key)?;
+    Ok(lib.tools.remove(index))
 }
 
 #[cfg(test)]
@@ -235,7 +502,10 @@ mod tests {
     fn round_trip_is_byte_identical() {
         let lib = sample_library();
         let text = save(&lib).unwrap();
-        assert!(text.starts_with("{\n  \"version\": 1,\n  \"tools\": [\n"), "{text}");
+        assert!(
+            text.starts_with("{\n  \"version\": 1,\n  \"tools\": [\n"),
+            "{text}"
+        );
         assert!(text.ends_with("}\n"), "{text}");
         assert!(text.contains("\"source\": null"), "{text}");
         assert!(text.contains("\"step_down_mm\": null"), "{text}");
@@ -295,8 +565,19 @@ mod tests {
                 id: LibraryToolId::new("lt1")
             }
         );
-        // Ids are never reused: after removing lt5 the next is lt6.
-        remove(&mut lib, "lt5").unwrap();
+        // A suffixed copy is the same tool too: re-adding the faster tool
+        // under its original name is already present as lt4.
+        let mut faster_again = tool_6_35_upcut();
+        faster_again.feed_mm_min = Some(1200.0);
+        assert_eq!(
+            add(&mut lib, faster_again, None).unwrap(),
+            AddOutcome::AlreadyPresent {
+                id: LibraryToolId::new("lt4")
+            }
+        );
+        // New ids follow the highest one, so a gap is never refilled:
+        // after removing lt2 the next is lt6.
+        remove(&mut lib, "lt2").unwrap();
         let mut other = ball_bare();
         other.name = "Other".into();
         assert_eq!(
@@ -305,7 +586,11 @@ mod tests {
                 id: LibraryToolId::new("lt6")
             }
         );
-        assert_eq!(find(&lib, "lt6").unwrap().tool.name, "Other", "unique: no suffix");
+        assert_eq!(
+            find(&lib, "lt6").unwrap().tool.name,
+            "Other",
+            "unique: no suffix"
+        );
     }
 
     /// An id match wins over a name match, a unique name finds its tool,
@@ -367,12 +652,20 @@ mod tests {
     /// the tool. The boundary values that pass upstream pass here.
     #[test]
     fn validation_rules_from_upstream() {
-        let cases: Vec<(&str, Box<dyn Fn(&mut Tool)>)> = vec![
+        /// One edit that breaks one rule.
+        type Edit = Box<dyn Fn(&mut Tool)>;
+        let cases: Vec<(&str, Edit)> = vec![
             ("diameter_mm", Box::new(|t| t.diameter_mm = 0.0)),
             ("diameter_mm", Box::new(|t| t.diameter_mm = -1.0)),
             ("flutes", Box::new(|t| t.flutes = 0)),
-            ("step_over_fraction", Box::new(|t| t.step_over_fraction = Some(0.0))),
-            ("step_over_fraction", Box::new(|t| t.step_over_fraction = Some(1.5))),
+            (
+                "step_over_fraction",
+                Box::new(|t| t.step_over_fraction = Some(0.0)),
+            ),
+            (
+                "step_over_fraction",
+                Box::new(|t| t.step_over_fraction = Some(1.5)),
+            ),
             (
                 "cutter.v_bit.included_angle_deg",
                 Box::new(|t| {
@@ -403,11 +696,13 @@ mod tests {
             let mut bad = tool_6_35_upcut();
             bad.name = "Bad".into();
             edit(&mut bad);
+            // The name the error gives: the edited one in the `name` case.
+            let bad_name = bad.name.clone();
             // `add` refuses it…
             let err = add(&mut lib, bad.clone(), None).unwrap_err();
             assert!(
                 matches!(&err, LibraryError::InvalidTool { id, name, field: f, .. }
-                    if id.as_str() == "lt4" && name == "Bad" && f == field),
+                    if id.as_str() == "lt4" && *name == bad_name && f == field),
                 "add with bad {field}: {err:?}"
             );
             assert_eq!(lib.tools.len(), 3, "nothing added for bad {field}");
@@ -421,12 +716,14 @@ mod tests {
             let err = load(text.as_bytes()).unwrap_err();
             assert!(
                 matches!(&err, LibraryError::InvalidTool { id, name, field: f, .. }
-                    if id.as_str() == "lt4" && name == "Bad" && f == field),
+                    if id.as_str() == "lt4" && *name == bad_name && f == field),
                 "load with bad {field}: {err:?}"
             );
             let message = err.to_string();
             assert!(
-                message.contains("`Bad`") && message.contains("`lt4`") && message.contains(field),
+                message.contains(&format!("`{bad_name}`"))
+                    && message.contains("`lt4`")
+                    && message.contains(field),
                 "{message}"
             );
         }

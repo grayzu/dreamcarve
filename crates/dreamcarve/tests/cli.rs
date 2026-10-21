@@ -2455,7 +2455,10 @@ fn config_path_prints_locations() {
     write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
     // `tools import` creates the library file on first write.
     import_sample_library(&dir);
-    assert!(config.join("tools.json").exists(), "the import created the library");
+    assert!(
+        config.join("tools.json").exists(),
+        "the import created the library"
+    );
     let out = run(&dir, &["config", "path"]);
     assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
     let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();

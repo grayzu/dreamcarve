@@ -39,7 +39,7 @@ the GUI both call, so **pure core, thin shell**.
 Dependency direction is one way:
 
 ```
-dc-geometry → dc-project → { dc-cam, dc-import } → dreamcarve (CLI, later GUI)
+dc-geometry → dc-project → { dc-cam, dc-import, dc-library } → dreamcarve (CLI, later GUI)
 dc-project → dc-cam → dc-gcode → dreamcarve
 ```
 
