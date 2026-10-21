@@ -30,7 +30,7 @@ use crate::passes::pass_z_mm;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::Warning;
 use dc_geometry::{EPS_MM, Point, Point3, as_circle};
 use dc_project::{DrillCycle, DrillOp, MachiningOrder, PeckRetract, Project, Tool};
 
@@ -92,14 +92,14 @@ pub struct DrillToolpath {
 /// Every closed profile of every target instance, placed by its
 /// transform, whose outline is a circle within the project's flatten
 /// tolerance is a hole; anything else warns
-/// [`WarningCode::DrillTargetNotCircle`] and is skipped, and a tool wider
-/// than a hole warns [`WarningCode::DrillToolWiderThanHole`]. Each hole is
+/// [`Warning::DrillTargetNotCircle`] and is skipped, and a tool wider
+/// than a hole warns [`Warning::DrillToolWiderThanHole`]. Each hole is
 /// drilled from the stock top to `depth_mm` (S1 with the operation's
 /// through-cut allowance):
 ///
 /// - the tool arrives at safe Z and rapids down to the retract plane
 ///   `min(safe Z, top + retract_mm)` (a negative `retract_mm` is raised to
-///   the top with [`WarningCode::DrillRetractBelowStockTop`]);
+///   the top with [`Warning::DrillRetractBelowStockTop`]);
 /// - it plunges at the tool's plunge rate, in one plunge for a simple
 ///   cycle or in pecks of the peck depth (the operation's, else the tool's
 ///   step-down), waiting `dwell_s` at the bottom of every plunge as a
@@ -119,7 +119,7 @@ pub struct DrillToolpath {
 /// Holes are visited by [`crate::sequence`]: nearest neighbour from the
 /// first hole in drawing order, ties by drawing order, linked at safe Z.
 /// A peck that reaches the bottom from the retract plane drills the hole
-/// in one plunge, with [`WarningCode::DrillPeckDeeperThanHole`].
+/// in one plunge, with [`Warning::DrillPeckDeeperThanHole`].
 ///
 /// Fails without a toolpath when the plunge rate, the stock thickness, the
 /// depth, or a peck's step-down is missing; when the depth passes the
@@ -192,12 +192,11 @@ pub fn generate_drill(
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let mut warnings = Vec::new();
     if op.retract_mm < 0.0 {
-        warnings.push(
-            Warning::new(WarningCode::DrillRetractBelowStockTop)
-                .with("op", &op.id)
-                .with("requested_mm", op.retract_mm)
-                .with("used_mm", 0.0),
-        );
+        warnings.push(Warning::DrillRetractBelowStockTop {
+            op: op.id.clone(),
+            requested_mm: op.retract_mm,
+            used_mm: 0.0,
+        });
     }
     let retract_z_mm = (top_z_mm + op.retract_mm.max(0.0)).min(safe_z_mm);
     // Plunge levels, shallowest first; a simple cycle is one level. Pecks
@@ -222,12 +221,11 @@ pub fn generate_drill(
     if let Some(peck_mm) = cycle.peck_mm
         && levels.len() == 1
     {
-        warnings.push(
-            Warning::new(WarningCode::DrillPeckDeeperThanHole)
-                .with("op", &op.id)
-                .with("peck_mm", peck_mm)
-                .with("depth_mm", depth_mm),
-        );
+        warnings.push(Warning::DrillPeckDeeperThanHole {
+            op: op.id.clone(),
+            peck_mm,
+            depth_mm,
+        });
     }
     let dwell_s = (op.dwell_s > 0.0).then_some(op.dwell_s);
 
@@ -414,13 +412,6 @@ fn resolve_holes(
                 instance_name: instance.name.clone(),
                 profile,
             };
-            let shape_warning = |code| {
-                Warning::new(code)
-                    .with("op", &op.id)
-                    .with("instance", &shape.instance)
-                    .with("instance_name", &shape.instance_name)
-                    .with("profile", shape.profile)
-            };
             let circle = if polyline.is_closed() {
                 let placed = instance
                     .transform
@@ -434,16 +425,20 @@ fn resolve_holes(
                 None
             };
             let Some((centre, radius_mm)) = circle else {
-                warnings.push(shape_warning(WarningCode::DrillTargetNotCircle));
+                warnings.push(Warning::DrillTargetNotCircle {
+                    op: op.id.clone(),
+                    shape,
+                });
                 continue;
             };
             let hole_mm = 2.0 * radius_mm;
             if tool_diameter_mm > hole_mm + EPS_MM {
-                warnings.push(
-                    shape_warning(WarningCode::DrillToolWiderThanHole)
-                        .with("hole_mm", hole_mm)
-                        .with("tool_mm", tool_diameter_mm),
-                );
+                warnings.push(Warning::DrillToolWiderThanHole {
+                    op: op.id.clone(),
+                    shape: shape.clone(),
+                    hole_mm,
+                    tool_mm: tool_diameter_mm,
+                });
             }
             holes.push((shape, centre));
         }
@@ -648,6 +643,16 @@ mod tests {
 
     fn codes(warnings: &[Warning]) -> Vec<WarningCode> {
         warnings.iter().map(|w| w.code()).collect()
+    }
+
+    /// The instance and profile a drill shape warning names.
+    fn shape_of(warning: &Warning) -> (&str, usize) {
+        let (Warning::DrillTargetNotCircle { shape, .. }
+        | Warning::DrillToolWiderThanHole { shape, .. }) = warning
+        else {
+            panic!("{warning:?}");
+        };
+        (shape.instance.as_str(), shape.profile)
     }
 
     /// Port of `camOperationSmoke.test.ts` "drilling simple: single
@@ -930,7 +935,7 @@ mod tests {
         let (drilled, warnings) = generate(&p, &op);
         assert_eq!(plunges(&drilled.toolpath).len(), 1);
         assert_eq!(codes(&warnings), [WarningCode::DrillPeckDeeperThanHole]);
-        assert_eq!(warnings[0].param("op"), Some("o1"));
+        assert_eq!(warnings[0].op().map(OperationId::as_str), Some("o1"));
     }
 
     /// Port of `toolpaths.test.ts` `testDrillingOrdersByNearestNeighbor`:
@@ -997,9 +1002,8 @@ mod tests {
                 WarningCode::DrillTargetNotCircle
             ]
         );
-        assert_eq!(warnings[0].param("instance"), Some("r"));
-        assert_eq!(warnings[0].param("profile"), Some("0"));
-        assert_eq!(warnings[1].param("instance"), Some("open"));
+        assert_eq!(shape_of(&warnings[0]), ("r", 0));
+        assert_eq!(shape_of(&warnings[1]).0, "open");
     }
 
     /// A circle drawn as four quarter arcs (a DXF or upstream four-arc
@@ -1051,7 +1055,7 @@ mod tests {
         let (drilled, warnings) = generate(&p, &drill_op(&p));
         assert_eq!(drilled.holes.len(), 2);
         assert_eq!(codes(&warnings), [WarningCode::DrillTargetNotCircle]);
-        assert_eq!(warnings[0].param("instance"), Some("slot"));
+        assert_eq!(shape_of(&warnings[0]).0, "slot");
     }
 
     /// A tool wider than the hole still drills it, with a warning giving
@@ -1063,10 +1067,15 @@ mod tests {
         let (drilled, warnings) = generate(&p, &drill_op(&p));
         assert_eq!(plunges(&drilled.toolpath).len(), 1);
         assert_eq!(codes(&warnings), [WarningCode::DrillToolWiderThanHole]);
-        let number = |key: &str| -> f64 { warnings[0].param(key).unwrap().parse().unwrap() };
-        assert_approx_eq!(number("hole_mm"), 5.0, 1e-6);
-        assert_approx_eq!(number("tool_mm"), 6.35, 1e-9);
-        assert_eq!(warnings[0].param("instance"), Some("c1"));
+        let Warning::DrillToolWiderThanHole {
+            hole_mm, tool_mm, ..
+        } = warnings[0]
+        else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_approx_eq!(hole_mm, 5.0, 1e-6);
+        assert_approx_eq!(tool_mm, 6.35, 1e-9);
+        assert_eq!(shape_of(&warnings[0]).0, "c1");
     }
 
     /// Port of `drillingRetract.test.ts` "retract height above the
@@ -1107,9 +1116,16 @@ mod tests {
         let (drilled, warnings) = generate(&p, &op);
         assert_approx_eq!(drilled.holes[0].retract_z_mm, THICKNESS_MM, TOL);
         assert_eq!(codes(&warnings), [WarningCode::DrillRetractBelowStockTop]);
-        let number = |key: &str| -> f64 { warnings[0].param(key).unwrap().parse().unwrap() };
-        assert_approx_eq!(number("requested_mm"), -2.0, TOL);
-        assert_approx_eq!(number("used_mm"), 0.0, TOL);
+        let Warning::DrillRetractBelowStockTop {
+            requested_mm,
+            used_mm,
+            ..
+        } = warnings[0]
+        else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_approx_eq!(requested_mm, -2.0, TOL);
+        assert_approx_eq!(used_mm, 0.0, TOL);
         assert_retract_safe(&drilled.toolpath, "negative retract");
         let below_surface = drilled
             .toolpath
