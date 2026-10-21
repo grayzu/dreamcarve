@@ -5,9 +5,10 @@
 //! "User config (CLI only)") and `dreamcarve config path`.
 //!
 //! `<config dir>/config.toml` holds the defaults a user sets once. Today
-//! that is `[export] tool_change_mode`, which `init` and `export --post`
-//! write into a new post-processor reference (functional spec, capability
-//! 19). Nothing else reads the file: a plain `export` works from the
+//! that is `[export] tool_change_mode`, which `init` and `export --post
+//! --reset-settings` write into a new post-processor reference (functional
+//! spec, capability 19), and a plain `export --post` only where it resets
+//! the project's mode (capability 27, #277). Nothing else reads the file: a plain `export` works from the
 //! project alone, so a project exports the same on every machine.
 //! `<config dir>/tools.json` is the tool library (slice 20). `<config dir>`
 //! is `DREAMCARVE_CONFIG_DIR` when that is set; otherwise the platform's
