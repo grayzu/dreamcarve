@@ -7,10 +7,11 @@
 //   src/engine/toolpaths/pocketPatterns.ts
 
 //! Pocket toolpaths (`docs/specs/phase-2/design.md`, "Algorithms → Pocket",
-//! steps 1–2, 4–8, 11–12): clear the inside of closed shapes with
+//! steps 1–2, 4–9, 11–12): clear the inside of closed shapes with
 //! concentric rings or raster lines, leaving nested shapes as islands. The
-//! ring tree is in [`rings`], the raster lines in [`raster`]; pocket
-//! allowance and rest machining land in later slices.
+//! ring tree is in [`rings`], the raster lines in [`raster`], and each
+//! pass's ramp or helix in [`crate::entry`]; pocket allowance and rest
+//! machining land in later slices.
 //!
 //! Re-derived for Y-up (ADR-0001) rather than copied: PureCutCNC's "conventional
 //! is a no-op on Clipper output" holds because its positive-area outers are
@@ -23,6 +24,7 @@ pub mod raster;
 pub mod rings;
 
 use crate::block::CutBlock;
+use crate::entry::{self, CutSide, EntryDomain, EntryPlan, EntryTool, EntryWarnings};
 use crate::error::{CamError, ShapeRef};
 use crate::footprint::footprint_at;
 use crate::passes::pass_z_mm;
@@ -32,7 +34,7 @@ use crate::profile::{
 use crate::sequence::{SequenceInput, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::lap_cuts;
-use crate::toolpath::Toolpath;
+use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryWarning, Point, Polyline, Region, area_mm2, difference, distance_mm,
@@ -108,12 +110,20 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// the raster angle is outside [0, 180) ([`CamError::InvalidRasterAngle`]),
 /// when targets cross, when an id does not resolve, when the cutter is not
 /// a flat end mill, when the cutter would leave the stock
-/// ([`CamError::OffStock`]) or its footprint would leave the pocket's
-/// material (S9, [`CamError::OffMaterial`]). Not yet generated: an
-/// allowance and rest machining fail with
-/// [`CamError::NotSupportedYet`]; a ramp or helix entry plunges instead
-/// ([`WarningCode::EntryFallback`]) and corner relief is skipped
-/// ([`WarningCode::ReliefSkipped`]).
+/// ([`CamError::OffStock`]) or its footprint, descents included, would
+/// leave the pocket's material (S9, [`CamError::OffMaterial`]), and when
+/// the entry's angle or helix fraction is out of range
+/// ([`CamError::InvalidEntry`]).
+///
+/// Each ring's or line's pass starts with the operation's entry (design
+/// step 9, [`entry`]): a helix or zigzag ramp placed once per ring or line
+/// in the tool-centre region its pass cuts, from safe Z on the first pass
+/// and from the previous pass Z after; where it does not fit the entry
+/// falls back to a ramp, then a plunge ([`WarningCode::EntryFallback`],
+/// [`WarningCode::HelixDiameterReduced`]). A ring or line reached by a
+/// stay-down link skips its descent. Not yet generated: an allowance and
+/// rest machining fail with [`CamError::NotSupportedYet`]; corner relief
+/// is skipped ([`WarningCode::ReliefSkipped`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_pocket(
     project: &Project,
@@ -158,6 +168,7 @@ pub fn generate_pocket(
         });
     }
     refuse_later_slices(op)?;
+    check_entry(op)?;
     let step_down_mm =
         op.step_down_mm
             .or(tool.step_down_mm)
@@ -199,6 +210,13 @@ pub fn generate_pocket(
     let tolerance_mm = project.flatten_tolerance_mm;
 
     let mut warnings = fallback_warnings(op);
+    let entry_tool = EntryTool {
+        diameter_mm: tool.diameter_mm,
+        feed_mm_min: rates.feed_mm_min,
+        plunge_mm_min: rates.plunge_mm_min,
+        direction: op.direction,
+        side: CutSide::Internal,
+    };
     let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
@@ -223,11 +241,13 @@ pub fn generate_pocket(
         WallPass::None => WallRings::Omitted,
     };
     // Every ring and raster line in cut order: its shape, its path (a ring
-    // oriented and starting at its entry, a line from start to end), and
-    // the tool-centre area it has cleared.
-    let mut rings: Vec<(ShapeRef, Polyline, Option<Region>)> = Vec::new();
+    // oriented and starting at its entry, a line from start to end), the
+    // tool-centre area it has cleared, and its placed entry.
+    let mut rings: Vec<(ShapeRef, Polyline, Option<Region>, Option<EntryPlan>)> = Vec::new();
     let mut anchor: Option<Point> = None;
     let mut root_index = 0;
+    // Every tool-centre region, for the S9 check on descents.
+    let mut centre_regions: Vec<Region> = Vec::new();
     for region in &regions {
         // `nest` keeps every contour or reverses it, so this always finds
         // the shape.
@@ -245,6 +265,7 @@ pub fn generate_pocket(
             );
             continue;
         }
+        centre_regions.extend(tool_centre.iter().cloned());
         for root in tool_centre {
             if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
                 let settings = RasterSettings {
@@ -257,33 +278,47 @@ pub fn generate_pocket(
                 };
                 let paths = raster::region_paths(&root, root_index, &settings, &mut anchor)
                     .ok_or_else(invalid_step_over)?;
-                rings.extend(
-                    paths
-                        .into_iter()
-                        .map(|(path, cleared)| (shape.clone(), path, cleared)),
-                );
+                // Raster lines reach the tool-centre region's edge at every
+                // wall pass, so the whole root is cleared each pass.
+                let domain = (op.entry != Entry::Plunge).then(|| {
+                    EntryDomain::new(std::slice::from_ref(&root), tool.diameter_mm, tolerance_mm)
+                });
+                rings.extend(paths.into_iter().map(|(path, cleared)| {
+                    let plan = domain
+                        .as_ref()
+                        .zip(path.vertices().first())
+                        .map(|(d, v)| entry::plan(d, &op.entry, v.point(), &entry_tool));
+                    (shape.clone(), path, cleared, plan)
+                }));
                 root_index += 1;
                 continue;
             }
             let tree = RingTree::build(root, stepover_mm, tolerance_mm, MAX_RINGS)
                 .ok_or_else(invalid_step_over)?;
+            let domain = (op.entry != Entry::Plunge).then(|| {
+                EntryDomain::new(&entry_regions(&tree, wall), tool.diameter_mm, tolerance_mm)
+            });
             for ring in tree.walk(wall, &mut anchor) {
                 let Some(node) = tree.nodes.get(ring.node) else {
                     continue;
                 };
+                let plan = domain
+                    .as_ref()
+                    .map(|d| entry::plan(d, &op.entry, ring.start, &entry_tool));
                 let cleared = Some(node.region.clone());
-                rings.push((shape.clone(), ring_path(ring, op.direction), cleared));
+                rings.push((shape.clone(), ring_path(ring, op.direction), cleared, plan));
             }
         }
     }
 
     let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
+    let mut entry_warnings = EntryWarnings::default();
     for (pass, &z_mm) in pass_z.iter().enumerate() {
         let descent_from_z_mm = pass
             .checked_sub(1)
             .and_then(|k| pass_z.get(k).copied())
             .unwrap_or(safe_z_mm);
-        for (shape, path, cleared) in &rings {
+        for (shape, path, cleared, plan) in &rings {
             let Some(start) = path.vertices().first().map(|v| v.point()) else {
                 continue;
             };
@@ -296,13 +331,21 @@ pub fn generate_pocket(
             let Some(lap) = lap_cuts(path, z_mm, None, rates) else {
                 continue;
             };
+            let (descent_from, descent) = match plan {
+                Some(plan) => {
+                    let descent = plan.descend(descent_from_z_mm, z_mm);
+                    entry_warnings.record(shape, &descent);
+                    (descent.from, descent.moves)
+                }
+                None => (start, Vec::new()),
+            };
             blocks.push(CutBlock {
                 shape: shape.clone(),
                 pass,
                 z_mm,
-                descent_from: start,
+                descent_from,
                 descent_from_z_mm,
-                descent: Vec::new(),
+                descent,
                 entry: start,
                 cuts: lap.moves,
                 exit,
@@ -313,6 +356,7 @@ pub fn generate_pocket(
             });
         }
     }
+    warnings.extend(entry_warnings.into_warnings(&op.id));
     let containment = nested_pockets(&regions, &shapes);
     let input = SequenceInput {
         blocks,
@@ -335,7 +379,15 @@ pub fn generate_pocket(
             overhang,
         });
     }
-    check_in_material(op, &toolpath, radius_mm, tolerance_mm, &regions, &shapes)?;
+    check_in_material(
+        op,
+        &toolpath,
+        radius_mm,
+        tolerance_mm,
+        &regions,
+        &centre_regions,
+        &shapes,
+    )?;
     Ok((toolpath, warnings))
 }
 
@@ -359,25 +411,59 @@ fn refuse_later_slices(op: &PocketOp) -> Result<(), CamError> {
     }
 }
 
-/// Warnings for the entry and corner relief this build replaces with a
-/// plunge and nothing (slices 9 and 12). Both still give the pocket asked
-/// for, so they warn rather than fail.
+/// The angle in (0, 45] degrees and the helix fraction in (0, 1] that
+/// validation requires, checked again: an entry outside them would cut
+/// something other than what validation passed.
+fn check_entry(op: &PocketOp) -> Result<(), CamError> {
+    let (angle_deg, fraction) = match op.entry {
+        Entry::Plunge => return Ok(()),
+        Entry::Ramp { angle_deg } => (angle_deg, None),
+        Entry::Helix {
+            diameter_fraction,
+            angle_deg,
+        } => (angle_deg, Some(diameter_fraction)),
+    };
+    if !(angle_deg > 0.0 && angle_deg <= 45.0) {
+        return Err(CamError::InvalidEntry {
+            op: op.id.clone(),
+            field: "angle_deg",
+            value: angle_deg,
+            range: "more than 0 and at most 45",
+        });
+    }
+    match fraction {
+        Some(f) if !(f > 0.0 && f <= 1.0) => Err(CamError::InvalidEntry {
+            op: op.id.clone(),
+            field: "diameter_fraction",
+            value: f,
+            range: "more than 0 and at most 1",
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// The clearance regions of a ring tree's entries: the material every
+/// pass of the tree removes. That is the root tool-centre region, or with
+/// the wall pass omitted its children, so a descent from the previous pass
+/// Z never starts above the uncut band the omitted wall ring leaves.
+fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
+    let Some(root) = tree.nodes.first() else {
+        return Vec::new();
+    };
+    match wall {
+        WallRings::Omitted => root
+            .children
+            .iter()
+            .filter_map(|&c| tree.nodes.get(c).map(|n| n.region.clone()))
+            .collect(),
+        WallRings::First | WallRings::Last => vec![root.region.clone()],
+    }
+}
+
+/// Warnings for the corner relief this build does not cut yet (slice 12).
+/// It still gives the pocket asked for, so it warns rather than fails.
 fn fallback_warnings(op: &PocketOp) -> Vec<Warning> {
     let mut warnings = Vec::new();
-    let entry = match op.entry {
-        Entry::Plunge => None,
-        Entry::Ramp { .. } => Some("ramp"),
-        Entry::Helix { .. } => Some("helix"),
-    };
-    if let Some(requested) = entry {
-        warnings.push(
-            Warning::new(WarningCode::EntryFallback)
-                .with("op", &op.id)
-                .with("requested", requested)
-                .with("used", "plunge")
-                .with("reason", "not_supported_yet"),
-        );
-    }
     let relief = match op.corner_relief {
         CornerRelief::None => None,
         CornerRelief::Dogbone => Some("dogbone"),
@@ -494,60 +580,83 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
 /// S9: the tool's footprint along `toolpath` lies in the pockets'
 /// material, inside every region and outside every island. Flattening
 /// moves both outlines by up to `tolerance_mm`, so area within that band
-/// of the boundaries is allowed.
+/// of the boundaries is allowed. Ramp and helix moves are checked on their
+/// tool centres, which must stay in `centre_regions` (the tool-centre
+/// regions, where the whole tool is in the material), and the rest of the
+/// toolpath on its swept footprint.
 fn check_in_material(
     op: &PocketOp,
     toolpath: &Toolpath,
     radius_mm: f64,
     tolerance_mm: f64,
     regions: &[Region],
+    centre_regions: &[Region],
     shapes: &[(ShapeRef, Contour)],
 ) -> Result<(), CamError> {
-    let swept = footprint_at(toolpath, radius_mm, tolerance_mm);
-    if swept.is_empty() {
-        return Ok(());
-    }
-    let outside = difference(&swept, regions, tolerance_mm);
     let boundary_mm: f64 = regions
         .iter()
         .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
         .map(|c| c.polyline().length_mm())
         .sum();
     let allowed_mm2 = (tolerance_mm + EPS_MM) * boundary_mm;
-    let area = area_mm2(&outside);
-    if area <= allowed_mm2 {
+    let off_material = |swept: &[Region], probe: Option<Point>| {
+        let outside = difference(swept, regions, tolerance_mm);
+        let area = area_mm2(&outside);
+        if area <= allowed_mm2 {
+            return Ok(());
+        }
+        // Name the pocket whose outline holds the stray area, else the first.
+        let probe = probe.or_else(|| {
+            outside
+                .iter()
+                .find_map(|r| r.outer().polyline().vertices().first().map(|v| v.point()))
+        });
+        let named = regions
+            .iter()
+            .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
+            .or_else(|| regions.first())
+            .and_then(|r| shape_of(shapes, r.outer()));
+        match named {
+            Some(shape) => Err(CamError::OffMaterial {
+                op: op.id.clone(),
+                shape: shape.clone(),
+                area_mm2: area,
+            }),
+            None => Ok(()),
+        }
+    };
+    if let Some(i) = entry::first_descent_outside(toolpath, centre_regions, tolerance_mm)
+        && let (Some(from), Some(mv)) = (
+            i.checked_sub(1).and_then(|k| toolpath.moves.get(k)),
+            toolpath.moves.get(i),
+        )
+    {
+        // The one stray move's own footprint, to measure and name.
+        let stray = Toolpath {
+            moves: vec![Move::rapid(from.to), *mv],
+        };
+        let swept = footprint_at(&stray, radius_mm, tolerance_mm);
+        off_material(&swept, Some(mv.to.xy()))?;
+    }
+    let swept = footprint_at(&entry::without_descents(toolpath), radius_mm, tolerance_mm);
+    if swept.is_empty() {
         return Ok(());
     }
-    // Name the pocket whose outline holds the stray area, else the first.
-    let probe = outside
-        .iter()
-        .find_map(|r| r.outer().polyline().vertices().first().map(|v| v.point()));
-    let named = regions
-        .iter()
-        .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
-        .or_else(|| regions.first())
-        .and_then(|r| shape_of(shapes, r.outer()));
-    match named {
-        Some(shape) => Err(CamError::OffMaterial {
-            op: op.id.clone(),
-            shape: shape.clone(),
-            area_mm2: area,
-        }),
-        None => Ok(()),
-    }
+    off_material(&swept, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entry::without_descents;
     use crate::error::CamError;
     use crate::footprint::footprint;
     use crate::test_support::assert_safe;
     use crate::toolpath::{Move, MoveKind, Toolpath};
     use crate::warning::WarningCode;
     use dc_geometry::{
-        Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Rect, Region, Transform,
-        area_mm2, assert_approx_eq, difference, intersection, nest, offset,
+        Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Polyline, Rect, Region,
+        Transform, area_mm2, assert_approx_eq, difference, intersection, nest, offset,
     };
     use dc_project::test_support::sample_project;
     use dc_project::{
@@ -1390,9 +1499,9 @@ mod tests {
         assert_approx_eq!(m[first_deep].feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
     }
 
-    /// What this slice refuses or falls back on: allowance and rest are
-    /// typed errors naming the feature; a ramp entry and corner relief
-    /// generate with a warning each and a plain plunge.
+    /// What this build refuses or skips: allowance and rest are typed
+    /// errors naming the feature; corner relief generates with a warning.
+    /// A ramp entry is cut (slice 9), so it no longer warns.
     #[test]
     fn allowance_and_rest_are_not_supported_yet() {
         let p = rect_project();
@@ -1416,15 +1525,397 @@ mod tests {
         op.entry = Entry::Ramp { angle_deg: 15.0 };
         op.corner_relief = CornerRelief::Dogbone;
         let (tp, warnings) = generate(&p, &op);
-        assert_eq!(
-            codes(&warnings),
-            vec![WarningCode::EntryFallback, WarningCode::ReliefSkipped]
-        );
-        assert_eq!(warnings[0].param("requested"), Some("ramp"));
-        assert_eq!(warnings[0].param("used"), Some("plunge"));
-        assert_eq!(warnings[0].param("reason"), Some("not_supported_yet"));
-        assert_eq!(warnings[1].param("requested"), Some("dogbone"));
+        assert_eq!(codes(&warnings), vec![WarningCode::ReliefSkipped]);
+        assert_eq!(warnings[0].param("requested"), Some("dogbone"));
         assert_eq!(rings_at(&tp, PASS_Z_MM[0]).len(), 9);
+    }
+
+    fn helix_80() -> Entry {
+        Entry::Helix {
+            diameter_fraction: 0.8,
+            angle_deg: 5.0,
+        }
+    }
+
+    fn assert_in_rect(q: Point, r: Rect, what: &str) {
+        assert!(
+            q.x >= r.min.x - TOL
+                && q.x <= r.max.x + TOL
+                && q.y >= r.min.y - TOL
+                && q.y <= r.max.y + TOL,
+            "{what} {q:?} leaves {r:?}"
+        );
+    }
+
+    /// True when `mv` from `from` falls while it moves in XY: a ramp or
+    /// helix move.
+    fn sloped(from: Point3, mv: &Move) -> bool {
+        !mv.is_rapid() && mv.to.z < from.z - EPS_MM && from.xy().distance_to(mv.to.xy()) > EPS_MM
+    }
+
+    /// Every sloped move with the point it starts from.
+    fn sloped_moves(tp: &Toolpath) -> Vec<(Point3, Move)> {
+        tp.moves
+            .windows(2)
+            .filter(|w| sloped(w[0].to, &w[1]))
+            .map(|w| (w[0].to, w[1]))
+            .collect()
+    }
+
+    /// The slope of `mv` from `from`, degrees below the horizontal.
+    fn slope_deg(from: Point3, mv: &Move) -> f64 {
+        (from.z - mv.to.z)
+            .atan2(from.xy().distance_to(mv.to.xy()))
+            .to_degrees()
+    }
+
+    fn entry_warnings(warnings: &[Warning]) -> Vec<&Warning> {
+        warnings
+            .iter()
+            .filter(|w| {
+                matches!(
+                    w.code,
+                    WarningCode::EntryFallback | WarningCode::HelixDiameterReduced
+                )
+            })
+            .collect()
+    }
+
+    /// Acceptance test 27, first part: a Pocket with `entry: helix` at 80 %
+    /// and a 6.35 mm tool descends on a helix 5.08 mm across, then turns
+    /// one flat revolution at the pass Z, all inside the region. The first
+    /// pass's helix starts at safe Z; later passes start at the previous
+    /// pass Z, never in the air above the floor already cut.
+    #[test]
+    fn helix_80_percent_is_5_08_mm_for_6_35_tool() {
+        let p = rect_project();
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.entry = helix_80();
+        let (tp, warnings) = generate(&p, &op);
+        assert!(entry_warnings(&warnings).is_empty(), "{warnings:?}");
+        let m = &tp.moves;
+        let first = m
+            .windows(2)
+            .position(|w| sloped(w[0].to, &w[1]))
+            .expect("a helix")
+            + 1;
+        assert!(m[first - 1].is_rapid(), "{:?}", m[first - 1]);
+        assert_approx_eq!(m[first - 1].to.z, SAFE_Z_MM, TOL);
+        let mut end = first;
+        while end < m.len() && sloped(m[end - 1].to, &m[end]) {
+            end += 1;
+        }
+        assert_approx_eq!(m[end - 1].to.z, PASS_Z_MM[0], TOL);
+        let flat = &m[end..end + 48];
+        for mv in flat {
+            assert_approx_eq!(mv.to.z, PASS_Z_MM[0], TOL);
+            assert_approx_eq!(mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
+        }
+        assert!(
+            flat[47].to.xy().distance_to(m[end - 1].to.xy()) <= 1e-6,
+            "the flat revolution closes"
+        );
+        let n = 48.0;
+        let centre = Point::new(
+            flat.iter().map(|mv| mv.to.x).sum::<f64>() / n,
+            flat.iter().map(|mv| mv.to.y).sum::<f64>() / n,
+        );
+        for mv in m[first..end].iter().chain(flat) {
+            let diameter = 2.0 * mv.to.xy().distance_to(centre);
+            assert_approx_eq!(diameter, 5.08, 0.01);
+        }
+        let centre_area = inset(wall(), RADIUS_MM);
+        for (from, mv) in sloped_moves(&tp) {
+            if mv.to.z < PASS_Z_MM[0] - TOL {
+                assert!(
+                    from.z <= PASS_Z_MM[0] + TOL,
+                    "a second-pass descent starts above the first floor: {from:?} -> {mv:?}"
+                );
+            }
+            assert_in_rect(mv.to.xy(), centre_area, "helix point");
+        }
+        // The descents are in the tool-centre region; the rest by footprint.
+        let region = region_of(&[rect_100x50()], at_20_20());
+        let fp = footprint(&without_descents(&tp), RADIUS_MM);
+        let outside = difference(&fp, std::slice::from_ref(&region), FLAT_TOL);
+        assert!(area_mm2(&outside) <= 1e-3, "{}", area_mm2(&outside));
+    }
+
+    /// A 40 × 7 mm slot: its tool-centre region is 0.65 mm wide.
+    fn slot_project() -> Project {
+        project(
+            vec![Polyline::rect(Point::new(0.0, 0.0), 40.0, 7.0)],
+            &[("i1", at_20_20())],
+        )
+    }
+
+    /// Acceptance test 27, second part: in a slot too narrow for a helix
+    /// the entry falls back to a ramp, warns `entry_fallback` naming the
+    /// operation and shape, and ramps inside the slot's tool-centre region
+    /// at the entry's angle. The spec's "6 mm slot" is narrower than the
+    /// 6.35 mm tool, which leaves no tool-centre region at all
+    /// (`pocket_no_room`); 7 mm is the narrowest whole size the tool fits.
+    #[test]
+    fn helix_in_narrow_slot_falls_back_to_ramp() {
+        let p = slot_project();
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.entry = helix_80();
+        let (tp, warnings) = generate(&p, &op);
+        let entry = entry_warnings(&warnings);
+        assert_eq!(entry.len(), 1, "{warnings:?}");
+        let w = entry[0];
+        assert_eq!(w.code, WarningCode::EntryFallback);
+        assert_eq!(w.param("op"), Some("o1"));
+        assert_eq!(w.param("instance"), Some("i1"));
+        assert_eq!(w.param("profile"), Some("0"));
+        assert_eq!(w.param("requested"), Some("helix"));
+        assert_eq!(w.param("used"), Some("ramp"));
+        let s = sloped_moves(&tp);
+        assert!(!s.is_empty(), "a ramp is cut");
+        let centre_area = inset(
+            Rect {
+                min: Point::new(20.0, 20.0),
+                max: Point::new(60.0, 27.0),
+            },
+            RADIUS_MM,
+        );
+        for (from, mv) in s {
+            for q in [from.xy(), mv.to.xy()] {
+                assert!(
+                    q.x >= centre_area.min.x - TOL
+                        && q.x <= centre_area.max.x + TOL
+                        && q.y >= centre_area.min.y - TOL
+                        && q.y <= centre_area.max.y + TOL,
+                    "ramp point {q:?} leaves the slot's tool-centre region"
+                );
+            }
+            assert_approx_eq!(slope_deg(from, &mv), 5.0, 0.1);
+        }
+    }
+
+    /// Acceptance test 27, third part: in a hole barely wider than the
+    /// tool neither a helix nor a ramp fits; the warning says `plunge` and
+    /// every descent is straight down at the plunge rate. The spec's "2 mm
+    /// hole" is smaller than the 6.35 mm tool (`pocket_no_room`); a 7 mm
+    /// hole leaves a 0.65 mm tool-centre circle, as acceptance 26's hole.
+    #[test]
+    fn helix_in_small_hole_falls_back_to_plunge() {
+        let p = project(
+            vec![Polyline::circle(Point::new(10.0, 10.0), 3.5)],
+            &[("i1", at_20_20())],
+        );
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.entry = helix_80();
+        let (tp, warnings) = generate(&p, &op);
+        let entry = entry_warnings(&warnings);
+        assert_eq!(entry.len(), 1, "{warnings:?}");
+        assert_eq!(entry[0].code, WarningCode::EntryFallback);
+        assert_eq!(entry[0].param("requested"), Some("helix"));
+        assert_eq!(entry[0].param("used"), Some("plunge"));
+        assert!(entry[0].to_string().contains("plunge"), "{}", entry[0]);
+        assert!(sloped_moves(&tp).is_empty(), "no ramp or helix");
+        let plunges = tp
+            .moves
+            .windows(2)
+            .filter(|w| !w[1].is_rapid() && w[1].to.z < w[0].to.z - EPS_MM)
+            .count();
+        assert_eq!(plunges, PASS_Z_MM.len(), "one plunge per pass");
+    }
+
+    /// S9 with descents: on the rect with the 20 mm island, every helix
+    /// stays in the pocket's tool-centre region and off the island, and the
+    /// whole footprint stays inside the rect and out of the island.
+    #[test]
+    fn helix_entry_footprint_stays_in_region() {
+        let p = island_project();
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.entry = helix_80();
+        let (tp, warnings) = generate(&p, &op);
+        assert!(entry_warnings(&warnings).is_empty(), "{warnings:?}");
+        let s = sloped_moves(&tp);
+        assert!(!s.is_empty(), "helices are cut");
+        let island_centre = Point::new(70.0, 45.0);
+        let centre_area = inset(wall(), RADIUS_MM);
+        for (from, mv) in s {
+            for q in [from.xy(), mv.to.xy()] {
+                assert!(
+                    q.distance_to(island_centre) >= 10.0 + RADIUS_MM - FLAT_TOL,
+                    "helix point {q:?} brings the tool onto the island"
+                );
+                assert!(
+                    q.x >= centre_area.min.x - TOL
+                        && q.x <= centre_area.max.x + TOL
+                        && q.y >= centre_area.min.y - TOL
+                        && q.y <= centre_area.max.y + TOL,
+                    "helix point {q:?} brings the tool through the wall"
+                );
+            }
+        }
+        let region = region_of(
+            &[
+                rect_100x50(),
+                Polyline::circle(Point::new(50.0, 25.0), 10.0),
+            ],
+            at_20_20(),
+        );
+        let fp = footprint(&without_descents(&tp), RADIUS_MM);
+        let outside = difference(&fp, std::slice::from_ref(&region), FLAT_TOL);
+        let band_mm2 = 2.0 * FLAT_TOL * TAU * 10.0;
+        assert!(
+            area_mm2(&outside) <= band_mm2,
+            "footprint off the material: {} mm²",
+            area_mm2(&outside)
+        );
+    }
+
+    /// Capability 16: a 15° ramp descends at 15° (within 0.1°), at the
+    /// feed rate (1000 × sin 15° = 259 mm/min, under the 300 plunge, so
+    /// unscaled), at least 0.1 · D inside the tool-centre region.
+    #[test]
+    fn ramp_entry_descends_at_its_angle() {
+        let p = rect_project();
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.entry = Entry::Ramp { angle_deg: 15.0 };
+        let (tp, warnings) = generate(&p, &op);
+        assert!(entry_warnings(&warnings).is_empty(), "{warnings:?}");
+        let s = sloped_moves(&tp);
+        assert!(!s.is_empty(), "a ramp is cut");
+        let clear = inset(
+            wall(),
+            RADIUS_MM + crate::entry::boundary_safety_mm(DIAMETER_MM) - TOL,
+        );
+        for (from, mv) in s {
+            assert_approx_eq!(slope_deg(from, &mv), 15.0, 0.1);
+            assert_approx_eq!(mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
+            let q = mv.to.xy();
+            assert!(
+                q.x >= clear.min.x
+                    && q.x <= clear.max.x
+                    && q.y >= clear.min.y
+                    && q.y <= clear.max.y,
+                "ramp point {q:?} is within the boundary safety"
+            );
+        }
+    }
+
+    /// S10 on the toolpath: with a 50 mm/min plunge a 5° helix at feed
+    /// 1000 would descend at 87 mm/min, so every helix move's feed is
+    /// scaled until its vertical component is the plunge rate (the safety
+    /// assertions check the exact value).
+    #[test]
+    fn helix_feed_is_plunge_limited() {
+        let mut p = rect_project();
+        p.tools[0].plunge_mm_min = Some(50.0);
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.entry = helix_80();
+        let (tp, _) = generate(&p, &op);
+        let s = sloped_moves(&tp);
+        assert!(!s.is_empty());
+        for (from, mv) in s {
+            let f = mv.feed_mm_min.unwrap();
+            assert!(f < FEED_MM_MIN, "scaled: {f}");
+            let length = ((mv.to.x - from.x).powi(2)
+                + (mv.to.y - from.y).powi(2)
+                + (mv.to.z - from.z).powi(2))
+            .sqrt();
+            let vertical = f * (from.z - mv.to.z) / length;
+            assert!(vertical <= 50.0 + 1e-6, "{vertical} mm/min: {mv:?}");
+        }
+    }
+
+    /// Design step 9 for raster: a raster line reached from safe Z starts
+    /// with the entry too, placed at the line's start in the root's
+    /// tool-centre region, off the island.
+    #[test]
+    fn raster_lines_take_the_entry() {
+        let p = island_project();
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.strategy = ClearanceStrategy::Raster { angle_deg: 0.0 };
+        op.entry = helix_80();
+        let (tp, warnings) = generate(&p, &op);
+        assert!(entry_warnings(&warnings).is_empty(), "{warnings:?}");
+        let s = sloped_moves(&tp);
+        assert!(!s.is_empty(), "helices are cut");
+        let island_centre = Point::new(70.0, 45.0);
+        let centre_area = inset(wall(), RADIUS_MM);
+        for (_, mv) in s {
+            let q = mv.to.xy();
+            assert_in_rect(q, centre_area, "helix point");
+            assert!(
+                q.distance_to(island_centre) >= 10.0 + RADIUS_MM - FLAT_TOL,
+                "helix point {q:?} brings the tool onto the island"
+            );
+        }
+    }
+
+    /// S9 on descents: a ramp whose tool centre leaves the tool-centre
+    /// region takes the tool through the wall, and the check refuses it;
+    /// the same ramp kept inside passes.
+    #[test]
+    fn descent_through_the_wall_is_off_material() {
+        let p = rect_project();
+        let op = pocket_op(&p, CutDirection::Climb);
+        let region = region_of(&[rect_100x50()], at_20_20());
+        let centre = inset_region(&region, RADIUS_MM, FLAT_TOL);
+        let shapes = vec![(
+            ShapeRef {
+                instance: InstanceId::new("i1"),
+                instance_name: "Shape i1".into(),
+                profile: 0,
+            },
+            region.outer().clone(),
+        )];
+        let ramp_to = |x: f64| Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(50.0, 40.0, SAFE_Z_MM)),
+                Move::linear(Point3::new(50.0, 40.0, THICKNESS_MM), PLUNGE_MM_MIN),
+                Move::linear(Point3::new(x, 40.0, PASS_Z_MM[0]), FEED_MM_MIN),
+                Move::rapid(Point3::new(x, 40.0, SAFE_Z_MM)),
+            ],
+        };
+        let check = |tp: &Toolpath| {
+            check_in_material(
+                &op,
+                tp,
+                RADIUS_MM,
+                FLAT_TOL,
+                std::slice::from_ref(&region),
+                &centre,
+                &shapes,
+            )
+        };
+        check(&ramp_to(30.0)).unwrap();
+        let err = check(&ramp_to(21.0)).unwrap_err();
+        assert!(
+            matches!(err, CamError::OffMaterial { area_mm2, .. } if area_mm2 > 1.0),
+            "{err:?}"
+        );
+    }
+
+    /// Validation's ranges, enforced again by the generator: an entry angle
+    /// outside (0, 45] or a helix fraction outside (0, 1] is an error.
+    #[test]
+    fn invalid_entry_is_an_error() {
+        let p = rect_project();
+        for entry in [
+            Entry::Ramp { angle_deg: 0.0 },
+            Entry::Ramp { angle_deg: 46.0 },
+            Entry::Helix {
+                diameter_fraction: 0.0,
+                angle_deg: 5.0,
+            },
+            Entry::Helix {
+                diameter_fraction: 1.5,
+                angle_deg: 5.0,
+            },
+        ] {
+            let mut op = pocket_op(&p, CutDirection::Climb);
+            op.entry = entry.clone();
+            assert!(
+                matches!(generate_pocket(&p, &op), Err(CamError::InvalidEntry { .. })),
+                "{entry:?}"
+            );
+        }
     }
 
     #[test]

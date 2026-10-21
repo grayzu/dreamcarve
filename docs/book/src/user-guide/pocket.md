@@ -56,7 +56,7 @@ is free, the pocket would be cut in a loose part (`check` warns
 | `direction` | `"climb"` or `"conventional"`, for the rings. Raster lines ignore it. See [Direction](#direction). |
 | `allowance_mm` | Material to leave on the walls. Must be 0 in this build. |
 | `rest_of` | Rest machining. Must be `null` in this build. |
-| `entry` | `"plunge"`. A ramp or helix plunges instead, with a warning. |
+| `entry` | How the bit gets down to each pass: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`. See [Entry](#entry). |
 | `corner_relief` | `"none"`. Dogbone or T-bone is skipped, with a warning. |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`, as for [Profile](profile.md#machining-order). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. A pocket deeper than the stock needs it, as a through cut does. |
@@ -81,7 +81,8 @@ Between two rings of one pass the bit stays down and cuts straight across
 when the move stays inside the tool-centre area; otherwise it lifts to
 safe Z. Each ring starts at its corner nearest where the previous one
 ended, so those links are short. Between passes, and between separate
-pockets, the bit lifts to safe Z and plunges at the plunge rate.
+pockets, the bit lifts to safe Z and comes back down by the operation's
+[entry](#entry): a plunge at the plunge rate, a ramp or a helix.
 
 A 100 × 50 mm rectangle with a 6.35 mm bit at 40 % stepover gives a wall
 ring 93.65 × 43.65 mm across its centre line and eight more rings inside
@@ -177,6 +178,57 @@ always turn opposite ways for one setting; that is what keeps the cut the
 same kind on both. Raster lines zigzag whatever `direction` says; the
 wall rings of a raster pocket follow it.
 
+## Entry
+
+`entry` says how the bit gets down to the depth of each pass, wherever it
+arrives from safe Z (VCarve's "Ramps"; Fusion's "Ramp Type"). A ring or
+raster line reached by a stay-down link from the one before is already at
+depth, so it has no entry.
+
+- `"plunge"`: straight down at the tool's plunge rate. A bit that does
+  not cut well at its centre, as most do not, takes this hard.
+- `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag. The bit runs back and
+  forth along a short straight line through the point where the ring or
+  raster line starts, going down `angle_deg` from the horizontal, until it reaches
+  the pass depth, then moves to that start. The line is the longest
+  one through that point that fits in the tool-centre area, kept a tenth
+  of the bit's diameter in from its edge so the ramp does not mark the
+  wall, and at most three diameters long.
+- `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`: a spiral
+  down, `diameter_fraction` of the bit's diameter across (5.08 mm for a
+  6.35 mm bit at 0.8), at `angle_deg`, then one flat turn at the pass
+  depth to clean the floor, then on to the ring's or line's start. The helix is
+  placed next to that start, where it fits with the same margin from the
+  edge. A fraction at most 1 leaves no core standing in the middle.
+
+The angle must be more than 0 and at most 45 degrees, the fraction more
+than 0 and at most 1. A climb pocket turns its helix counter-clockwise,
+seen from above, as its rings run; conventional turns it clockwise.
+
+The first pass descends from safe Z; each pass after starts from the
+floor of the pass before, so the bit does not spiral down through air it
+has already cleared.
+
+**Feed rate.** A ramp or helix moves at the tool's feed rate, except
+that its speed straight down is never faster than the plunge rate: when
+`feed × sin(angle)` would exceed the plunge rate, the feed of each
+descending move is reduced until it does not. A 5° helix with a 1500
+mm/min feed and a 100 mm/min plunge runs at about 1147 mm/min.
+
+**When it does not fit.** A helix that does not fit at full size is made
+smaller, halving up to three times, and `helix_diameter_reduced` says how
+small. A helix that does not fit at all, in a slot less than about 1.3
+bit diameters wide, falls back to a ramp; a ramp that does not fit, in a
+hole barely wider than the bit, falls back to a plunge. Each fallback
+warns `entry_fallback`, naming the shape and both entries. A very shallow
+angle on a deep pass that would take more than 20 000 moves falls back
+the same way. A shape that can only be plunged warns on every export
+until its `entry` is `"plunge"`.
+
+The ramp or helix is inside the tool-centre area of the pass, and out of
+every island grown by the bit's radius, so the whole bit stays in the
+material the pocket removes: the [safety](#safety) check covers it.
+
 ## Not yet in this build
 
 These load and validate, so a project can carry them, but:
@@ -184,8 +236,7 @@ These load and validate, so a project can carry them, but:
 - `allowance_mm` above 0 and `rest_of` are refused at `check` and
   `export` ("not supported by this build yet"): cutting something else
   would make the wrong pocket. Set them to 0 and `null` for now.
-- `entry` `ramp` or `helix` plunges instead (`entry_fallback`), and
-  `corner_relief` `dogbone` or `t_bone` is skipped (`relief_skipped`).
+- `corner_relief` `dogbone` or `t_bone` is skipped (`relief_skipped`).
   The pocket is still the one asked for.
 
 ## Safety
@@ -193,7 +244,9 @@ These load and validate, so a project can carry them, but:
 Before a Pocket's toolpath is handed to the post-processor, DreamCarve
 sweeps the bit along every cutting move and checks that the swept area
 stays inside the pocket and out of every island (safety rule S9), and that
-it stays on the stock. If not, export fails and nothing is written.
+it stays on the stock. Ramp and helix moves are checked on the bit's
+centre, which must stay in the tool-centre area: the same rule, measured
+the cheap way. If not, export fails and nothing is written.
 
 ## Warnings
 
@@ -201,7 +254,8 @@ it stays on the stock. If not, export fails and nothing is written.
 | --- | --- |
 | `pocket_no_room` | The bit is wider than the pocket everywhere; that shape is not cut. |
 | `pocket_island_too_close` | An island is nearer the wall or another island than the bit is wide; the material between them stays. |
-| `entry_fallback` | The entry asked for is not in this build; the pass plunges. |
+| `entry_fallback` | The helix or ramp asked for does not fit a shape; it uses a ramp or a plunge instead. |
+| `helix_diameter_reduced` | The helix fits a shape only smaller than asked; it is cut at the size that fits. |
 | `relief_skipped` | The corner relief asked for is not in this build. |
 
 All codes are listed under [Warnings](warnings.md).

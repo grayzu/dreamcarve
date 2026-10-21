@@ -24,8 +24,10 @@ written. There are no safety warnings, only errors.
    hole already drilled, and never in uncut material.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
    the tool: the plunge rate for straight-down moves and tab steps, the feed
-   rate for everything else. A tool without a feed rate or plunge rate
-   stops the export, and so does one without a spindle speed unless the
+   rate for everything else. The one value in between is a ramp or helix
+   [entry](pocket.md#entry): its feed rate is lowered just enough that it
+   goes down no faster than the plunge rate. A tool without a feed rate or
+   plunge rate stops the export, and so does one without a spindle speed unless the
    router is switched by hand. DreamCarve has no defaults for these.
 4. **The spindle runs before it cuts.** With automatic spindle control, the
    spindle starts at the tool's RPM and the program waits for it to reach

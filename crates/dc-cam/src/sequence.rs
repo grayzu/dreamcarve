@@ -76,8 +76,10 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// link is nothing when `b` is the next pass of `a`'s shape and its descent
 /// starts where `a` ended; a stay-down `Linear` at feed when both blocks
 /// have `cleared` areas at one Z and the straight link lies inside their
-/// union and is at most `tool_diameter_mm + stepover_mm` long; otherwise a
-/// rapid up to safe Z, a rapid in XY, and the descent. A block's empty
+/// union and is at most `tool_diameter_mm + stepover_mm` long, which runs to
+/// `b`'s entry and skips `b`'s descent (the tool is already at `b`'s Z in
+/// cleared material); otherwise a rapid up to safe Z, a rapid in XY, and
+/// the descent. A block's empty
 /// descent is a straight plunge at the plunge rate; its own descent moves
 /// are written as given, after a plunge to `descent_from_z_mm` when that is
 /// below the height the tool arrives at. Zero-length moves are never
@@ -375,8 +377,12 @@ impl<'a> Emitter<'a, '_> {
             (Some(previous), Some(current)) => match self.link(previous, block, current) {
                 Link::None => {}
                 Link::StayDown => {
-                    let to = Point3::new(block.descent_from.x, block.descent_from.y, current.z);
+                    // Already at the block's Z in cleared material: straight
+                    // to its entry, and its descent is not cut.
+                    let to = Point3::new(block.entry.x, block.entry.y, current.z);
                     self.push(Move::linear(to, self.input.feed_mm_min));
+                    self.cut(block);
+                    return;
                 }
                 Link::Retract => {
                     self.push(Move::rapid(Point3::new(current.x, current.y, safe_z)));
@@ -396,6 +402,11 @@ impl<'a> Emitter<'a, '_> {
             }
         }
         self.descend(block);
+        self.cut(block);
+    }
+
+    /// Writes `block`'s cuts and makes it the previous block.
+    fn cut(&mut self, block: &'a CutBlock) {
         for cut in &block.cuts {
             self.push(*cut);
         }
@@ -412,10 +423,10 @@ impl<'a> Emitter<'a, '_> {
             && (a.z_mm - b.z_mm).abs() <= EPS_MM
             && (current.z - b.z_mm).abs() <= EPS_MM
         {
-            let length_mm = current.xy().distance_to(b.descent_from);
+            let length_mm = current.xy().distance_to(b.entry);
             let limit_mm = self.input.tool_diameter_mm + self.input.stepover_mm;
             if length_mm <= limit_mm + EPS_MM
-                && link_inside_cleared(cleared_a, cleared_b, current.xy(), b.descent_from)
+                && link_inside_cleared(cleared_a, cleared_b, current.xy(), b.entry)
             {
                 return Link::StayDown;
             }
@@ -930,6 +941,63 @@ mod tests {
         none.stepover_mm = 10.0;
         none.blocks[0].cleared = None;
         assert!(link_move(&run(&none)).is_rapid());
+    }
+
+    /// Slice 9: a block whose descent is a ramp or helix keeps it for when
+    /// the tool arrives from above. Reached by a stay-down link, the tool
+    /// is already at the block's Z in cleared material, so the link runs
+    /// straight to the block's entry and the descent is not cut: replaying
+    /// it from `descent_from` would climb back up through cleared air.
+    #[test]
+    fn stay_down_link_skips_the_descent() {
+        let mut blocks = cleared_pair(10.0, 5.0);
+        // b ramps in from (14, 5) at Z 4.4 down to its entry (10, 5) at Z 4.
+        blocks[1].descent_from = Point::new(14.0, 5.0);
+        blocks[1].descent_from_z_mm = 4.4;
+        blocks[1].descent = vec![
+            Move::linear(Point3::new(12.0, 5.0, 4.2), FEED_MM_MIN),
+            Move::linear(Point3::new(10.0, 5.0, 4.0), FEED_MM_MIN),
+        ];
+        let mut stay = input(blocks.clone(), MachiningOrder::FullDepthFirst, &[]);
+        stay.stepover_mm = 10.0;
+        let tp = run(&stay);
+        assert_eq!(
+            link_move(&tp),
+            Move::linear(Point3::new(10.0, 5.0, 4.0), FEED_MM_MIN),
+            "{:?}",
+            tp.moves
+        );
+        assert_eq!(
+            tp.moves[7],
+            Move::linear(Point3::new(30.0, 5.0, 4.0), FEED_MM_MIN),
+            "b's cuts follow the link: {:?}",
+            tp.moves
+        );
+        assert!(
+            tp.moves
+                .iter()
+                .all(|m| m.to.z <= 4.0 + EPS_MM || m.is_rapid()),
+            "no descent move is replayed: {:?}",
+            tp.moves
+        );
+
+        // Reached by a retract, the descent is cut as given.
+        let mut retract = input(blocks, MachiningOrder::FullDepthFirst, &[]);
+        retract.stepover_mm = 2.0;
+        let tp = run(&retract);
+        let at = tp
+            .moves
+            .iter()
+            .position(|m| *m == Move::linear(Point3::new(12.0, 5.0, 4.2), FEED_MM_MIN))
+            .expect("the descent is cut");
+        assert_eq!(
+            tp.moves[at - 1],
+            Move::linear(Point3::new(14.0, 5.0, 4.4), PLUNGE_MM_MIN)
+        );
+        assert_eq!(
+            tp.moves[at - 2],
+            Move::rapid(Point3::new(14.0, 5.0, SAFE_Z_MM))
+        );
     }
 
     /// Port of `testPocketFeatureFirstOrder` (PureCutCNC

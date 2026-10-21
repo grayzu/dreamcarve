@@ -32,8 +32,13 @@ use dc_project::{Operation, Project};
 ///    in XY.)
 /// 4. **Feeds (S3).** Every linear and arc move carries `Some` positive
 ///    feed. A straight plunge (Z falls, XY stays) carries the tool's plunge
-///    rate; any move that changes XY, including a ramp down, carries the
-///    tool's feed rate.
+///    rate. A straight move that falls while it moves in XY (a ramp or
+///    helix descent, a tab's down slope) carries the tool's feed rate, or
+///    the feed rate scaled so its vertical component is the plunge rate,
+///    `min(feed, plunge × length / drop)` (S10's feed scale). Every other
+///    move that changes XY carries the tool's feed rate. That an entry's
+///    descent is scaled whenever it must be is checked by the entry tests;
+///    S10 on every descending move is the safety pass's (slice 16).
 /// 5. **Dwells.** A dwell ends where the tool already is and carries no
 ///    feed.
 ///
@@ -147,6 +152,16 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
                         approx_eq(f, plunge, EPS_MM),
                         "plunge {i} feeds at {f}, not plunge {plunge}: {mv:?}"
                     );
+                } else if descends && matches!(mv.kind, MoveKind::Linear) {
+                    let (dx, dy) = (mv.to.x - prev.to.x, mv.to.y - prev.to.y);
+                    let drop = prev.to.z - mv.to.z;
+                    let length = (dx * dx + dy * dy + drop * drop).sqrt();
+                    let limited = feed.min(plunge * length / drop);
+                    assert!(
+                        approx_eq(f, feed, EPS_MM)
+                            || approx_eq(f, limited, EPS_MM * limited.max(1.0)),
+                        "descending XY move {i} feeds at {f}, neither feed {feed} nor the plunge-limited {limited} (plunge {plunge}): {prev:?} -> {mv:?}"
+                    );
                 } else if moves_xy {
                     assert!(
                         approx_eq(f, feed, EPS_MM),
@@ -256,15 +271,22 @@ mod tests {
         check(moves);
     }
 
-    /// Rapid in, plunge to 2, ramp down to 0 over 5 mm of X, cut, retract.
-    fn ramp_cut(ramp_feed: f64) -> Vec<Move> {
+    /// Rapid in, plunge to `drop`, ramp down to 0 over 5 mm of X, cut,
+    /// retract.
+    fn ramp_cut_by(drop: f64, ramp_feed: f64) -> Vec<Move> {
         vec![
             Move::rapid(Point3::new(0.0, 0.0, 11.0)),
-            Move::linear(Point3::new(0.0, 0.0, 2.0), 300.0),
+            Move::linear(Point3::new(0.0, 0.0, drop), 300.0),
             Move::linear(Point3::new(5.0, 0.0, 0.0), ramp_feed),
             Move::linear(Point3::new(10.0, 0.0, 0.0), 1000.0),
             Move::rapid(Point3::new(10.0, 0.0, 11.0)),
         ]
+    }
+
+    /// A 1 mm drop over 5 mm: at feed 1000 the vertical rate is 196 mm/min,
+    /// under the 300 plunge, so the ramp runs at the cutting feed.
+    fn ramp_cut(ramp_feed: f64) -> Vec<Move> {
+        ramp_cut_by(1.0, ramp_feed)
     }
 
     #[test]
@@ -272,8 +294,24 @@ mod tests {
         check(ramp_cut(1000.0));
     }
 
+    /// S10's feed scale: a 2 mm drop over 5 mm at feed 1000 would descend
+    /// at 371 mm/min, faster than the 300 plunge; scaled to
+    /// `300 × length / drop` it is a feed derived from the tool.
     #[test]
-    #[should_panic(expected = "not feed")]
+    fn accepts_steep_ramp_at_plunge_limited_feed() {
+        let length = (25.0_f64 + 4.0).sqrt();
+        check(ramp_cut_by(2.0, 300.0 * length / 2.0));
+    }
+
+    /// Any other feed on a descending XY move is invented.
+    #[test]
+    #[should_panic(expected = "neither feed")]
+    fn rejects_steep_ramp_at_an_invented_feed() {
+        check(ramp_cut_by(2.0, 500.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "neither feed")]
     fn rejects_ramp_down_at_plunge_rate() {
         check(ramp_cut(300.0));
     }
