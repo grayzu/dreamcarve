@@ -2091,8 +2091,8 @@ documents disagreed with the spec's expectations in several rows):
 | Controller | Sources (README) | As written |
 | --- | --- | --- |
 | LinuxCNC | LinuxCNC 2.9.10 `g-code.html`, `m-code.html`, `overview.html`, `hal_manualtoolchange(1)`; source on branch `2.9` and `master` | header `( Project: {programName} )`, `G90 G17 G40 G49 G80 G94`, `G91.1`, `G21`/`G20`, `G54`; `M3 S`; `G4 P` seconds; no `%`; no line numbers; no `M6`, no `G43 H`; canned `G81`, `G82` only, with `G98` and `G80`; footer `M5`, `M2`; `.ngc` |
-| Mach3 | Using Mach3Mill 1.84-A2; Mach3 Install & Config v3 | `%` (never numbered), no `O0001` (an `O` word is a subroutine label and "The O line may not have a line number", 10.5.2, 10.8.7); line numbers `N10` step 10 on every line but the `%`; `G90 G94 G17 G40 G49 G80`, `G91.1`, `G21`/`G20`, `G54`; `G4 P` **seconds** (the unit is a setting, shown as seconds in both manuals, and `G82 P` is documented in seconds); no `M6`; canned `G81`, `G82` only; footer `M5`, `M30`; `.tap` |
-| UCCNC | UCCNC user's manual 1.0047 (software 1.2113) | no `%`, no `O0001`, no line numbers (the manual documents none of them); `G90 G17 G40 G49 G80 G94`, `G54`; no `G20`/`G21` (not in the code list: lengths are in the profile's units, so the program has no units word and `export` warns `units_set_by_controller`); `G4 P` **milliseconds** (the default); no `M6`; no canned cycles; footer `M5`, `M30`; `.txt` |
+| Mach3 | Using Mach3Mill 1.84-A2; Mach3 Install & Config v3 | `%` (never numbered), no `O0001` (an `O` word is a subroutine label and "The O line may not have a line number", 10.5.2, 10.8.7); line numbers `N10` step 10 on every line but the `%`; `G90 G94 G17 G40 G49 G80`, `G91.1`, `G21`/`G20`, `G54` (changed in #286: version 2 has no `G49`; changed in #312: version 3 adds `G50` and `G69`, each on its own line, after the modal line, to cancel a `G51` scale and a `G68` rotation, which `M30` does not reset, Using Mach3Mill 1.84 10.7.15, 10.7.20, 10.8.1); `G4 P` **seconds** (the unit is a setting, shown as seconds in both manuals, and `G82 P` is documented in seconds); no `M6`; canned `G81`, `G82` only; footer `M5`, `M30`; `.tap` |
+| UCCNC | UCCNC user's manual 1.0047 (software 1.2113) | no `%`, no `O0001`, no line numbers (the manual documents none of them); `G90 G17 G40 G49 G80 G94`, `G54` (changed in #286: version 2 has no `G49`; changed in #312: version 3 adds `G50` and `G69` after the modal line, user's manual 4.1.1 p. 58-60, since "Reset on file load G68 and G51" is only a checkbox, 3.6 p. 35); no `G20`/`G21` (not in the code list: lengths are in the profile's units, so the program has no units word and `export` warns `units_set_by_controller`); `G4 P` **milliseconds** (the default); no `M6`; no canned cycles; footer `M5`, `M30`; `.txt` |
 | generic | RS274/NGC (NIST IR 6556, Kramer, Proctor, Messina 2000) | `( )` comments, no line numbers, `G90`, `G17`, `G94`, `G21`/`G20`, `G54`, `M3 S`, `G4 P` seconds, no `M6`, no canned cycles, footer `M5`, `M30`, trailing zeros off, `.nc` |
 
 Rules for all four (README, "Rules for the slice 17 definitions"):
@@ -2111,7 +2111,13 @@ Rules for all four (README, "Rules for the slice 17 definitions"):
   same header in version 2 of each (#171).
 - **Header modal codes.** `G40`, `G49`, `G80` and `G91.1` are accepted
   in any program and written again after every pause; `G90.1` is
-  refused (#154).
+  refused (#154). (changed in #312: `G50` and `G69` are written again
+  after every pause too, and accepted only from a definition whose header
+  has them, Mach3 v3 and UCCNC v3, alone on a line, in the header or the
+  setup after a stop; anywhere else the export fails with
+  `MisplacedSetupWord`. `G51` and `G68` are refused everywhere. LinuxCNC,
+  GRBL and RS274/NGC have no such codes; grblHAL's `G50`/`G51` are
+  #316.)
 
 `SpindleDwell` gains `units: Seconds | Milliseconds` so a millisecond
 dwell (UCCNC) is written right; the bundled phase 1 definitions carry

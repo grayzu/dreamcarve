@@ -79,6 +79,7 @@ instead, add `--reset-settings`
 | grblHAL v2, GRBL v2 | The first line is `( Project: coaster )` (GRBL: `; Project: coaster`) instead of `( coaster )` (`; coaster`). Some controllers act on a comment that starts with a keyword, such as `(MSG, …)` or `(ABORT, …)` on grblHAL, so the project name never starts one. Nothing else in the program changes. |
 | grblHAL v3, GRBL v3 | The header has `G80` and then `G40` after `G94`, and so does the setup written again after every pause and tool change. They cancel a drilling cycle and cutter compensation left on by an earlier job or by commands you typed, so neither changes the program's moves. Nothing else in the program changes. See [Modes the header cancels](#modes-the-header-cancels). |
 | LinuxCNC v2, Mach3 v2, UCCNC v2 | The header no longer has `G49` (`G90 G17 G40 G80 G94`; Mach3 `G90 G94 G17 G40 G80`). If a tool length offset was active when you set Z zero, version 1's `G49` cancelled it and moved every Z by its length, which could cut deeper than the drawing. Nothing else in the program changes. Upgrade a version 1 project with `export --post <id>`. |
+| Mach3 v3, UCCNC v3 | The header has a `G50` line and a `G69` line after the modal line, and so does the setup written again after every pause. `G50` sets every axis scale back to 1 and `G69` cancels a rotation, so a `G51` or `G68` left on by an earlier program or by commands you typed cannot scale, mirror or rotate the job. Nothing else in the program changes, except that Mach3's line numbers after them move on by 20. Upgrade a version 1 or 2 project with `export --post <id>`. See [Controllers compared](#controllers-compared). |
 
 A file that names a post-processor or a version this DreamCarve does not
 have is refused when it is loaded, with the line and column of the value
@@ -592,7 +593,7 @@ canned cycle, and no `M6`. The sources, line by line, are in
 | --- | --- | --- | --- | --- |
 | Checked against | LinuxCNC 2.9 G-code and M-code references, and its source | *Using Mach3Mill* 1.84 and the Mach3 configuration guide | UCCNC user's manual 1.0047 | NIST RS274/NGC version 3 (NISTIR 6556) |
 | Extension | `.ngc` | `.tap` | `.txt` | `.nc` |
-| Header | `G90 G17 G40 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G80`, `G91.1`, units, `G54` | `G90 G17 G40 G80 G94`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
+| Header | `G90 G17 G40 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G80`, `G50`, `G69`, `G91.1`, units, `G54` | `G90 G17 G40 G80 G94`, `G50`, `G69`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
 | Line numbers | No | Every line, `N10` up in tens | No | No |
 | Spin-up wait | `G4 P3.000` (seconds) | `G4 P3.000` (seconds) | `G4 P3000` (milliseconds) | `G4 P3` (seconds) |
 | Numbers | `10.500` | `10.500` | `10.500` | `10.5` |
@@ -608,7 +609,26 @@ it would move every Z by its length, possibly into the spoilboard. So the
 program leaves it as you set it. If your setup applies an offset, set it
 before you set Z zero, and do not change it until the program ends. Version
 1 of these three post-processors did write `G49`; see
-[Versions](#versions). `G91.1` makes arc
+[Versions](#versions).
+
+On Mach3 and UCCNC, `G50` sets every axis's scale factor back to 1 and
+`G69` cancels a coordinate rotation. Both controllers keep a scale set
+with `G51` (or Mach3's Scale DRO) and a rotation set with `G68` until
+something cancels them, and the end of a program does not. A `G51 Z-1`
+left from an earlier job would mirror every Z, so a retract would become a
+plunge. The program therefore cancels both before it moves, and again
+after every pause. This also cancels a scale or rotation you set on
+purpose: a DreamCarve program always cuts the project at its own size and
+angle, so make a change of size or angle in the project. Version 2 and
+earlier of these two post-processors do not cancel them; see
+[Versions](#versions). LinuxCNC has no scaling or rotation codes (it
+rotates only through the work offset, which is part of the zero you set),
+and neither does the generic RS274/NGC post-processor, so neither header
+writes them. grblHAL does have `G51` scaling, which its header does not
+cancel yet (#316): do not leave a `G51` set on grblHAL. A soft reset
+clears it.
+
+`G91.1` makes arc
 centres (`I`, `J`) relative to the arc's start, which is how DreamCarve
 writes them. On Mach3 this is a setting you can change, so the header sets
 it.

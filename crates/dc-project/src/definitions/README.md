@@ -21,6 +21,8 @@ lines added; see "Header modal state" below (#279).
 `linuxcnc/v2.json`, `mach3/v2.json` and `uccnc/v2.json` are version 1 of
 each without `G49` in the header; see "Tool length offset at touch-off"
 below (#286).
+`mach3/v3.json` and `uccnc/v3.json` are version 2 of each with two header
+lines added, `G50` and `G69`; see "Scaling and rotation" below (#312).
 
 grblHAL and GRBL are checked under "Verification" below. LinuxCNC, Mach3,
 UCCNC and generic (slice 17, #164) each have a section of their own, with
@@ -98,6 +100,8 @@ These files were modified from the upstream copies (Apache-2.0 §4(b)):
   "Header modal state").
 - Version 2 of LinuxCNC, Mach3 and UCCNC has no `G49` in its header
   (#286; "Tool length offset at touch-off").
+- Version 3 of Mach3 and UCCNC adds `G50` and `G69` to the header (#312;
+  "Scaling and rotation").
 - The safety and correctness changes listed under "Verification" below,
   and, for the four later files, under "Changed from PureCutCNC" in each
   one's section.
@@ -258,8 +262,8 @@ and the Mach3, UCCNC and NIST documents of the slice 17 sections below
 | `grbl/v3.json` | `G53` | As `grbl/v1.json`. |
 | `linuxcnc/v1.json` | `G53` | #306. LinuxCNC `src/emc/rs274ngc/` at `a33293f`: `interp_array.cc` 109: `G53` is in modal group 0, non-modal ([G] `#gcode:g53`: "G53 is not modal and must be programmed on each line"). `interp_check.cc` 103-108: it needs `G0` or `G1` (`NCE_MUST_USE_G0_OR_G1_WITH_G53`) and absolute distance mode. `interp_convert.cc` 4855-4857: it fails with cutter compensation on. `interp_find.cc` 170-200: the end Z is the Z word less the G5x origin, the `G92`/`G52` axis offset and the tool length offset, which `get_abs_position` (`interp_convert.cc` 2441-2447) adds back, so the machine Z reached is the Z word with no offset applied. `interp_convert.cc` 2749-2830: `G20`/`G21` convert every offset to the program's units, so in `G20` the Z word is inches. |
 | `linuxcnc/v2.json` | `G53` | As `linuxcnc/v1.json`. Version 2 differs only in the header's `G49`, which does not touch `G53`. |
-| `mach3/v1.json`, `mach3/v2.json` | `null` | #306, refused. [MILL] 10.7.17 (p. 10-23) states the form and that `G53` is non-modal, but not which offsets it ignores, and 7.2.1 (p. 7-3) with 10.1.4 (p. 10-4) suggests the tool length offset applies. Machine Z after homing and soft limits are settings. See "Mach3, UCCNC and generic" below. |
-| `uccnc/v1.json`, `uccnc/v2.json` | `null` | #306, refused. [UM] 4.1.1 (p. 58-59) states the form and that `G53` is non-modal, but not what it does with the tool offset or `G51` scaling. The coordinate written at homing is a setting. See "Mach3, UCCNC and generic" below. |
+| `mach3/v1.json`, `mach3/v2.json`, `mach3/v3.json` | `null` | #306, refused. [MILL] 10.7.17 (p. 10-23) states the form and that `G53` is non-modal, but not which offsets it ignores, and 7.2.1 (p. 7-3) with 10.1.4 (p. 10-4) suggests the tool length offset applies. Machine Z after homing and soft limits are settings. See "Mach3, UCCNC and generic" below. |
+| `uccnc/v1.json`, `uccnc/v2.json`, `uccnc/v3.json` | `null` | #306, refused. [UM] 4.1.1 (p. 58-59) states the form and that `G53` is non-modal, but not what it does with the tool offset or `G51` scaling. The coordinate written at homing is a setting. See "Mach3, UCCNC and generic" below. |
 | `generic/v1.json` | `null` | #306, refused. [NIST] 3.5.12 defines `G53`, but an unknown controller's machine Z, homing and offsets cannot be checked. See "Mach3, UCCNC and generic" below. |
 
 Where machine Z is. grblHAL and GRBL home Z to the top of its travel, at a
@@ -632,7 +636,10 @@ Choices that apply to all four:
 - **Header modal codes.** `G40` and `G80` (and, in version 1, `G49`)
   only cancel modes DreamCarve never sets. `G91.1` selects incremental arc centres, which is
   how DreamCarve writes `I` and `J`. The safety pass accepts all four in
-  any program, and `G90.1` in none (#154). Each line of the header is
+  any program, and `G90.1` in none (#154). Since version 3, Mach3 and
+  UCCNC also cancel scaling (`G50`) and rotation (`G69`); the safety pass
+  accepts those two only from a definition whose header has them (see
+  "Scaling and rotation"). Each line of the header is
   written again after every pause, with the units and WCS lines (#55).
 
 ## Tool length offset at touch-off (version 2 of LinuxCNC, Mach3, UCCNC)
@@ -720,6 +727,87 @@ and neither affects where Z is. A project that names version 1 keeps it,
 byte for byte, until `export --post <id>`
 (`cli::linuxcnc_v1_project_still_exports_byte_identically`).
 
+## Scaling and rotation (version 3 of Mach3 and UCCNC)
+
+Mach3 and UCCNC scale (`G51`) and rotate (`G68`) every coordinate a
+program writes, and keep both until they are cancelled. A `G51 Z-1` left
+by MDI or by an earlier program mirrors every Z, so a retract becomes a
+plunge; `G51 X2` doubles the part. The safety pass reads the program as
+written, so it cannot see either. Versions 1 and 2 cancel neither (#312).
+Version 3 of each is version 2 with two header lines added right after the
+modal line: `G50`, then `G69`. It is a new version, not an edit, because
+it changes emitted bytes ("Versions" above); a project that names version
+1 or 2 keeps it until the user runs `export --post <id>`. Checked on
+2026-10-21:
+
+| Code | Mach3, [MILL] | UCCNC, [UM] | Decision |
+| --- | --- | --- | --- |
+| `G51` | 10.7.15 (p. 10-23): "To define a scale factor which will be applied to an X, Y, Z, A, B, C, I & J word before it is used program G51 X~ Y~ Z~ A~ B~ C~". 10.1.3 "Scaling input": "mirror images to be created - by use of negative scale factors"; 6.2.2.4: "If a scale factor (other than 1.0) is set then it is applied to coordinates when they appear in G-code ... Negative values mirror the coordinates about the relevant axis." The Scale DRO shows and sets it. | 4.1.1 (p. 58): "In case of negative scale factors the axis gets mirrored", and "All motion commands including linear and circular motion commands are scaled with the defined scale factor". | Never written, and refused by the safety pass on every definition. |
+| `G50` | 10.7.15 (p. 10-23): "To reset the scale factors of all axes to 1.0 program G50"; figure 10.4, "Reset all scale factors to 1.0". It takes no words. 10.1.3: "The offsets stored in tool and fixture tables are not scaled before use", so it changes no offset. | 4.1.1 (p. 58): "To reset the scale factor to value 1 on all XYZABC axes program G50. The command has no parameters." Modal group 16, `G50`/`G51` (table, p. 50). | **Added** on both, on a line of its own. |
+| `G68` | 10.7.20 (p. 10-24): "Program G68 A~ B~ I~ R~ to rotate the program coordinate system", about a centre in the current coordinate system "including all work and tool offsets"; with `I` the angle adds to the rotation already set. | 4.1.1 (p. 59): "When the rotation is enabled all of the motion commands are rotated, except the movements in the absolute coordinate system (G53)." | Never written, refused everywhere. |
+| `G69` | 10.7.20 (p. 10-24): "Program G69 to cancel rotation." No words; figure 10.4, "Rotate program coordinate system". | 4.1.1 (p. 60): "To reset the rotation of the coordinate system program G69. The command has no parameters." Modal group 17, `G68`/`G69` (table, p. 50). Its errors (p. 59) are for `G18`/`G19` while rotation is on, and threading; the header's plane is `G17`. | **Added** on both, after `G50`. |
+| End of program | 10.8.1 (p. 10-33) lists what `M2`/`M30` may reset, depending on Config > Logic: offsets, plane, distance mode, feed mode, overrides, cutter compensation, spindle, motion mode, coolant. Neither scaling nor rotation is on the list. | 4.1.2 (p. 65): `M30` stops and rewinds and names no reset. 3.6 (p. 35): "Reset on file load G68 and G51: If these checkboxes are checked cancels the G68 coordinate system rotation and resets the G51 scale factors to 1 prior to loading a new g-code files." A box the profile may leave unticked, and it acts on file load, not on a mode set by MDI after it. | The program cancels both itself. |
+
+Neither code moves the machine: each sets a mode back to the identity and
+takes no axis words. Mach3's modal group table (10.6, figure 10.3) lists
+neither, so each is on a line of its own rather than on the modal line.
+After them the program's first motion line, as after any header, carries
+absolute coordinates (`G90`), so where the current point was under the old
+scale or rotation does not matter. They do cancel a scale or rotation the
+user set on purpose, as `G80` and `G40` cancel modes on grblHAL: a
+DreamCarve program is cut at the size and angle of the project, and the
+post-processors chapter says so.
+
+The emitter writes the header's lines that only set modal state again after
+every stop that the program moves after (#55), so `G50` and `G69` come back
+after each manual-spindle `M0` (`emit::setup_after_stop_repeats_g50_g69`).
+The safety pass accepts `G50` and `G69` only from a definition whose header
+writes them, and `G51` and `G68` from none (`safety::g50_g69_accepted`):
+LinuxCNC and RS274/NGC lack them (below), and a code the safety pass has
+not checked against a definition's controller is refused. Even there it
+accepts each only as `emit` writes it: alone on its line (a line number
+aside), and only in the header or in the setup after a stop, before the
+next move or spindle start. With a value word (`G50 X0`) it would be a
+different command on some dialects, which a check that read it as a
+cancel would let through, so the export fails with
+`ExportError::MisplacedSetupWord` (`safety::g50_g69_only_where_emit_writes_them`).
+
+Not added elsewhere:
+
+- **LinuxCNC** has no scaling or rotation codes. In the interpreter on
+  branch `2.9`, at `a33293f46575c809e082e0806e79ab996f982513` (the commit
+  "Tool length offset at touch-off" cites), `interp_array.cc` L108 and
+  L117 give `_gees[500]`, `[510]`, `[680]` and `[690]` as `-1`, and
+  `read_g` in `interp_read.cc` L597-598 fails such a code with
+  `NCE_UNKNOWN_G_CODE_USED`. The G-code reference ([G]) has no `G50`,
+  `G51`, `G68` or `G69` either. So `G50` or `G69` would stop a LinuxCNC
+  program; they are not written. (A configuration may `REMAP` a G-code,
+  `interp_read.cc` L587-593, but that is the user's own code.) LinuxCNC rotates XY only
+  through the work offset (`G10 L2 R`, [G] `#gcode:g10-l2`), which is part
+  of the zero the user set, as the tool length offset is.
+- **Generic RS274/NGC**: [NIST] table 4 (modal groups) and table 5 (G
+  codes) have none of the four, and "Any input not explicitly allowed is
+  illegal" (3.3). A controller that follows the report rejects them.
+- **GRBL 1.1** has none of the four: `grbl/gcode.c`, at the commit
+  "Header modal state" cites, has no case for them, and the G-word
+  `default` case (233) fails them with `STATUS_GCODE_UNSUPPORTED_COMMAND`.
+- **grblHAL has `G50` and `G51`, and no `G68` or `G69`.** At the commit
+  "Header modal state" cites, `gcode.c` 1766-1770 reads both into modal
+  group 11, Mach3 style by default (`MACH3_SCALING 1`, 50-51; the scaling
+  itself 2740-2800, applied to axis words 2802-2816). Program end does not
+  reset it (5021-5053 list what it resets); a soft reset (`gc_init`, 822)
+  and `G28`/`G30` (4644) do. So grblHAL has the same hazard. It is out of
+  this change, which is Mach3 and UCCNC (#312), and is tracked in #316;
+  `G68` is not a grblHAL code (the G-word `default`, 1781).
+
+`post::mach3_v3_header_cancels_scaling_and_rotation` and
+`post::uccnc_v3_header_cancels_scaling_and_rotation` check that version 3
+is version 2 with `G50`, `G69` after the modal line;
+`post::scaling_and_rotation_words_only_where_supported` checks that no
+other version has any of the four. A project that names version 2 exports
+its old bytes (`cli::mach3_v2_project_still_exports_byte_identically`,
+`cli::uccnc_v2_project_still_exports_byte_identically`).
+
 ## LinuxCNC (`linuxcnc/v1.json`, `linuxcnc/v2.json`)
 
 Version 2 is version 1 without `G49` (see "Tool length offset at
@@ -770,6 +858,9 @@ Not used, and why:
   (<https://linuxcnc.org/docs/stable/html/config/stepper.html#_standard_pinout_hal>),
   so `M6` returns at once and the program would cut with the old bit. And
   `T<n>` must be in the tool table. So no `M6`; one program per tool run.
+- **`G50`, `G69`.** LinuxCNC has no scaling or rotation codes, and
+  rs274ngc fails them as unknown ([SRC] 2.9 `interp_array.cc` L108, L117;
+  `interp_read.cc` L597-598; see "Scaling and rotation").
 
 ### Changed from PureCutCNC
 
@@ -850,10 +941,11 @@ unnecessary, and whether 3 s is enough without one. PureCutCNC validated its Lin
 `rs274` standalone interpreter (`scripts/gcode-conformance/README.md`);
 DreamCarve's has not been run through it yet.
 
-## Mach3 (`mach3/v1.json`, `mach3/v2.json`)
+## Mach3 (`mach3/v1.json`, `mach3/v2.json`, `mach3/v3.json`)
 
 Version 2 is version 1 without `G49` (see "Tool length offset at
-touch-off"). Checked against ArtSoft's manuals on machsupport.com:
+touch-off"). Version 3 is version 2 with `G50` and `G69` (see "Scaling
+and rotation"). Checked against ArtSoft's manuals on machsupport.com:
 
 - [MILL] *Using Mach3Mill*, Rev 1.84-A2,
   <https://www.machsupport.com/wp-content/uploads/2013/02/Mach3Mill_1.84.pdf>.
@@ -872,6 +964,8 @@ and was not read.
 | `( Project: {programName} )`, `( Generated by DreamCarve on {date} )` | [MILL] 10.5.5: "A left parenthesis always starts a comment"; 10.5.6: "If more than one comment appears on a line, only the last one will be used" | One comment per line. |
 | `G90 G94 G17 G40 G49 G80` | [MILL] 10.7.25 (G90), 10.7.28 (G94: "units per minute mode"), 10.7.8 (G17), 10.7.13 (G40: "It is OK to turn compensation off when it is already off"), 10.7.14 (G49: "To use no tool length offset, program G49"), 10.7.23 (G80: "Program G80 to ensure no axis motion will occur"); 6.6.2: a program "should therefore include G17/G18/G19, G20/G21, G40, G49, G61/G62, G90/G91, G93/G94" | Mach3 keeps modal state between programs. Version 1. |
 | `G90 G94 G17 G40 G80` (v2) | As v1, without 10.7.14 | 7.2.1, 7.3.1 and 10.1.11: a Z zero set with the tool offset on includes it, and `G49` moves Z by it (#286, "Tool length offset at touch-off"). |
+| `G50` (v3) | [MILL] 10.7.15 (p. 10-23): "To reset the scale factors of all axes to 1.0 program G50" | A `G51` scale left set applies to every coordinate, and negative factors mirror (6.2.2.4, 10.1.3); `M30` does not reset it (10.8.1). #312, "Scaling and rotation". |
+| `G69` (v3) | [MILL] 10.7.20 (p. 10-24): "Program G69 to cancel rotation." | A `G68` rotation left set rotates every XY coordinate; `M30` does not reset it (10.8.1). #312. |
 | `G91.1` | [MILL] 10.7.26 "Set IJ Mode - G90.1 and G91.1": "To go into incremental IJ mode, program G91.1 ... Incorrect settings of this mode will generally result in large incorrectly oriented arcs"; 10.7.3.2 and [CFG] 5.6.6.2: the IJ mode is a startup setting | The manuals' screenshots show the setting at incremental, but a profile can be set to absolute, and [CFG] calls it "the most frequent cause of questions from users when trying to cut circles". |
 | `{unitsCommand}`: `G21`, `G20` | [MILL] 10.7.9 | Millimetre or inch program. |
 | `{wcsCommand}`: `G54` | [MILL] 10.7.18 | S5. |
@@ -914,6 +1008,7 @@ Not used, and why:
 | `O0001 ({programName})` | `( Project: {programName} )`; no `O` word | [MILL] 10.5.2, 10.8.7 (above). |
 | `N10 %` (upstream numbers every line, `%` too) | `%` unnumbered | [MILL] 10.5.5. |
 | — | `( Generated by DreamCarve on {date} )`, `G91.1` | [MILL] 10.7.26. |
+| — | `G50`, `G69` (v3) | [MILL] 10.7.15, 10.7.20 (#312). |
 | `( Description: {operationDescription} )` | removed | Not filled by `emit`. |
 | `footer: []` | `["M5"]` | [MILL] 10.8.1, S4. |
 | tool change `M5`, `M6 T{toolNumber}`, `G43 H{toolNumber}`, `pauseCommand` `M1` | `M5`, `M0` (never written), `pause_command` `M0` | [MILL] 10.8.1, 10.8.3. |
@@ -926,10 +1021,11 @@ Before the first cut, check in Config > Logic that "G04 Dwell param in
 ms" is unchecked and the IJ mode is incremental, and run the program in
 the simulator.
 
-## UCCNC (`uccnc/v1.json`, `uccnc/v2.json`)
+## UCCNC (`uccnc/v1.json`, `uccnc/v2.json`, `uccnc/v3.json`)
 
 Version 2 is version 1 without `G49` (see "Tool length offset at
-touch-off"). Checked against [UM] *UCCNC software installation and user's guide*,
+touch-off"). Version 3 is version 2 with `G50` and `G69` (see "Scaling
+and rotation"). Checked against [UM] *UCCNC software installation and user's guide*,
 manual version 1.0047, software 1.2113, CNC Drive,
 <https://cncdrive.com/UCCNC/UCCNC_usersmanual.pdf> (87 pages; page numbers
 are the manual's `n/87`). The current software is 1.2115
@@ -942,6 +1038,8 @@ forum (<https://forum.cncdrive.com/>) was searched; its pages returned HTTP
 | `( Project: {programName} )`, `( Generated by DreamCarve on {date} )` | [UM] 4.2 "Parametric programming", p. 68: "in the RS274NGC programming the round brackets '(' and ')' are used to defined comments" | `;` is not a comment on UCCNC: it separates function arguments (p. 70). |
 | `G90 G17 G40 G49 G80 G94` | [UM] 4.1.1, modal group table, p. 50 (G90/G91, G17, G40/G41/G42, G43/G44/G49, G93/G94, G80 in group 1); entries p. 52-63 | Every word is in UCCNC's list of supported codes. Version 1. |
 | `G90 G17 G40 G80 G94` (v2) | As v1, without G49 (p. 57-58) | 3.10, p. 42-43: the current coordinates include the tool offset, and the manual does not say a Z zero leaves it out, so `G49` may move Z by it (#286, "Tool length offset at touch-off"). |
+| `G50` (v3) | [UM] 4.1.1, p. 58: "To reset the scale factor to value 1 on all XYZABC axes program G50. The command has no parameters."; modal group 16 (p. 50) | A `G51` scale left set scales "All motion commands", and a negative factor mirrors the axis (p. 58). 3.6, p. 35: "Reset on file load G68 and G51" is a checkbox, so a profile may keep both. #312, "Scaling and rotation". |
+| `G69` (v3) | [UM] 4.1.1, p. 60: "To reset the rotation of the coordinate system program G69. The command has no parameters."; modal group 17 (p. 50) | A `G68` rotation rotates "all of the motion commands" except `G53` (p. 59). #312. |
 | `{wcsCommand}`: `G54` | [UM] 4.1.1, "Coordinate System (Group 12)", p. 50, p. 59 | S5. |
 | `( Operation {operationIndex}: {operationName} )`, `( Tool {toolNumber}: {toolName} )` | [UM] 4.2, p. 68 | |
 | `G0`, `G1`, `G2`, `G3` | [UM] 4.1.1, p. 50-51 | Arcs "in the center format ... I and J specifies the center of the arc". The manual does not say the centre is relative to the start. It says UCCNC follows "the industry standard RS274 format" (4.1, p. 49), where "I and J are the offsets from the current location" (NIST IR 6556, 3.5.3.2). CNC Drive staff on the forum: UCCNC always uses incremental IJ and does not support `G90.1`/`G91.1` (search summary only). So arcs are written, without `G91.1`. |
@@ -975,6 +1073,7 @@ Not used, and why:
 | --- | --- | --- |
 | `%`, `O0001 ({programName})`, `lineNumbers: true` | `( Project: {programName} )`, no line numbers | [UM] 4.1.3; not documented (above). |
 | `G90 G94 G17 G40 G49 G80` | `G90 G17 G40 G49 G80 G94` | The same words, in the order of the LinuxCNC header. |
+| — | `G50`, `G69` (v3) | [UM] 4.1.1, p. 58, p. 60 (#312). |
 | `{unitsCommand}`, `G21`/`G20` | none | [UM] 4.1.1. |
 | `( Description: {operationDescription} )` | removed | Not filled by `emit`. |
 | `footer: []` | `["M5"]` | S4. |
@@ -1018,7 +1117,9 @@ Not used: `%` (optional with `M30`, [NIST] 3.1), line numbers (optional,
 while it is in progress", and a basic controller's behaviour is unknown),
 `G40`/`G49`/`G80` in the header (RS274/NGC has them, 3.5.10, 3.5.11,
 3.5.15, but the design spec keeps generic to the words every basic
-controller has, as PureCutCNC did), coolant (upstream has none).
+controller has, as PureCutCNC did), coolant (upstream has none), and
+`G50`/`G69`: RS274/NGC has no scaling or rotation codes (tables 4 and 5;
+see "Scaling and rotation").
 
 ### Changed from PureCutCNC
 
