@@ -862,11 +862,11 @@ impl fmt::Display for Warning {
             }
             Self::TabOnHole { tab, shape, .. } => write!(
                 f,
-                "tab `{tab}` is on {shape}, which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear --tab {tab}`) unless you mean to keep the slug"
+                "tab `{tab}` is on {shape}, which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear <dcv> --tab {tab}`) unless you mean to keep the slug"
             ),
             Self::TabNotCrossed { tab, shape } => write!(
                 f,
-                "tab `{tab}` on {shape} is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear --tab {tab}`)"
+                "tab `{tab}` on {shape} is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab {tab}`)"
             ),
             Self::ToolpathsOverlap {
                 shape,

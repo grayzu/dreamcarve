@@ -22,7 +22,7 @@ use std::process::ExitCode;
 
 use dc_cam::Warning;
 use dc_cam::placed_tabs::{
-    TabSize, along_outline_mm, crossed_by, place, place_on_outlines, place_requests,
+    TabSize, along_outline_mm, crossed_by, freed_parts, place, place_on_outlines, place_requests,
 };
 use dc_project::{Operation, OperationId, PlacedTab, Project, TabPlacement, TabShape, TabSpec};
 
@@ -103,6 +103,16 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
     };
     let (mut project, warnings) = place_requests(&raw).map_err(Failure::error)?;
     print_warnings(&warnings);
+    // Size, shape and holes belong to the tabs --count or --at places; a
+    // request brings its own.
+    if args.count.is_none()
+        && args.at.is_none()
+        && (args.width.is_some() || args.height.is_some() || args.shape.is_some() || args.on_holes)
+    {
+        return Err(Failure::usage(
+            "--width, --height, --shape and --on-holes need --count or --at",
+        ));
+    }
     let width_mm = args.width.unwrap_or(DEFAULT_WIDTH_MM);
     let height_mm = args.height.unwrap_or(DEFAULT_HEIGHT_MM);
     let shape = args.shape.map_or(TabShape::Rect, Into::into);
@@ -285,22 +295,32 @@ fn list(dcv: &Path) -> Result<(), Failure> {
     Ok(())
 }
 
-/// `tabs clear`: every tab, those on the instances `op` targets, or those
-/// named in `ids`.
+/// `tabs clear`: every tab, those the Profile `op` cuts round, or those
+/// named in `ids`. Says which parts an enabled Profile then cuts through
+/// the stock with no tab that one held before.
 fn clear(dcv: &Path, op: Option<&str>, ids: &[String]) -> Result<(), Failure> {
     let (mut project, _) = load_placed(dcv)?;
     let before = project.tabs.len();
+    let freed_before = freed_parts(&project);
     if let Some(op) = op {
         let op = OperationId::new(op);
-        let targets = project
-            .operations
-            .iter()
-            .find(|o| o.id() == &op)
-            .map(|o| o.targets().to_vec())
-            .ok_or_else(|| {
-                Failure::error(format!("operation `{op}` is not in {}", dcv.display()))
-            })?;
-        project.tabs.retain(|t| !targets.contains(&t.instance));
+        let profile = match project.operations.iter().find(|o| o.id() == &op) {
+            Some(Operation::Profile(p)) => p.clone(),
+            Some(other) => {
+                return Err(Failure::error(format!(
+                    "operation `{op}` is a {} operation; only a Profile cuts tabs",
+                    other.kind()
+                )));
+            }
+            None => {
+                return Err(Failure::error(format!(
+                    "operation `{op}` is not in {}",
+                    dcv.display()
+                )));
+            }
+        };
+        let crossed = crossed_by(&project, &profile).map_err(Failure::error)?;
+        project.tabs.retain(|t| !crossed.contains(&t.id));
     } else if !ids.is_empty() {
         if let Some(missing) = ids
             .iter()
@@ -324,5 +344,12 @@ fn clear(dcv: &Path, op: Option<&str>, ids: &[String]) -> Result<(), Failure> {
         dcv.display(),
         project.tabs.len()
     )?;
+    for (op, shape) in freed_parts(&project) {
+        if !freed_before.contains(&(op.clone(), shape.clone())) {
+            outln!(
+                "Note: operation `{op}` now cuts {shape} through the stock with no tab, so the part comes loose on its last pass."
+            )?;
+        }
+    }
     Ok(())
 }

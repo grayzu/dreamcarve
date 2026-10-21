@@ -162,8 +162,9 @@ Places, lists and removes the project's [tabs](tabs.md): `tabs place
 <dcv> <op> --count N` (or `--at d1,d2,…`, or neither for the operation's
 own tab request) puts tabs on the outlines a Profile cuts, `tabs list
 <dcv>` shows every tab and the Profiles that cut round it, and `tabs
-clear <dcv>` removes all of them, those on one operation's shapes
-(`tabs clear <dcv> <op>`), or the ones named with `--tab <id>`. `place`
+clear <dcv>` removes all of them, those one Profile cuts round (`tabs
+clear <dcv> <op>`, which names any part a through cut then frees with no
+tab), or the ones named with `--tab <id>`. `place`
 and `clear` save the project.
 
 ### `dreamcarve config path`

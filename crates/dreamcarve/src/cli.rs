@@ -72,12 +72,12 @@ pub enum TabsCommand {
         /// The project.
         dcv: PathBuf,
     },
-    /// Remove tabs and save the project: every tab, those on the outlines
-    /// one operation cuts, or those named with --tab.
+    /// Remove tabs and save the project: every tab, those one Profile
+    /// operation cuts round, or those named with --tab.
     Clear {
         /// The project.
         dcv: PathBuf,
-        /// Remove only the tabs on the instances this operation targets.
+        /// Remove only the tabs this Profile operation cuts round.
         op: Option<String>,
         /// Remove this tab; repeat for several.
         #[arg(long = "tab", value_name = "ID", conflicts_with = "op")]
@@ -94,7 +94,7 @@ pub struct TabsPlaceArgs {
     pub op: String,
     /// Space this many tabs evenly along each tool path, as phase 2 laid
     /// `count` tabs: fewer on an outline too short for them.
-    #[arg(long, conflicts_with = "at")]
+    #[arg(long, conflicts_with = "at", value_parser = clap::value_parser!(u8).range(1..))]
     pub count: Option<u8>,
     /// Put a tab at each of these distances along every outline, in mm
     /// from its first vertex as drawn: `--at 10,55.5`.

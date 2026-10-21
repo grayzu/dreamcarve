@@ -279,22 +279,31 @@ mirrors or scales. Every enabled Profile that cuts that outline rises
 over the tab, centred at its tool path's point nearest the tab, with the
 phase 1 span (the tab width plus the tool diameter) and shapes. A
 Profile crosses a tab when its path passes within the tool radius plus
-half the tab width of where the tab meets the outline. A pass rises over
+half the tab width of where the tab meets the outline and its cut goes
+below the tab's top, so a shallow score pass of a tabbed outline crosses
+none. A pass rises over
 a tab only below that tab's top; overlapping spans merge, taking the
 highest top, smooth only if every tab in them is, and warn
-`tabs_overlap`. Placed tabs are cut as placed: export never drops one,
+`tabs_overlap`; one tab alone whose span covers its whole path overlaps
+nothing and warns only its coverage. Placed tabs are cut as placed: export never drops one,
 and a layout that covers more than half its path warns
 `tabs_cover_most_of_contour` ("All of them are cut, as placed"). Two new
 warnings: `tab_not_crossed`, project-level, for a tab no enabled Profile
 crosses (its outline is not cut by an enabled Profile, or only by a
-Pocket or a disabled Profile, or every path runs too far from it), and
+Pocket or a disabled Profile, or every path runs too far from it or stops
+above its top), and
 `tab_on_hole` for a tab on an outline a Profile cuts as a hole: the tab
 is cut and holds the slug. The CLI gains `dreamcarve tabs place <dcv>
 <op> [--count N | --at d1,d2,…] [--width] [--height] [--shape]
 [--on-holes]` (with neither `--count` nor `--at`, the operation's own
 request), `tabs list <dcv>` (each tab, its distance along the outline,
 and the enabled Profiles that cross it) and `tabs clear <dcv> [<op> |
---tab <id>…]`. `--count` follows capability 26; `--at` puts a tab at
+--tab <id>…]`, where `<op>` must be a Profile and only the tabs it
+crosses are removed, with a note naming any part a through cut then
+frees with no tab (changed in #105 review: `<op>` removed every tab on
+its targets, whatever the operation). `--count` is at least 1, and
+`--width`, `--height`, `--shape` and `--on-holes` need `--count` or
+`--at`. `--count` follows capability 26; `--at` puts a tab at
 each distance along the outline from its first vertex as drawn. Format
 version 11 adds `"tabs": []`; a Profile's `tabs` stays as a tab
 request, which generation places before it cuts, so older files cut

@@ -102,9 +102,11 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   the tab setting (none on holes unless `--on-holes`, fewer on a short
   outline), `--at d1,d2,…` puts them at distances along each outline,
   `tabs list` shows every tab and the Profiles that cut round it, and
-  `tabs clear` removes them. `check` warns `tab_not_crossed` for a tab no
-  enabled Profile cuts round, and `tab_on_hole` for a tab that holds a hole's
-  slug.
+  `tabs clear` removes them (`tabs clear <dcv> <op>` the tabs one Profile cuts
+  round, naming any part a through cut then frees with no tab). A Profile cuts
+  round a tab only when its cut goes below the tab's top. `check` warns
+  `tab_not_crossed` for a tab no enabled Profile cuts round, and `tab_on_hole`
+  for a tab that holds a hole's slug.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
@@ -122,6 +124,9 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   strictly in drawing order (research decision D5, [#127]). A shape inside a hole
   is still cut before the hole, and ties keep drawing order ([#215]). A
   one-shape operation exports exactly as before.
+- **One tab alone no longer warns `tabs_overlap`.** A single tab whose span
+  covers its whole tool path warns only `tabs_cover_most_of_contour`; before,
+  it warned that tabs overlapped as well ([#105]). The program is the same.
 - **`init` writes a 15° ramp entry** for its Profile ([#119]). Projects from 0.1
   keep `entry: "plunge"` when upgraded, so they cut as before.
 - **Ramps, helixes and straight plunges start 1 mm above the stock.** The bit
