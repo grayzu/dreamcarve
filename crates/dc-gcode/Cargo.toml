@@ -24,6 +24,7 @@ thiserror.workspace = true
 [dev-dependencies]
 dc-cam = { workspace = true, features = ["test-support"] }
 dc-project = { workspace = true, features = ["test-support"] }
+proptest.workspace = true
 
 [lints]
 workspace = true
