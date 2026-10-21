@@ -64,9 +64,16 @@ Remove the old one or choose another name with `-o`.
 
 SVG lengths are converted to millimetres from the units the drawing
 declares (`mm`, `cm`, `in`, `pt`, `pc`; plain numbers and `px` are 96 per
-inch). Curves are converted to short straight lines within 0.01 mm of the
-drawing. Text, images, clip paths and masks are ignored with a warning:
-convert text to paths before you save.
+inch). Circles stay circles: a `<circle>`, an `<ellipse>` whose two radii
+are equal, the rounded corners of a `<rect>` with equal `rx` and `ry`, and
+a path's arc command (`A`) with equal radii are imported as exact arcs,
+and written as `G2`/`G3` where the post-processor allows. That holds under
+moves, rotations, uniform scaling and mirroring; a drawing stretched more
+one way than the other turns a circle into an ellipse. Every other curve
+(ellipses, Bézier curves, and circles under such a stretch) is converted
+to short straight lines within 0.01 mm of the drawing. Text, images, clip
+paths and masks are ignored with a warning: convert text to paths before
+you save.
 
 A drawing is refused if its page is larger than 6000 mm (6 m) on a side or
 any path reaches more than 6000 mm from the page's bottom-left corner.
