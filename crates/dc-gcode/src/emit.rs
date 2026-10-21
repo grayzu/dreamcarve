@@ -617,8 +617,10 @@ fn emit_enabled(
     // height set, so no other program's bytes change.
     if heights.machine_z_mm.is_some() {
         let comment = format!(
-            "{} {MACHINE_LIFT_COMMENT} {}",
-            post.program.comment_prefix, post.program.comment_suffix
+            "{} {} {}",
+            post.program.comment_prefix,
+            machine_lift_comment(&post.id),
+            post.program.comment_suffix
         );
         w.line(comment.trim_end());
     }
@@ -1014,14 +1016,46 @@ impl Lifts {
     }
 }
 
-/// The header comment of a program that lifts with `G53` (#283). It names
-/// soft limits (#308): on a machine that homes Z downward every negative
-/// machine Z is below the travel, and only soft limits (`$20=1`) stop the
-/// lift before it drives Z down (definitions README, "Machine-coordinate
-/// moves"). No `( ) ;` inside, which would end the comment early, and `$`
-/// starts a system command only at the start of a line.
-const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running. \
-                                    Needs Z to home upward, or soft limits on with $20=1";
+/// The start of the header comment of a program that lifts with `G53`
+/// (#283).
+const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running.";
+
+/// The header comment of a program that lifts with `G53` on the
+/// definition `post_id` (#283): home the machine, then what keeps a lift
+/// outside the travel from moving (#308; definitions README,
+/// "Machine-coordinate moves"). On grblHAL and GRBL, where a machine that
+/// homes Z downward has every negative machine Z below the travel, Z
+/// homing upward or soft limits on (`$20=1`). On LinuxCNC, whose soft
+/// limits always apply once homed, homing that is not skipped with
+/// `NO_FORCE_HOMING`. No `( ) ;` inside, which would end the comment
+/// early; `$` starts a GRBL system command only at the start of a line.
+fn machine_lift_comment(post_id: &str) -> String {
+    let limits = match post_id {
+        "grblhal" | "grbl" => Some("Needs Z to home upward, or soft limits on with $20=1"),
+        "linuxcnc" => Some("Soft limits apply only once homed: leave NO_FORCE_HOMING unset"),
+        _ => None,
+    };
+    limits.map_or_else(
+        || MACHINE_LIFT_COMMENT.to_owned(),
+        |limits| format!("{MACHINE_LIFT_COMMENT} {limits}"),
+    )
+}
+
+/// What the export note of a program that lifts with `G53` on the
+/// definition `post_id` adds after "home the machine" (#308): the
+/// controller's own condition for a lift outside the travel to stop before
+/// it moves, as in [`machine_lift_comment`]. `None` for a definition that
+/// has no such check documented.
+#[must_use]
+pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
+    match post_id {
+        "grblhal" | "grbl" => Some("Z must home upward, or soft limits must be on ($20=1)."),
+        "linuxcnc" => Some(
+            "LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.",
+        ),
+        _ => None,
+    }
+}
 
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under
@@ -5275,7 +5309,7 @@ mod tests {
                         program
                             .text
                             .lines()
-                            .any(|l| l == format!("( {MACHINE_LIFT_COMMENT} )")),
+                            .any(|l| l == format!("( {} )", machine_lift_comment("linuxcnc"))),
                         "{}",
                         program.text
                     );

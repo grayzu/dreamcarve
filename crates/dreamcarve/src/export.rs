@@ -38,7 +38,10 @@ use dc_cam::{
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs};
+use dc_gcode::{
+    AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs,
+    machine_lift_limits_note,
+};
 use dc_project::{
     Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap, Tool,
     ToolChangeMode, Units, validate,
@@ -715,7 +718,8 @@ fn report(
     // homed machine; the program cannot check that.
     if let Some(z) = &program.machine_lift {
         outln!(
-            "Before you start: home the machine; this program moves to machine Z {z} (G53). {SOFT_LIMITS_NOTE}"
+            "Before you start: home the machine; this program moves to machine Z {z} (G53).{}",
+            limits_note(project)
         )?;
     }
     report_tool_length_offset(project)?;
@@ -738,11 +742,13 @@ fn report(
     Ok(())
 }
 
-/// #308: what keeps a `G53` lift from driving Z down on a machine that
-/// homes Z downward, where every negative machine Z is below the travel
-/// (definitions README, "Machine-coordinate moves"). Only grblHAL and GRBL
-/// document `G53`, so the setting is theirs.
-const SOFT_LIMITS_NOTE: &str = "Z must home upward, or soft limits must be on ($20=1).";
+/// #308: the post-processor's condition for a `G53` lift outside the
+/// travel to stop before it moves, with a leading space, or nothing.
+fn limits_note(project: &Project) -> String {
+    machine_lift_limits_note(&project.post_processor.id)
+        .map(|note| format!(" {note}"))
+        .unwrap_or_default()
+}
 
 /// Prints the export summary of the programs of tool runs (#95): the files
 /// in the order to run them, with what to do before each, then one line
@@ -776,7 +782,8 @@ fn report_runs(
     // #283: every program of the export ends with the same lift.
     if let Some(z) = programs.iter().find_map(|p| p.machine_lift.as_ref()) {
         outln!(
-            "Before you start: home the machine; each program moves to machine Z {z} (G53). {SOFT_LIMITS_NOTE}"
+            "Before you start: home the machine; each program moves to machine Z {z} (G53).{}",
+            limits_note(project)
         )?;
     }
     report_tool_length_offset(project)?;

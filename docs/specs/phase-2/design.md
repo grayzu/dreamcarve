@@ -3043,9 +3043,17 @@ above:
   export note and the header comment name both conditions. DreamCarve
   cannot read the homing direction or `$20`, so it is a note, not a
   refusal. Header bytes change only for a program with a machine Z, so
-  no definition version is added. Tests:
+  no definition version is added. The wording is per controller, since
+  `$20` is GRBL's: on LinuxCNC (#306), whose soft limits always apply once
+  homed and which runs no program unhomed unless `[TRAJ] NO_FORCE_HOMING`
+  is set, the header says `Soft limits apply only once homed: leave
+  NO_FORCE_HOMING unset` and the note `LinuxCNC applies soft limits only
+  once homed: leave [TRAJ] NO_FORCE_HOMING unset.`
+  (`dc_gcode::machine_lift_limits_note`). Tests:
   `emit::machine_z_header_comment`,
-  `cli::export_machine_z_note_names_soft_limits`.
+  `emit::machine_z_header_comment_on_linuxcnc`,
+  `cli::export_machine_z_note_names_soft_limits`,
+  `cli::export_machine_z_note_on_linuxcnc`.
 - The estimate (A4). A `G53` lift has no work-coordinate motion, so
   `dc-gcode::estimate` leaves its distance, and that of the rise after it
   from an unknown Z, out of the rapid distance.

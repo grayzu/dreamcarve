@@ -351,14 +351,25 @@ DreamCarve cannot check, so `export` says to home it whenever a program
 has a lift, and the program says so in a header comment in the
 definition's comment syntax, `( Lifts to machine Z with G53: home the
 machine before running. Needs Z to home upward, or soft limits on with
-$20=1 )` (`;` on GRBL v3). Both name soft limits (#308), since a user who
-never reads the post-processors chapter would not otherwise learn that
-on a machine that homes Z downward the lift is safe only with them on.
-DreamCarve cannot read the homing direction or `$20`, so this is a note,
-not a refusal. The comment holds no `( ) ;`, and its `$` is not a command:
-both controllers read `$` as a system command only as the first character
-of a line (GRBL `grbl/protocol.c` 96, grblHAL `protocol.c` 249), and the
-line starts with the comment.
+$20=1 )` on grblHAL and GRBL (`;` on GRBL v3). Both name soft limits
+(#308), since a user who never reads the post-processors chapter would
+not otherwise learn that on a machine that homes Z downward the lift is
+safe only with them on. DreamCarve cannot read the homing direction or
+`$20`, so this is a note, not a refusal. The comment holds no `( ) ;`,
+and its `$` is not a command: both controllers read `$` as a system
+command only as the first character of a line (GRBL `grbl/protocol.c`
+96, grblHAL `protocol.c` 249), and the line starts with the comment.
+
+`$20` is GRBL's. On LinuxCNC the soft limits need no setting but homing
+(see the LinuxCNC list above: "The axis must be homed before MIN_LIMIT is
+in force", and a program runs unhomed only with `[TRAJ] NO_FORCE_HOMING`),
+so the comment is `( Lifts to machine Z with G53: home the machine before
+running. Soft limits apply only once homed: leave NO_FORCE_HOMING unset )`
+and the export note ends `LinuxCNC applies soft limits only once homed:
+leave [TRAJ] NO_FORCE_HOMING unset.` The comment's text starts with
+`Lifts`, none of the words LinuxCNC acts on in a comment (`MSG,`,
+`DEBUG,`, `PRINT,`, `PROBEOPEN` and the other probe and `LOG` words;
+[O] `#gcode:comments`).
 
 What DreamCarve writes, the safety pass's S16: `G53 G0 Z<v>`, alone on its
 line, in the program's units, after a retract in work coordinates to at
