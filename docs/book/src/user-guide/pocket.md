@@ -194,9 +194,10 @@ the bit's diameter: 0.4 with a 6.35 mm bit is 2.54 mm. Smaller is slower
 and leaves a smoother floor. Above 0.5 the rings alone would leave
 material standing: a pin in the middle of the innermost ring, and above
 about 0.85 a small peak in each sharp corner of a ring. DreamCarve finds
-what the rings miss and adds a short clean-up ring round each piece, cut
-with the rings, so the floor is cleared at any stepover; each one away
-from the others costs a lift and an entry. The operation's
+what the rings miss and adds a short clean-up ring round each piece, so
+the floor is cleared at any stepover. The ring next to a piece cuts it
+on its way past, without lifting: it runs in from its corner, round the
+clean-up ring and back out. The operation's
 `step_over_fraction` wins over the tool's.
 
 ## Direction
