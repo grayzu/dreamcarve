@@ -339,6 +339,10 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   ([#157]).
 - Open paths now take part in the `toolpaths_overlap` and
   `cut_inside_freed_part` warnings ([#206]).
+- An On line ramp whose leg ends a hair past a chord vertex no longer goes
+  back to that vertex with a move too short to write. With arc fitting on,
+  arc fitting counted that move as a chord the program does not write, and
+  export failed S12 ([#321]).
 
 ### Safety
 
@@ -458,3 +462,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306
 [#308]: https://github.com/grayzu/dreamcarve/issues/308
+[#321]: https://github.com/grayzu/dreamcarve/issues/321
