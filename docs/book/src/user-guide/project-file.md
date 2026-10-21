@@ -249,7 +249,7 @@ To move a shape on the stock, change `e` and `f`.
 | --- | --- |
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
-| `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. In this build the number is checked but programs still write the position; writing it is a phase 2 follow-up. |
+| `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. Set it to match your machine's tool table: with `5`, programs write `T5` (`M61 Q5`, `T5 M6`, the `( Tool 5: … )` comment, `Fit T5`) and, with one program per tool run, name its programs `<stem>-<k>-T5.nc`. |
 | `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside or Inside Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
 | `diameter_mm` | Cutting diameter. Profile and Pocket offset the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used in phase 1. |
