@@ -265,8 +265,8 @@ fn init_round_trip() {
     let profile = &definition.profiles[0];
     assert!(profile.is_closed(), "the circle is a closed profile");
     let bounds = profile.bounds().expect("profile has vertices");
-    // Flattened vertices lie on the circle, so the bounds may fall short of
-    // the true extremes by up to the flatten tolerance.
+    // The circle is two exact arcs (#70); the tolerance is what phase 1
+    // allowed its flattened vertices, which fell short of the extremes.
     let tol = 2.0 * project.flatten_tolerance_mm;
     assert_approx_eq!(bounds.min.x, 5.0, tol);
     assert_approx_eq!(bounds.min.y, 5.0, tol);
@@ -274,6 +274,35 @@ fn init_round_trip() {
     assert_approx_eq!(bounds.max.y, 95.0, tol);
     assert_approx_eq!(project.stock.width_mm, 110.0, tol);
     assert_approx_eq!(project.stock.height_mm, 110.0, tol);
+}
+
+/// #70: the coaster's `<circle>` is imported as the circle it is, two
+/// half-circle bulge arcs (bulge −1: usvg draws circles clockwise as seen
+/// on the page), not 160 flattened edges. Placed on the stock it is the
+/// 90 mm circle centred at (55, 55), and Drill's circle test finds it
+/// exactly.
+#[test]
+fn init_imports_coaster_as_two_bulge_vertices() {
+    let dir = work_dir("init_imports_coaster_as_two_bulge_vertices");
+    let project = load_file(&init_coaster(&dir)).project;
+    assert_eq!(project.definitions.len(), 1, "one definition");
+    let definition = project.definitions.values().next().expect("a definition");
+    assert_eq!(definition.profiles.len(), 1, "one profile");
+    let profile = &definition.profiles[0];
+    assert!(profile.is_closed());
+    assert_eq!(profile.vertices().len(), 2, "{:?}", profile.vertices());
+    for v in profile.vertices() {
+        assert_approx_eq!(v.bulge, -1.0, 0.0);
+    }
+    let instance = &project.instances[0];
+    let placed = instance
+        .transform
+        .apply_polyline(profile)
+        .expect("transform applies");
+    let (centre, radius_mm) = dc_geometry::as_circle(&placed, 1e-6).expect("a circle");
+    assert_approx_eq!(centre.x, 55.0, 1e-4);
+    assert_approx_eq!(centre.y, 55.0, 1e-4);
+    assert_approx_eq!(radius_mm, 45.0, 1e-4);
 }
 
 /// #64: `init` cannot know the material, so like the feeds it leaves the
@@ -528,7 +557,7 @@ fn is_hundredth(value_mm: f64) -> bool {
 /// rounds the stock size up and the instance offset to 0.01 mm, keeping
 /// the drawing at least the 10 mm margin in from every stock edge. The
 /// margin is checked to 0.001 mm, the resolution programs are written with:
-/// noise below that (the coaster's circle reaches 4.9999981 mm) is not worth
+/// noise below that (usvg's f32 rounding: a few millionths of a mm) is not worth
 /// a 0.01 mm larger stock or a shifted drawing.
 #[test]
 fn init_writes_round_numbers() {
@@ -2139,33 +2168,73 @@ fn printed_range(summary: &str, label: char) -> (f64, f64) {
     )
 }
 
-/// Functional acceptance 37, on the `init` coaster: with
-/// `arc_fit_tolerance_mm: null` nothing is fitted:
-/// `tests/expected/coaster-grblhal-unfitted.nc` is `coaster-grblhal.nc`
-/// with every lap its straight moves. (It ramps into each pass, as `init`
-/// projects do since #119, so it is no longer the phase 1 program; the
-/// migrated phase 1 fixture keeps that, `v7_project_exports_the_same_program`.)
+/// Functional acceptance 37, through `init`: with
+/// `arc_fit_tolerance_mm: null` nothing is fitted. Since #70 the
+/// quick-start coaster's `<circle>` imports as two exact arcs, leaving
+/// nothing to fit, so this uses the coaster drawn as four Béziers that are
+/// not the circle's exact arc (`tests/fixtures/coaster-bezier.svg`), which
+/// is flattened as phase 1 flattened every circle.
+/// `tests/expected/coaster-bezier-grblhal-unfitted.nc` is its program with
+/// every lap its straight moves; with `init`'s 0.01 mm the fitted program
+/// is a fraction of the length. (It ramps into each pass, as `init`
+/// projects do since #119, so it is not the phase 1 program; the migrated
+/// phase 1 fixture keeps that, `v7_project_exports_the_same_program`.)
 #[test]
 fn null_arc_fit_tolerance_exports_the_unfitted_program() {
     let dir = work_dir("null_arc_fit_tolerance");
-    let dcv = init_coaster(&dir);
+    copy_fixture(&dir, "coaster-bezier.svg", "coaster.svg");
+    let out = run(&dir, &["init", "coaster.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("coaster.dcv");
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
     assert_eq!(project.arc_fit_tolerance_mm, Some(0.01), "init's default");
+    let facets = project
+        .definitions
+        .values()
+        .next()
+        .expect("a definition")
+        .profiles[0]
+        .vertices()
+        .len();
+    assert!(facets > 100, "the Bézier circle is flattened: {facets}");
     project.arc_fit_tolerance_mm = None;
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
-    assert_exports_match(&dir, &[], &[("coaster.nc", "coaster-grblhal-unfitted.nc")]);
-    // The fitted program is a fraction of the length.
-    let fitted = include_str!("expected/coaster-grblhal.nc");
-    let unfitted = include_str!("expected/coaster-grblhal-unfitted.nc");
-    assert!(fitted.lines().count() < unfitted.lines().count() / 4);
+    assert_exports_match(
+        &dir,
+        &[],
+        &[("coaster.nc", "coaster-bezier-grblhal-unfitted.nc")],
+    );
+    let unfitted = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+
+    project.arc_fit_tolerance_mm = Some(0.01);
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--date",
+            FIXED_DATE,
+            "-o",
+            "fitted.nc",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let fitted = std::fs::read_to_string(dir.join("fitted.nc")).expect("fitted.nc written");
+    assert!(
+        fitted.lines().count() < unfitted.lines().count() / 4,
+        "fitted {} lines, unfitted {}",
+        fitted.lines().count(),
+        unfitted.lines().count()
+    );
 }
 
 /// #62: `export` and `check` print the program's extents in machine
 /// coordinates, rounded as the program is. Z is exactly the range of the Z
 /// words (Z min is the deepest cut). X and Y reach at least as far as the
-/// X and Y words, and further where an arc bulges past its end words: with
-/// arc fitting the coaster's lap is a few arcs, so the extents are the
+/// X and Y words, and further where an arc bulges past its end words: the
+/// coaster's lap is two half-circle arcs (#70), so the extents are the
 /// tool-centre circle, radius 45 + 3.175 mm about (55, 55), within the
 /// rounding of the written arcs.
 #[test]

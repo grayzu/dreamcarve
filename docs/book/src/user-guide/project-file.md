@@ -104,12 +104,15 @@ The fields, in the order DreamCarve writes them:
 
 ## Arc fitting
 
-A curve in an SVG is imported as short straight edges, within
-`flatten_tolerance_mm` of the curve, so a circle becomes a hundred or
-more `G1` moves per lap. With `arc_fit_tolerance_mm` set, `export` looks
+Circles and circular arcs in an SVG or DXF are imported as arcs and cut
+as arcs ([Overview](overview.md#dreamcarve-init-svgdxf)). Other curves,
+such as ellipses, Bézier curves and DXF splines, are imported as short
+straight edges, within `flatten_tolerance_mm` of the curve, so a curve
+becomes many `G1` moves. With `arc_fit_tolerance_mm` set, `export` looks
 for runs of straight cutting moves, at one depth and one feed, whose
 corners all lie on one circle within that distance, and writes each run
-as `G2`/`G3` arcs instead: the coaster's lap of 160 edges becomes 7 arcs.
+as `G2`/`G3` arcs instead: a 90 mm circle drawn as Bézier curves, 160
+edges a lap, becomes 9 arcs.
 Each arc sweeps at most 90°, starts and ends exactly on corners of the
 run, and passes within the tolerance of every corner between. Rapids,
 plunges, moves that change depth, and arcs the toolpath already has are
@@ -193,9 +196,8 @@ corner.
   "profiles": [
     {
       "vertices": [
-        { "x": 95.0, "y": 50.0, "bulge": 0.0 },
-        { "x": 94.964, "y": 48.2, "bulge": 0.0 },
-        …
+        { "x": 95.0, "y": 50.0, "bulge": -1.0 },
+        { "x": 5.0, "y": 50.0, "bulge": -1.0 }
       ],
       "closed": true
     }
@@ -203,8 +205,9 @@ corner.
 }
 ```
 
-(Numbers shortened here; the file holds them in full. The coaster's circle
-is 160 short straight lines.)
+(Numbers shortened here; the file holds them in full, with the few
+millionths of a millimetre the SVG reader's rounding leaves. The coaster's
+circle is two half-circle arcs, clockwise.)
 
 DreamCarve writes each vertex on one line, as above, to keep a drawing
 short; the numbers keep their full precision. A vertex spread over several

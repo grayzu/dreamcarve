@@ -404,6 +404,10 @@ lap is one run per segment between tabs: 4 tab tops and 5 segments give
 number of `G1` moves as before on a post-processor without arc
 support; every original vertex lies on its fitted arc within 0.01 mm;
 an ellipse is not fitted; the program with `arc_fit_tolerance_mm:  null` equals the phase 1 program. The fitted program passes S6.
+(changed in #70: `init` now imports an SVG circle as two exact bulge
+arcs, so the 160-facet coaster is built in the test, as phase 1 imported
+it, and the CLI check uses the coaster drawn as Béziers,
+`tests/fixtures/coaster-bezier.svg`.)
 38. **Golden parity.** For each case in `tests/golden/` listed in the
 design spec, the cutting moves at each Z match PureCutCNC's exported
 G-code within 0.01 mm after start-point alignment; for the two
