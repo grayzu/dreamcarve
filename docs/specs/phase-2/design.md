@@ -704,7 +704,7 @@ tolerance.
    on the toolpath; the safety pass checks it inside a Drill span and
    fails with `ExportError::RapidIntoUncut`. Every other operation has
    S2, which since #214 also lets a rapid straight down from safe Z stop
-   over a ramp or helix's start.
+   over a ramp or helix's start, and since #227 over a straight plunge.
 
 ### Engrave (dc-cam::engrave)
 
@@ -754,7 +754,10 @@ cut direction and cut side.
   descent started at safe Z, so a 15° helix spiralled about 3.5 turns
   through the air at the feed rate before it reached the wood, half of
   the plaque's first program; VCarve and Fusion rapid down to a
-  clearance above the material first, as the Drill already did.)
+  clearance above the material first, as the Drill already did.) A
+  straight plunge (`entry: plunge`, a fallback plunge, an Engrave pass, a
+  corner-relief notch, a lap that starts on a tab) is reached by the same
+  rapid down and plunges at the plunge rate only from there (#227).
 - **Pitch** `π · d · tan(angle)` for path diameter `d`. **Feed scale**
   `min(1, plunge / (feed · sin(slope)))` on every descending move (S10).
 - **Helix placement:** largest clearance circle (pole of inaccessibility,
@@ -1191,7 +1194,16 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
      whichever is lower but not below `descent_from_z_mm`, then a plunge
      at the plunge rate for the rest; then the descent. A tool below a
      descent's start (rule 1, a Pocket's later pass) rises to it at the
-     plunge rate. (changed in #214: the plunge ran from safe Z.)
+     plunge rate. (changed in #214: the plunge ran from safe Z.) A
+     straight plunge is reached the same way: an empty descent's plunge
+     to `b.entry` at `b.z_mm`, and a descent that opens with a straight
+     plunge at `b.descent_from` (a lap that starts on a tab, a Profile's
+     corner-relief notch). The rapid stops at the same floor, never below
+     the plunge's end, and the plunge covers the rest; the floors count
+     the cuts of `SequenceInput::cut_before` too, the main path a
+     Pocket's relief pass follows. (changed in #227: a straight plunge
+     fed from safe Z through the air; the plaque's 3.175 mm Engrave spent
+     3 s of each 3.2 s plunge in air.)
    The first block is reached by a rapid to safe Z then XY; the last is
    followed by a rapid to safe Z. Zero-length moves are never written
    (so a tab over the lap start stays byte-identical to phase 1); dwells
@@ -1204,7 +1216,8 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
 5. **Output:** one `Toolpath`. Every `Rapid` is at safe Z except a
    Drill's descent, one Z rapid down to its `retract_z`, the peck
    rapids inside its cuts, and the rapid straight down from safe Z to a
-   ramp or helix (step 4, S2 as changed in #214). The descents
+   ramp, helix or straight plunge (step 4, S2 as changed in #214 and
+   #227). The descents
    themselves are `Linear` at feed/plunge, never `Rapid`.
 6. **Invariants O1–O10** are the module's tests.
 
@@ -1273,7 +1286,20 @@ the fitted centre is transformed like a point).
    #213: a 0.006 mm stay-down link, a shallow corner arc and a 40 mm wall
    side lie on a 154.75 mm circle, and with only two chord steps the
    median let it through; the arc bowed 1.3 mm into the wall, which S9
-   refused.) Direction from
+   refused.) And the arc lies within `tolerance` of every move it
+   replaces along the move's whole length
+   (`arcfit::arc_chord_deviation_mm`: the farthest of the arc's ends, the
+   point farthest from the chord's line, and eight points between, from
+   the chord; for a chord between points on the circle, its sagitta
+   `r(1 − cos(step/2))`); a shallow corner arc counts as its chord.
+   (changed in #226, #229, #233: only the vertices were checked, and a
+   square's four corners lie on one circle, so a 7 mm square cut On line
+   became four 90° arcs bowing 1.45 mm off its sides and failed S9. A
+   polyline that stands for a curve has chords within the tolerance when
+   it is flattened at a tolerance no coarser than the arc-fit one, so the
+   fitter's unit tests fit those, not coarse polygons; a project whose
+   `flatten_tolerance_mm` is coarser than `arc_fit_tolerance_mm` fits
+   fewer runs.) Direction from
    the sign of the summed cross products (negative = clockwise = `G2`).
 3. Split each fitted run into arcs of ≤ 90° with intermediate endpoints on
    the circle and the last endpoint exactly the source point; `I`,`J` per
@@ -1310,12 +1336,18 @@ shallow arcs) when:
   three toolpath moves;
 - every vertex and shallow-arc midpoint between lies on its piece within
   that tolerance;
+- over every piece a move spans, the piece's farthest point from that
+  move's chord is within that tolerance (changed in #226: an arc whose
+  ends and vertices are all on the circle, over a 0.006 mm fragment, a
+  short chord and a 40 mm straight side, bowed 1.3 mm off the side and
+  S6 accepted it; S12 must not trust the fitter);
 - the direction matches the sign of the vertices' turn.
 
 A wrong arc in place of a deep toolpath arc stays `MotionMismatch`. A
 failure is `ExportError::ArcFitViolation`. `fitted_arcs_pass_s6`,
-`arc_off_the_vertices_fails_s6` and `arc_over_90_degrees_fails_s12` are
-the tests. (changed in slice 14, #128: one arc per run could not match a
+`arc_off_the_vertices_fails_s6`, `arc_over_90_degrees_fails_s12`,
+`arc_bowing_off_a_long_straight_move_fails_s12` (mm and inch) and
+`arc_within_tolerance_of_every_chord_passes` are the tests. (changed in slice 14, #128: one arc per run could not match a
 split run; slice 4, #137, chained each piece's centre to the previous
 piece's rather than the first, because snapped centres drift along a
 run.)

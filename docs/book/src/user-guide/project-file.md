@@ -114,7 +114,11 @@ corners all lie on one circle within that distance, and writes each run
 as `G2`/`G3` arcs instead: a 90 mm circle drawn as Bézier curves, 160
 edges a lap, becomes 9 arcs.
 Each arc sweeps at most 90°, starts and ends exactly on corners of the
-run, and passes within the tolerance of every corner between. Rapids,
+run, and passes within the tolerance of every corner between and of
+every straight move it replaces, along the whole move: a square's four
+corners lie on one circle, but its sides are far from it, so a square
+stays four lines. Curves flattened at `flatten_tolerance_mm` no coarser
+than `arc_fit_tolerance_mm` have edges close enough to fit. Rapids,
 plunges, moves that change depth, and arcs the toolpath already has are
 left as they are, and the post-processor must write arcs
 (`arc_interpolation`); a definition that cannot gets the straight moves.

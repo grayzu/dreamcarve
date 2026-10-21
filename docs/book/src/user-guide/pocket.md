@@ -204,7 +204,8 @@ arrives from safe Z (VCarve's "Ramps"; Fusion's "Ramp Type"). A ring or
 raster line reached by a stay-down link from the one before is already at
 depth, so it has no entry.
 
-- `"plunge"`: straight down at the tool's plunge rate. A bit that does
+- `"plunge"`: straight down at the tool's plunge rate, from 1 mm above the
+  stock or the floor already cut there (the bit rapids that far). A bit that does
   not cut well at its centre, as most do not, takes this hard.
 - `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag. The bit runs back and
   forth along a short straight line through the point where the ring or
