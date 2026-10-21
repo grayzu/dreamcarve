@@ -76,6 +76,9 @@ pub struct Transform(kurbo::Affine);
 
 pub fn offset(c: &Contour, delta_mm: f64) -> Vec<Contour>;       // cavalier_contours parallel_offset; +delta grows
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline>;
+    // within tolerance_mm of the curve: kurbo is asked for half of it, as the SVG importer's
+    // per-curve flattening is (changed in #225: kurbo's own bound is approximate, and at the
+    // tolerance itself it strayed up to 1.34 × it from random cubics)
 pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>), GeometryError>;
     // even-odd containment → outer/holes; crossing shapes are ContoursCross, duplicates dropped with a warning
 pub fn length(p: &Polyline) -> f64;
