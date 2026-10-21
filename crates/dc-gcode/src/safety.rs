@@ -25,7 +25,7 @@
 //! operation's own material, worked out from the project
 //! ([`crate::material`]).
 
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::Range;
 
 use dc_cam::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
@@ -1254,22 +1254,32 @@ fn check_reproduces(
         }
         // S12: an arc where the toolpath has straight moves (or a shallow
         // corner arc a run may take as its chord).
-        let fitted = rest
-            .first()
-            .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
-        let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
-            return Err(mismatch(index));
+        let fitted = (|| {
+            let fitted = rest
+                .first()
+                .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
+            let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
+                return Err(mismatch(index));
+            };
+            if !run_eligible(previous, mv, arc_fit_mm) {
+                return Err(mismatch(index));
+            }
+            match_fitted_arc(rest, moves, index, previous, transform, arc_fit_mm).ok_or_else(|| {
+                ExportError::ArcFitViolation {
+                    op: span.op.id().clone(),
+                    line: read.mv.line,
+                }
+            })
+        })();
+        let (lines, covered) = match fitted {
+            Ok(fitted) => fitted,
+            // An arc of at most a half turn that ends where the controller
+            // already is lies wholly within the rounding of it: `emit`
+            // writes it as nothing, as it does such a straight move. Tried
+            // last, so a fitted run that takes the arc is matched first.
+            Err(_) if already_there && written_as_nothing(previous, mv) => (0, 1),
+            Err(error) => return Err(error),
         };
-        if !run_eligible(previous, mv, arc_fit_mm) {
-            return Err(mismatch(index));
-        }
-        let (lines, covered) = match_fitted_arc(
-            rest, moves, index, previous, transform, arc_fit_mm,
-        )
-        .ok_or_else(|| ExportError::ArcFitViolation {
-            op: span.op.id().clone(),
-            line: read.mv.line,
-        })?;
         cursor += lines;
         index += covered;
         previous = moves.get(index.wrapping_sub(1)).map(|m| m.to);
@@ -1284,6 +1294,19 @@ fn check_reproduces(
     } else {
         Err(mismatch(span.toolpath.moves.len()))
     }
+}
+
+/// Whether toolpath move `mv`, from `previous`, is an arc of at most a
+/// half turn: every point of it lies no further from its start than its
+/// end does, so it is wholly within the rounding when its end is.
+fn written_as_nothing(previous: Option<Point3>, mv: &Move) -> bool {
+    let (MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre }) = mv.kind else {
+        return false;
+    };
+    let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
+    previous
+        .and_then(|start| ToolpathArc::new(start, mv.to, centre, clockwise))
+        .is_some_and(|arc| arc.sweep_rad <= PI)
 }
 
 /// A parsed move with its ends in project space, mm.
@@ -4314,6 +4337,44 @@ mod tests {
         assert!(matches!(err, ExportError::OffMaterial { .. }), "{err:?}");
     }
 
+    /// #231: the sample's outside Profile with T-bones of a 60 × 40 mm
+    /// frame at (90, 60) with a 30 × 20 mm hole at (105, 70). The T-bone
+    /// in the hole's corner (105, 70) runs from the miter point
+    /// (108.175, 73.175) to (108.175, 70) on the hole's long wall. Its
+    /// return leg, written from a start the rounding moved 0.0005 mm into
+    /// the part, passes; one starting 0.1 mm inside the part fails: the
+    /// slack S9 judges the side with does not open the part. The tool
+    /// gets to each start by rapids, which S9 does not hold to the
+    /// material, so only the return leg is judged.
+    #[test]
+    fn outside_cut_starting_inside_the_part_is_rejected() {
+        let mut project = sample_project();
+        project.stock = dc_project::Stock {
+            width_mm: 240.0,
+            height_mm: 160.0,
+            thickness_mm: Some(6.0),
+        };
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles = vec![
+                dc_geometry::Polyline::rect(Point::new(0.0, 0.0), 60.0, 40.0),
+                dc_geometry::Polyline::rect(Point::new(15.0, 10.0), 30.0, 20.0),
+            ];
+        }
+        project.instances[0].transform = dc_geometry::Transform::translate(90.0, 60.0);
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.tabs = None;
+        op.corner_relief = dc_project::CornerRelief::TBone;
+        let op = Operation::Profile(op.clone());
+        let program =
+            |y: &str| format!("G21 G90\nG54\nG0 Z5\nX108.175 Y{y}\nZ-1\nG1 Y73.175 F1000\nG0 Z5\n");
+        check_material_text(&program("69.9995"), &project, &op).unwrap();
+        let err = check_material_text(&program("69.9"), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+            "{err:?}"
+        );
+    }
+
     /// S9 for an inside Profile (#177): the tool centre stays inside the
     /// hole, a radius from its walls, as a Pocket's; a cut that crosses
     /// out of the hole fails.
@@ -5073,6 +5134,46 @@ mod tests {
         let toolpath = chord_run(102, 3.0 * FRAC_PI_2, None);
         let text = drifting_run_text([0.009, 0.0, 0.0, 0.009]);
         check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+    }
+
+    /// Found by the Pocket property test once #232, #234 and #235 were
+    /// fixed: an offset ring started 0.0017 mm before the end of a round
+    /// corner, leaving an arc piece shorter than a unit of a 4-place inch
+    /// program. `emit` writes such an arc as nothing (its ends round to one
+    /// point, and a G2 there would be a full circle), so S6 must take a
+    /// toolpath arc of at most a half turn that ends where the controller
+    /// already is as reproduced, as it takes such a straight move. Here a
+    /// 0.001 mm arc of radius 0.685 mm, in inches; the same arc in mm is
+    /// written and matched as usual.
+    #[test]
+    fn arc_shorter_than_a_quantum_is_written_as_nothing() {
+        for units in [Units::Inch, Units::Mm] {
+            let (mut project, op, tool) = partless_fixture();
+            project.display_units = units;
+            let centre = Point::new(20.0, 10.685);
+            let turn: f64 = 0.001 / 0.685;
+            let end = Point::new(20.0 + 0.685 * turn.sin(), 10.685 - 0.685 * turn.cos());
+            let toolpath = Toolpath {
+                moves: vec![
+                    Move::rapid(Point3::new(10.0, 10.0, 11.0)),
+                    Move::linear(Point3::new(10.0, 10.0, 3.0), 300.0),
+                    Move::linear(Point3::new(20.0, 10.0, 3.0), 1000.0),
+                    Move {
+                        kind: MoveKind::ArcCcw { centre },
+                        to: Point3::new(end.x, end.y, 3.0),
+                        feed_mm_min: Some(1000.0),
+                    },
+                    Move::linear(Point3::new(30.0, 10.0, 3.0), 1000.0),
+                    Move::rapid(Point3::new(30.0, 10.0, 11.0)),
+                ],
+            };
+            let result = emit(
+                &project,
+                &[(Operation::Profile(op), tool, toolpath).into()],
+                "2026-10-21",
+            );
+            assert!(result.is_ok(), "{units:?}: {result:?}");
+        }
     }
 
     /// #142: two abutting runs on different circles stay separate chains.

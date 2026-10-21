@@ -14,6 +14,14 @@ use crate::polyline::{Polyline, Vertex};
 /// `flatten_tolerance_mm` default.
 pub const FLATTEN_TOLERANCE_DEFAULT_MM: f64 = 0.01;
 
+/// The fraction of the tolerance kurbo is asked to flatten within (#225).
+/// kurbo's bound is approximate, "not absolutely guaranteed" in its own
+/// docs: on random cubics a polyline flattened at the tolerance strays up
+/// to 1.34 × it from the curve. At half the tolerance the worst measured
+/// is 0.66 × it, for about √2 times as many segments. The property test
+/// `flatten_stays_within_tolerance` guards the bound.
+pub const KURBO_FLATTEN_SAFETY: f64 = 0.5;
+
 /// Flattens `path` into one polyline per subpath, with no vertex or
 /// segment further than `tolerance_mm` from the curve. Coordinates pass
 /// through unchanged: the caller has already transformed, scaled, and
@@ -24,7 +32,7 @@ pub const FLATTEN_TOLERANCE_DEFAULT_MM: f64 = 0.01;
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline> {
     let mut out = Vec::new();
     let mut current: Vec<Point> = Vec::new();
-    kurbo::flatten(path, tolerance_mm, |el| match el {
+    kurbo::flatten(path, tolerance_mm * KURBO_FLATTEN_SAFETY, |el| match el {
         kurbo::PathEl::MoveTo(p) => {
             finish(&mut out, std::mem::take(&mut current), false);
             current.push(Point::new(p.x, p.y));
@@ -66,7 +74,7 @@ fn finish(out: &mut Vec<Polyline>, mut points: Vec<Point>, closed: bool) {
 mod tests {
     use super::*;
     use crate::point::Point;
-    use kurbo::Shape;
+    use kurbo::{ParamCurveNearest, Shape};
 
     #[test]
     fn circle_within_tolerance() {
@@ -85,6 +93,40 @@ mod tests {
             for p in [seg.start, seg.start + (seg.end - seg.start) * 0.5] {
                 let err = (p.distance_to(centre) - radius).abs();
                 assert!(err <= tol + 1e-5, "point {p:?} is {err} mm off the circle");
+            }
+        }
+    }
+
+    /// #225: kurbo's flattening bound is "not absolutely guaranteed", and
+    /// on this cubic (the property test's shrunk case) a vertex lands
+    /// 1.13 × the tolerance from the curve. Every point along every
+    /// segment (sixteenths) must lie within the tolerance, measured with
+    /// `CubicBez::nearest`.
+    #[test]
+    fn shrunk_cubic_stays_within_tolerance() {
+        let curve = kurbo::CubicBez::new(
+            (-86.789_338_779_879_57, -5.461_446_589_400_106),
+            (91.760_128_305_684_76, -32.071_008_963_757_265),
+            (-42.504_781_479_741_624, -16.363_669_339_829_194),
+            (0.0, 60.115_254_630_605_09),
+        );
+        let tolerance_mm = 0.414_318_758_935_438_07;
+        let mut path = kurbo::BezPath::new();
+        path.move_to(curve.p0);
+        path.curve_to(curve.p1, curve.p2, curve.p3);
+        let out = flatten(&path, tolerance_mm);
+        assert_eq!(out.len(), 1);
+        for seg in out[0].segments() {
+            for k in 0..=16 {
+                let p = seg.start + (seg.end - seg.start) * (f64::from(k) / 16.0);
+                let d_mm = curve
+                    .nearest(kurbo::Point::new(p.x, p.y), 1e-12)
+                    .distance_sq
+                    .sqrt();
+                assert!(
+                    d_mm <= tolerance_mm,
+                    "{p:?} is {d_mm} mm off the curve, tolerance {tolerance_mm}"
+                );
             }
         }
     }

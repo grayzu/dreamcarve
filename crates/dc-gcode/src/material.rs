@@ -751,25 +751,38 @@ fn in_regions(
     clear
 }
 
+/// The point of `path` that tells which side of an outline it is on: its
+/// middle, not an end (#231). A T-bone notch's return leg starts on the
+/// wall it slots into, and the program's rounding moves that end up to a
+/// quantum to either side, so its start tells nothing; its middle lies in
+/// the waste. A path whose middle is on the waste side but which reaches
+/// into the part crosses a wall, which the clearance test after this one
+/// refuses.
+fn side_point(path: Segment) -> Point {
+    let [_, middle, _] = points_of(path);
+    middle
+}
+
 /// Whether tool-centre path `path` lies outside every one of `areas`, at
 /// least `clearance_mm` from all their outlines, or is a relief notch at
 /// one of their corners when `notch` is set. Only the areas whose bounds
 /// come within the clearance of the path's are looked at: the path cannot
-/// be in or near the others.
+/// be in or near the others. Its side is judged at [`side_point`].
 fn outside_regions(areas: &[Area], path: Segment, clearance_mm: f64, notch: Option<Notch>) -> bool {
     let bounds = bounds_of(path);
+    let side = side_point(path);
     areas
         .iter()
         .filter(|a| near(bounds, a.bounds, clearance_mm.max(0.0)))
         .all(|a| {
-            !a.region.contains_point(path.start)
+            !a.region.contains_point(side)
                 && walls_allow(a, &(0..a.edges.len()), path, clearance_mm, notch)
         })
 }
 
 /// The lap rule (module docs): whether tool-centre path `path` runs along
 /// one loop of `areas`, its ends and middle within `reach_mm` of it, on
-/// its waste side, and clear of every loop of that loop's own area (or a
+/// its waste side (judged at [`side_point`]), and clear of every loop of that loop's own area (or a
 /// notch at one of their corners). Other areas' outlines are not looked
 /// at; the loop's own area's always are (#192).
 fn is_lap(
@@ -794,7 +807,7 @@ fn is_lap(
                 }) && l
                     .alone
                     .as_ref()
-                    .is_some_and(|r| r.contains_point(path.start) == l.waste_inside)
+                    .is_some_and(|r| r.contains_point(side_point(path)) == l.waste_inside)
                     && walls_allow(area, &(0..area.edges.len()), path, clearance_mm, notch)
             })
         })

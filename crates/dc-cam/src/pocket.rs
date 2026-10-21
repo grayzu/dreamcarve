@@ -3878,4 +3878,62 @@ mod tests {
             );
         }
     }
+
+    /// #232 (found by the dc-gcode property test): a raster Pocket of a
+    /// 29.83 × 45.09 mm rectangle round a 15.65 × 14.49 mm rectangular
+    /// island, with a 1.645 mm tool at 13.6 % step-over and 24.6°. A
+    /// 0.34 mm stay-down link joined two raster ends on the round
+    /// tool-centre boundary about an island corner, and passed 0.7985 mm
+    /// from the corner, 0.024 mm inside the cutter's radius. No cutting
+    /// move may bring the tool centre nearer the island than the radius,
+    /// less the flatten tolerance the tool-centre outline is drawn to.
+    #[test]
+    fn raster_link_never_cuts_an_island_corner() {
+        let placement = Transform::translate(120.0, 80.0);
+        let island = Polyline::rect(
+            Point::new(-7.825_474_403_184_983, -7.242_710_582_657_877),
+            15.650_948_806_369_966,
+            14.485_421_165_315_754,
+        );
+        let mut p = project(
+            vec![
+                Polyline::rect(
+                    Point::new(-14.917_410_529_058_088, -22.545_952_942_869_242),
+                    29.834_821_058_116_176,
+                    45.091_905_885_738_484,
+                ),
+                island.clone(),
+            ],
+            &[("i1", placement)],
+        );
+        let diameter_mm = 1.644_546_628_706_222_7;
+        p.tools[0].diameter_mm = diameter_mm;
+        let op = PocketOp {
+            depth_mm: Some(1.0),
+            step_over_fraction: Some(0.135_681_152_562_577_37),
+            ..raster_op(
+                &p,
+                CutDirection::Climb,
+                24.628_005_484_201_154,
+                WallPass::Last,
+            )
+        };
+        let (tp, _) = generate(&p, &op);
+        let island = placement.apply_polyline(&island).unwrap();
+        let clear_mm = diameter_mm / 2.0 - FLAT_TOL;
+        let mut at = tp.moves[0].to.xy();
+        for (i, mv) in tp.moves.iter().enumerate() {
+            if !mv.is_rapid() {
+                let path = move_segment(at, mv);
+                for edge in island.segments() {
+                    let d = dc_geometry::segment_distance_mm(path, edge);
+                    assert!(
+                        d >= clear_mm,
+                        "move {i} brings the tool centre {d} mm from the island: {mv:?}"
+                    );
+                }
+            }
+            at = mv.to.xy();
+        }
+    }
 }
