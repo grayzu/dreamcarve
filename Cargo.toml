@@ -65,6 +65,12 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 # codecs. Fusion writes deflate, so only the deflate decoder is on, through
 # flate2's pure-Rust zlib-rs backend.
 zip = { version = "9.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Property tests (dev-dependency only, issue #72; `docs/rust-guidelines.md`,
+# "Tests"). Default features are off: `fork` and `timeout` run each case in
+# a child process (rusty-fork, tempfile), and `bit-set` serves collection
+# strategies nothing here uses. `std` keeps the regression files under
+# `proptest-regressions/`.
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic

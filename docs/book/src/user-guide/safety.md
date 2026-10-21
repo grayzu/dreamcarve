@@ -133,7 +133,9 @@ written. There are no safety warnings, only errors.
       part's lines and its other open paths, except near a point where the
       two meet. A cut also keeps a bit's width from the stretches of its
       own line farther along it, so a cut along a U, a tight spiral or a
-      narrow neck stops the export, as DreamCarve's own check (see
+      narrow neck stops the export, and so does any cut round a part
+      narrower than the bit everywhere, which the cut would remove whole,
+      as DreamCarve's own check (see
       [Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)). Laps, tab rises,
       entry ramps and helixes, lead arcs and corner relief notches all
       count, so a ramp or lead arc that swings into a part, its own or a

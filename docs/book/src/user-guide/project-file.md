@@ -398,7 +398,7 @@ Errors stop export. Warnings do not.
 | `post_processor.tool_change_mode` is `"m6"` but the post-processor has no `M6` (every one but grblHAL) | |
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
-| A Profile whose tool does not fit between two lines of one shape, Inside or On line ([Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)) | |
+| A Profile whose tool does not fit between two lines of one shape, Inside or On line, or that would remove a whole part narrower than the bit On line ([Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)) | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
 | An Outside or Inside Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |

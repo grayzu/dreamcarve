@@ -140,7 +140,8 @@ into wood. A negative `retract_mm` is an error at `check`.
 The holes are drilled nearest first, starting from the first one in
 drawing order (the order of `targets`, then the order of each drawing's
 outlines). From each hole the bit goes to the nearest hole not yet
-drilled; two holes the same distance away are taken in drawing order. The
+drilled; two holes the same distance away, to within 0.001 mm, are taken
+in drawing order. The
 result is the same every time you export. `machining_order` does not
 apply: each hole is one plunge or one set of pecks, drilled to depth
 before the bit moves on. See [Machining order and operation

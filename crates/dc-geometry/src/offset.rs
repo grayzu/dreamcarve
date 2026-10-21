@@ -33,6 +33,25 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         .collect()
 }
 
+/// Whether every point inside `contour` lies within `inset_mm` of it: the
+/// contour offset inward by `inset_mm` is empty (#223, a part a bit of
+/// radius `inset_mm` cut on its line removes whole).
+///
+/// The points inside a closed line of length `L` and within `t` of it
+/// cover at most `L·t`: each inner parallel curve is no longer than the
+/// line itself. So an area above `L · inset_mm` always keeps a point
+/// farther in, and only a smaller one is offset to find out, which keeps a
+/// large outline of many chords from being offset at all.
+#[must_use]
+pub fn inset_is_empty(contour: &Contour, inset_mm: f64) -> bool {
+    let area_mm2 = contour.signed_area_mm2().abs();
+    if inset_mm.is_nan() || inset_mm <= 0.0 || area_mm2 > contour.polyline().length_mm() * inset_mm
+    {
+        return false;
+    }
+    offset(contour, -inset_mm).is_empty()
+}
+
 pub(crate) fn to_cavalier(polyline: &Polyline) -> CavPolyline {
     let mut out = CavPolyline::with_capacity(polyline.vertices().len(), polyline.is_closed());
     for v in polyline.vertices() {
@@ -86,6 +105,47 @@ mod tests {
     #[test]
     fn inside_offset_larger_than_shape_vanishes() {
         assert!(offset(&rect_100x50(), -30.0).is_empty());
+    }
+
+    /// A circle of radius 2.5 and a 3 mm square lie within 3.175 mm of
+    /// their lines everywhere; a 3.3 mm circle and a 7 mm square do not,
+    /// nor does a large circle of many chords, which the area bound settles
+    /// without an offset.
+    #[test]
+    fn inset_is_empty_when_the_part_lies_within_the_inset() {
+        let contour = |p: Polyline| Contour::new(p).unwrap();
+        let at = Point::new(0.0, 0.0);
+        assert!(inset_is_empty(
+            &contour(Polyline::circle(at, 2.5)),
+            TOOL_RADIUS_MM
+        ));
+        assert!(inset_is_empty(
+            &contour(Polyline::rect(at, 3.0, 3.0)),
+            TOOL_RADIUS_MM
+        ));
+        assert!(inset_is_empty(
+            &contour(Polyline::rect(at, 50.0, 3.0)),
+            TOOL_RADIUS_MM
+        ));
+        assert!(!inset_is_empty(
+            &contour(Polyline::circle(at, 3.3)),
+            TOOL_RADIUS_MM
+        ));
+        assert!(!inset_is_empty(
+            &contour(Polyline::rect(at, 7.0, 7.0)),
+            TOOL_RADIUS_MM
+        ));
+        let chords = (0..2000)
+            .map(|k| {
+                let a = f64::from(k) * std::f64::consts::TAU / 2000.0;
+                Vertex::line(14.0 * a.cos(), 14.0 * a.sin())
+            })
+            .collect();
+        assert!(!inset_is_empty(
+            &contour(Polyline::new(chords, true)),
+            TOOL_RADIUS_MM
+        ));
+        assert!(!inset_is_empty(&contour(Polyline::circle(at, 2.5)), 0.0));
     }
 
     #[test]

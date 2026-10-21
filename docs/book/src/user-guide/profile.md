@@ -256,7 +256,9 @@ line.
 - An open path is a shape of its own for
   [shapes too close together](#shapes-too-close-together): one that comes
   within half a bit of another shape's line, or crosses it, warns
-  `toolpaths_overlap`. One that lies wholly in a part, as a slot cut into
+  `toolpaths_overlap`. So does one drawn outside any part that comes
+  within half a bit of itself, far along it, as a tight spiral or a
+  hairpin does: the warning names the path twice. One that lies wholly in a part, as a slot cut into
   it, is not compared with that part's own lines there; instead, one that
   runs closer than a bit's width beside them stops the operation (see
   [Bands narrower than the bit](#bands-narrower-than-the-bit)). Cut after
@@ -528,6 +530,20 @@ sharper one, such as a 10° spike or the points of a star sharper than
 45°, is refused. Only the part counts: a notch narrower than the bit cut
 into an outline, or a hole with a narrow neck, has waste between its two
 sides, and is cut. Cut a star or a spike **outside** to keep its points.
+
+A part narrower than the bit **everywhere**, such as a round dot of
+2.5 mm radius or a 3 mm square cut **on line** with a 6.35 mm bit, is
+removed whole: every point of it is within half a bit of its line. That
+is an error too, however small the part:
+
+``operation `o1` cuts `Dot` (instance `i1`, profile 0) On line, but the
+part is nowhere as wide as its 6.35 mm tool, so the bit would remove the
+whole part; ...``
+
+A part a little wider than the bit, a 3.3 mm radius circle, is cut as
+drawn. A small **hole** cut on line is fine: its inside is waste. To mark
+a dot on purpose, use [Engrave](engrave.md); to keep the part, cut it
+**outside**.
 
 Cut **outside**, a hole close to its outline only leaves a thin wall and
 is cut as drawn.
