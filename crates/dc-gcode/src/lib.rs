@@ -11,6 +11,7 @@
 //! text (`docs/specs/phase-1/design.md`, "Emission").
 
 pub mod arcfit;
+mod ascii;
 pub mod canned;
 pub mod emit;
 mod error;
