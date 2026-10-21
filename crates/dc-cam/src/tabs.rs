@@ -580,7 +580,7 @@ fn point_on(segment: &Segment, distance_mm: f64) -> Point {
 
 /// How a whole segment, or a constant-Z piece of it, is cut. A positive
 /// bulge, hence a positive sweep, is counter-clockwise in Y-up.
-fn segment_kind(segment: &Segment) -> MoveKind {
+pub(crate) fn segment_kind(segment: &Segment) -> MoveKind {
     match segment.arc() {
         Some(arc) if arc.sweep_rad > 0.0 => MoveKind::ArcCcw { centre: arc.centre },
         Some(arc) => MoveKind::ArcCw { centre: arc.centre },
@@ -721,7 +721,7 @@ mod tests {
 
     fn generate(project: &Project, op: &ProfileOp) -> (Toolpath, Vec<Warning>) {
         let (toolpath, warnings) = generate_profile(project, op).unwrap();
-        assert_safe(&toolpath, project, op);
+        assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
         (toolpath, warnings)
     }
 

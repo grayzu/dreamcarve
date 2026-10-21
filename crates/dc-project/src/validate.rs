@@ -172,7 +172,8 @@ pub enum Problem {
         expected: &'static str,
     },
     /// A definition's profile is open. Profile cuts only closed shapes, so
-    /// it is never cut (functional spec, capability 8).
+    /// it is never cut (functional spec, capability 8). Not reported for a
+    /// definition an enabled Engrave targets, since Engrave cuts it.
     OpenProfile {
         /// The definition.
         definition: DefinitionId,
@@ -978,6 +979,19 @@ impl Validator {
         // Definitions with a coordinate out of range; their instances are
         // not checked again, so each mistake is reported once.
         let mut out_of_range = BTreeSet::new();
+        // Engrave cuts open paths, so a definition an enabled Engrave
+        // targets is not reported as having paths that are never cut.
+        let engraved: BTreeSet<&DefinitionId> = p
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                Operation::Engrave(op) if op.enabled => Some(&op.targets),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|id| p.instances.iter().find(|i| &i.id == id))
+            .map(|i| &i.definition)
+            .collect();
         for (key, def) in &p.definitions {
             if *key != def.id {
                 self.problems.push(Problem::DefinitionKeyMismatch {
@@ -986,7 +1000,7 @@ impl Validator {
                 });
             }
             for (i, profile) in def.profiles.iter().enumerate() {
-                if !profile.is_closed() {
+                if !profile.is_closed() && !engraved.contains(&def.id) {
                     self.problems.push(Problem::OpenProfile {
                         definition: def.id.clone(),
                         name: def.name.clone(),
@@ -2025,6 +2039,33 @@ mod tests {
             message.contains("Rectangle") && message.contains("open"),
             "{message}"
         );
+    }
+
+    /// Capability 15 (#135): Engrave cuts open paths, so an open profile of
+    /// a definition an enabled Engrave targets is not reported as never
+    /// cut. A disabled Engrave cuts nothing, so the warning stays.
+    #[test]
+    fn open_profile_engraved_is_not_reported() {
+        let mut p = sample_project();
+        p.definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1")
+            .profiles
+            .push(Polyline::new(
+                vec![Vertex::new(0.0, 40.0, 0.0), Vertex::new(50.0, 40.0, 0.0)],
+                false,
+            ));
+        p.operations.push(Operation::Engrave(sample_engrave()));
+        let open = |p: &Project| {
+            validate(p)
+                .iter()
+                .any(|q| matches!(q, Problem::OpenProfile { .. }))
+        };
+        assert!(!open(&p), "{:?}", validate(&p));
+        if let Some(Operation::Engrave(op)) = p.operations.last_mut() {
+            op.enabled = false;
+        }
+        assert!(open(&p), "a disabled Engrave cuts nothing");
     }
 
     /// The fields of every error-class problem, in order.

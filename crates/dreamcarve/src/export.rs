@@ -29,7 +29,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dc_cam::{Toolpath, generate_profile, order};
+use dc_cam::{Toolpath, generate_drill, generate_engrave, generate_profile, order};
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{AxisRange, ExportWarning, Program, ProgramSplit, emit_programs};
@@ -156,30 +156,43 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         if !operation.enabled() {
             continue;
         }
-        // Pocket, Drill and Engrave load and validate from format version
-        // 8 on; their generators land in their own slices (#117). Until
-        // then an enabled one is refused, never skipped.
-        let Operation::Profile(op) = operation else {
-            findings.errors.push(Finding::plain(format!(
-                "operation `{}` (`{}`) is a {} operation, which is not supported by this build \
-                 yet; disable it to export the rest",
-                operation.id(),
-                operation.name(),
-                operation.kind()
-            )));
-            continue;
-        };
-        let Some(tool) = project.tools.iter().find(|t| t.id == op.tool) else {
+        let Some(tool) = project.tools.iter().find(|t| &t.id == operation.tool()) else {
             findings.errors.push(Finding::plain(format!(
                 "operation `{}` uses tool `{}`, which is not in the project",
-                op.id, op.tool
+                operation.id(),
+                operation.tool()
             )));
             continue;
         };
-        match generate_profile(project, op) {
+        let generated = match operation {
+            Operation::Profile(op) => generate_profile(project, op),
+            Operation::Engrave(op) => generate_engrave(project, op),
+            // The hole records are for canned cycles, which the emitter
+            // does not write yet (slice 15): the plain moves are exported.
+            Operation::Drill(op) => {
+                generate_drill(project, op).map(|(drilled, warnings)| (drilled.toolpath, warnings))
+            }
+            // Pocket loads and validates from format version 8 on; its
+            // generator lands in its own slice (#117). Until then an enabled
+            // one is refused, never skipped.
+            Operation::Pocket(_) => {
+                findings.errors.push(Finding::plain(format!(
+                    "operation `{}` (`{}`) is a {} operation, which is not supported by this \
+                     build yet; disable it to export the rest",
+                    operation.id(),
+                    operation.name(),
+                    operation.kind()
+                )));
+                continue;
+            }
+        };
+        match generated {
             Ok((toolpath, warnings)) => {
                 findings.warnings.extend(warnings.iter().map(|w| {
-                    Finding::coded(w.code.as_str(), format!("operation `{}`: {w}", op.id))
+                    Finding::coded(
+                        w.code.as_str(),
+                        format!("operation `{}`: {w}", operation.id()),
+                    )
                 }));
                 ops.push((operation.clone(), tool.clone(), toolpath));
             }
@@ -188,8 +201,10 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
     }
     // The order check runs on whatever generated, so `check` reports it
     // even when another operation failed; it never needs a failed one.
-    let generated: Vec<(&Operation, &Toolpath)> =
-        ops.iter().map(|(op, _, toolpath)| (op, toolpath)).collect();
+    let generated: Vec<(&Operation, &Toolpath)> = ops
+        .iter()
+        .map(|(operation, _, toolpath)| (operation, toolpath))
+        .collect();
     findings
         .warnings
         .extend(order::check(project, &generated).iter().map(|w| {

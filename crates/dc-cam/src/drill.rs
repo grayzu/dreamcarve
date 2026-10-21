@@ -421,7 +421,7 @@ fn resolve_holes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::assert_drill_safe;
+    use crate::test_support::assert_safe;
     use crate::toolpath::{Move, MoveKind};
     use crate::warning::WarningCode;
     use dc_geometry::{EPS_MM, Point3, Polyline, Transform, Vertex, assert_approx_eq};
@@ -536,10 +536,14 @@ mod tests {
         }
     }
 
-    /// Generates, and checks the result with [`assert_drill_safe`].
+    /// Generates, and checks the result with [`assert_safe`].
     fn generate(project: &Project, op: &DrillOp) -> (DrillToolpath, Vec<Warning>) {
         let (drilled, warnings) = generate_drill(project, op).unwrap();
-        assert_drill_safe(&drilled.toolpath, project, op);
+        assert_safe(
+            &drilled.toolpath,
+            project,
+            &dc_project::Operation::Drill(op.clone()),
+        );
         (drilled, warnings)
     }
 

@@ -1264,16 +1264,14 @@ mod tests {
     use dc_cam::{Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3};
     use dc_project::test_support::sample_project;
-    use dc_project::{
-        ArcFormat, Axis, Operation, ProfileOp, Project, SpindleControl, ToolChangeMode,
-    };
+    use dc_project::{ArcFormat, Axis, Operation, Project, SpindleControl, ToolChangeMode};
 
     /// The sample project (100 × 100 × 6 mm stock, safe Z 11 absolute,
     /// feed 1000, plunge 300, 18000 rpm, GRBL), its operation, and its
     /// tool as a point: the hand-written toolpaths below run along the
     /// stock's left and front edges (X = 0, Y = 0), which S7 allows only
     /// for a tool of no width. The S7 tests set a diameter.
-    fn fixture() -> (Project, ProfileOp, Tool) {
+    fn fixture() -> (Project, dc_project::ProfileOp, Tool) {
         let project = sample_project();
         let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
             panic!("sample project has a profile operation");
@@ -1407,7 +1405,7 @@ mod tests {
 
     fn emit_one(
         project: &Project,
-        op: &ProfileOp,
+        op: &dc_project::ProfileOp,
         tool: &Tool,
         tp: Toolpath,
     ) -> Result<String, ExportError> {
@@ -1444,8 +1442,9 @@ mod tests {
         let transform = MachineTransform::new(&project, &post).unwrap();
         let toolpath = Toolpath::default();
         let lines = text.lines().count() + 1;
+        let op = Operation::Profile(op);
         let spans = [OpSpan {
-            op: &Operation::Profile(op.clone()),
+            op: &op,
             tool: &tool,
             toolpath: &toolpath,
             lines: 1..lines,
@@ -2059,8 +2058,9 @@ mod tests {
         let (project, op, tool) = fixture();
         let post = project.post_processor.resolve().unwrap();
         let transform = MachineTransform::new(&project, &post).unwrap();
+        let op = Operation::Profile(op);
         let spans = [OpSpan {
-            op: &Operation::Profile(op.clone()),
+            op: &op,
             tool: &tool,
             toolpath,
             lines: 1..text.lines().count() + 1,

@@ -333,7 +333,7 @@ mod tests {
         };
         let tool = project.tools[0].clone();
         let (toolpath, _) = generate_profile(&project, &op).unwrap();
-        dc_cam::test_support::assert_safe(&toolpath, &project, &op);
+        dc_cam::test_support::assert_safe(&toolpath, &project, &Operation::Profile(op.clone()));
         let (program, _) = emit(
             &project,
             &[(Operation::Profile(op), tool, toolpath.clone())],

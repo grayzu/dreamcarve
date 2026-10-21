@@ -15,6 +15,7 @@
 
 mod block;
 mod drill;
+mod engrave;
 mod error;
 pub mod order;
 mod overlap;
@@ -31,6 +32,7 @@ pub mod test_support;
 
 pub use block::CutBlock;
 pub use drill::{CannedKind, DrillHole, DrillToolpath, PECK_REENTRY_MM, generate_drill};
+pub use engrave::generate_engrave;
 pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use profile::{Wall, generate_profile, traversal_is_ccw};
 pub use sequence::{SequenceInput, plan, sequence};

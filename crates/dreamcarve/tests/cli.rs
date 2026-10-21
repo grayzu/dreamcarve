@@ -27,9 +27,9 @@ mod clock;
 use dc_gcode::MachineMove;
 use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
-    CornerRelief, DefinitionId, DrillCycle, Entry, FeatureDefinition, FeatureInstance, InstanceId,
-    Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp, Project, Side,
-    SpindleControl, TabPlacement, ToolChangeMode, ToolId, load, save,
+    CornerRelief, DefinitionId, DrillCycle, EngraveOp, Entry, FeatureDefinition, FeatureInstance,
+    InstanceId, Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp, Project,
+    Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, ToolKind, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -2900,6 +2900,181 @@ fn plaque_dxf_imports_same_shapes_as_svg() {
         9,
         "all but the squiggle"
     );
+}
+
+/// The SVG of acceptance test 25: a closed rectangle and an open polyline.
+const ENGRAVE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <rect id="border" x="10" y="10" width="60" height="40"/>
+  <path id="squiggle" d="M 20 80 L 40 70 L 60 80 L 80 70"/>
+</svg>
+"#;
+
+/// The placed vertices of the instance named `name`, project space.
+fn placed_vertices(project: &Project, name: &str) -> Vec<(f64, f64)> {
+    let instance = instance_named(project, name);
+    let definition = project
+        .definitions
+        .get(&instance.definition)
+        .expect("the instance has a definition");
+    definition
+        .profiles
+        .iter()
+        .flat_map(|profile| {
+            instance
+                .transform
+                .apply_polyline(profile)
+                .expect("the instance places")
+                .vertices()
+                .iter()
+                .map(|v| (v.x, v.y))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Whether `m` ends within 0.001 mm of one of `points` in XY.
+fn ends_on(m: &MachineMove, points: &[(f64, f64)]) -> bool {
+    let x = m.to.x.expect("X is known after the first move");
+    let y = m.to.y.expect("Y is known after the first move");
+    points
+        .iter()
+        .any(|&(px, py)| (x - px).abs() <= 1e-3 && (y - py).abs() <= 1e-3)
+}
+
+/// Whether `m` moves in XY (a cut along the drawing rather than a plunge).
+fn moves_xy(m: &MachineMove) -> bool {
+    match (m.from.x, m.from.y, m.to.x, m.to.y) {
+        (Some(fx), Some(fy), Some(tx), Some(ty)) => {
+            (fx - tx).abs() > 1e-9 || (fy - ty).abs() > 1e-9
+        }
+        _ => true,
+    }
+}
+
+/// Acceptance test 25: an open polyline and a closed rectangle engraved
+/// 1 mm deep in 0.5 mm passes with a 60° V-bit and `alternate_direction`.
+/// Every cut along the drawing ends on one of its vertices (the tool
+/// centre is on the line), each path is cut at two depths, the open path's
+/// second pass runs backwards with no rapid between its passes, the
+/// rectangle's passes run the same way both times, and the program passes
+/// the safety rules: every rapid at safe Z and nothing below the stock
+/// bottom. Z zero is the stock top, as `init` writes it.
+#[test]
+fn engrave_exports_and_passes_safety() {
+    let dir = work_dir("engrave_exports_and_passes_safety");
+    std::fs::write(dir.join("plaque.svg"), ENGRAVE_SVG).expect("svg written");
+    let out = run(&dir, &["init", "plaque.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("plaque.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.tools[0].cutter = ToolKind::VBit {
+        included_angle_deg: 60.0,
+    };
+    project.operations = vec![Operation::Engrave(EngraveOp {
+        id: OperationId::new("op1"),
+        name: "Engrave".into(),
+        enabled: true,
+        targets: project.instances.iter().map(|i| i.id.clone()).collect(),
+        tool: project.tools[0].id.clone(),
+        depth_mm: Some(1.0),
+        step_down_mm: Some(0.5),
+        alternate_direction: true,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 5.0,
+    })];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let border = placed_vertices(&project, "border");
+    let squiggle = placed_vertices(&project, "squiggle");
+
+    let check = run(&dir, &["check", "plaque.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "check: {report}");
+    assert!(report.contains("0 error(s)"), "{report}");
+    assert!(
+        !report.contains("open_profile"),
+        "the engraved open path is not reported as never cut: {report}"
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("plaque.nc")).expect("plaque.nc written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+
+    // Every cut along the drawing ends on a vertex of it.
+    let traces: Vec<(usize, &MachineMove)> = moves
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.kind.is_cut() && moves_xy(m))
+        .collect();
+    assert!(!traces.is_empty(), "the program cuts: {program}");
+    for (k, m) in &traces {
+        assert!(
+            ends_on(m, &border) || ends_on(m, &squiggle),
+            "cut {k} leaves the drawing: {m:?}"
+        );
+    }
+    // Two passes, 0.5 mm and 1 mm below the stock top.
+    let mut depths: Vec<f64> = traces.iter().filter_map(|(_, m)| m.to.z).collect();
+    depths.sort_by(f64::total_cmp);
+    depths.dedup_by(|a, b| (*a - *b).abs() <= 1e-6);
+    assert_eq!(depths.len(), 2, "{depths:?}");
+    assert_approx_eq!(depths[0], -1.0, 1e-6);
+    assert_approx_eq!(depths[1], -0.5, 1e-6);
+
+    // The cuts of one path at one depth: each one's index and end point.
+    let pass = |points: &[(f64, f64)], z: f64| -> Vec<(usize, (f64, f64))> {
+        traces
+            .iter()
+            .filter(|(_, m)| ends_on(m, points) && m.to.z.is_some_and(|mz| (mz - z).abs() <= 1e-6))
+            .map(|(k, m)| (*k, (m.to.x.unwrap_or(0.0), m.to.y.unwrap_or(0.0))))
+            .collect()
+    };
+    let same = |a: &[(usize, (f64, f64))], b: &[(usize, (f64, f64))]| -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|((_, p), (_, q))| (p.0 - q.0).abs() <= 1e-3 && (p.1 - q.1).abs() <= 1e-3)
+    };
+    let (s1, s2) = (pass(&squiggle, -0.5), pass(&squiggle, -1.0));
+    assert_eq!(s1.len(), 3, "three cuts along the squiggle: {s1:?}");
+    assert_eq!(s2.len(), 3, "three cuts back along it: {s2:?}");
+    // Forwards the cuts end on vertices 1, 2, 3; backwards on 2, 1, 0.
+    let mut backwards: Vec<(usize, (f64, f64))> = s1.iter().rev().skip(1).copied().collect();
+    backwards.push((0, squiggle[0]));
+    assert!(
+        same(&backwards, &s2),
+        "the second pass runs backwards: {s1:?} then {s2:?}"
+    );
+    let (Some(&(last_first, _)), Some(&(first_second, _))) = (s1.last(), s2.first()) else {
+        panic!("both squiggle passes are cut");
+    };
+    assert!(last_first < first_second, "the first pass is cut first");
+    for m in &moves[last_first + 1..first_second] {
+        assert!(
+            m.kind.is_cut(),
+            "no rapid between the squiggle's passes: {m:?}"
+        );
+    }
+    let (b1, b2) = (pass(&border, -0.5), pass(&border, -1.0));
+    assert_eq!(b1.len(), 4, "four cuts round the border: {b1:?}");
+    assert!(
+        same(&b1, &b2),
+        "the border's passes run the same way: {b1:?} then {b2:?}"
+    );
+
+    // Safety: rapids at safe Z (5 mm above the stock top), nothing below
+    // the stock bottom.
+    for (k, m) in moves.iter().enumerate() {
+        let z = m.to.z.expect("Z is known after the first move");
+        assert!(
+            z >= -MEASURED_THICKNESS_MM - 1e-6,
+            "move {k} below the stock: {m:?}"
+        );
+        if !m.kind.is_cut() {
+            assert!(z >= 5.0 - 1e-6, "rapid {k} below safe Z: {m:?}");
+        }
+    }
 }
 
 /// The warning lines of `report`: those starting `warning:` or carrying

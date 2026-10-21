@@ -14,7 +14,7 @@
 
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use dc_geometry::{EPS_MM, Point, approx_eq};
-use dc_project::{DrillOp, Operation, ProfileOp, Project, ToolId};
+use dc_project::{Operation, Project};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -38,79 +38,29 @@ use dc_project::{DrillOp, Operation, ProfileOp, Project, ToolId};
 ///    feed.
 ///
 /// Panics with the offending move index on the first violation.
-pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
-    assert_safe_within(
-        toolpath,
-        &limits_of(
-            project,
-            &op.tool,
-            op.safe_z_mm,
-            op.through_cut_allowance_mm,
-            true,
-        ),
-    );
-}
-
-/// [`assert_safe`] for a Drill operation. Drill never moves in XY while
-/// cutting, so the tool needs a plunge rate but no feed.
-pub fn assert_drill_safe(toolpath: &Toolpath, project: &Project, op: &DrillOp) {
-    assert_safe_within(
-        toolpath,
-        &limits_of(
-            project,
-            &op.tool,
-            op.safe_z_mm,
-            op.through_cut_allowance_mm,
-            false,
-        ),
-    );
-}
-
-/// [`assert_safe`] for any operation kind.
-pub fn assert_safe_op(toolpath: &Toolpath, project: &Project, op: &Operation) {
-    match op {
-        Operation::Profile(op) => assert_safe(toolpath, project, op),
-        Operation::Drill(op) => assert_drill_safe(toolpath, project, op),
-        Operation::Pocket(_) | Operation::Engrave(_) => assert_safe_within(
-            toolpath,
-            &limits_of(
-                project,
-                op.tool(),
-                op.safe_z_mm(),
-                op.through_cut_allowance_mm(),
-                true,
-            ),
-        ),
-    }
-}
-
-/// The limits of an operation on `tool` in `project`. With `needs_feed`
-/// false the feed may be unset, and then no XY cutting move is accepted.
-fn limits_of(
-    project: &Project,
-    tool: &ToolId,
-    safe_z_mm: f64,
-    through_cut_allowance_mm: f64,
-    needs_feed: bool,
-) -> Limits {
+pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
     let tool = project
         .tools
         .iter()
-        .find(|t| &t.id == tool)
+        .find(|t| &t.id == op.tool())
         .expect("operation's tool is in the project");
     let thickness_mm = project.stock.thickness_mm.expect("stock has a thickness");
-    let feed_mm_min = if needs_feed {
-        tool.feed_mm_min.expect("tool has a feed")
-    } else {
-        tool.feed_mm_min.unwrap_or(f64::NAN)
+    // A Drill never cuts in XY, so it needs no cutting feed; with none set,
+    // any XY cutting move fails the feed check.
+    let feed_mm_min = match op {
+        Operation::Drill(_) => tool.feed_mm_min.unwrap_or(f64::NAN),
+        _ => tool.feed_mm_min.expect("tool has a feed"),
     };
-    Limits {
-        safe_z_mm: thickness_mm + safe_z_mm,
-        stock_top_mm: thickness_mm,
-        floor_z_mm: -through_cut_allowance_mm,
-        feed_mm_min,
-        plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
-    }
+    assert_safe_within(
+        toolpath,
+        &Limits {
+            safe_z_mm: thickness_mm + op.safe_z_mm(),
+            stock_top_mm: thickness_mm,
+            floor_z_mm: -op.through_cut_allowance_mm(),
+            feed_mm_min,
+            plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
+        },
+    );
 }
 
 /// The limits [`assert_safe_within`] checks a toolpath against, for tests
@@ -234,16 +184,17 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
 mod tests {
     use super::*;
     use dc_geometry::Point3;
-    use dc_project::Operation;
     use dc_project::test_support::sample_project;
 
     /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
     /// plunge 300) and its profile operation.
-    fn fixture() -> (Project, ProfileOp) {
+    fn fixture() -> (Project, Operation) {
         let project = sample_project();
-        let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
-            panic!("sample project has a profile operation");
-        };
+        let op = project
+            .operations
+            .first()
+            .cloned()
+            .expect("sample project has an operation");
         (project, op)
     }
 
