@@ -114,7 +114,7 @@ dev-dependencies only.
 | `overlap.rs` | The check that two shapes' tool paths in one Profile do not cut into each other (D6). |
 | `stock.rs` | `swept_bounds`, `stock_overhang`: does the cutter stay on the stock (#62). |
 | `tabs.rs` | Tab spans along the tool-centre path, each tab with its own width, height and shape; merging; rect and smooth laps. |
-| `placed_tabs.rs` | Placed tabs (#105): `place` (a tab request's layout as placed tabs), `place_on_outlines` (`tabs place --at`), `place_requests`, `crossed_by`, and `check`, the `tab_not_crossed` warning. |
+| `placed_tabs.rs` | Placed tabs (#105): `place` (a tab request's layout as placed tabs), `place_on_outlines` (`tabs place --at`), `place_requests`, `crossed_by`, `on_holes`, `off_outline_mm`, and `check`, the `tab_not_crossed` and `tab_off_outline` (#300) warnings. |
 | `toolpath.rs` | `Toolpath`, `Move`, `MoveKind` (including `Dwell`): project-space output. |
 | `error.rs`, `warning.rs` | `CamError`; `Warning` with a stable `WarningCode`. |
 | `test_support.rs` | `assert_safe`, the shared emitted-motion safety assertions (`test-support` feature). |

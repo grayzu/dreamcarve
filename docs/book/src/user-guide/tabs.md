@@ -122,11 +122,11 @@ dreamcarve tabs list coaster.dcv
 ```
 
 ```text
-ID    INSTANCE  PROFILE  AT_MM    X_MM    Y_MM    WIDTH_MM  HEIGHT_MM  SHAPE  CUT_BY
-tab1  i1        0        35.343   84.065  15.935  8         3          rect   op1
-tab2  i1        0        106.029  15.935  15.935  8         3          rect   op1
-tab3  i1        0        176.715  15.935  84.065  8         3          rect   op1
-tab4  i1        0        247.4    84.065  84.065  8         3          rect   op1
+ID    INSTANCE  PROFILE  AT_MM    OFF_MM  X_MM    Y_MM    WIDTH_MM  HEIGHT_MM  SHAPE  CUT_BY
+tab1  i1        0        35.343   3.175   84.065  15.935  8         3          rect   op1
+tab2  i1        0        106.029  3.175   15.935  15.935  8         3          rect   op1
+tab3  i1        0        176.715  3.175   15.935  84.065  8         3          rect   op1
+tab4  i1        0        247.4    3.175   84.065  84.065  8         3          rect   op1
 1 operation(s) hold a tab request, listed as the tabs it places; any `tabs` command that saves the project writes them.
 ```
 
@@ -135,6 +135,7 @@ tab4  i1        0        247.4    84.065  84.065  8         3          rect   op
 | `ID` | The tab's id, for `tabs clear --tab`. |
 | `INSTANCE`, `PROFILE` | The shape and which of its outlines, counted from 0. |
 | `AT_MM` | How far along the outline, from its first vertex as drawn, the tab meets it. |
+| `OFF_MM` | How far the tab's point is from the outline, as cut (after the instance's transform): 0 for a tab placed with `--at`, the bit's radius for one placed with `--count` or from a request. More than the tab's width plus the bit warns `tab_off_outline` ([A placed tab in the file](#a-placed-tab-in-the-file)). |
 | `X_MM`, `Y_MM` | The tab's point, in the shape's own coordinates (its definition), not the stock's. |
 | `WIDTH_MM`, `HEIGHT_MM`, `SHAPE` | The tab's size and shape. |
 | `CUT_BY` | The enabled Profiles that rise over the tab, or `-` for none. |
@@ -200,6 +201,18 @@ point. The point need not be exactly on the outline. A Profile centres the
 tab at the point of its tool path nearest it. `tabs place --at` writes
 points on the outline; `--count` and requests write points on the tool
 path. A tab on an instance or outline that does not exist is an error.
+
+A point far from its outline is still cut, where the outline is nearest
+it, but that may not be where you meant: a typing slip, or a tab left
+behind after you changed the drawing. When the point is farther from the
+outline than the tab's width plus the widest bit that cuts round it,
+`check` and `export` warn `tab_off_outline`, with the distance. No
+placing command writes a point that far off. `tabs list` shows the
+distance of every tab in `OFF_MM`:
+
+```text
+warning: tab_off_outline: tab `far` on `coaster` (instance `i1`, profile 0) is 20 mm from that outline, more than its width plus the widest bit that cuts round it (14.35 mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`
+```
 
 ## Tab requests
 
@@ -388,9 +401,16 @@ not.
 Give `--on-holes` to hold the slugs too, for example to keep a disc cut
 from the middle of a ring. Each hole then gets the tabs, or as many as fit
 ([Outlines too short for the tabs](#outlines-too-short-for-the-tabs)).
-A placed tab on a hole is always cut, however it was placed, and `check`
-and `export` warn `tab_on_hole`, because a held slug is usually waste you then have to free
-by hand. If you did not mean to keep the slug, remove the tab:
+A placed tab on a hole is always cut, however it was placed. A held slug
+is usually waste you then have to free by hand, so `tabs place` warns
+`tab_on_hole` once for each tab it puts on a hole. After that, `check`
+and `export` stay quiet about the tabs placed on a hole for the cut that
+holds it, with `--count --on-holes` or from a request with `on_holes`,
+because you asked for them. They still warn about any other tab on a
+hole, such as one you added by hand, one placed with `--at --on-holes`
+(it sits on the outline, where a hand edit could also put it), or one
+whose Profile's bit or side changed since it was placed. If you did not
+mean to keep the slug, remove the tab:
 
 ```text
 warning: tab_on_hole: operation `op1`: tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`) unless you mean to keep the slug
@@ -398,6 +418,9 @@ warning: tab_on_hole: operation `op1`: tab `tab3` is on `Shape` (instance `i1`, 
 
 A project from before format version 9 opens with `"on_holes": true` in
 its request, because every outline had tabs then, so it cuts as it did.
+The first `tabs` command that saves it places those hole tabs and warns
+`tab_on_hole` for each, once. Remove the ones whose slugs you do not
+need.
 
 Splitting a part and its holes into two operations still works, but
 operations run in the order they are listed, so put the holes first.
@@ -426,6 +449,7 @@ prints those it finds while placing.
 | "the tab top is ... but the deepest pass stops at ..." | No pass goes below the tab top, so the tabs change nothing. The cut is shallower than the stock, or the tabs are taller than the depth reaches. |
 | "the tab top is ... higher than the ... stock top" | The tab top is above the stock top. The tabs still apply: over each tab, every pass lifts clear of the stock, leaving its full thickness. |
 | "tab ... is on ..., which this operation cuts as a hole" (`tab_on_hole`) | A tab is on a hole, so it holds the slug. See [Parts with holes](#parts-with-holes). |
+| "tab ... on ... is ... mm from that outline" (`tab_off_outline`) | The tab's point is farther from its outline than its width plus the widest bit that cuts round it. It is cut where the outline is nearest it. See [A placed tab in the file](#a-placed-tab-in-the-file). |
 | "tab ... on ... is crossed by no enabled Profile operation" (`tab_not_crossed`) | No enabled Profile rises over the tab, so it holds nothing: no enabled Profile cuts that outline (it is cut only by a Pocket or a disabled Profile, or not at all), or every one that does runs too far from the tab or stops above its top. Cut the outline with a Profile, move the tab, or remove it with `dreamcarve tabs clear <dcv> --tab <id>`. |
 
 `tab_not_crossed` reads, in full:
