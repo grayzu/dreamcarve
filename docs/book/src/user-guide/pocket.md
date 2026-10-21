@@ -365,7 +365,9 @@ corner). An island's outward corners are not relieved: the bit already
 cuts round them. Arcs and fillets have no corners, so a circle or a
 rounded rectangle gets no notches. Each edge beside a corner must be at
 least the bit's diameter long, or the notch would not fit; such a corner
-is skipped with `relief_corner_too_tight`.
+is skipped with `relief_corner_too_tight`. So is a corner whose notch
+would come nearer another wall, such as an island's, than the bit's
+radius, since it would cut into that wall too.
 
 **How it is cut.** After all the pocket's passes, the bit visits the
 corners, nearest first from where it finished. At each it plunges where
@@ -409,7 +411,7 @@ walls, nowhere else. If not, export fails and nothing is written.
 | `entry_fallback` | The helix or ramp asked for does not fit a shape; it uses a ramp or a plunge instead. |
 | `helix_diameter_reduced` | The helix fits a shape only smaller than asked; it is cut at the size that fits. |
 | `relief_skipped` | The tool has no `step_down_mm`, so no corner is relieved. |
-| `relief_corner_too_tight` | A corner's edge is shorter than the bit is wide, or the bit cannot reach it; it keeps the bit's radius. |
+| `relief_corner_too_tight` | A corner's edge is shorter than the bit is wide, the bit cannot reach it, or its notch would cut into another wall; it keeps the bit's radius. |
 | `relief_corner_not_cut` | The pocket did not cut to full depth where a corner's notch would start; that corner is skipped. |
 | `rest_of_clears_nothing` | A rest machining Pocket's bit reaches nothing the earlier Pocket left; it cuts nothing. |
 

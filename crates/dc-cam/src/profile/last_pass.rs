@@ -19,7 +19,7 @@ use crate::overlap::within;
 use crate::passes::pass_z_mm;
 use crate::tabs::{PathTabs, RaisedSpan};
 use dc_geometry::{
-    Contour, EPS_MM, Point, Polyline, Region, Vertex, distance_mm, nearest_point, offset,
+    Contour, EPS_MM, Point, Polyline, Region, Vec2, Vertex, distance_mm, nearest_point, offset,
 };
 use dc_project::{LastPass, ProfileOp, Side, TabShape, Tool};
 use std::collections::BTreeMap;
@@ -113,9 +113,11 @@ pub(super) fn pass_z(
     Ok(z_mm)
 }
 
-/// How much more than `√2 · allowance` the last pass may take off, mm
-/// (#310 review): the rounding of offsets and sampling, so that a square
-/// corner, where it takes exactly that, is cut.
+/// How much more than `√2 · allowance` the last pass may take off
+/// without being looked at further, mm (#310 review): the rounding of
+/// offsets and sampling, so that a square corner, where it takes exactly
+/// that, is cut. Also how much farther than the allowance a stretch must
+/// run from the allowance path to be one it stops short of (#324).
 pub(super) const THICKNESS_SLACK_MM: f64 = 0.05;
 
 /// What [`twins`] needs to know about one outline and its paths.
@@ -145,11 +147,15 @@ pub(super) struct Outline<'a> {
 ///   allowance offset vanishes, splits or merges, so its loops are not
 ///   one for each part path: [`CamError::ShapeNarrowerThanAllowance`].
 /// - The last pass takes off, at any point, at most how far its path
-///   runs from the allowance path there: that must be at most
-///   `√2 · a` (a square corner's) plus [`THICKNESS_SLACK_MM`] (#310
-///   review). A notch, slot or tip the earlier passes skip or stop short
-///   of, or a corner sharper than 90°, would leave the last pass more to
-///   cut at full depth: [`CamError::ShapeNarrowerThanAllowance`] too.
+///   runs from the allowance path there ([`cuts_only_corners`]; #310
+///   review, changed in #324): nowhere more than a third of the bit (or
+///   `√2 · a` plus [`THICKNESS_SLACK_MM`], a square corner's, where that
+///   is more), and more than a square corner's only at a corner, where
+///   the earlier passes cut both walls and stop short of the wedge
+///   between. A notch, slot or inlet the earlier passes bridge and skip,
+///   or a tip so narrow that its wedge is thicker, would leave the last
+///   pass that much to cut at full depth:
+///   [`CamError::ShapeNarrowerThanAllowance`] too.
 pub(super) fn twins(
     op: &ProfileOp,
     tool: &Tool,
@@ -205,8 +211,13 @@ pub(super) fn twins(
         // The last pass takes off at most how far its path runs from the
         // allowance path's (its cutter reaches no farther past theirs).
         let step_mm = (radius_mm / 8.0).min(0.25);
-        let thickest_mm = std::f64::consts::SQRT_2 * allowance_mm + THICKNESS_SLACK_MM;
-        if farthest_mm(centre.polyline(), twin.polyline(), step_mm) > thickest_mm {
+        if !cuts_only_corners(
+            centre.polyline(),
+            twin.polyline(),
+            allowance_mm,
+            tool.diameter_mm,
+            step_mm,
+        ) {
             return Err(narrow());
         }
         twins.push(twin);
@@ -271,18 +282,84 @@ pub(super) fn check_neighbours(
     Ok(())
 }
 
-/// How far the point of `path` farthest from `other` lies from it, mm,
-/// sampled at every vertex and at most `step_mm` apart along each
-/// segment.
-fn farthest_mm(path: &Polyline, other: &Polyline, step_mm: f64) -> f64 {
-    let gap = |p: Point| nearest_point(other, p).map_or(f64::INFINITY, |n| n.gap_mm);
-    let mut farthest: f64 = 0.0;
+/// The most the last pass may take off anywhere, mm (#324): a third of
+/// the tool's `diameter_mm`, the thickest skin [`check`] lets the
+/// allowance itself be, so a corner's wedge is never thicker than a
+/// straight wall's skin may be; or a square corner's `√2 · a`, plus
+/// [`THICKNESS_SLACK_MM`], where that is more (the #310 rule, so nothing
+/// it cut is refused now).
+fn thickest_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
+    (diameter_mm / 3.0).max(square_corner_mm(allowance_mm))
+}
+
+/// What the last pass takes off in a square corner, `√2 · a`, plus
+/// [`THICKNESS_SLACK_MM`], mm: the #310 bound, within which no stretch is
+/// looked at further.
+fn square_corner_mm(allowance_mm: f64) -> f64 {
+    std::f64::consts::SQRT_2 * allowance_mm + THICKNESS_SLACK_MM
+}
+
+/// How far a corner may turn back the other way, rad (#324): 1°, for the
+/// sampling and flattening of curves. A stretch that turns back more goes
+/// in and comes out again.
+const CORNER_TURN_BACK_RAD: f64 = std::f64::consts::PI / 180.0;
+
+/// How far a corner may turn, rad (#324): 179°, a U-turn less the
+/// [`CORNER_TURN_BACK_RAD`] allowed for sampling. A stretch that turns as
+/// far as a U-turn goes in and comes out again: a slot's end.
+const CORNER_TURN_RAD: f64 = std::f64::consts::PI - CORNER_TURN_BACK_RAD;
+
+/// One stretch of a part path the allowance path stops short of, for
+/// [`cuts_only_corners`].
+struct Departure {
+    /// The farthest it lies from the allowance path, mm.
+    thickest_mm: f64,
+    /// How far it turns left and right, rad.
+    left_rad: f64,
+    right_rad: f64,
+    /// Its direction of travel at the last sample.
+    heading: Vec2,
+}
+
+impl Departure {
+    /// A corner turns one way, less than a U-turn.
+    fn is_corner(&self) -> bool {
+        self.left_rad.min(self.right_rad) <= CORNER_TURN_BACK_RAD
+            && self.left_rad.max(self.right_rad) < CORNER_TURN_RAD
+    }
+}
+
+/// Whether the last pass on `path` may follow passes on `twin`, its
+/// allowance path at `allowance_mm`, with a tool of `diameter_mm` (#324),
+/// `path` sampled at every vertex and at most `step_mm` apart along each
+/// segment. The last pass takes off at most how far its path runs from
+/// the allowance path, and:
+///
+/// - nowhere more than [`thickest_mm`];
+/// - where it takes off more than a square corner's `√2 · a` (plus
+///   [`THICKNESS_SLACK_MM`]), only at a corner: each stretch of `path`
+///   farther than `a` (plus the slack) from `twin` that reaches past that
+///   must turn one way, by less than a U-turn ([`Departure::is_corner`]).
+///   A corner's earlier passes cut both its walls and stop short of where
+///   they meet, so the last pass takes only the wedge between. A stretch
+///   that turns back, or turns as far as a U-turn, goes into a notch,
+///   slot or inlet that the earlier passes bridge and skip, and the last
+///   pass would cut it whole, as wide as the bit, at full depth.
+fn cuts_only_corners(
+    path: &Polyline,
+    twin: &Polyline,
+    allowance_mm: f64,
+    diameter_mm: f64,
+    step_mm: f64,
+) -> bool {
+    let gap = |p: Point| nearest_point(twin, p).map_or(f64::INFINITY, |n| n.gap_mm);
+    let mut samples: Vec<(f64, Vec2)> = Vec::new();
     for segment in path.segments() {
         let length_mm = segment.length_mm();
         let mut along_mm = 0.0;
         loop {
-            if let Some((p, _)) = segment.point_at(along_mm) {
-                farthest = farthest.max(gap(p));
+            if let Some((p, heading)) = segment.point_at(along_mm) {
+                samples.push((gap(p), heading));
             }
             if along_mm >= length_mm {
                 break;
@@ -290,7 +367,51 @@ fn farthest_mm(path: &Polyline, other: &Polyline, step_mm: f64) -> f64 {
             along_mm = (along_mm + step_mm.max(EPS_MM)).min(length_mm);
         }
     }
-    farthest
+    let square_mm = square_corner_mm(allowance_mm);
+    if samples
+        .iter()
+        .any(|(gap_mm, _)| *gap_mm > thickest_mm(diameter_mm, allowance_mm))
+    {
+        return false;
+    }
+    if samples.iter().all(|(gap_mm, _)| *gap_mm <= square_mm) {
+        return true;
+    }
+    let away = |gap_mm: f64| gap_mm > allowance_mm + THICKNESS_SLACK_MM;
+    let n = samples.len();
+    // Start at a sample beside the allowance path, so no stretch wraps the
+    // scan; a path nowhere beside it is one long stretch, no corner.
+    let Some(beside) = samples.iter().position(|(gap_mm, _)| !away(*gap_mm)) else {
+        return false;
+    };
+    let mut stretch: Option<Departure> = None;
+    for offset in 1..=n {
+        let Some(&(gap_mm, heading)) = samples.get((beside + offset) % n) else {
+            continue;
+        };
+        if away(gap_mm) {
+            let d = stretch.get_or_insert(Departure {
+                thickest_mm: 0.0,
+                left_rad: 0.0,
+                right_rad: 0.0,
+                heading,
+            });
+            let turn_rad = d.heading.cross(heading).atan2(d.heading.dot(heading));
+            if turn_rad > 0.0 {
+                d.left_rad += turn_rad;
+            } else {
+                d.right_rad -= turn_rad;
+            }
+            d.heading = heading;
+            d.thickest_mm = d.thickest_mm.max(gap_mm);
+        } else if let Some(d) = stretch.take()
+            && d.thickest_mm > square_mm
+            && !d.is_corner()
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// `path`, closed, run the other way from the same start: its last pass
