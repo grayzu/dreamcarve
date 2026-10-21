@@ -2727,9 +2727,13 @@ mod tests {
         assert!(text.contains(&format!("Z{:.4}", -6.0 / 25.4)), "{text}");
     }
 
+    /// The characters the controllers act on, and control characters, are
+    /// removed from every name. The non-ASCII character is one with no
+    /// transliteration (U+2603), so it is dropped; before #278 this was an
+    /// em dash, which is now written `-` (`comment_text_transliterates`).
     #[test]
     fn comment_text_is_sanitized() {
-        let nasty = "Bad!~?(name);\nnext\u{2014}line\u{18}";
+        let nasty = "Bad!~?(name);\nnext\u{2603}line\u{18}";
         for post in ["grblhal", "grbl"] {
             let mut project = project_with(post);
             project.name = nasty.into();
@@ -2771,6 +2775,51 @@ mod tests {
                 assert!(!inner.contains(['(', ')', ';']), "{post}: {line:?}");
                 assert!(inner.contains("Bad name next line"), "{post}: {line:?}");
             }
+        }
+    }
+
+    /// Acceptance 40 (#278): a name with accents and symbols keeps its
+    /// letters, transliterated before the sanitizer runs, in each comment
+    /// style; the program stays printable ASCII. Tool and operation names
+    /// go through the same rule.
+    #[test]
+    fn comment_text_transliterates() {
+        for (post, header) in [
+            ("grblhal", "( Project: Cafe O6 1/2 )"),
+            ("grbl", "; Project: Cafe O6 1/2"),
+        ] {
+            let mut project = project_with(post);
+            project.name = "Café Ø6 ½".into();
+            let mut ops = ops_for(&project);
+            profile_of(&mut ops[0].op).name = "Découpe — Straße".into();
+            ops[0].tool.name = "Ø6 mm ¼\u{2033}".into();
+            let text = emit(&project, &ops, DATE).unwrap().0.text;
+            assert_eq!(text.lines().next(), Some(header), "{post}:\n{text}");
+            assert!(text.contains("Decoupe - Strasse"), "{post}:\n{text}");
+            assert!(text.contains("O6 mm 1/4"), "{post}:\n{text}");
+            assert!(
+                text.bytes()
+                    .all(|b| b == b'\n' || (b' '..=b'~').contains(&b)),
+                "{post}: a byte that is not printable ASCII:\n{text}"
+            );
+        }
+    }
+
+    /// Acceptance 40: a name made only of characters with no
+    /// transliteration (CJK here) writes an empty name, as before #278,
+    /// and every byte is printable ASCII.
+    #[test]
+    fn comment_text_drops_unmapped() {
+        for (post, header) in [("grblhal", "( Project:  )"), ("grbl", "; Project:")] {
+            let mut project = project_with(post);
+            project.name = "木工".into();
+            let text = emit(&project, &ops_for(&project), DATE).unwrap().0.text;
+            assert_eq!(text.lines().next(), Some(header), "{post}:\n{text}");
+            assert!(
+                text.bytes()
+                    .all(|b| b == b'\n' || (b' '..=b'~').contains(&b)),
+                "{post}: a byte that is not printable ASCII:\n{text}"
+            );
         }
     }
 
