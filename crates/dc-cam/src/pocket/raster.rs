@@ -669,6 +669,7 @@ fn wall_paths(
         nodes: vec![RingNode {
             region: root.clone(),
             children: Vec::new(),
+            residual: false,
         }],
     };
     tree.walk_keeping(WallRings::Last, anchor, keep)

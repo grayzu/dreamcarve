@@ -22,12 +22,21 @@
 //! Upstream builds the tree recursively; it is built and walked with an
 //! explicit stack here, so a fine step-over on a large pocket cannot
 //! exhaust the call stack.
+//!
+//! Above half the diameter the rings alone leave material standing (#258):
+//! a ring sweeps `r` either side, so a point more than `r` from its node's
+//! ring and more than `r` from every child is never cut, the middle of a
+//! region too small for another step-over, or a sharp corner of one with a
+//! child. [`RingTree::build`] gives each such node residual rings that
+//! reach it, as upstream's trochoidal pocket does for its leaves
+//! (`appendResidualCoreGuides`).
 
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, difference, nest, offset,
 };
 use std::f64::consts::TAU;
 
+use super::rest::{grow_all, without_noise};
 use crate::sequence::nearest_of;
 
 /// `region` inset by `inset_mm`: its outer offset inward and its islands
@@ -87,9 +96,56 @@ fn single_region(contour: Contour) -> Option<Region> {
         .and_then(|(regions, _)| regions.into_iter().next())
 }
 
+/// What the rings of a node of `region` whose children are `children`
+/// leave uncut, as regions whose rings cut it (#258): the points more than
+/// `r` from the node's rings and from every child, which the walk's rings
+/// never reach when the step-over is above `r`. Each ring sweeps `r` either
+/// side, and a child's subtree clears the child, so the rest of the node
+/// is cut within `r` of its rings and of its children. Every point the
+/// step-over inset leaves out lies under a step-over (at most `2r`) from
+/// the node's rings, so under `r` from the edge of the node inset by `r`:
+/// one ring round each piece of what is left, a leaf, reaches all of it.
+///
+/// Measured `tolerance_mm` further in on both sides, the node inset by
+/// `r + tolerance_mm` less the children grown by `r + tolerance_mm`, so
+/// at step-over `2r`, where the two edges meet along a straight wall, no
+/// sliver is left between them; the pieces' rings still sweep the
+/// tolerance-wide strips this leaves out. Pieces thinner than twice the
+/// tolerance are noise, as rest machining's are. Empty when nothing is
+/// left; at step-over `r` or less nothing ever is.
+///
+/// Upstream (`appendResidualCoreGuides`) adds one ring inset by the
+/// shortfall to each leaf of a trochoidal pocket only, its contour pocket
+/// having the same gap above half the diameter; the corners of a node with
+/// children are left there.
+#[must_use]
+pub fn residual_regions(
+    region: &Region,
+    children: &[Region],
+    radius_mm: f64,
+    tolerance_mm: f64,
+) -> Vec<Region> {
+    let reach_mm = radius_mm + tolerance_mm;
+    let deep = inset_region(region, reach_mm, tolerance_mm);
+    if deep.is_empty() {
+        return deep;
+    }
+    let left = if children.is_empty() {
+        deep
+    } else {
+        difference(
+            &deep,
+            &grow_all(children, reach_mm, tolerance_mm),
+            tolerance_mm,
+        )
+    };
+    without_noise(left, tolerance_mm)
+}
+
 /// The rings of one tool-centre region: the region itself at the root,
 /// and below each node the regions [`inset_region`] leaves of it at one
-/// step-over, until nothing is left.
+/// step-over, until nothing is left, with the residual nodes of
+/// [`residual_regions`] beside them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RingTree {
     /// Every node; the root is node 0.
@@ -103,6 +159,9 @@ pub struct RingNode {
     pub region: Region,
     /// Indices of the node's children in [`RingTree::nodes`].
     pub children: Vec<usize>,
+    /// A residual node (#258): a leaf that reaches what its parent's rings
+    /// and its siblings leave, not an inset of its parent.
+    pub residual: bool,
 }
 
 /// Which wall of its node a ring is.
@@ -142,35 +201,54 @@ pub enum WallRings {
 }
 
 impl RingTree {
-    /// The tree of `root` at step-over `stepover_mm`, or `None` when it
-    /// would have more than `max_nodes` nodes.
+    /// The tree of `root` at step-over `stepover_mm` for a tool of radius
+    /// `radius_mm`, or `None` when it would have more than `max_nodes`
+    /// nodes. Each node's children are its [`inset_region`] by the
+    /// step-over, then its [`residual_regions`] as residual leaves.
     #[must_use]
     pub fn build(
         root: Region,
         stepover_mm: f64,
+        radius_mm: f64,
         tolerance_mm: f64,
         max_nodes: usize,
     ) -> Option<Self> {
         let mut nodes = vec![RingNode {
             region: root,
             children: Vec::new(),
+            residual: false,
         }];
         let mut pending = vec![0usize];
         while let Some(index) = pending.pop() {
-            let children = match nodes.get(index) {
-                Some(node) => inset_region(&node.region, stepover_mm, tolerance_mm),
+            let (children, residual) = match nodes.get(index) {
+                Some(node) => {
+                    let children = inset_region(&node.region, stepover_mm, tolerance_mm);
+                    let residual = if stepover_mm > radius_mm + tolerance_mm {
+                        residual_regions(&node.region, &children, radius_mm, tolerance_mm)
+                    } else {
+                        Vec::new()
+                    };
+                    (children, residual)
+                }
                 None => continue,
             };
-            let mut ids = Vec::with_capacity(children.len());
-            for region in children {
+            let mut ids = Vec::with_capacity(children.len() + residual.len());
+            let tagged = children
+                .into_iter()
+                .map(|r| (r, false))
+                .chain(residual.into_iter().map(|r| (r, true)));
+            for (region, residual) in tagged {
                 if nodes.len() >= max_nodes {
                     return None;
                 }
                 ids.push(nodes.len());
-                pending.push(nodes.len());
+                if !residual {
+                    pending.push(nodes.len());
+                }
                 nodes.push(RingNode {
                     region,
                     children: Vec::new(),
+                    residual,
                 });
             }
             if let Some(node) = nodes.get_mut(index) {
@@ -184,8 +262,10 @@ impl RingTree {
     /// walk that, at each node, visits the child whose outer comes nearest
     /// `anchor` (the end of the last ring, ties by child order), then cuts
     /// the node's own rings, nearest first. The root's rings go where
-    /// `wall` says. `anchor` is updated to each ring's point nearest it,
-    /// which is where that ring will start and end.
+    /// `wall` says; with the root's rings omitted, so are its residual
+    /// nodes, which reach only what those rings would leave. `anchor` is
+    /// updated to each ring's point nearest it, which is where that ring
+    /// will start and end.
     pub fn walk(&self, wall: WallRings, anchor: &mut Option<Point>) -> Vec<Ring> {
         self.walk_keeping(wall, anchor, &|_| true)
     }
@@ -203,8 +283,12 @@ impl RingTree {
         if wall == WallRings::First {
             self.push_rings(0, anchor, keep, &mut out);
         }
+        let mut first = self.children(0);
+        if wall == WallRings::Omitted {
+            first.retain(|&c| self.nodes.get(c).is_some_and(|n| !n.residual));
+        }
         // Frames of (node, children not yet visited).
-        let mut stack: Vec<(usize, Vec<usize>)> = vec![(0, self.children(0))];
+        let mut stack: Vec<(usize, Vec<usize>)> = vec![(0, first)];
         while let Some((node, remaining)) = stack.last_mut() {
             if remaining.is_empty() {
                 let node = *node;
@@ -500,7 +584,7 @@ mod tests {
         ]);
         let out = inset_region(&r, 1.2, FLATTEN_TOLERANCE_DEFAULT_MM);
         assert!(out.is_empty(), "{out:?}");
-        let tree = RingTree::build(r, 1.2, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        let tree = RingTree::build(r, 1.2, 1.5, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
         assert_eq!(tree.nodes.len(), 1);
     }
 
@@ -511,7 +595,7 @@ mod tests {
     #[test]
     fn ring_starts_at_nearest_point_of_an_arc() {
         let r = region(vec![Polyline::circle(Point::new(0.0, 0.0), 10.0)]);
-        let tree = RingTree::build(r, 50.0, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        let tree = RingTree::build(r, 50.0, 25.0, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
         let mut anchor = Some(Point::new(12.0, 1.0));
         let rings = tree.walk(WallRings::Last, &mut anchor);
         assert_eq!(rings.len(), 1);
@@ -559,10 +643,79 @@ mod tests {
         assert_approx_eq!(d, 29.0_f64.sqrt(), 1e-9);
     }
 
+    /// #258: a 6.35 mm tool at step-over 1.0 (`s = 6.35`, `r = 3.175`). A
+    /// tool-centre circle of radius 5.325 has no room for another ring, and
+    /// its ring reaches only 3.175 in; it gets one residual ring, the circle
+    /// inset by `r` and the tolerance, which reaches the centre. At radius
+    /// 3.0 the ring reaches the centre and none is added; nor is one at
+    /// step-over 0.5, whatever the radius.
+    #[test]
+    fn leaf_gets_a_residual_ring_only_when_needed() {
+        let tol = FLATTEN_TOLERANCE_DEFAULT_MM;
+        let circle = |radius_mm| region(vec![Polyline::circle(Point::new(0.0, 0.0), radius_mm)]);
+        let tree = RingTree::build(circle(5.325), 6.35, 3.175, tol, 100).unwrap();
+        assert_eq!(tree.nodes.len(), 2, "{tree:?}");
+        assert_eq!(tree.nodes[0].children, [1]);
+        let residual = &tree.nodes[1];
+        assert!(residual.residual && residual.children.is_empty());
+        assert_approx_eq!(
+            residual.region.area_mm2(),
+            std::f64::consts::PI * (5.325 - 3.175 - tol).powi(2),
+            1e-6
+        );
+        let rings = tree.walk(WallRings::Last, &mut None);
+        assert_eq!(rings.iter().map(|r| r.node).collect::<Vec<_>>(), [1, 0]);
+        // With the wall pass omitted the residual ring goes with it.
+        assert!(tree.walk(WallRings::Omitted, &mut None).is_empty());
+
+        let tree = RingTree::build(circle(3.0), 6.35, 3.175, tol, 100).unwrap();
+        assert_eq!(tree.nodes.len(), 1);
+        let tree = RingTree::build(circle(5.325), 3.175, 3.175, tol, 100).unwrap();
+        assert!(tree.nodes.iter().all(|n| !n.residual), "{tree:?}");
+    }
+
+    /// #258: at step-over 1.0 the child of a rect has its corners `2r` in
+    /// from each side, so a point `1.1r` from both sides of a corner is
+    /// more than `r` from the ring and from the child (`0.9·√2·r`). The
+    /// 100 × 50 pocket's tool-centre rect gets one residual ring in each
+    /// corner beside its child. At 0.8 the child's corner is near enough
+    /// (a right angle needs `s ≤ (1 + √2/2)·r`) and none is added.
+    #[test]
+    fn square_corners_get_residual_rings_at_full_step_over() {
+        let tol = FLATTEN_TOLERANCE_DEFAULT_MM;
+        let rect = || region(vec![Polyline::rect(Point::new(0.0, 0.0), 93.65, 43.65)]);
+        let tree = RingTree::build(rect(), 6.35, 3.175, tol, 1000).unwrap();
+        let root = &tree.nodes[0];
+        let residual: Vec<&RingNode> = root
+            .children
+            .iter()
+            .map(|&c| &tree.nodes[c])
+            .filter(|n| n.residual)
+            .collect();
+        assert_eq!(root.children.len(), 5, "{root:?}");
+        assert_eq!(residual.len(), 4);
+        for corner in [(0.0, 0.0), (93.65, 0.0), (93.65, 43.65), (0.0, 43.65)] {
+            let corner = Point::new(corner.0, corner.1);
+            assert!(
+                residual.iter().any(|n| {
+                    n.region
+                        .outer()
+                        .polyline()
+                        .vertices()
+                        .iter()
+                        .all(|v| v.point().distance_to(corner) < 2.5 * 3.175)
+                }),
+                "no residual ring at {corner:?}"
+            );
+        }
+        let tree = RingTree::build(rect(), 0.8 * 6.35, 3.175, tol, 1000).unwrap();
+        assert!(tree.nodes.iter().all(|n| !n.residual));
+    }
+
     #[test]
     fn tree_of_a_rect_is_a_chain() {
         let r = region(vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0)]);
-        let tree = RingTree::build(r, 2.0, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        let tree = RingTree::build(r, 2.0, 2.5, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
         // Half-height 5: insets of 2 and 4 remain, 6 does not.
         assert_eq!(tree.nodes.len(), 3);
         let mut anchor = None;
@@ -573,6 +726,7 @@ mod tests {
             RingTree::build(
                 region(vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0)]),
                 2.0,
+                2.5,
                 FLATTEN_TOLERANCE_DEFAULT_MM,
                 2
             )

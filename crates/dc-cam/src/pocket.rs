@@ -379,7 +379,7 @@ pub fn generate_pocket(
                 root_index += 1;
                 continue;
             }
-            let tree = RingTree::build(root, stepover_mm, tolerance_mm, MAX_RINGS)
+            let tree = RingTree::build(root, stepover_mm, radius_mm, tolerance_mm, MAX_RINGS)
                 .ok_or_else(invalid_step_over)?;
             let domain = (op.entry != Entry::Plunge).then(|| {
                 EntryDomain::new(&entry_regions(&tree, wall), tool.diameter_mm, tolerance_mm)
@@ -570,7 +570,8 @@ fn reference_of(project: &Project, op: &PocketOp) -> Result<Option<rest::Referen
 
 /// The clearance regions of a ring tree's entries: the material every
 /// pass of the tree removes. That is the root tool-centre region, or with
-/// the wall pass omitted its children, so a descent from the previous pass
+/// the wall pass omitted its children (not its residual nodes, which are
+/// then omitted too), so a descent from the previous pass
 /// Z never starts above the uncut band the omitted wall ring leaves.
 fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
     let Some(root) = tree.nodes.first() else {
@@ -580,7 +581,9 @@ fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
         WallRings::Omitted => root
             .children
             .iter()
-            .filter_map(|&c| tree.nodes.get(c).map(|n| n.region.clone()))
+            .filter_map(|&c| tree.nodes.get(c))
+            .filter(|n| !n.residual)
+            .map(|n| n.region.clone())
             .collect(),
         WallRings::First | WallRings::Last => vec![root.region.clone()],
     }
@@ -1320,12 +1323,23 @@ mod tests {
         footprint(&at_z, RADIUS_MM)
     }
 
+    /// The largest piece of the reachable area a coverage test lets stand,
+    /// mm²: a 0.1 mm square.
+    const PIN_MM2: f64 = 0.01;
+
     /// At every pass, the footprint of `tp` covers the reachable area of
-    /// the pocket walled by `outer` within the coverage tolerance.
+    /// the pocket walled by `outer` within the coverage tolerance, and no
+    /// piece it leaves is over [`PIN_MM2`].
     fn assert_covers_at_every_pass(tp: &Toolpath, outer: &Polyline, what: &str) {
         let reachable = reachable_of(outer);
         for z in PASS_Z_MM {
             let uncut = difference(&reachable, &footprint_at_z(tp, z), FLAT_TOL);
+            // A pin is one piece; a sliver along a flattened arc is not.
+            let largest_mm2 = uncut.iter().map(Region::area_mm2).fold(0.0, f64::max);
+            assert!(
+                largest_mm2 <= PIN_MM2,
+                "{what} at Z {z}: a {largest_mm2} mm² piece is left standing"
+            );
             assert!(
                 area_mm2(&uncut) <= coverage_tolerance_mm2(&reachable),
                 "{what} at Z {z}: {} mm² uncut, in {} pieces",
@@ -1347,17 +1361,36 @@ mod tests {
         for fraction in [0.6, 0.8, 1.0] {
             for (name, outer) in pin_shapes() {
                 let p = project(vec![outer.clone()], &[("i1", Transform::IDENTITY)]);
+                // The residual rings take the entry like any other ring, and
+                // go wherever the wall pass goes.
+                let setups = [
+                    (Entry::Plunge, WallPass::Last),
+                    (helix_80(), WallPass::Last),
+                    (Entry::Ramp { angle_deg: 3.0 }, WallPass::Last),
+                    (Entry::Plunge, WallPass::First),
+                ];
+                for (entry, wall_pass) in setups {
+                    let mut op = pocket_op(&p, CutDirection::Climb);
+                    op.step_over_fraction = Some(fraction);
+                    op.entry = entry;
+                    op.wall_pass = wall_pass;
+                    let (tp, warnings) = generate(&p, &op);
+                    let what = format!("{name} at {fraction}, {:?}, {wall_pass:?}", op.entry);
+                    assert!(warnings.is_empty(), "{what}: {:?}", codes(&warnings));
+                    assert_covers_at_every_pass(&tp, &outer, &what);
+                    for z in PASS_Z_MM {
+                        assert!(
+                            covers(&footprint_at_z(&tp, z), PIN_CENTRE),
+                            "{what} at Z {z}: a pin is left at the centre"
+                        );
+                    }
+                }
+                // With no wall pass the root's residual rings go with its
+                // rings; what is cut still passes S9 (`generate`).
                 let mut op = pocket_op(&p, CutDirection::Climb);
                 op.step_over_fraction = Some(fraction);
-                let (tp, _) = generate(&p, &op);
-                let what = format!("{name} at {fraction}");
-                assert_covers_at_every_pass(&tp, &outer, &what);
-                for z in PASS_Z_MM {
-                    assert!(
-                        covers(&footprint_at_z(&tp, z), PIN_CENTRE),
-                        "{what} at Z {z}: a pin is left at the centre"
-                    );
-                }
+                op.wall_pass = WallPass::None;
+                generate(&p, &op);
             }
         }
     }
