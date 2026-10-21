@@ -538,9 +538,28 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    with `none` the root's rings are omitted and the first child becomes
    the outermost ring (the pocket is undersize by `s`, as VCarve's "No
    Profile Pass" warns; a region too small for a second ring is then not
-   cut). The tree is built and walked with an explicit stack, capped at
-   `MAX_RINGS` = 10 000 nodes per tool-centre region (`InvalidStepOver`
-   above it). At each node the children are visited nearest-first
+   cut). **Residual rings:** when `s > r + tolerance`, each node also gets
+   residual leaf children, one per piece of `inset_region(node, r + tol)`
+   less its children (noise dropped) grown by `r + tol` (`rings::residual_regions`),
+   pieces under `tolerance × perimeter` dropped as noise. A ring sweeps
+   `r` either side, so those are the points neither the node's rings nor
+   its children's subtrees reach; every one lies under `s ≤ 2r` from the
+   node's rings, so one ring round each piece reaches all of it. They are
+   ordinary rings in the walk (visited nearest-first with the children,
+   `cleared` their own region); with `none` the root's are omitted with
+   the root's rings. At `s ≤ r` there are none, so 40 % output and the
+   goldens are unchanged. (changed in #258: above half the diameter the
+   innermost ring could lie up to `s` from the middle of its region and
+   reach only `r`, a 4.3 mm pin standing in a 17 mm circle at step-over
+   1.0, and above `(1 + √2/2)·r` each ring's right-angle corners were
+   more than `r` from the ring inside, 2.2 mm² a corner a level on the
+   100 × 50 rect; PureCutCNC's contour pocket has the same gap, and its
+   trochoidal `appendResidualCoreGuides` adds a ring to leaves only.
+   Raster has no such gap: its lines are `s ≤ 2r` apart and the wall
+   pass cuts within `r` of the edge.) The tree is built and walked with
+   an explicit stack, capped at `MAX_RINGS` = 10 000 nodes per tool-centre
+   region (`InvalidStepOver` above it), residual nodes included. At each
+   node the children are visited nearest-first
    (upstream `orderNodesGreedy`), then the node's own rings. Ring blocks
    of one pass share a `group` so `sequence` keeps the inner-first order.
    Each ring's `cleared` area is the ring's node region in tool-centre
@@ -1879,7 +1898,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::offset_cuts_inner_rings_before_the_wall` (port: "offset cuts inner loops before wall-adjacent loops").
 - `pocket::wall_pass_first_last_none` — ring order and the undersize with `none`.
 - `pocket::footprint_stays_inside_region` (S9), `pocket::footprint_stays_outside_island` (S9).
-- `pocket::offset_coverage_reaches_inset_region` — union of footprints ⊇ inset by r within 0.05 (port: `pocketClearance.test.ts` "no stock left" spirit).
+- `pocket::offset_coverage_reaches_inset_region` — union of footprints ⊇ inset by r within 0.05 at step-over 0.4, 0.6, 0.8 and 1.0 (port: `pocketClearance.test.ts` "no stock left" spirit).
+- `pocket::offset_above_half_step_over_leaves_no_centre_pin`, `pocket::raster_above_half_step_over_leaves_no_ridge`, `pocket::rings::leaf_gets_a_residual_ring_only_when_needed`, `pocket::rings::square_corners_get_residual_rings_at_full_step_over` (#258).
 - `pocket::island_wall_runs_opposite_to_pocket_wall` (port: `pocketFinishIslandDirection.test.ts`).
 - `pocket::climb_on_pocket_wall_is_counter_clockwise`, `pocket::climb_on_island_is_clockwise`, `pocket::conventional_reverses_both` (Y-up re-derivation).
 - `pocket::tool_wider_than_region_warns_and_skips`.
