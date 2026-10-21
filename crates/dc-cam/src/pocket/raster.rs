@@ -159,11 +159,10 @@ fn intervals(loops: &[Vec<Point>], y: f64) -> Vec<(f64, f64)> {
         }
     }
     xs.sort_by(f64::total_cmp);
-    xs.chunks_exact(2)
-        .filter_map(|pair| match *pair {
-            [a, b] if b - a > EPS_MM => Some((a, b)),
-            _ => None,
-        })
+    xs.as_chunks::<2>()
+        .0
+        .iter()
+        .filter_map(|&[a, b]| (b - a > EPS_MM).then_some((a, b)))
         .collect()
 }
 
