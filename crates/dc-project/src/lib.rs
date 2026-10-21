@@ -34,9 +34,10 @@ pub use model::{
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,
     DwellUnits, FeedSpeed, MAX_FILE_EXTENSION_CHARS, Motion, NumberFormat, PostProcessor,
-    PostProcessorError, PostProcessorRef, ProgramFormat, RetractMode, SpindleControl, SpindleDwell,
-    Stop, ToolChange, ToolChangeMode, UnitCommands, WorkCoordinates, bundled_definition,
-    bundled_definitions, is_m6_line, is_safe_file_extension, latest_definition, latest_definitions,
+    PostProcessorError, PostProcessorRef, ProgramFormat, ResetReason, RetractMode, SettingReset,
+    SpindleControl, SpindleDwell, Stop, ToolChange, ToolChangeMode, UnitCommands, WorkCoordinates,
+    bundled_definition, bundled_definitions, is_m6_line, is_safe_file_extension, latest_definition,
+    latest_definitions, switch_post,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use validate::{MAX_RATE_MM_MIN, MAX_RPM, MAX_TOOL_DIAMETER_MM, Problem, Severity, validate};

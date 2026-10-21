@@ -188,6 +188,22 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   units, with the post-processor's decimal places for them: `0.5000 in deep`
   in an inch project, `12.000 mm deep` (was `12 mm deep`) in a millimetre one
   ([#282]).
+- **Names in comments keep their letters** ([#278]). Accented letters and
+  common symbols in project, operation and tool names are spelled in ASCII
+  instead of dropped: "Café Ø6 ½" is written `Cafe O6 1/2`, not `Caf 6`.
+  A character DreamCarve has no spelling for is still dropped, and the
+  characters controllers act on are still removed. This changes comment
+  bytes only, on every post-processor and definition version, and only for
+  names that hold such characters.
+- **`export --post` keeps your settings** ([#277]). Switching post-processor,
+  or upgrading to a newer version of your own, used to reset all six
+  post-processor settings to the definition's defaults. Now a setting you
+  changed, such as a longer `spindle_on_dwell_s`, is kept; one still at the
+  old default takes the new one (so `nc` becomes `ngc` on LinuxCNC). A setting
+  the new post-processor cannot use (`"m6"` without M6, canned cycles where it
+  has none) is reset, and `export` names it, both values and why. Your
+  configured `tool_change_mode` applies only to a reset mode. `--reset-settings`
+  gives the old behaviour.
 
 ### Fixed
 
@@ -287,6 +303,8 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#207]: https://github.com/grayzu/dreamcarve/issues/207
 [#242]: https://github.com/grayzu/dreamcarve/issues/242
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
+[#278]: https://github.com/grayzu/dreamcarve/issues/278
+[#277]: https://github.com/grayzu/dreamcarve/issues/277
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
