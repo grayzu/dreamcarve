@@ -136,6 +136,14 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   name can never start a controller command such as `( MSG, ...)` ([#171]). `init`
   writes version 2. A version 1 project keeps exporting version 1 bytes until
   you run `export --post <id>`, which upgrades it and says so.
+- **grblHAL and GRBL definitions version 3.** The header, and the setup
+  written again after every pause and tool change, cancel a canned-cycle
+  motion mode (`G80`) and then cutter compensation (`G40`) after `G94`, so a
+  mode left by an earlier job or by MDI cannot change the program ([#279]).
+  `G49` is not added: both controllers fold an active tool length offset into
+  the work zero you set, so cancelling it would move every Z. `export` now
+  says so for grblHAL and GRBL programs. `init` writes version 3; a version 1
+  or 2 project keeps its bytes until `export --post <id>`.
 - **On line Profile of an open path starts where VCarve's does:** conventional
   at the first vertex, climb at the last ([#242]). Tabs are still placed from the
   first vertex as drawn.
@@ -271,4 +279,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#207]: https://github.com/grayzu/dreamcarve/issues/207
 [#242]: https://github.com/grayzu/dreamcarve/issues/242
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
+[#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
