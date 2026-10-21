@@ -188,6 +188,8 @@ Cut after the part, a hole is cut in a part held only by its tabs, which
 is less rigid than the uncut stock: the part can flex or chatter, and the
 cut can break a tab. `check` warns this as `cut_inside_tab_held_part`
 (and as `cut_inside_freed_part` when the part has no tabs, so is loose).
+Any later cut in the part deeper than half the stock warns the same way;
+a lighter one, such as a shallow engraving, does not.
 A project from before format version 9 that cut the part first and its
 hole second warns so when opened: move the hole's operation first, or
 add the hole to the part's operation and delete its own. A hole cut on

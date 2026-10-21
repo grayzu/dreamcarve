@@ -1448,9 +1448,15 @@ ran in the loose part with no warning.)
 
 The outlines a tabbed Profile through the stock cuts with tabs are held
 only by them (`profile::cut_outlines`, `Hold::Tabs`). Every target of
-`j`, closed or open, that lies inside one of them by the same rule yields
-`CutInsideTabHeldPart (op: j, earlier_op: i, instance, held)`, `held`
-being the innermost such outline (the smallest by area: outlines round
+`j`, closed or open, that lies inside one of them by the same rule
+yields, when `j` cuts deep, `CutInsideTabHeldPart (op: j, earlier_op: i,
+instance, held)`. `j` cuts deep when its `depth_mm` is more than half the
+stock thickness (plus `EPS_MM`), which takes in every cut that reaches
+the stock bottom, through-cut allowance and all; with either value unset
+it does not (validation reports them). A lighter cut, such as the
+plaque's 1 mm Engrave after its tabbed cut-out, is normal practice and
+quiet. `held` is
+the innermost such outline (the smallest by area: outlines round
 one target are nested). It comes in the same order as
 `CutInsideFreedPart` and is skipped for a pair `(target, i)` that already
 warns `CutInsideFreedPart`, since a loose slug inside a tabbed part is
@@ -1460,7 +1466,9 @@ is unchanged. (changed in #269: a tab-held part was treated as safely
 held, so the two-operation star of `tests/manual/star_with_hole`, part
 with tabs first, then its hole, cut the hole in a part held by four
 small bridges with no warning; projects migrated from v8 keep such
-pairs.)
+pairs. Then narrowed in #269 review to deep cuts, so a light cut on a
+tab-held part, which is normal practice, does not train users to ignore
+the warning.)
 
 ### Arc fitting (dc-gcode::arcfit)
 
@@ -1949,7 +1957,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `tabs::holes_get_no_tabs_by_default`, `tabs::on_holes_opt_in_keeps_hole_tabs`, `tabs::too_short_outline_gets_fewer_tabs_and_warns`, `tabs::short_part_outline_keeps_at_least_one_tab`.
 - `profile::star_and_its_hole_cut_in_one_operation` (the manual `tests/manual/star_with_hole` case, redrawn).
 - `order::tabbed_profile_frees_the_outlines_it_leaves_untabbed`.
-- `order::cut_inside_tab_held_part_warns`, `order::any_cut_inside_tab_held_part_warns`, `order::inside_first_is_quiet`, `order::one_operation_part_and_hole_is_quiet`, `order::tab_held_warning_names_the_innermost_outline`, `cli::check_warns_hole_cut_in_tab_held_star` (#269).
+- `order::cut_inside_tab_held_part_warns`, `order::deep_cut_inside_tab_held_part_warns`, `order::shallow_engrave_inside_tab_held_part_is_quiet`, `order::inside_first_is_quiet`, `order::one_operation_part_and_hole_is_quiet`, `order::tab_held_warning_names_the_innermost_outline`, `cli::check_warns_hole_cut_in_tab_held_star`, `cli::plaque_engrave_after_tabbed_cut_out_is_quiet` (#269).
 - `migrate::version_8_fixture_loads`, `migrate::v8_tabs_keep_their_holes_tabbed`, `migrate::v8_with_on_holes_already_present_fails`.
 
 **dc-cam — pocket**

@@ -136,9 +136,12 @@ warn when it is probably wrong; `check` and `export` print them.
   outline last is quiet.
 - **`cut_inside_tab_held_part`.** A Profile that cuts through the stock
   with [tabs](tabs.md) leaves its parts held only by them. A later
-  operation that cuts inside one of those outlines works on a piece held
-  by a few small bridges, which can flex, chatter or break a tab. The
-  same shapes count as for `cut_inside_freed_part`, and the warning names
+  operation that cuts deeper than half the stock inside one of those
+  outlines (a hole through it, a deep pocket) works on a piece held by a
+  few small bridges, which can flex, chatter or break a tab. A lighter
+  cut, such as a shallow engraving, is quiet: it is normal practice. The
+  operation's `depth_mm` is compared with the stock thickness. The same
+  shapes count as for `cut_inside_freed_part`, and the warning names
   both operations, the shape and the innermost tabbed outline round it.
   Move the later operation before the Profile, or, for a hole, cut it in
   the same operation as its part, which cuts holes first ([Tabs: parts
@@ -158,7 +161,5 @@ The [plaque quick start](../quick-start/plaque.md) lists a raster Pocket,
 an offset Pocket, a Drill and an outside Profile with the 6.35 mm end mill,
 then an Engrave with the 3.175 mm end mill. That is two tool runs, so two
 programs in that order. The Profile has tabs, so the Engrave after it
-cuts in a part that is still held, but only by those tabs:
-`cut_inside_tab_held_part` warns for the border and the squiggle. A 1 mm
-groove is a light cut, so the quick start keeps this order; listing the
-Engrave first would also be two tool runs, and quiet.
+cuts in a part that is still held. It is a 1 mm groove in 11.8 mm
+plywood, a light cut, so neither check warns.

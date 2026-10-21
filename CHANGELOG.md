@@ -154,9 +154,10 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   `tabs_cover_most_of_contour` says how many are cut; before, the tabs were cut
   as set. A version 8 file is upgraded with `on_holes: true`,
   so its holes keep their tabs.
-- `check` warns `cut_inside_tab_held_part` when an operation cuts inside a
-  part that an earlier Profile through the stock holds only by its tabs, such
-  as a hole cut after its tabbed part ([#269]). A tabbed part used to count as
+- `check` warns `cut_inside_tab_held_part` when an operation cuts deeper than
+  half the stock inside a part that an earlier Profile through the stock holds
+  only by its tabs, such as a hole cut after its tabbed part ([#269]). A
+  lighter cut, such as a shallow engraving, stays quiet. A tabbed part used to count as
   held, so this order gave no warning.
 
 ### Fixed

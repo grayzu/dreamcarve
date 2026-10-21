@@ -63,8 +63,9 @@ Drill and Engrave operations. Export cuts the enabled ones in list
 order, never reordered or regrouped by tool (research decision D7).
 `check` warns `cut_inside_freed_part` when an operation cuts inside a
 shape an earlier operation has already cut free,
-`cut_inside_tab_held_part` when it cuts inside a part an earlier Profile
-through the stock holds only by its tabs (changed in #269), and hints
+`cut_inside_tab_held_part` when it cuts deeper than half the stock
+inside a part an earlier Profile through the stock holds only by its tabs
+(changed in #269), and hints
 `tool_change_avoidable` when the same tool is used in two operations
 that are not adjacent.
 11. **Machining order** (`machining_order`) on Profile, Pocket and Engrave:

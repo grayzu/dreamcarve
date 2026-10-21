@@ -34,8 +34,9 @@ use dc_project::{Operation, OperationId, Project, Side, ToolId};
 ///   an Engrave or an On line Profile cuts (#206);
 /// - in the same order, [`Warning::CutInsideTabHeldPart`] for every such
 ///   target that lies inside an outline an earlier Profile cut through the
-///   stock round with tabs, naming the innermost such outline, unless the
-///   same earlier operation freed an outline round it (#269);
+///   stock round with tabs, naming the innermost such outline, when the
+///   later operation cuts deeper than half the stock ([`cuts_deep`]) and
+///   the same earlier operation freed no outline round it (#269);
 /// - [`Warning::ToolChangeAvoidable`] once per tool that the enabled
 ///   operations, in order, use again after a different tool, by the
 ///   tool's first use.
@@ -48,6 +49,10 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
     let freeing: Vec<Freed> = generated
         .iter()
         .map(|(op, toolpath)| freed_by(project, op, toolpath))
+        .collect();
+    let deep: Vec<bool> = generated
+        .iter()
+        .map(|(op, _)| cuts_deep(project, op))
         .collect();
 
     let mut warnings = Vec::new();
@@ -75,6 +80,9 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
                     });
                     // A loose piece is the worse news; the tabs round it
                     // do not hold it.
+                    continue;
+                }
+                if !deep.get(j).copied().unwrap_or(false) {
                     continue;
                 }
                 let held = targets.get(i).and_then(|outlines| {
@@ -162,6 +170,20 @@ fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
         (false, _) => Freed::Nothing,
         (true, None) => Freed::All,
         (true, Some(_)) => Freed::Tabbed(cut_outlines(project, profile)),
+    }
+}
+
+/// True when `op` cuts deeper than half the stock, which takes in every
+/// cut that reaches the stock bottom, through-cut allowance and all: a
+/// cut heavy enough to flex a part held only by tabs, or break one
+/// (#269). A light cut, such as a shallow engraving after a tabbed
+/// cut-out, is normal practice. Reads the operation's `depth_mm` against
+/// the stock thickness; false when either is unset, which validation
+/// reports.
+fn cuts_deep(project: &Project, op: &Operation) -> bool {
+    match (op.depth_mm(), project.stock.thickness_mm) {
+        (Some(depth_mm), Some(thickness_mm)) => depth_mm > thickness_mm / 2.0 + EPS_MM,
+        _ => false,
     }
 }
 

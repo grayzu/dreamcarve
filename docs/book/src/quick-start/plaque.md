@@ -337,10 +337,9 @@ plywood between cuts. The first four use `t2`, the last `t3`.
 
 **The order matters.** Export cuts the operations in the order they are
 listed, never regrouped. The pockets and holes come before the outline:
-they are cut while the plaque is still part of the board. The Engrave is
-the only cut with the small bit, so it runs on its own after the others
-and you change bits once; `check` notes that it then cuts a plaque held
-only by its tabs (step 6). See [Machining order and cut
+they are cut while the plaque is still part of the board. The Engrave
+comes last because it is the only cut with the small bit, so you change
+bits once. See [Machining order and cut
 order](../user-guide/machining-order.md).
 
 ## 6. Check the project
@@ -356,15 +355,13 @@ warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider 
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-4` (instance `i8`, profile 0), so the hole comes out the tool's size
-warning: cut_inside_tab_held_part: operation `op5`: `border` (instance `i9`, profile 0) lies inside `outline` (instance `i1`, profile 0), which operation `op4` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `op4`, or, for a hole, cut it in the same operation as its part, which cuts holes first
-warning: cut_inside_tab_held_part: operation `op5`: `squiggle` (instance `i10`, profile 0) lies inside `outline` (instance `i1`, profile 0), which operation `op4` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `op4`, or, for a hole, cut it in the same operation as its part, which cuts holes first
 Program 1 (T1):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
 Program 2 (T2):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
-plaque.dcv: 0 error(s), 7 warning(s)
+plaque.dcv: 0 error(s), 5 warning(s)
 ```
 
 No errors: the project exports. Each warning names what it is about:
@@ -375,12 +372,6 @@ No errors: the project exports. Each warning names what it is about:
 - `drill_tool_wider_than_hole`: the drawing's circles are 5 mm across and
   the bit is 6.35 mm, so each hole comes out 6.35 mm: clearance for an M5
   screw. A Drill never moves sideways, so a hole is always the bit's size.
-- `cut_inside_tab_held_part`: the Engrave runs after the cut-out, so
-  it grooves a plaque that only its four tabs hold, which is less rigid
-  than the uncut board. A 1 mm groove with a small bit is a light cut,
-  so the plaque cuts fine this way. Listing the Engrave first, before the
-  pockets, would also change bits only once and keep `check` quiet: it
-  cuts nothing the pockets remove.
 
 `check` gives the extents of each program separately, because you fit a
 different bit for each.
@@ -398,8 +389,6 @@ warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider 
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-4` (instance `i8`, profile 0), so the hole comes out the tool's size
-warning: cut_inside_tab_held_part: operation `op5`: `border` (instance `i9`, profile 0) lies inside `outline` (instance `i1`, profile 0), which operation `op4` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `op4`, or, for a hole, cut it in the same operation as its part, which cuts holes first
-warning: cut_inside_tab_held_part: operation `op5`: `squiggle` (instance `i10`, profile 0) lies inside `outline` (instance `i1`, profile 0), which operation `op4` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `op4`, or, for a hole, cut it in the same operation as its part, which cuts holes first
 Wrote 2 programs; run them in this order:
   1. plaque-1-T1.nc  Before you start: fit T1 1/4 end mill and set work zero (X, Y and Z) with it.
   2. plaque-2-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
