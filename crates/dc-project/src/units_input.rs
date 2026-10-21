@@ -20,7 +20,7 @@
 //! [`crate::load`] reports at the field's line and column. The model keeps
 //! millimetres (ADR-0001), so [`crate::save`] writes numbers back.
 
-use serde::de::{Deserialize, Deserializer, Error as _, Visitor};
+use serde::de::{Deserialize, Deserializer, Visitor};
 use std::fmt;
 
 /// Millimetres per inch, exactly.
@@ -279,7 +279,7 @@ fn decimal(text: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use crate::model::{Operation, Tool};
     use crate::serialize::{LoadError, load};
     use crate::test_support::{sample_project, tool_6_35_upcut};

@@ -508,9 +508,9 @@ fn report_post_and_operations(
         // Validation refuses an unset depth, so an exported one is set.
         let depth = op
             .depth_mm()
-            .map_or_else(|| "?".to_owned(), |d| d.to_string());
+            .map_or_else(|| "? mm".to_owned(), |d| describe_length(project, d));
         outln!(
-            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} mm deep",
+            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} deep",
             op.id(),
             op.name(),
             op.tool(),
@@ -518,6 +518,27 @@ fn report_post_and_operations(
         )?;
     }
     Ok(())
+}
+
+/// `length_mm` as the summary states a length (addendum A6): in the
+/// project's display units, with the post-processor's decimal places for
+/// them, then the unit: `12.000 mm`, `0.5000 in`, as VCarve states lengths
+/// in its job units.
+fn describe_length(project: &Project, length_mm: f64) -> String {
+    let units = project.display_units;
+    let value = length_mm / mm_per_unit(units);
+    let unit = match units {
+        Units::Mm => "mm",
+        Units::Inch => "in",
+    };
+    // The project was exported with this post-processor, so it resolves.
+    let number = project
+        .post_processor
+        .resolve()
+        .ok()
+        .and_then(|post| format_number(value, &post.number_format, units).ok())
+        .unwrap_or_else(|| value.to_string());
+    format!("{number} {unit}")
 }
 
 /// Prints every pause and tool change of `program`, each line after

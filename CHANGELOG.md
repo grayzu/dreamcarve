@@ -98,6 +98,12 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
+- **Inch input.** Any length or feed in a project or tool library file may be
+  written with its unit: `"depth_mm": "0.5 in"`, `"1 1/4 in"`,
+  `"feed_mm_min": "60 in/min"`, `"safe_z_mm": "5 mm"`. Inches are converted to
+  millimetres exactly when the file is read, so the program is the one the
+  millimetre numbers give; a bad unit is an error at its line and column. A
+  command that saves the file writes millimetre numbers back ([#282]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -172,6 +178,10 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   only by its tabs, such as a hole cut after its tabbed part ([#269]). A
   lighter cut, such as a shallow engraving, stays quiet. A tabbed part used to count as
   held, so this order gave no warning.
+- `export`'s summary states each operation's depth in the project's display
+  units, with the post-processor's decimal places for them: `0.5000 in deep`
+  in an inch project, `12.000 mm deep` (was `12 mm deep`) in a millimetre one
+  ([#282]).
 
 ### Fixed
 
@@ -272,3 +282,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#242]: https://github.com/grayzu/dreamcarve/issues/242
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
+[#282]: https://github.com/grayzu/dreamcarve/issues/282

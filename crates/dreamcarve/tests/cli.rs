@@ -5390,6 +5390,10 @@ fn coaster_inch_string(field: &str) -> serde_json::Value {
 /// `init --units inch` on the coaster, then its values filled in twice:
 /// `coaster-mm.dcv` with the millimetre numbers and `coaster-in.dcv` with
 /// the inch strings of [`COASTER_INCH_VALUES`]. Returns the two paths.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "indexing a JSON object inserts the key; a saved project has these"
+)]
 fn coaster_inch_twins(dir: &Path) -> (PathBuf, PathBuf) {
     std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
     let out = run(dir, &["init", "coaster.svg", "--units", "inch"]);

@@ -11,11 +11,17 @@
 //! serde's implicit `None` for a missing field), so a schema change can never
 //! slip in without a migration.
 //!
+//! Every length (`*_mm`) and feed rate (`*_mm_min`) reads through
+//! [`crate::units_input`], so a file may write it with its unit (`"0.5
+//! in"`, `"60 in/min"`; addendum A6). Those helpers keep a field required,
+//! as `Option::deserialize` does. The model holds millimetres either way.
+//!
 //! Geometry is Y-up, Z-up, millimetres (ADR-0001). Stock occupies
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::post_processor::PostProcessorRef;
+use crate::units_input;
 use dc_geometry::{Polyline, Transform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -38,12 +44,13 @@ pub struct Project {
     pub display_units: Units,
     /// Maximum deviation, millimetres, when curves are flattened to
     /// polylines. Default [`dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM`].
+    #[serde(deserialize_with = "units_input::mm")]
     pub flatten_tolerance_mm: f64,
     /// Fit arcs to straight runs at export within this deviation,
     /// millimetres (functional spec, capability 24). `None` turns fitting
     /// off. `init` writes 0.01. Read by the arc fitter once it lands
     /// (#117 lists the follow-ups).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub arc_fit_tolerance_mm: Option<f64>,
     /// The material block.
     pub stock: Stock,
@@ -79,13 +86,15 @@ pub enum Units {
 #[serde(deny_unknown_fields)]
 pub struct Stock {
     /// Extent along X, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub width_mm: f64,
     /// Extent along Y, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub height_mm: f64,
     /// Extent along Z, millimetres. The material bottom is Z = 0. `None`
     /// until the user measures the material; like a feed, it is never
     /// defaulted, and validation reports it as an error until set (#64).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub thickness_mm: Option<f64>,
 }
 
@@ -117,8 +126,10 @@ pub enum OriginXy {
     /// An arbitrary point in project space.
     Custom {
         /// X, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
         x_mm: f64,
         /// Y, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
         y_mm: f64,
     },
 }
@@ -168,11 +179,11 @@ pub struct FeatureInstance {
     /// until the user sets it; nothing reads it yet, so it is never
     /// guessed (#99). Reserved: validation checks only its range and that
     /// it is not below `z_bottom_mm` (#71).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub z_top_mm: Option<f64>,
     /// Bottom of the feature, millimetres above the material bottom. `None`
     /// until the user sets it, like `z_top_mm`.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub z_bottom_mm: Option<f64>,
 }
 
@@ -195,20 +206,21 @@ pub struct Tool {
     /// read `"kind": {"kind": ...}` (the variant tag is `kind`).
     pub cutter: ToolKind,
     /// Cutting diameter, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub diameter_mm: f64,
     /// Number of flutes.
     pub flutes: u8,
     /// Cutting feed rate, millimetres per minute.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm_min")]
     pub feed_mm_min: Option<f64>,
     /// Plunge feed rate, millimetres per minute.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm_min")]
     pub plunge_mm_min: Option<f64>,
     /// Spindle speed, revolutions per minute.
     #[serde(deserialize_with = "Option::deserialize")]
     pub rpm: Option<u32>,
     /// Default depth per pass, millimetres.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Default step-over as a fraction of the diameter, in (0, 1].
     #[serde(deserialize_with = "Option::deserialize")]
@@ -410,6 +422,7 @@ pub enum Entry {
 #[serde(deny_unknown_fields)]
 pub struct Lead {
     /// Arc radius, millimetres, greater than 0.
+    #[serde(deserialize_with = "units_input::mm")]
     pub radius_mm: f64,
     /// Arc sweep, degrees, in (0, 180]. `init` writes 90.
     pub sweep_deg: f64,
@@ -417,6 +430,7 @@ pub struct Lead {
     pub lead_out: bool,
     /// Distance to continue past the start point before leading out,
     /// millimetres, 0 or more.
+    #[serde(deserialize_with = "units_input::mm")]
     pub overcut_mm: f64,
 }
 
@@ -452,17 +466,19 @@ pub struct ProfileOp {
     pub side: Side,
     /// Final depth below the stock top, millimetres. `None` until the user
     /// sets it; never defaulted, and an error in validation until set (#64).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Climb or conventional milling.
     pub direction: CutDirection,
     /// How far below the stock bottom the cut may go, millimetres. 0 forbids
     /// cutting below the material bottom.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
     /// Holding tabs, if any.
     #[serde(deserialize_with = "Option::deserialize")]
@@ -528,10 +544,10 @@ pub struct PocketOp {
     /// Whether and when the wall pass runs.
     pub wall_pass: WallPass,
     /// Final depth below the stock top, millimetres. `None` until set.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Step-over as a fraction of the tool diameter, in (0, 1]; overrides
     /// [`Tool::step_over_fraction`].
@@ -540,6 +556,7 @@ pub struct PocketOp {
     /// Climb or conventional milling, on every ring and the wall pass.
     pub direction: CutDirection,
     /// Material to leave on the walls, millimetres, 0 or more.
+    #[serde(deserialize_with = "units_input::mm")]
     pub allowance_mm: f64,
     /// An earlier enabled Pocket with the same targets whose tool could
     /// not reach everything: this one clears only what it left
@@ -553,8 +570,10 @@ pub struct PocketOp {
     /// The order shapes and passes are visited.
     pub machining_order: MachiningOrder,
     /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
 }
 
@@ -568,6 +587,7 @@ pub enum PeckRetract {
     /// By a short gap, enough to break the chip.
     ChipBreak {
         /// How far to lift, millimetres, greater than 0.
+        #[serde(deserialize_with = "units_input::mm")]
         gap_mm: f64,
     },
 }
@@ -583,7 +603,7 @@ pub enum DrillCycle {
     Peck {
         /// Depth of each peck, millimetres, greater than 0. `None` takes
         /// the tool's step-down, which must then be set.
-        #[serde(deserialize_with = "Option::deserialize")]
+        #[serde(deserialize_with = "units_input::opt_mm")]
         peck_depth_mm: Option<f64>,
         /// How far to retract between pecks.
         retract: PeckRetract,
@@ -611,14 +631,17 @@ pub struct DrillOp {
     /// dwell. Combinable with any cycle.
     pub dwell_s: f64,
     /// Final depth below the stock top, millimetres. `None` until set.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Height above the hole top to return to between pecks and between
     /// holes, millimetres, 0 or more. `init` writes 1.
+    #[serde(deserialize_with = "units_input::mm")]
     pub retract_mm: f64,
     /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
 }
 
@@ -638,10 +661,10 @@ pub struct EngraveOp {
     /// The tool to cut with. Any cutter.
     pub tool: ToolId,
     /// Final depth below the stock top, millimetres. `None` until set.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Cut successive passes of an open path in opposite directions,
     /// saving a retract per pass.
@@ -649,8 +672,10 @@ pub struct EngraveOp {
     /// The order shapes and passes are visited.
     pub machining_order: MachiningOrder,
     /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
 }
 
@@ -717,8 +742,10 @@ pub struct TabSpec {
     /// Where the tabs go along the outline.
     pub placement: TabPlacement,
     /// Tab length along the outline, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub width_mm: f64,
     /// Tab top above the stock bottom, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub height_mm: f64,
     /// Tab cross-section.
     pub shape: TabShape,
@@ -741,6 +768,7 @@ pub enum TabPlacement {
     /// Tabs centred at the given distances along the contour.
     AtDistances {
         /// Distances along the contour, millimetres, taken modulo its length.
+        #[serde(deserialize_with = "units_input::vec_mm")]
         distances_mm: Vec<f64>,
     },
 }

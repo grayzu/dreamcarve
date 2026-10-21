@@ -19,14 +19,52 @@ layout.
 - Every field must be present. A field DreamCarve does not know is an
   error, so a typo in a name is caught instead of ignored.
 - An unset value is `null`, never left out.
-- Every length is in millimetres and every feed in millimetres per minute,
-  even in an inch project. The unit is in each field's name: `depth_mm`,
-  `feed_mm_min`.
+- A number in a length or a feed is in the unit in the field's name:
+  millimetres for `depth_mm`, millimetres per minute for `feed_mm_min`,
+  even in an inch project. To use another unit, write the value as a
+  string with its unit; see [Values with units](#values-with-units).
 - JSON has no comments, and no comma after the last item in a list or
   object.
 - Run `dreamcarve check` after each edit. It names the field and the value
   it does not accept, and where it is in the file (see
   [Finding a value](#finding-a-value)).
+
+## Values with units
+
+Any length (a field ending `_mm`) or feed (ending `_mm_min`) may be written
+as a string with its unit, whatever the project's `display_units`:
+
+```json
+"depth_mm": "0.5 in",
+"step_down_mm": "1/8 in",
+"safe_z_mm": "5 mm",
+"feed_mm_min": "60 in/min",
+"plunge_mm_min": "500 mm/min",
+```
+
+- The number is a decimal (`0.5`, `-2`, `.25`), a fraction (`1/4`) or a
+  whole number and a fraction (`1 1/4`). No exponent, no space around the
+  `/`.
+- A length takes `mm` or `in`; a feed takes `mm/min` or `in/min`. The space
+  before the unit is optional. A length unit on a feed, or a feed unit on a
+  length, is an error.
+- A bare number is still in the field's unit: `"depth_mm": 12.7` and
+  `"depth_mm": "12.7 mm"` are the same. A string without a unit is an
+  error.
+- Inches are converted to millimetres when the file is read, exactly
+  (`× 25.4`): `"0.5 in"` is 12.7 mm, `"1 1/4 in"` 31.75 mm, and
+  `"60 in/min"` 1524 mm/min. Every check and every program is the same as
+  with those numbers.
+- Fields in other units take numbers only: `angle_deg`,
+  `step_over_fraction`, `rpm`, `dwell_s`, and the vertices of the shapes.
+- A tool library file takes units in its tools' fields too.
+
+A command that saves the project, `export --post` or `tools add`, writes the
+millimetre numbers back: `"0.5 in"` becomes `12.7`. Keep a copy if you want
+your inch values.
+
+An older DreamCarve does not read a value with a unit: it stops at that
+field, naming its line and column.
 
 ## Finding a value
 
@@ -91,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 | --- | --- |
 | `version` | Format version. This build writes `10`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
-| `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
+| `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
 | `arc_fit_tolerance_mm` | How far, at most, an arc written in place of a run of short straight moves may stray from their corners. `init` writes 0.01; `null` turns arc fitting off. See [Arc fitting](#arc-fitting). |
 | `stock` | The block of material. |
