@@ -1419,7 +1419,7 @@ mod tests {
             .unwrap()
             .clone();
         let (toolpath, _) = generate_profile(project, &op).unwrap();
-        dc_cam::test_support::assert_safe(&toolpath, project, &op);
+        dc_cam::test_support::assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
         vec![(op, tool, toolpath)]
     }
 

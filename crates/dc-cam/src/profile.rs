@@ -574,7 +574,8 @@ mod tests {
     use dc_project::test_support::sample_project;
     use dc_project::{
         CornerRelief, DefinitionId, Entry, FeatureDefinition, FeatureInstance, InstanceId,
-        MachiningOrder, OperationId, Side, Stock, TabPlacement, TabShape, TabSpec, ToolId,
+        MachiningOrder, Operation, OperationId, Side, Stock, TabPlacement, TabShape, TabSpec,
+        ToolId,
     };
     use std::collections::BTreeMap;
     use std::f64::consts::{PI, TAU};
@@ -668,7 +669,7 @@ mod tests {
     /// Generates, and checks the result with [`assert_safe`].
     fn generate(project: &Project, op: &ProfileOp) -> (Toolpath, Vec<Warning>) {
         let (toolpath, warnings) = generate_profile(project, op).unwrap();
-        assert_safe(&toolpath, project, op);
+        assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
         (toolpath, warnings)
     }
 
@@ -1293,9 +1294,8 @@ mod tests {
             let mut p = rect_project();
             p.tools[0].cutter = cutter;
             let op = profile_op(&p, Side::OnLine, CutDirection::Climb);
-            let (tp, warnings) = generate(&p, &op);
+            let (_, warnings) = generate(&p, &op);
             assert!(warnings.is_empty(), "{warnings:?}");
-            assert_safe(&tp, &p, &op);
         }
     }
 

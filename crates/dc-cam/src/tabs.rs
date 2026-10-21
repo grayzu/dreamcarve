@@ -721,7 +721,7 @@ mod tests {
 
     fn generate(project: &Project, op: &ProfileOp) -> (Toolpath, Vec<Warning>) {
         let (toolpath, warnings) = generate_profile(project, op).unwrap();
-        assert_safe(&toolpath, project, op);
+        assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
         (toolpath, warnings)
     }
 

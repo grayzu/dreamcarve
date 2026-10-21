@@ -342,6 +342,16 @@ impl Operation {
         }
     }
 
+    /// How far below the stock bottom the cut may go, millimetres (S1).
+    pub fn through_cut_allowance_mm(&self) -> f64 {
+        match self {
+            Self::Profile(op) => op.through_cut_allowance_mm,
+            Self::Pocket(op) => op.through_cut_allowance_mm,
+            Self::Drill(op) => op.through_cut_allowance_mm,
+            Self::Engrave(op) => op.through_cut_allowance_mm,
+        }
+    }
+
     /// The operation's kind as the file tags it: `profile`, `pocket`,
     /// `drill` or `engrave`.
     #[must_use]

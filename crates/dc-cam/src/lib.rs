@@ -12,6 +12,7 @@
 //! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.
 
 mod block;
+mod engrave;
 mod error;
 mod overlap;
 pub mod passes;
@@ -26,6 +27,7 @@ mod warning;
 pub mod test_support;
 
 pub use block::CutBlock;
+pub use engrave::generate_engrave;
 pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use profile::{Wall, generate_profile, traversal_is_ccw};
 pub use sequence::{SequenceInput, plan, sequence};

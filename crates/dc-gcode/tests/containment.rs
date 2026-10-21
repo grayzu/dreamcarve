@@ -82,7 +82,7 @@ fn export(project: &Project) -> String {
         .expect("the operation's tool exists");
     let (toolpath, warnings) = generate_profile(project, op).expect("the profile generates");
     assert!(warnings.is_empty(), "{warnings:?}");
-    assert_safe(&toolpath, project, op);
+    assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
     let (program, _) = emit(project, &[(op.clone(), tool.clone(), toolpath)], DATE)
         .expect("the program passes the safety pass");
     program.text
