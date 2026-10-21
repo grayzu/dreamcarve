@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The minimal cases the properties shrank their failures to, as named
-//! tests (#231, #232, #234, #235, #265, #272, #273): each project
+//! tests (#231, #232, #234, #235, #265, #272, #273, #322): each project
 //! validates, generates, and exports through the full safety pass. Every
 //! case is built from `dc_project::test_support::sample_project()` on
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
@@ -141,6 +141,185 @@ fn outside_t_bone_beside_an_island_part_exports() {
             "{angle_rad}: {warnings:?}"
         );
     }
+}
+
+/// #322 (the Profile property, `PROPTEST_RNG_SEED=100`): a 20.47 ×
+/// 14.90 mm part with a 9.23 × 8.39 mm hole, rotated and placed at
+/// (40, 40), cut outside with T-bones by a 6.84 mm tool, 1.01 mm deep in
+/// one pass, on grblHAL. Each of the hole's corners has its T-bone along
+/// the hole's longer (9.23 mm) wall, so the notch reaches the tool's
+/// radius, 3.42 mm, past the hole's top or bottom wall; the part is only
+/// 3.26 mm thick there, so the notch would cut through it into the
+/// outside, and S9 refused it. The generator skips each such corner with
+/// [`Warning::ReliefCornerTooTight`]. The program exports; no cut brings
+/// the cutter into the part; no Z is below the final depth or the
+/// material bottom; and every feed is the tool's.
+#[test]
+fn outside_t_bone_in_a_hole_just_wider_than_the_bit_exports() {
+    let project = t_bone_in_a_tight_hole();
+    let warnings = exports(&project);
+    let skipped: Vec<&Warning> = warnings
+        .iter()
+        .filter(|w| w.code() == WarningCode::ReliefCornerTooTight)
+        .collect();
+    assert_eq!(skipped.len(), 4, "the hole's four corners: {warnings:?}");
+
+    let instance = &project.instances[0];
+    let to_local = instance.transform.inverse().expect("a rotation inverts");
+    let (outer_x, outer_y) = (10.236_917_615_093_802, 7.450_461_970_335_859);
+    let (hole_x, hole_y) = (4.617_180_390_808_221, 4.195_238_437_099_146);
+    // How far the cutter's centre at `p` (project XY) is from the part's
+    // material: the outer rectangle less the hole, both centred on the
+    // definition's origin.
+    let clearance_mm = |p: Point| {
+        let local = to_local.apply(p);
+        let (x, y) = (local.x.abs(), local.y.abs());
+        if x < hole_x && y < hole_y {
+            (hole_x - x).min(hole_y - y)
+        } else if x > outer_x || y > outer_y {
+            (x - outer_x).max(0.0).hypot((y - outer_y).max(0.0))
+        } else {
+            0.0
+        }
+    };
+    let radius_mm = project.tools[0].diameter_mm / 2.0;
+    let Operation::Profile(profile) = &project.operations[0] else {
+        unreachable!("the case is a Profile");
+    };
+    let thickness_mm = project.stock.thickness_mm.expect("the stock is sized");
+    let final_z_mm = thickness_mm - profile.depth_mm.expect("the depth is set");
+    let tool = &project.tools[0];
+    let rates = [
+        tool.feed_mm_min.expect("a feed"),
+        tool.plunge_mm_min.expect("a plunge rate"),
+    ];
+
+    let post = project
+        .post_processor
+        .resolve()
+        .expect("grblHAL is bundled");
+    let transform =
+        dc_gcode::transform::MachineTransform::new(&project, &post).expect("a valid mapping");
+    let op = generate(&project).expect("generates");
+    let (program, _) = emit(&project, &[op], DATE).expect("exports");
+    // One unit in the last place and the flatten tolerance: what S9 lets
+    // a written move depart by.
+    let slack_mm = 0.001 + project.flatten_tolerance_mm;
+    let mut cuts = 0;
+    for mv in dc_gcode::parse_motion(&program.text).expect("the program parses") {
+        let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+            (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
+        else {
+            continue;
+        };
+        let from = transform.to_project(Point3::new(fx, fy, fz), mv.units);
+        let to = transform.to_project(Point3::new(tx, ty, tz), mv.units);
+        assert!(to.z >= 0.0, "line {}: below the material bottom", mv.line);
+        assert!(
+            to.z >= final_z_mm - 0.0005,
+            "line {}: below the final depth",
+            mv.line
+        );
+        if !mv.kind.is_cut() {
+            continue;
+        }
+        cuts += 1;
+        let feed = mv.feed.expect("a cut has a feed");
+        assert!(
+            rates.iter().any(|r| (feed - r).abs() <= 0.0005),
+            "line {}: feed {feed} is not the tool's",
+            mv.line
+        );
+        // The cut's path in XY: a line, or an arc about its centre words.
+        let samples: Vec<Point> = match (mv.arc.i, mv.arc.j) {
+            (Some(i), Some(j)) if !matches!(mv.kind, dc_gcode::parse::MotionKind::Linear) => {
+                let centre = transform
+                    .to_project(Point3::new(fx + i, fy + j, fz), mv.units)
+                    .xy();
+                let ccw = matches!(mv.kind, dc_gcode::parse::MotionKind::ArcCcw);
+                let arc = dc_geometry::Arc::from_ends(from.xy(), to.xy(), centre, ccw);
+                (0..=16)
+                    .map(|k| {
+                        let a = arc.start_angle_rad + arc.sweep_rad * f64::from(k) / 16.0;
+                        centre + dc_geometry::Vec2::new(a.cos(), a.sin()) * arc.radius_mm
+                    })
+                    .collect()
+            }
+            _ => (0..=16)
+                .map(|k| from.xy() + (to.xy() - from.xy()) * (f64::from(k) / 16.0))
+                .collect(),
+        };
+        for p in samples {
+            let c = clearance_mm(p);
+            assert!(
+                c >= radius_mm - slack_mm,
+                "line {}: the cutter reaches {:.4} mm into the part",
+                mv.line,
+                radius_mm - c
+            );
+        }
+    }
+    assert!(cuts > 0, "the program cuts");
+}
+
+/// #322's project, as the property shrank it.
+fn t_bone_in_a_tight_hole() -> Project {
+    let rect = |x: f64, y: f64| {
+        Polyline::new(
+            vec![
+                Vertex::new(-x, y, 0.0),
+                Vertex::new(x, y, 0.0),
+                Vertex::new(x, -y, 0.0),
+                Vertex::new(-x, -y, 0.0),
+            ],
+            true,
+        )
+    };
+    let profiles = vec![
+        rect(10.236_917_615_093_802, 7.450_461_970_335_859),
+        rect(4.617_180_390_808_221, 4.195_238_437_099_146),
+    ];
+    let transform = Transform::from([
+        -0.671_372_193_632_167_6,
+        -0.741_120_352_991_018_1,
+        0.741_120_352_991_018_1,
+        -0.671_372_193_632_167_6,
+        40.0,
+        40.0,
+    ]);
+    let Operation::Profile(outside) = outside_profile(CornerRelief::TBone, 1.012_347_095_014_033)
+    else {
+        unreachable!("outside_profile is a Profile");
+    };
+    let op = Operation::Profile(ProfileOp {
+        direction: dc_project::CutDirection::Climb,
+        step_down_mm: None,
+        safe_z_mm: 1.0,
+        entry: Entry::Plunge,
+        lead: None,
+        last_pass: None,
+        machining_order: dc_project::MachiningOrder::FullDepthFirst,
+        ..outside
+    });
+    let mut project = case(profiles, transform, 20.246_941_900_280_66, op);
+    project.display_units = Units::Mm;
+    project.arc_fit_tolerance_mm = None;
+    project.origin = MachineOrigin {
+        xy: OriginXy::Custom {
+            x_mm: 138.033_995_045_598_8,
+            y_mm: 122.911_474_822_395_33,
+        },
+        z: OriginZ::StockTop,
+    };
+    project.post_processor = PostProcessorRef::latest("grblhal").expect("grblHAL is bundled");
+    let tool = &mut project.tools[0];
+    tool.diameter_mm = 6.840_693_609_003_763;
+    tool.feed_mm_min = Some(2_952.738_628_505_208);
+    tool.plunge_mm_min = Some(2_760.977_947_122_163);
+    tool.rpm = Some(19_265);
+    tool.step_down_mm = Some(5.860_938_183_944_079);
+    tool.step_over_fraction = Some(0.410_720_724_256_278_6);
+    project
 }
 
 /// #232: a raster Pocket round a rectangular island, whose stay-down link

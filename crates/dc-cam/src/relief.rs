@@ -2769,6 +2769,49 @@ mod tests {
         assert!(out[0].start.distance_to(at(28.0, 32.0)) < 1e-6, "{out:?}");
     }
 
+    /// #322: an outside Profile of a 30 mm wide frame round a 14 × 10 mm
+    /// hole, by the 4 mm tool. Each T-bone in the hole runs along its
+    /// 14 mm walls and reaches `r` = 2 mm past the top or bottom wall. With
+    /// the frame 1.5 mm thick there, that notch would cut through it into
+    /// the outside, so each corner is skipped with
+    /// [`Warning::ReliefCornerTooTight`] and no notch is cut. A dogbone
+    /// reaches only `r(1 − sin 45°)` past each wall, so it fits the same
+    /// frame; and with the frame 3 mm thick the T-bones fit.
+    #[test]
+    fn t_bone_through_a_thin_wall_is_skipped() {
+        let frame = |height: f64, hole_y: f64| {
+            vec![
+                rect(30.0, height),
+                poly(&[
+                    (8.0, hole_y),
+                    (22.0, hole_y),
+                    (22.0, hole_y + 10.0),
+                    (8.0, hole_y + 10.0),
+                ]),
+            ]
+        };
+        let thin = one_tool(frame(13.0, 1.5));
+        let (_, warnings, cut) =
+            profile_run(&thin, &profile_op(Side::Outside, CornerRelief::TBone));
+        assert_eq!(
+            relief_codes(&warnings),
+            [WarningCode::ReliefCornerTooTight; 4],
+            "{warnings:?}"
+        );
+        assert!(cut.is_empty(), "no notch is cut: {cut:?}");
+
+        let (_, warnings, cut) =
+            profile_run(&thin, &profile_op(Side::Outside, CornerRelief::Dogbone));
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        assert_eq!(outward(&cut).len(), 4);
+
+        let thick = one_tool(frame(16.0, 3.0));
+        let (_, warnings, cut) =
+            profile_run(&thick, &profile_op(Side::Outside, CornerRelief::TBone));
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        assert_eq!(outward(&cut).len(), 4);
+    }
+
     /// S9: the notches cut past the pocket's walls only in their corners'
     /// lobes, within one radius of each dogbone end and at most the notch
     /// depth `r(1 − sin 45°)` past a wall, and the generator's own S9
