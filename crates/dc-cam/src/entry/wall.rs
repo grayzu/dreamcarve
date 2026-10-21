@@ -141,6 +141,17 @@ impl EntryPlan {
 }
 
 impl EntryDomain {
+    /// The signed distance from `p` to the nearest wall of the region
+    /// holding it, mm: positive inside a region (in its outer, in none of
+    /// its holes), negative outside every region, by the distance to the
+    /// nearest. Arcs are the chords [`EntryDomain::new`] flattened them to.
+    pub(crate) fn clearance_mm(&self, p: Point) -> f64 {
+        self.areas
+            .iter()
+            .map(|area| area.signed_distance(p))
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
     /// S9 for one descent: the index in `moves`, cut from `from`, of the
     /// first descent move ([`is_descent_move`]) whose tool centre leaves
     /// every region of the domain by more than `slack_mm`.
