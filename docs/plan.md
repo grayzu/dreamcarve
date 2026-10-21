@@ -15,45 +15,47 @@ reference implementation except where this plan says otherwise.
 ## Principles
 
 1. **Every phase ships a working product.** Someone can cut something with the
-   output of each phase. Phases end with a tagged release, binaries for all
-   three desktop platforms, user documentation, and a quick start.
+ output of each phase. Phases end with a tagged release, binaries for all
+ three desktop platforms, user documentation, and a quick start.
 2. **Spec first.** Each phase begins with a functional spec (what the user can
-   do, how we know it works) and a design spec (how it is built, what is
-   tested). Both are reviewed in a PR before implementation issues open.
+ do, how we know it works) and a design spec (how it is built, what is
+ tested). Both are reviewed in a PR before implementation issues open.
 3. **Test first.** Every implementation slice is a GitHub issue that lists its
-   test cases before any implementation PR opens. The red test lands before the
-   code that makes it green. See "How work flows" below.
+ test cases before any implementation PR opens. The red test lands before the
+ code that makes it green. See "How work flows" below.
 4. **Port, don't invent.** PureCutCNC has solved most of these problems. Read
-   its code first, port idiomatically, keep its unit tests as the red step, and
-   use its output as a golden corpus. Attribution rules are in `AGENTS.md`.
+ its code first, port idiomatically, keep its unit tests as the red step, and
+ use its output as a golden corpus. Attribution rules are in `AGENTS.md`.
 5. **Machine output is safety-critical.** Never invent feeds or speeds. Never
-   emit motion below material bottom. Every post-processor change has tests
-   asserting safe Z, plunge depth, and feed rates on the emitted moves.
+ emit motion below material bottom. Every post-processor change has tests
+ asserting safe Z, plunge depth, and feed rates on the emitted moves.
 
 ## Settled decisions
 
-| Decision | Choice | Where recorded |
-| --- | --- | --- |
-| Internal coordinates | Y-up, Z-up, millimetres, machine-native | ADR-0001 |
-| Project file | Own JSON format, `.dcv`, versioned with migrations | ADR-0002 |
-| 3D view | Heightfield simulation only, no CSG | ADR-0003 |
-| MVP shape | Headless: library crates + CLI. GUI arrives CAM-first (phase 4, imported geometry only), CAD second (phase 5) | this file |
-| GUI toolkit | egui + wgpu | phase 4 design spec |
-| Crate layout | Cargo workspace from day one | phase 0 design spec |
-| 2D geometry | Polylines with arc segments. Béziers flattened at import to a project tolerance. Arc fitting at export | phase 1 design spec |
-| Geometry crates | cavalier_contours (offsets), i_overlay (booleans), kurbo (curves) | phase 1 design spec |
-| Feature model | Definition/instance split from day one; snapshot undo history in the model | phase 1 design spec |
-| Tools and post-processors | Projects embed copies. App-level library in user config dir from phase 2 | phase 1 and 2 design specs |
-| Controllers | grblHAL primary and validated on hardware. GRBL alongside in phase 1. LinuxCNC, Mach3, UCCNC, generic in phase 2 | phase 1 functional spec |
-| Operation names | Profile, Pocket, Drill, V-Carve, Engrave; Surface Rough and Surface Finish from phase 7 | `CONTEXT.md` |
-| Multi-tool export | One program with tool changes, or one program per tool. The user sets a default once; each export can override it | phase 2 functional spec |
-| Toolpath coverage | Every carving toolpath common in hobby CAM is planned or explicitly excluded; see "Toolpath coverage" below | this file |
-| Tool import | Fusion `.tools`/`.json` only, following Autodesk's published schema. Other vendor formats post-1.0 | phase 2 functional spec |
-| Platforms | Windows, macOS, Linux desktop. No tablet, no phone, no web | this file |
-| Localization | Strings keyed from the first GUI phase. English only until phase 8 | phase 4 design spec |
-| Fonts | Bundled OFL fonts plus user font files. No system font enumeration | phase 5 design spec |
-| STEP import | Post-1.0, pending a permissively licensed Rust reader | this file |
-| Versioning | `0.N.0` tags the end of phase N; fixes between phases bump the patch. 1.0.0 is phase 9. Builds other than a release tag print `<version>-dev.<UTC build time>+g<hash>`; right after tagging, bump `Cargo.toml` to the next patch | this file |
+
+| Decision                  | Choice                                                                                                                                                                                                                           | Where recorded             |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Internal coordinates      | Y-up, Z-up, millimetres, machine-native                                                                                                                                                                                          | ADR-0001                   |
+| Project file              | Own JSON format, `.dcv`, versioned with migrations                                                                                                                                                                               | ADR-0002                   |
+| 3D view                   | Heightfield simulation only, no CSG                                                                                                                                                                                              | ADR-0003                   |
+| MVP shape                 | Headless: library crates + CLI. GUI arrives CAM-first (phase 4, imported geometry only), CAD second (phase 5)                                                                                                                    | this file                  |
+| GUI toolkit               | egui + wgpu                                                                                                                                                                                                                      | phase 4 design spec        |
+| Crate layout              | Cargo workspace from day one                                                                                                                                                                                                     | phase 0 design spec        |
+| 2D geometry               | Polylines with arc segments. Béziers flattened at import to a project tolerance. Arc fitting at export                                                                                                                           | phase 1 design spec        |
+| Geometry crates           | cavalier\_contours (offsets), i\_overlay (booleans), kurbo (curves)                                                                                                                                                              | phase 1 design spec        |
+| Feature model             | Definition/instance split from day one; snapshot undo history in the model                                                                                                                                                       | phase 1 design spec        |
+| Tools and post-processors | Projects embed copies. App-level library in user config dir from phase 2                                                                                                                                                         | phase 1 and 2 design specs |
+| Controllers               | grblHAL primary and validated on hardware. GRBL alongside in phase 1. LinuxCNC, Mach3, UCCNC, generic in phase 2                                                                                                                 | phase 1 functional spec    |
+| Operation names           | Profile, Pocket, Drill, V-Carve, Engrave; Inlay and Photo V-Carve from phase 3; Surface Rough and Surface Finish from phase 7 | `CONTEXT.md` |
+| Multi-tool export         | One program with tool changes, or one program per tool. The user sets a default once; each export can override it                                                                                                                | phase 2 functional spec    |
+| Toolpath coverage         | Every carving toolpath common in hobby CAM is planned or explicitly excluded; see "Toolpath coverage" below                                                                                                                      | this file                  |
+| Tool import               | Fusion `.tools`/`.json` only, following Autodesk's published schema. Other vendor formats post-1.0                                                                                                                               | phase 2 functional spec    |
+| Platforms                 | Windows, macOS, Linux desktop. No tablet, no phone, no web                                                                                                                                                                       | this file                  |
+| Localization              | Strings keyed from the first GUI phase. English only until phase 8                                                                                                                                                               | phase 4 design spec        |
+| Fonts                     | Bundled OFL fonts plus user font files. No system font enumeration                                                                                                                                                               | phase 5 design spec        |
+| STEP import               | Post-1.0, pending a permissively licensed Rust reader                                                                                                                                                                            | this file                  |
+| Versioning                | `0.N.0` tags the end of phase N; fixes between phases bump the patch. 1.0.0 is phase 9. Builds other than a release tag print `<version>-dev.<UTC build time>+g<hash>`; right after tagging, bump `Cargo.toml` to the next patch | this file                  |
+
 
 ## Toolpath coverage
 
@@ -61,22 +63,26 @@ The carving toolpaths common in hobby CAM, compared against VCarve Pro's
 published toolpath list at the level of what each is for (laser toolpaths
 excluded). Each one is either planned or deliberately left out. A toolpath
 PureCutCNC lacks has nothing to port, so it would be designed from scratch;
-those wait until after 1.0.
+those wait until after 1.0, except Inlay and Photo V-Carve, which phase 3
+designs from the documented references the table names.
 
-| Toolpath | Where | Note |
-| --- | --- | --- |
-| Profile | Phase 1 | Tabs in phase 1; lead-in/out and ramp entry in phase 2 |
-| Pocket | Phase 2 | Offset and Raster clearance |
-| Drill | Phase 2 | V-bit countersinking in phase 3 |
-| Engrave | Phase 2 | Fixed-depth cut along the line. V-bit engraving whose width follows the shape is V-Carve |
-| V-Carve | Phase 3 | With flat-bottom clearing |
-| Surface Rough, Surface Finish | Phase 7 | From a mesh or a grayscale heightmap |
-| Inlay | Post-1.0 | No PureCutCNC reference. Builds on V-Carve |
-| Fluting | Post-1.0 | No PureCutCNC reference |
-| Texture | Post-1.0 | No PureCutCNC reference |
-| Prism carving | Post-1.0 | No PureCutCNC reference |
-| Moulding | Post-1.0 | No PureCutCNC reference; also needs a swept 3D model, which the CAD side doesn't create |
-| Quick (V-bit) engrave | Not planned | Covered by Engrave for fixed depth and V-Carve for V-bit work |
+
+| Toolpath                      | Where       | Note                                                                                                                                                                                                                                                 |
+| ----------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Profile                       | Phase 1     | Tabs in phase 1; lead-in/out and ramp entry in phase 2                                                                                                                                                                                               |
+| Pocket                        | Phase 2     | Offset and Raster clearance                                                                                                                                                                                                                          |
+| Drill                         | Phase 2     | V-bit countersinking in phase 3                                                                                                                                                                                                                      |
+| Engrave                       | Phase 2     | Fixed-depth cut along the line. V-bit engraving whose width follows the shape is V-Carve                                                                                                                                                             |
+| V-Carve                       | Phase 3     | With flat-bottom clearing                                                                                                                                                                                                                            |
+| Surface Rough, Surface Finish | Phase 7     | From a mesh or a grayscale heightmap                                                                                                                                                                                                                 |
+| Inlay                         | Phase 3     | Builds on V-Carve. No PureCutCNC reference; designed from Corbin's Workshop's documentation of its Fusion inlay add-in: <https://www.corbinsworkshop.com/vcarve-inlay-plugin-for-autodesk-fusion-documentation/> |
+| Photo V-Carve                 | Phase 3     | Like Vectric's PhotoVCarve: parallel V-bit lines whose depth follows pixel brightness. No PureCutCNC reference; behaviour and test reference is RasterCarve (`../rastercarve`, GPLv2+: behaviour and tests only, no code) |
+| Fluting                       | Post-1.0    | No PureCutCNC reference                                                                                                                                                                                                                              |
+| Texture                       | Post-1.0    | No PureCutCNC reference                                                                                                                                                                                                                              |
+| Prism carving                 | Post-1.0    | No PureCutCNC reference                                                                                                                                                                                                                              |
+| Moulding                      | Post-1.0    | No PureCutCNC reference; also needs a swept 3D model, which the CAD side doesn't create                                                                                                                                                              |
+| Quick (V-bit) engrave         | Not planned | Covered by Engrave for fixed depth and V-Carve for V-bit work                                                                                                                                                                                        |
+
 
 Toolpath management with no PureCutCNC reference (toolpath templates,
 merging toolpaths, array-copying a toolpath, tiling oversize jobs) is also
@@ -148,8 +154,7 @@ as a percentage of tool diameter. Rough and finish pockets. Drill (simple,
 peck, dwell, chip-break, canned cycles where the post supports them), Engrave
 (open and closed paths, at a fixed depth). Multiple operations per project
 with ordering. Multi-tool export: one program with tool changes or one program
-per tool, with a user default and a per-export override (see
-`docs/specs/phase-2/NOTES.md`). Tool library in the user config directory with
+per tool, with a user default and a per-export override. Tool library in the user config directory with
 import from Fusion `.tools`/`.json` and export to DreamCarve JSON. DXF import.
 LinuxCNC, Mach3, UCCNC, and generic post-processors. Arc fitting at export.
 Ramp and helical entry for pockets and profiles, and arc lead-in/out for
@@ -164,32 +169,47 @@ ported behaviours; phase 2 test part cut; `v0.2.0`.
 
 **Real cut:** yes (a pocketed, drilled, engraved plaque).
 
-**Spec notes:** requirements captured ahead of the spec are in
-`docs/specs/phase-2/NOTES.md`; fold them in when writing the spec.
-
 **Read first:** `src/engine/toolpaths/pocket.ts`, `pocketPatterns.ts`,
 `drilling.ts`, `carving.ts`, `entry.ts`, `regions.ts`, `regionDomain.ts`,
 `resolver.ts`, `src/engine/gcode/arcFitting.ts`, `src/import/dxf.ts`,
 `src/machine/`, `planning/REGION_FEATURE_SEMANTICS.md`,
 `planning/BAND_RESOLVER_SEMANTICS.md`.
 
-### Phase 3: V-Carve
+### Phase 3: V-Carve, Inlay, and Photo V-Carve
 
-**Goal:** the headline operation, from the command line.
+**Goal:** the headline operation, and the two V-bit techniques built on it,
+from the command line.
 
 **In:** medial-axis V-carving of closed shapes with a V-bit, flat-depth
 limiting with a clearing tool, offset-stepping V-carve mode, V-bit
 countersinking on Drill. Carve-quality tests against the golden corpus.
+**Inlay**: the paired female (pocket) and male (plug) V-carve toolpaths,
+with the start depth, glue gap and plug depth the technique needs, following
+the method in Corbin's Workshop's documentation for its Fusion inlay add-in.
+**Photo V-Carve**: a grayscale image carved as parallel V-bit lines whose
+depth follows pixel brightness, as Vectric's PhotoVCarve does, with
+RasterCarve as the behaviour and test reference.
 
 **Out:** GUI.
 
-**Exit:** parity with PureCutCNC's V-carve tests; phase 3 test part cut (a
-lettered sign imported as SVG outlines); `v0.3.0`.
+**Exit:** parity with PureCutCNC's V-carve tests; the phase 3 test parts
+cut: a lettered sign imported as SVG outlines, an inlay pair (female and
+male, cut and fitted, following Corbin's Fusion tutorial), and a photo
+V-carve whose toolpath matches RasterCarve's test cases within the
+tolerance the spec states; `v0.3.0`.
 
-**Real cut:** yes.
+**Real cut:** yes, all three parts.
 
 **Read first:** `src/engine/toolpaths/vcarve.ts`, the `v_carve_medial`
-operation kind in `src/types/project.ts`, related tests.
+operation kind in `src/types/project.ts`, related tests. Inlay has no
+PureCutCNC reference: read Corbin's Workshop's add-in documentation
+(<https://www.corbinsworkshop.com/vcarve-inlay-plugin-for-autodesk-fusion-documentation/>)
+for the method and the parameters, and VCarve's inlay tutorials for the
+vocabulary. Photo V-Carve has no PureCutCNC reference either: read
+RasterCarve (`../rastercarve`, its Python engine, Rust engine and tests) for
+behaviour and test cases. RasterCarve is GPLv2+, so its code is not ported;
+the phase 3 spec designs the operation from its documented behaviour and
+re-derives the tests, as the ordering research did with FreeCAD.
 
 ### Phase 4: GUI, CAM only
 
@@ -325,30 +345,30 @@ full user manual.
 Not rejected, just after 1.0: STEP import, Vectric/Carveco/MillMage/Carbide
 Create tool-library import, rotary and 4th-axis, parametrics, cloud sync,
 system font enumeration, an agent-facing API. The toolpaths and toolpath
-management features marked post-1.0 in "Toolpath coverage": Inlay, Fluting,
+management features marked post-1.0 in "Toolpath coverage": Fluting,
 Texture, Prism carving, Moulding, toolpath templates, merge, array copy, and
 tiling.
 
 ## How work flows
 
 1. **Phase spec PR.** Copy `docs/specs/TEMPLATE-functional.md` and
-   `TEMPLATE-design.md` into `docs/specs/phase-N/`. Fill them. Open a PR.
-   Merge when the user signs off.
+ `TEMPLATE-design.md` into `docs/specs/phase-N/`. Fill them. Open a PR.
+ Merge when the user signs off.
 2. **Slice issues.** Break the design spec into GitHub issues, each small
-   enough for one PR. Each issue body has a **Tests** section listing the
-   test names and what each asserts. An issue without a Tests section is not
-   ready; label it `needs-info`. A complete one gets `ready-for-agent` or
-   `ready-for-human`.
+ enough for one PR. Each issue body has a **Tests** section listing the
+ test names and what each asserts. An issue without a Tests section is not
+ ready; label it `needs-info`. A complete one gets `ready-for-agent` or
+ `ready-for-human`.
 3. **Red.** The first commit of the implementation PR adds the tests from the
-   issue. They fail. Ported PureCutCNC tests count as red tests and keep the
-   attribution header.
+ issue. They fail. Ported PureCutCNC tests count as red tests and keep the
+ attribution header.
 4. **Green.** Implement until green. Run the full gate from `AGENTS.md`.
 5. **Refactor and document.** Update rustdoc, the mdBook chapter, and
-   `INDEX`-style module docs touched by the change. Update `CONTEXT.md` if a
-   term changed.
+ `INDEX`-style module docs touched by the change. Update `CONTEXT.md` if a
+ term changed.
 6. **Review.** PR review checks the tests match the issue, the attribution
-   headers are right, and safety assertions exist for any machine-output
-   change.
+ headers are right, and safety assertions exist for any machine-output
+ change.
 7. **Phase exit.** Real cut where required, quick start published, tag.
 
 ## Parity corpus

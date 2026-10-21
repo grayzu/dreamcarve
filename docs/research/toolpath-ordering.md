@@ -1,7 +1,7 @@
 # Toolpath ordering: research and proposal
 
 Status: research note. The decisions taken from it are in section 7 and in
-`docs/specs/phase-2/NOTES.md`; the specs are the authority. Terms follow
+`docs/specs/phase-2/`; the specs are the authority. Terms follow
 `CONTEXT.md`.
 
 ## The question
@@ -502,8 +502,8 @@ sequencer.
 
 ## 7. Decisions
 
-Taken with the maintainer on 2026-10-18. `docs/specs/phase-2/NOTES.md`
-carries the phase 2 items; phase 1 items are tracked as issues.
+Taken with the maintainer on 2026-10-18. The phase 2 specs carry the
+phase 2 items (the interim `NOTES.md` was folded into them); phase 1 items are tracked as issues.
 
 | # | Decision | Phase |
 | --- | --- | --- |
