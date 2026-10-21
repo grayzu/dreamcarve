@@ -357,7 +357,10 @@ Each notch plunges where the outline's path turned that corner and steps
 down by the **tool's** `step_down_mm` to the operation's depth. The
 notches are cut among the outline's own passes, nearest corner first: a
 notch level comes right after the pass that cut down to it, so the bit
-plunges into the slot that pass opened. A corner under a [tab](tabs.md)
+plunges into the slot that pass opened. When that pass ended on the
+corner's plunge point, as it often does on a rectangle, the bit goes
+straight on into the notch from where it is, up or down in the slot it
+has just cut, without lifting to safe Z first. A corner under a [tab](tabs.md)
 is skipped with `relief_corner_not_cut`: the path rises over the tab
 there, so the notch would plunge into uncut material. Edges shorter than
 the bit is wide skip their corner with `relief_corner_too_tight`, and a
@@ -409,7 +412,8 @@ one drawn (see [Machining order](machining-order.md)). For each outline:
 
 Every move between shapes is at safe Z; the tool never travels through
 material from one shape to another. With [corner relief](#corner-relief)
-each pass is followed by its notches, each corner reached at safe Z; on
+each pass is followed by its notches, each corner reached at safe Z
+(except one where the pass ended, which is cut straight from there); on
 a through cut the notches of the last pass are cut from within it, at
 each corner as the lap gets there.
 
