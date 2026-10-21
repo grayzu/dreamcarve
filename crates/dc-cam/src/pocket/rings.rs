@@ -80,6 +80,22 @@ pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Re
     difference(&subject, &clip, tolerance_mm)
 }
 
+/// Whether `region` is noise at `tolerance_mm`, not a ring to cut: its
+/// area is under the tolerance times its perimeter, a piece thinner than
+/// twice the tolerance (rest machining's rule, [`super::rest`]); for a
+/// circle, a radius under twice the tolerance. A ring that small is
+/// below what a program can be trusted to write (#235: one of radius
+/// 0.0002 mm, three arcs whose ends round to one point, failed S6), and
+/// it cuts nothing the ring around it does not already reach within the
+/// tolerance when the step-over is at most the tool radius.
+fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
+    let perimeter_mm: f64 = std::iter::once(region.outer())
+        .chain(region.holes())
+        .map(|c| c.polyline().length_mm())
+        .sum();
+    region.area_mm2() <= tolerance_mm * perimeter_mm
+}
+
 /// The region `contour` alone encloses.
 fn single_region(contour: Contour) -> Option<Region> {
     nest(vec![contour])
@@ -143,7 +159,8 @@ pub enum WallRings {
 
 impl RingTree {
     /// The tree of `root` at step-over `stepover_mm`, or `None` when it
-    /// would have more than `max_nodes` nodes.
+    /// would have more than `max_nodes` nodes. An inset that is noise at
+    /// `tolerance_mm` ([`is_noise`]) is not a node (#235).
     #[must_use]
     pub fn build(
         root: Region,
@@ -162,7 +179,7 @@ impl RingTree {
                 None => continue,
             };
             let mut ids = Vec::with_capacity(children.len());
-            for region in children {
+            for region in children.into_iter().filter(|r| !is_noise(r, tolerance_mm)) {
                 if nodes.len() >= max_nodes {
                     return None;
                 }
