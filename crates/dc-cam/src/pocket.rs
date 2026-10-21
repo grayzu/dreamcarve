@@ -7,10 +7,10 @@
 //   src/engine/toolpaths/pocketPatterns.ts
 
 //! Pocket toolpaths (`docs/specs/phase-2/design.md`, "Algorithms → Pocket",
-//! steps 1–2, 4–6, 8, 11–12): clear the inside of closed shapes with
-//! concentric rings, leaving nested shapes as islands. The ring tree is in
-//! [`rings`]; the raster strategy, pocket allowance and rest machining land
-//! in later slices.
+//! steps 1–2, 4–8, 11–12): clear the inside of closed shapes with
+//! concentric rings or raster lines, leaving nested shapes as islands. The
+//! ring tree is in [`rings`], the raster lines in [`raster`]; pocket
+//! allowance and rest machining land in later slices.
 //!
 //! Re-derived for Y-up (ADR-0001) rather than copied: PureCutCNC's "conventional
 //! is a no-op on Clipper output" holds because its positive-area outers are
@@ -19,6 +19,7 @@
 //! island ring is climb round an island, so conventional reverses both
 //! ([`ring_is_ccw`]).
 
+pub mod raster;
 pub mod rings;
 
 use crate::block::CutBlock;
@@ -40,7 +41,8 @@ use dc_geometry::{
 use dc_project::{
     ClearanceStrategy, CornerRelief, CutDirection, Entry, PocketOp, Project, Tool, WallPass,
 };
-use rings::{RingKind, RingTree, WallRings, inset_region};
+use raster::RasterSettings;
+use rings::{Ring, RingKind, RingTree, WallRings, inset_region};
 
 /// Most rings one tool-centre region may have. Bounds the work a tiny
 /// step-over can cause (a 0.01 step-over of a 6 mm tool on a 1 m wide
@@ -88,21 +90,27 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// ([`rings::inset_region`]); where it is empty the shape is skipped with
 /// [`WarningCode::PocketNoRoom`], and an island closer than the tool's
 /// diameter to the wall or another island warns
-/// [`WarningCode::PocketIslandTooClose`]. Each tool-centre region's rings
-/// step in by `diameter × step_over_fraction` ([`RingTree`]); per depth
-/// pass they are cut innermost first, with the wall and island rings last,
-/// first, or not at all per `op.wall_pass`, each ring starting at its
-/// vertex nearest the previous ring's end and running per [`ring_is_ccw`].
-/// [`sequence`] orders and links the rings (stay-down links inside the
-/// cleared tool-centre area, else a retract to safe Z).
+/// [`WarningCode::PocketIslandTooClose`]. With the offset strategy each
+/// tool-centre region's rings step in by `diameter × step_over_fraction`
+/// ([`RingTree`]); per depth pass they are cut innermost first, with the
+/// wall and island rings last, first, or not at all per `op.wall_pass`,
+/// each ring starting at its vertex nearest the previous ring's end and
+/// running per [`ring_is_ccw`]. With the raster strategy each tool-centre
+/// region is crossed by lines at the raster angle, one step-over apart and
+/// alternating in direction ([`raster::raster_lines`]), whatever
+/// `op.direction`; the wall and island rings follow (or precede) them as
+/// for offset. [`sequence`] orders and links the rings and lines
+/// (stay-down links inside the cleared tool-centre area, else a retract to
+/// safe Z).
 ///
 /// Fails without a toolpath when a rate, the step-down or the step-over is
 /// missing, when the depth goes below the stock bottom plus allowance, when
-/// targets cross, when an id does not resolve, when the cutter is not a
-/// flat end mill, when the cutter would leave the stock
+/// the raster angle is outside [0, 180) ([`CamError::InvalidRasterAngle`]),
+/// when targets cross, when an id does not resolve, when the cutter is not
+/// a flat end mill, when the cutter would leave the stock
 /// ([`CamError::OffStock`]) or its footprint would leave the pocket's
-/// material (S9, [`CamError::OffMaterial`]). Not yet generated: a raster
-/// strategy, an allowance, and rest machining fail with
+/// material (S9, [`CamError::OffMaterial`]). Not yet generated: an
+/// allowance and rest machining fail with
 /// [`CamError::NotSupportedYet`]; a ramp or helix entry plunges instead
 /// ([`WarningCode::EntryFallback`]) and corner relief is skipped
 /// ([`WarningCode::ReliefSkipped`]).
@@ -139,6 +147,14 @@ pub fn generate_pocket(
         return Err(CamError::InvalidSafeZ {
             op: op.id.clone(),
             safe_z_mm: op.safe_z_mm,
+        });
+    }
+    if let ClearanceStrategy::Raster { angle_deg } = op.strategy
+        && !(angle_deg.is_finite() && (0.0..180.0).contains(&angle_deg))
+    {
+        return Err(CamError::InvalidRasterAngle {
+            op: op.id.clone(),
+            angle_deg,
         });
     }
     refuse_later_slices(op)?;
@@ -206,10 +222,12 @@ pub fn generate_pocket(
         WallPass::First => WallRings::First,
         WallPass::None => WallRings::Omitted,
     };
-    // Every ring in cut order: its shape, its path (oriented, starting at
-    // its entry), and the tool-centre area it lies in.
-    let mut rings: Vec<(ShapeRef, Polyline, Region)> = Vec::new();
+    // Every ring and raster line in cut order: its shape, its path (a ring
+    // oriented and starting at its entry, a line from start to end), and
+    // the tool-centre area it has cleared.
+    let mut rings: Vec<(ShapeRef, Polyline, Option<Region>)> = Vec::new();
     let mut anchor: Option<Point> = None;
+    let mut root_index = 0;
     for region in &regions {
         // `nest` keeps every contour or reverses it, so this always finds
         // the shape.
@@ -228,27 +246,33 @@ pub fn generate_pocket(
             continue;
         }
         for root in tool_centre {
+            if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
+                let settings = RasterSettings {
+                    stepover_mm,
+                    radius_mm,
+                    angle_deg,
+                    tolerance_mm,
+                    wall,
+                    direction: op.direction,
+                };
+                let paths = raster::region_paths(&root, root_index, &settings, &mut anchor)
+                    .ok_or_else(invalid_step_over)?;
+                rings.extend(
+                    paths
+                        .into_iter()
+                        .map(|(path, cleared)| (shape.clone(), path, cleared)),
+                );
+                root_index += 1;
+                continue;
+            }
             let tree = RingTree::build(root, stepover_mm, tolerance_mm, MAX_RINGS)
                 .ok_or_else(invalid_step_over)?;
             for ring in tree.walk(wall, &mut anchor) {
-                let side = match ring.kind {
-                    RingKind::Outer => RingWall::Pocket,
-                    RingKind::Hole => RingWall::Island,
-                };
-                let ccw = ring_is_ccw(side, op.direction);
-                let path = if ring.contour.is_ccw() == ccw {
-                    ring.contour.into_polyline()
-                } else {
-                    ring.contour.reversed().into_polyline()
-                };
                 let Some(node) = tree.nodes.get(ring.node) else {
                     continue;
                 };
-                rings.push((
-                    shape.clone(),
-                    starting_at(&path, ring.start),
-                    node.region.clone(),
-                ));
+                let cleared = Some(node.region.clone());
+                rings.push((shape.clone(), ring_path(ring, op.direction), cleared));
             }
         }
     }
@@ -263,6 +287,12 @@ pub fn generate_pocket(
             let Some(start) = path.vertices().first().map(|v| v.point()) else {
                 continue;
             };
+            // A ring ends where it starts; a raster line at its far end.
+            let exit = if path.is_closed() {
+                start
+            } else {
+                path.vertices().last().map_or(start, |v| v.point())
+            };
             let Some(lap) = lap_cuts(path, z_mm, None, rates) else {
                 continue;
             };
@@ -275,10 +305,10 @@ pub fn generate_pocket(
                 descent: Vec::new(),
                 entry: start,
                 cuts: lap.moves,
-                exit: start,
+                exit,
                 // A pocket never cuts a part free.
                 frees: false,
-                cleared: Some(cleared.clone()),
+                cleared: cleared.clone(),
                 group: pass,
             });
         }
@@ -309,13 +339,11 @@ pub fn generate_pocket(
     Ok((toolpath, warnings))
 }
 
-/// Typed errors for what later slices generate: raster (slice 5), an
-/// allowance and rest machining (slice 6). Each would cut something other
-/// than what was asked, so none is silently ignored.
+/// Typed errors for what later slices generate: an allowance and rest
+/// machining (slice 6). Each would cut something other than what was
+/// asked, so none is silently ignored.
 fn refuse_later_slices(op: &PocketOp) -> Result<(), CamError> {
-    let feature = if let ClearanceStrategy::Raster { .. } = op.strategy {
-        Some("a raster strategy")
-    } else if op.allowance_mm > 0.0 {
+    let feature = if op.allowance_mm > 0.0 {
         Some("a pocket allowance (allowance_mm)")
     } else if op.rest_of.is_some() {
         Some("rest machining (rest_of)")
@@ -405,6 +433,21 @@ fn island_gap_warnings(
         }
     }
     warnings
+}
+
+/// `ring` as a path: wound by the direction rule ([`ring_is_ccw`]) for
+/// `direction`, starting at its start vertex.
+fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
+    let side = match ring.kind {
+        RingKind::Outer => RingWall::Pocket,
+        RingKind::Hole => RingWall::Island,
+    };
+    let path = if ring.contour.is_ccw() == ring_is_ccw(side, direction) {
+        ring.contour.into_polyline()
+    } else {
+        ring.contour.reversed().into_polyline()
+    };
+    starting_at(&path, ring.start)
 }
 
 /// `path` (closed) rotated to start at its vertex at `start`
@@ -1705,11 +1748,17 @@ mod tests {
     }
 
     /// The tool centres along `tp` never come nearer the island fixture's
-    /// circle than its radius plus the tool's, less the flattening.
+    /// circle than its radius plus the tool's, less the flattening: along
+    /// every straight cut, and at the ends of every arc (the island ring's
+    /// arcs bulge away from the island).
     fn assert_clear_of_island(tp: &Toolpath) {
         let centre = Point::new(70.0, 45.0);
         for cut in cuts(tp) {
-            let d = segment_distance(centre, cut.from, cut.to);
+            let d = if tp.moves[cut.index].kind == MoveKind::Linear {
+                segment_distance(centre, cut.from, cut.to)
+            } else {
+                centre.distance_to(cut.from).min(centre.distance_to(cut.to))
+            };
             assert!(
                 d >= 10.0 + RADIUS_MM - FLAT_TOL,
                 "{cut:?} brings the tool centre {d} mm from the island centre"
@@ -1779,12 +1828,19 @@ mod tests {
                 on_line.sort_by(|a, b| a.0.total_cmp(&b.0));
                 let dy = (y - 45.0).abs();
                 if dy < grown - RING_TOL {
-                    let half = (grown * grown - dy * dy).sqrt();
                     assert_eq!(on_line.len(), 2, "Y {y}: {on_line:?}");
                     assert_approx_eq!(on_line[0].0, tc.min.x, RING_TOL);
-                    assert_approx_eq!(on_line[0].1, 70.0 - half, 2.0 * RING_TOL);
-                    assert_approx_eq!(on_line[1].0, 70.0 + half, 2.0 * RING_TOL);
                     assert_approx_eq!(on_line[1].1, tc.max.x, RING_TOL);
+                    // The inner ends lie on the grown circle, flattened:
+                    // on a chord at most the tolerance inside it.
+                    for x in [on_line[0].1, on_line[1].0] {
+                        let r = Point::new(x, y).distance_to(Point::new(70.0, 45.0));
+                        assert!(
+                            r >= grown - FLAT_TOL - EPS_MM && r <= grown + EPS_MM,
+                            "Y {y}: end at X {x} is {r} mm from the island centre"
+                        );
+                    }
+                    assert!(on_line[0].1 < 70.0 && on_line[1].0 > 70.0);
                     split += 1;
                 } else {
                     assert_eq!(on_line.len(), 1, "Y {y}: {on_line:?}");
@@ -1955,6 +2011,10 @@ mod tests {
         for angle_deg in [-1.0, 180.0, 270.0, f64::NAN] {
             let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
             let err = generate_pocket(&p, &op).unwrap_err();
+            assert!(
+                matches!(err, CamError::InvalidRasterAngle { ref op, .. } if op.as_str() == "o1"),
+                "{angle_deg}: {err:?}"
+            );
             assert!(
                 err.to_string().contains("raster angle"),
                 "{angle_deg}: {err}"
