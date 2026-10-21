@@ -41,6 +41,7 @@ use dc_project::{
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
 use crate::config;
+use crate::output::{errln, outln};
 
 /// One error or warning.
 #[derive(Debug)]
@@ -300,10 +301,10 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
 
     let Built { programs, findings } = build(&project, args.split(), &date);
     for warning in &findings.warnings {
-        eprintln!("{}", file.describe("warning", warning));
+        errln!("{}", file.describe("warning", warning));
     }
     for error in &findings.errors {
-        eprintln!("{}", file.describe("error", error));
+        errln!("{}", file.describe("error", error));
     }
     if programs.is_empty() {
         return Err(Failure::error(format!(
@@ -341,8 +342,8 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     }
 
     match (programs.as_slice(), outputs.as_slice()) {
-        ([program], [output]) => report(&project, program, output, args, switched_from.as_ref()),
-        _ => report_runs(&project, &programs, &outputs, args, switched_from.as_ref()),
+        ([program], [output]) => report(&project, program, output, args, switched_from.as_ref())?,
+        _ => report_runs(&project, &programs, &outputs, args, switched_from.as_ref())?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -399,24 +400,24 @@ fn report(
     output: &Path,
     args: &ExportArgs,
     switched_from: Option<&PostProcessorRef>,
-) {
-    println!(
+) -> Result<(), Failure> {
+    outln!(
         "Wrote {} ({} lines, post-processor {}).",
         output.display(),
         program.text.lines().count(),
         project.post_processor.id
-    );
-    report_post_and_operations(project, args, switched_from);
+    )?;
+    report_post_and_operations(project, args, switched_from)?;
     for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
-        println!("{line}");
+        outln!("{line}")?;
     }
     // #57: the program does not stop for the first tool.
-    println!(
+    outln!(
         "Before you start: fit T{}{} and set work zero with it.",
         program.first_tool.number,
         name_suffix(&program.first_tool.name)
-    );
-    report_pauses(program, "");
+    )?;
+    report_pauses(program, "")?;
     // #95: the user chose one program with M6, in the project or with
     // `--one-program`; it stops only if the sender lets M6 through or
     // stops for it itself.
@@ -428,10 +429,11 @@ fn report(
         }
     };
     if one_program && changes_tools(project) {
-        println!(
+        outln!(
             "This program changes tools with M6, so your sender must stop at M6; see \"One program with M6\" in the post-processors chapter."
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Prints the export summary of the programs of tool runs (#95): the files
@@ -443,8 +445,8 @@ fn report_runs(
     outputs: &[PathBuf],
     args: &ExportArgs,
     switched_from: Option<&PostProcessorRef>,
-) {
-    println!("Wrote {} programs; run them in this order:", programs.len());
+) -> Result<(), Failure> {
+    outln!("Wrote {} programs; run them in this order:", programs.len())?;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
         let tool = &program.first_tool;
         let fit = format!("fit T{}{}", tool.number, name_suffix(&tool.name));
@@ -455,25 +457,26 @@ fn report_runs(
         } else {
             format!("{fit} and set Z zero with it. Keep X and Y zero.")
         };
-        println!(
+        outln!(
             "  {}. {}  Before you start: {before}",
             k + 1,
             output.display()
-        );
+        )?;
     }
-    println!("Post-processor {}.", project.post_processor.id);
-    report_post_and_operations(project, args, switched_from);
+    outln!("Post-processor {}.", project.post_processor.id)?;
+    report_post_and_operations(project, args, switched_from)?;
     for (program, output) in programs.iter().zip(outputs) {
-        println!(
+        outln!(
             "{} ({} lines):",
             output.display(),
             program.text.lines().count()
-        );
+        )?;
         for line in describe_extents(project, program, tool_radius_mm(project, program)) {
-            println!("  {line}");
+            outln!("  {line}")?;
         }
-        report_pauses(program, "  ");
+        report_pauses(program, "  ")?;
     }
+    Ok(())
 }
 
 /// Prints that `--post` updated the project, from which post-processor
@@ -483,7 +486,7 @@ fn report_post_and_operations(
     project: &Project,
     args: &ExportArgs,
     switched_from: Option<&PostProcessorRef>,
-) {
+) -> Result<(), Failure> {
     if let Some(old) = switched_from {
         let new = &project.post_processor;
         let to = if new.id == old.id {
@@ -491,12 +494,12 @@ fn report_post_and_operations(
         } else {
             format!("{} v{}", new.id, new.definition_version)
         };
-        println!(
+        outln!(
             "Updated {}: post-processor {} v{} → {to}, with its default settings.",
             args.dcv.display(),
             old.id,
             old.definition_version
-        );
+        )?;
     }
     for op in project.operations.iter().filter(|op| op.enabled()) {
         let tool = project
@@ -508,31 +511,33 @@ fn report_post_and_operations(
         let depth = op
             .depth_mm()
             .map_or_else(|| "?".to_owned(), |d| d.to_string());
-        println!(
+        outln!(
             "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} mm deep",
             op.id(),
             op.name(),
             op.tool(),
             op.targets().len(),
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Prints every pause and tool change of `program`, each line after
 /// `indent`.
-fn report_pauses(program: &Program, indent: &str) {
+fn report_pauses(program: &Program, indent: &str) -> Result<(), Failure> {
     if program.pauses.is_empty() {
-        return;
+        return Ok(());
     }
-    println!("{indent}Pauses and tool changes; resume each with cycle start:");
+    outln!("{indent}Pauses and tool changes; resume each with cycle start:")?;
     for pause in &program.pauses {
         let message = if pause.message.is_empty() {
             "(no message)"
         } else {
             pause.message.as_str()
         };
-        println!("{indent}  line {}: {message}", pause.line);
+        outln!("{indent}  line {}: {message}", pause.line)?;
     }
+    Ok(())
 }
 
 /// ` <name>`, or nothing for an empty name.

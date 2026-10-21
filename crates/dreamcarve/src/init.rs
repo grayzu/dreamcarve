@@ -37,6 +37,7 @@ use dc_project::{
 
 use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
 use crate::config;
+use crate::output::{errln, outln};
 
 /// Margin between the drawing's bounds and each stock edge, mm.
 const STOCK_MARGIN_MM: f64 = 10.0;
@@ -109,7 +110,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
         import_svg_drawing(args, &bytes)?
     };
     for warning in &warnings {
-        eprintln!("warning: {warning}");
+        errln!("warning: {warning}");
     }
     let Some(bounds) = import.bounds else {
         return Err(Failure::error(format!(
@@ -136,7 +137,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     let text = dc_project::save(&project).map_err(Failure::error)?;
     StagedFile::write(&output, text.as_bytes())?.commit()?;
 
-    report(&project, &output, &text);
+    report(&project, &output, &text)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -147,13 +148,13 @@ fn import_svg_drawing(
 ) -> Result<(Imported, Vec<ImportWarning>), Failure> {
     let (import, warnings) = import_svg(bytes, &SvgImportOptions::new())
         .map_err(|e| Failure::error(format!("cannot import {}: {e}", args.drawing.display())))?;
-    println!(
+    outln!(
         "Imported {} shape(s) from {}: page units {}, 1 user unit = {:.4} mm.",
         import.definitions.len(),
         args.drawing.display(),
         import.units,
         import.mm_per_user_unit
-    );
+    )?;
     Ok((
         Imported {
             definitions: import.definitions,
@@ -192,12 +193,12 @@ fn import_dxf_drawing(
         // Unreachable: without either, the import fails above.
         (None, None) => "units unknown".to_owned(),
     };
-    println!(
+    outln!(
         "Imported {} shape(s) from {}: {units}, 1 drawing unit = {:.4} mm.",
         import.definitions.len(),
         args.drawing.display(),
         import.mm_per_unit
-    );
+    )?;
     Ok((
         Imported {
             definitions: import.definitions,
@@ -322,41 +323,41 @@ fn default_project(
 
 /// Prints what was written and what the user must do next: one line per
 /// value to set, located in `text`, the file as written.
-fn report(project: &Project, output: &Path, text: &str) {
+fn report(project: &Project, output: &Path, text: &str) -> Result<(), Failure> {
     let targets = project
         .operations
         .iter()
         .map(|op| op.targets().len())
         .sum::<usize>();
     let untargeted = project.instances.len() - targets.min(project.instances.len());
-    println!(
+    outln!(
         "Wrote {}: stock {:.2} × {:.2} mm, post-processor {}, {} shape(s) targeted by Profile.",
         output.display(),
         project.stock.width_mm,
         project.stock.height_mm,
         project.post_processor.id,
         targets,
-    );
+    )?;
     if untargeted > 0 {
-        println!(
+        outln!(
             "{untargeted} shape(s) are open paths and are not cut; `dreamcarve check` lists them."
-        );
+        )?;
     }
-    println!("Values to set; export refuses until every one is set:");
+    outln!("Values to set; export refuses until every one is set:")?;
     let map = SourceMap::parse(text).ok();
     for problem in validate(project).iter().filter(|p| p.is_unset_value()) {
         let at = problem
             .field()
             .and_then(|field| map.as_ref()?.locate(&field));
         match at {
-            Some(at) => println!("{}:{at}: {problem}", output.display()),
-            None => println!("{problem}"),
+            Some(at) => outln!("{}:{at}: {problem}", output.display())?,
+            None => outln!("{problem}")?,
         }
     }
-    println!(
+    outln!(
         "Next: edit {} and replace each `null` listed above. To cut through, `depth_mm` is \
          the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check {}`.",
         output.display(),
         output.display()
-    );
+    )
 }
