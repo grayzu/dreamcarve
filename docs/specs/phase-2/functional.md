@@ -303,7 +303,12 @@ crosses are removed, with a note naming any part a through cut then
 frees with no tab (changed in #105 review: `<op>` removed every tab on
 its targets, whatever the operation). `--count` is at least 1, and
 `--width`, `--height`, `--shape` and `--on-holes` need `--count` or
-`--at`. `--count` follows capability 26; `--at` puts a tab at
+`--at`. `tabs place` adds to the tabs already there, and notes each
+outline that had some; `--replace` (which needs `--count` or `--at`)
+first removes the tabs the Profile crosses, the set `tabs clear <dcv>
+<op>` removes, prints each tab removed and placed, and saves once, with
+`tabs clear`'s note for a part it leaves with no tab (changed in #293:
+changing the count took `tabs clear` first). `--count` follows capability 26; `--at` puts a tab at
 each distance along the outline from its first vertex as drawn. Format
 version 11 adds `"tabs": []`; a Profile's `tabs` stays as a tab
 request, which generation places before it cuts, so older files cut
