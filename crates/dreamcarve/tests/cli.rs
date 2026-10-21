@@ -4602,6 +4602,24 @@ fn check_reports_order_warnings() {
     }
 }
 
+/// #269: the plaque engraves 1 mm deep after its tabbed cut-out, a light
+/// cut on a tab-held part that is normal practice, so `check` gives it no
+/// order warning: its five warnings are the unused tool and the four
+/// drilled holes, as the quick start shows.
+#[test]
+fn plaque_engrave_after_tabbed_cut_out_is_quiet() {
+    let dir = work_dir("plaque_engrave_after_tabbed_cut_out_is_quiet");
+    copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    assert!(
+        !report.contains("cut_inside_tab_held_part"),
+        "the engrave is light: {report}"
+    );
+    assert!(report.contains("0 error(s), 5 warning(s)"), "{report}");
+}
+
 /// #269: the maintainer's two-operation star from before format v9
 /// (`tests/manual/star_with_hole`): op1 cuts the star `outside` through
 /// the stock with `init`'s tabs, then op2 cuts its hole `inside`. The hole

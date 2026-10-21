@@ -726,19 +726,22 @@ mod tests {
         );
     }
 
-    /// #269: a Pocket and an Engrave of an open line inside the tab-held
-    /// rectangle warn too, as for a freed part (#206). A Profile with tabs
-    /// that stops above the stock bottom leaves the part in the stock, so
-    /// it holds nothing by its tabs alone.
+    /// #269: a Pocket through the stock and a 4 mm Engrave of an open line
+    /// inside the tab-held rectangle warn too, as for a freed part (#206):
+    /// each cuts deeper than half the 6 mm stock. A Profile with tabs that
+    /// stops above the stock bottom leaves the part in the stock, so it
+    /// holds nothing by its tabs alone.
     #[test]
-    fn any_cut_inside_tab_held_part_warns() {
+    fn deep_cut_inside_tab_held_part_warns() {
         let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
         let mut outline = profile("o1", "i1", Side::Outside, 6.0);
         outline.tabs = Some(four_tabs());
+        let mut through = pocket("o2", "i2");
+        through.depth_mm = Some(6.0);
         project.operations = vec![
             Operation::Profile(outline.clone()),
-            Operation::Pocket(pocket("o2", "i2")),
-            Operation::Engrave(engrave("o3", "i3", 1.0)),
+            Operation::Pocket(through),
+            Operation::Engrave(engrave("o3", "i3", 4.0)),
         ];
         let warnings = check_all(&project);
         assert_eq!(
@@ -751,6 +754,27 @@ mod tests {
         project.operations[0] = Operation::Profile(outline);
         let warnings = check_all(&project);
         assert!(held_cuts(&warnings).is_empty(), "not through: {warnings:?}");
+    }
+
+    /// #269: a light cut on a tab-held part is normal practice, as the
+    /// plaque's 1 mm Engrave after its tabbed cut-out: only a cut deeper
+    /// than half the stock, or through it, risks flexing the part or
+    /// breaking a tab. A 1 mm Engrave and a Pocket exactly half the 6 mm
+    /// stock deep are quiet.
+    #[test]
+    fn shallow_engrave_inside_tab_held_part_is_quiet() {
+        let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
+        let mut outline = profile("o1", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        let mut half = pocket("o3", "i2");
+        half.depth_mm = Some(3.0);
+        project.operations = vec![
+            Operation::Profile(outline),
+            Operation::Engrave(engrave("o2", "i3", 1.0)),
+            Operation::Pocket(half),
+        ];
+        let warnings = check_all(&project);
+        assert!(held_cuts(&warnings).is_empty(), "light cuts: {warnings:?}");
     }
 
     /// #269: the hole first, then the tabbed outline. The outline is not
@@ -799,14 +823,19 @@ mod tests {
         }
     }
 
-    /// #269: a cut on a hole's slug that the hole's own tabs hold (two of
-    /// four fit the 24 mm hole's path, `on_holes`) names the hole, the
+    /// #269: a 4 mm cut on a hole's slug that the hole's own tabs hold
+    /// (two of four fit the 24 mm hole's path, `on_holes`) names the hole, the
     /// innermost tab-held outline round it, not the part. A slug the
     /// tabbed Profile cuts free warns `cut_inside_freed_part` alone: the
     /// slug is loose, whatever holds the part round it.
     #[test]
     fn tab_held_warning_names_the_innermost_outline() {
-        let warnings = check_all(&slug_cut_after(true, 12.0));
+        let mut project = slug_cut_after(true, 12.0);
+        // Deeper than half the stock, so heavy enough to warn.
+        if let Some(Operation::Engrave(dot)) = project.operations.get_mut(1) {
+            dot.depth_mm = Some(4.0);
+        }
+        let warnings = check_all(&project);
         assert_eq!(
             held_cuts(&warnings),
             vec![("o2", "o1", "i3", "i2")],
