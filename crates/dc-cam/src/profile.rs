@@ -198,7 +198,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// An On line Profile also cuts open paths (#175, as VCarve's Profile
 /// "On" an open vector): each pass runs the path from its first vertex to
-/// its last (climb) or from its last to its first (conventional), with
+/// its last (conventional) or from its last to its first (climb, #242), with
 /// the ramp along it and its tabs placed from its first vertex as drawn,
 /// then retracts; it has no lead, no relief and frees nothing. Inside and
 /// Outside skip open paths ([`WarningCode::OpenPathSkipped`]), as they
@@ -385,11 +385,12 @@ pub fn generate_profile(
         &open_paths,
         project.flatten_tolerance_mm,
     )?;
-    // #175: an open path is cut On line as drawn, from its first vertex
-    // under climb and from its last under conventional (VCarve's rule:
-    // the direction picks the end). It bounds no region, so no
+    // #175: an open path is cut On line as drawn. #242: from its first
+    // vertex under conventional and from its last under climb, as VCarve
+    // ("Conventional starts cutting at the Start point Climb cutting
+    // starts cutting at the end point"). It bounds no region, so no
     // containment and no waste domain; its wall is never asked.
-    let reversed_open = op.direction == CutDirection::Conventional;
+    let reversed_open = op.direction == CutDirection::Climb;
     for (shape, path) in &open_paths {
         let path = if reversed_open {
             path.reversed()
