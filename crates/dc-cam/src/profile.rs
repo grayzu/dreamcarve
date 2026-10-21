@@ -29,7 +29,8 @@ use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
-    LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
+    LapRates, Least, PathEnds, PathTabs, Reduced, Tabs, coverage_warning, cut_range_warnings,
+    lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{OpenPathReason, Warning};
@@ -156,10 +157,12 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// With `op.tabs`, every pass below the tab top rises over each tab span
 /// (`width + diameter` along the tool-centre contour); overlapping spans
-/// merge with [`Warning::TabsOverlap`], spans covering more than half a
-/// contour give [`Warning::TabsCoverMostOfContour`] (the tabs are still
-/// cut as set), and a tab top no pass reaches,
+/// merge with [`Warning::TabsOverlap`], and a tab top no pass reaches,
 /// or one above the stock top, gives [`Warning::TabsOutsideCutRange`].
+/// Tabs go on each contour separately (#109): a hole gets none unless
+/// `on_holes`, and a contour whose spans would cover more than half of it
+/// gets the most tabs that cover at most half (a part's outline at least
+/// one; a hole may get none), with [`Warning::TabsCoverMostOfContour`].
 ///
 /// With `op.entry` a ramp or helix (design spec, "Algorithms → Entry"),
 /// each pass reaches its depth at the contour start without a plunge:
@@ -330,9 +333,10 @@ pub fn generate_profile(
     let open_paths = drop_duplicate_paths(open_paths, &mut warnings);
 
     let radius_mm = tool.diameter_mm / 2.0;
-    // Each tool-centre path with the shape it cuts, the wall it cuts and
-    // the index of its region, in drawing order.
-    let mut placed: Vec<(Polyline, &ShapeRef, Wall, usize)> = Vec::new();
+    // Each tool-centre path with the shape it cuts, the wall it cuts, the
+    // index of its region and whether the shape is a hole, in drawing
+    // order.
+    let mut placed: Vec<(Polyline, &ShapeRef, Wall, usize, bool)> = Vec::new();
     for (region_index, region) in regions.iter().enumerate() {
         let ordered = hole_shapes(region, &shapes)
             .map(|(h, shape)| (h, shape, Role::Hole))
@@ -370,7 +374,7 @@ pub fn generate_profile(
                 } else {
                     c.reversed().into_polyline()
                 };
-                (path, shape, wall, region_index)
+                (path, shape, wall, region_index, role == Role::Hole)
             }));
         }
     }
@@ -394,7 +398,7 @@ pub fn generate_profile(
         } else {
             path.clone()
         };
-        placed.push((path, shape, Wall::Outside, regions.len()));
+        placed.push((path, shape, Wall::Outside, regions.len(), false));
     }
     // Drawing order is the order the targets were resolved in: target,
     // then profile. Stable, so the loops of one shape keep their offset
@@ -405,24 +409,43 @@ pub fn generate_profile(
             shape.profile,
         )
     };
-    placed.sort_by_key(|(_, shape, _, _)| drawing_index(shape));
-    let walls: Vec<(Wall, usize)> = placed.iter().map(|(_, _, w, r)| (*w, *r)).collect();
-    let paths: Vec<(Polyline, &ShapeRef)> = placed.into_iter().map(|(p, s, _, _)| (p, s)).collect();
+    placed.sort_by_key(|(_, shape, _, _, _)| drawing_index(shape));
+    let walls: Vec<(Wall, usize)> = placed.iter().map(|(_, _, w, r, _)| (*w, *r)).collect();
+    let holes: Vec<bool> = placed.iter().map(|(_, _, _, _, hole)| *hole).collect();
+    let paths: Vec<(Polyline, &ShapeRef)> =
+        placed.into_iter().map(|(p, s, _, _, _)| (p, s)).collect();
 
     // Tab layout per path, and one block per path per pass. An open
-    // path's tabs are measured from its first vertex as drawn.
-    let layouts: Vec<PathLayout> = paths
+    // path's tabs are measured from its first vertex as drawn. #109: a
+    // hole gets none unless `on_holes`; a path too short for its tabs
+    // gets the most that fit.
+    let (layouts, reductions): (Vec<PathLayout>, Vec<Option<Reduced>>) = paths
         .iter()
-        .map(|(path, _)| {
-            tabs.as_ref().map(|tabs| {
-                if path.is_closed() {
-                    tabs.layout(path.length_mm())
-                } else {
-                    tabs.layout_open(path.length_mm(), reversed_open)
+        .zip(&holes)
+        .map(|((path, _), &hole)| {
+            let Some(tabs) = &tabs else {
+                return (None, None);
+            };
+            let ends = if path.is_closed() {
+                PathEnds::Closed
+            } else {
+                PathEnds::Open {
+                    reversed: reversed_open,
                 }
-            })
+            };
+            if hole && !tabs.on_holes() {
+                return (Some((Tabs::none(path.length_mm(), ends), false)), None);
+            }
+            // #109: a part keeps a tab; a hole or an open path may not.
+            let least = if hole || !path.is_closed() {
+                Least::Zero
+            } else {
+                Least::One
+            };
+            let (layout, overlapped, reduced) = tabs.fit(path.length_mm(), ends, least);
+            (Some((layout, overlapped)), reduced)
         })
-        .collect();
+        .unzip();
     let quantum_mm = project
         .post_processor
         .decimal_places
@@ -643,7 +666,7 @@ pub fn generate_profile(
         }
     }
     for (cut_index, &path_index) in path_order.iter().enumerate() {
-        let (Some((path, shape)), Some(Some((layout, overlapped)))) =
+        let (Some((path, shape)), Some(Some((_, overlapped)))) =
             (paths.get(path_index), layouts.get(path_index))
         else {
             continue;
@@ -655,13 +678,16 @@ pub fn generate_profile(
         if *overlapped {
             warnings.push(overlap_warning(&op.id, cut_index, Some(shape), length_mm));
         }
-        warnings.extend(coverage_warning(
-            &op.id,
-            cut_index,
-            Some(shape),
-            tabs,
-            layout,
-        ));
+        if let Some(Some(reduced)) = reductions.get(path_index) {
+            warnings.push(coverage_warning(
+                &op.id,
+                cut_index,
+                Some(shape),
+                tabs,
+                length_mm,
+                *reduced,
+            ));
+        }
     }
     // D6: paths in cut order, so the warnings follow it.
     let cut_paths: Vec<CutPath<'_>> = path_order
@@ -1248,6 +1274,67 @@ pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
         .ok()
         .and_then(|(regions, _)| regions.into_iter().next())
         .is_some_and(|region| region.contains_point(p))
+}
+
+/// The closed target outlines that the tabbed Profile `op` cuts with no
+/// tab, in drawing order (#109): its holes unless `on_holes`, and every
+/// hole whose tool-centre paths are too short for even one tab
+/// ([`Tabs::fit`]; a part's outline always keeps one). Cut through the stock, each of them comes loose. Empty
+/// when `op` has no tabs, and when its toolpath cannot be generated:
+/// [`crate::order::check`] only warns.
+pub(crate) fn untabbed_outlines(project: &Project, op: &ProfileOp) -> Vec<ShapeRef> {
+    let Some(spec) = &op.tabs else {
+        return Vec::new();
+    };
+    let Some(tool) = project.tools.iter().find(|t| t.id == op.tool) else {
+        return Vec::new();
+    };
+    let Ok(tabs) = Tabs::new(&op.id, spec, tool.diameter_mm, project.flatten_tolerance_mm) else {
+        return Vec::new();
+    };
+    let mut ignored = Vec::new();
+    let Ok(shapes) = resolve_shapes(project, &op.id, &op.targets, None, &mut ignored) else {
+        return Vec::new();
+    };
+    let Ok((regions, _)) = nest(shapes.iter().map(|(_, c)| c.clone()).collect()) else {
+        return Vec::new();
+    };
+    let radius_mm = tool.diameter_mm / 2.0;
+    let mut untabbed = Vec::new();
+    for region in &regions {
+        let ordered = hole_shapes(region, &shapes)
+            .map(|(h, shape)| (h, shape, Role::Hole))
+            .chain(outer_shape(region, &shapes).map(|shape| (region.outer(), shape, Role::Outer)));
+        for (contour, shape, role) in ordered {
+            let centres = match placement(op.side, role).0 {
+                Offset::Grow => offset(contour, radius_mm),
+                Offset::Shrink => offset(contour, -radius_mm),
+                Offset::None => vec![contour.clone()],
+            };
+            // A shape the tool does not fit is not cut, so not freed.
+            let cut_free = !centres.is_empty()
+                && ((role == Role::Hole && !tabs.on_holes())
+                    || centres.iter().all(|c| {
+                        let least = match role {
+                            Role::Hole => Least::Zero,
+                            Role::Outer => Least::One,
+                        };
+                        let (layout, _, _) =
+                            tabs.fit(c.polyline().length_mm(), PathEnds::Closed, least);
+                        layout.is_untabbed()
+                    }));
+            if cut_free {
+                untabbed.push(shape.clone());
+            }
+        }
+    }
+    untabbed.sort_by_key(|shape| {
+        (
+            op.targets.iter().position(|t| *t == shape.instance),
+            shape.profile,
+        )
+    });
+    untabbed
 }
 
 /// The shape `region`'s outer came from, `region` being one that `nest`
@@ -2613,6 +2700,7 @@ mod tests {
             width_mm: 10.0,
             height_mm: 3.0,
             shape: TabShape::Rect,
+            on_holes: false,
         });
         let (_, warnings) = generate(&p, &op);
         let covered: Vec<(usize, &str)> = warnings
@@ -2627,6 +2715,150 @@ mod tests {
             })
             .collect();
         assert_eq!(covered, [(0, "i1"), (1, "i3"), (2, "i2")]);
+    }
+
+    // ── #109: a part and its hole in one operation ──
+
+    const STAR_CENTRE: Point = Point::new(50.0, 50.0);
+    const STAR_HOLE_CENTRE: Point = Point::new(50.0, 70.0);
+
+    /// The maintainer's manual case (`tests/manual/star_with_hole`, #109),
+    /// redrawn with straight edges: a five-pointed star (points 40 mm and
+    /// notches 22 mm from (50, 50), one point straight up) as instance
+    /// `i1`, and a 7 mm circle 20 mm up its top arm as instance `i2`,
+    /// leaving a 6.6 mm web. 100 × 100 × 12 mm stock.
+    fn star_with_hole_project() -> Project {
+        let mut p = sample_project();
+        p.stock = Stock {
+            width_mm: 100.0,
+            height_mm: 100.0,
+            thickness_mm: Some(12.0),
+        };
+        let star = (0..10u32)
+            .map(|k| {
+                let angle_rad = PI / 2.0 + f64::from(k) * PI / 5.0;
+                let r_mm = if k % 2 == 0 { 40.0 } else { 22.0 };
+                Vertex::line(
+                    STAR_CENTRE.x + r_mm * angle_rad.cos(),
+                    STAR_CENTRE.y + r_mm * angle_rad.sin(),
+                )
+            })
+            .collect();
+        let definitions = [
+            ("d1", "Star", Polyline::new(star, true)),
+            ("d2", "Hole", Polyline::circle(STAR_HOLE_CENTRE, 3.5)),
+        ];
+        p.definitions = definitions
+            .iter()
+            .map(|(id, name, profile)| {
+                let def = FeatureDefinition {
+                    id: DefinitionId::new(*id),
+                    name: (*name).into(),
+                    profiles: vec![profile.clone()],
+                };
+                (def.id.clone(), def)
+            })
+            .collect();
+        p.instances = [("i1", "d1", "star"), ("i2", "d2", "hole")]
+            .iter()
+            .map(|(id, def, name)| FeatureInstance {
+                id: InstanceId::new(*id),
+                definition: DefinitionId::new(*def),
+                transform: Transform::IDENTITY,
+                name: (*name).into(),
+                visible: true,
+                locked: false,
+                z_top_mm: Some(12.0),
+                z_bottom_mm: Some(0.0),
+            })
+            .collect();
+        p.operations.clear();
+        p
+    }
+
+    /// #109: one Outside Profile of the star and its hole, with four
+    /// smooth 6 × 3 mm tabs and the 6.35 mm bit, 12 mm deep in 4 mm
+    /// passes, as the manual file set it. Containment cuts the hole first; the
+    /// hole, a slug of waste, gets no tabs and is cut free; only the
+    /// star's last pass rises over tabs, four times. Before #109 this
+    /// took two operations in the right order.
+    #[test]
+    fn star_and_its_hole_cut_in_one_operation() {
+        let p = star_with_hole_project();
+        let op = ProfileOp {
+            targets: vec![InstanceId::new("i1"), InstanceId::new("i2")],
+            depth_mm: Some(12.0),
+            step_down_mm: Some(4.0),
+            through_cut_allowance_mm: 0.01,
+            tabs: Some(TabSpec {
+                placement: TabPlacement::Count { count: 4 },
+                width_mm: 6.0,
+                height_mm: 3.0,
+                shape: TabShape::Smooth,
+                on_holes: false,
+            }),
+            ..profile_op(&p, Side::Outside, CutDirection::Climb)
+        };
+        let (tp, warnings) = generate(&p, &op);
+        assert!(
+            !warnings.iter().any(|w| matches!(
+                w.code(),
+                WarningCode::TabsCoverMostOfContour | WarningCode::TabsOverlap
+            )),
+            "{warnings:?}"
+        );
+
+        // Every move along a path, with where it starts.
+        let mut cuts: Vec<(Point3, Move)> = Vec::new();
+        for pair in tp.moves.windows(2) {
+            let (from, mv) = (pair[0].to, pair[1]);
+            if !mv.is_rapid() && from.xy().distance_to(mv.to.xy()) > EPS_MM {
+                cuts.push((from, mv));
+            }
+        }
+        let in_hole = |(from, mv): &(Point3, Move)| {
+            from.xy().distance_to(STAR_HOLE_CENTRE) < 3.5
+                && mv.to.xy().distance_to(STAR_HOLE_CENTRE) < 3.5
+        };
+        let last_hole = cuts.iter().rposition(in_hole).expect("the hole is cut");
+        let first_star = cuts
+            .iter()
+            .position(|c| !in_hole(c))
+            .expect("the star is cut");
+        assert!(last_hole < first_star, "the hole is cut before the star");
+
+        // The depth is the stock: the last pass is at the stock bottom.
+        let floor_mm = tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min);
+        assert_approx_eq!(floor_mm, 0.0, TOL);
+        let on_last_pass = |(from, mv): &(Point3, Move)| from.z < 3.5 && mv.to.z < 3.5;
+        let level = |(from, mv): &(Point3, Move)| {
+            (from.z - floor_mm).abs() <= TOL && (mv.to.z - floor_mm).abs() <= TOL
+        };
+
+        let hole_last: Vec<_> = cuts[..=last_hole]
+            .iter()
+            .filter(|c| on_last_pass(c))
+            .collect();
+        assert!(!hole_last.is_empty(), "the hole's last pass is cut");
+        for cut in &hole_last {
+            assert!(level(cut), "the hole has no tabs: {cut:?}");
+        }
+
+        let star_last: Vec<_> = cuts[first_star..]
+            .iter()
+            .filter(|c| on_last_pass(c))
+            .collect();
+        let raised: Vec<bool> = star_last.iter().map(|c| !level(c)).collect();
+        let mut tabs = raised.windows(2).filter(|w| !w[0] && w[1]).count();
+        if raised.first() == Some(&true) && raised.last() != Some(&true) {
+            tabs += 1;
+        }
+        assert_eq!(tabs, 4, "the star rises over its four tabs");
+        let top_mm = star_last
+            .iter()
+            .map(|(from, mv)| from.z.max(mv.to.z))
+            .fold(f64::MIN, f64::max);
+        assert_approx_eq!(top_mm, 3.0, TOL);
     }
 
     // ── #176: the start moves off a tab ──
@@ -2645,6 +2877,7 @@ mod tests {
             width_mm: 8.0,
             height_mm: TAB_TOP_MM,
             shape,
+            on_holes: false,
         }
     }
 

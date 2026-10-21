@@ -9,9 +9,9 @@ Each group of one part and its holes is a **region**. This page states the
 rules, with a picture of each one.
 
 The rules apply to the outlines of one operation's targets. A shape cut by
-an operation of its own has nothing around it there, so it is a part. To
-cut a hole in a separate operation, for example to keep tabs out of it,
-see [Parts with holes](tabs.md#parts-with-holes).
+an operation of its own has nothing around it there, so it is a part.
+Holes get no tabs by default, so a part and its holes are best cut in
+one operation; see [Parts with holes](tabs.md#parts-with-holes).
 
 ## Reading the figures
 

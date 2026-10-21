@@ -146,6 +146,14 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   cutting as before (apart from arc fitting and the faster descent above), and
   is written as version 8 only when DreamCarve saves it (`export --post`).
   Older DreamCarve versions cannot read version 8 files.
+- **Tabs per outline; project format version 9.** A Profile's tabs no longer go
+  on its holes unless the new `tabs.on_holes` is `true`, so one operation cuts a
+  part and its holes, holes first ([#109]). An outline whose tabs would cover
+  more than half of its tool path gets the most tabs that cover at most half
+  (a part keeps at least one; a hole may get none), and
+  `tabs_cover_most_of_contour` says how many are cut; before, the tabs were cut
+  as set. A version 8 file is upgraded with `on_holes: true`,
+  so its holes keep their tabs.
 
 ### Fixed
 
@@ -221,6 +229,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [0.1.0]: https://github.com/grayzu/dreamcarve/releases/tag/v0.1.0
 [#17]: https://github.com/grayzu/dreamcarve/issues/17
 [#70]: https://github.com/grayzu/dreamcarve/issues/70
+[#109]: https://github.com/grayzu/dreamcarve/issues/109
 [#119]: https://github.com/grayzu/dreamcarve/issues/119
 [#124]: https://github.com/grayzu/dreamcarve/issues/124
 [#127]: https://github.com/grayzu/dreamcarve/issues/127

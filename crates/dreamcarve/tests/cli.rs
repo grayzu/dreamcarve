@@ -1078,13 +1078,15 @@ mod golden {
 /// A fresh project carries every phase 2 field at the value that cuts as
 /// phase 1 did: it plunges (the ramp generator lands in a later slice),
 /// has no lead or corner relief, no tool number, canned cycles off, and
-/// arc fitting at 0.01 mm.
+/// arc fitting at 0.01 mm. Its tabs leave holes untabbed (#109, format
+/// version 9).
 #[test]
 fn init_writes_phase_2_defaults() {
     let dir = work_dir("init_writes_phase_2_defaults");
     let dcv = init_coaster(&dir);
     let text = std::fs::read_to_string(&dcv).expect("dcv readable");
-    assert!(text.contains("\"version\": 8,"), "{text}");
+    assert!(text.contains("\"version\": 9,"), "{text}");
+    assert!(text.contains("\"on_holes\": false"), "{text}");
     assert!(text.contains("\"arc_fit_tolerance_mm\": 0.01,"), "{text}");
     assert!(text.contains("\"number\": null,"), "{text}");
     assert!(text.contains("\"lead\": null,"), "{text}");
@@ -1135,7 +1137,7 @@ fn init_writes_ramp_entry() {
 /// The spec's `v6_fixture_exports_phase_1_bytes_with_fitting_off`, for
 /// the version this repository is at: a phase 1 project opened by this
 /// build exports the same program whether it is still a version 7 file or
-/// has been saved as version 8. (Arc fitting does not exist yet, so the
+/// has been saved at the current version. (Arc fitting does not exist yet, so the
 /// tolerance the migration writes changes nothing.)
 #[test]
 fn v7_project_exports_the_same_program() {
@@ -1157,7 +1159,8 @@ fn v7_project_exports_the_same_program() {
     let v8 = dir.join("v8.dcv");
     std::fs::write(&v8, save(&project).expect("project saves")).expect("dcv written");
     let saved = std::fs::read_to_string(&v8).expect("dcv readable");
-    assert!(saved.contains("\"version\": 8,"), "{saved}");
+    let version = format!("\"version\": {},", dc_project::CURRENT_VERSION);
+    assert!(saved.contains(&version), "{saved}");
     let out = run(&dir, &["export", "v8.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export v8: {}", stderr(&out));
     let from_v8 = std::fs::read_to_string(dir.join("v8.nc")).expect("v8.nc written");
@@ -1880,6 +1883,13 @@ fn warnings_are_readable() {
     for op in project.operations.iter_mut().map(as_profile_mut) {
         if let Some(tabs) = &mut op.tabs {
             tabs.height_mm = thickness_mm + 1.0;
+            // Two tabs 5 mm apart overlap on every outline; with the
+            // third they would cover most of the small hole, which then
+            // keeps the first two (#109).
+            tabs.placement = TabPlacement::AtDistances {
+                distances_mm: vec![10.0, 15.0, 40.0],
+            };
+            tabs.on_holes = true;
         }
     }
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
@@ -1897,7 +1907,7 @@ fn warnings_are_readable() {
         "same outline",
         "does not fit",
         "overlap",
-        "may not cut free",
+        "would not cut free",
         "stock top",
     ] {
         assert!(
@@ -4623,6 +4633,13 @@ fn warnings_print_code_and_message() {
     let first = as_profile_mut(&mut project.operations[0]);
     if let Some(tabs) = &mut first.tabs {
         tabs.height_mm = thickness_mm + 1.0;
+        // Two tabs 5 mm apart overlap on every outline; with the third,
+        // they would cover more than half of the small hole's path, so
+        // the hole keeps the first two (#109).
+        tabs.placement = TabPlacement::AtDistances {
+            distances_mm: vec![10.0, 15.0, 40.0],
+        };
+        tabs.on_holes = true;
     }
     let mut outline_op = first.clone();
     outline_op.id = OperationId::new("op2");

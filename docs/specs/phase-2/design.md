@@ -46,7 +46,9 @@ settings" (ADR-0004) took format version 7, so phase 2's format is
 version 8. The four new definitions are
 `crates/dc-project/src/definitions/<id>/v1.json`, and `use_canned_cycles`
 is a project setting beside the post-processor reference. (changed in
-slice 2, #117: #106 took version 7 first.)
+slice 2, #117: #106 took version 7 first.) #109 then took version 9 for
+`TabSpec::on_holes`. (changed in #109: a part and a hole too small for
+tabs needed two operations in the right order.)
 
 ## PureCutCNC sources
 
@@ -74,10 +76,10 @@ header.
 
 ## Data model
 
-### dc-project (format version 8)
+### dc-project (format version 9)
 
 ```rust
-pub const CURRENT_VERSION: u32 = 8;   // #106 took 7 (slice 2, #117)
+pub const CURRENT_VERSION: u32 = 9;   // #106 took 7 (slice 2, #117); #109 took 9
 
 pub struct Project {
     // phase 1 fields unchanged, plus:
@@ -122,6 +124,13 @@ pub struct Lead {
 }
 
 pub enum CornerRelief { None, Dogbone, TBone }       // "none" | "dogbone" | "t_bone"
+
+pub struct TabSpec {
+    // phase 1 fields unchanged, plus (version 9, #109):
+    /// Holes get tabs too: the outlines nested as holes among the
+    /// operation's targets. `init`: false; migration: true.
+    pub on_holes: bool,
+}
 
 pub struct ProfileOp {
     // phase 1 fields unchanged, plus:
@@ -206,6 +215,18 @@ byte-identical (acceptance 37). Open question 8 in the functional spec
 records why this is a migration and not a serde default. (changed in
 slice 2, #117: #106 took version 7, so this is `v7_to_v8`, not
 `v6_to_v7`.)
+
+**Migration v8 → v9** (`migrate::v8_to_v9`, #109): add `on_holes: true`
+at the end of every Profile's non-null `tabs`, so a project whose holes
+had tabs keeps them and cuts the same; `tabs: null` and other operation
+kinds are untouched, and the migration fails if the key is already there.
+The fixture `crates/dc-project/tests/fixtures/dcv/v8/sample.dcv` loads as
+the sample project (`migrate::version_8_fixture_loads`,
+`migrate::v8_tabs_keep_their_holes_tabbed`). `init` writes `false`: a
+hole's slug is waste, and holding it is extra hand work. (changed in
+#109: phase 1 tabbed every outline an operation cut, so a part with a
+hole too small for tabs took two operations, and in the wrong order the
+hole was cut in a loose part.)
 
 `DwellUnits` and `reentry_gap_mm` are definition fields, and every
 definition field is required, so the bundled `v1.json` files were edited
@@ -544,19 +565,40 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    pieces under `tolerance × perimeter` dropped as noise. A ring sweeps
    `r` either side, so those are the points neither the node's rings nor
    its children's subtrees reach; every one lies under `s ≤ 2r` from the
-   node's rings, so one ring round each piece reaches all of it. They are
-   ordinary rings in the walk (visited nearest-first with the children,
-   `cleared` their own region); with `none` the root's are omitted with
-   the root's rings. At `s ≤ r` there are none, so 40 % output and the
-   goldens are unchanged. (changed in #258: above half the diameter the
-   innermost ring could lie up to `s` from the middle of its region and
-   reach only `r`, a 4.3 mm pin standing in a 17 mm circle at step-over
-   1.0, and above `(1 + √2/2)·r` each ring's right-angle corners were
-   more than `r` from the ring inside, 2.2 mm² a corner a level on the
-   100 × 50 rect; PureCutCNC's contour pocket has the same gap, and its
-   trochoidal `appendResidualCoreGuides` adds a ring to leaves only.
-   Raster has no such gap: its lines are `s ≤ 2r` apart and the wall
-   pass cuts within `r` of the edge.) The tree is built and walked with
+   node's rings, so one ring round each piece reaches all of it. Each
+   residual ring is cut from inside the lap of its node's ring
+   (`rings::Splice`): the point of the node's outer or a hole nearest a
+   vertex of the piece's ring (among vertices and arc points, so a
+   straight edge offers its corners; ties to the outer, then the earlier
+   hole and vertex), and the piece's point nearest that. When the lap
+   reaches that point it runs straight to the piece's point, round the
+   residual ring (wound by the direction rule, as an outer), and straight
+   back, at the pass Z and the feed, then goes on; a piece reached from
+   the lap's start is cut when the lap closes there. The ring has cleared
+   `r` about that point and the piece is at least `r + tol` from the
+   ring, so the link runs out through cleared material. A piece with a
+   hole, a link longer than one diameter plus `s` (the stay-down limit)
+   or one that leaves the node's region (checked exactly against its
+   edges, arcs as arcs, and sampled every 0.1 mm), and a piece whose
+   ring a rest operation does not cut (#167), is instead an ordinary
+   ring in the walk (visited nearest-first with the children, `cleared`
+   its own region). With `none` the root's residual rings are omitted
+   with the root's rings. At `s ≤ r` there are none, so 40 % output and
+   the goldens are unchanged. (changed in #258: above half the diameter
+   the innermost ring could lie up to `s` from the middle of its region
+   and reach only `r`, a 4.3 mm pin standing in a 17 mm circle at
+   step-over 1.0, and above `(1 + √2/2)·r` each ring's right-angle
+   corners were more than `r` from the ring inside, 2.2 mm² a corner a
+   level on the 100 × 50 rect; PureCutCNC's contour pocket has the same
+   gap, and its trochoidal `appendResidualCoreGuides` adds a ring to
+   leaves only. Raster has no such gap: its lines are `s ≤ 2r` apart and
+   the wall pass cuts within `r` of the edge.) (changed in #267: as rings
+   of their own, the corner pieces lay far apart and each cost a lift and
+   an entry, 13 lifts per pass on the 100 × 50 rect at step-over 1.0
+   against 1 at 0.8; cut from the lap, 1 per pass with the wall pass last
+   and 2 with it first, as at 0.8. A leaf's centre piece is now cut after
+   the leaf's ring, from it, rather than before; the corner pieces of the
+   root are cut from the wall pass.) The tree is built and walked with
    an explicit stack, capped at `MAX_RINGS` = 10 000 nodes per tool-centre
    region (`InvalidStepOver` above it), residual nodes included. At each
    node the children are visited nearest-first
@@ -993,6 +1035,43 @@ Slice 11 (#180) decisions:
   up to that far outside them. A lead arc whose samples leave its domain
   is `CamError::OffMaterial` (S9), as a descent's.
 
+### Tabs per outline (dc-cam::tabs)
+
+Tabs stay an operation setting (`TabSpec`; placed tabs are #105, with the
+GUI), but each tool-centre path gets its own layout, `Tabs::fit`:
+
+1. A path cut for a hole (`Role::Hole`: nested as a hole among the
+   operation's targets, at any depth) gets no tabs unless `on_holes`.
+   Its last pass through the stock frees the slug. Islands (depth 2) are
+   parts and keep their tabs; open paths are never holes.
+2. Every other path lays the placement as before (`count` from `L/(2n)`,
+   `at_distances` modulo `L`). When the merged spans cover more than half
+   of `L` (the `TabsCoverMostOfContour` threshold, `> L/2 + EPS_MM`), the
+   part or hole would not cut free, so the path gets the most tabs that
+   cover at most half: `count` becomes the largest `n' < n` with
+   `n' (w + d) ≤ L/2` (evenly spaced, so never overlapping), and
+   `at_distances` keeps its longest prefix within half. A part's outline
+   (`Role::Outer`, `Least::One`) never drops below one tab: cut fully
+   free, a small part can be thrown by the bit, which is worse than an
+   over-held part, so if even one covers more than half that one is cut
+   and the warning says the part may need cutting free by hand. A hole
+   (with `on_holes`) or an open path (`Least::Zero`) may reach none.
+   `TabsCoverMostOfContour` names the shape with the tabs asked
+   (`tab_count`) and cut (`cut_count`), and the width at which all would
+   fit. (changed in #109 review: parts first dropped to none too, which
+   left a part that asked for tabs loose on the through cut.)
+3. `order::check` counts an outline a tabbed Profile through the stock
+   cuts with no tab (its holes, or a hole too short for a tab) as freed
+   (`profile::untabbed_outlines`).
+
+PureCutCNC sizes auto-tabs per feature (`autoTabs.ts`, a 15 % free-path
+rule) as a command that writes placed tabs; that port waits for #105.
+VCarve applies tabs per vector and lets the user leave vectors out, which
+`on_holes` approximates without placed tabs. (changed in #109: one tab
+setting applied to every outline, holes included, and a too-short
+outline kept tabs covering most of it, warned but cut as set; a star and
+its 7 mm hole took two operations.)
+
 ### Profile bands (dc-cam::profile)
 
 Phase 1's Profile step 3 offsets each contour on its own. Under Inside
@@ -1376,7 +1455,10 @@ For operations `i < j`, both enabled: `i` frees its targets when it is a
 Profile with no tabs and a cutting move of its toolpath reaches Z ≤ 0
 (within `EPS_MM`), which means depth ≥ thickness. Any side counts:
 Outside and On line free the part, and Inside frees the slug of its
-hole. A tabbed Profile frees nothing, because the tabs hold the part.
+hole. A tabbed Profile frees only the outlines it cuts with no tab: its
+holes unless `on_holes`, and holes too short for one ("Tabs per
+outline"; a part always keeps one); the tabs hold the rest. (changed in #109: a tabbed Profile
+freed nothing, because every outline had tabs.)
 Every closed target of `j` nested in one of `i`'s freed outlines, or the
 same outline, by `dc_geometry::nest` on the true curves, yields
 `CutInsideFreedPart (op: j, earlier_op: i, instance)`. Crossing shapes
@@ -1893,6 +1975,12 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `profile::one_shape_golden_is_byte_identical_after_sequence` (phase 1 goldens unchanged).
 - `tabs::final_pass_has_exactly_four_raised_segments_at_tab_z` extended to both orders (O9).
 
+**dc-cam — tabs per outline (#109)**
+- `tabs::holes_get_no_tabs_by_default`, `tabs::on_holes_opt_in_keeps_hole_tabs`, `tabs::too_short_outline_gets_fewer_tabs_and_warns`, `tabs::short_part_outline_keeps_at_least_one_tab`.
+- `profile::star_and_its_hole_cut_in_one_operation` (the manual `tests/manual/star_with_hole` case, redrawn).
+- `order::tabbed_profile_frees_the_outlines_it_leaves_untabbed`.
+- `migrate::version_8_fixture_loads`, `migrate::v8_tabs_keep_their_holes_tabbed`, `migrate::v8_with_on_holes_already_present_fails`.
+
 **dc-cam — pocket**
 - `pocket::offset_rings_are_concentric_and_spaced_by_stepover` — 100×50, 6.35 mm, 40 %: ring gaps 2.54 ± 0.01.
 - `pocket::offset_cuts_inner_rings_before_the_wall` (port: "offset cuts inner loops before wall-adjacent loops").
@@ -1900,6 +1988,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::footprint_stays_inside_region` (S9), `pocket::footprint_stays_outside_island` (S9).
 - `pocket::offset_coverage_reaches_inset_region` — union of footprints ⊇ inset by r within 0.05 at step-over 0.4, 0.6, 0.8 and 1.0 (port: `pocketClearance.test.ts` "no stock left" spirit).
 - `pocket::offset_above_half_step_over_leaves_no_centre_pin`, `pocket::raster_above_half_step_over_leaves_no_ridge`, `pocket::rings::leaf_gets_a_residual_ring_only_when_needed`, `pocket::rings::square_corners_get_residual_rings_at_full_step_over` (#258).
+- `pocket::corner_cleanup_rings_do_not_lift` (#267: 1 lift per pass at step-over 1.0 with the wall pass last, 2 with it first, as at 0.8; `pocket::rings::leaf_gets_a_residual_ring_only_when_needed` and `pocket::rings::square_corners_get_residual_rings_at_full_step_over` check the splices).
 - `pocket::island_wall_runs_opposite_to_pocket_wall` (port: `pocketFinishIslandDirection.test.ts`).
 - `pocket::climb_on_pocket_wall_is_counter_clockwise`, `pocket::climb_on_island_is_clockwise`, `pocket::conventional_reverses_both` (Y-up re-derivation).
 - `pocket::tool_wider_than_region_warns_and_skips`.

@@ -23,7 +23,8 @@ bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
     "placement": { "kind": "count", "count": 4 },
     "width_mm": 8.0,
     "height_mm": 3.0,
-    "shape": "rect"
+    "shape": "rect",
+    "on_holes": false
   },
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
@@ -75,9 +76,9 @@ edges of the ring keep the size you drew.
 [Shapes, holes, and islands](shapes-and-holes.md) has the rules.
 
 This is decided among one operation's targets only. A hole cut by an
-operation of its own is a part to that operation, so cut it `"inside"`:
-[Tabs](tabs.md#parts-with-holes) shows how, for a part whose hole should
-get no tabs.
+operation of its own is a part to that operation, so cut it `"inside"`.
+Holes get no tabs unless you ask for them, so one operation can cut a
+part and its holes: see [Tabs](tabs.md#parts-with-holes).
 
 A 100 × 50 mm rectangle cut outside with a 6.35 mm bit gives a tool path
 106.35 × 56.35 mm across its centre line; cut inside, 93.65 × 43.65 mm.

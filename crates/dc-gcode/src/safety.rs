@@ -4040,6 +4040,39 @@ mod tests {
         }
     }
 
+    /// S9 on an offset Pocket at step-over 1.0 (#267): the corner clean-up
+    /// rings are cut from inside the laps of the rings that leave them,
+    /// out from a corner and back, and the program passes, on the rect with
+    /// and without its island, with an allowance too, the wall pass last
+    /// or first, plunging or by helix.
+    #[test]
+    fn offset_corner_cleanups_pass_s9() {
+        for allowance_mm in [0.0, 0.5] {
+            for entry in [dc_project::Entry::Plunge, helix()] {
+                let (island, op) = island_pocket(entry, allowance_mm);
+                let mut plain = island.clone();
+                if let Some(def) = plain.definitions.values_mut().next() {
+                    def.profiles.truncate(1);
+                }
+                for project in [&island, &plain] {
+                    for wall_pass in [dc_project::WallPass::Last, dc_project::WallPass::First] {
+                        let op = dc_project::PocketOp {
+                            step_over_fraction: Some(1.0),
+                            wall_pass,
+                            ..op.clone()
+                        };
+                        let text = emit_pocket(project, &op, None);
+                        assert!(
+                            text.is_ok(),
+                            "{allowance_mm} mm, {:?}, {wall_pass:?}: {text:?}",
+                            op.entry
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// S9 on a raster Pocket whose wall curves inward (#218): an L, whose
     /// reflex corner rounds the tool-centre region by the tool radius, and
     /// a rect with a half-disc bay of radius 15 pushed in from its top.

@@ -7,6 +7,7 @@
 
 use std::fmt;
 
+use dc_geometry::EPS_MM;
 use dc_project::{CornerRelief, OperationId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
@@ -33,9 +34,9 @@ pub enum WarningCode {
     /// goes below it (the tabs change nothing), or it is above the stock
     /// top (the tabs still apply).
     TabsOutsideCutRange,
-    /// The tab spans on one tool-centre contour cover more than half of its
-    /// length, so the part or hole may not cut free. The tabs are cut as
-    /// set.
+    /// The tab spans on one tool-centre contour would cover more than half
+    /// of its length, so the part or hole would not cut free. The contour
+    /// gets the most tabs that cover at most half, down to none (#109).
     TabsCoverMostOfContour,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
@@ -273,7 +274,7 @@ pub enum Warning {
         shape: Option<ShapeRef>,
         /// The contour's length.
         path_length_mm: f64,
-        /// How many tabs are on it.
+        /// How many tabs the placement asked for on it.
         tab_count: usize,
         /// The tab width as set.
         tab_width_mm: f64,
@@ -283,10 +284,10 @@ pub enum Warning {
         tab_span_mm: f64,
         /// `tab_count` times `tab_span_mm`.
         tab_total_mm: f64,
-        /// The most tabs of this width that cover at most half: a whole
-        /// number.
-        max_count: f64,
-        /// The widest tab at this count that covers at most half; `None`
+        /// How many tabs are cut on it: the most that cover at most half,
+        /// fewer than `tab_count`, possibly none.
+        cut_count: usize,
+        /// The widest tab at `tab_count` that covers at most half; `None`
         /// when none fits.
         max_width_mm: Option<f64>,
     },
@@ -611,25 +612,40 @@ const fn relief_name(relief: CornerRelief) -> &'static str {
     }
 }
 
-/// The suggestion for tabs that cover most of a contour: `tab_count` tabs,
-/// at most `max_count` of which cover at most half, or tabs at most
-/// `max_width_mm` wide.
-fn coverage_advice(tab_count: usize, max_count: f64, max_width_mm: Option<f64>) -> String {
-    let max_count = rounded(max_count, 0);
-    let fewer = if max_count == "0" {
-        "even one tab this wide covers more than half".to_owned()
-    } else {
-        format!("use at most {max_count} tab(s) this wide")
+/// What is cut instead of `tab_count` tabs that would cover most of a
+/// contour (`cut_count` of them; `kept_covers_most` when that is the one
+/// tab a part keeps and it still covers more than half), and the width at
+/// which all of them would fit, `max_width_mm`.
+fn coverage_advice(
+    tab_count: usize,
+    cut_count: usize,
+    kept_covers_most: bool,
+    max_width_mm: Option<f64>,
+) -> String {
+    let cut = match (cut_count, kept_covers_most) {
+        (0, _) => "No tab is cut there".to_owned(),
+        (1, true) if tab_count == 1 => "Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
+        (1, true) => "Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
+        (1, false) => "Only 1 of them is cut there".to_owned(),
+        (n, _) => format!("Only {n} of them are cut there"),
     };
     match max_width_mm {
-        Some(width_mm) => format!(
-            "To let it cut free, {fewer}, or make the {tab_count} tab(s) at most {} mm wide.",
+        Some(width_mm) if tab_count == 1 && cut_count == 1 => format!(
+            "{cut}. To let it cut free, make it at most {} mm wide.",
             mm(width_mm)
         ),
-        None if max_count == "0" => format!(
-            "To let it cut free, {fewer}: this outline is too short for tabs with this bit, so consider removing them."
+        Some(width_mm) if tab_count == 1 => format!(
+            "{cut}. To keep it, make it at most {} mm wide.",
+            mm(width_mm)
         ),
-        None => format!("To let it cut free, {fewer}."),
+        Some(width_mm) => format!(
+            "{cut}. To keep all {tab_count}, make them at most {} mm wide.",
+            mm(width_mm)
+        ),
+        None if cut_count == 0 => {
+            format!("{cut}: this outline is too short for tabs with this bit.")
+        }
+        None => format!("{cut}."),
     }
 }
 
@@ -711,7 +727,7 @@ impl fmt::Display for Warning {
                 diameter_mm,
                 tab_span_mm,
                 tab_total_mm,
-                max_count,
+                cut_count,
                 max_width_mm,
                 ..
             } => {
@@ -739,9 +755,14 @@ impl fmt::Display for Warning {
                 };
                 write!(
                     f,
-                    "tabs on {} cover more than half of its tool path: {tabs}, so the part or hole may not cut free. {} The tabs are cut as set.",
+                    "tabs on {} would cover more than half of its tool path: {tabs}, so the part or hole would not cut free. {}",
                     shape_or_contour(shape.as_ref(), *contour),
-                    coverage_advice(*tab_count, *max_count, *max_width_mm)
+                    coverage_advice(
+                        *tab_count,
+                        *cut_count,
+                        *cut_count == 1 && 2.0 * tab_span_mm > *path_length_mm + EPS_MM,
+                        *max_width_mm
+                    )
                 )
             }
             Self::ToolpathsOverlap {
@@ -1086,10 +1107,10 @@ mod tests {
                     diameter_mm: 6.35,
                     tab_span_mm: 16.35,
                     tab_total_mm: 65.4,
-                    max_count: 3.0,
+                    cut_count: 3,
                     max_width_mm: Some(6.15),
                 },
-                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole may not cut free. To let it cut free, use at most 3 tab(s) this wide, or make the 4 tab(s) at most 6.15 mm wide. The tabs are cut as set.",
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole would not cut free. Only 3 of them are cut there. To keep all 4, make them at most 6.15 mm wide.",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1102,10 +1123,10 @@ mod tests {
                     diameter_mm: 8.0,
                     tab_span_mm: 13.0,
                     tab_total_mm: 26.0,
-                    max_count: 1.0,
+                    cut_count: 1,
                     max_width_mm: None,
                 },
-                "tabs on contour 2 in cut order cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide. The tabs are cut as set.",
+                "tabs on contour 2 in cut order would cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole would not cut free. Only 1 of them is cut there.",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1118,10 +1139,58 @@ mod tests {
                     diameter_mm: 3.175,
                     tab_span_mm: 6.175,
                     tab_total_mm: 6.175,
-                    max_count: 0.0,
+                    cut_count: 0,
                     max_width_mm: None,
                 },
-                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole may not cut free. To let it cut free, even one tab this wide covers more than half: this outline is too short for tabs with this bit, so consider removing them. The tabs are cut as set.",
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole would not cut free. No tab is cut there: this outline is too short for tabs with this bit.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 6.5,
+                    tab_count: 1,
+                    tab_width_mm: 3.0,
+                    diameter_mm: 1.5,
+                    tab_span_mm: 4.5,
+                    tab_total_mm: 4.5,
+                    cut_count: 0,
+                    max_width_mm: Some(1.75),
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 1.5 mm bit it keeps 4.5 mm of the tool path raised on a 6.5 mm path (69.2%), so the part or hole would not cut free. No tab is cut there. To keep it, make it at most 1.75 mm wide.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 20.0,
+                    tab_count: 1,
+                    tab_width_mm: 8.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 14.35,
+                    tab_total_mm: 14.35,
+                    cut_count: 1,
+                    max_width_mm: Some(3.65),
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 8 mm wide, and with the 6.35 mm bit it keeps 14.35 mm of the tool path raised on a 20 mm path (71.8%), so the part or hole would not cut free. Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand. To let it cut free, make it at most 3.65 mm wide.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 20.0,
+                    tab_count: 4,
+                    tab_width_mm: 8.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 14.35,
+                    tab_total_mm: 57.4,
+                    cut_count: 1,
+                    max_width_mm: None,
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 20 mm path (287%), so the part or hole would not cut free. Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand.",
             ),
             (
                 Warning::ToolpathsOverlap {

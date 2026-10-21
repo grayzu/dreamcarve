@@ -40,8 +40,8 @@ use crate::tabs::lap_cuts;
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{IslandNeighbour, Warning};
 use dc_geometry::{
-    Contour, EPS_MM, GeometryWarning, Point, Polyline, Region, area_mm2, difference, distance_mm,
-    nest, union,
+    Contour, EPS_MM, GeometryWarning, Point, Polyline, Region, Vertex, area_mm2, difference,
+    distance_mm, nest, union,
 };
 use dc_project::{
     ClearanceStrategy, CutDirection, Entry, Operation, OperationId, PocketOp, Project, Tool,
@@ -639,7 +639,11 @@ fn island_gap_warnings(
 }
 
 /// `ring` as a path: wound by the direction rule ([`ring_is_ccw`]) for
-/// `direction`, starting at its start point.
+/// `direction`, starting at its start point, with each of its clean-ups
+/// spliced in where the lap reaches its point (#267): straight to the
+/// residual ring's start, round it (wound by the same rule), and straight
+/// back. A clean-up reached from the start is cut when the lap closes
+/// there, after the ring has cleared round it.
 fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
     let side = match ring.kind {
         RingKind::Outer => RingWall::Pocket,
@@ -650,7 +654,50 @@ fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
     } else {
         ring.contour.reversed().into_polyline()
     };
-    starting_at(&path, ring.start)
+    let lap = starting_at(&path, ring.start);
+    if ring.cleanups.is_empty() {
+        return lap;
+    }
+    let lap = ring
+        .cleanups
+        .iter()
+        .fold(lap, |lap, c| rings::split_at(&lap, c.at));
+    let vertices = lap.vertices();
+    // The vertex of the lap each clean-up leaves from; the start counts as
+    // the lap's end.
+    let slot = |at: Point| {
+        vertices
+            .iter()
+            .skip(1)
+            .position(|v| v.point().distance_to(at) <= EPS_MM)
+            .map_or(vertices.len(), |i| i + 1)
+    };
+    let mut excursions: Vec<(usize, Vec<Vertex>)> = ring
+        .cleanups
+        .into_iter()
+        .map(|c| {
+            let at = c.at;
+            let start = c.ring.start;
+            let mut out = vec![Vertex::new(at.x, at.y, 0.0)];
+            out.extend_from_slice(ring_path(c.ring, direction).vertices());
+            out.push(Vertex::new(start.x, start.y, 0.0));
+            (slot(at), out)
+        })
+        .collect();
+    // In lap order; a stable sort keeps the walk's order at one vertex.
+    excursions.sort_by_key(|(slot, _)| *slot);
+    let mut out = Vec::with_capacity(vertices.len() + excursions.len() * 8);
+    let mut pending = excursions.into_iter().peekable();
+    for (index, vertex) in vertices.iter().enumerate() {
+        while let Some((_, excursion)) = pending.next_if(|(slot, _)| *slot == index) {
+            out.extend(excursion);
+        }
+        out.push(*vertex);
+    }
+    for (_, excursion) in pending {
+        out.extend(excursion);
+    }
+    Polyline::new(out, true)
 }
 
 /// `path` (closed) rotated to start at `start` (`rotateContourToNearestEntry`),
@@ -1414,6 +1461,50 @@ mod tests {
                     let what = format!("{name} at {fraction}, {angle_deg}°");
                     assert_covers_at_every_pass(&tp, &outer, &what);
                 }
+            }
+        }
+    }
+
+    /// The rapids up from a cut at `z_mm`: one per lift off that pass.
+    fn lifts_from(tp: &Toolpath, z_mm: f64) -> usize {
+        tp.moves
+            .windows(2)
+            .filter(|w| {
+                w[1].is_rapid() && (w[0].to.z - z_mm).abs() <= EPS_MM && w[1].to.z > z_mm + EPS_MM
+            })
+            .count()
+    }
+
+    /// #267: above `(1 + √2/2)·r` step-over every sharp corner of a ring
+    /// with a child has a residual ring (#258), and each one cut as a ring
+    /// of its own lifted: 13 lifts per pass on the 100 × 50 rect at 1.0,
+    /// where 0.8 lifts once. Each is now cut from the ring that leaves it,
+    /// out from that ring's corner and back, at the pass Z: 1 lift per pass
+    /// at 1.0 with the wall pass last and 2 with it first, the same as at
+    /// 0.8. Coverage holds at every pass.
+    #[test]
+    fn corner_cleanup_rings_do_not_lift() {
+        let p = rect_project();
+        let outer = at_20_20().apply_polyline(&rect_100x50()).unwrap();
+        for wall_pass in [WallPass::Last, WallPass::First] {
+            for entry in [Entry::Plunge, helix_80()] {
+                let lifts = |fraction| {
+                    let mut op = pocket_op(&p, CutDirection::Climb);
+                    op.step_over_fraction = Some(fraction);
+                    op.wall_pass = wall_pass;
+                    op.entry = entry.clone();
+                    let (tp, warnings) = generate(&p, &op);
+                    let what = format!("{fraction}, {wall_pass:?}, {entry:?}");
+                    assert!(warnings.is_empty(), "{what}: {:?}", codes(&warnings));
+                    assert_covers_at_every_pass(&tp, &outer, &what);
+                    PASS_Z_MM.map(|z| lifts_from(&tp, z))
+                };
+                let (at_0_8, at_1_0) = (lifts(0.8), lifts(1.0));
+                assert_eq!(at_1_0, at_0_8, "{wall_pass:?}, {entry:?}");
+                // With the wall pass first, the lift from the wall ring to
+                // the innermost ring is the second.
+                let want = if wall_pass == WallPass::Last { 1 } else { 2 };
+                assert_eq!(at_1_0, [want; 2], "{wall_pass:?}, {entry:?}");
             }
         }
     }
