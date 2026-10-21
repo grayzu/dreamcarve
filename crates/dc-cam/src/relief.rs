@@ -1515,7 +1515,7 @@ mod tests {
     }
 
     fn codes(warnings: &[Warning]) -> Vec<WarningCode> {
-        warnings.iter().map(|w| w.code).collect()
+        warnings.iter().map(|w| w.code()).collect()
     }
 
     fn relief_codes(warnings: &[Warning]) -> Vec<WarningCode> {
@@ -1830,7 +1830,7 @@ mod tests {
         );
         let tight: Vec<&Warning> = warnings
             .iter()
-            .filter(|w| w.code == WarningCode::ReliefCornerTooTight)
+            .filter(|w| w.code() == WarningCode::ReliefCornerTooTight)
             .collect();
         assert!(!tight.is_empty());
         for w in tight {

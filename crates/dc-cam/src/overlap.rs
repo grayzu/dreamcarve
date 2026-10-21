@@ -284,7 +284,7 @@ mod tests {
     fn overlaps(warnings: &[Warning]) -> Vec<&Warning> {
         warnings
             .iter()
-            .filter(|w| w.code == WarningCode::ToolpathsOverlap)
+            .filter(|w| w.code() == WarningCode::ToolpathsOverlap)
             .collect()
     }
 

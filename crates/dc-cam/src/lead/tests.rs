@@ -524,7 +524,7 @@ fn generate(p: &Project, o: &ProfileOp) -> (Toolpath, Vec<Warning>) {
 }
 
 fn codes(warnings: &[Warning], code: WarningCode) -> Vec<&Warning> {
-    warnings.iter().filter(|w| w.code == code).collect()
+    warnings.iter().filter(|w| w.code() == code).collect()
 }
 
 /// Every arc move with the point it starts from.

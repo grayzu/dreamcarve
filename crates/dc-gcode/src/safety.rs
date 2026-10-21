@@ -4098,7 +4098,7 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .any(|w| w.code == dc_cam::WarningCode::ToolpathsOverlap),
+                .any(|w| w.code() == dc_cam::WarningCode::ToolpathsOverlap),
             "{warnings:?}"
         );
         emit(

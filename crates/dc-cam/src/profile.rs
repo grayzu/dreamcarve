@@ -1583,7 +1583,7 @@ mod tests {
     }
 
     fn codes(warnings: &[Warning]) -> Vec<WarningCode> {
-        warnings.iter().map(|w| w.code).collect()
+        warnings.iter().map(|w| w.code()).collect()
     }
 
     #[test]
@@ -2552,7 +2552,7 @@ mod tests {
         let (_, warnings) = generate(&p, &op);
         let covered: Vec<(Option<&str>, Option<&str>)> = warnings
             .iter()
-            .filter(|w| w.code == WarningCode::TabsCoverMostOfContour)
+            .filter(|w| w.code() == WarningCode::TabsCoverMostOfContour)
             .map(|w| (w.param("contour"), w.param("instance")))
             .collect();
         assert_eq!(

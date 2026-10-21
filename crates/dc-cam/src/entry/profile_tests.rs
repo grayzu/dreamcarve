@@ -174,7 +174,7 @@ fn generate(p: &Project, o: &ProfileOp) -> (Toolpath, Vec<Warning>) {
 fn fallbacks(warnings: &[Warning]) -> Vec<&Warning> {
     warnings
         .iter()
-        .filter(|w| w.code == WarningCode::EntryFallback)
+        .filter(|w| w.code() == WarningCode::EntryFallback)
         .collect()
 }
 

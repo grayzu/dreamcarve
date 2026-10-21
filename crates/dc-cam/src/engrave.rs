@@ -622,7 +622,7 @@ mod tests {
         let (tp, warnings) = generate(&p, &engrave_op(&p, 1.0));
         let degenerate: Vec<&Warning> = warnings
             .iter()
-            .filter(|w| w.code == WarningCode::EngravePathDegenerate)
+            .filter(|w| w.code() == WarningCode::EngravePathDegenerate)
             .collect();
         assert_eq!(degenerate.len(), 2, "{warnings:?}");
         for (w, profile) in degenerate.iter().zip(["1", "2"]) {
@@ -763,7 +763,7 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .all(|w| w.code != WarningCode::ToolpathsOverlap),
+                .all(|w| w.code() != WarningCode::ToolpathsOverlap),
             "{warnings:?}"
         );
     }

@@ -896,7 +896,7 @@ mod tests {
     }
 
     fn codes(warnings: &[Warning]) -> Vec<WarningCode> {
-        warnings.iter().map(|w| w.code).collect()
+        warnings.iter().map(|w| w.code()).collect()
     }
 
     /// A move that changes XY, with where it started.
@@ -1345,7 +1345,7 @@ mod tests {
     fn coverage_warnings(warnings: &[Warning]) -> Vec<&Warning> {
         warnings
             .iter()
-            .filter(|w| w.code == WarningCode::TabsCoverMostOfContour)
+            .filter(|w| w.code() == WarningCode::TabsCoverMostOfContour)
             .collect()
     }
 

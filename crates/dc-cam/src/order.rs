@@ -343,7 +343,7 @@ mod tests {
     }
 
     fn with_code(warnings: &[Warning], code: WarningCode) -> Vec<&Warning> {
-        warnings.iter().filter(|w| w.code == code).collect()
+        warnings.iter().filter(|w| w.code() == code).collect()
     }
 
     /// O8, acceptance test 32: an Outside Profile through the stock on

@@ -1059,7 +1059,7 @@ mod tests {
     }
 
     fn codes(warnings: &[Warning]) -> Vec<WarningCode> {
-        warnings.iter().map(|w| w.code).collect()
+        warnings.iter().map(|w| w.code()).collect()
     }
 
     fn assert_rect_eq(got: Rect, want: Rect, tol: f64, what: &str) {
@@ -1410,7 +1410,7 @@ mod tests {
         let (tp, warnings) = generate(&p, &pocket_op(&p, CutDirection::Climb));
         let close: Vec<&Warning> = warnings
             .iter()
-            .filter(|w| w.code == WarningCode::PocketIslandTooClose)
+            .filter(|w| w.code() == WarningCode::PocketIslandTooClose)
             .collect();
         assert!(!close.is_empty(), "{warnings:?}");
         assert_eq!(close[0].param("island"), Some("1"));
@@ -1423,7 +1423,7 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .all(|w| w.code == WarningCode::PocketIslandTooClose),
+                .all(|w| w.code() == WarningCode::PocketIslandTooClose),
             "{warnings:?}"
         );
         // The bar spans X 65..75; rings are wholly left or right of it.
@@ -2254,7 +2254,7 @@ mod tests {
             .iter()
             .filter(|w| {
                 matches!(
-                    w.code,
+                    w.code(),
                     WarningCode::EntryFallback | WarningCode::HelixDiameterReduced
                 )
             })
@@ -2350,7 +2350,7 @@ mod tests {
         let entry = entry_warnings(&warnings);
         assert_eq!(entry.len(), 1, "{warnings:?}");
         let w = entry[0];
-        assert_eq!(w.code, WarningCode::EntryFallback);
+        assert_eq!(w.code(), WarningCode::EntryFallback);
         assert_eq!(w.param("op"), Some("o1"));
         assert_eq!(w.param("instance"), Some("i1"));
         assert_eq!(w.param("profile"), Some("0"));
@@ -2395,7 +2395,7 @@ mod tests {
         let (tp, warnings) = generate(&p, &op);
         let entry = entry_warnings(&warnings);
         assert_eq!(entry.len(), 1, "{warnings:?}");
-        assert_eq!(entry[0].code, WarningCode::EntryFallback);
+        assert_eq!(entry[0].code(), WarningCode::EntryFallback);
         assert_eq!(entry[0].param("requested"), Some("helix"));
         assert_eq!(entry[0].param("used"), Some("plunge"));
         assert!(entry[0].to_string().contains("plunge"), "{}", entry[0]);

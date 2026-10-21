@@ -47,4 +47,7 @@ pub use sequence::{SequenceInput, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
 pub use tabs::tab_centres_mm;
 pub use toolpath::{Move, MoveKind, Toolpath};
-pub use warning::{Warning, WarningCode};
+pub use warning::{
+    IslandNeighbour, LeadDroppedReason, OpenPathReason, ParamWarning, ReliefCornerReason,
+    ReliefSkippedReason, TabsRangeReason, Warning, WarningCode,
+};
