@@ -3115,8 +3115,8 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         let plunge = lines
             .iter()
-            .position(|l| has_word(l, "G1") && has_word(l, "Z-3"))
-            .unwrap_or_else(|| panic!("no plunge to Z-3 in\n{text}"));
+            .position(|l| has_word(l, "G1") && has_word(l, "Z-3.000"))
+            .unwrap_or_else(|| panic!("no plunge to Z-3.000 in\n{text}"));
         lines[plunge + 1]
     }
 

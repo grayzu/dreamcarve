@@ -162,4 +162,22 @@ _Avoid_: Overcut, extra depth, cut-through
 
 **Safe Z**:
 The height above the stock at which rapid moves between cuts travel.
-_Avoid_: Clearance height, retract height (retract is the per-move lift)
+_Avoid_: Clearance height; not the Retract Height, a Drill's lower plane (retract alone is the per-move lift)
+
+**Retract Height**:
+In a Drill, the height `retract_mm` above the stock top, capped at Safe Z,
+where each hole's plunge starts and a full-retract peck lifts to. A
+canned cycle's `R` plane.
+_Avoid_: Retract plane, R plane, clearance
+_PureCutCNC_: retractHeight
+
+**Peck**:
+One plunge of a Drill that stops short of the hole's depth, followed by a
+lift to clear chips: to the Retract Height (full) or by a small gap (chip
+break).
+_Avoid_: Step, pass (a pass is a depth level of a cutting operation)
+
+**Dwell**:
+A timed pause with no motion: at the bottom of a Drill plunge (`dwell_s`),
+or while the spindle reaches speed. Written as `G4`.
+_Avoid_: Delay, wait

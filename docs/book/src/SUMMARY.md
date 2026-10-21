@@ -17,6 +17,7 @@
 - [Profile operation](user-guide/profile.md)
 - [Tabs](user-guide/tabs.md)
 - [Engrave operation](user-guide/engrave.md)
+- [Drill operation](user-guide/drill.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)
 - [Warnings](user-guide/warnings.md)

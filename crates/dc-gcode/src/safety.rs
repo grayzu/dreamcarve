@@ -18,7 +18,9 @@ use std::ops::Range;
 
 use dc_cam::{Move, MoveKind, Toolpath};
 use dc_geometry::{Arc, EPS_MM, Point, Point3, approx_eq};
-use dc_project::{Operation, PostProcessor, SpindleControl, Stock, Tool, ToolId, Units};
+use dc_project::{
+    DwellUnits, Operation, PostProcessor, SpindleControl, Stock, Tool, ToolId, Units,
+};
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
@@ -261,6 +263,8 @@ fn check_rules(
     let mut spindle_on = false;
     let mut rpm: Option<f64> = None;
     let mut dwell_pending = false;
+    // S15: the deepest a cut has reached at the XY of the last cut.
+    let mut cut_to: Option<CutTo> = None;
     for block in &blocks {
         let line = block.line;
         if block.has('G', 20.0) || block.has('G', 21.0) {
@@ -346,7 +350,7 @@ fn check_rules(
         if block.has('G', 4.0)
             && block
                 .value('P')
-                .is_some_and(|p| p >= dwell_s - DWELL_TOLERANCE_S)
+                .is_some_and(|p| dwell_seconds(post, p) >= dwell_s - DWELL_TOLERANCE_S)
         {
             dwell_pending = false;
         }
@@ -381,6 +385,23 @@ fn check_rules(
             check_feed(mv, &limits, 2.0 * tolerance_mm)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
+            if let (Some(x), Some(y), Some((z_mm, _))) = (mv.to.x, mv.to.y, z_after) {
+                let deepest_mm = cut_to
+                    .filter(|cut| cut.is_at(x, y))
+                    .map_or(z_mm, |cut| cut.z_mm.min(z_mm));
+                cut_to = Some(CutTo {
+                    x,
+                    y,
+                    z_mm: deepest_mm,
+                });
+            }
+        } else if let Some(below_safe) = z_after.filter(|&(z_mm, tolerance_mm)| {
+            matches!(limits.op, Some(Operation::Drill(_)))
+                && !differs(mv.from.x, mv.to.x)
+                && !differs(mv.from.y, mv.to.y)
+                && z_mm < limits.safe_z_mm - tolerance_mm
+        }) {
+            check_drill_rapid(mv, below_safe, stock_thickness_mm, cut_to)?;
         } else {
             check_rapid(mv, &limits, router.z_mm, z_after)?;
         }
@@ -644,6 +665,61 @@ fn check_rapid(
     }
 }
 
+/// The deepest Z a cut has reached at one XY: machine X and Y as written,
+/// Z above stock bottom, mm (S15).
+#[derive(Debug, Clone, Copy)]
+struct CutTo {
+    x: f64,
+    y: f64,
+    z_mm: f64,
+}
+
+impl CutTo {
+    /// Whether this is the cut at machine (`x`, `y`). Both come from the
+    /// same written numbers, so only rounding noise is tolerated.
+    fn is_at(&self, x: f64, y: f64) -> bool {
+        approx_eq(self.x, x, EPS_MM) && approx_eq(self.y, y, EPS_MM)
+    }
+}
+
+/// S15: inside a Drill, a rapid in Z alone that stops below safe Z at
+/// (`z_mm`, `tolerance_mm`) above stock bottom stops in air only: at or
+/// above the stock top (the retract plane), or no deeper than a cut has
+/// already reached at its XY (a peck re-entry). Port of PureCutCNC's
+/// `assertPostedRetractSafe` (`drillingRetract.test.ts`).
+fn check_drill_rapid(
+    mv: &MachineMove,
+    (z_mm, tolerance_mm): (f64, f64),
+    stock_top_mm: f64,
+    cut_to: Option<CutTo>,
+) -> Result<(), ExportError> {
+    if z_mm >= stock_top_mm - tolerance_mm {
+        return Ok(());
+    }
+    let cut_mm = match (mv.to.x, mv.to.y, cut_to) {
+        (Some(x), Some(y), Some(cut)) if cut.is_at(x, y) => Some(cut.z_mm),
+        _ => None,
+    };
+    if cut_mm.is_some_and(|cut| z_mm >= cut - tolerance_mm) {
+        Ok(())
+    } else {
+        Err(ExportError::RapidIntoUncut {
+            line: mv.line,
+            z_mm,
+            cut_mm,
+        })
+    }
+}
+
+/// A `G4 P` value in seconds: the definition's dwell `units` say what `P`
+/// is (seconds, or milliseconds on Mach3).
+fn dwell_seconds(post: &PostProcessor, p: f64) -> f64 {
+    match post.feed_speed.spindle_on_dwell.units {
+        DwellUnits::Seconds => p,
+        DwellUnits::Milliseconds => p / 1000.0,
+    }
+}
+
 /// True unless both are known and equal.
 fn differs(a: Option<f64>, b: Option<f64>) -> bool {
     match (a, b) {
@@ -741,6 +817,8 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 ///   moves in Z alone or in XY alone towards it (`emit` splits a rapid so
 ///   it never travels sideways below either end);
 /// - a straight cut by one `G1` that ends at its end point;
+/// - a dwell by a `G4` with the same seconds (within a millisecond, in
+///   the definition's dwell units) between the motion lines around it;
 /// - an arc by `G2`/`G3` moves and straight moves that each end on the
 ///   arc, further along it than the last, the last one at the arc's end.
 ///   A `G2`/`G3` must turn the same way as the toolpath once the axis
@@ -782,6 +860,13 @@ fn check_reproduces(
         op: span.op.id().clone(),
         index,
     };
+    // The span's dwells: line and seconds.
+    let dwells: Vec<(usize, f64)> = blocks
+        .iter()
+        .filter(|b| span.lines.contains(&b.line) && b.motion.is_none() && b.has('G', 4.0))
+        .filter_map(|b| Some((b.line, dwell_seconds(post, b.value('P')?))))
+        .collect();
+    let mut next_dwell = 0;
     let mut cursor = motions
         .iter()
         .position(|m| !is_retract(m.mv))
@@ -802,7 +887,27 @@ fn check_reproduces(
         let already_there = here.is_some_and(|h| near(h, mv.to, tolerance_mm));
         let consumed = match mv.kind {
             MoveKind::Rapid => match_rapid(rest, mv.to, already_there),
-            MoveKind::Dwell { .. } => Some(0),
+            MoveKind::Dwell { seconds } => {
+                // A `G4` with these seconds after the last motion matched
+                // and before the next; it moves nothing.
+                let after = cursor
+                    .checked_sub(1)
+                    .and_then(|i| motions.get(i))
+                    .map_or(0, |m| m.mv.line);
+                let before = rest.first().map_or(usize::MAX, |m| m.mv.line);
+                let found = dwells
+                    .iter()
+                    .enumerate()
+                    .skip(next_dwell)
+                    .find(|(_, (line, s))| {
+                        *line > after && *line < before && (s - seconds).abs() <= DWELL_TOLERANCE_S
+                    })
+                    .map(|(i, _)| i);
+                found.map(|i| {
+                    next_dwell = i + 1;
+                    0
+                })
+            }
             MoveKind::Linear => match_linear(rest, mv.to, already_there),
             MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
                 let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });

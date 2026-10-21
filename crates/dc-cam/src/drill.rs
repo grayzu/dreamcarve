@@ -617,8 +617,8 @@ mod tests {
         warnings.iter().map(|w| w.code).collect()
     }
 
-    /// Port of `camOperationSmoke.test.ts` "drilling simple: single plunge
-    /// + rapid retract": rapid in at safe Z, rapid down to the retract
+    /// Port of `camOperationSmoke.test.ts` "drilling simple: single
+    /// plunge + rapid retract": rapid in at safe Z, rapid down to the retract
     /// plane 1 mm above the stock, one plunge at the plunge rate to the
     /// bottom, one rapid back to safe Z (acceptance 23; the `G98` return
     /// to the initial Z a canned `G81` makes).
