@@ -22,6 +22,7 @@ use crate::entry::{self, CutSide, EntryKind, EntryTool, EntryWarnings, FallbackR
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::overlap::{CutPath, overlap_warnings};
 use crate::passes::pass_z_mm;
+use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
@@ -156,6 +157,12 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// fit falls back to a ramp, then a plunge, with
 /// [`WarningCode::EntryFallback`]; so does a contour whose start is under
 /// a tab.
+///
+/// With `op.corner_relief`, after the main passes a dogbone or T-bone
+/// notch is cut in each corner the round tool cannot reach (Inside: the
+/// hole's corners; Outside: the part's concave corners), stepping down at
+/// the tool's step-down (the `relief` module); On line warns
+/// [`WarningCode::ReliefSkipped`].
 ///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
 /// with a [`Warning`]. Shapes in different regions whose tool paths cut
@@ -457,7 +464,15 @@ pub fn generate_profile(
         &cut_paths, &shapes, &regions, op.side, tool,
     ));
 
-    let toolpath = sequence(&input)?;
+    let mut toolpath = sequence(&input)?;
+    // Corner relief after the main passes (`crate::relief`).
+    let geometry = relief::ProfileGeometry {
+        regions: &regions,
+        shapes: &shapes,
+        paths: &paths,
+        walls: &walls,
+    };
+    relief::profile(project, op, tool, &geometry, &mut toolpath, &mut warnings)?;
     // #62: the cutter must stay on the stock.
     if let Some(overhang) =
         swept_bounds(&toolpath, radius_mm).and_then(|swept| stock_overhang(&project.stock, swept))

@@ -6,36 +6,90 @@
 //   src/engine/toolpaths/cornerRelief.ts
 //   src/engine/toolpaths/cornerRelief.test.ts
 
-//! Corner relief (`docs/specs/phase-2/design.md`, "Algorithms → Corner
-//! relief (dc-cam::relief)"; functional spec capability 18). Stubbed until
-//! the implementation commit.
+//! Corner relief: dogbone and T-bone notches (`docs/specs/phase-2/design.md`,
+//! "Algorithms → Corner relief (dc-cam::relief)"; functional spec
+//! capability 18, acceptance 29). VCarve calls these "Create Fillets":
+//! Dog-Bone and T-Bone.
+//!
+//! As upstream, relief is a pass of its own after the operation's main
+//! passes, stepping down at the tool's step-down, never a change to the
+//! cleared region (a radius-`r` lobe eroded by a radius-`r` cutter
+//! vanishes) nor a detour in the wall ring. Per corner and level: plunge
+//! at the descend point, where the main path already cut to full depth, cut
+//! out to the end point, and cut back.
+//!
+//! **The touch-the-corner rule.** For corner `C` of the cleared region,
+//! with unit edge directions `u`, `v` from `C`, bisector `b`, cleared-side
+//! interior angle `θ` and cutter radius `r`, the excursion ends where the
+//! cutter just touches `C`: `C + b·r` for a dogbone, `C + u·r` for a T-bone
+//! along the longer adjacent edge `u` (VCarve's placement; on a tie the more
+//! X-parallel edge, then the one pointing more to `+x`). Upstream's
+//! X-parallel `t_bone` and its `longest_edge` variant are one style here.
+//! The notch reaches `r(1 − sin(θ/2))` past each wall for a dogbone and `r`
+//! past its own wall for a T-bone.
+//!
+//! **Which corners.** Each cleared loop is walked with the cleared side on
+//! its left (a Pocket's outline and an inside Profile's outline are
+//! cleared inside, a Pocket's islands and an outside Profile's part are
+//! cleared outside); a vertex where the path turns left by more than
+//! [`RELIEF_MIN_TURN_RAD`] is a corner. DreamCarve keeps arcs as arcs, so
+//! the turn is measured between the two segments' tangents: a fillet or a
+//! circle has no corner at all, where upstream relies on the turn
+//! threshold to skip tessellation steps.
+//!
+//! Re-derived for Y-up (ADR-0001): "cleared on the left" is the same rule
+//! in both frames once the loop is wound for it, and the winding is taken
+//! from the loop's signed area, never assumed.
+//!
+//! Upstream's keep-outs are dropped (design spec): a corner under a tab is
+//! caught by the one guard, because the tab lifts the main path over the
+//! descend point at the deepest level.
 
+use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
-use crate::profile::Wall;
+use crate::footprint::{capsule, move_bulge};
+use crate::passes::pass_z_mm;
+use crate::profile::{Wall, rates_of, shape_of, shape_warning};
+use crate::sequence::{SequenceInput, sequence};
 use crate::tabs::LapRates;
-use crate::toolpath::Toolpath;
-use crate::warning::Warning;
-use dc_geometry::{Contour, Point, Polyline, Region, Vec2};
-use dc_project::{CornerRelief, OperationId, Side, Tool};
+use crate::toolpath::{Move, Toolpath};
+use crate::warning::{Warning, WarningCode};
+use dc_geometry::{
+    Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, point_segment_distance_mm,
+    union,
+};
+use dc_project::{CornerRelief, MachiningOrder, OperationId, ProfileOp, Project, Side, Tool};
+use std::f64::consts::PI;
 
 /// The smallest turn toward the cleared side at one vertex that counts as
-/// a corner.
-pub const RELIEF_MIN_TURN_RAD: f64 = std::f64::consts::PI / 12.0;
+/// a corner, 15° (design spec). Upstream derives its threshold from the
+/// arc-flattening step; DreamCarve measures turns between tangents, so arcs
+/// never reach it, and the corners it skips (interior angle above 165°)
+/// have a notch under `0.01 r` deep.
+pub const RELIEF_MIN_TURN_RAD: f64 = PI / 12.0;
 
-/// Position tolerance, mm.
+/// Position tolerance, mm (upstream `RELIEF_POSITION_TOLERANCE`): the
+/// slack on the descend-point search window and on the guard.
 pub const RELIEF_POSITION_TOLERANCE_MM: f64 = 1e-3;
 
-/// The two relief styles.
+/// Z slack for "the main path cut at or below this level", mm.
+const RELIEF_Z_TOLERANCE_MM: f64 = 1e-6;
+
+/// Two unit-vector components closer than this are equal for the T-bone
+/// tie-break.
+const UNIT_EPSILON: f64 = 1e-9;
+
+/// The two relief styles (`CornerRelief` less `none`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Style {
-    /// Along the bisector.
+    /// A notch along the corner's bisector.
     Dogbone,
-    /// Along the longer edge.
+    /// A notch along the corner's longer edge.
     TBone,
 }
 
 impl Style {
-    /// The style `relief` asks for.
+    /// The style `relief` asks for; `None` for no relief.
     pub(crate) const fn of(relief: CornerRelief) -> Option<Self> {
         match relief {
             CornerRelief::None => None,
@@ -45,132 +99,666 @@ impl Style {
     }
 }
 
-/// One corner of a cleared loop.
+/// The name `relief` has in the project file, for warnings.
+const fn relief_name(relief: CornerRelief) -> &'static str {
+    match relief {
+        CornerRelief::None => "none",
+        CornerRelief::Dogbone => "dogbone",
+        CornerRelief::TBone => "t_bone",
+    }
+}
+
+/// A corner of the cleared region, with everything the styles need.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CornerGeometry {
+    /// `C`, the corner, mm.
     pub corner: Point,
+    /// Unit direction from `C` along the incoming edge.
     pub edge_a: Vec2,
+    /// Unit direction from `C` along the outgoing edge.
     pub edge_b: Vec2,
+    /// Length of the incoming edge, mm.
     pub length_a_mm: f64,
+    /// Length of the outgoing edge, mm.
     pub length_b_mm: f64,
+    /// Unit bisector of the cleared-side wedge, pointing into it.
     pub bisector: Vec2,
+    /// The cleared-side interior angle at `C`, radians, below π.
     pub interior_angle_rad: f64,
 }
 
-/// One closed boundary loop of the cleared region.
+/// One closed boundary loop of the region an operation clears.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReliefLoop {
+    /// The loop, either winding.
     pub polyline: Polyline,
+    /// True when the cleared material is inside the loop (a Pocket's
+    /// outline, an inside Profile's outline), false when outside (a
+    /// Pocket's island, an outside Profile's part).
     pub cleared_inside: bool,
+    /// The shape warnings and notch blocks name.
     pub shape: ShapeRef,
 }
 
-/// The loops of one region and its tool-centre walls.
+/// The cleared loops of one region and the tool-centre rings the
+/// operation cut along them, where the descend points are found.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Site {
+    /// The cleared loops.
     pub loops: Vec<ReliefLoop>,
+    /// The tool-centre rings: a Pocket's tool-centre region's outlines, a
+    /// Profile's tool-centre contours.
     pub walls: Vec<Polyline>,
 }
 
 /// A corner to relieve.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReliefCorner {
+    /// The corner.
     pub geometry: CornerGeometry,
+    /// `P`, where the tool-centre ring crosses the bisector: the notch
+    /// plunges here, where the main path already cut.
     pub descend: Point,
+    /// `E`, where the excursion ends, the cutter just touching `C`.
     pub end: Point,
+    /// The shape of the loop the corner is on.
     pub shape: ShapeRef,
 }
 
-/// Where the excursion ends.
-pub(crate) fn excursion_end(geometry: &CornerGeometry, _style: Style, _distance_mm: f64) -> Point {
-    geometry.corner
+/// The edge a T-bone slots into: the longer one (VCarve's placement); on
+/// a tie the more X-parallel, then the one pointing more to `+x`, then
+/// more to `+y`, so the choice never depends on where the loop starts.
+fn t_bone_edge(g: &CornerGeometry) -> Vec2 {
+    let (a, b) = (g.edge_a, g.edge_b);
+    if (g.length_a_mm - g.length_b_mm).abs() > RELIEF_POSITION_TOLERANCE_MM {
+        return if g.length_a_mm > g.length_b_mm { a } else { b };
+    }
+    if (a.y.abs() - b.y.abs()).abs() > UNIT_EPSILON {
+        return if a.y.abs() < b.y.abs() { a } else { b };
+    }
+    if (a.x - b.x).abs() > UNIT_EPSILON {
+        return if a.x > b.x { a } else { b };
+    }
+    if a.y >= b.y { a } else { b }
 }
 
-/// The corners of `site`.
+/// Where the excursion ends, `distance_mm` from the corner: along the
+/// bisector for a dogbone, along the T-bone edge for a T-bone. The
+/// distance is the cutter radius in production; it is a parameter so the
+/// tests can show that ending short fails.
+pub(crate) fn excursion_end(geometry: &CornerGeometry, style: Style, distance_mm: f64) -> Point {
+    let direction = match style {
+        Style::Dogbone => geometry.bisector,
+        Style::TBone => t_bone_edge(geometry),
+    };
+    geometry.corner + direction * distance_mm
+}
+
+/// `l` wound so its cleared side is on the left of travel.
+fn canonical(l: &ReliefLoop) -> Polyline {
+    let ccw = l.polyline.signed_area_mm2() > 0.0;
+    if ccw == l.cleared_inside {
+        l.polyline.clone()
+    } else {
+        l.polyline.reversed()
+    }
+}
+
+/// The corners of `polyline` (closed, cleared on the left): every vertex
+/// where the path turns left, toward the cleared side, by more than
+/// [`RELIEF_MIN_TURN_RAD`], measured between the tangents of the segments
+/// meeting there.
+fn corners_of(polyline: &Polyline) -> Vec<CornerGeometry> {
+    let segments: Vec<Segment> = polyline
+        .segments()
+        .filter(|s| s.length_mm() > EPS_MM)
+        .collect();
+    let n = segments.len();
+    let mut out = Vec::new();
+    if n < 2 {
+        return out;
+    }
+    for (k, next) in segments.iter().enumerate() {
+        let Some(prev) = segments.get((k + n - 1) % n) else {
+            continue;
+        };
+        let (Some((_, incoming)), Some((_, outgoing))) =
+            (prev.point_at(prev.length_mm()), next.point_at(0.0))
+        else {
+            continue;
+        };
+        // The edges as directions away from the corner.
+        let edge_a = -incoming;
+        let edge_b = outgoing;
+        let turn = (-edge_a.cross(edge_b)).atan2(-edge_a.dot(edge_b));
+        if turn.is_nan() || turn <= RELIEF_MIN_TURN_RAD {
+            continue;
+        }
+        let Some(bisector) = Vec2::new(edge_a.x + edge_b.x, edge_a.y + edge_b.y).normalized()
+        else {
+            continue;
+        };
+        out.push(CornerGeometry {
+            corner: next.start,
+            edge_a,
+            edge_b,
+            length_a_mm: prev.length_mm(),
+            length_b_mm: next.length_mm(),
+            bisector,
+            interior_angle_rad: PI - turn,
+        });
+    }
+    out
+}
+
+/// The straight pieces of `walls`, arcs flattened within `tolerance_mm`.
+fn wall_segments(walls: &[Polyline], tolerance_mm: f64) -> Vec<(Point, Point)> {
+    walls
+        .iter()
+        .flat_map(|w| {
+            w.with_arcs_flattened(tolerance_mm)
+                .segments()
+                .map(|s| (s.start, s.end))
+                .collect::<Vec<_>>()
+        })
+        .filter(|(a, b)| a.distance_to(*b) > EPS_MM)
+        .collect()
+}
+
+/// March out from the corner along the bisector to the first crossing of
+/// the tool-centre ring, at `t ∈ [r, r/sin(θ/2)]`: the exact miter is the
+/// furthest it can be (a fillet or a round join only pulls it nearer), so
+/// the window is one-sided. `None` when the ring does not cross there.
+fn locate_descend(
+    g: &CornerGeometry,
+    segments: &[(Point, Point)],
+    radius_mm: f64,
+) -> Option<Point> {
+    let direction = g.bisector;
+    let min_t = radius_mm - RELIEF_POSITION_TOLERANCE_MM;
+    let max_t = radius_mm / (g.interior_angle_rad / 2.0).sin() + RELIEF_POSITION_TOLERANCE_MM;
+    let mut best = f64::INFINITY;
+    for &(a, b) in segments {
+        let edge = b - a;
+        let denominator = direction.cross(edge);
+        if denominator.abs() < UNIT_EPSILON {
+            continue;
+        }
+        let to_start = a - g.corner;
+        let t = to_start.cross(edge) / denominator;
+        if t.is_nan() || t < min_t || t > max_t || t >= best {
+            continue;
+        }
+        let along = to_start.cross(direction) / denominator;
+        let slack = RELIEF_POSITION_TOLERANCE_MM / edge.length().max(EPS_MM);
+        if along < -slack || along > 1.0 + slack {
+            continue;
+        }
+        best = t;
+    }
+    best.is_finite().then(|| g.corner + direction * best)
+}
+
+/// A warning about corner `g` of `shape`.
+fn corner_warning(
+    code: WarningCode,
+    op: &OperationId,
+    shape: &ShapeRef,
+    g: &CornerGeometry,
+) -> Warning {
+    shape_warning(code, shape)
+        .with("op", op)
+        .with("x_mm", g.corner.x)
+        .with("y_mm", g.corner.y)
+}
+
+/// Every corner of `site` that qualifies for relief, with its descend
+/// point and end point, and a [`WarningCode::ReliefCornerTooTight`] for
+/// each corner rejected: an adjacent edge under `2r` (a T-bone's slot and
+/// its cutter need that much along the wall, and arc-like runs of short
+/// edges fail it), or no tool-centre ring crossing within reach. A relief
+/// that is not where the geometry says is worse than none, so corners are
+/// rejected rather than approximated.
 pub(crate) fn collect(
-    _op: &OperationId,
-    _style: Style,
-    _radius_mm: f64,
-    _site: &Site,
-    _tolerance_mm: f64,
+    op: &OperationId,
+    style: Style,
+    radius_mm: f64,
+    site: &Site,
+    tolerance_mm: f64,
 ) -> (Vec<ReliefCorner>, Vec<Warning>) {
-    (Vec::new(), Vec::new())
+    let mut corners = Vec::new();
+    let mut warnings = Vec::new();
+    if !(radius_mm.is_finite() && radius_mm > 0.0) {
+        return (corners, warnings);
+    }
+    let segments = wall_segments(&site.walls, tolerance_mm);
+    let min_edge_mm = 2.0 * radius_mm - EPS_MM;
+    for l in &site.loops {
+        for g in corners_of(&canonical(l)) {
+            let too_tight = |reason: &str| {
+                corner_warning(WarningCode::ReliefCornerTooTight, op, &l.shape, &g)
+                    .with("reason", reason)
+            };
+            if g.length_a_mm < min_edge_mm || g.length_b_mm < min_edge_mm {
+                warnings.push(too_tight("short_edge"));
+                continue;
+            }
+            match locate_descend(&g, &segments, radius_mm) {
+                Some(descend) => corners.push(ReliefCorner {
+                    geometry: g,
+                    descend,
+                    end: excursion_end(&g, style, radius_mm),
+                    shape: l.shape.clone(),
+                }),
+                None => warnings.push(too_tight("no_wall_path")),
+            }
+        }
+    }
+    (corners, warnings)
 }
 
-/// Whether the main path cut at `point` at or below `max_z_mm`.
+/// The guard: whether a cutting move of `toolpath` with both ends at or
+/// below `max_z_mm` passes within `tolerance_mm` of `point` (arcs as
+/// arcs). A flat cutter there at that depth has opened the whole column
+/// above, so a notch may plunge at `point`. Rapids never count; a plunge
+/// from above the level does not either.
 pub(crate) fn main_path_cuts_at(
-    _toolpath: &Toolpath,
-    _point: Point,
-    _max_z_mm: f64,
-    _tolerance_mm: f64,
+    toolpath: &Toolpath,
+    point: Point,
+    max_z_mm: f64,
+    tolerance_mm: f64,
 ) -> bool {
+    let z_limit = max_z_mm + RELIEF_Z_TOLERANCE_MM;
+    let mut position: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        if let Some(from) = position
+            && mv.is_cut()
+            && from.z <= z_limit
+            && mv.to.z <= z_limit
+        {
+            let path = Segment {
+                start: from.xy(),
+                end: mv.to.xy(),
+                bulge: move_bulge(from.xy(), mv),
+            };
+            if point_segment_distance_mm(path, point) <= tolerance_mm {
+                return true;
+            }
+        }
+        position = Some(mv.to);
+    }
     false
 }
 
-/// What the relief pass needs.
+/// `corners` in nearest-neighbour order from `start`, by descend point,
+/// ties in the order given.
+fn nearest_neighbour(mut corners: Vec<ReliefCorner>, start: Point) -> Vec<ReliefCorner> {
+    let mut ordered = Vec::with_capacity(corners.len());
+    let mut from = start;
+    while !corners.is_empty() {
+        let next = corners
+            .iter()
+            .enumerate()
+            .min_by(|(ia, a), (ib, b)| {
+                from.distance_to(a.descend)
+                    .total_cmp(&from.distance_to(b.descend))
+                    .then(ia.cmp(ib))
+            })
+            .map_or(0, |(i, _)| i);
+        let corner = corners.remove(next);
+        from = corner.descend;
+        ordered.push(corner);
+    }
+    ordered
+}
+
+/// The relief pass of one operation: what [`Setup::plan`] works out.
 #[derive(Debug, Clone)]
 pub(crate) struct Relief {
+    /// The operation, for warnings.
     pub op: OperationId,
+    /// The style.
     pub style: Style,
+    /// The tool's radius, mm.
     pub radius_mm: f64,
+    /// The relief levels, top first, at the tool's step-down.
     pub levels: Vec<f64>,
+    /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
+    /// The tool's feed and plunge rates.
     pub rates: LapRates,
+    /// The project's flatten tolerance, mm.
     pub tolerance_mm: f64,
 }
 
-/// The settings a generator hands over.
+/// What a generator hands over to plan its relief pass.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Setup<'a> {
+    /// The operation.
     pub op: &'a OperationId,
+    /// The relief it asks for.
     pub relief: CornerRelief,
+    /// Its tool.
     pub tool: &'a Tool,
+    /// The stock thickness, mm.
     pub thickness_mm: f64,
+    /// The operation's depth, mm.
     pub depth_mm: f64,
+    /// Its through-cut allowance, mm.
     pub through_cut_allowance_mm: f64,
+    /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
+    /// The tool's rates.
     pub rates: LapRates,
+    /// The flatten tolerance, mm.
     pub tolerance_mm: f64,
 }
 
 impl Setup<'_> {
-    /// The relief pass.
-    pub(crate) fn plan(&self, _warnings: &mut Vec<Warning>) -> Result<Option<Relief>, CamError> {
-        Ok(None)
+    /// The relief pass, or `None` when the operation asks for none. Its
+    /// levels step down at the tool's step-down, never the operation's
+    /// (upstream: an operation's step-down may be a stale or coarse value
+    /// for another purpose), to the operation's depth. A tool with no
+    /// step-down skips the pass with [`WarningCode::ReliefSkipped`]
+    /// rather than cutting each notch in one full-depth slot.
+    ///
+    /// # Errors
+    ///
+    /// As [`pass_z_mm`] for the tool's step-down.
+    pub(crate) fn plan(&self, warnings: &mut Vec<Warning>) -> Result<Option<Relief>, CamError> {
+        let Some(style) = Style::of(self.relief) else {
+            return Ok(None);
+        };
+        let Some(step_down_mm) = self.tool.step_down_mm else {
+            warnings.push(skipped(self.op, self.relief, "no_step_down"));
+            return Ok(None);
+        };
+        let levels = pass_z_mm(
+            self.op,
+            self.thickness_mm,
+            self.depth_mm,
+            step_down_mm,
+            self.through_cut_allowance_mm,
+        )?;
+        Ok(Some(Relief {
+            op: self.op.clone(),
+            style,
+            radius_mm: self.tool.diameter_mm / 2.0,
+            levels,
+            safe_z_mm: self.safe_z_mm,
+            rates: self.rates,
+            tolerance_mm: self.tolerance_mm,
+        }))
     }
 }
 
 impl Relief {
-    /// Appends the relief pass.
+    /// Collects the corners of `sites` and appends the relief pass to
+    /// `toolpath`, the operation's main path; returns the corners cut.
+    ///
+    /// # Errors
+    ///
+    /// As [`sequence`], which never fails on the blocks built here.
     pub(crate) fn append(
         &self,
-        _sites: &[Site],
-        _toolpath: &mut Toolpath,
-        _warnings: &mut Vec<Warning>,
+        sites: &[Site],
+        toolpath: &mut Toolpath,
+        warnings: &mut Vec<Warning>,
     ) -> Result<Vec<ReliefCorner>, CamError> {
-        Ok(Vec::new())
+        let mut corners = Vec::new();
+        for site in sites {
+            let (found, rejected) = collect(
+                &self.op,
+                self.style,
+                self.radius_mm,
+                site,
+                self.tolerance_mm,
+            );
+            corners.extend(found);
+            warnings.extend(rejected);
+        }
+        self.cut(corners, toolpath, warnings)
+    }
+
+    /// The pass itself (upstream `generateCornerReliefPass`): each corner
+    /// whose descend point the main path cut at the deepest level, else
+    /// [`WarningCode::ReliefCornerNotCut`]; nearest-neighbour from where
+    /// the main path ended; per corner one [`CutBlock`] per level (plunge
+    /// at the descend point, cut to the end, cut back), sequenced as one
+    /// shape so the levels follow each other without a retract, and a
+    /// retract between corners.
+    fn cut(
+        &self,
+        corners: Vec<ReliefCorner>,
+        toolpath: &mut Toolpath,
+        warnings: &mut Vec<Warning>,
+    ) -> Result<Vec<ReliefCorner>, CamError> {
+        let Some(deepest) = self.levels.iter().copied().reduce(f64::min) else {
+            return Ok(Vec::new());
+        };
+        // The descend point lies on the wall ring flattened within the
+        // tolerance, so the path the main pass cut may be that far off it.
+        let guard_mm = RELIEF_POSITION_TOLERANCE_MM + self.tolerance_mm;
+        let mut cut = Vec::with_capacity(corners.len());
+        for corner in corners {
+            if main_path_cuts_at(toolpath, corner.descend, deepest, guard_mm) {
+                cut.push(corner);
+            } else {
+                warnings.push(corner_warning(
+                    WarningCode::ReliefCornerNotCut,
+                    &self.op,
+                    &corner.shape,
+                    &corner.geometry,
+                ));
+            }
+        }
+        let Some(start) = toolpath
+            .moves
+            .last()
+            .map(|m| m.to.xy())
+            .or_else(|| cut.first().map(|c| c.descend))
+        else {
+            return Ok(cut);
+        };
+        let ordered = nearest_neighbour(cut, start);
+        for corner in &ordered {
+            let input = SequenceInput {
+                blocks: self.blocks(corner),
+                order: MachiningOrder::FullDepthFirst,
+                containment: &[],
+                safe_z_mm: self.safe_z_mm,
+                tool_diameter_mm: 2.0 * self.radius_mm,
+                stepover_mm: 0.0,
+                feed_mm_min: self.rates.feed_mm_min,
+                plunge_mm_min: self.rates.plunge_mm_min,
+            };
+            toolpath.moves.extend(sequence(&input)?.moves);
+        }
+        Ok(ordered)
+    }
+
+    /// One block per level for `corner`: a straight plunge at the descend
+    /// point from safe Z or the level above, out to the end and back at
+    /// the feed rate.
+    fn blocks(&self, corner: &ReliefCorner) -> Vec<CutBlock> {
+        let (p, e) = (corner.descend, corner.end);
+        let feed = self.rates.feed_mm_min;
+        self.levels
+            .iter()
+            .enumerate()
+            .map(|(pass, &z_mm)| CutBlock {
+                shape: corner.shape.clone(),
+                pass,
+                z_mm,
+                descent_from: p,
+                descent_from_z_mm: pass
+                    .checked_sub(1)
+                    .and_then(|k| self.levels.get(k).copied())
+                    .unwrap_or(self.safe_z_mm),
+                descent: Vec::new(),
+                entry: p,
+                cuts: vec![
+                    Move::linear(Point3::new(e.x, e.y, z_mm), feed),
+                    Move::linear(Point3::new(p.x, p.y, z_mm), feed),
+                ],
+                exit: p,
+                frees: false,
+                cleared: None,
+                group: 0,
+            })
+            .collect()
     }
 }
 
-/// The lobe a notch may remove.
-pub(crate) fn lobe(_corner: &ReliefCorner, _radius_mm: f64, _tolerance_mm: f64) -> Vec<Region> {
-    Vec::new()
+/// S9's notch rule: the area beyond the cleared region a notch at
+/// `corner` may remove. It is the triangle of `C + b·r` (where the cutter
+/// touches the corner along the bisector), the miter point `C +
+/// b·r/sin(θ/2)` (the furthest a descend point can be) and the end point,
+/// grown by the radius. Every notch the pass cuts sweeps inside it: its
+/// descend point lies on the bisector between the first two, so its
+/// excursion lies in the triangle. The generator's footprint check allows
+/// these lobes on top of the operation's own area.
+pub(crate) fn lobe(corner: &ReliefCorner, radius_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+    let g = &corner.geometry;
+    let near = g.corner + g.bisector * radius_mm;
+    let miter = g.corner + g.bisector * (radius_mm / (g.interior_angle_rad / 2.0).sin());
+    let pieces: Vec<Region> = [(near, miter), (miter, corner.end), (corner.end, near)]
+        .into_iter()
+        .filter_map(|(a, b)| capsule(a, b, radius_mm))
+        .collect();
+    if pieces.is_empty() {
+        return Vec::new();
+    }
+    union(&pieces, &[], tolerance_mm)
 }
 
-/// The relief sites of a Profile.
-pub(crate) fn profile_sites(
-    _side: Side,
-    _regions: &[Region],
-    _shapes: &[(ShapeRef, Contour)],
-    _paths: &[(Polyline, &ShapeRef)],
-    _walls: &[(Wall, usize)],
-) -> Vec<Site> {
-    Vec::new()
+/// The relief site of one Pocket region: the area it clears (`cleared`,
+/// the region less the allowance) and its tool-centre region (`centre`,
+/// restricted for rest machining), all named after the pocket's outline.
+pub(crate) fn pocket_site(cleared: &[Region], centre: &[Region], shape: &ShapeRef) -> Site {
+    let outlines = |r: &Region| {
+        std::iter::once(r.outer())
+            .chain(r.holes())
+            .map(|c| c.polyline().clone())
+            .collect::<Vec<_>>()
+    };
+    let loops = cleared
+        .iter()
+        .flat_map(|r| {
+            std::iter::once((r.outer(), true)).chain(r.holes().iter().map(|h| (h, false)))
+        })
+        .map(|(c, cleared_inside)| ReliefLoop {
+            polyline: c.polyline().clone(),
+            cleared_inside,
+            shape: shape.clone(),
+        })
+        .collect();
+    Site {
+        loops,
+        walls: centre.iter().flat_map(outlines).collect(),
+    }
 }
 
-/// A `relief_skipped` warning.
-pub(crate) fn skipped(op: &OperationId, _relief: CornerRelief, _reason: &str) -> Warning {
-    Warning::new(crate::warning::WarningCode::ReliefSkipped).with("op", op)
+/// A Profile's regions and tool-centre paths, as `generate_profile` built
+/// them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProfileGeometry<'a> {
+    /// The nested target regions.
+    pub regions: &'a [Region],
+    /// Every target shape and its contour.
+    pub shapes: &'a [(ShapeRef, Contour)],
+    /// Every tool-centre path and the shape it cuts.
+    pub paths: &'a [(Polyline, &'a ShapeRef)],
+    /// The wall each path cuts and the index of its region.
+    pub walls: &'a [(Wall, usize)],
+}
+
+/// The relief sites of a Profile on `side`: per region, its outline and
+/// holes with the side the kerf clears (Inside: inside the outline and
+/// outside the holes; Outside: the reverse), and the region's tool-centre
+/// paths. On line has none.
+fn profile_sites(side: Side, geometry: &ProfileGeometry<'_>) -> Vec<Site> {
+    if side == Side::OnLine {
+        return Vec::new();
+    }
+    let inside = side == Side::Inside;
+    geometry
+        .regions
+        .iter()
+        .enumerate()
+        .map(|(index, region)| {
+            let mut loops = Vec::new();
+            let contours = std::iter::once((region.outer(), inside))
+                .chain(region.holes().iter().map(|h| (h, !inside)));
+            for (contour, cleared_inside) in contours {
+                if let Some(shape) = shape_of(geometry.shapes, contour) {
+                    loops.push(ReliefLoop {
+                        polyline: contour.polyline().clone(),
+                        cleared_inside,
+                        shape: shape.clone(),
+                    });
+                }
+            }
+            let walls = geometry
+                .paths
+                .iter()
+                .zip(geometry.walls)
+                .filter(|(_, (_, r))| *r == index)
+                .map(|((path, _), _)| path.clone())
+                .collect();
+            Site { loops, walls }
+        })
+        .collect()
+}
+
+/// Appends a Profile's relief pass to `toolpath`, its main path (Inside:
+/// the hole's corners; Outside: the part's concave corners). On line has
+/// no waste side for a notch: [`WarningCode::ReliefSkipped`].
+///
+/// # Errors
+///
+/// As [`Setup::plan`] and [`Relief::append`].
+pub(crate) fn profile(
+    project: &Project,
+    op: &ProfileOp,
+    tool: &Tool,
+    geometry: &ProfileGeometry<'_>,
+    toolpath: &mut Toolpath,
+    warnings: &mut Vec<Warning>,
+) -> Result<(), CamError> {
+    if op.corner_relief == CornerRelief::None {
+        return Ok(());
+    }
+    if op.side == Side::OnLine {
+        warnings.push(skipped(&op.id, op.corner_relief, "on_line"));
+        return Ok(());
+    }
+    let (Some(thickness_mm), Some(depth_mm)) = (project.stock.thickness_mm, op.depth_mm) else {
+        return Ok(());
+    };
+    let setup = Setup {
+        op: &op.id,
+        relief: op.corner_relief,
+        tool,
+        thickness_mm,
+        depth_mm,
+        through_cut_allowance_mm: op.through_cut_allowance_mm,
+        safe_z_mm: thickness_mm + op.safe_z_mm,
+        rates: rates_of(tool)?,
+        tolerance_mm: project.flatten_tolerance_mm,
+    };
+    if let Some(relief) = setup.plan(warnings)? {
+        relief.append(&profile_sites(op.side, geometry), toolpath, warnings)?;
+    }
+    Ok(())
+}
+
+/// A [`WarningCode::ReliefSkipped`] for `op`, which asked for `relief`.
+pub(crate) fn skipped(op: &OperationId, relief: CornerRelief, reason: &str) -> Warning {
+    Warning::new(WarningCode::ReliefSkipped)
+        .with("op", op)
+        .with("requested", relief_name(relief))
+        .with("reason", reason)
 }
 
 #[cfg(test)]

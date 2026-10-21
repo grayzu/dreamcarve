@@ -7,11 +7,12 @@
 //   src/engine/toolpaths/pocketPatterns.ts
 
 //! Pocket toolpaths (`docs/specs/phase-2/design.md`, "Algorithms → Pocket",
-//! steps 1–9, 11–12): clear the inside of closed shapes with concentric
+//! steps 1–12): clear the inside of closed shapes with concentric
 //! rings or raster lines, leaving nested shapes as islands and, with an
 //! allowance, a band of material on every wall. The ring tree is in
 //! [`rings`], the raster lines in [`raster`], rest machining's leftover in
-//! [`rest`], and each pass's ramp or helix in [`crate::entry`].
+//! [`rest`], each pass's ramp or helix in [`crate::entry`], and the corner
+//! relief notches in the `relief` module.
 //!
 //! Re-derived for Y-up (ADR-0001) rather than copied: PureCutCNC's "conventional
 //! is a no-op on Clipper output" holds because its positive-area outers are
@@ -32,6 +33,7 @@ use crate::passes::pass_z_mm;
 use crate::profile::{
     contour_contains, crossing_error, rates_of, resolve_targets, shape_of, shape_warning,
 };
+use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::lap_cuts;
@@ -39,11 +41,11 @@ use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryWarning, Point, Polyline, Region, area_mm2, difference, distance_mm,
-    nest,
+    nest, union,
 };
 use dc_project::{
-    ClearanceStrategy, CornerRelief, CutDirection, Entry, Operation, OperationId, PocketOp,
-    Project, Tool, WallPass,
+    ClearanceStrategy, CutDirection, Entry, Operation, OperationId, PocketOp, Project, Tool,
+    WallPass,
 };
 use raster::RasterSettings;
 use rings::{Ring, RingKind, RingTree, WallRings, inset_region};
@@ -137,8 +139,16 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// and from the previous pass Z after; where it does not fit the entry
 /// falls back to a ramp, then a plunge ([`WarningCode::EntryFallback`],
 /// [`WarningCode::HelixDiameterReduced`]). A ring or line reached by a
-/// stay-down link skips its descent. Not yet generated: corner relief is
-/// skipped ([`WarningCode::ReliefSkipped`]).
+/// stay-down link skips its descent.
+///
+/// With `op.corner_relief` a dogbone or T-bone notch is cut in every
+/// corner the round tool cannot reach, the pocket's corners and the
+/// concave corners of its islands, sized to the wall the allowance
+/// leaves, after the main passes and stepping down at the tool's
+/// step-down (the `relief` module); S9 then allows each notch its corner's lobe.
+/// A tool with no step-down skips it ([`WarningCode::ReliefSkipped`]);
+/// corners it cannot relieve warn [`WarningCode::ReliefCornerTooTight`]
+/// or [`WarningCode::ReliefCornerNotCut`].
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_pocket(
     project: &Project,
@@ -225,7 +235,19 @@ pub fn generate_pocket(
     let radius_mm = tool.diameter_mm / 2.0;
     let tolerance_mm = project.flatten_tolerance_mm;
 
-    let mut warnings = fallback_warnings(op);
+    let mut warnings = Vec::new();
+    let relief = relief::Setup {
+        op: &op.id,
+        relief: op.corner_relief,
+        tool,
+        thickness_mm,
+        depth_mm,
+        through_cut_allowance_mm: op.through_cut_allowance_mm,
+        safe_z_mm,
+        rates,
+        tolerance_mm,
+    }
+    .plan(&mut warnings)?;
     let entry_tool = EntryTool {
         diameter_mm: tool.diameter_mm,
         feed_mm_min: rates.feed_mm_min,
@@ -270,6 +292,8 @@ pub fn generate_pocket(
     // Whether a rest operation found anything to clear.
     let mut rest_found = false;
     let mut rest_had_room = false;
+    // Each region's cleared loops and tool-centre rings, for the relief.
+    let mut sites: Vec<Site> = Vec::new();
     for region in &regions {
         // `nest` keeps every contour or reverses it, so this always finds
         // the shape.
@@ -277,6 +301,7 @@ pub fn generate_pocket(
             continue;
         };
         warnings.extend(island_gap_warnings(op, tool, region, &shapes, shape));
+        let cleared_from = allowed.len();
         if op.allowance_mm > 0.0 {
             allowed.extend(inset_region(region, op.allowance_mm, tolerance_mm));
         } else {
@@ -310,6 +335,10 @@ pub fn generate_pocket(
             None => tool_centre,
         };
         centre_regions.extend(tool_centre.iter().cloned());
+        if relief.is_some() {
+            let cleared = allowed.get(cleared_from..).unwrap_or(&[]);
+            sites.push(relief::pocket_site(cleared, &tool_centre, shape));
+        }
         for root in tool_centre {
             if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
                 let settings = RasterSettings {
@@ -421,7 +450,19 @@ pub fn generate_pocket(
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
     };
-    let toolpath = sequence(&input)?;
+    let mut toolpath = sequence(&input)?;
+    // Design step 10: the relief pass after all the passes; S9 allows each
+    // notch the lobe its corner may lose.
+    if let Some(relief) = &relief {
+        let cut = relief.append(&sites, &mut toolpath, &mut warnings)?;
+        let lobes: Vec<Region> = cut
+            .iter()
+            .flat_map(|c| relief::lobe(c, radius_mm, tolerance_mm))
+            .collect();
+        if !lobes.is_empty() {
+            allowed = union(&allowed, &lobes, tolerance_mm);
+        }
+    }
 
     // #62: the cutter must stay on the stock.
     if let Some(overhang) =
@@ -525,26 +566,6 @@ fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
     }
 }
 
-/// Warnings for the corner relief this build does not cut yet (slice 12).
-/// It still gives the pocket asked for, so it warns rather than fails.
-fn fallback_warnings(op: &PocketOp) -> Vec<Warning> {
-    let mut warnings = Vec::new();
-    let relief = match op.corner_relief {
-        CornerRelief::None => None,
-        CornerRelief::Dogbone => Some("dogbone"),
-        CornerRelief::TBone => Some("t_bone"),
-    };
-    if let Some(requested) = relief {
-        warnings.push(
-            Warning::new(WarningCode::ReliefSkipped)
-                .with("op", &op.id)
-                .with("requested", requested)
-                .with("reason", "not_supported_yet"),
-        );
-    }
-    warnings
-}
-
 /// [`WarningCode::PocketIslandTooClose`] for every island of `region`
 /// nearer than the tool's diameter to the wall or to a later island.
 fn island_gap_warnings(
@@ -643,8 +664,9 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
 }
 
 /// S9: the tool's footprint along `toolpath` lies in the pockets'
-/// material, `allowed` (each of `regions` less the allowance), inside
-/// every region and outside every island; `regions` name the pocket in
+/// material, `allowed` (each of `regions` less the allowance, plus the
+/// lobe of every relief notch cut, [`relief::lobe`]), inside every region
+/// and outside every island; `regions` name the pocket in
 /// the error. A rest operation is held to the same area (S14). Flattening
 /// moves both outlines by up to `tolerance_mm`, so area within that band
 /// of the boundaries is allowed. Ramp and helix moves are checked on their
@@ -1571,19 +1593,23 @@ mod tests {
         assert_approx_eq!(m[first_deep].feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
     }
 
-    /// What this build skips: corner relief generates the pocket asked for
-    /// with a warning (slice 12). A ramp entry is cut (slice 9), so it no
-    /// longer warns.
+    /// Corner relief (slice 12) with a ramp entry: no warning, and the
+    /// notches follow the main passes, which are those of the same Pocket
+    /// without relief ([`crate::relief`] has the relief tests).
     #[test]
-    fn corner_relief_is_skipped_with_a_warning() {
+    fn corner_relief_follows_the_main_passes() {
         let p = rect_project();
         let mut op = pocket_op(&p, CutDirection::Climb);
         op.entry = Entry::Ramp { angle_deg: 15.0 };
+        let (plain, _) = generate(&p, &op);
         op.corner_relief = CornerRelief::Dogbone;
         let (tp, warnings) = generate(&p, &op);
-        assert_eq!(codes(&warnings), vec![WarningCode::ReliefSkipped]);
-        assert_eq!(warnings[0].param("requested"), Some("dogbone"));
-        assert_eq!(rings_at(&tp, PASS_Z_MM[0]).len(), 9);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            tp.moves.get(..plain.moves.len()),
+            Some(plain.moves.as_slice())
+        );
+        assert!(tp.moves.len() > plain.moves.len());
     }
 
     /// The bounds of `regions`, outers only.
