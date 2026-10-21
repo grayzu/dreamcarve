@@ -687,11 +687,11 @@ fn export_refuses_feed_above_limit_with_location() {
     assert_eq!(out.status.code(), Some(1), "an error exits 1");
     let stderr = stderr(&out);
     assert!(
-        stderr.contains("coaster.dcv:24:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
+        stderr.contains("coaster.dcv:29:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("coaster.dcv:26:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        stderr.contains("coaster.dcv:31:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
         "{stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
@@ -7013,4 +7013,333 @@ fn inch_project_summary_in_inches() {
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
     let summary = stdout(&out);
     assert!(summary.contains(", 12.000 mm deep"), "{summary}");
+}
+
+// ── #283: clearance, tool-change and park heights ──
+
+/// The plaque (`tests/fixtures/plaque.dcv`) copied into `dir`, saved with
+/// `heights` set, as `plaque.dcv`.
+fn plaque_with_heights(dir: &Path, heights: dc_project::Heights) -> PathBuf {
+    let dcv = copy_fixture(dir, "plaque.dcv", "plaque.dcv");
+    let mut project = load_file(&dcv).project;
+    project.heights = heights;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// Acceptance 45's heights: clearance 20 mm, machine Z −5 mm, park (0, 0).
+fn acceptance_45_heights() -> dc_project::Heights {
+    dc_project::Heights {
+        clearance_mm: Some(20.0),
+        tool_change_machine_z_mm: Some(-5.0),
+        park: Some(dc_project::ParkXy {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        }),
+    }
+}
+
+/// Each line of `program` with code, comments removed, with its 1-based
+/// line number and the operation whose header comment it follows.
+fn code_by_operation(program: &str) -> Vec<(usize, Option<usize>, String)> {
+    let mut op = None;
+    let mut out = Vec::new();
+    for (i, line) in program.lines().enumerate() {
+        if let Some(rest) = line.strip_prefix("( Operation ") {
+            op = rest.split(':').next().and_then(|n| n.parse().ok());
+            continue;
+        }
+        let code = match line.find('(') {
+            Some(at) => line[..at].trim(),
+            None => line.trim(),
+        };
+        if !code.is_empty() {
+            out.push((i + 1, op, code.to_owned()));
+        }
+    }
+    out
+}
+
+/// Acceptance 45 (#283, functional capability 33): the two-tool plaque on
+/// grblHAL in one program, with `clearance_mm: 20`,
+/// `tool_change_machine_z_mm: -5` and `park: (0, 0)`. Every move in XY
+/// between parts and between operations is at Z 20 (work zero at the
+/// stock top), and between passes of one part at its safe Z of 15: the
+/// four drilled holes, each its own part, are crossed at 20; the Cut out
+/// Profile's passes at 15. The tool change is the rise to 20, `G53 G0
+/// Z-5.000`, `M5`, `T2 M6`; the program ends with a rapid to the park
+/// point at Z 20, then the lift, then the footer. Nothing goes below the
+/// material bottom less the through-cut allowance (S1), and the export
+/// says to home the machine.
+#[test]
+fn heights_plaque_one_program() {
+    let dir = work_dir("heights_plaque_one_program");
+    plaque_with_heights(&dir, acceptance_45_heights());
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plaque.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("plaque.nc")).expect("program written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let op_of: Vec<(usize, Option<usize>, String)> = code_by_operation(&program);
+    let op_at = |line: usize| {
+        op_of
+            .iter()
+            .find(|(l, ..)| *l == line)
+            .and_then(|(_, op, _)| *op)
+    };
+
+    // S1: the plaque is 11.8 mm thick, cut through with 0.2 mm allowance.
+    for mv in &moves {
+        if let Some(z) = mv.to.z {
+            assert!(
+                z >= -12.0 - 1e-9,
+                "line {} below the floor: {mv:?}",
+                mv.line
+            );
+        }
+    }
+    // Every rapid in XY, by operation, at the clearance or safe Z.
+    let xy_rapids: Vec<(usize, Option<usize>, f64)> = moves
+        .iter()
+        .filter(|m| m.kind == dc_gcode::parse::MotionKind::Rapid)
+        .filter(|m| m.to.x.is_some() && (m.from.x != m.to.x || m.from.y != m.to.y))
+        .map(|m| (m.line, op_at(m.line), m.to.z.expect("Z known")))
+        .collect();
+    for &(line, _, z) in &xy_rapids {
+        assert!(
+            (z - 20.0).abs() < 1e-9 || (z - 15.0).abs() < 1e-9,
+            "line {line}: XY rapid at Z {z}"
+        );
+    }
+    // Into each operation at the clearance height.
+    for op in 1..=5 {
+        let first = xy_rapids
+            .iter()
+            .find(|(_, o, _)| *o == Some(op))
+            .unwrap_or_else(|| panic!("operation {op} has an XY rapid"));
+        assert!(
+            (first.2 - 20.0).abs() < 1e-9,
+            "into operation {op}: {first:?}"
+        );
+    }
+    // Drill: four holes, four parts, each reached at 20.
+    let drill: Vec<f64> = xy_rapids
+        .iter()
+        .filter(|(_, o, _)| *o == Some(3))
+        .map(|r| r.2)
+        .collect();
+    assert!(
+        drill.len() == 4 && drill.iter().all(|z| (z - 20.0).abs() < 1e-9),
+        "{xy_rapids:?}"
+    );
+    // Cut out: one part, its passes linked at 15.
+    let cut_out: Vec<f64> = xy_rapids
+        .iter()
+        .filter(|(_, o, _)| *o == Some(4))
+        .map(|r| r.2)
+        .skip(1)
+        .collect();
+    assert!(
+        !cut_out.is_empty() && cut_out.iter().all(|&z| (z - 15.0).abs() < 1e-9),
+        "{cut_out:?}"
+    );
+
+    let code: Vec<&str> = op_of.iter().map(|(_, _, c)| c.as_str()).collect();
+    let change = code
+        .iter()
+        .position(|c| c.starts_with("T2 M6"))
+        .expect("a tool change");
+    assert!(
+        ["Z20.000", "G0 Z20.000"].contains(&code[change - 3]),
+        "{:?}",
+        &code[change - 3..=change]
+    );
+    assert_eq!(code[change - 2..=change], ["G53 G0 Z-5.000", "M5", "T2 M6"]);
+    let n = code.len();
+    assert_eq!(
+        code[n - 5..],
+        ["Z20.000", "X0.000 Y0.000", "G53 G0 Z-5.000", "M5", "M30"],
+        "{program}"
+    );
+    assert!(
+        stdout(&out).contains(
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53)."
+        ),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Acceptance 45, the errors: on LinuxCNC, whose documents were not
+/// checked for `G53`, the machine Z is an error naming the setting at its
+/// place in the file; a clearance below an enabled operation's safe Z (15
+/// on the plaque) is an error naming the operation. With all three unset
+/// the version 11 plaque exports the programs it did before #283.
+#[test]
+fn heights_errors_and_unset_heights() {
+    let dir = work_dir("heights_errors_and_unset_heights");
+    let dcv = plaque_with_heights(&dir, acceptance_45_heights());
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        text.contains(
+            "error: heights.tool_change_machine_z_mm is set, but post-processor `linuxcnc`"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("plaque.dcv:"), "located: {text}");
+
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            clearance_mm: Some(10.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains(
+            "heights.clearance_mm is 10 mm, below the 15 mm safe_z_mm of operation `Panel`"
+        ),
+        "{}",
+        stderr(&out)
+    );
+
+    // The plaque as the build before #283 saved it (version 11, grblHAL
+    // v2), against the expected programs of that build.
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/heights-migration/plaque.dcv"),
+        &dcv,
+    )
+    .expect("corpus plaque copied");
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_corpus_programs(&dir, "plaque", "heights unset");
+    assert!(
+        !stdout(&out).contains("home the machine"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Design addendum A7: `export` says to home the machine when its
+/// programs lift with `G53`, since a machine position means nothing on an
+/// unhomed machine and DreamCarve cannot check; with one program per tool
+/// run, once for all of them. Without the setting it says nothing.
+#[test]
+fn export_prints_home_note() {
+    let dir = work_dir("export_prints_home_note");
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert_eq!(
+        text.matches(
+            "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53)."
+        )
+        .count(),
+        1,
+        "{text}"
+    );
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plaque.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains(
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53)."
+        ),
+        "{}",
+        stdout(&out)
+    );
+    plaque_with_heights(&dir, dc_project::Heights::unset());
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        !stdout(&out).contains("home the machine"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// #283: the repository's corpus of version 11 projects, saved with
+/// placed tabs by the build before #283 (`tabs place` on each project of
+/// the tabs-migration corpus), with the programs they export.
+fn heights_migration_corpus() -> Vec<(String, PathBuf)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/heights-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// #283, design addendum A7: every version 11 project of the corpus
+/// migrates to version 12 with its heights unset and exports byte for
+/// byte the programs the build before #283 exported (the tabs-migration
+/// expected programs, which that build reproduced), as loaded and after
+/// it is saved at version 12.
+#[test]
+fn version_11_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_11_projects_export_byte_identical_programs");
+    let corpus = heights_migration_corpus();
+    assert_eq!(corpus.len(), 16, "{corpus:?}");
+    for (name, path) in corpus {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(text.contains("\"version\": 11,"), "{name} is version 11");
+        assert!(!text.contains("\"heights\""), "{name} has no heights");
+
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "version 11");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        assert_eq!(project.heights, dc_project::Heights::unset(), "{name}");
+        std::fs::write(dir.join(&file), save(&project).expect("saves")).expect("dcv written");
+        for entry in std::fs::read_dir(&dir).expect("dir readable") {
+            let path = entry.expect("entry").path();
+            if path.extension().is_some_and(|x| x == "nc") {
+                std::fs::remove_file(path).expect("program removed");
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "version 12");
+    }
 }

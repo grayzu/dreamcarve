@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -12,6 +12,11 @@
   "origin": {
     "xy": "bottom_left",
     "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
   },
   "tools": [
     {

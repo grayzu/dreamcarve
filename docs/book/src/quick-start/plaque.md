@@ -59,11 +59,11 @@ Wrote plaque.dcv: stock 170.00 × 120.00 mm, post-processor grblhal, 9 shape(s) 
 1 shape(s) are open paths and are not cut; `dreamcarve check` lists them.
 Values to set; export refuses until every one is set:
 plaque.dcv:10:21: stock.thickness_mm is not set (mm)
-plaque.dcv:24:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-plaque.dcv:25:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-plaque.dcv:26:14: tools[t1].rpm is not set (RPM) for tool `Set me`
-plaque.dcv:27:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-plaque.dcv:50:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
+plaque.dcv:29:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+plaque.dcv:30:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+plaque.dcv:31:14: tools[t1].rpm is not set (RPM) for tool `Set me`
+plaque.dcv:32:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
+plaque.dcv:55:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
 Next: edit plaque.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check plaque.dcv`.
 ```
 
@@ -350,7 +350,7 @@ dreamcarve check plaque.dcv
 ```
 
 ```text
-plaque.dcv:17:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+plaque.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
@@ -387,7 +387,7 @@ dreamcarve export plaque.dcv
 ```
 
 ```text
-plaque.dcv:17:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+plaque.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size

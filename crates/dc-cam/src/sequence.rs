@@ -71,8 +71,14 @@ pub struct SequenceInput<'a> {
     /// its freeing pass, and under full depth first before `encloser`
     /// starts at all. Pairs naming shapes with no blocks are ignored.
     pub containment: &'a [(ShapeRef, ShapeRef)],
-    /// Absolute safe Z, mm: every rapid that moves in XY runs here.
+    /// Absolute safe Z, mm: every rapid that moves in XY between blocks of
+    /// one instance (passes, holes, notches) runs here.
     pub safe_z_mm: f64,
+    /// Absolute clearance Z, mm (#283; design addendum A7): a rapid that
+    /// moves in XY between blocks of different instances runs here. The
+    /// project's `heights.clearance_mm` above the stock top, or
+    /// `safe_z_mm` when that is unset; never below `safe_z_mm`.
+    pub clearance_z_mm: f64,
     /// The stock top, mm: a rapid straight down to a descent may stop
     /// [`ENTRY_CLEARANCE_MM`] above it anywhere (S2, #214).
     pub stock_top_mm: f64,
@@ -91,6 +97,21 @@ pub struct SequenceInput<'a> {
     /// rapid straight down may stop [`ENTRY_CLEARANCE_MM`] above the
     /// floors they cut, as above the toolpath's own (S2, #227).
     pub cut_before: &'a [Move],
+}
+
+/// The clearance Z, mm, absolute, for [`SequenceInput::clearance_z_mm`]
+/// (#283; design addendum A7): the project's `heights.clearance_mm` above
+/// the stock top at `thickness_mm`, or `safe_z_mm` when it is unset. Never
+/// below `safe_z_mm`: validation refuses a clearance below an enabled
+/// operation's safe Z, and a link between parts is never lower than one
+/// between passes whatever a caller passes.
+#[must_use]
+pub fn clearance_z_mm(project: &dc_project::Project, thickness_mm: f64, safe_z_mm: f64) -> f64 {
+    project
+        .heights
+        .clearance_mm
+        .filter(|c| c.is_finite())
+        .map_or(safe_z_mm, |c| (thickness_mm + c).max(safe_z_mm))
 }
 
 /// Longest gap between sample points when checking that a stay-down link
@@ -124,7 +145,8 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// and is at most `tool_diameter_mm + stepover_mm` long, which runs to
 /// `b`'s entry and skips `b`'s descent (the tool is already at `b`'s Z in
 /// cleared material); otherwise a rapid up to safe Z, a rapid in XY, and
-/// the descent. A block's empty
+/// the descent, or, between blocks of different instances, the same at
+/// the clearance Z (#283). A block's empty
 /// descent is a straight plunge at the plunge rate; its own descent moves
 /// are written as given, from `descent_from_z_mm`: below safe Z the tool
 /// gets there by a rapid straight down that stops in the air (S2 as
@@ -415,7 +437,8 @@ enum Link {
     InColumn,
     /// A straight cut at feed through cleared material at the current Z.
     StayDown,
-    /// Up to safe Z, across, and down.
+    /// Up to safe Z (the clearance Z to another instance), across, and
+    /// down.
     Retract,
 }
 
@@ -456,11 +479,18 @@ impl<'a> Emitter<'a, '_> {
                     return;
                 }
                 Link::Retract => {
-                    self.push(Move::rapid(Point3::new(current.x, current.y, safe_z)));
+                    // #283: between parts at the clearance height, between
+                    // passes and holes of one part at safe Z.
+                    let link_z = if previous.shape.instance == block.shape.instance {
+                        safe_z
+                    } else {
+                        self.input.clearance_z_mm.max(safe_z)
+                    };
+                    self.push(Move::rapid(Point3::new(current.x, current.y, link_z)));
                     self.push(Move::rapid(Point3::new(
                         block.descent_from.x,
                         block.descent_from.y,
-                        safe_z,
+                        link_z,
                     )));
                 }
             },
@@ -863,6 +893,7 @@ mod tests {
             order,
             containment,
             safe_z_mm: SAFE_Z_MM,
+            clearance_z_mm: SAFE_Z_MM,
             stock_top_mm: THICKNESS_MM,
             tool_diameter_mm: DIAMETER_MM,
             stepover_mm: 0.0,
@@ -1116,6 +1147,126 @@ mod tests {
             let z = if down { THICKNESS_MM + 1.0 } else { SAFE_Z_MM };
             assert!((mv.to.z - z).abs() <= EPS_MM, "{mv:?}");
         }
+    }
+
+    /// The clearance Z of the #283 tests: 20 mm above the stock top, well
+    /// above `SAFE_Z_MM`.
+    const CLEARANCE_Z_MM: f64 = THICKNESS_MM + 20.0;
+
+    /// #283, design addendum A7: a link between blocks of different
+    /// instances rises to the clearance Z and crosses there; S2 still
+    /// holds (the rapid down stops 1 mm above the stock, then the plunge).
+    /// Two squares, each its own instance: the link from `a` to `b` is a
+    /// rapid up to the clearance Z, a rapid in XY at it, then the descent.
+    #[test]
+    fn links_between_instances_rise_to_clearance() {
+        let blocks = [
+            squares("a", 0.0, 0.0, 20.0, 1),
+            squares("b", 50.0, 0.0, 20.0, 1),
+        ]
+        .concat();
+        let mut sequenced = input(blocks, MachiningOrder::FullDepthFirst, &[]);
+        sequenced.clearance_z_mm = CLEARANCE_Z_MM;
+        let tp = run(&sequenced);
+        let last_cut_of_a = 2 + 4;
+        let m = &tp.moves;
+        assert_eq!(m[last_cut_of_a].to, Point3::new(0.0, 0.0, 4.0));
+        assert_eq!(
+            m[last_cut_of_a + 1],
+            Move::rapid(Point3::new(0.0, 0.0, CLEARANCE_Z_MM))
+        );
+        assert_eq!(
+            m[last_cut_of_a + 2],
+            Move::rapid(Point3::new(50.0, 0.0, CLEARANCE_Z_MM))
+        );
+        assert_eq!(
+            m[last_cut_of_a + 3],
+            Move::rapid(Point3::new(50.0, 0.0, THICKNESS_MM + 1.0))
+        );
+        assert_eq!(
+            m[last_cut_of_a + 4],
+            Move::linear(Point3::new(50.0, 0.0, 4.0), PLUNGE_MM_MIN)
+        );
+        // Every XY rapid between the two runs at the clearance Z; the
+        // first approach and the last retract stay at safe Z, for the
+        // emitter to rise from (design addendum A7, "Emitter").
+        let xy_rapids: Vec<&Move> = m
+            .iter()
+            .zip(m.iter().skip(1))
+            .filter(|(a, b)| b.is_rapid() && a.to.xy().distance_to(b.to.xy()) > EPS_MM)
+            .map(|(_, b)| b)
+            .collect();
+        assert_eq!(xy_rapids.len(), 1, "{m:?}");
+        assert!(
+            (xy_rapids[0].to.z - CLEARANCE_Z_MM).abs() <= EPS_MM,
+            "{m:?}"
+        );
+        assert_eq!(m[0], Move::rapid(Point3::new(0.0, 0.0, SAFE_Z_MM)));
+        assert_eq!(
+            m.last(),
+            Some(&Move::rapid(Point3::new(50.0, 0.0, SAFE_Z_MM)))
+        );
+    }
+
+    /// One instance's square outline (profile 0) and a square hole in it
+    /// (profile 1).
+    fn part_square(profile: usize, x: f64, y: f64, size: f64, passes: usize) -> Vec<CutBlock> {
+        squares("part", x, y, size, passes)
+            .into_iter()
+            .map(|mut b| {
+                b.shape.profile = profile;
+                b
+            })
+            .collect()
+    }
+
+    /// #283, design addendum A7: links within one instance, between its
+    /// passes and between its hole and its outline, stay at safe Z, as
+    /// Fusion's retract height does, even with a clearance Z set. The hole
+    /// is cut first (O1), each square in two passes with the second
+    /// starting where the first ended (no link), and the one retract from
+    /// the hole to the outline crosses at safe Z.
+    #[test]
+    fn passes_of_one_instance_link_at_safe_z() {
+        let outline = part_square(0, 0.0, 0.0, 100.0, 2);
+        let hole = part_square(1, 40.0, 40.0, 20.0, 2);
+        let containment = vec![(hole[0].shape.clone(), outline[0].shape.clone())];
+        let blocks = [outline, hole].concat();
+        let mut sequenced = input(blocks, MachiningOrder::FullDepthFirst, &containment);
+        sequenced.clearance_z_mm = CLEARANCE_Z_MM;
+        let tp = run(&sequenced);
+        assert!(
+            tp.moves.iter().all(|mv| mv.to.z <= SAFE_Z_MM + EPS_MM),
+            "nothing rises above safe Z: {:?}",
+            tp.moves
+        );
+        let crossings: Vec<&Move> = tp
+            .moves
+            .iter()
+            .zip(tp.moves.iter().skip(1))
+            .filter(|(a, b)| b.is_rapid() && a.to.xy().distance_to(b.to.xy()) > EPS_MM)
+            .map(|(_, b)| b)
+            .collect();
+        assert_eq!(crossings.len(), 1, "{:?}", tp.moves);
+        assert_eq!(crossings[0].to, Point3::new(0.0, 0.0, SAFE_Z_MM));
+        // Against the same blocks as two instances, which do rise.
+        let mut apart = sequenced.clone();
+        for block in &mut apart.blocks {
+            if block.shape.profile == 1 {
+                block.shape.instance = InstanceId::new("other");
+            }
+        }
+        let other_containment =
+            vec![(apart.blocks[2].shape.clone(), apart.blocks[0].shape.clone())];
+        apart.containment = &other_containment;
+        let tp = run(&apart);
+        assert!(
+            tp.moves
+                .iter()
+                .any(|mv| (mv.to.z - CLEARANCE_Z_MM).abs() <= EPS_MM),
+            "{:?}",
+            tp.moves
+        );
     }
 
     fn region(x: f64, y: f64, size: f64) -> Region {

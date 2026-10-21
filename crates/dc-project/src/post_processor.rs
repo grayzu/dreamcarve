@@ -267,6 +267,13 @@ pub struct WorkCoordinates {
     /// Command selecting the WCS, for example `G54`; `None` emits nothing.
     #[serde(deserialize_with = "Option::deserialize")]
     pub select_command: Option<String>,
+    /// The non-modal command that makes one move in machine coordinates,
+    /// `G53`, where the controller's documentation or source shows it
+    /// (#283; `definitions/README.md`, "Machine-coordinate moves"). The
+    /// program writes it only as `G53 G0 Z…`, for a project's
+    /// `heights.tool_change_machine_z_mm`; `None` refuses that height.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub machine_command: Option<String>,
 }
 
 /// How arc centres are written.
@@ -1077,6 +1084,7 @@ mod tests {
             },
             work_coordinates: WorkCoordinates {
                 select_command: Some("G54".into()),
+                machine_command: None,
             },
             motion: Motion {
                 rapid_command: "G0".into(),
@@ -1331,7 +1339,7 @@ mod tests {
 
     /// A current-version project whose `post_processor` is the GRBL
     /// reference with the default settings.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v11/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v12/sample.dcv");
 
     /// The reference block as the project writes it, keys in order.
     const REFERENCE_BLOCK: &str = r#"{
@@ -1435,6 +1443,10 @@ mod tests {
         let mut value: Value = serde_json::from_str(text).unwrap();
         value["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
         value["use_canned_cycles"] = Value::from(false);
+        // #283: both document `G53` (`definitions/README.md`,
+        // "Machine-coordinate moves"); nothing writes it unless a project
+        // sets the height.
+        value["work_coordinates"]["machine_command"] = Value::from("G53");
         if let Some(cycles) = value["canned_cycles"].as_object_mut() {
             cycles.insert("reentry_gap_mm".into(), Value::Null);
         }
@@ -1641,27 +1653,28 @@ mod tests {
     #[test]
     fn released_definition_versions_are_unchanged() {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
-        // `default_settings.use_canned_cycles` reached every version (a
-        // schema-wide field; see `definitions/README.md`, "Versions").
+        // `default_settings.use_canned_cycles` reached every version, and
+        // in #283 when `work_coordinates.machine_command` did (schema-wide
+        // fields; see `definitions/README.md`, "Versions").
         const PINNED: [(&str, u64); 13] = [
-            ("grblhal/v1.json", 0xac47_0795_847b_c94d),
+            ("grblhal/v1.json", 0x4069_e336_d88c_fe81),
             // #171: the project name no longer opens a comment.
-            ("grblhal/v2.json", 0x0ee4_d80e_2afc_557c),
+            ("grblhal/v2.json", 0xabe7_6c89_c5f8_6bf8),
             // #279: the header cancels canned-cycle motion and cutter
             // compensation (`G80`, `G40`).
-            ("grblhal/v3.json", 0x4a20_1e24_454c_d6da),
-            ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
-            ("grbl/v2.json", 0x355c_00fe_3f6a_a808),
-            ("grbl/v3.json", 0x73ad_5169_aa8e_3d12),
+            ("grblhal/v3.json", 0x341b_511e_68ea_cdde),
+            ("grbl/v1.json", 0xfa5f_26f9_ddd0_790f),
+            ("grbl/v2.json", 0x3970_4e64_8e3c_4d04),
+            ("grbl/v3.json", 0x5696_f0ba_8779_d54e),
             // Slice 17 (#164).
-            ("linuxcnc/v1.json", 0x9d07_5dad_8ee8_1225),
+            ("linuxcnc/v1.json", 0xc43a_54b2_0f46_2fe9),
             // #286: no `G49` in the header.
-            ("linuxcnc/v2.json", 0x21ab_46cc_0201_105b),
-            ("mach3/v1.json", 0x5217_9912_0119_4b63),
-            ("mach3/v2.json", 0x6abe_6423_dd20_d4b1),
-            ("uccnc/v1.json", 0x1866_9d4e_236b_e202),
-            ("uccnc/v2.json", 0x6a6c_3a9d_311e_1148),
-            ("generic/v1.json", 0xfa66_bbf8_af00_4d46),
+            ("linuxcnc/v2.json", 0x7608_f5d6_1b74_9cd7),
+            ("mach3/v1.json", 0xeff3_be07_97a2_28bf),
+            ("mach3/v2.json", 0x7604_07ca_afcf_53d5),
+            ("uccnc/v1.json", 0x1c80_d6fb_1d78_ab36),
+            ("uccnc/v2.json", 0xfae6_efe4_6cee_ccbc),
+            ("generic/v1.json", 0x0fa6_f809_7b33_a95c),
         ];
         let bundled = bundled_definitions().unwrap();
         let paths: Vec<&str> = bundled.iter().map(|d| d.path).collect();

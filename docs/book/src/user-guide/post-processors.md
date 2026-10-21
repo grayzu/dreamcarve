@@ -422,6 +422,111 @@ interoperability only:
 Senders change; check yours on a test file before you rely on it. With the
 default, one program per tool run, none of this matters.
 
+## Heights: clearance, tool change and park
+
+By default a program has one height above the work, each operation's
+`safe_z_mm`: it crosses between parts and between operations at it, stops
+for a tool change at it, and ends 5 mm or so above the last cut. Three
+settings in the project's [`heights`](project-file.md#heights) change that.
+Each is `null` (unset) until you set it, and with all three unset the
+program is exactly what it was before they existed.
+
+| Setting | What it does | Like |
+| --- | --- | --- |
+| `clearance_mm` | Above the stock top. Moves between parts, between operations, before a tool change and at the end rise to it. Moves between the passes of one part stay at that operation's `safe_z_mm`. It must be at least every enabled operation's `safe_z_mm`. | VCarve's Clearance gap (Z1); Fusion's clearance height, with `safe_z_mm` as its retract height. |
+| `tool_change_machine_z_mm` | A height in machine coordinates. Before every tool-change stop and at the end of every program, the bit lifts to it with `G53 G0 Z…`. grblHAL and GRBL only. | Fusion's tool-change retract to the machine's home Z. |
+| `park` | `{ "x_mm": …, "y_mm": … }`, in project coordinates (from the stock's front left corner, like the shapes). At the end the bit rises to the clearance height, moves there, then lifts to the machine Z if set. | VCarve's Home position, without its Z. |
+
+```json
+"heights": {
+  "clearance_mm": 20.0,
+  "tool_change_machine_z_mm": -5.0,
+  "park": { "x_mm": 0.0, "y_mm": 0.0 }
+}
+```
+
+With these on grblHAL and one program with `M6`, the tool change of the
+plaque reads:
+
+```text
+G0 Z15.000
+Z20.000
+G53 G0 Z-5.000
+M5
+( Operation 5: Border and squiggle )
+( Tool 2: 1/8 end mill )
+T2 M6 (MSG, Fit T2 1/8 end mill. Set Z zero, then resume.)
+```
+
+and its end:
+
+```text
+Z20.000
+X0.000 Y0.000
+G53 G0 Z-5.000
+M5
+M30
+```
+
+The move to the park point comes before the machine-coordinate lift, at a
+height the safety check can follow. After the lift the program does not
+know where the bit is in work coordinates, so after the tool change it
+rises to the clearance height, from the new Z zero, before it moves across
+the work. With one program per tool run, every program ends with the park
+and the lift, so the lift is where you change bits on GRBL too.
+
+**Home the machine first, with soft limits on.** A machine coordinate
+means something only on a machine that has been homed since it was
+switched on. DreamCarve cannot check that, so when a program has a lift
+`export` says:
+
+```text
+Before you start: home the machine; this program moves to machine Z -5.000 mm (G53).
+```
+
+and the program's header says it too (on GRBL v3, after `;`):
+
+```text
+( Lifts to machine Z with G53: home the machine before running )
+```
+
+Turn soft limits on (`$20=1`): then a machine Z outside the travel stops
+the controller with an alarm before it moves, instead of driving the bit
+into a limit. A machine that homes Z downward, to the bottom of its travel
+(possible on GRBL built with `HOMING_FORCE_SET_ORIGIN`, or grblHAL with
+"force set origin"), has no machine Z below 0 inside its travel, so the
+setting cannot be used there.
+
+**Choosing the machine Z.** grblHAL and GRBL home Z to the top of its
+travel and call that just below machine Z 0: `−pulloff` (`$27`), or 0
+without hard limits. So `tool_change_machine_z_mm` must be below 0, which
+`check` enforces, and should be at least the pull-off below it: with soft
+limits on, a target above the homed position is an alarm. Pick a height
+above your clearance height on every job, so the lift only ever goes up:
+the program writes it at the clearance height, and a machine Z lower than
+that would move the bit down, straight down at the spot it is over.
+`check` also refuses a machine Z so close to 0 that the program would
+write it as 0 (under 0.0005 mm in a millimetre program, 0.00127 mm in an
+inch one).
+
+With manual spindle control, the program stops for you to switch the
+router off right after the lift. You may jog there, so before the tool
+change it lifts to the machine Z again.
+
+**Only where `G53` is documented.** The lift is written only for a
+post-processor whose definition documents `G53`
+(`work_coordinates.machine_command`): grblHAL and GRBL, every version,
+checked against their source (definitions README, "Machine-coordinate
+moves"). On LinuxCNC, Mach3, UCCNC and generic, `check` and `export` refuse
+`tool_change_machine_z_mm` until their documents are checked; the
+clearance height and the park point work on every post-processor.
+
+**Canned cycles.** A Drill whose holes are separate parts crosses between
+them at the clearance height, which a canned cycle's `G98` return cannot
+do (it returns to the height of the first hole). With a clearance height
+set, such a Drill is written as plain moves, with the warning
+`canned_cycle_expanded` (`clearance_height`).
+
 ## grblHAL and GRBL compared
 
 The motion is identical. Only these differ:

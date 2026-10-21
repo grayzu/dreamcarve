@@ -56,6 +56,10 @@ pub struct Project {
     pub stock: Stock,
     /// Where the machine's work zero sits relative to the stock.
     pub origin: MachineOrigin,
+    /// The clearance, tool-change and park heights (#283; functional
+    /// spec, capability 33). Each is optional; unset, the program is as
+    /// before format version 12.
+    pub heights: Heights,
     /// Tools embedded in the project (ADR-0002).
     pub tools: Vec<Tool>,
     /// Machining operations, in cutting order.
@@ -71,6 +75,61 @@ pub struct Project {
     /// Canonical shapes, keyed by id. Last in the file, since it is the
     /// bulk of it and rarely edited by hand.
     pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,
+}
+
+/// Heights the program moves to between parts, at a tool change and at
+/// the end (#283; `docs/specs/phase-2/design.md`, "Phase 2 addendum
+/// (#73)", A7). After VCarve's Material Setup ("Rapid Z Gaps above
+/// Material", "Home / Start Position") and Fusion's clearance and retract
+/// heights. Every field is `None` until the user sets it, and a project
+/// with all three unset exports what it did before they existed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Heights {
+    /// Above the stock top, millimetres: the height of links between parts
+    /// (feature instances) within an operation, between operations, at a
+    /// tool change and at the end. Each operation's `safe_z_mm` stays the
+    /// retract between passes of one part. At least every enabled
+    /// operation's `safe_z_mm`.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub clearance_mm: Option<f64>,
+    /// Machine Z, millimetres (written in the program's units), that
+    /// `G53 G0 Z…` lifts to before every tool-change stop and at the end
+    /// of every program. Below 0, since grblHAL and GRBL home Z to a
+    /// negative machine position, and only on a definition whose
+    /// `work_coordinates.machine_command` is set. Needs a homed machine.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub tool_change_machine_z_mm: Option<f64>,
+    /// Where the program ends in XY, project coordinates: the bit rises to
+    /// the clearance height, rapids here, then makes the machine-Z lift if
+    /// set. VCarve's Home position without its Z.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub park: Option<ParkXy>,
+}
+
+impl Heights {
+    /// All three unset, as `init` writes them and the version 12
+    /// migration adds them.
+    #[must_use]
+    pub const fn unset() -> Self {
+        Self {
+            clearance_mm: None,
+            tool_change_machine_z_mm: None,
+            park: None,
+        }
+    }
+}
+
+/// A point in project space, millimetres (Y-up): where a program parks.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParkXy {
+    /// X, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub x_mm: f64,
+    /// Y, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub y_mm: f64,
 }
 
 /// Display units for the CLI and new projects.

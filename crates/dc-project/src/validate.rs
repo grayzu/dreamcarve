@@ -38,6 +38,11 @@
 //! Drill with a cutter other than a drill or end mill; corner relief on a
 //! tool with no step-down; a V-bit engraving deeper than its cone.
 //!
+//! #283 (design addendum A7) adds the heights. Errors: a clearance height
+//! below an enabled operation's safe Z; a tool-change machine Z of 0 or
+//! more, or on a definition that documents no `G53`; a park point beyond
+//! the coordinate limit.
+//!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
@@ -366,6 +371,36 @@ pub enum Problem {
         /// The tool's display name.
         tool_name: String,
     },
+    /// The clearance height is below an enabled operation's safe Z (#283):
+    /// a link between parts would run lower than that operation's links
+    /// between passes. An error.
+    ClearanceBelowSafeZ {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `heights.clearance_mm`.
+        clearance_mm: f64,
+        /// The operation's `safe_z_mm`.
+        safe_z_mm: f64,
+    },
+    /// `heights.tool_change_machine_z_mm` is 0 or above, or rounds to 0 in
+    /// the program's decimal places (#283). grblHAL
+    /// and GRBL home Z to the top of its travel at a negative machine
+    /// position (grblHAL `machine_limits.c`, GRBL `limits.c`), so a Z of 0
+    /// or more is past the limit switch. An error.
+    MachineZNotBelowHome {
+        /// The value, mm.
+        machine_z_mm: f64,
+    },
+    /// `heights.tool_change_machine_z_mm` is set, but the post-processor
+    /// documents no machine-coordinate move (`work_coordinates.
+    /// machine_command` is `null`), so the lift cannot be written (#283).
+    /// An error.
+    MachineZNeedsG53 {
+        /// The post-processor's id.
+        post: String,
+    },
     /// An enabled Engrave with a V-bit cuts deeper than the bit's cone is
     /// tall (#117), so the shank, not the cone, would cut. A warning.
     EngraveDeeperThanCone {
@@ -435,6 +470,9 @@ impl Problem {
             Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
             Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
             Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
+            Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
+            Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
+            Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
         }
     }
 
@@ -456,7 +494,10 @@ impl Problem {
             | Self::DuplicateToolNumber { .. }
             | Self::RestOfInvalid { .. }
             | Self::HelixNeedsWasteSide { .. }
-            | Self::CannedCyclesUnsupported { .. } => Severity::Error,
+            | Self::CannedCyclesUnsupported { .. }
+            | Self::ClearanceBelowSafeZ { .. }
+            | Self::MachineZNotBelowHome { .. }
+            | Self::MachineZNeedsG53 { .. } => Severity::Error,
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -564,11 +605,17 @@ impl Problem {
             Self::EngraveDeeperThanCone { operation, .. } => {
                 Some(format!("operations[{operation}].depth_mm"))
             }
+            Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
+            Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
+                Some(MACHINE_Z.to_owned())
+            }
         }
     }
 }
 
 const STOCK_THICKNESS: &str = "stock.thickness_mm";
+const CLEARANCE: &str = "heights.clearance_mm";
+const MACHINE_Z: &str = "heights.tool_change_machine_z_mm";
 
 /// The unit of a value the user must supply, for "is not set" messages.
 fn unset_unit(field: &str) -> &'static str {
@@ -779,6 +826,23 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) engraves {depth_mm} mm deep with tool `{tool_name}`, whose cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
             ),
+            Self::ClearanceBelowSafeZ {
+                operation,
+                name,
+                clearance_mm,
+                safe_z_mm,
+            } => write!(
+                f,
+                "{CLEARANCE} is {clearance_mm} mm, below the {safe_z_mm} mm safe_z_mm of operation `{name}` (`{operation}`); links between parts would run lower than its links between passes, so raise the clearance to at least {safe_z_mm} mm"
+            ),
+            Self::MachineZNotBelowHome { machine_z_mm } => write!(
+                f,
+                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL home Z at the top of its travel, where machine Z is just below 0, so the lift must be below 0, at least the homing pull-off below it"
+            ),
+            Self::MachineZNeedsG53 { post } => write!(
+                f,
+                "{MACHINE_Z} is set, but post-processor `{post}` does not document a machine-coordinate move (G53), so the lift cannot be written; set it to null"
+            ),
         }
     }
 }
@@ -827,6 +891,7 @@ impl Validator {
             self.finite("origin.xy.custom.x_mm", x_mm);
             self.finite("origin.xy.custom.y_mm", y_mm);
         }
+        self.heights(p);
 
         // In the order the file holds them (#76): settings, then geometry.
         // Tools an enabled operation cuts with; only their rates are required.
@@ -1470,6 +1535,60 @@ impl Validator {
             self.out_of_range(field, lead.sweep_deg, SWEEP);
         }
         self.non_negative(&format!("{at}.lead.overcut_mm"), lead.overcut_mm);
+    }
+
+    /// #283, design addendum A7: the clearance height is positive and at
+    /// least every enabled operation's safe Z; the tool-change machine Z is
+    /// below 0 and only on a definition that documents `G53`; the park
+    /// point is within the coordinate limit.
+    fn heights(&mut self, p: &Project) {
+        let heights = &p.heights;
+        if let Some(clearance_mm) = heights.clearance_mm
+            && self.coordinate(CLEARANCE, clearance_mm)
+        {
+            if clearance_mm <= 0.0 {
+                self.out_of_range(CLEARANCE.to_owned(), clearance_mm, POSITIVE);
+            }
+            for op in p.operations.iter().filter(|op| op.enabled()) {
+                let safe_z_mm = op.safe_z_mm();
+                if safe_z_mm.is_finite() && clearance_mm < safe_z_mm {
+                    self.problems.push(Problem::ClearanceBelowSafeZ {
+                        operation: op.id().clone(),
+                        name: op.name().to_owned(),
+                        clearance_mm,
+                        safe_z_mm,
+                    });
+                }
+            }
+        }
+        if let Some(machine_z_mm) = heights.tool_change_machine_z_mm
+            && self.coordinate(MACHINE_Z, machine_z_mm)
+        {
+            // Below 0 as the program writes it: not one that rounds to 0
+            // in its decimal places (#304 review).
+            let half_quantum_mm = p.post_processor.decimal_places.quantum_mm(p.display_units) / 2.0;
+            if machine_z_mm >= -half_quantum_mm {
+                self.problems
+                    .push(Problem::MachineZNotBelowHome { machine_z_mm });
+            }
+            // A reference that names no bundled definition fails to load;
+            // only a project built in code gets here without one.
+            let documents_g53 = p.post_processor.definition().is_ok_and(|d| {
+                d.post_processor()
+                    .work_coordinates
+                    .machine_command
+                    .is_some()
+            });
+            if !documents_g53 {
+                self.problems.push(Problem::MachineZNeedsG53 {
+                    post: p.post_processor.id.clone(),
+                });
+            }
+        }
+        if let Some(park) = heights.park {
+            self.coordinate("heights.park.x_mm", park.x_mm);
+            self.coordinate("heights.park.y_mm", park.y_mm);
+        }
     }
 
     /// Reports `field` if `value` is not finite; returns whether it is.
@@ -3757,5 +3876,160 @@ mod tests {
                 "{expected} in {kinds:?}"
             );
         }
+    }
+
+    // #283: the clearance, tool-change and park heights.
+
+    /// Design addendum A7: the clearance height is for links between
+    /// parts, so it may not be below an enabled operation's retract
+    /// between passes. `clearance_mm: 3` with the sample Profile's
+    /// `safe_z_mm: 5` names the operation, at the clearance field; 5 is
+    /// valid, and a disabled operation does not count.
+    #[test]
+    fn clearance_below_safe_z_is_error() {
+        let mut p = sample_project();
+        p.heights.clearance_mm = Some(3.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ClearanceBelowSafeZ {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                clearance_mm: 3.0,
+                safe_z_mm: 5.0,
+            }]
+        );
+        assert!(problems[0].is_error());
+        assert_eq!(problems[0].field().as_deref(), Some("heights.clearance_mm"));
+        assert!(
+            problems[0].to_string().contains("Cut out"),
+            "{}",
+            problems[0]
+        );
+        let text = crate::save(&p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        assert!(map.locate("heights.clearance_mm").is_some(), "{text}");
+
+        p.heights.clearance_mm = Some(5.0);
+        assert_eq!(validate(&p), vec![]);
+        p.heights.clearance_mm = Some(3.0);
+        profile_mut(&mut p).enabled = false;
+        assert!(
+            !validate(&p)
+                .iter()
+                .any(|q| matches!(q, Problem::ClearanceBelowSafeZ { .. })),
+            "a disabled operation is not cut"
+        );
+    }
+
+    /// Design addendum A7: grblHAL and GRBL home Z at the top of its
+    /// travel, to a negative machine position (grblHAL `machine_limits.c`
+    /// 116-140, GRBL `limits.c` 382), so a lift to machine Z 0 or above
+    /// goes past the limit switch. `0` and `2` are errors; `-5` is valid.
+    #[test]
+    fn machine_z_must_be_below_zero() {
+        for machine_z_mm in [0.0, 2.0] {
+            let mut p = sample_project();
+            p.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::MachineZNotBelowHome { machine_z_mm }],
+                "{machine_z_mm}"
+            );
+            assert!(problems[0].is_error());
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("heights.tool_change_machine_z_mm")
+            );
+        }
+        let mut p = sample_project();
+        p.heights.tool_change_machine_z_mm = Some(-5.0);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #304 review: the program writes the machine Z to its decimal places
+    /// (3 in mm, 4 in inches), so one that rounds to 0 there is the same
+    /// lift past the limit switch: −0.0004 mm is refused in a mm program,
+    /// −0.001 mm in an inch program (under half of 0.0001 in, 0.00127
+    /// mm), while −0.001 mm and −0.0013 mm write −0.001 and −0.0001.
+    #[test]
+    fn machine_z_rounding_to_zero_is_error() {
+        for (units, machine_z_mm, refused) in [
+            (crate::Units::Mm, -0.0004, true),
+            (crate::Units::Mm, -0.001, false),
+            (crate::Units::Inch, -0.001, true),
+            (crate::Units::Inch, -0.0013, false),
+        ] {
+            let mut p = sample_project();
+            p.display_units = units;
+            p.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+            let problems = validate(&p);
+            let expected = if refused {
+                vec![Problem::MachineZNotBelowHome { machine_z_mm }]
+            } else {
+                vec![]
+            };
+            assert_eq!(problems, expected, "{units:?} {machine_z_mm}");
+        }
+    }
+
+    /// Design addendum A7: the lift is `G53 G0 Z…`, which only a
+    /// definition that documents `G53` may write (`definitions/README.md`,
+    /// "Machine-coordinate moves"). On LinuxCNC, whose documents were not
+    /// checked for it, the setting is an error naming the post-processor;
+    /// on GRBL (the sample's) it is valid.
+    #[test]
+    fn machine_z_needs_g53_definition() {
+        let mut p = sample_project();
+        p.heights.tool_change_machine_z_mm = Some(-5.0);
+        p.post_processor = crate::PostProcessorRef::latest("linuxcnc").unwrap();
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::MachineZNeedsG53 {
+                post: "linuxcnc".into()
+            }]
+        );
+        assert!(problems[0].is_error());
+        assert!(
+            problems[0].to_string().contains("linuxcnc"),
+            "{}",
+            problems[0]
+        );
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("heights.tool_change_machine_z_mm")
+        );
+    }
+
+    /// #283: the park point is a coordinate, within the 6000 mm limit
+    /// (#75); the clearance height is positive.
+    #[test]
+    fn park_and_clearance_are_in_range() {
+        let mut p = sample_project();
+        p.heights.park = Some(crate::ParkXy {
+            x_mm: 7000.0,
+            y_mm: 0.0,
+        });
+        let problems = validate(&p);
+        assert!(
+            matches!(problems.as_slice(), [Problem::OutOfRange { field, .. }] if field == "heights.park.x_mm"),
+            "{problems:?}"
+        );
+        p.heights.park = Some(crate::ParkXy {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        });
+        assert_eq!(validate(&p), vec![]);
+        profile_mut(&mut p).enabled = false;
+        p.heights.clearance_mm = Some(-1.0);
+        let problems = validate(&p);
+        assert!(
+            problems.iter().any(
+                |q| matches!(q, Problem::OutOfRange { field, .. } if field == "heights.clearance_mm")
+            ),
+            "{problems:?}"
+        );
     }
 }

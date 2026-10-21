@@ -223,6 +223,7 @@ mod tests {
                 y: None,
                 z: None,
             },
+            machine_lift: None,
         }
     }
 

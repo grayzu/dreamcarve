@@ -19,6 +19,13 @@
 //! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
 //! the motion the machine makes.
 //!
+//! S16 (#283; `docs/specs/phase-2/functional.md`, "Safety (addendum)"):
+//! the parser reads `G53 G0 Z` lines as machine-coordinate lifts and
+//! refuses any other `G53`; a lift goes to the project's tool-change
+//! machine Z, from at or above safe Z, on a definition that documents
+//! `G53`, and only right before a stop or the end; work Z is unknown after
+//! it.
+//!
 //! S10 (`docs/specs/phase-2/functional.md`): every descending cut falls no
 //! faster than its tool's plunge rate, its slope recomputed from the
 //! written numbers ([`check_descent_rate`]). S9: every cut stays in its
@@ -64,6 +71,18 @@ pub(crate) struct OpSpan<'a> {
     pub lines: Range<usize>,
 }
 
+/// The project's heights the program was written for (#283).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct ProgramHeights {
+    /// `heights.tool_change_machine_z_mm`, the only machine Z a `G53` may
+    /// lift to (S16); `None` refuses every `G53`.
+    pub machine_lift_mm: Option<f64>,
+    /// The clearance height, absolute project Z, mm, when set: each
+    /// operation's first move across the work, every move across outside
+    /// the operations (the park move) and every stop are at or above it.
+    pub clearance_z_mm: Option<f64>,
+}
+
 /// How far the program may depart from the toolpath by design.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Tolerances {
@@ -76,13 +95,18 @@ pub(crate) struct Tolerances {
 }
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S7, S9, S10 and S12, and returns the program's
-/// extents.
+/// in `spans`, against S1–S7, S9, S10, S12 and S16, and returns the
+/// program's extents. `heights` are the project's clearance height and
+/// tool-change machine Z (S2, S16).
 ///
 /// # Errors
 ///
 /// The first violation found, as the matching [`ExportError`].
 #[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the program, how it was written, and what it was written for, each needed"
+)]
 pub(crate) fn check(
     text: &str,
     post: &PostProcessor,
@@ -90,6 +114,7 @@ pub(crate) fn check(
     stock: &Stock,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
     check_parsed(
@@ -99,6 +124,7 @@ pub(crate) fn check(
         stock,
         stock_thickness_mm,
         tolerances,
+        heights,
         spans,
     )
     .map(|(extents, _)| extents)
@@ -106,6 +132,10 @@ pub(crate) fn check(
 
 /// [`check`], also returning the blocks the program parsed into, so the
 /// emitter reads its pauses without parsing the program again (#71).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the program, how it was written, and what it was written for, each needed"
+)]
 pub(crate) fn check_parsed(
     text: &str,
     post: &PostProcessor,
@@ -113,9 +143,18 @@ pub(crate) fn check_parsed(
     stock: &Stock,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<(Extents, Vec<Block>), ExportError> {
-    let blocks = check_rules(text, post, transform, stock_thickness_mm, tolerances, spans)?;
+    let blocks = check_rules(
+        text,
+        post,
+        transform,
+        stock_thickness_mm,
+        tolerances,
+        heights,
+        spans,
+    )?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
         check_reproduces(span, &blocks, post, transform, tolerances)?;
@@ -285,16 +324,18 @@ fn check_on_stock(
     Ok(())
 }
 
-/// Checks `text` against S1–S5 and S10 and returns its blocks.
+/// Checks `text` against S1–S5, S10 and S16 and returns its blocks.
 fn check_rules(
     text: &str,
     post: &PostProcessor,
     transform: &MachineTransform,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
+    let machine_lift_mm = heights.machine_lift_mm;
     // S11: canned cycles are expanded into the moves the controller makes,
     // and every rule below checks those.
     // A controller without units words (UCCNC) reads the program in the
@@ -306,10 +347,14 @@ fn check_rules(
         ..CycleModel::of(post)
     };
     let blocks = parse_program_with(text, &model)?;
+    // S16: `G53` only from a definition that documents it, and only when
+    // the project sets the height it lifts to.
+    let with_g53 = machine_lift_mm.is_some() && post.work_coordinates.machine_command.is_some();
     check_words(
         &blocks,
         changes_tools_in_program(post),
         writes_canned_cycles(post),
+        with_g53,
     )?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
@@ -328,8 +373,59 @@ fn check_rules(
     let mut cut_to: Option<CutTo> = None;
     // S2 (#214): the cuts of the operation being read.
     let mut floors = Floors::new(stock_thickness_mm, tolerances);
+    // S16: the line of the last machine-coordinate lift, while no motion
+    // has followed it, and whether a stop has come since.
+    let mut lifted: Option<(usize, bool)> = None;
+    // S2 for #283: the span of the last move, and whether it has moved
+    // across the work yet.
+    let mut crossing: (Option<usize>, bool) = (None, false);
     for block in &blocks {
         let line = block.line;
+        // S16 (#283): `G53 G0 Z<v>`, to the project's tool-change machine
+        // Z, from a known Z at or above safe Z, where the bit already is.
+        // Work Z is unknown after it, as after a pause.
+        if let Some(z_mm) = block.machine_lift_mm {
+            let Some(expected_mm) = machine_lift_mm else {
+                return Err(ExportError::ForbiddenWord {
+                    line,
+                    word: "G53".to_owned(),
+                });
+            };
+            let tolerance_mm = quantum_mm(post, transform.output_units()) + EPS_MM;
+            if z_mm >= 0.0 || (z_mm - expected_mm).abs() > tolerance_mm {
+                return Err(ExportError::MachineLiftWrongZ {
+                    line,
+                    z_mm,
+                    expected_mm,
+                });
+            }
+            // From a known Z at or above safe Z, or again right after a stop
+            // that followed a lift, with nothing moved since: the user may
+            // have jogged at that stop (manual spindle control: the
+            // router-off pause, then the tool change).
+            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
+            let relift = matches!(lifted, Some((_, true)));
+            if !(relift || router.at_or_above(safe_z_mm)) {
+                return Err(ExportError::MachineLiftNotAtSafeZ { line });
+            }
+            // S5: the Z word is in the units in force, which a user may
+            // have changed at a pause.
+            if !units_set {
+                return Err(match last_pause {
+                    Some(pause_line) => ExportError::MissingSetupAfterPause {
+                        line,
+                        pause_line,
+                        what: "units (G20 or G21)",
+                    },
+                    None => ExportError::MissingSetup {
+                        what: "units (G20 or G21)",
+                    },
+                });
+            }
+            router.z_mm = None;
+            lifted = Some((line, false));
+            continue;
+        }
         if block.has('G', 20.0) || block.has('G', 21.0) {
             units_set = true;
         }
@@ -356,8 +452,15 @@ fn check_rules(
         // Afterwards Z is unknown: the user may have jogged or set Z zero.
         let changes_tool = block.has('M', 6.0);
         if block.has('M', 0.0) || block.has('M', 1.0) || changes_tool {
-            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
-            if !router.at_or_above(safe_z_mm) {
+            // #283: a stop is at the clearance height when it is set.
+            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm)
+                .safe_z_mm
+                .max(heights.clearance_z_mm.unwrap_or(f64::NEG_INFINITY));
+            // S16: or at the machine-coordinate lift, which nothing has
+            // moved from since.
+            if let Some((_, stopped)) = &mut lifted {
+                *stopped = true;
+            } else if !router.at_or_above(safe_z_mm) {
                 return Err(ExportError::PauseNotAtSafeZ { line });
             }
             if manual {
@@ -471,6 +574,43 @@ fn check_rules(
         } else if !floors.allow_approach(mv, transform, router.z_mm, z_after, limits.safe_z_mm) {
             check_rapid(mv, &limits, router.z_mm, z_after)?;
         }
+        // S2 as changed for #283: with a clearance height, an operation's
+        // first move across the work and every one outside the operations
+        // run at or above it. Links within an operation are held to the
+        // toolpath by S6, whose sequencer links parts at it.
+        let span = spans.iter().position(|s| s.lines.contains(&line));
+        if crossing.0 != span || span.is_none() {
+            crossing = (span, false);
+        }
+        let crosses = mv.kind == MotionKind::Rapid
+            && (differs(mv.from.x, mv.to.x) || differs(mv.from.y, mv.to.y));
+        if let Some(clearance_z_mm) = heights.clearance_z_mm
+            && crosses
+            && !crossing.1
+        {
+            let below = |z: Option<(f64, f64)>| match z {
+                Some((z_mm, tolerance_mm)) => {
+                    (z_mm < clearance_z_mm - tolerance_mm).then_some(Some(z_mm))
+                }
+                None => Some(None),
+            };
+            if let Some(z_mm) = below(router.z_mm).or_else(|| below(z_after)) {
+                return Err(ExportError::RapidBelowClearance {
+                    line,
+                    z_mm,
+                    clearance_z_mm,
+                });
+            }
+        }
+        if crosses && span.is_some() {
+            crossing.1 = true;
+        }
+        // S16: a lift comes only right before a stop or the end.
+        if let Some((lift_line, stopped)) = lifted.take()
+            && !stopped
+        {
+            return Err(ExportError::MachineLiftNotBeforeStop { line, lift_line });
+        }
         router.moved(z_after);
     }
     if spindle_on {
@@ -564,8 +704,8 @@ const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
 /// cannot follow, so it is rejected. This also keeps out the words
 /// DreamCarve never sends to GRBL or grblHAL (`dc-project/src/definitions/README.md`,
 /// "Verification"): `M4` needs a direction pin or laser mode, `M7` is
-/// optional on both, and `G28`, `G30`, and `G53` move in machine
-/// coordinates. `M6` is accepted only from a definition whose tool change
+/// optional on both, and `G28` and `G30` move in machine coordinates.
+/// `G53` is accepted only for S16's lift ([`check_words`]). `M6` is accepted only from a definition whose tool change
 /// uses it and whose tool-change mode is `"m6"` ([`TOOL_CHANGE_M`]).
 ///
 /// Four codes only cancel a mode DreamCarve never turns on, or select the
@@ -594,6 +734,8 @@ const CANNED_G: [f64; 6] = [73.0, 81.0, 82.0, 83.0, 98.0, 99.0];
 pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
     post.use_canned_cycles && post.canned_cycles.is_some()
 }
+/// `G53`, accepted on a machine-coordinate lift only (S16).
+const MACHINE_G: [f64; 1] = [53.0];
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
 /// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
 /// `M61`, which sets the current tool number without a stop or a move.
@@ -633,14 +775,27 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 
 /// Rejects every `G` and `M` code not in [`ALLOWED_G`] or [`ALLOWED_M`].
 /// The codes in [`TOOL_CHANGE_M`] are allowed too when the program may
-/// change tools with `M6` (`with_m6`), and those in [`CANNED_G`] when it
-/// may hold canned cycles (`with_canned`).
-fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(), ExportError> {
+/// change tools with `M6` (`with_m6`), those in [`CANNED_G`] when it
+/// may hold canned cycles (`with_canned`), and `G53` on the lines the
+/// parser read as a machine-coordinate lift when the definition documents
+/// it and the project sets the height (`with_g53`, S16).
+fn check_words(
+    blocks: &[Block],
+    with_m6: bool,
+    with_canned: bool,
+    with_g53: bool,
+) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
     for block in blocks {
+        let lift: &[f64] = if with_g53 && block.machine_lift_mm.is_some() {
+            &MACHINE_G
+        } else {
+            &[]
+        };
         for word in &block.words {
             let (allowed, extra): (&[f64], &[f64]) = match word.letter {
+                'G' if !lift.is_empty() => (&ALLOWED_G, lift),
                 'G' => (&ALLOWED_G, canned),
                 'M' => (&ALLOWED_M, tool_change),
                 _ => continue,
@@ -1991,6 +2146,17 @@ mod tests {
         post: PostProcessor,
         control: SpindleControl,
     ) -> Result<(), ExportError> {
+        check_text_lifting(text, post, control, None)
+    }
+
+    /// [`check_text_on`] for a project whose tool-change machine Z is
+    /// `machine_lift_mm` (S16, #283).
+    fn check_text_lifting(
+        text: &str,
+        post: PostProcessor,
+        control: SpindleControl,
+        machine_lift_mm: Option<f64>,
+    ) -> Result<(), ExportError> {
         let (project, op, tool) = fixture();
         let mut post = post;
         post.feed_speed.spindle_control = control;
@@ -2013,6 +2179,10 @@ mod tests {
             Tolerances {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
+            ProgramHeights {
+                machine_lift_mm,
+                clearance_z_mm: None,
             },
             &spans,
         )
@@ -2175,6 +2345,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: project.arc_fit_tolerance_mm,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .unwrap_err();
@@ -2893,6 +3064,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -2922,6 +3094,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: None,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -3195,6 +3368,7 @@ mod tests {
                     flatten_mm: project.flatten_tolerance_mm,
                     arc_fit_mm: project.arc_fit_tolerance_mm,
                 },
+                ProgramHeights::default(),
                 &spans,
             )
             .map(|_| ())
@@ -3554,6 +3728,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: None,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -5399,5 +5574,238 @@ mod tests {
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\n");
         let result = check_against_with(&text, &toolpath, Some(0.01));
         assert!(result.is_err(), "{result:?}");
+    }
+
+    // S16 (#283): machine-coordinate moves.
+
+    /// A program that cuts at the fixture's safe Z (work Z 5), then has
+    /// `tail` after its last retract.
+    fn lift_program(tail: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n{tail}")
+    }
+
+    /// [`check_text_lifting`] on the fixture's GRBL definition, which
+    /// documents `G53` (grbl `gcode.c` 154-156, 635-640), with `lift`.
+    fn check_lift(text: &str, lift: Option<f64>) -> Result<(), ExportError> {
+        let (project, _, _) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        assert!(post.work_coordinates.machine_command.is_some());
+        check_text_lifting(text, post, SpindleControl::Automatic, lift)
+    }
+
+    /// S16: the one machine-coordinate move is `G53 G0 Z<v>`, alone on its
+    /// line. A `G53` with an X word, with `G1`, without `G0`, or with
+    /// another word is refused as G-code the check does not model; the
+    /// lift itself, before the end, is accepted.
+    #[test]
+    fn g53_only_z_alone() {
+        check_lift(&lift_program("G53 G0 Z-5\nM5\n"), Some(-5.0)).unwrap();
+        for line in [
+            "G53 G0 X0",
+            "G53 G1 Z-5",
+            "G53 Z-5",
+            "G53 G0 Z-5 X0",
+            "G53 G0 Z-5 F100",
+            "G53 G53 G0 Z-5",
+            "G0 G53 G0 Z-5",
+        ] {
+            let err = check_lift(&lift_program(&format!("{line}\nM5\n")), Some(-5.0)).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::Unparseable { line: 9, reason } if reason.contains("S16")),
+                "{line}: {err:?}"
+            );
+        }
+    }
+
+    /// S16: work Z is unknown after the lift, as after a pause (S4), so an
+    /// XY rapid right after it is refused (S2), and so is any move before
+    /// the stop or the end that the lift is for. After a stop, a retract
+    /// in work coordinates makes the XY rapid safe again.
+    #[test]
+    fn xy_rapid_after_g53_needs_retract() {
+        let err = check_lift(&lift_program("G53 G0 Z-5\nX10 Y10\nM5\n"), Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::RapidBelowSafeZ {
+                    line: 10,
+                    z_mm: None,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let err = check_lift(&lift_program("G53 G0 Z-5\nG0 Z5\nM5\n"), Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MachineLiftNotBeforeStop {
+                    line: 10,
+                    lift_line: 9
+                }
+            ),
+            "{err:?}"
+        );
+        let stopped = lift_program("G53 G0 Z-5\nM5\nM0\nG21 G90 G54\nG0 Z5\nX10 Y10\n");
+        check_lift(&stopped, Some(-5.0)).unwrap();
+        let unretracted = lift_program("G53 G0 Z-5\nM5\nM0\nG21 G90 G54\nX10 Y10\n");
+        let err = check_lift(&unretracted, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowSafeZ { z_mm: None, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S16: the lift starts from a known Z at or above safe Z, and goes to
+    /// the project's tool-change machine Z, below 0; a stop right after it
+    /// is accepted though work Z is unknown there.
+    #[test]
+    fn g53_lifts_from_safe_z_to_the_project_height() {
+        let low = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG53 G0 Z-5\nM5\n";
+        let err = check_lift(low, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftNotAtSafeZ { line: 8 }),
+            "{err:?}"
+        );
+        let err = check_lift(&lift_program("G53 G0 Z-4\nM5\n"), Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftWrongZ { line: 9, .. }),
+            "{err:?}"
+        );
+        let err = check_lift(&lift_program("G53 G0 Z0\nM5\n"), Some(0.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftWrongZ { line: 9, .. }),
+            "{err:?}"
+        );
+        check_lift(&lift_program("G53 G0 Z-5\nM5\nM0\n"), Some(-5.0)).unwrap();
+    }
+
+    /// S16: a `G53` is refused, as before #283, in a program whose project
+    /// sets no tool-change machine Z, and on a definition that documents
+    /// no machine-coordinate move (LinuxCNC), whatever the project sets.
+    #[test]
+    fn g53_refused_without_height() {
+        let text = lift_program("G53 G0 Z-5\nM5\n");
+        let err = check_lift(&text, None).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::ForbiddenWord { line: 9, word } if word == "G53"),
+            "{err:?}"
+        );
+        let linuxcnc = dc_project::latest_definition("linuxcnc")
+            .unwrap()
+            .post_processor()
+            .clone();
+        assert!(linuxcnc.work_coordinates.machine_command.is_none());
+        let err =
+            check_text_lifting(&text, linuxcnc, SpindleControl::Automatic, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
+            "{err:?}"
+        );
+    }
+
+    /// #304 review, S16: with manual spindle control the user may jog at
+    /// the router-off pause after a lift, so the program lifts again before
+    /// `T<n> M6`. A second lift is accepted right after a stop that came
+    /// after a lift, with nothing moved between, once the units are set
+    /// again; a lift after a stop with no lift before it is still refused,
+    /// since Z is unknown there.
+    #[test]
+    fn g53_again_after_a_stop() {
+        let again = lift_program("G53 G0 Z-5\nM5\nM0\nG21 G90 G54\nG53 G0 Z-5\nM0\n");
+        check_lift(&again, Some(-5.0)).unwrap();
+        let no_units = lift_program("G53 G0 Z-5\nM5\nM0\nG53 G0 Z-5\nM0\n");
+        let err = check_lift(&no_units, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MissingSetupAfterPause {
+                    line: 12,
+                    pause_line: 11,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let unlifted = lift_program("M5\nM0\nG21 G90 G54\nG53 G0 Z-5\nM0\n");
+        let err = check_lift(&unlifted, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftNotAtSafeZ { line: 12 }),
+            "{err:?}"
+        );
+    }
+
+    /// [`check_rules`] on the fixture's GRBL definition with `heights`, the
+    /// operation owning lines `op_lines` and every other line outside it.
+    fn check_heights(
+        text: &str,
+        op_lines: Range<usize>,
+        heights: ProgramHeights,
+    ) -> Result<(), ExportError> {
+        let (project, op, tool) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let toolpath = Toolpath::default();
+        let op = Operation::Profile(op);
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath: &toolpath,
+            material: &Material::Unchecked,
+            lines: op_lines,
+        }];
+        check_rules(
+            text,
+            &post,
+            &transform,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
+            heights,
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// #304 review, S2 and S6 as changed for #283: with a clearance height
+    /// (here work Z 20 over the fixture's 6 mm stock, absolute 26), an
+    /// operation's first move across the work, every move across outside
+    /// the operations (the park move), and every stop are at or above it;
+    /// moves across inside an operation after its first stay held to safe
+    /// Z (work Z 5). Without a clearance height the same low moves pass.
+    #[test]
+    fn rapids_held_to_the_clearance_height() {
+        let heights = ProgramHeights {
+            machine_lift_mm: None,
+            clearance_z_mm: Some(26.0),
+        };
+        let program = |entry_z: &str, park_z: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z20\nM3 S18000\nG4 P3\nZ{entry_z}\nX0 Y0\nZ5\nG1 Z-1 F300\nG0 Z5\nX10 Y0\nG1 Z-1\nG0 Z20\nZ{park_z}\nX50 Y50\nM5\n"
+            )
+        };
+        // The operation is lines 1 to 13; the park is lines 14 and 15.
+        check_heights(&program("20", "20"), 1..14, heights).unwrap();
+        let err = check_heights(&program("5", "20"), 1..14, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowClearance { line: 7, .. }),
+            "{err:?}"
+        );
+        let err = check_heights(&program("20", "10"), 1..14, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowClearance { line: 15, .. }),
+            "{err:?}"
+        );
+        check_heights(&program("5", "10"), 1..14, ProgramHeights::default()).unwrap();
+        // A stop below the clearance height.
+        let stop = "G21 G90\nG54\nG0 Z20\nM5\nZ5\nM0\n";
+        let err = check_heights(stop, 1..7, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::PauseNotAtSafeZ { line: 6 }),
+            "{err:?}"
+        );
+        check_heights(stop, 1..7, ProgramHeights::default()).unwrap();
     }
 }
