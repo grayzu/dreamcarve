@@ -1355,14 +1355,31 @@ meaning and the labels are VCarve's.
   not reported for a definition an enabled Left or Right Profile targets.
   O8 (`order::targets_of`) reads a Left or Right Profile's open paths
   and none of its closed outlines.
-- **Direction** as for On line open paths (#242), on each piece:
-  conventional from the end beside the first vertex, climb from the end
-  beside the last (VCarve: "Conventional starts cutting at the Start
-  point Climb cutting starts cutting at the end point";
-  `profile::left_right_direction_follows_vcarve`). VCarve's names pick
-  the starting end, not the engagement: with Left, travel from the first
-  vertex keeps the part on the tool's right, which is climb by
-  `traversal_is_ccw`'s rule; the Profile chapter says so.
+- **Direction** is the milling mode, as for closed shapes, on each
+  piece (`profile::open_runs_reversed`). The spindle turns clockwise from
+  above, so climb keeps the part on the right of travel
+  (`traversal_is_ccw`'s rule). The tool runs on the waste side and the
+  part lies beyond the path, so:
+
+  | Side | Climb starts beside | Conventional starts beside |
+  | --- | --- | --- |
+  | Left | the first vertex | the last vertex |
+  | Right | the last vertex | the first vertex |
+  | On line (#242) | the last vertex | the first vertex |
+
+  With Left, travel from the first vertex keeps the part on the tool's
+  right, which is climb; Right is the mirror
+  (`profile::left_climb_keeps_the_part_on_the_right_of_travel`,
+  `profile::right_climb_keeps_the_part_on_the_right_of_travel`,
+  `profile::left_conventional_is_the_reverse`, each with the line drawn
+  both ways). VCarve's start-point rule ("Conventional starts cutting at
+  the Start point Climb cutting starts cutting at the end point") is kept
+  for On line only, where both flanks cut and no milling mode exists.
+  (changed in #287: #207 applied VCarve's start-point rule on every side,
+  so a Left cut named `climb` milled conventional and the other way
+  round; on a Left or Right cut only one flank meets kept material, so
+  climb and conventional are physical and must mean what they mean on a
+  closed shape, and in VCarve's and Fusion's milling-mode options.)
 - **Entry, tabs, leads, relief** as for On line open paths: a ramp runs
   `entry::along_path` on the offset piece; a helix is
   `HelixNeedsWasteSide` (validation and generator), there being no waste
@@ -2206,7 +2223,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-cam — profile**
 - `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221), `profile::on_line_part_smaller_than_the_bit_is_refused`, `profile::on_line_part_just_larger_than_the_bit_is_cut`, `safety::on_line_part_smaller_than_the_bit_fails_s9` (#223).
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
-- `profile::open_path_left_offsets_to_the_left`, `profile::open_path_right_offsets_to_the_right`, `profile::left_right_on_closed_target_is_skipped_with_warning`, `profile::left_right_direction_follows_vcarve`, `profile::left_right_ramp_and_tabs`, `profile::left_right_cut_into_the_kept_side_is_refused`, `profile::left_right_tool_too_large_for_a_tight_arc_warns`, `offset::open_offset_moves_left_of_travel_and_ends_square`, `offset::open_offset_rounds_outer_turns_and_trims_inner_ones`, `offset::open_offset_of_a_tight_arc_toward_its_centre_vanishes`, `safety::left_right_cut_off_its_path_fails_s9`, `cli::left_profile_of_an_svg_line_exports_on_its_left` (#207).
+- `profile::open_path_left_offsets_to_the_left`, `profile::open_path_right_offsets_to_the_right`, `profile::left_right_on_closed_target_is_skipped_with_warning`, `profile::left_right_ramp_and_tabs`, `profile::left_right_cut_into_the_kept_side_is_refused`, `profile::left_right_tool_too_large_for_a_tight_arc_warns`, `offset::open_offset_moves_left_of_travel_and_ends_square`, `offset::open_offset_rounds_outer_turns_and_trims_inner_ones`, `offset::open_offset_of_a_tight_arc_toward_its_centre_vanishes`, `safety::left_right_cut_off_its_path_fails_s9`, `cli::left_profile_of_an_svg_line_exports_on_its_left` (#207). `profile::left_climb_keeps_the_part_on_the_right_of_travel`, `profile::right_climb_keeps_the_part_on_the_right_of_travel`, `profile::left_conventional_is_the_reverse` (#287, replacing #207's `profile::left_right_direction_follows_vcarve`).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
 **dc-cam — overlap**

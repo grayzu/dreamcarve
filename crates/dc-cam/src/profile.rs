@@ -84,6 +84,27 @@ pub fn traversal_is_ccw(wall: Wall, direction: CutDirection) -> bool {
     }
 }
 
+/// The open-path direction rule: true when an open path cut on `side`
+/// with `direction` runs from its last vertex to its first.
+///
+/// Left and Right (#207) cut one flank of the bit against kept material,
+/// so `direction` is the milling mode, as in [`traversal_is_ccw`]: climb
+/// keeps the part on the right of travel (#287). Left runs the tool to the
+/// path's left with the part beyond the path, which is on the tool's right
+/// going from the first vertex to the last; Right is the mirror. On line
+/// cuts with both flanks, so no milling mode exists and `direction` picks
+/// the starting end as VCarve's does (#242): "Conventional starts cutting
+/// at the Start point Climb cutting starts cutting at the end point".
+fn open_runs_reversed(side: Side, direction: CutDirection) -> bool {
+    let climb = direction == CutDirection::Climb;
+    match side {
+        Side::Left => !climb,
+        Side::Right | Side::OnLine => climb,
+        // Never asked: Inside and Outside cut no open path.
+        Side::Inside | Side::Outside => climb,
+    }
+}
+
 /// A contour's place in its region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -216,9 +237,12 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// ([`offset_open`]: round on the outside of a turn, trimmed on the
 /// inside, ending square on the normals through the path's ends), and
 /// skips closed targets with [`Warning::SideNeedsOpenPath`]. A path whose
-/// offset vanishes warns [`Warning::ToolTooLarge`]. Direction, ramp and
-/// tabs are On line's, along the offset path; it has no lead or relief and
-/// frees nothing. A cut that comes within the radius of another of its
+/// offset vanishes warns [`Warning::ToolTooLarge`]. Direction is the
+/// milling mode (#287): climb keeps the part on the right of travel, so
+/// Left climb runs from the end beside the first vertex and Right climb
+/// from the end beside the last; conventional is the reverse. Ramp and
+/// tabs are On line's, along the offset path; it has no lead or relief
+/// and frees nothing. A cut that comes within the radius of another of its
 /// lines, or of the strip a line keeps, fails with
 /// [`CamError::CutsIntoKeptSide`]; D6's overlap warning, whose condition
 /// that is, does not apply.
@@ -440,14 +464,12 @@ pub fn generate_profile(
     if let Some(left_mm) = side_mm {
         check_kept_sides(op, tool, &open_paths, &open_centres, left_mm)?;
     }
-    // #175: an open path is cut On line as drawn. #242: from its first
-    // vertex under conventional and from its last under climb, as VCarve
-    // ("Conventional starts cutting at the Start point Climb cutting
-    // starts cutting at the end point"); #207: so is a Left or Right
-    // offset of one, from the end beside that vertex. It bounds no
-    // region, so no containment and no waste domain; its wall is never
-    // asked.
-    let reversed_open = op.direction == CutDirection::Climb;
+    // #175: an open path is cut On line as drawn, from the end
+    // `open_runs_reversed` picks (#242 On line, #287 Left and Right); a
+    // Left or Right offset of one (#207) from the end beside that vertex.
+    // It bounds no region, so no containment and no waste domain; its
+    // wall is never asked.
+    let reversed_open = open_runs_reversed(op.side, op.direction);
     for (shape, centres) in open_centres {
         for path in centres {
             let path = if reversed_open { path.reversed() } else { path };

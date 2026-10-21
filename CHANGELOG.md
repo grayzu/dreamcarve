@@ -56,7 +56,10 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   radius to its left or right looking from its first vertex to its last, as
   VCarve's Profile "to the Left" and "to the Right" of an open vector do
   ([#207]). The cut ends square at the path's ends, ramps along its own path,
-  takes tabs, and has no lead or corner relief. A closed shape in such an
+  takes tabs, and has no lead or corner relief. `direction` is the milling
+  mode, as on a closed shape: climb keeps the part on the right of travel, so
+  Left climb starts beside the first vertex and Right climb beside the last
+  ([#287]). A closed shape in such an
   operation is skipped with `side_needs_open_path`, and a cut that would cross
   another of its lines or reach the part side of one stops the export. A
   version 9 file loads unchanged; older DreamCarve versions cannot read
@@ -268,3 +271,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#207]: https://github.com/grayzu/dreamcarve/issues/207
 [#242]: https://github.com/grayzu/dreamcarve/issues/242
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
+[#287]: https://github.com/grayzu/dreamcarve/issues/287
