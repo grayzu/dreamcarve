@@ -500,6 +500,36 @@ pub(crate) fn plan_lead_in(
     None
 }
 
+/// [`plan_lead_in`] at one arrival, the start of the closed `path` (#285:
+/// the Profile's start is set, so the lead arrives there or not at all).
+/// The radius and sweep ladders and the free sides are tried as there; the
+/// seam is the path itself. `None` when nothing fits there.
+pub(crate) fn plan_lead_in_at_start(
+    path: &Polyline,
+    lead: &Lead,
+    tool_diameter_mm: f64,
+    space: &dyn LeadSpace,
+) -> Option<LeadIn> {
+    let (edges, perimeter_mm) = edges_of(path);
+    if perimeter_mm.is_nan() || perimeter_mm <= EPS_MM || !path.is_closed() {
+        return None;
+    }
+    let edge = edges.iter().find(|e| e.length_mm > LEAD_EPS)?;
+    let (_, tangent) = edge.segment.point_at(0.0)?;
+    let point = edge.segment.start;
+    let free = sides(point, tangent, tool_diameter_mm, space);
+    ladder(lead).into_iter().find_map(|(radius_mm, sweep_deg)| {
+        free.iter()
+            .map(|&side| arc_into(point, tangent, side, radius_mm, sweep_deg))
+            .find(|arc| lead_fits(point, arc, space))
+            .map(|arc| LeadIn {
+                arc,
+                arrival_mm: edge.start_mm,
+                seam: reseam_at(path, edge.index, 0.0),
+            })
+    })
+}
+
 /// Upstream `planXyLeadOut` with DreamCarve's overcut: from `seam` (the
 /// contour as the lead-in re-seamed it, so the lap ends at its start),
 /// continue `lead.overcut_mm` along it (at most one more lap), then the
@@ -569,7 +599,7 @@ pub(crate) fn reseam(path: &Polyline, distance_mm: f64) -> Polyline {
 }
 
 /// `path` re-seamed `local_mm` along its segment `index`.
-fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polyline {
+pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polyline {
     let vertices = path.vertices();
     let n = vertices.len();
     let rotated = |k: usize| {

@@ -24,13 +24,15 @@ bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
     "width_mm": 8.0,
     "height_mm": 3.0,
     "shape": "rect",
-    "on_holes": false
+    "on_holes": false,
+    "avoid_corners": true
   },
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
   "corner_relief": "none",
-  "last_pass": null
+  "last_pass": null,
+  "start": "auto"
 }
 ```
 
@@ -58,6 +60,7 @@ This is the Profile `init` writes, with `depth_mm` and
 | `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
 | `corner_relief` | `"none"` (as `init` writes it), `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
 | `last_pass` | `null` (as `init` writes it), or a last pass allowance: every pass but the last leaves a thin skin on the wall, and the last pass cuts it off at full depth. Inside and Outside only. See [Last pass](#last-pass). |
+| `start` | Where each closed outline's cut starts: `"auto"` (as `init` writes it), `"first_vertex"`, or `{ "near": { "x_mm": …, "y_mm": … } }`. See [Start point](#start-point). |
 
 ## Side
 
@@ -418,6 +421,8 @@ quarters; the place with the least turning within one bit diameter
 either way wins, so a rectangle starts partway along a side, away from its
 corners; among places as straight as each other, the one nearest where
 the previous outline ended; after that, the first along the outline.
+With a [start point](#start-point) set, the lead arrives there or not at
+all.
 
 **When it does not fit.** The arc is tried at `radius_mm`, then at ¾, ½
 and ¼ of it, each at `sweep_deg` and then at 60° and 45° (when smaller).
@@ -572,6 +577,48 @@ there is an error; so is an allowance of 0 or less or above a third of
 the bit, or a `thickness_mm` of 0 or less, deeper than `depth_mm` or
 thicker than the step-down. A cut of only one pass is the last pass, on
 the part's path, and warns `last_pass_unused`.
+
+## Start point
+
+Each closed outline's cut starts somewhere on the bit's path round it, and
+that is where the bit comes down, where a mark is most likely, and where
+`at_distances` tabs are measured from. `start` says where (VCarve's 2D
+Profile "Use vector start point" and "Start At"; Fusion's "Entry
+Positions"):
+
+| Value | Where each outline's cut starts |
+| --- | --- |
+| `"auto"` | As DreamCarve chooses: from the outline's first vertex, moved by a [lead](#leads) to a straight stretch, or by a ramp or helix that has no room beside a tab. `init` writes this, and files from before format version 14 open with it. |
+| `"first_vertex"` | At the point of the bit's path nearest the outline's first vertex as you drew it, as VCarve's "Use vector start point" plunges at the shape's first point. Cut outside, a corner's path turns round it on an arc, and the cut starts in the middle of that arc. |
+| `{ "near": { "x_mm": 0.0, "y_mm": 0.0 } }` | At the point of each outline's bit path nearest that point, in [project coordinates](project-file.md#coordinates) (the stock's bottom left corner is 0, 0). A point off the stock is fine; inch input works as for any length. |
+
+```json
+"start": { "near": { "x_mm": 0.0, "y_mm": 0.0 } }
+```
+
+With `"first_vertex"` or `"near"`, the start you set wins over the
+conveniences `"auto"` allows:
+
+- A tab request's `at_distances` count from the start, and `count` spaces
+  its tabs from it: the first of four is an eighth of the way round
+  ([Tabs: tab requests](tabs.md#tab-requests)). Tabs already placed stay
+  where they are.
+- A [lead](#leads) arrives at the start, at the largest size that fits
+  there, or is left off with `lead_dropped` (reason `no_room`); it is not
+  moved to where it would fit.
+- A ramp or helix [entry](#entry) that has no room at the start falls
+  back to a ramp, then a plunge, with `entry_fallback`, instead of the
+  start moving. On a start under a tab the passes below the tab top come
+  down onto the tab's top there.
+- A [last pass](#last-pass)'s earlier passes start at their own path's
+  point nearest the same place, and a reversed last pass starts where the
+  others do.
+
+Each pass of an outline starts at the same place. Open paths ignore
+`start`: their cut starts at the end the `direction` sets
+([Open paths](#open-paths)). Draw the toolpath with `dreamcarve check
+part.dcv --preview part-preview.svg` to see each start, a circle the size
+of the bit ([Toolpath preview](overview.md#toolpath-preview)).
 
 ## Order of operations
 

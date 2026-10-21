@@ -39,6 +39,13 @@
 //! sizes tabs per feature in its auto-tab command (`autoTabs.ts`, a 15%
 //! free-path rule); that command writes placed tabs and waits for the
 //! GUI. The half-path threshold here is the coverage warning's.
+//!
+//! A request with [`TabSpec::avoid_corners`] moves each tab it lays on a
+//! corner off it before the half-path rule is applied ([`corners`], #285).
+
+mod corners;
+
+pub use corners::TAB_CORNER_TURN_DEG;
 
 use crate::entry::plunge_limited_feed_mm_min;
 use crate::error::{CamError, ShapeRef};
@@ -125,6 +132,23 @@ pub(crate) struct Request {
     span_mm: f64,
     /// Holes get tabs too (#109).
     on_holes: bool,
+    /// Tabs move off corners (#285).
+    avoid_corners: bool,
+    /// Diameter of the tool that cuts the tabs.
+    diameter_mm: f64,
+}
+
+/// The tabs a request lays on one path ([`Request::fit`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Fit {
+    /// The tabs cut on it.
+    pub cuts: Vec<TabCut>,
+    /// What was asked and what is cut, when they would cover more than
+    /// half of it.
+    pub reduced: Option<Reduced>,
+    /// Where each tab left on a corner is centred (#285), mm along the
+    /// path as tabs are measured on it.
+    pub on_corners: Vec<f64>,
 }
 
 /// Which way a path runs, for laying tabs on it.
@@ -358,6 +382,8 @@ impl Request {
             width_mm: spec.width_mm,
             span_mm: spec.width_mm + diameter_mm,
             on_holes: spec.on_holes,
+            avoid_corners: spec.avoid_corners,
+            diameter_mm,
         })
     }
 
@@ -386,40 +412,63 @@ impl Request {
         }
     }
 
-    /// The tabs this request puts on a path `path_length_mm` long, laid
-    /// out by `tabs` ([`Tabs::layout`]). When their spans would cover more
-    /// than half the path, so the part or hole would not cut free, the
-    /// path gets the most tabs that cover at most half (#109), but never
-    /// fewer than `least` allows: `count` tabs re-spaced evenly, or the
-    /// first of `at_distances` in their order. What was asked and what is
-    /// cut are in [`Reduced`], which is given whenever the asked tabs
-    /// covered more than half, even when one kept tab is all that was
-    /// asked.
-    pub(crate) fn fit(
-        &self,
-        tabs: &Tabs,
-        path_length_mm: f64,
-        ends: PathEnds,
-        least: Least,
-    ) -> (Vec<TabCut>, Option<Reduced>) {
-        let l = path_length_mm;
+    /// The tabs this request puts on `path`, laid out by `tabs`
+    /// ([`Tabs::layout`]). With `avoid_corners` each one on a corner moves
+    /// off it first, where it can ([`corners`], #285); one that cannot
+    /// stays, and is in [`Fit::on_corners`]. When their spans would cover
+    /// more than half the path, so the part or hole would not cut free,
+    /// the path gets the most tabs that cover at most half (#109), but
+    /// never fewer than `least` allows: `count` tabs re-spaced evenly, or
+    /// the first of `at_distances` in their order, moved off corners as
+    /// before. What was asked and what is cut are in [`Reduced`], which is
+    /// given whenever the asked tabs covered more than half, even when one
+    /// kept tab is all that was asked.
+    pub(crate) fn fit(&self, tabs: &Tabs, path: &Polyline, ends: PathEnds, least: Least) -> Fit {
+        let l = path.length_mm();
         let half_mm = l / 2.0 + EPS_MM;
-        let cuts = |centres: Vec<f64>| -> Vec<TabCut> {
-            centres.into_iter().map(|c| self.cut(c)).collect()
+        // Tabs on an open path are measured from its first vertex as
+        // drawn, so its corners are found along the path as drawn.
+        let corners = self.avoid_corners.then(|| {
+            let drawn = match ends {
+                PathEnds::Open { reversed: true } => path.reversed(),
+                PathEnds::Closed | PathEnds::Open { reversed: false } => path.clone(),
+            };
+            corners::Corners::of(&drawn, self.diameter_mm, self.span_mm)
+        });
+        let lay = |centres: Vec<f64>| -> (Vec<TabCut>, Vec<f64>) {
+            let (centres, on_corners) = match &corners {
+                Some(corners) => {
+                    let (moved, blocked) = corners::avoid(&centres, corners, self.span_mm);
+                    let on: Vec<f64> = blocked
+                        .iter()
+                        .filter_map(|&i| moved.get(i).copied())
+                        .collect();
+                    (moved, on)
+                }
+                None => (centres, Vec::new()),
+            };
+            (
+                centres.into_iter().map(|c| self.cut(c)).collect(),
+                on_corners,
+            )
         };
         let covered = |cuts: &[TabCut]| tabs.layout(cuts, l, ends).0.covered_mm();
         let centres = tab_centres_mm(&self.placement, l);
         let asked = centres.len();
-        let all = cuts(centres.clone());
+        let (all, on_corners) = lay(centres.clone());
         if covered(&all) <= half_mm {
-            return (all, None);
+            return Fit {
+                cuts: all,
+                reduced: None,
+                on_corners,
+            };
         }
         // `asked` is at least 1 here: no tabs cover nothing.
         let fewest = match least {
             Least::One => 1,
             Least::Zero => 0,
         };
-        let kept = match &self.placement {
+        let (kept, on_corners) = match &self.placement {
             // Evenly spaced spans that fit in half the path never overlap.
             TabPlacement::Count { count } => {
                 let fits = (0..*count)
@@ -427,26 +476,27 @@ impl Request {
                     .find(|&n| f64::from(n) * self.span_mm <= half_mm)
                     .unwrap_or(0)
                     .max(fewest);
-                cuts(tab_centres_mm(&TabPlacement::Count { count: fits }, l))
+                lay(tab_centres_mm(&TabPlacement::Count { count: fits }, l))
             }
             TabPlacement::AtDistances { .. } => {
-                let first = |k: usize| cuts(centres.iter().take(k).copied().collect());
+                let first = |k: usize| lay(centres.iter().take(k).copied().collect());
                 (usize::from(fewest)..asked)
                     .rev()
                     .map(first)
-                    .find(|kept| covered(kept) <= half_mm)
+                    .find(|(kept, _)| covered(kept) <= half_mm)
                     .unwrap_or_else(|| first(usize::from(fewest)))
             }
         };
         let cut = kept.len();
-        (
-            kept,
-            Some(Reduced {
+        Fit {
+            cuts: kept,
+            reduced: Some(Reduced {
                 asked,
                 cut,
                 placed: false,
             }),
-        )
+            on_corners,
+        }
     }
 }
 

@@ -53,9 +53,12 @@ pub struct TabSize {
 
 /// Places the tabs `spec` asks for on the outlines Profile `op` cuts, with
 /// the phase 2 layout rules (#109): per tool path, `count` tabs evenly
-/// spaced or tabs at `at_distances` along it from its start; none on a
-/// hole unless `on_holes`; and on a path too short for them, the most
-/// that cover at most half of it, but at least one on a part. Each tab is
+/// spaced or tabs at `at_distances` along it from its start (the
+/// Profile's start point when it sets one, #285); off corners where they
+/// can be with `avoid_corners` ([`Warning::TabOnCorner`] for one that
+/// cannot); none on a hole unless `on_holes`; and on a path too short for
+/// them, the most that cover at most half of it, but at least one on a
+/// part. Each tab is
 /// placed at its centre on the tool path itself, taken into the
 /// instance's definition space, so the Profile cuts it exactly where the
 /// request did; it is crossed by every Profile that comes near where it
@@ -96,6 +99,16 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
             placement
                 .warnings
                 .push(overlap_warning(op, j, Some(shape), length_mm));
+        }
+        // #285: a tab left on a corner is placed there, warned.
+        if let Some(on) = cut.plan.on_corners.get(j) {
+            placement
+                .warnings
+                .extend(on.iter().map(|&distance_mm| Warning::TabOnCorner {
+                    op: op.clone(),
+                    shape: shape.clone(),
+                    distance_mm,
+                }));
         }
         for tab_cut in asked {
             // Centres on an open path are measured from its first vertex

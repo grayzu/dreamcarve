@@ -34,8 +34,8 @@ use dc_import::{
 use dc_project::{
     CURRENT_VERSION, CornerRelief, CutDirection, Entry, FeatureDefinition, FeatureInstance,
     Heights, MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ,
-    PostProcessorRef, ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec,
-    Tool, ToolId, ToolKind, Units, validate,
+    PostProcessorRef, ProfileOp, Project, Side, SourceMap, StartAt, Stock, TabPlacement, TabShape,
+    TabSpec, Tool, ToolId, ToolKind, Units, validate,
 };
 
 use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
@@ -295,7 +295,8 @@ fn default_project(
             shape: TabShape::Rect,
             // #109: a hole's slug is waste.
             on_holes: false,
-            avoid_corners: false,
+            // #285: tabs are weakest, and hardest to clean up, on a corner.
+            avoid_corners: true,
         }),
         machining_order: MachiningOrder::FullDepthFirst,
         entry: Entry::Ramp {
@@ -304,7 +305,7 @@ fn default_project(
         lead: None,
         corner_relief: CornerRelief::None,
         last_pass: None,
-        start: dc_project::StartAt::Auto,
+        start: StartAt::Auto,
     };
     Project {
         version: CURRENT_VERSION,

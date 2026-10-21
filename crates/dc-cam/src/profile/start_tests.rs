@@ -197,7 +197,7 @@ struct XyMove {
 
 /// The XY moves of the pass at `z_mm`, from the first move that arrives
 /// at that Z: every non-rapid move that changes XY and stays below the
-/// pass above, until the next rapid.
+/// pass above, until the next rapid or the next pass down.
 fn pass_moves(tp: &Toolpath, z_mm: f64, above_mm: f64) -> Vec<XyMove> {
     let start = tp
         .moves
@@ -207,7 +207,7 @@ fn pass_moves(tp: &Toolpath, z_mm: f64, above_mm: f64) -> Vec<XyMove> {
     let mut out = Vec::new();
     let mut pos = tp.moves[start].to;
     for mv in &tp.moves[start + 1..] {
-        if mv.is_rapid() {
+        if mv.is_rapid() || mv.to.z < z_mm - EPS_MM {
             break;
         }
         let (a, b) = (pos.xy(), mv.to.xy());
@@ -361,8 +361,8 @@ fn at_distances_count_from_explicit_start() {
         &[start],
         "start",
     );
-    for (k, &z) in PASS_Z_MM.iter().enumerate().skip(1) {
-        let lap = pass_moves(&tp, z, PASS_Z_MM[k - 1]);
+    for &z in PASS_Z_MM.iter().skip(1) {
+        let lap = pass_moves(&tp, z, THICKNESS_MM);
         assert!(
             lap[0].from.xy().distance_to(start) <= TOL,
             "{z}: {:?}",
@@ -378,7 +378,7 @@ fn at_distances_count_from_explicit_start() {
         ..tab_at(Vec::new(), TabShape::Rect)
     });
     let (tp, _) = generate(&p, &op);
-    let lap = pass_moves(&tp, 0.0, PASS_Z_MM[1]);
+    let lap = pass_moves(&tp, 0.0, THICKNESS_MM);
     let l: f64 = lap.iter().map(|m| m.length_mm).sum();
     let centres = held_centres(&lap);
     assert_eq!(centres.len(), 4, "{centres:?}");
@@ -406,9 +406,15 @@ fn explicit_start_entry_falls_back_not_moves() {
     );
     let plunges = distinct(plunge_points(&tp));
     assert_same_points(&plunges, &[start], "plunges only at the start");
-    // The first pass, above the tab, ramps down to the start.
+    // The first pass, above the tab, ramps down to the start and cuts a
+    // whole lap from it.
     let lap = pass_moves(&tp, PASS_Z_MM[0], THICKNESS_MM);
-    assert!(lap[0].from.xy().distance_to(start) <= TOL, "{:?}", lap[0]);
+    let at = lap
+        .iter()
+        .position(|m| m.mv.to.xy().distance_to(start) <= TOL)
+        .expect("the ramp ends at the start");
+    let lap_mm: f64 = lap.iter().skip(at + 1).map(|m| m.length_mm).sum();
+    assert_approx_eq!(lap_mm, 300.0 + std::f64::consts::TAU * RADIUS_MM, 1e-6);
     // With `auto` the start moves off the tab, so the ramp fits.
     op.start = StartAt::Auto;
     let (moved, warnings) = generate(&p, &op);

@@ -105,6 +105,7 @@ fn step(from: u32) -> Option<Step> {
         10 => Some(v10_to_v11),
         11 => Some(v11_to_v12),
         12 => Some(v12_to_v13),
+        13 => Some(v13_to_v14),
         _ => None,
     }
 }
@@ -575,6 +576,55 @@ fn v12_to_v13(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
         }
         if !inserted {
             out.insert("last_pass".into(), Value::Null);
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
+/// Version 13 → 14 (#285): `avoid_corners: false` at the end of each
+/// Profile's non-null `tabs` request, so its tabs are laid where they
+/// were, and `start: "auto"` right after its `last_pass`, so each cut
+/// starts where it did. Other operations are unchanged. Fails if a Profile
+/// already has either key: that is not a version 13 file.
+fn v13_to_v14(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("start") {
+            return Err(format!(
+                "a version 13 file has no `operations[{i}].start`, but this one does"
+            ));
+        }
+        let mut out = Map::with_capacity(fields.len() + 1);
+        let mut inserted = false;
+        for (key, mut value) in fields {
+            if key == "tabs"
+                && let Value::Object(tabs) = &mut value
+            {
+                if tabs.contains_key("avoid_corners") {
+                    return Err(format!(
+                        "a version 13 file has no `operations[{i}].tabs.avoid_corners`, but this one does"
+                    ));
+                }
+                tabs.insert("avoid_corners".into(), Value::Bool(false));
+            }
+            let after_this = key == "last_pass";
+            out.insert(key, value);
+            if after_this {
+                out.insert("start".into(), Value::from("auto"));
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("start".into(), Value::from("auto"));
         }
         *op = Value::Object(out);
     }

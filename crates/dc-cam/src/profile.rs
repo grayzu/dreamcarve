@@ -16,6 +16,7 @@
 
 mod entries;
 mod last_pass;
+mod start;
 #[cfg(test)]
 mod start_tests;
 mod waste;
@@ -393,6 +394,9 @@ pub fn generate_profile(
         allowance_mm,
         &mut warnings,
     )?;
+    // #285: an explicit start re-seams each closed path, and its allowance
+    // twin, nearest the start point, before the tabs are laid on it.
+    let (placed, fixed) = start::seat(project, op, placed);
     let walls: Vec<(Wall, usize)> = placed.iter().map(|c| (c.wall, c.region)).collect();
     let holes: Vec<bool> = placed.iter().map(|c| c.hole).collect();
     let mut twins: Vec<Option<Polyline>> = Vec::with_capacity(placed.len());
@@ -410,6 +414,7 @@ pub fn generate_profile(
         reductions,
         tops_z_mm,
         on_holes,
+        on_corners,
         ..
     } = plan_tabs(
         project,
@@ -433,6 +438,14 @@ pub fn generate_profile(
             shape,
         });
     }
+    // #285: a requested tab with nowhere off its corner is cut there.
+    for ((_, shape), on) in paths.iter().zip(&on_corners) {
+        warnings.extend(on.iter().map(|&distance_mm| Warning::TabOnCorner {
+            op: op.id.clone(),
+            shape: (*shape).clone(),
+            distance_mm,
+        }));
+    }
     // #284: the part's `n` paths, then each one's allowance twin, which
     // the passes before the last cut; `twin_of` finds it. A twin's tabs
     // are its part path's, carried onto it and widened by the allowance;
@@ -444,6 +457,7 @@ pub fn generate_profile(
     let mut allowances: Vec<f64> = vec![0.0; n];
     let mut reversed: Vec<bool> = vec![false; n];
     let mut twin_of: Vec<Option<usize>> = vec![None; n];
+    let mut fixed = fixed;
     if let Some(allowance_mm) = allowance_mm {
         // The last pass's floor, where the tabs it leaves stand from.
         let floor_z_mm = pass_z.last().copied().unwrap_or(0.0);
@@ -468,6 +482,8 @@ pub fn generate_profile(
             layouts.push(carried);
             allowances.push(allowance_mm);
             reversed.push(false);
+            let own = fixed.get(i).copied().unwrap_or(false);
+            fixed.push(own);
         }
     }
     if reverse_last {
@@ -546,6 +562,7 @@ pub fn generate_profile(
                 tolerance_mm: project.flatten_tolerance_mm,
                 any_above_tabs: pass_z.iter().any(|z| !below_tabs(*z)),
                 any_below_tabs: pass_z.iter().any(|z| below_tabs(*z)),
+                fixed: &fixed,
             },
             &mut lead_warnings,
         )?,
@@ -553,9 +570,14 @@ pub fn generate_profile(
     };
     // #176: a path whose entry has no room at its start for the tabs
     // starts where it has, on every pass; its tabs stay put. A path with a
-    // lead keeps the lead's seam. The domains are the same either way.
-    let led: Vec<bool> = leads.iter().map(Option::is_some).collect();
-    let seams = tab_seams(&setup, &domains, &led);
+    // lead keeps the lead's seam, and one with an explicit start its start
+    // (#285). The domains are the same either way.
+    let kept: Vec<bool> = leads
+        .iter()
+        .zip(&fixed)
+        .map(|(lead, fixed)| lead.is_some() || *fixed)
+        .collect();
+    let seams = tab_seams(&setup, &domains, &kept);
     let (paths, layouts): (Vec<(Polyline, &ShapeRef)>, Vec<PathLayout>) = paths
         .iter()
         .zip(&layouts)
@@ -1058,6 +1080,9 @@ pub(crate) struct TabPlan {
     pub requested: Vec<Vec<TabCut>>,
     /// Per path, what the request asked and cut when it cut some down.
     pub request_reductions: Vec<Option<(Reduced, Vec<f64>)>>,
+    /// Per path, where each tab the request leaves on a corner is
+    /// centred, mm along it as tabs are measured on it (#285).
+    pub on_corners: Vec<Vec<f64>>,
 }
 
 /// Plans the tabs of `op` on `paths` (each with the shape it cuts; `holes`
@@ -1100,10 +1125,12 @@ fn plan_tabs(
     );
     let mut requested = Vec::with_capacity(paths.len());
     let mut reductions = Vec::with_capacity(paths.len());
+    let mut on_corners = Vec::with_capacity(paths.len());
     for ((path, _), &hole) in paths.iter().zip(holes) {
         let Some(request) = request.filter(|r| !hole || r.on_holes()) else {
             requested.push(Vec::new());
             reductions.push(None);
+            on_corners.push(Vec::new());
             continue;
         };
         // #109: a part keeps a tab; a hole or an open path may not.
@@ -1112,9 +1139,10 @@ fn plan_tabs(
         } else {
             Least::One
         };
-        let (cuts, reduced) = request.fit(&fitter, path.length_mm(), ends_of(path), least);
-        requested.push(cuts);
-        reductions.push(reduced.map(|r| (r, vec![request.width_mm(); r.asked])));
+        let fit = request.fit(&fitter, path, ends_of(path), least);
+        requested.push(fit.cuts);
+        reductions.push(fit.reduced.map(|r| (r, vec![request.width_mm(); r.asked])));
+        on_corners.push(fit.on_corners);
     }
     let request_reductions = reductions.clone();
 
@@ -1232,6 +1260,7 @@ fn plan_tabs(
         crossed,
         requested,
         request_reductions,
+        on_corners,
     })
 }
 
@@ -1295,6 +1324,8 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
         None,
         &mut ignored,
     )?;
+    // #285: tabs a request lays count from the start point.
+    let (centres, _) = start::seat(project, op, centres);
     let holes: Vec<bool> = centres.iter().map(|c| c.hole).collect();
     let paths: Vec<(Polyline, &ShapeRef)> =
         centres.into_iter().map(|c| (c.path, c.shape)).collect();
@@ -1705,9 +1736,14 @@ struct LeadSetup<'a, 'b> {
     tolerance_mm: f64,
     any_above_tabs: bool,
     any_below_tabs: bool,
+    /// The paths whose start is set (#285): a lead arrives there or not
+    /// at all.
+    fixed: &'a [bool],
 }
 
 /// Each path's lead, in order, or `None` where none fits (or On line).
+/// A path with an explicit start (#285) is led in only at its start,
+/// with the radius and sweep ladders as elsewhere.
 /// A lead that fits the domain less the tabs fits the whole domain, since
 /// one holds the other, so it is planned there first and then serves
 /// every pass; failing that, a lead in the whole domain serves the passes
@@ -1727,9 +1763,15 @@ fn plan_leads(
             continue;
         };
         let d = setup.diameter_mm;
+        let at_start = setup.fixed.get(i).copied().unwrap_or(false);
         let plan_in = |space: &Space| {
             let leads = DomainSpace::new(&space.domain, d, setup.tolerance_mm);
-            lead::plan_lead_in(path, setup.lead, d, &leads, from).map(|lead_in| {
+            let lead_in = if at_start {
+                lead::plan_lead_in_at_start(path, setup.lead, d, &leads)
+            } else {
+                lead::plan_lead_in(path, setup.lead, d, &leads, from)
+            };
+            lead_in.map(|lead_in| {
                 let lead_out = lead::plan_lead_out(&lead_in.seam, setup.lead, d, &leads);
                 (lead_in, lead_out)
             })

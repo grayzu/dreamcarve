@@ -142,7 +142,8 @@ fn init_tab_request() -> TabSpec {
         height_mm: 3.0,
         shape: TabShape::Rect,
         on_holes: false,
-        avoid_corners: false,
+        // #285: off corners.
+        avoid_corners: true,
     }
 }
 
@@ -8048,12 +8049,21 @@ fn corners_and_start_rotated_square() {
     let start = Point::new(50.0 - off_side, 50.0 - off_side);
     let moves = dc_gcode::parse_motion(&on).expect("program parses");
     let first_depth = -STEP_DOWN_MM;
+    let xy = |m: &MachineMove| Point::new(m.to.x.expect("X"), m.to.y.expect("Y"));
+    let at_depth = |m: &MachineMove| m.to.z.is_some_and(|z| (z - first_depth).abs() <= 1e-3);
     let reached = moves
         .iter()
-        .find(|m| m.kind.is_cut() && m.to.z.is_some_and(|z| (z - first_depth).abs() <= 1e-3))
+        .position(|m| m.kind.is_cut() && at_depth(m))
         .expect("the first pass is cut");
-    let at = Point::new(reached.to.x.expect("X"), reached.to.y.expect("Y"));
-    assert!(at.distance_to(start) <= 2e-3, "{at:?}, not {start:?}");
+    let arrived = moves
+        .iter()
+        .skip(reached)
+        .position(|m| m.kind.is_cut() && at_depth(m) && xy(m).distance_to(start) <= 2e-3)
+        .expect("the first pass's ramp ends at the start");
+    // Between the two, the ramp stays beside the start.
+    for m in moves.iter().skip(reached).take(arrived + 1) {
+        assert!(xy(m).distance_to(start) <= 3.0 * 6.35, "line {}", m.line);
+    }
 
     // `tabs place --count` keeps the tabs off the corners; with
     // `--allow-corners` it places them as before.

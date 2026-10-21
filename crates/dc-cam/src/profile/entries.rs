@@ -166,8 +166,9 @@ pub(super) fn path_entries(
 
 /// #176: where each closed path of `setup` should start so its ramp or
 /// helix fits clear of the tabs, as a distance along it from its start;
-/// `None` keeps the start. Only a path cut without a lead (`led` false)
-/// whose passes below the tab top would plunge at its start is moved:
+/// `None` keeps the start. Only a path whose seam is free (`kept` false:
+/// no lead, and no explicit start, #285, which wins over the entry) whose
+/// passes below the tab top would plunge at its start is moved:
 /// its start under a tab span, or so near one that the entry has no room
 /// in the waste domain less the tab keep-outs (Inside, Outside) or before
 /// the first tab (On line). The candidates are the middles of the
@@ -179,7 +180,7 @@ pub(super) fn path_entries(
 pub(super) fn tab_seams(
     setup: &EntrySetup<'_, '_>,
     domains: &[PathDomain],
-    led: &[bool],
+    kept: &[bool],
 ) -> Vec<Option<f64>> {
     let none = || setup.paths.iter().map(|_| None).collect();
     let Some(tabs) = setup.tabs else {
@@ -215,7 +216,7 @@ pub(super) fn tab_seams(
                 Some(Some((layout, _))) if path.is_closed() => layout,
                 _ => return None,
             };
-            if led.get(i).copied().unwrap_or(false) {
+            if kept.get(i).copied().unwrap_or(false) {
                 return None;
             }
             let tool = tool_for(setup, i);
