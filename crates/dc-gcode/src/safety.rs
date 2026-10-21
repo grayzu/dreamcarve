@@ -1843,6 +1843,104 @@ mod tests {
         );
     }
 
+    /// A ramp at (20, 20) on the fixture's 6 mm stock (machine Z 0 at the
+    /// stock top, safe Z 5): rapid straight down to machine Z `first`,
+    /// ramp to Z −1 and back along X to (20, 20), lift, rapid straight
+    /// down to `second` at (`x`, 20), ramp to Z −2, out.
+    fn entry_program(first: &str, x: &str, second: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX20 Y20\nZ{first}\nG1 X30 Z-1 F1000\nX20\nG0 Z5\nX{x}\nZ{second}\nG1 X30 Z-2\nG0 Z5\nM5\n"
+        )
+    }
+
+    /// S2 as changed in #214: a ramp or helix starts 1 mm above the stock
+    /// top, or 1 mm above the floor the operation's pass before cut there,
+    /// and a rapid straight down from safe Z takes the tool there. A rapid
+    /// in Z alone may end at or above the stock top plus the entry
+    /// clearance anywhere, and at or above the entry clearance over the
+    /// lowest Z a cut of the same operation has reached through its XY.
+    #[test]
+    fn rapid_down_to_entry_start_above_stock_is_accepted() {
+        // Z 1 is the stock top plus 1 mm; Z 0 is 1 mm above the Z −1 the
+        // first ramp's return along X cut through (20, 20).
+        check_text(&entry_program("1", "20", "0")).unwrap();
+        // Higher is fine too.
+        check_text(&entry_program("2.5", "20", "3")).unwrap();
+        // Anywhere over the stock, Z 1 is in the air.
+        check_text(&entry_program("1", "25", "1")).unwrap();
+        // The return cut passes through (25, 20) at Z −1 as well.
+        check_text(&entry_program("1", "25", "0")).unwrap();
+    }
+
+    /// S2 as changed in #214 lets a rapid in Z alone stop in the air only:
+    /// one that ends below the stock top plus the clearance where nothing
+    /// was cut, or less than the clearance above the floor a cut reached
+    /// there, or above a floor only another operation cut, is still
+    /// refused, and so is a rapid in XY below safe Z.
+    #[test]
+    fn rapid_into_the_stock_is_still_rejected() {
+        let below_at = |text: &str, at: usize| {
+            let err = check_text(text).unwrap_err();
+            assert!(
+                matches!(err, ExportError::RapidBelowSafeZ { line, .. } if line == at),
+                "line {at}: {err:?}"
+            );
+        };
+        // Less than 1 mm above the stock top, nothing cut there yet.
+        below_at(&entry_program("0.5", "20", "0"), 7);
+        below_at(&entry_program("-0.5", "20", "0"), 7);
+        // Less than 1 mm above the floor cut there.
+        below_at(&entry_program("1", "20", "-0.5"), 12);
+        // Not over the cut: (35, 20) is past the ramp's far end.
+        below_at(&entry_program("1", "35", "0"), 12);
+        // In XY below safe Z, even above the stock.
+        below_at(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX20 Y20\nZ1\nX30\nG1 Z-1 F300\nG0 Z5\nM5\n",
+            8,
+        );
+
+        // A floor another operation cut does not count: the same program
+        // split after the first ramp, the second op's rapid at line 12
+        // stops 1 mm above the first op's floor, below the stock top.
+        let (project, op, tool) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let toolpath = Toolpath::default();
+        let first = Operation::Profile(op.clone());
+        let mut second_op = op;
+        second_op.id = dc_project::OperationId::new("o2");
+        let second = Operation::Profile(second_op);
+        let text = entry_program("1", "20", "0");
+        let spans = [
+            OpSpan {
+                op: &first,
+                tool: &tool,
+                toolpath: &toolpath,
+                material: &Material::Unchecked,
+                lines: 1..10,
+            },
+            OpSpan {
+                op: &second,
+                tool: &tool,
+                toolpath: &toolpath,
+                material: &Material::Unchecked,
+                lines: 10..text.lines().count() + 1,
+            },
+        ];
+        let err = check_rules(
+            &text,
+            &post,
+            &transform,
+            project.stock.thickness_mm.unwrap(),
+            &spans,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowSafeZ { line: 12, .. }),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn every_cut_has_active_feed() {
         let ok =

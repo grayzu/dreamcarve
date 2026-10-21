@@ -1839,3 +1839,12 @@ mod tests {
     reason = "tests"
 )]
 mod profile_tests;
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "tests"
+)]
+mod start_tests;

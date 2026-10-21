@@ -765,6 +765,7 @@ mod tests {
     use crate::test_support::assert_safe;
     use crate::toolpath::{Move, MoveKind, Toolpath};
     use crate::warning::WarningCode;
+    use dc_geometry::Vertex;
     use dc_geometry::{
         Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Polyline, Rect, Region,
         Transform, area_mm2, assert_approx_eq, difference, intersection, nest, offset,
@@ -775,7 +776,7 @@ mod tests {
         InstanceId, MachiningOrder, OperationId, Stock, ToolId, WallPass,
     };
     use std::collections::BTreeMap;
-    use std::f64::consts::TAU;
+    use std::f64::consts::{PI, TAU};
 
     const TOL: f64 = 1e-6;
     /// Rings and bounds are compared to this: the design's "± 0.01".
@@ -3497,6 +3498,87 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// The 100 × 50 rect with 5 mm round corners, the plaque's panel, and
+    /// the 20 mm circle island at its centre, placed at (20, 20). The wall
+    /// ring's tool-centre corners are arcs of 1.825 mm.
+    fn rounded_island_project() -> Project {
+        let b = (PI / 8.0).tan();
+        let rounded = Polyline::new(
+            vec![
+                Vertex::new(5.0, 0.0, 0.0),
+                Vertex::new(95.0, 0.0, b),
+                Vertex::new(100.0, 5.0, 0.0),
+                Vertex::new(100.0, 45.0, b),
+                Vertex::new(95.0, 50.0, 0.0),
+                Vertex::new(5.0, 50.0, b),
+                Vertex::new(0.0, 45.0, 0.0),
+                Vertex::new(0.0, 5.0, b),
+            ],
+            true,
+        );
+        project(
+            vec![rounded, Polyline::circle(Point::new(50.0, 25.0), 10.0)],
+            &[("i1", at_20_20())],
+        )
+    }
+
+    /// #213: a raster Pocket with an island and a wall pass places the
+    /// wall ring's helix or ramp, as the island ring's. The wall ring
+    /// starts at its point nearest the last line's end, here on a round
+    /// corner of the tool-centre region, which the entry domain holds as
+    /// chords inside the arc: the start lay just outside the domain, no
+    /// placement reached it, and the ring warned `entry_fallback` and
+    /// plunged.
+    #[test]
+    fn raster_wall_ring_gets_its_entry() {
+        let p = rounded_island_project();
+        for entry in [
+            helix_80(),
+            Entry::Helix {
+                diameter_fraction: 0.8,
+                angle_deg: 15.0,
+            },
+            Entry::Ramp { angle_deg: 15.0 },
+        ] {
+            for wall_pass in [WallPass::Last, WallPass::First] {
+                let mut op = raster_op(&p, CutDirection::Climb, 0.0, wall_pass);
+                op.entry = entry.clone();
+                let (_, warnings) = generate(&p, &op);
+                assert!(
+                    entry_warnings(&warnings).is_empty(),
+                    "{entry:?}, {wall_pass:?}: {warnings:?}"
+                );
+            }
+        }
+    }
+
+    /// #213: the step from the last raster line's end to the wall ring's
+    /// start, inside material that line has just cut, is a stay-down link,
+    /// not a lift: the ring's start on the corner arc lay a hair outside
+    /// the cleared area as the sequencer flattens it.
+    #[test]
+    fn raster_wall_ring_follows_the_last_line_without_a_lift() {
+        let p = rounded_island_project();
+        let mut op = raster_op(&p, CutDirection::Climb, 0.0, WallPass::Last);
+        op.entry = helix_80();
+        let (tp, _) = generate(&p, &op);
+        for z in PASS_Z_MM {
+            let sides = wall_sides_at(&tp, z);
+            let first_side = sides.first().expect("the wall ring is cut").index;
+            let last_line = raster_lines_at(&tp, z)
+                .into_iter()
+                .filter(|c| c.index < first_side)
+                .last()
+                .expect("lines come before the wall ring")
+                .index;
+            let between = &tp.moves[last_line + 1..first_side];
+            assert!(
+                between.iter().all(|m| !m.is_rapid()),
+                "Z {z}: the tool lifts between the last line and the wall ring: {between:?}"
+            );
         }
     }
 
