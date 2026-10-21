@@ -248,6 +248,9 @@ line.
   `entry_fallback`: an open path's start cannot move.
 - There is no lead (`lead_dropped`, as for any On line Profile) and no
   corner relief (`relief_skipped`), and an open path frees nothing.
+- An open path drawn twice in the same place, in either direction, is
+  cut once, and the copy warns `duplicate_shape_dropped`, as a closed
+  shape drawn twice does.
 - An open path is a shape of its own for
   [shapes too close together](#shapes-too-close-together): one that comes
   within half a bit of another shape's line, or crosses it, warns
@@ -431,7 +434,7 @@ These still give a safe program. `check` and `export` print each one as
 | --- | --- |
 | "... is an open path" | An Inside or Outside target is not a closed outline; it is not cut. See [Open paths](#open-paths). |
 | "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
-| "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
+| "... is the same outline in the same place as ..." | Two shapes are the same outline, or the same open path in either direction, in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
 | "the lead arc on ... is ... smaller than ...", "there is no room for a lead-in arc ..." | See [Leads](#leads). |
 | "the tool paths of ... and ... cut into each other" | Two shapes are closer than the bit needs to cut between them, so cutting one gouges the other. See below. |
@@ -524,6 +527,19 @@ gap past the meeting point. Lines meet when they touch, cross, or stop
 within `flatten_tolerance_mm` of each other; a slot that stops 1 mm short
 of the edge leaves a 1 mm wall and is refused. Draw the slot to the edge,
 move the line a bit's width away, or cut it with Engrave.
+
+One line can also come too close to **itself**. A U-shaped line in a
+part whose legs are 2 mm apart, a spiral whose turns are 4 mm apart, or
+an outline with a 3 mm neck between two wider ends (a dumbbell) cut **on
+line** with a 6.35 mm bit cuts the part between the two stretches away.
+That is the same error, naming the shape twice. Only stretches more than
+1.41 bit widths apart along the line are compared, so a smooth curve
+and a corner of 90° or more are cut as drawn. A sharper corner is
+treated as two lines meeting there: a V of 45° or more is cut, and a
+sharper one, such as a 10° spike or the points of a star sharper than
+45°, is refused. Only the part counts: a notch narrower than the bit cut
+into an outline, or a hole with a narrow neck, has waste between its two
+sides, and is cut. Cut a star or a spike **outside** to keep its points.
 
 Cut **outside**, a hole close to its outline only leaves a thin wall and
 is cut as drawn.

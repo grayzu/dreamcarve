@@ -34,8 +34,8 @@ use crate::tabs::{
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
-    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region,
-    distance_away_from_mm, distance_mm, meeting_points, nest, offset,
+    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
+    distance_away_from_mm, distance_mm, meeting_points, nest, offset, point_segment_distance_mm,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
@@ -204,7 +204,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// have no side.
 ///
 /// Open paths Inside and Outside, shapes the tool cannot fit, and
-/// duplicate shapes are skipped with a [`Warning`]. Shapes in different
+/// duplicate shapes (closed, or open paths drawn twice either way, #221)
+/// are skipped with a [`Warning`]. Shapes in different
 /// regions whose tool paths cut into each other give
 /// [`WarningCode::ToolpathsOverlap`], in cut order; an open path cut On
 /// line is a shape of its own unless it lies in a region's material
@@ -220,7 +221,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// #199; a contour with no path at all is [`WarningCode::ToolTooLarge`]
 /// and skipped; an open path a region holds is compared with that
 /// region's lines and its other open paths away from where they meet,
-/// #210),
+/// #210; an On line line is also compared with its own stretches far
+/// along it, #221, so a hairpin or a narrow neck is refused),
 /// when an On line Profile asks for a helix
 /// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
 /// would leave its waste domain ([`CamError::OffMaterial`], a defect).
@@ -317,6 +319,8 @@ pub fn generate_profile(
             );
         }
     }
+    // #221: an open path drawn twice is cut once, as a closed shape is.
+    let open_paths = drop_duplicate_paths(open_paths, &mut warnings);
 
     let radius_mm = tool.diameter_mm / 2.0;
     // Each tool-centre path with the shape it cuts, the wall it cuts and
@@ -348,7 +352,16 @@ pub fn generate_profile(
                 );
                 continue;
             }
-            check_band(&op.id, op.side, tool, region, contour, &centres, &shapes)?;
+            check_band(
+                &op.id,
+                op.side,
+                tool,
+                region,
+                contour,
+                &centres,
+                &shapes,
+                project.flatten_tolerance_mm,
+            )?;
             let ccw = traversal_is_ccw(wall, op.direction);
             placed.extend(centres.into_iter().map(|c| {
                 let path = if c.is_ccw() == ccw {
@@ -694,7 +707,9 @@ pub fn generate_profile(
 ///   the bit cuts `r` of the band beside every line, so one that comes
 ///   closer than the diameter to another line of `region` cuts through
 ///   the band together with that line's cut: the part loses material it
-///   keeps.
+///   keeps. `contour` is also measured against itself
+///   ([`check_self_band`], #221; `tolerance_mm` is the project's flatten
+///   tolerance, where it meets itself).
 /// - **Outside** needs no check: there the outline's path runs outside
 ///   the region and every hole's inside its hole, so each is at least `r`
 ///   from every other line of the region, and a band between them is a
@@ -704,6 +719,10 @@ pub fn generate_profile(
 /// first first. Paths in different regions are D6's
 /// [`WarningCode::ToolpathsOverlap`]; under Inside never closer than `r`
 /// once this check passes.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every argument is one fact about the band; a struct would only rename them"
+)]
 fn check_band(
     op: &OperationId,
     side: Side,
@@ -712,6 +731,7 @@ fn check_band(
     contour: &Contour,
     centres: &[Contour],
     shapes: &[(ShapeRef, Contour)],
+    tolerance_mm: f64,
 ) -> Result<(), CamError> {
     let reach_mm = match side {
         Side::Inside => tool.diameter_mm / 2.0,
@@ -739,7 +759,93 @@ fn check_band(
             diameter_mm: tool.diameter_mm,
         });
     }
-    Ok(())
+    if side != Side::OnLine {
+        return Ok(());
+    }
+    let Some(shape) = shape_of(shapes, contour) else {
+        return Ok(());
+    };
+    let line = contour.polyline();
+    let between = |p: Point, q: Point| material_between(region, line, p, q);
+    check_self_band(op, shape, line, tool, tolerance_mm, between)
+}
+
+/// Whether the part lies between points `p` and `q` of `line`, a line of
+/// `region` (#221): the point midway lies in the region's material, a
+/// quarter of their gap or more from `line`. Across a notch or a hole's
+/// neck it lies in the waste; between two points along one edge, as
+/// either side of a notch's mouth, it lies on the line.
+fn material_between(region: &Region, line: &Polyline, p: Point, q: Point) -> bool {
+    let middle = p + (q - p) * 0.5;
+    let depth_mm = p.distance_to(q) / 4.0;
+    region.contains_point(middle)
+        && line
+            .segments()
+            .all(|s| point_segment_distance_mm(s, middle) >= depth_mm)
+}
+
+/// #221: #199's and #210's On line band check for one line against
+/// itself. Two points of `line` more than [`MEETING_REACH_DIAMETERS`]`·d`
+/// apart along it whose cuts come closer than the tool's diameter `d`
+/// (less [`EPS_MM`]) cut through the part between them, as a hairpin, a
+/// spiral with tight turns, or an outline with a narrow neck does:
+/// [`CamError::BandNarrowerThanTool`] naming `shape` twice. Neighbouring
+/// stretches are not compared, so a smooth curve and a corner of 90° or
+/// more pass. A corner sharper than 90° is where two lines meet (#210):
+/// its arms are set aside within `√2·d` of its tip, so a V of 45° or more
+/// passes and a sharper one is refused. So are stretches near where the
+/// line touches or crosses itself. `counts` takes the closest points of a
+/// pair and says whether the part lies between them: always for an open
+/// path a region holds, and for a closed line as [`material_between`]
+/// says, so a notch or a hole's neck, waste between two stretches, is
+/// cut.
+fn check_self_band(
+    op: &OperationId,
+    shape: &ShapeRef,
+    line: &Polyline,
+    tool: &Tool,
+    tolerance_mm: f64,
+    counts: impl Fn(Point, Point) -> bool,
+) -> Result<(), CamError> {
+    let diameter_mm = tool.diameter_mm;
+    let band = SelfBand::new(
+        line,
+        MEETING_REACH_DIAMETERS * diameter_mm,
+        tolerance_mm.max(EPS_MM),
+    );
+    match band.narrowest_mm(diameter_mm - EPS_MM, counts) {
+        Some(band_mm) => Err(CamError::BandNarrowerThanTool {
+            op: op.clone(),
+            shape: shape.clone(),
+            other: Box::new(shape.clone()),
+            band_mm,
+            diameter_mm,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// #221: `open` without the paths that repeat an earlier one exactly,
+/// the same vertices in the same or the reverse direction, each dropped
+/// with [`WarningCode::DuplicateShapeDropped`] naming the one kept, as
+/// `nest` drops a closed shape drawn twice.
+fn drop_duplicate_paths(
+    open: Vec<(ShapeRef, Polyline)>,
+    warnings: &mut Vec<Warning>,
+) -> Vec<(ShapeRef, Polyline)> {
+    let mut kept: Vec<(ShapeRef, Polyline)> = Vec::with_capacity(open.len());
+    for (shape, path) in open {
+        let reversed = path.reversed();
+        match kept.iter().find(|(_, k)| *k == path || *k == reversed) {
+            Some((original, _)) => warnings.push(
+                shape_warning(WarningCode::DuplicateShapeDropped, &shape)
+                    .with("duplicate_of_instance", &original.instance)
+                    .with("duplicate_of_profile", original.profile),
+            ),
+            None => kept.push((shape, path)),
+        }
+    }
+    kept
 }
 
 /// How far from a point where two lines of one region meet their On line
@@ -816,6 +922,9 @@ fn check_open_bands(
                 diameter_mm,
             });
         }
+        // #221: and with itself. The region holds all of it, so the part
+        // lies on both sides of every stretch.
+        check_self_band(&op.id, shape, path, tool, tolerance_mm, |_, _| true)?;
     }
     Ok(())
 }

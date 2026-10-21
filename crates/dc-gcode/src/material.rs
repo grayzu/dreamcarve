@@ -64,6 +64,15 @@
 //!     (touch, cross, or come within the flatten tolerance) set aside: so
 //!     a slot drawn from the edge passes and one beside a wall fails, as
 //!     dc-cam refuses it (`BandNarrowerThanTool`, #210).
+//!     A cut also keeps the diameter from the stretches of its own line
+//!     that lie more than `√2·d` along it from where it runs (#221,
+//!     [`dc_geometry::SelfBand`]): a loop of a region, or an open path a
+//!     region holds. The stretches within `√2·d` of a point where the line
+//!     meets itself (a corner sharper than 90°, or where it touches or
+//!     crosses itself) are set aside, and a loop counts only the pairs with
+//!     the region's material between them, so a cut along a hairpin, a
+//!     tight spiral or an outline's narrow neck fails and one along a
+//!     narrow notch passes, as dc-cam decides.
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
 //!     it on its waste side, passes even where an outline of another
 //!     region comes nearer than the radius. That cut is the outline's
@@ -104,8 +113,9 @@
 use std::ops::Range;
 
 use dc_geometry::{
-    Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, Vec2, as_circle,
-    meeting_points, nest, point_segment_distance_mm, segment_distance_mm,
+    Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
+    as_circle, closest_points, meeting_points, nest, point_segment_distance_mm,
+    segment_distance_mm,
 };
 use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side};
 
@@ -147,7 +157,8 @@ pub(crate) enum Material {
     /// An On line Profile's regions: the tool centre stays on one of
     /// their lines, at least the tool's diameter from the region's other
     /// lines (#199), or on one of its targets' open paths (#175), as far
-    /// from the lines beside that path away from where they meet (#210).
+    /// from the lines beside that path away from where they meet (#210),
+    /// and as far from its own line's stretches far along it (#221).
     OnLineProfile {
         /// The regions, outer and holes, from the targets' closed
         /// profiles.
@@ -190,6 +201,8 @@ struct Loop {
     edges: Range<usize>,
     /// The loop alone, to tell its sides apart.
     alone: Option<Region>,
+    /// The loop as wound, for measuring it against itself (#221).
+    line: Polyline,
     /// The waste is inside the loop.
     waste_inside: bool,
 }
@@ -328,6 +341,9 @@ impl Edge {
 pub(crate) struct OpenPath {
     /// The path's segments.
     edges: Vec<Edge>,
+    /// The path, when a region's material holds it: then it is measured
+    /// against itself too (#221).
+    held: Option<Polyline>,
     /// When a region's material holds the path: each line of that region
     /// and each other open path it holds.
     beside: Vec<Beside>,
@@ -353,10 +369,17 @@ const MEETING_REACH_DIAMETERS: f64 = std::f64::consts::SQRT_2;
 /// paths that region holds, with the points where each meets it within
 /// `tolerance_mm`. A path no region holds has nothing beside it.
 fn open_paths_of(paths: &[Polyline], regions: &[Region], tolerance_mm: f64) -> Vec<OpenPath> {
-    let open: Vec<&Polyline> = paths
+    // A path drawn twice, either way round, is cut once (#221).
+    let mut open: Vec<&Polyline> = Vec::new();
+    for path in paths
         .iter()
         .filter(|p| !p.is_closed() && p.length_mm() > EPS_MM)
-        .collect();
+    {
+        let reversed = path.reversed();
+        if !open.iter().any(|&kept| *kept == *path || *kept == reversed) {
+            open.push(path);
+        }
+    }
     let holds = |region: &Region, path: &Polyline| {
         let middles = path
             .segments()
@@ -392,6 +415,7 @@ fn open_paths_of(paths: &[Polyline], regions: &[Region], tolerance_mm: f64) -> V
             };
             OpenPath {
                 edges: edges_of(path).collect(),
+                held: region_index.is_some().then(|| (*path).clone()),
                 beside: lines
                     .into_iter()
                     .map(|line| Beside {
@@ -467,6 +491,7 @@ fn areas_of(regions: Vec<Region>, waste_inside: bool) -> Vec<Area> {
                     alone: nest(vec![contour.clone()])
                         .ok()
                         .and_then(|(r, _)| r.into_iter().next()),
+                    line: polyline,
                     waste_inside: inside,
                 });
             }
@@ -589,6 +614,16 @@ pub(crate) fn check(
         return Ok(());
     }
     let radius_mm = span.tool.diameter_mm / 2.0;
+    // #221: each On line loop and held open path, measured against itself.
+    let selves = match span.material {
+        Material::OnLineProfile { areas, open } => Some(SelfBands::new(
+            areas,
+            open,
+            MEETING_REACH_DIAMETERS * 2.0 * radius_mm,
+            tolerances.flatten_mm,
+        )),
+        _ => None,
+    };
     let departure_mm = tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM;
     // The region the last cut ended in, and where.
     let mut last: Option<(usize, Point)> = None;
@@ -638,10 +673,16 @@ pub(crate) fn check(
                     .any(|(centre, r)| p.distance_to(*centre) <= r + slack_mm)
             }),
             Material::OnLineProfile { areas, open } => {
-                let band_mm = 2.0 * radius_mm - slack_mm;
-                let reach_mm = MEETING_REACH_DIAMETERS * 2.0 * radius_mm + slack_mm;
-                on_own_line(areas, path, band_mm, slack_mm)
-                    || on_open_path(open, path, band_mm, reach_mm, slack_mm)
+                let band = Band {
+                    band_mm: 2.0 * radius_mm - slack_mm,
+                    reach_mm: MEETING_REACH_DIAMETERS * 2.0 * radius_mm + slack_mm,
+                    slack_mm,
+                };
+                let (own_areas, own_open) = selves
+                    .as_ref()
+                    .map_or((&[][..], &[][..]), |s| (&s.areas[..], &s.open[..]));
+                on_own_line(areas, own_areas, path, band)
+                    || on_open_path(open, own_open, path, band)
             }
             Material::OnLine { edges } => {
                 points_of(path).iter().all(|&p| on_line(edges, p, slack_mm))
@@ -755,17 +796,23 @@ fn is_lap(
 }
 
 /// The On line Profile rule (module docs): whether tool-centre path
-/// `path` lies on one loop of `areas`, its ends and middle within
-/// `slack_mm` of it, and at least `band_mm` from every other loop of that
-/// loop's area (#199). Other areas' loops are not looked at.
-fn on_own_line(areas: &[Area], path: Segment, band_mm: f64, slack_mm: f64) -> bool {
+/// `path` lies on one loop of `areas`, its ends and middle within the
+/// slack of it, at least the band from every other loop of that loop's
+/// area (#199), and from the stretches of its own loop far along it
+/// (#221, [`keeps_self`]; `selves` holds each loop's [`SelfBand`]). Other
+/// areas' loops are not looked at.
+fn on_own_line(areas: &[Area], selves: &[Vec<SelfBand>], path: Segment, band: Band) -> bool {
+    let Band {
+        band_mm, slack_mm, ..
+    } = band;
     let bounds = bounds_of(path);
     let points = points_of(path);
     areas
         .iter()
-        .filter(|a| near(bounds, a.bounds, slack_mm))
-        .any(|area| {
-            area.loops.iter().any(|l| {
+        .zip(selves)
+        .filter(|(a, _)| near(bounds, a.bounds, slack_mm))
+        .any(|(area, own)| {
+            area.loops.iter().zip(own).any(|(l, own)| {
                 let edges = area.edges.get(l.edges.clone()).unwrap_or_default();
                 points.iter().all(|&p| on_line(edges, p, slack_mm))
                     && area
@@ -774,25 +821,29 @@ fn on_own_line(areas: &[Area], path: Segment, band_mm: f64, slack_mm: f64) -> bo
                         .enumerate()
                         .filter(|(i, e)| !l.edges.contains(i) && near(bounds, e.bounds, band_mm))
                         .all(|(_, e)| segment_distance_mm(path, e.segment) >= band_mm)
+                    && keeps_self(own, path, band, |p, q| {
+                        material_between(&area.region, edges, p, q)
+                    })
             })
         })
 }
 
 /// The On line rule for open paths (module docs, #210): whether tool-centre
-/// path `path` lies on one of `open`, its ends and middle within
-/// `slack_mm` of it, and keeps `band_mm` from every line beside that path
-/// once the stretches of both within `reach_mm` of a point where they meet
-/// are set aside.
-fn on_open_path(
-    open: &[OpenPath],
-    path: Segment,
-    band_mm: f64,
-    reach_mm: f64,
-    slack_mm: f64,
-) -> bool {
+/// path `path` lies on one of `open`, its ends and middle within the
+/// slack of it, and keeps the band from every line beside that path once
+/// the stretches of both within the reach of a point where they meet are
+/// set aside, and from the stretches of the path itself far along it
+/// when a region holds it (#221; `selves` holds each path's
+/// [`SelfBand`]).
+fn on_open_path(open: &[OpenPath], selves: &[Option<SelfBand>], path: Segment, band: Band) -> bool {
+    let Band {
+        band_mm,
+        reach_mm,
+        slack_mm,
+    } = band;
     let bounds = bounds_of(path);
     let points = points_of(path);
-    open.iter().any(|o| {
+    open.iter().zip(selves).any(|(o, own)| {
         points.iter().all(|&p| on_line(&o.edges, p, slack_mm))
             && o.beside.iter().all(|b| {
                 let pieces = path.outside_discs(&b.meetings, reach_mm);
@@ -809,7 +860,100 @@ fn on_open_path(
                                 .all(|q| segment_distance_mm(path, q) >= band_mm)
                     })
             })
+            && own
+                .as_ref()
+                .is_none_or(|own| keeps_self(own, path, band, |_, _| true))
     })
+}
+
+/// The On line band rule for one move and one line (#221): the band,
+/// mm, the reach about a meeting point within which a pair is set aside,
+/// mm, and the slack a written move may depart by, mm.
+#[derive(Debug, Clone, Copy)]
+struct Band {
+    band_mm: f64,
+    reach_mm: f64,
+    slack_mm: f64,
+}
+
+/// Each On line loop of each area, and each open path a region holds,
+/// as a [`SelfBand`] (#221): the loops in [`Area::loops`] order, the open
+/// paths in `open` order, `None` for a path no region holds.
+struct SelfBands {
+    areas: Vec<Vec<SelfBand>>,
+    open: Vec<Option<SelfBand>>,
+}
+
+impl SelfBands {
+    /// The bands of `areas` and `open`, compared beyond `reach_mm` along
+    /// each line and meeting where they come within `tolerance_mm` of
+    /// themselves, as `dc_cam::generate_profile` measures them.
+    fn new(areas: &[Area], open: &[OpenPath], reach_mm: f64, tolerance_mm: f64) -> Self {
+        let tolerance_mm = tolerance_mm.max(EPS_MM);
+        Self {
+            areas: areas
+                .iter()
+                .map(|a| {
+                    a.loops
+                        .iter()
+                        .map(|l| SelfBand::new(&l.line, reach_mm, tolerance_mm))
+                        .collect()
+                })
+                .collect(),
+            open: open
+                .iter()
+                .map(|o| {
+                    o.held
+                        .as_ref()
+                        .map(|line| SelfBand::new(line, reach_mm, tolerance_mm))
+                })
+                .collect(),
+        }
+    }
+}
+
+/// #221: whether tool-centre path `path`, which runs on the line `own`
+/// measures, keeps `band.band_mm` from the stretches of that line that
+/// lie more than the reach along it from where `path` runs, for every
+/// pair of closest points `counts` accepts. The stretches of both within
+/// `band.reach_mm` of a point where the line meets itself are set aside,
+/// as for two lines (#210).
+fn keeps_self(
+    own: &SelfBand,
+    path: Segment,
+    band: Band,
+    counts: impl Fn(Point, Point) -> bool,
+) -> bool {
+    let far = own.far_from(path, band.slack_mm, band.band_mm);
+    if far.is_empty() {
+        return true;
+    }
+    let pieces = path.outside_discs(own.meetings(), band.reach_mm);
+    far.into_iter().all(|stretch| {
+        let away = stretch.outside_discs(own.meetings(), band.reach_mm);
+        pieces
+            .iter()
+            .map(|&p| (p, stretch))
+            .chain(away.into_iter().map(|a| (path, a)))
+            .all(|(s, t)| {
+                let (p, q) = closest_points(s, t);
+                p.distance_to(q) >= band.band_mm || !counts(p, q)
+            })
+    })
+}
+
+/// Whether the part lies between points `p` and `q` of one loop of
+/// `region`, whose segments are `edges` (#221, as `dc_cam` decides it):
+/// the point midway lies in the region's material, a quarter of their gap
+/// or more from the loop. Across a notch or a hole's neck it lies in the
+/// waste; between two points along one edge it lies on the loop.
+fn material_between(region: &Region, edges: &[Edge], p: Point, q: Point) -> bool {
+    let middle = p + (q - p) * 0.5;
+    let depth_mm = p.distance_to(q) / 4.0;
+    region.contains_point(middle)
+        && edges
+            .iter()
+            .all(|e| point_segment_distance_mm(e.segment, middle) >= depth_mm)
 }
 
 /// Whether `p` lies within `slack_mm` of one of `edges`.

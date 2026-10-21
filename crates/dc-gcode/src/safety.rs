@@ -4164,6 +4164,44 @@ mod tests {
         );
     }
 
+    /// #221: S9 measures every On line cut against its own line's
+    /// stretches, but only those near the cut, so an outline of 2000 chords
+    /// cut On line in three passes stays fast in a debug build.
+    #[test]
+    fn s9_check_is_fast_on_an_on_line_outline_of_many_chords() {
+        let mut project = sample_project();
+        let chords: Vec<dc_geometry::Vertex> = (0..2000)
+            .map(|k| {
+                let a = f64::from(k) * TAU / 2000.0;
+                dc_geometry::Vertex::line(25.0 + 14.0 * a.cos(), 15.0 + 14.0 * a.sin())
+            })
+            .collect();
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles = vec![dc_geometry::Polyline::new(chords, true)];
+        }
+        let profile = dc_project::test_support::profile_mut(&mut project);
+        profile.side = dc_project::Side::OnLine;
+        profile.tabs = None;
+        let profile = profile.clone();
+        let (toolpath, _) = generate_profile(&project, &profile).unwrap();
+        let op = Operation::Profile(profile);
+        let text = emit(
+            &project,
+            &[(op.clone(), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .map(|(p, _)| p.text)
+        .unwrap();
+        let start = std::time::Instant::now();
+        check_material_text(&text, &project, &op).unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "S9 took {elapsed:?} on {} lines",
+            text.lines().count()
+        );
+    }
+
     /// #158: S9 on the helix Pocket checks each of its more than a
     /// thousand descent chords as a segment against the region's outlines,
     /// not as the union of swept capsules (6.7 s in a debug build in slice
