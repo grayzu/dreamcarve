@@ -65,7 +65,7 @@ pub struct TabsArgs {
 pub enum TabsCommand {
     /// Place tabs on the outlines a Profile operation cuts, and save the
     /// project. With neither --count nor --at, places the operation's own
-    /// tab request.
+    /// tab request. Adds to the tabs already there unless --replace.
     Place(TabsPlaceArgs),
     /// List the project's tabs, and the operations that cut round each.
     List {
@@ -112,6 +112,10 @@ pub struct TabsPlaceArgs {
     /// Put tabs on holes too, to hold their slugs.
     #[arg(long)]
     pub on_holes: bool,
+    /// Remove the tabs the operation cuts round (those `tabs clear <dcv>
+    /// <op>` removes) and place the new ones instead, in one save.
+    #[arg(long)]
+    pub replace: bool,
 }
 
 /// `--shape` values.

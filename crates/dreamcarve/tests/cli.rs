@@ -6146,6 +6146,92 @@ fn placed_v8_hole_tabs_export_without_tab_on_hole() {
     assert!(report.contains("tab `by-hand` is on"), "{report}");
 }
 
+/// #293 with #300: `tabs place --replace --on-holes` warns `tab_on_hole`
+/// once for each new tab it puts on the square's hole, and none for the
+/// tabs it removed; `export` then warns none. Both parts keep tabs, so
+/// there is no note that a part comes loose. Replacing again without
+/// `--on-holes` leaves the hole with no tabs: nothing warns, and the hole's
+/// slug coming free is no part coming loose, so there is no note either.
+#[test]
+fn tabs_place_replace_onto_a_hole_warns_once() {
+    let dir = work_dir("tabs_place_replace_onto_a_hole_warns_once");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tabs-migration/square-with-hole-on-holes.dcv"),
+        dir.join("square.dcv"),
+    )
+    .expect("fixture copied");
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = load_file(&dir.join("square.dcv")).project.tabs;
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--width",
+            "4",
+            "--on-holes",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    let project = load_file(&dir.join("square.dcv")).project;
+    let hole_tabs: Vec<&dc_project::PlacedTab> =
+        project.tabs.iter().filter(|t| t.profile == 1).collect();
+    assert_eq!(hole_tabs.len(), 2, "{:?}", project.tabs);
+    assert!(
+        printed.contains(&format!("{} tab(s) removed and 4 placed", first.len())),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let warned = stderr(&out);
+    assert_eq!(
+        warned.matches("warning: tab_on_hole:").count(),
+        2,
+        "{warned}"
+    );
+    for tab in &hole_tabs {
+        assert_eq!(
+            warned.matches(&format!("tab `{}` is on", tab.id)).count(),
+            1,
+            "{warned}"
+        );
+    }
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_on_hole"), "{report}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("tab_on_hole"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("Note:"), "{}", stdout(&out));
+    let project = load_file(&dir.join("square.dcv")).project;
+    assert!(
+        project.tabs.iter().all(|t| t.profile == 0),
+        "{:?}",
+        project.tabs
+    );
+}
+
 /// #207: an SVG line from (20, 30) to (80, 30), drawn left to right, cut
 /// Left: the cut runs on the side the drawing shows as the line's left
 /// (up the page), which after the importer's flip to Y-up (ADR-0001) is
@@ -6263,6 +6349,110 @@ fn tabs_clear_op_removes_only_the_tabs_it_cuts_round() {
     assert!(
         printed.contains("`coaster` (instance `i1`, profile 0)") && printed.contains("no tab"),
         "names the part op1 now cuts free: {printed}"
+    );
+}
+
+/// The tab points of the project at `dcv`, by id.
+fn tab_points(dcv: &Path) -> Vec<(String, Point)> {
+    load_file(dcv)
+        .project
+        .tabs
+        .iter()
+        .map(|t| (t.id.to_string(), Point::new(t.x_mm, t.y_mm)))
+        .collect()
+}
+
+/// #293, the issue's first test: `tabs place --replace` swaps the tabs
+/// the operation cuts round (the set `tabs clear <dcv> <op>` removes) for
+/// the new ones in one save, and prints both. Four tabs on the coaster,
+/// then six with `--replace`: the file holds the six, at none of the first
+/// four's points and with fresh ids, so an id read off an earlier `tabs
+/// list` names no new tab. The part keeps tabs, so there is no note that
+/// it comes loose. `--replace` with nothing to place is a usage error.
+#[test]
+fn tabs_place_replace_swaps_the_operations_tabs() {
+    let dir = work_dir("tabs_place_replace_swaps_the_operations_tabs");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = tab_points(&dcv);
+    assert_eq!(first.len(), 4, "{first:?}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "6",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert_eq!(printed.matches("Removed `tab").count(), 4, "{printed}");
+    assert_eq!(printed.matches("Placed `tab").count(), 6, "{printed}");
+    assert!(
+        printed.contains("4 tab(s) removed and 6 placed; coaster.dcv saved with 6 tab(s)."),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let second = tab_points(&dcv);
+    assert_eq!(second.len(), 6, "{second:?}");
+    for (id, point) in &second {
+        assert!(
+            first.iter().all(|(old, _)| old != id),
+            "new tab reuses id {id}: {second:?}"
+        );
+        assert!(
+            first.iter().all(|(_, old)| old.distance_to(*point) > 1e-6),
+            "new tab {id} at an old tab's point: {second:?}"
+        );
+    }
+
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1", "--replace"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("--replace needs --count or --at"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+}
+
+/// #293, the issue's second test: without `--replace`, `tabs place` keeps
+/// adding: four tabs then six leave ten on the coaster (none of the six
+/// lands on one of the four), and it notes that the outline already had
+/// tabs and how to swap them instead.
+#[test]
+fn tabs_place_without_replace_notes_existing_tabs() {
+    let dir = work_dir("tabs_place_without_replace_notes_existing_tabs");
+    init_coaster(&dir);
+    let dcv = dir.join("coaster.dcv");
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "6"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(load_file(&dcv).project.tabs.len(), 10);
+    let printed = stdout(&out);
+    assert!(
+        printed.contains(
+            "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s); this adds 6 more. To swap them instead, give --replace."
+        ),
+        "{printed}"
     );
 }
 

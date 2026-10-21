@@ -45,6 +45,7 @@ Placed `tab4` on `coaster` (instance `i1`, profile 0) 247.4 mm along it: 8 mm wi
 | `--height MM` | Height of the tab top above the stock bottom. A rect tab is this thick all along; a smooth tab is this thick at its middle. Default 3. |
 | `--shape rect\|smooth` | `rect` (square shoulders, the default) or `smooth` (a triangle: straight ramps up and down). See [What the bit does over a tab](#what-the-bit-does-over-a-tab). |
 | `--on-holes` | Put tabs on holes too. Without it holes get none. See [Parts with holes](#parts-with-holes). |
+| `--replace` | Remove the tabs the operation cuts round first, as `tabs clear <dcv> <op>` does, and place the new ones instead. See [Changing an operation's tabs](#changing-an-operations-tabs). |
 
 `--count` follows the rules below: no tabs on holes unless `--on-holes`,
 and fewer tabs on an outline too short for them, but at least one on a
@@ -55,18 +56,16 @@ tool path, the bit's radius off the outline for an Inside or Outside cut.
 On a project `init` wrote, the Profile already asks for four tabs, and
 `tabs place` places that request first ([What every `tabs place`
 does](#what-every-tabs-place-does)), so the command above places just
-those four. To have three instead, clear them first:
+those four. To have three instead, give `--replace`:
 
 ```sh
-dreamcarve tabs clear coaster.dcv
-dreamcarve tabs place coaster.dcv op1 --count 3
+dreamcarve tabs place coaster.dcv op1 --count 3 --replace
 ```
 
 ### At distances along the outline
 
 ```sh
-dreamcarve tabs clear coaster.dcv
-dreamcarve tabs place coaster.dcv op1 --at 0,70.686
+dreamcarve tabs place coaster.dcv op1 --at 0,70.686 --replace
 ```
 
 This puts one tab at each distance, in millimetres, along every outline
@@ -100,11 +99,18 @@ error: operation `op1` has no tab request to place; give --count or --at
 
 ### What every `tabs place` does
 
-- It adds tabs; it never removes any. Run `tabs clear` first to replace
-  tabs. A tab exactly like one already there, on the same outline at the
-  same point with the same size and shape, is not added again.
+- It adds tabs, unless you give `--replace` ([Changing an operation's
+  tabs](#changing-an-operations-tabs)). A tab exactly like one already
+  there, on the same outline at the same point with the same size and
+  shape, is not added again. When new tabs go on an outline that already
+  had tabs, it says so after the total:
+
+  ```text
+  Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s); this adds 6 more. To swap them instead, give --replace.
+  ```
+
 - New tabs take the next free id: `tab5` after `tab4`, even when `tab2`
-  was removed.
+  was removed, or when `--replace` removed `tab1` to `tab4`.
 - It first places the tab request of every enabled Profile, so the file
   it saves holds placed tabs only.
 - It works only on a Profile. Another kind fails (exit code 1), and so
@@ -114,6 +120,36 @@ error: operation `op1` has no tab request to place; give --count or --at
   error: operation `o2` is a pocket operation; only a Profile cuts tabs
   error: operation `op9` is not in coaster.dcv
   ```
+
+### Changing an operation's tabs
+
+```sh
+dreamcarve tabs place coaster.dcv op1 --count 6 --replace
+```
+
+`--replace` removes the tabs the operation cuts round, the same ones
+`tabs clear coaster.dcv op1` removes, then places the new ones, and saves
+once. Tabs on outlines the operation does not cut round stay. It prints
+each tab it removed, then each it placed, then a total:
+
+```text
+Removed `tab1` on `coaster` (instance `i1`, profile 0) 35.343 mm along it: 8 mm wide, top 3 mm above the stock bottom, rect
+...
+Removed `tab4` on `coaster` (instance `i1`, profile 0) 247.4 mm along it: 8 mm wide, top 3 mm above the stock bottom, rect
+Placed `tab5` on `coaster` (instance `i1`, profile 0) 23.562 mm along it: 8 mm wide, top 3 mm above the stock bottom, rect
+...
+Placed `tab10` on `coaster` (instance `i1`, profile 0) 259.181 mm along it: 8 mm wide, top 3 mm above the stock bottom, rect
+4 tab(s) removed and 6 placed; coaster.dcv saved with 6 tab(s).
+```
+
+A tab is on the part, so every Profile that cuts its outline rises over
+it: replacing a finish pass's tabs replaces the cut-out's too. When the
+new tabs leave a part that an enabled Profile cuts through the stock with
+no tab, `--replace` prints the same note as `tabs clear` ([Removing
+tabs](#removing-tabs)). A new tab on a hole (`--on-holes`) warns
+`tab_on_hole` once, as with any `tabs place` ([Parts with
+holes](#parts-with-holes)). `--replace` needs `--count` or `--at`;
+without either it is a usage error (exit code 2).
 
 ## Listing tabs
 

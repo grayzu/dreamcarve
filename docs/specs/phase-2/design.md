@@ -378,6 +378,9 @@ pub mod placed_tabs {   // #105, "Placed tabs"
     pub fn place_on_outlines(project: &Project, op: &OperationId, at_mm: &[f64], size: TabSize, on_holes: bool) -> Result<Placement, CamError>;
     /// Every enabled Profile's request placed and cleared, as `dreamcarve` saves.
     pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamError>;
+    /// The tabs `op` crosses replaced by what `place` places without them (#293).
+    pub struct Replacement { pub project: Project, pub removed: Vec<PlacedTab>, pub placement: Placement }
+    pub fn replace<F: FnOnce(&Project) -> Result<Placement, CamError>>(project: &Project, op: &OperationId, place: F) -> Result<Replacement, CamError>;
     pub fn crossed_by(project: &Project, op: &ProfileOp) -> Result<Vec<TabId>, CamError>;
     pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning>;  // tab_not_crossed, tab_off_outline
     /// The tab's width plus `diameter_mm` (#300).
@@ -1306,6 +1309,14 @@ largest `tab<n>` in the project, so a removed id is not reused. A tab
 equal to one the project already has, or to one placed in the same
 call (same instance, profile and shape, point, width and height within
 `EPS_MM`), is not added, so placing the same tabs twice adds none.
+
+**Replacing** (`replace`, `tabs place --replace`, #293). The tabs a
+Profile crosses (`crossed_by`, the set `tabs clear <dcv> <op>` removes)
+are removed, then `place` or `place_on_outlines` runs on the project
+without them, so a new tab at a removed tab's point is placed again
+rather than taken for a copy. The new tabs are renumbered from one more
+than the largest `tab<n>` the project had before the removal, so no
+removed id names a new tab. (changed in #293: placing only added.)
 
 **Requests.** Generation places any request still present before it
 cuts (`profile::plan_tabs`), so a file with requests, of any version,
@@ -2335,6 +2346,18 @@ following the chapters, which each carry a complete JSON block to paste.
   (instance `i1`, profile 0) 35.343 mm along it: 8 mm wide, top 3 mm
   above the stock bottom, rect` per new tab, then `N tab(s) placed;
   coaster.dcv saved with M tab(s).`, and the placing warnings on stderr.
+  An outline that had tabs and gets more is noted after the total:
+  "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s);
+  this adds 6 more. To swap them instead, give --replace."
+  `--replace` (#293; needs `--count` or `--at`, exit 2 without):
+  `placed_tabs::replace`; prints `Removed …` per tab removed (as
+  `Placed …`), the `Placed …` lines, `R tab(s) removed and N placed;
+  coaster.dcv saved with M tab(s).`, and the `tabs clear` note for each
+  part it leaves cut through with no tab. (changed in #293: adding was
+  the only way, so changing the count took `tabs clear` first.)
+  With or without `--replace`, each new tab an enabled Profile cuts as a
+  hole warns `tab_on_hole` once, on stderr (#300); a tab `--replace`
+  removes and places again takes a new id, so it is new and warns again.
 - `tabs list <dcv>`: a table `ID INSTANCE PROFILE AT_MM OFF_MM X_MM Y_MM
   WIDTH_MM HEIGHT_MM SHAPE CUT_BY`, `AT_MM` the distance of the tab's
   foot along its outline from the first vertex as drawn, `OFF_MM` how far
@@ -2434,7 +2457,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `profile::star_with_tabs_placed_only_on_the_star_lifts_only_on_the_star` (acceptance 38a).
 - `safety::placed_tab_programs_pass_s1_to_s9`; the golden harness checks that every golden case with tabs cuts the same once its tabs are placed.
 - `cli::version_9_tab_settings_export_byte_identical_programs` (the tabs-migration corpus, as loaded and after `tabs place`), `cli::init_asks_for_four_tabs_that_tabs_place_writes`, `cli::tabs_place_list_and_clear`, `cli::tabs_place_at_puts_tabs_along_the_outline`, `cli::tabs_place_refuses_what_it_cannot_place`, `cli::check_warns_tab_not_crossed`.
-- `placed_tabs::tab_far_from_its_outline_warns`, `placed_tabs::hole_tabs_placed_for_the_cut_do_not_warn`, `cli::tabs_list_shows_how_far_each_tab_is_off_its_outline`, `cli::placed_v8_hole_tabs_export_without_tab_on_hole` (#300).
+- `placed_tabs::replace_swaps_only_the_tabs_the_profile_crosses`, `cli::tabs_place_replace_swaps_the_operations_tabs`, `cli::tabs_place_without_replace_notes_existing_tabs` (#293).
+- `placed_tabs::tab_far_from_its_outline_warns`, `placed_tabs::hole_tabs_placed_for_the_cut_do_not_warn`, `cli::tabs_list_shows_how_far_each_tab_is_off_its_outline`, `cli::placed_v8_hole_tabs_export_without_tab_on_hole`, `cli::tabs_place_replace_onto_a_hole_warns_once` (#300).
 
 **dc-cam — pocket**
 - `pocket::offset_rings_are_concentric_and_spaced_by_stepover` — 100×50, 6.35 mm, 40 %: ring gaps 2.54 ± 0.01.
