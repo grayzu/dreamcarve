@@ -47,7 +47,8 @@
 //!   Every preset of one Fusion tool shares it.
 //! - `start-values.presets[]`: one library tool per preset, named
 //!   `description` when there is one preset and `<description> (<preset
-//!   name>)` when there are several. `n` → `rpm`, `v_f` → `feed_mm_min`,
+//!   name>)` when there are several (a tool without a `description` takes
+//!   its `product-id`, else `<DC> <mm|in> <type>`). `n` → `rpm`, `v_f` → `feed_mm_min`,
 //!   `v_f_plunge` → `plunge_mm_min`; a missing, zero or negative value stays
 //!   `None` (never defaulted: export refuses until the user sets it) and an
 //!   [`ImportNote`] says so. `stepdown` → `step_down_mm` and `stepover / DC`
@@ -223,9 +224,400 @@ fn is_zip(bytes: &[u8]) -> bool {
 }
 
 /// Imports a Fusion 360 library: a `.tools` archive or its JSON document
-/// (module docs).
-pub fn import(_bytes: &[u8]) -> Result<FusionImport, LibraryError> {
-    Err(LibraryError::NotAFusionLibrary)
+/// (module docs). Fails only when the file as a whole cannot be read (a
+/// damaged archive, invalid JSON, no `data` array, a `version` below
+/// [`MIN_FUSION_VERSION`]); an item that cannot be imported is
+/// [`Skipped`] and the rest still import.
+pub fn import(bytes: &[u8]) -> Result<FusionImport, LibraryError> {
+    let document = document(bytes)?;
+    let root: Value = serde_json::from_slice(&document).map_err(|e| LibraryError::Json {
+        line: e.line(),
+        column: e.column(),
+        message: e.to_string(),
+    })?;
+    let obj = root.as_object().ok_or(LibraryError::NotAFusionLibrary)?;
+    let data = obj
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or(LibraryError::NotAFusionLibrary)?;
+    let version = obj.get("version").ok_or(LibraryError::MissingVersion)?;
+    if version.as_u64().is_none_or(|v| v < MIN_FUSION_VERSION) {
+        return Err(LibraryError::FusionVersion {
+            found: version.to_string(),
+        });
+    }
+    let mut tools = Vec::new();
+    let mut skipped = Vec::new();
+    for (index, item) in data.iter().enumerate() {
+        match import_item(index, item) {
+            Ok(imported) => tools.extend(imported),
+            Err(skip) => skipped.push(skip),
+        }
+    }
+    for (k, imported) in tools.iter_mut().enumerate() {
+        imported.tool.id = ToolId::new(format!("t{}", k.saturating_add(1)));
+    }
+    Ok(FusionImport { tools, skipped })
+}
+
+/// The JSON document in `bytes`: the bytes themselves, or for a zip the
+/// entry named `tools.json`, else its only `.json` entry.
+fn document(bytes: &[u8]) -> Result<Cow<'_, [u8]>, LibraryError> {
+    if !is_zip(bytes) {
+        return Ok(Cow::Borrowed(bytes));
+    }
+    let error = |message: String| LibraryError::FusionArchive { message };
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| error(format!("not a valid zip archive: {e}")))?;
+    let name = {
+        let names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.map(|n| n.into_owned()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| error(format!("an entry name cannot be read: {e}")))?;
+        if names.iter().any(|n| n == "tools.json") {
+            "tools.json".to_owned()
+        } else {
+            let json: Vec<&String> = names
+                .iter()
+                .filter(|n| n.to_ascii_lowercase().ends_with(".json"))
+                .collect();
+            match json.as_slice() {
+                [only] => (*only).clone(),
+                [] => return Err(error("it holds no `tools.json`".into())),
+                several => {
+                    return Err(error(format!(
+                        "it holds no `tools.json` and {} other JSON files",
+                        several.len()
+                    )));
+                }
+            }
+        }
+    };
+    let entry = archive
+        .by_name(&name)
+        .map_err(|e| error(format!("`{name}` cannot be opened: {e}")))?;
+    let mut out = Vec::new();
+    entry
+        .take(MAX_DOCUMENT_BYTES.saturating_add(1))
+        .read_to_end(&mut out)
+        .map_err(|e| error(format!("`{name}` cannot be unpacked: {e}")))?;
+    if u64::try_from(out.len())
+        .ok()
+        .is_none_or(|n| n > MAX_DOCUMENT_BYTES)
+    {
+        return Err(error(format!(
+            "`{name}` is larger than {} MiB",
+            MAX_DOCUMENT_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(Cow::Owned(out))
+}
+
+/// The DreamCarve cutter a supported Fusion type becomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Family {
+    /// `flat end mill`, `slot mill`.
+    EndMill,
+    /// `bull nose end mill`: an end mill whose name records `RE`.
+    BullNose,
+    /// `ball end mill`.
+    BallNose,
+    /// `chamfer mill`: a V-bit of twice `TA`.
+    Chamfer,
+    /// The hole-making tools DreamCarve drills with.
+    Drill,
+}
+
+/// What a Fusion `type` is to the importer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// Imported as this family.
+    Supported(Family),
+    /// Named by the schema, but DreamCarve has no such cutter.
+    Unsupported,
+    /// Not named by the schema.
+    Unknown,
+}
+
+/// The types DreamCarve imports.
+const SUPPORTED: &[(&str, Family)] = &[
+    ("flat end mill", Family::EndMill),
+    ("slot mill", Family::EndMill),
+    ("bull nose end mill", Family::BullNose),
+    ("ball end mill", Family::BallNose),
+    ("chamfer mill", Family::Chamfer),
+    ("drill", Family::Drill),
+    ("spot drill", Family::Drill),
+    ("center drill", Family::Drill),
+    ("counter sink", Family::Drill),
+    ("counter bore", Family::Drill),
+    ("reamer", Family::Drill),
+];
+
+/// Every other type the schema's enums name (milling, hole making,
+/// cutting, depositing, probe, holder and tool block); `turning *` types
+/// are matched by prefix.
+const UNSUPPORTED: &[&str] = &[
+    "lollipop mill",
+    "dovetail mill",
+    "face mill",
+    "form mill",
+    "thread mill",
+    "tapered mill",
+    "radius mill",
+    "corner chamfer end mill",
+    "circle segment barrel",
+    "circle segment lens",
+    "circle segment oval",
+    "circle segment taper",
+    "boring bar",
+    "tap left hand",
+    "tap right hand",
+    "plasma cutter",
+    "laser cutter",
+    "waterjet",
+    "electric arc wire",
+    "laser powder",
+    "laser wire",
+    "probe",
+    "holder",
+    "tool block",
+];
+
+/// How the importer treats Fusion type `kind`.
+fn classify(kind: &str) -> Class {
+    if let Some((_, family)) = SUPPORTED.iter().find(|(name, _)| *name == kind) {
+        Class::Supported(*family)
+    } else if UNSUPPORTED.contains(&kind) || kind.starts_with("turning ") {
+        Class::Unsupported
+    } else {
+        Class::Unknown
+    }
+}
+
+/// `value` rounded to a whole number of at least 1 that fits in a `u32`,
+/// else `None`.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the value is range-checked before the cast"
+)]
+fn whole_positive(value: f64) -> Option<u32> {
+    let rounded = value.round();
+    (rounded >= 1.0 && rounded <= f64::from(u32::MAX)).then_some(rounded as u32)
+}
+
+/// The number at `key` in `obj` when it is finite and positive.
+fn positive(obj: Option<&Map<String, Value>>, key: &str) -> Option<f64> {
+    obj?.get(key)?
+        .as_f64()
+        .filter(|v| v.is_finite() && *v > 0.0)
+}
+
+/// The non-empty, trimmed string at `key` in `obj`.
+fn text<'a>(obj: Option<&'a Map<String, Value>>, key: &str) -> Option<&'a str> {
+    obj?.get(key)?
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// The tools one `data` item imports as, or why it is skipped.
+fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped> {
+    let obj = item.as_object();
+    let kind = text(obj, "type");
+    let label = text(obj, "description").or_else(|| text(obj, "product-id"));
+    let description = label
+        .or(kind)
+        .map_or_else(|| format!("data[{index}]"), str::to_owned);
+    let skip = |reason: SkipReason| Skipped {
+        description: description.clone(),
+        reason,
+    };
+    let Some(kind) = kind else {
+        return Err(skip(SkipReason::MissingType));
+    };
+    let family = match classify(kind) {
+        Class::Supported(family) => family,
+        Class::Unsupported => return Err(skip(SkipReason::UnsupportedType(kind.into()))),
+        Class::Unknown => return Err(skip(SkipReason::UnknownType(kind.into()))),
+    };
+    let (mm_per_unit, unit_label) = match obj.and_then(|o| o.get("unit")) {
+        None => return Err(skip(SkipReason::UnknownUnit(None))),
+        Some(Value::String(unit)) if unit == "millimeters" => (1.0, "mm"),
+        Some(Value::String(unit)) if unit == "inches" => (MM_PER_INCH, "in"),
+        Some(Value::String(unit)) => return Err(skip(SkipReason::UnknownUnit(Some(unit.clone())))),
+        Some(other) => return Err(skip(SkipReason::UnknownUnit(Some(other.to_string())))),
+    };
+    let geometry = obj
+        .and_then(|o| o.get("geometry"))
+        .and_then(Value::as_object);
+    let diameter = positive(geometry, "DC").ok_or_else(|| skip(SkipReason::NoDiameter))?;
+    let cutter = match family {
+        Family::EndMill | Family::BullNose => ToolKind::EndMill,
+        Family::BallNose => ToolKind::BallNose,
+        Family::Drill => ToolKind::Drill,
+        Family::Chamfer => {
+            // TA is the half angle (module docs, "Chamfer angle").
+            let half_angle_deg = geometry
+                .and_then(|g| g.get("TA"))
+                .and_then(Value::as_f64)
+                .ok_or_else(|| skip(SkipReason::NoTaperAngle))?;
+            ToolKind::VBit {
+                included_angle_deg: 2.0 * half_angle_deg,
+            }
+        }
+    };
+    let mut tool_notes = Vec::new();
+    let flutes = match positive(geometry, "NOF").and_then(whole_positive) {
+        Some(flutes) => u8::try_from(flutes).map_err(|_| {
+            skip(SkipReason::Invalid {
+                field: "flutes".into(),
+                message: format!("must be at most {}, got {flutes}", u8::MAX),
+            })
+        })?,
+        None => {
+            tool_notes.push(ImportNote::FlutesUnset);
+            1
+        }
+    };
+    let post = obj
+        .and_then(|o| o.get("post-process"))
+        .and_then(Value::as_object);
+    let number = positive(post, "number").and_then(whole_positive);
+    // Fusion leaves `description` empty on many tools (Autodesk's metric
+    // sample has 179 such drills); the diameter and type tell them apart.
+    let mut base_name =
+        label.map_or_else(|| format!("{diameter} {unit_label} {kind}"), str::to_owned);
+    if family == Family::BullNose
+        && let Some(corner_radius) = positive(geometry, "RE")
+    {
+        base_name = format!("{base_name} (bull nose r{corner_radius})");
+    }
+    let guid = text(obj, "guid").map_or_else(|| format!("data[{index}]"), str::to_owned);
+    let template = Tool {
+        id: ToolId::new("t1"),
+        name: base_name.clone(),
+        number,
+        cutter,
+        diameter_mm: diameter * mm_per_unit,
+        flutes,
+        feed_mm_min: None,
+        plunge_mm_min: None,
+        rpm: None,
+        step_down_mm: None,
+        step_over_fraction: None,
+    };
+
+    let presets: Vec<(usize, &Map<String, Value>)> = obj
+        .and_then(|o| o.get("start-values"))
+        .and_then(|s| s.get("presets"))
+        .and_then(Value::as_array)
+        .map(|presets| {
+            presets
+                .iter()
+                .enumerate()
+                .filter_map(|(k, p)| Some((k, p.as_object()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut imported = Vec::new();
+    if presets.is_empty() {
+        let mut notes = tool_notes.clone();
+        notes.extend([
+            ImportNote::NoPresets,
+            ImportNote::FeedUnset,
+            ImportNote::PlungeUnset,
+            ImportNote::RpmUnset,
+        ]);
+        imported.push(ImportedTool {
+            tool: template.clone(),
+            source: format!("fusion:{guid}:no-preset"),
+            notes,
+        });
+    }
+    let several = presets.len() > 1;
+    for (k, preset) in presets {
+        let preset = Some(preset);
+        let mut notes = tool_notes.clone();
+        let name = if several {
+            let preset_name =
+                text(preset, "name").map_or_else(|| format!("preset {}", k + 1), str::to_owned);
+            format!("{base_name} ({preset_name})")
+        } else {
+            base_name.clone()
+        };
+        let preset_id = text(preset, "guid").map_or_else(|| k.to_string(), str::to_owned);
+        let feed_mm_min = positive(preset, "v_f").map(|v| v * mm_per_unit);
+        let plunge_mm_min = positive(preset, "v_f_plunge").map(|v| v * mm_per_unit);
+        let rpm = positive(preset, "n").and_then(whole_positive);
+        for (unset, note) in [
+            (feed_mm_min.is_none(), ImportNote::FeedUnset),
+            (plunge_mm_min.is_none(), ImportNote::PlungeUnset),
+            (rpm.is_none(), ImportNote::RpmUnset),
+        ] {
+            if unset {
+                notes.push(note);
+            }
+        }
+        // `use-stepdown` / `use-stepover`: true or absent applies the value.
+        let applies = |flag: &str| {
+            preset
+                .and_then(|p| p.get(flag))
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        };
+        let step_down_mm = applies("use-stepdown")
+            .then(|| positive(preset, "stepdown"))
+            .flatten()
+            .map(|v| v * mm_per_unit);
+        let step_over_fraction = applies("use-stepover")
+            .then(|| positive(preset, "stepover"))
+            .flatten()
+            .map(|step_over| {
+                let fraction = step_over / diameter;
+                if fraction > 1.0 {
+                    notes.push(ImportNote::StepOverClamped {
+                        step_over_mm: step_over * mm_per_unit,
+                        diameter_mm: diameter * mm_per_unit,
+                    });
+                    1.0
+                } else {
+                    fraction
+                }
+            });
+        imported.push(ImportedTool {
+            tool: Tool {
+                name,
+                feed_mm_min,
+                plunge_mm_min,
+                rpm,
+                step_down_mm,
+                step_over_fraction,
+                ..template.clone()
+            },
+            source: format!("fusion:{guid}:{preset_id}"),
+            notes,
+        });
+    }
+    for t in &imported {
+        crate::validate_tool(&LibraryToolId::new(t.source.as_str()), &t.tool).map_err(|e| {
+            skip(match e {
+                LibraryError::InvalidTool { field, message, .. } => {
+                    SkipReason::Invalid { field, message }
+                }
+                LibraryError::NonFinite { field, .. } => SkipReason::Invalid {
+                    field,
+                    message: "is not a finite number".into(),
+                },
+                other => SkipReason::Invalid {
+                    field: "tool".into(),
+                    message: other.to_string(),
+                },
+            })
+        })?;
+    }
+    Ok(imported)
 }
 
 #[cfg(test)]
@@ -799,6 +1191,21 @@ mod tests {
         let mut item = flat_end_mill();
         item.as_object_mut().expect("object").remove("post-process");
         assert_eq!(only_tool(item).tool.number, None);
+    }
+
+    #[test]
+    fn missing_description_names_tool_by_diameter_and_type() {
+        let mut item = of_type("drill");
+        set(&mut item, &["description"], json!(""));
+        set(&mut item, &["geometry", "DC"], json!(6.7));
+        assert_eq!(only_tool(item.clone()).tool.name, "6.7 mm drill");
+        item["product-id"] = json!("DR-67");
+        assert_eq!(only_tool(item).tool.name, "DR-67", "the product id first");
+        let mut item = of_type("flat end mill");
+        item.as_object_mut().expect("object").remove("description");
+        set(&mut item, &["unit"], json!("inches"));
+        set(&mut item, &["geometry", "DC"], json!(0.125));
+        assert_eq!(only_tool(item).tool.name, "0.125 in flat end mill");
     }
 
     #[test]

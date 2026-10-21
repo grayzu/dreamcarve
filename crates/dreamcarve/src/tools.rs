@@ -10,6 +10,11 @@
 //! directory, by the first command that writes it (`import`). Every write
 //! is staged and renamed into place, so a failure leaves the old file.
 //!
+//! `tools import` reads a DreamCarve library or a Fusion 360 library
+//! (`dc_library::fusion`, by content), and adds each tool as
+//! `dc_library::add` (or `replace` with `--replace`) decides; a Fusion
+//! re-import is `already present` tool by tool.
+//!
 //! `tools add` copies a library tool into a project under the next free
 //! project id (`t<n>`), keeping every value including its `number`, and
 //! saves the project through `dc_project::save`. Projects embed copies
