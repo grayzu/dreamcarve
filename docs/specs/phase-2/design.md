@@ -2224,15 +2224,15 @@ updated in the same PR. The other six change no persisted field.
 
 | Item | Issue | Model change | `.dcv` version | Depends on |
 | --- | --- | --- | --- | --- |
-| A1 `export --post` keeps settings | #A1 | none | — | — |
-| A2 Comment transliteration | #A2 | none | — | — |
-| A3 Header modal state | #A3 | definitions `grblhal/v3`, `grbl/v3` | — | A1 (the upgrade it prompts keeps settings) |
-| A4 Cycle-time estimate | #A4 | user config `[estimate]` | — | — |
-| A5 SVG toolpath preview | #A5 | none | — | — |
-| A6 Inch input | #A6 | reader only | — | — |
-| A7 Separate heights | #A7 | `Project::heights`; definition field `work_coordinates.machine_command` | 12 | #105 (v11), A3 |
-| A8 Profile last pass | #A8 | `ProfileOp::last_pass` | 13 | A7 |
-| A9 Tab corners, start point | #A9 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
+| A1 `export --post` keeps settings | #277 | none | — | — |
+| A2 Comment transliteration | #278 | none | — | — |
+| A3 Header modal state | #279 | definitions `grblhal/v3`, `grbl/v3` | — | A1 (the upgrade it prompts keeps settings) |
+| A4 Cycle-time estimate | #280 | user config `[estimate]` | — | — |
+| A5 SVG toolpath preview | #281 | none | — | — |
+| A6 Inch input | #282 | reader only | — | — |
+| A7 Separate heights | #283 | `Project::heights`; definition field `work_coordinates.machine_command` | 12 | #105 (v11), A3 |
+| A8 Profile last pass | #284 | `ProfileOp::last_pass` | 13 | A7 |
+| A9 Tab corners, start point | #285 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only

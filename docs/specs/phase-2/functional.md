@@ -605,7 +605,7 @@ continue theirs. The design is in `design.md`, "Phase 2 addendum (#73)".
 The rest are specified below, one subsection each, in the order they are
 built (design addendum, "Order and format versions").
 
-### A1. `export --post` keeps your settings
+### A1. `export --post` keeps your settings (#277)
 
 27. **Switching post-processor keeps customised settings.** Today
     `export --post <id>` resets all six post-processor settings to the
@@ -624,7 +624,7 @@ built (design addendum, "Order and format versions").
     the project's own id, to upgrade the version, changes only the
     version. No format change.
 
-### A2. Comment transliteration
+### A2. Comment transliteration (#278)
 
 28. **Names keep their letters.** Text DreamCarve puts in a comment (the
     project, operation and tool names) is reduced to printable ASCII, as
@@ -637,7 +637,7 @@ built (design addendum, "Order and format versions").
     coordinate, word or motion changes. Applies to every post-processor
     and every definition version.
 
-### A3. Header modal state on grblHAL and GRBL
+### A3. Header modal state on grblHAL and GRBL (#279)
 
 29. **Programs cancel stale modes before they move.** grblHAL v3 and GRBL
     v3 add `G80` (cancel a canned-cycle motion mode) and then `G40`
@@ -657,7 +657,7 @@ built (design addendum, "Order and format versions").
     project keeps v2 until `export --post` (which, with A1, keeps its
     settings).
 
-### A4. Cycle-time estimate
+### A4. Cycle-time estimate (#280)
 
 30. **Export says how long the job takes.** After writing, `export`
     prints for each program, and in total, an estimate as VCarve's
@@ -675,7 +675,7 @@ built (design addendum, "Order and format versions").
     dwells 25 s); 4.3 m of rapids not included: set [estimate]
     rapid_mm_min in config.toml. Excludes acceleration and 1 pause.`
 
-### A5. Toolpath preview as SVG
+### A5. Toolpath preview as SVG (#281)
 
 31. **See the toolpaths before phase 4.** `export --preview <file.svg>`
     and `check --preview <file.svg>` write a picture of every enabled
@@ -690,7 +690,7 @@ built (design addendum, "Order and format versions").
     file when every operation generates, whatever the warnings; `export
     --preview` writes it with the programs, all or none.
 
-### A6. Inch input
+### A6. Inch input (#282)
 
 32. **Inch projects take inch values.** Any length (`*_mm`) or feed
     (`*_mm_min`) value in a `.dcv` or a tool library file may be written
@@ -711,7 +711,7 @@ built (design addendum, "Order and format versions").
     parameters are named `_mm`). No format change: DreamCarve still writes
     numbers.
 
-### A7. Separate heights
+### A7. Separate heights (#283)
 
 33. **Clearance, tool-change and park heights** (`heights` on the
     project; VCarve Material Setup, "Rapid Z Gaps above Material" and
@@ -747,7 +747,7 @@ built (design addendum, "Order and format versions").
     stop, becomes `G0 Z<clearance>`, `G53 G0 Z<machine z>`, `M5`, then the
     stop.
 
-### A8. Profile last pass
+### A8. Profile last pass (#284)
 
 34. **Last pass allowance** (`last_pass` on Profile; VCarve 2D Profile
     "Last Pass Allowance",
@@ -764,7 +764,7 @@ built (design addendum, "Order and format versions").
     On line has no wall to leave material on. Unset (`null`) by default,
     in `init` and in migrated projects.
 
-### A9. Tabs that avoid corners, and start-point control
+### A9. Tabs that avoid corners, and start-point control (#285)
 
 35. **Tabs off corners** (`tabs.avoid_corners`). A tab whose stretch (tab
     width plus bit diameter) would lie on a corner, where the bit's path
