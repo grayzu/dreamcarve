@@ -73,6 +73,7 @@ use dc_project::{
 
 use crate::ExportError;
 use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
+use crate::ascii;
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
 use crate::material::Material;
@@ -1446,13 +1447,24 @@ fn comment_text(text: &str) -> String {
     sanitize_comment(text, MAX_PLACEHOLDER_CHARS)
 }
 
-/// `text` made safe for a comment on GRBL and grblHAL: printable ASCII,
-/// without `( ) ;` (which end a comment early), `! ? ~` (real-time
-/// commands even inside a comment), `{ }` (placeholder syntax) or `%`
-/// (a program delimiter to some senders), whitespace collapsed, and at
-/// most `max_chars` long.
+/// `text` made safe for a comment on GRBL and grblHAL: non-ASCII
+/// characters transliterated where [`ascii::transliterate`] has an entry
+/// (#278), then printable ASCII only, without `( ) ;` (which end a comment
+/// early), `! ? ~` (real-time commands even inside a comment), `{ }`
+/// (placeholder syntax) or `%` (a program delimiter to some senders),
+/// whitespace collapsed, and at most `max_chars` long, counted after
+/// transliteration.
 fn sanitize_comment(text: &str, max_chars: usize) -> String {
-    let cleaned: String = text
+    let mut ascii = String::with_capacity(text.len());
+    for c in text.chars() {
+        match ascii::transliterate(c) {
+            Some(spelled) => ascii.push_str(spelled),
+            // ASCII is kept or replaced below; an unmapped character is
+            // replaced by the filter, as before #278.
+            None => ascii.push(c),
+        }
+    }
+    let cleaned: String = ascii
         .chars()
         .map(|c| {
             let printable = (' '..='~').contains(&c);

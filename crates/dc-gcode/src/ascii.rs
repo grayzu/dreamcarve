@@ -8,13 +8,143 @@
 //! The emitter's comment sanitizer (`emit::sanitize_comment`) maps each
 //! non-ASCII character through [`transliterate`] before its filter, so
 //! "Café" is written `Cafe`, not `Caf`. The table is DreamCarve's own,
-//! written by hand and reviewed, with no dependency.
+//! written by hand and reviewed, with no dependency (`deunicode` was
+//! considered: its table covers scripts whose output nobody here can
+//! check). It covers Latin-1 Supplement (U+00A0–U+00FF), Latin Extended-A
+//! (U+0100–U+017F), the General Punctuation dashes, quotes and dots
+//! (U+2010–U+2026), and `™`. A letter loses its accent or stroke (`é` →
+//! `e`, `Ø` → `O`, `Ł` → `L`), a ligature or sharp s spells out (`Æ` →
+//! `AE`, `ß` → `ss`), and a symbol takes its usual ASCII spelling (`½` →
+//! `1/2`, `°` → `deg`, `×` → `x`, `—` → `-`, `…` → `...`).
+//!
+//! No entry holds a character a controller acts on in a comment (`( ) ; !
+//! ? ~ { } %`): `©` is `C`, not `(C)`, and `¡` and `¿` have no entry, so
+//! they are dropped, as is every character not in the table.
 
 /// The printable ASCII text that stands for non-ASCII character `c` in a
 /// comment, or `None` when the table has no entry for it (and for ASCII
-/// characters, which the sanitizer keeps or drops itself).
-pub(crate) fn transliterate(_c: char) -> Option<&'static str> {
-    None
+/// characters, which the sanitizer keeps or drops itself). An entry may be
+/// empty: a soft hyphen is removed, not turned into a space.
+pub(crate) fn transliterate(c: char) -> Option<&'static str> {
+    let ascii = match c {
+        // Latin-1 Supplement: spaces and symbols.
+        '\u{a0}' => " ",
+        '¢' => "c",
+        '£' => "GBP",
+        '¥' => "JPY",
+        '¦' => "|",
+        '§' => "S",
+        '©' => "C",
+        'ª' => "a",
+        '«' => "<<",
+        '¬' => "-",
+        '\u{ad}' => "",
+        '®' => "R",
+        '°' => "deg",
+        '±' => "+-",
+        '²' => "2",
+        '³' => "3",
+        '´' => "'",
+        'µ' => "u",
+        '¶' => "P",
+        '·' => ".",
+        '¸' => ",",
+        '¹' => "1",
+        'º' => "o",
+        '»' => ">>",
+        '¼' => "1/4",
+        '½' => "1/2",
+        '¾' => "3/4",
+        '×' => "x",
+        '÷' => "/",
+        // Latin-1 Supplement: letters.
+        'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' => "A",
+        'Æ' => "AE",
+        'Ç' => "C",
+        'È' | 'É' | 'Ê' | 'Ë' => "E",
+        'Ì' | 'Í' | 'Î' | 'Ï' => "I",
+        'Ð' => "D",
+        'Ñ' => "N",
+        'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' => "O",
+        'Ù' | 'Ú' | 'Û' | 'Ü' => "U",
+        'Ý' => "Y",
+        'Þ' => "Th",
+        'ß' => "ss",
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => "a",
+        'æ' => "ae",
+        'ç' => "c",
+        'è' | 'é' | 'ê' | 'ë' => "e",
+        'ì' | 'í' | 'î' | 'ï' => "i",
+        'ð' => "d",
+        'ñ' => "n",
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => "o",
+        'ù' | 'ú' | 'û' | 'ü' => "u",
+        'ý' | 'ÿ' => "y",
+        'þ' => "th",
+        // Latin Extended-A, in code point order.
+        'Ā' | 'Ă' | 'Ą' => "A",
+        'ā' | 'ă' | 'ą' => "a",
+        'Ć' | 'Ĉ' | 'Ċ' | 'Č' => "C",
+        'ć' | 'ĉ' | 'ċ' | 'č' => "c",
+        'Ď' | 'Đ' => "D",
+        'ď' | 'đ' => "d",
+        'Ē' | 'Ĕ' | 'Ė' | 'Ę' | 'Ě' => "E",
+        'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
+        'Ĝ' | 'Ğ' | 'Ġ' | 'Ģ' => "G",
+        'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
+        'Ĥ' | 'Ħ' => "H",
+        'ĥ' | 'ħ' => "h",
+        'Ĩ' | 'Ī' | 'Ĭ' | 'Į' | 'İ' => "I",
+        'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
+        'Ĳ' => "IJ",
+        'ĳ' => "ij",
+        'Ĵ' => "J",
+        'ĵ' => "j",
+        'Ķ' => "K",
+        'ķ' | 'ĸ' => "k",
+        'Ĺ' | 'Ļ' | 'Ľ' | 'Ŀ' | 'Ł' => "L",
+        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
+        'Ń' | 'Ņ' | 'Ň' => "N",
+        'ń' | 'ņ' | 'ň' => "n",
+        'ŉ' => "'n",
+        'Ŋ' => "NG",
+        'ŋ' => "ng",
+        'Ō' | 'Ŏ' | 'Ő' => "O",
+        'ō' | 'ŏ' | 'ő' => "o",
+        'Œ' => "OE",
+        'œ' => "oe",
+        'Ŕ' | 'Ŗ' | 'Ř' => "R",
+        'ŕ' | 'ŗ' | 'ř' => "r",
+        'Ś' | 'Ŝ' | 'Ş' | 'Š' => "S",
+        'ś' | 'ŝ' | 'ş' | 'š' | 'ſ' => "s",
+        'Ţ' | 'Ť' | 'Ŧ' => "T",
+        'ţ' | 'ť' | 'ŧ' => "t",
+        'Ũ' | 'Ū' | 'Ŭ' | 'Ů' | 'Ű' | 'Ų' => "U",
+        'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => "u",
+        'Ŵ' => "W",
+        'ŵ' => "w",
+        'Ŷ' | 'Ÿ' => "Y",
+        'ŷ' => "y",
+        'Ź' | 'Ż' | 'Ž' => "Z",
+        'ź' | 'ż' | 'ž' => "z",
+        // General Punctuation: dashes, quotes, dots.
+        '\u{2010}'..='\u{2015}' => "-",
+        '\u{2016}' => "||",
+        '\u{2017}' => "_",
+        '\u{2018}' | '\u{2019}' | '\u{201b}' => "'",
+        '\u{201a}' => ",",
+        '\u{201c}'..='\u{201f}' => "\"",
+        '\u{2020}' => "+",
+        '\u{2021}' => "++",
+        '\u{2022}' => "*",
+        '\u{2023}' => ">",
+        '\u{2024}' => ".",
+        '\u{2025}' => "..",
+        '\u{2026}' => "...",
+        '™' => "TM",
+        _ => return None,
+    };
+    Some(ascii)
 }
 
 #[cfg(test)]
