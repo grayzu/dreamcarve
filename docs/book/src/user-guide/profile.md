@@ -134,8 +134,9 @@ Directions are seen from above, with Y pointing away from you. An outside
 Profile runs outside a part's outline and inside its holes. An `on_line`
 cut counts as outside on a part's outline and inside on a hole. An open
 path has no inside or outside, so the direction picks the end its cut
-starts at: climb from its first vertex, conventional from its last (as
-VCarve does).
+starts at: conventional from its first vertex, climb from its last (as
+VCarve does: "Conventional starts cutting at the Start point" and "Climb
+cutting starts cutting at the end point").
 
 ## Machining order
 
@@ -236,8 +237,8 @@ Profile "On" cuts an open vector: a slot one bit wide centred on the
 line.
 
 - Each pass runs the whole path at the pass depth, from its first vertex
-  to its last under climb, or from its last to its first under
-  conventional. Then the bit lifts to safe Z and goes back to the start
+  to its last under conventional, or from its last to its first under
+  climb. Then the bit lifts to safe Z and goes back to the start
   for the next pass.
 - A ramp runs back and forth along the path from the start, as on a
   closed outline, turning at the path's end when the path is shorter than
