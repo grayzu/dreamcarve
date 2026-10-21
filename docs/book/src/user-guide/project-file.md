@@ -328,11 +328,9 @@ same meaning, plus its own fields:
 | `"drill"` | `cycle`: `"simple"` or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`, where `peck_depth_mm` may be `null` for the tool's `step_down_mm` and `retract` is `"full"` or `{ "chip_break": { "gap_mm": 0.5 } }` (greater than 0); `dwell_s` (0 or more; 0 is none); `retract_mm` (0 or more, above the hole top). A cutter other than `"drill"` or `"end_mill"` is a warning. |
 | `"engrave"` | `step_down_mm` (`null` for the tool's); `alternate_direction` (`true` or `false`); `machining_order`. Any cutter; a V-bit deeper than its cone is tall is a warning. |
 
-In this build an enabled Pocket is an error at `check` and `export` ("not
-supported by this build yet"): it loads and is checked, and its generator
-arrives in a later phase 2 release. Disable it (`"enabled": false`) to
-export the rest. [Engrave](engrave.md) and [Drill](drill.md) have chapters
-of their own.
+Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md)
+and [Engrave](engrave.md). A Pocket cuts with the `"offset"` strategy
+only; its chapter says what this build does not cut yet.
 
 ## `post_processor`
 

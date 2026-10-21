@@ -28,7 +28,7 @@ use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, nest, offset,
 };
-use dc_project::{CutDirection, ProfileOp, Project, Side, Tool};
+use dc_project::{CutDirection, InstanceId, OperationId, ProfileOp, Project, Side, Tool};
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,7 +215,7 @@ pub fn generate_profile(
     if let Some(tabs) = &tabs {
         warnings.extend(cut_range_warnings(&op.id, tabs, &pass_z, thickness_mm));
     }
-    let shapes = resolve_targets(project, op, &mut warnings)?;
+    let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
     for warning in nest_warnings {
@@ -470,7 +470,7 @@ pub(crate) fn containment_pairs(
 }
 
 /// True when `p` lies inside or on `contour`, whichever way it winds.
-fn contour_contains(contour: &Contour, p: Point) -> bool {
+pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
     nest(vec![contour.clone()])
         .ok()
         .and_then(|(regions, _)| regions.into_iter().next())
@@ -478,28 +478,32 @@ fn contour_contains(contour: &Contour, p: Point) -> bool {
 }
 
 /// The shape `contour`, as `nest` returned it, came from.
-fn shape_of<'a>(shapes: &'a [(ShapeRef, Contour)], contour: &Contour) -> Option<&'a ShapeRef> {
+pub(crate) fn shape_of<'a>(
+    shapes: &'a [(ShapeRef, Contour)],
+    contour: &Contour,
+) -> Option<&'a ShapeRef> {
     shapes
         .iter()
         .find(|(_, c)| same_contour(c, contour))
         .map(|(s, _)| s)
 }
 
-/// Places every profile of every target instance, in target then profile
-/// order. Open paths are skipped with a warning.
-fn resolve_targets(
+/// Places every profile of every instance in `targets` (operation `op`),
+/// in target then profile order. Open paths are skipped with a warning.
+pub(crate) fn resolve_targets(
     project: &Project,
-    op: &ProfileOp,
+    op: &OperationId,
+    targets: &[InstanceId],
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<(ShapeRef, Contour)>, CamError> {
     let mut shapes = Vec::new();
-    for instance_id in &op.targets {
+    for instance_id in targets {
         let instance = project
             .instances
             .iter()
             .find(|i| &i.id == instance_id)
             .ok_or_else(|| CamError::UnknownInstance {
-                op: op.id.clone(),
+                op: op.clone(),
                 instance: instance_id.clone(),
             })?;
         let definition = project
@@ -535,7 +539,7 @@ fn resolve_targets(
 
 /// Maps `nest`'s input indices for crossing contours back to the shapes the
 /// user drew.
-fn crossing_error(error: GeometryError, shapes: &[(ShapeRef, Contour)]) -> CamError {
+pub(crate) fn crossing_error(error: GeometryError, shapes: &[(ShapeRef, Contour)]) -> CamError {
     if let GeometryError::ContoursCross { first, second } = error
         && let (Some((a, _)), Some((b, _))) = (shapes.get(first), shapes.get(second))
     {
