@@ -5817,6 +5817,73 @@ mod tests {
         }
     }
 
+    /// #305 with #306: on LinuxCNC, cycles from the clearance height and
+    /// the `G53` lift in one program. With acceptance 45's heights (machine
+    /// Z −5, park at the origin), automatic and manual spindle control, mm
+    /// and inch, the plaque's Drill is still written as cycles with no
+    /// warning, the program passes the safety pass (`emit` runs it), and
+    /// after `G80` it parks at the clearance height, lifts once and ends:
+    /// `G0 X0 Y0` (with its `G0`: `G80` leaves no motion mode),
+    /// `G53 G0 Z…`, then `M5`, `M2` (or the router-off `M0`). No
+    /// move comes between the cycles' return to the clearance height and
+    /// the park, so the lift is from at least safe Z (S16).
+    #[test]
+    fn canned_cycles_from_the_clearance_height_with_the_lift_on_linuxcnc() {
+        for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            for (units, z20, lift, park) in [
+                (Units::Mm, "Z20.000", "G53 G0 Z-5.000", "G0 X0.000 Y0.000"),
+                (
+                    Units::Inch,
+                    "Z0.7874",
+                    "G53 G0 Z-0.1969",
+                    "G0 X0.0000 Y0.0000",
+                ),
+            ] {
+                let (mut project, ops) = plaque_drill_on_linuxcnc(0.0);
+                project.post_processor.spindle_control = control;
+                project.display_units = units;
+                project.heights = acceptance_45_heights();
+                let (program, warnings) = emit(&project, &ops, DATE)
+                    .unwrap_or_else(|e| panic!("{control:?} {units:?}: {e:?}"));
+                let text = &program.text;
+                assert!(
+                    warnings.is_empty(),
+                    "{control:?} {units:?}: {warnings:?}\n{text}"
+                );
+                let lines = code_lines(text);
+                let g98 = lines.iter().position(|l| l == "G98").unwrap();
+                assert!(
+                    lines[g98 - 1].starts_with('X')
+                        && lines[..g98].iter().any(|l| l.ends_with(z20)),
+                    "{control:?} {units:?}: over the first hole at the clearance height\n{text}"
+                );
+                let cancel = lines.iter().position(|l| l == "G80").unwrap();
+                assert_eq!(lines[g98 + 1..cancel].len(), 4, "{text}");
+                let at = lines.iter().position(|l| l == lift).unwrap();
+                assert_eq!(
+                    lines.iter().filter(|l| l.starts_with("G53")).count(),
+                    1,
+                    "{text}"
+                );
+                assert_eq!(
+                    lines[cancel + 1..at],
+                    [park],
+                    "{control:?} {units:?}\n{text}"
+                );
+                let end: &[&str] = match control {
+                    SpindleControl::Automatic => &["M5", "M2"],
+                    SpindleControl::Manual => &["M2"],
+                };
+                let tail: Vec<&str> = lines[at + 1..]
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|l| !l.starts_with("M0"))
+                    .collect();
+                assert_eq!(tail, end, "{control:?} {units:?}\n{text}");
+            }
+        }
+    }
+
     /// #305: a clearance height equal to the Drill's safe Z (validation
     /// allows it) links the parts at safe Z. The cycles start from it, as
     /// without a clearance height, with no warning, and the program is the

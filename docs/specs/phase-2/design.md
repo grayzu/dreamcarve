@@ -3040,6 +3040,8 @@ above:
   `emit::canned_motion_from_the_clearance_height_equals_plain_program`
   (`G81`, `G82`, `G83`, `G73` on the test definition, the same pecks),
   `emit::canned_cycles_with_the_clearance_height_at_safe_z`,
+  `emit::canned_cycles_from_the_clearance_height_with_the_lift_on_linuxcnc`
+  (with #306's `G53` lift: `G80`, the park, the lift, the footer),
   `emit::clearance_height_expands_canned_cycles` (links at both heights),
   `safety::canned_cycles_from_clearance_match_the_toolpath`,
   `safety::vertical_rapids_join_only_along_a_cycle_rapid`.
