@@ -173,6 +173,22 @@ Wrote 2 programs; run them in this order:
   2. coaster-2-T2.nc  Before you start: fit T2 3mm finisher and set Z zero with it. Keep X and Y zero.
 ```
 
+Then, for each program, its extents and its
+[estimated run time](configuration.md#estimated-run-time), and last the
+total for all of them:
+
+```text
+coaster-2-T2.nc (69 lines):
+  Extents (machine coordinates, mm, tool centre): X 8.412..102.418, Y 8.412..101.587, Z -12.000..5.000
+    The cutter's edge reaches X 6.824..104.006, Y 6.824..103.175; keep clamps outside that.
+  Estimated time: 56 s (cutting 53 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 1 min 43 s (cutting 1 min 37 s, dwells 6 s); 42 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+```
+
+Each time is rounded to the second on its own, so the programs' times may
+add up to a second more or less than the total. The time between programs,
+for changing the bit, is not included.
+
 Between programs, fit the next bit and set Z zero with it. A new bit has a
 new length, so set Z zero even if it is a bit you zeroed with before. Leave
 X and Y zero as they are. Each program starts by rising to safe Z,

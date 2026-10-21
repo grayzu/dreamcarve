@@ -106,8 +106,10 @@ Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed
 (the speed is optional when the router is switched by hand), and one whose
 cut would leave the stock. After the file is written it lists each
-operation, prints the program's extents, names the bit to fit and set work
-zero with before you start, then lists every place the program stops. The
+operation, prints the program's extents and
+[estimated run time](configuration.md#estimated-run-time), names the bit to
+fit and set work zero with before you start, then lists every place the
+program stops. The
 extents are in machine coordinates, the numbers your controller shows once
 work zero is set: first where the centre of the bit goes on each axis (Z
 min is the deepest cut), then where its edge reaches in X and Y. Place
@@ -115,8 +117,9 @@ clamps from them ([Safety](safety.md#before-every-cut)). The coaster, with
 one bit and the default automatic spindle control, does not stop:
 
 ```text
-Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
-  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
