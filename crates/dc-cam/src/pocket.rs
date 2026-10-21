@@ -1347,27 +1347,20 @@ mod tests {
         assert_approx_eq!(m[first_deep].feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
     }
 
-    /// What this slice refuses or falls back on: raster, allowance and
-    /// rest are typed errors naming the feature; a ramp entry and corner
-    /// relief generate with a warning each and a plain plunge.
+    /// What this slice refuses or falls back on: allowance and rest are
+    /// typed errors naming the feature; a ramp entry and corner relief
+    /// generate with a warning each and a plain plunge.
     #[test]
-    fn raster_allowance_and_rest_are_not_supported_yet() {
+    fn allowance_and_rest_are_not_supported_yet() {
         let p = rect_project();
         let mut op = pocket_op(&p, CutDirection::Climb);
-        op.strategy = ClearanceStrategy::Raster { angle_deg: 45.0 };
-        let err = generate_pocket(&p, &op).unwrap_err();
-        let CamError::NotSupportedYet { feature, .. } = &err else {
-            panic!("{err:?}");
-        };
-        assert!(feature.contains("raster"), "{feature}");
-        assert!(err.to_string().contains("not supported by this build yet"));
-
-        let mut op = pocket_op(&p, CutDirection::Climb);
         op.allowance_mm = 0.5;
+        let err = generate_pocket(&p, &op).unwrap_err();
         assert!(matches!(
-            generate_pocket(&p, &op).unwrap_err(),
-            CamError::NotSupportedYet { ref feature, .. } if feature.contains("allowance")
+            &err,
+            CamError::NotSupportedYet { feature, .. } if feature.contains("allowance")
         ));
+        assert!(err.to_string().contains("not supported by this build yet"));
 
         let mut op = pocket_op(&p, CutDirection::Climb);
         op.rest_of = Some(OperationId::new("o0"));
@@ -1450,5 +1443,522 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, CamError::MissingFeed { .. }), "{err:?}");
+    }
+
+    // ---- Raster strategy (design step 7, acceptance 21) ----
+
+    /// The rect's tool-centre rect.
+    fn tool_centre() -> Rect {
+        inset(wall(), RADIUS_MM)
+    }
+
+    /// The longest a stay-down link may be: one diameter plus a step-over.
+    const LINK_MAX_MM: f64 = DIAMETER_MM + STEPOVER_MM;
+
+    /// A raster Pocket at `angle_deg` with `wall_pass`, otherwise as
+    /// [`pocket_op`].
+    fn raster_op(
+        project: &Project,
+        direction: CutDirection,
+        angle_deg: f64,
+        wall_pass: WallPass,
+    ) -> PocketOp {
+        let mut op = pocket_op(project, direction);
+        op.strategy = ClearanceStrategy::Raster { angle_deg };
+        op.wall_pass = wall_pass;
+        op
+    }
+
+    /// One XY cutting move at one Z: where it starts and ends, and its
+    /// index in the toolpath.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct Cut {
+        index: usize,
+        z_mm: f64,
+        from: Point,
+        to: Point,
+    }
+
+    impl Cut {
+        fn length_mm(&self) -> f64 {
+            self.from.distance_to(self.to)
+        }
+
+        fn unit(&self) -> dc_geometry::Vec2 {
+            (self.to - self.from).normalized().unwrap()
+        }
+
+        fn mid(&self) -> Point {
+            Point::new(
+                (self.from.x + self.to.x) / 2.0,
+                (self.from.y + self.to.y) / 2.0,
+            )
+        }
+    }
+
+    /// Every non-rapid move that travels in XY at a constant Z, in order.
+    fn cuts(tp: &Toolpath) -> Vec<Cut> {
+        let mut out = Vec::new();
+        let mut pos = tp.moves[0].to;
+        for (index, mv) in tp.moves.iter().enumerate() {
+            let level = (mv.to.z - pos.z).abs() <= EPS_MM;
+            if !mv.is_rapid() && level && pos.xy().distance_to(mv.to.xy()) > EPS_MM {
+                out.push(Cut {
+                    index,
+                    z_mm: mv.to.z,
+                    from: pos.xy(),
+                    to: mv.to.xy(),
+                });
+            }
+            pos = mv.to;
+        }
+        out
+    }
+
+    /// The cuts at `z_mm` longer than any stay-down link may be: the
+    /// raster lines, and the wall ring's sides when there is a wall pass.
+    fn long_cuts_at(tp: &Toolpath, z_mm: f64) -> Vec<Cut> {
+        cuts(tp)
+            .into_iter()
+            .filter(|c| (c.z_mm - z_mm).abs() <= EPS_MM && c.length_mm() > LINK_MAX_MM + RING_TOL)
+            .collect()
+    }
+
+    /// True when both ends of `cut` lie on one side of `rect`.
+    fn on_side(cut: &Cut, rect: Rect) -> bool {
+        let near = |a: f64, b: f64| (a - b).abs() <= RING_TOL;
+        (near(cut.from.x, rect.min.x) && near(cut.to.x, rect.min.x))
+            || (near(cut.from.x, rect.max.x) && near(cut.to.x, rect.max.x))
+            || (near(cut.from.y, rect.min.y) && near(cut.to.y, rect.min.y))
+            || (near(cut.from.y, rect.max.y) && near(cut.to.y, rect.max.y))
+    }
+
+    /// The raster lines of the rect fixture at `z_mm`, in cut order: the
+    /// long cuts that are not sides of the wall ring.
+    fn raster_lines_at(tp: &Toolpath, z_mm: f64) -> Vec<Cut> {
+        long_cuts_at(tp, z_mm)
+            .into_iter()
+            .filter(|c| !on_side(c, tool_centre()))
+            .collect()
+    }
+
+    /// The wall ring's sides on the rect fixture at `z_mm`, in cut order.
+    fn wall_sides_at(tp: &Toolpath, z_mm: f64) -> Vec<Cut> {
+        long_cuts_at(tp, z_mm)
+            .into_iter()
+            .filter(|c| on_side(c, tool_centre()))
+            .collect()
+    }
+
+    /// The distance from `p` to the segment `a → b`.
+    fn segment_distance(p: Point, a: Point, b: Point) -> f64 {
+        let ab = b - a;
+        let len2 = ab.dot(ab);
+        let t = if len2 <= 0.0 {
+            0.0
+        } else {
+            ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
+        };
+        p.distance_to(a + ab * t)
+    }
+
+    /// Asserts consecutive values of `offsets` (sorted) are one step-over
+    /// apart.
+    fn assert_spaced_by_stepover(mut offsets: Vec<f64>, what: &str) {
+        offsets.sort_by(f64::total_cmp);
+        for pair in offsets.windows(2) {
+            assert_approx_eq!(pair[1] - pair[0], STEPOVER_MM, RING_TOL);
+        }
+        assert!(offsets.len() >= 2, "{what}: {offsets:?}");
+    }
+
+    /// Design step 7 at 0°: every clearance line is parallel to X, the
+    /// lines are one step-over apart, the first half a step-over above the
+    /// bottom of the tool-centre rect, and each spans the rect. The
+    /// tool-centre rect is 43.65 high: lines at 1.27 + 2.54 k for k = 0 to
+    /// 16 lie below 43.65 − 1.27, so 17 lines.
+    #[test]
+    fn raster_lines_at_zero_degrees_are_horizontal_and_spaced() {
+        let p = rect_project();
+        let op = raster_op(&p, CutDirection::Climb, 0.0, WallPass::None);
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let tc = tool_centre();
+        for z in PASS_Z_MM {
+            let lines = long_cuts_at(&tp, z);
+            assert_eq!(lines.len(), 17, "lines at Z {z}: {lines:?}");
+            for line in &lines {
+                assert_approx_eq!(line.from.y, line.to.y, TOL);
+                assert_approx_eq!(line.from.x.min(line.to.x), tc.min.x, RING_TOL);
+                assert_approx_eq!(line.from.x.max(line.to.x), tc.max.x, RING_TOL);
+            }
+            let ys: Vec<f64> = lines.iter().map(|l| l.from.y).collect();
+            let lowest = ys.iter().copied().fold(f64::MAX, f64::min);
+            assert_approx_eq!(lowest, tc.min.y + STEPOVER_MM / 2.0, RING_TOL);
+            assert_spaced_by_stepover(ys, "0°");
+        }
+    }
+
+    /// Design step 7 at 45°, Y-up: every line runs along (1, 1), up and to
+    /// the right as drawn (PureCutCNC's −45°), the lines one step-over
+    /// apart across their direction. 135° runs along (−1, 1).
+    #[test]
+    fn raster_lines_at_45_degrees() {
+        let p = rect_project();
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        for (angle_deg, along) in [
+            (45.0, Point::new(half, half)),
+            (135.0, Point::new(-half, half)),
+        ] {
+            let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::None);
+            let (tp, _) = generate(&p, &op);
+            let along = along - Point::new(0.0, 0.0);
+            let across = along.perp();
+            for z in PASS_Z_MM {
+                let lines = long_cuts_at(&tp, z);
+                assert!(lines.len() > 20, "{angle_deg}° at Z {z}: {lines:?}");
+                for line in &lines {
+                    let d = line.unit();
+                    assert_approx_eq!(d.cross(along), 0.0, 1e-6);
+                }
+                let offsets = lines
+                    .iter()
+                    .map(|l| (l.from - Point::new(0.0, 0.0)).dot(across))
+                    .collect();
+                assert_spaced_by_stepover(offsets, "45°");
+            }
+        }
+    }
+
+    /// Design step 7: consecutive lines in cut order run opposite ways.
+    #[test]
+    fn raster_lines_alternate_direction() {
+        let p = rect_project();
+        for angle_deg in [0.0, 45.0] {
+            let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::None);
+            let (tp, _) = generate(&p, &op);
+            for z in PASS_Z_MM {
+                let lines = long_cuts_at(&tp, z);
+                assert!(lines.len() > 2);
+                for pair in lines.windows(2) {
+                    assert!(
+                        pair[0].unit().dot(pair[1].unit()) < -1.0 + 1e-6,
+                        "{angle_deg}°: {:?} then {:?}",
+                        pair[0],
+                        pair[1]
+                    );
+                }
+            }
+        }
+    }
+
+    /// Asserts that, at `z_mm`, everything from the first raster line to
+    /// the last is cut at that Z with no rapid, and every link between
+    /// lines is a straight feed move at most one diameter plus a step-over
+    /// long with both ends inside the tool-centre rect.
+    fn assert_lines_linked_without_retract(tp: &Toolpath, lines: &[Cut], z_mm: f64) {
+        let (first, last) = (lines[0].index, lines[lines.len() - 1].index);
+        for (i, mv) in tp.moves.iter().enumerate().take(last + 1).skip(first) {
+            assert!(!mv.is_rapid(), "move {i} retracts between lines: {mv:?}");
+            assert_approx_eq!(mv.to.z, z_mm, TOL);
+        }
+        let tc = tool_centre();
+        for pair in lines.windows(2) {
+            let links: Vec<Cut> = cuts(tp)
+                .into_iter()
+                .filter(|c| c.index > pair[0].index && c.index < pair[1].index)
+                .collect();
+            for link in links {
+                assert!(link.length_mm() <= LINK_MAX_MM + EPS_MM, "{link:?}");
+                assert_eq!(tp.moves[link.index].kind, MoveKind::Linear);
+                assert_approx_eq!(
+                    tp.moves[link.index].feed_mm_min.unwrap(),
+                    FEED_MM_MIN,
+                    EPS_MM
+                );
+                for p in [link.from, link.to] {
+                    assert!(
+                        p.x >= tc.min.x - RING_TOL
+                            && p.x <= tc.max.x + RING_TOL
+                            && p.y >= tc.min.y - RING_TOL
+                            && p.y <= tc.max.y + RING_TOL,
+                        "link leaves the tool-centre rect: {link:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Design step 7: on the rect, the link from one line to the next is a
+    /// short cut inside the tool-centre region, never a retract.
+    #[test]
+    fn raster_link_stays_down_inside_region() {
+        let p = rect_project();
+        for angle_deg in [0.0, 45.0] {
+            let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::None);
+            let (tp, _) = generate(&p, &op);
+            for z in PASS_Z_MM {
+                let lines = long_cuts_at(&tp, z);
+                assert_lines_linked_without_retract(&tp, &lines, z);
+            }
+        }
+    }
+
+    /// The tool centres along `tp` never come nearer the island fixture's
+    /// circle than its radius plus the tool's, less the flattening.
+    fn assert_clear_of_island(tp: &Toolpath) {
+        let centre = Point::new(70.0, 45.0);
+        for cut in cuts(tp) {
+            let d = segment_distance(centre, cut.from, cut.to);
+            assert!(
+                d >= 10.0 + RADIUS_MM - FLAT_TOL,
+                "{cut:?} brings the tool centre {d} mm from the island centre"
+            );
+        }
+    }
+
+    /// Design step 7: with the 20 mm circle island at 0°, the lines through
+    /// it are split, and the move between the two halves of a line lifts
+    /// to safe Z instead of cutting across the island.
+    #[test]
+    fn raster_retracts_across_island() {
+        let p = island_project();
+        let op = raster_op(&p, CutDirection::Climb, 0.0, WallPass::None);
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_clear_of_island(&tp);
+        for z in PASS_Z_MM {
+            let lines = long_cuts_at(&tp, z);
+            let (first, last) = (lines[0].index, lines[lines.len() - 1].index);
+            let retracts = tp.moves[first..=last]
+                .iter()
+                .filter(|m| m.is_rapid() && (m.to.z - SAFE_Z_MM).abs() <= TOL)
+                .count();
+            // Every line through the island's grown circle lifts once
+            // between its halves; at least the lines near Y 45 do.
+            assert!(retracts >= 2, "retracts at Z {z}: {retracts}");
+            for pair in lines.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                let same_line = (a.from.y - b.from.y).abs() <= TOL;
+                if same_line {
+                    let between = &tp.moves[a.index + 1..b.index];
+                    assert!(
+                        between
+                            .iter()
+                            .any(|m| m.is_rapid() && (m.to.z - SAFE_Z_MM).abs() <= TOL),
+                        "no retract between {a:?} and {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Design step 7: a line through the island's grown circle (radius
+    /// 13.175 about (70, 45)) is two segments, ending and starting on that
+    /// circle; a line clear of it is one segment across the rect.
+    #[test]
+    fn raster_segments_split_around_island() {
+        let p = island_project();
+        let op = raster_op(&p, CutDirection::Climb, 0.0, WallPass::None);
+        let (tp, _) = generate(&p, &op);
+        let grown = 10.0 + RADIUS_MM;
+        let tc = tool_centre();
+        let mut split = 0;
+        for z in PASS_Z_MM {
+            let lines = long_cuts_at(&tp, z);
+            let mut ys: Vec<f64> = lines.iter().map(|l| l.from.y).collect();
+            ys.sort_by(f64::total_cmp);
+            ys.dedup_by(|a, b| (*a - *b).abs() <= TOL);
+            assert_eq!(ys.len(), 17, "{ys:?}");
+            for y in ys {
+                let mut on_line: Vec<(f64, f64)> = lines
+                    .iter()
+                    .filter(|l| (l.from.y - y).abs() <= TOL)
+                    .map(|l| (l.from.x.min(l.to.x), l.from.x.max(l.to.x)))
+                    .collect();
+                on_line.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let dy = (y - 45.0).abs();
+                if dy < grown - RING_TOL {
+                    let half = (grown * grown - dy * dy).sqrt();
+                    assert_eq!(on_line.len(), 2, "Y {y}: {on_line:?}");
+                    assert_approx_eq!(on_line[0].0, tc.min.x, RING_TOL);
+                    assert_approx_eq!(on_line[0].1, 70.0 - half, 2.0 * RING_TOL);
+                    assert_approx_eq!(on_line[1].0, 70.0 + half, 2.0 * RING_TOL);
+                    assert_approx_eq!(on_line[1].1, tc.max.x, RING_TOL);
+                    split += 1;
+                } else {
+                    assert_eq!(on_line.len(), 1, "Y {y}: {on_line:?}");
+                }
+            }
+        }
+        assert!(split >= 2 * PASS_Z_MM.len(), "{split}");
+    }
+
+    /// Design step 8: raster lines are the same for climb and conventional;
+    /// the wall ring runs counter-clockwise for climb and clockwise for
+    /// conventional (twice its signed area, from its four sides).
+    #[test]
+    fn raster_ignores_direction_wall_pass_honours_it() {
+        let p = rect_project();
+        let climb = generate(
+            &p,
+            &raster_op(&p, CutDirection::Climb, 30.0, WallPass::Last),
+        )
+        .0;
+        let conventional = generate(
+            &p,
+            &raster_op(&p, CutDirection::Conventional, 30.0, WallPass::Last),
+        )
+        .0;
+        for z in PASS_Z_MM {
+            let ends = |tp: &Toolpath| -> Vec<(Point, Point)> {
+                raster_lines_at(tp, z)
+                    .iter()
+                    .map(|l| (l.from, l.to))
+                    .collect()
+            };
+            let lines = ends(&climb);
+            assert!(lines.len() > 10, "{lines:?}");
+            assert_eq!(lines, ends(&conventional), "lines at Z {z}");
+            let twice_area = |tp: &Toolpath| -> f64 {
+                let sides = wall_sides_at(tp, z);
+                assert_eq!(sides.len(), 4, "{sides:?}");
+                sides
+                    .iter()
+                    .map(|s| (s.from - Point::new(0.0, 0.0)).cross(s.to - Point::new(0.0, 0.0)))
+                    .sum()
+            };
+            assert!(twice_area(&climb) > 0.0, "climb wall is CCW");
+            assert!(twice_area(&conventional) < 0.0, "conventional wall is CW");
+        }
+    }
+
+    /// S9 on the raster: the footprint stays inside the rect and out of
+    /// the island, at an angle that meets the island's curve everywhere.
+    #[test]
+    fn raster_footprint_stays_inside_region() {
+        let p = island_project();
+        let op = raster_op(&p, CutDirection::Climb, 45.0, WallPass::Last);
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_clear_of_island(&tp);
+        let fp = footprint(&tp, RADIUS_MM);
+        let region = region_of(
+            &[
+                rect_100x50(),
+                Polyline::circle(Point::new(50.0, 25.0), 10.0),
+            ],
+            at_20_20(),
+        );
+        let outside = difference(&fp, std::slice::from_ref(&region), FLAT_TOL);
+        let boundary_mm = region.outer().polyline().length_mm() + TAU * 10.0;
+        assert!(
+            area_mm2(&outside) <= 2.0 * FLAT_TOL * boundary_mm,
+            "footprint outside the material: {} mm²",
+            area_mm2(&outside)
+        );
+    }
+
+    /// Acceptance test 21, as the offset coverage test: at every pass the
+    /// footprints cover the rect inset by the tool radius within 0.05 mm.
+    #[test]
+    fn raster_coverage_reaches_inset_region() {
+        let p = rect_project();
+        let outer = Contour::new(at_20_20().apply_polyline(&rect_100x50()).unwrap()).unwrap();
+        let reachable = nest(offset(&outer, -RADIUS_MM)).unwrap().0;
+        let perimeter_mm = reachable[0].outer().polyline().length_mm();
+        for angle_deg in [0.0, 45.0, 100.0] {
+            let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
+            let (tp, _) = generate(&p, &op);
+            for z in PASS_Z_MM {
+                let at_z = Toolpath {
+                    moves: tp
+                        .moves
+                        .iter()
+                        .filter(|m| !m.is_rapid() && (m.to.z - z).abs() <= EPS_MM)
+                        .copied()
+                        .collect(),
+                };
+                let fp = footprint(&at_z, RADIUS_MM);
+                let uncut = difference(&reachable, &fp, FLAT_TOL);
+                assert!(
+                    area_mm2(&uncut) <= 0.05 * perimeter_mm,
+                    "{angle_deg}° at Z {z}: {} mm² uncut",
+                    area_mm2(&uncut)
+                );
+            }
+        }
+    }
+
+    /// Acceptance test 21: the rect rastered at 0° has every clearance
+    /// line parallel to X, 2.54 mm apart; at 45° every line is at 45°.
+    /// Consecutive lines alternate and are joined by a cut inside the
+    /// region, not a retract. The wall pass is last by default and first
+    /// with `wall_pass: first`.
+    #[test]
+    fn raster_acceptance_21() {
+        let p = rect_project();
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        let op = raster_op(&p, CutDirection::Climb, 0.0, WallPass::Last);
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for z in PASS_Z_MM {
+            let lines = raster_lines_at(&tp, z);
+            assert!(lines.iter().all(|l| (l.from.y - l.to.y).abs() <= TOL));
+            assert_spaced_by_stepover(lines.iter().map(|l| l.from.y).collect(), "0°");
+        }
+        for (wall_pass, wall_last) in [(WallPass::Last, true), (WallPass::First, false)] {
+            for angle_deg in [0.0, 45.0] {
+                let op = raster_op(&p, CutDirection::Climb, angle_deg, wall_pass);
+                let (tp, _) = generate(&p, &op);
+                for z in PASS_Z_MM {
+                    let lines = raster_lines_at(&tp, z);
+                    assert!(lines.len() > 10, "{lines:?}");
+                    if angle_deg > 0.0 {
+                        for line in &lines {
+                            let d = line.unit();
+                            assert_approx_eq!(d.x.abs(), half, 1e-6);
+                            assert_approx_eq!(d.y.abs(), half, 1e-6);
+                            assert!(d.x * d.y > 0.0, "{line:?} is at 45°");
+                        }
+                    }
+                    for pair in lines.windows(2) {
+                        assert!(pair[0].unit().dot(pair[1].unit()) < 0.0);
+                    }
+                    assert_lines_linked_without_retract(&tp, &lines, z);
+                    let sides = wall_sides_at(&tp, z);
+                    assert_eq!(sides.len(), 4, "{wall_pass:?} {angle_deg}°: {sides:?}");
+                    let (first_line, last_line) = (lines[0].index, lines[lines.len() - 1].index);
+                    if wall_last {
+                        assert!(sides.iter().all(|s| s.index > last_line), "{wall_pass:?}");
+                    } else {
+                        assert!(sides.iter().all(|s| s.index < first_line), "{wall_pass:?}");
+                    }
+                    // Lines lie strictly inside the tool-centre rect.
+                    let tc = tool_centre();
+                    for line in &lines {
+                        let m = line.mid();
+                        assert!(
+                            m.x > tc.min.x && m.x < tc.max.x && m.y > tc.min.y && m.y < tc.max.y
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The raster angle is degrees from +X in [0, 180); outside it the
+    /// generator refuses rather than guessing, as validation does.
+    #[test]
+    fn raster_angle_outside_range_is_error() {
+        let p = rect_project();
+        for angle_deg in [-1.0, 180.0, 270.0, f64::NAN] {
+            let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
+            let err = generate_pocket(&p, &op).unwrap_err();
+            assert!(
+                err.to_string().contains("raster angle"),
+                "{angle_deg}: {err}"
+            );
+        }
     }
 }
