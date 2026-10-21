@@ -958,7 +958,7 @@ crates/dc-import/src/{svg.rs, dxf.rs, dxf/{entities.rs, spline.rs, stitch.rs}}
 crates/dc-library/src/{lib.rs, library.rs, fusion.rs, error.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs, tools.rs, config.rs}
 tests/golden/{pocket-offset-rect, pocket-offset-island, pocket-raster-0deg, pocket-raster-45deg, pocket-rough-then-rest, drill-simple, drill-peck, engrave-open-closed, profile-ramp, profile-helix-inside, profile-lead, profile-dogbone, order-full-depth-first, order-pass-first, post-linuxcnc-coaster, post-mach3-coaster, post-uccnc-coaster, post-generic-coaster}/
-tests/fixtures/{plaque.svg, plaque.dxf, dxf/*.dxf, fusion-sample.tools, fusion-vendor-sample.json, dcv/v6/*.dcv}
+tests/fixtures/{plaque.svg, plaque.dxf, dxf/*.dxf, fusion/{sample.tools, sample.json}, dcv/v6/*.dcv}
 ```
 
 New dependencies: `i_overlay` (MIT, booleans; already a settled decision),
