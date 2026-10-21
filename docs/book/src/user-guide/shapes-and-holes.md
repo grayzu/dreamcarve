@@ -90,13 +90,22 @@ the drawing, yet the regions are ordered by their parts, `#1` then `#2`.
 
 ![Regions ordered by where their parts appear](figures/nesting/region-order.svg)
 
-The cut order follows the drawing too, with one exception: a part inside
-another part's hole (an island) is always cut before that hole, at every
+The cut order starts from the drawing but does not follow it throughout.
+The first shape drawn is cut first; after that the tool goes to whichever
+uncut shape starts nearest to where it finished, so parts scattered across
+the stock are visited in a short route rather than in the order they were
+drawn. Two shapes equally near are taken in drawing order, so the order is
+always the same for the same drawing.
+
+One rule overrides nearness: a shape inside another is always cut before the
+shape around it. Each part's holes come before its outline, and a part
+inside another part's hole (an island) is cut before that hole, at every
 depth. Cutting the hole frees the waste inside it, so a part still sitting
-in that waste must already be cut out. Parts at the same depth are cut in
-drawing order, and each part's holes still come before its outline. For a
-frame with a coaster inside its opening, the coaster is cut first, then the
-opening, then the frame's outline, whichever was drawn first.
+in that waste must already be cut out. For a frame with a coaster inside
+its opening, the coaster is cut first, then the opening, then the frame's
+outline, whichever was drawn first. How the passes of several shapes
+interleave is the Profile's `machining_order`; see
+[Profile, Machining order](profile.md#machining-order).
 
 ### 7. Reordering the drawing doesn't change which shapes are holes
 

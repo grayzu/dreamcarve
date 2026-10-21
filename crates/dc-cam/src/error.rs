@@ -51,6 +51,44 @@ impl fmt::Display for ShapeRef {
     }
 }
 
+/// What is wrong with a [`crate::CutBlock`] a generator handed to
+/// [`crate::sequence`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlockProblem {
+    /// A cut or descent move ends below the block's pass Z.
+    MoveBelowPass {
+        /// The block's pass Z, mm.
+        z_mm: f64,
+        /// The lowest move end, mm.
+        lowest_mm: f64,
+    },
+    /// The shape's passes are not the consecutive integers from 0.
+    PassesNotConsecutive {
+        /// The pass indices the shape's blocks carry, sorted.
+        passes: Vec<usize>,
+    },
+    /// The block has no descent moves, so it plunges, but its descent
+    /// starts away from its entry.
+    PlungeAwayFromEntry,
+}
+
+impl fmt::Display for BlockProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MoveBelowPass { z_mm, lowest_mm } => {
+                write!(
+                    f,
+                    "a move ends at Z {lowest_mm} mm, below the pass Z {z_mm} mm"
+                )
+            }
+            Self::PassesNotConsecutive { passes } => {
+                write!(f, "its passes {passes:?} are not consecutive from 0")
+            }
+            Self::PlungeAwayFromEntry => f.write_str("a plunge starts away from the entry point"),
+        }
+    }
+}
+
 /// Why a toolpath could not be generated.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CamError {
@@ -212,6 +250,24 @@ pub enum CamError {
         field: String,
         /// The value, mm.
         value_mm: f64,
+    },
+    /// A generator produced a cut block the sequencer cannot trust. This
+    /// is a defect in the generator, never in the user's project.
+    #[error("shape {shape}, pass {pass}: {problem}")]
+    InvalidBlock {
+        /// The block's shape.
+        shape: ShapeRef,
+        /// The block's pass index.
+        pass: usize,
+        /// What is wrong.
+        problem: BlockProblem,
+    },
+    /// The containment pairs given to the sequencer form a cycle, so no
+    /// shape can be cut first. `nest` never produces one.
+    #[error("shape {shape} encloses itself through other shapes; no cut order exists")]
+    ContainmentCycle {
+        /// A shape on the cycle.
+        shape: ShapeRef,
     },
     /// Any other geometry failure.
     #[error(transparent)]
