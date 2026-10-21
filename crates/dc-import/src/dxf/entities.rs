@@ -11,22 +11,24 @@
 //! Entity to polyline conversion and INSERT expansion
 //! (`docs/specs/phase-2/design.md`, "Algorithms → DXF import", steps 2–4).
 //! Each entity becomes a bulge polyline in its own coordinates and is then
-//! taken through the accumulated transform (block inserts and the unit
-//! scale) into millimetres. Changed from upstream: no Y flip and no arc
-//! flip (DXF is Y-up, ADR-0001); arcs stay bulges instead of being
-//! sampled, and are flattened only under a transform no bulge can carry;
-//! `ELLIPSE` is read; skipped entities are counted, not dropped.
+//! taken through its object coordinate system and the accumulated
+//! transform (block inserts and the unit scale) into millimetres. Changed
+//! from upstream: no Y flip and no arc flip (DXF is Y-up, ADR-0001); arcs
+//! stay bulges instead of being sampled, and are flattened only under a
+//! transform no bulge can carry; `ELLIPSE` is read; the extrusion
+//! direction is applied (−Z mirrors) and entities out of the XY plane are
+//! counted; MINSERT arrays are expanded; a spline-fit POLYLINE drops its
+//! frame vertices; skipped entities are counted, not dropped.
 
 use std::collections::BTreeMap;
 
-use ::dxf::entities::{Entity, EntityType};
-use ::dxf::{Block, Point as DxfPoint};
 use dc_geometry::{
     EPS_MM, GeometryError, MAX_COORDINATE_MM, Point, Polyline, Transform, Vec2, Vertex, flatten,
 };
 use kurbo::{BezPath, PathEl, Shape as _};
 
 use super::MAX_INSERT_DEPTH;
+use super::document::{Block, Entity};
 use super::spline::BSpline;
 use crate::ImportError;
 use crate::svg::{element_is_finite, element_is_within_limit, estimated_vertices};
@@ -45,6 +47,37 @@ pub(super) struct Shape {
 const IGNORED_INSERT_LAYERS: [&str; 2] = ["ASHADE", "HATCH"];
 /// Blocks of the AME/AVE solid modellers; skipped silently, as upstream.
 const IGNORED_INSERT_BLOCKS: [&str; 3] = ["AME_NIL", "AME_SOL", "AVE_RENDER"];
+/// The entity types `walk` reads. A block holding none of them is not
+/// expanded. `3DLINE` is the R12 name of a LINE with Z.
+const READ_TYPES: [&str; 9] = [
+    "LINE",
+    "3DLINE",
+    "ARC",
+    "CIRCLE",
+    "LWPOLYLINE",
+    "POLYLINE",
+    "SPLINE",
+    "ELLIPSE",
+    "INSERT",
+];
+
+/// Closed flag of LWPOLYLINE, POLYLINE and SPLINE (group 70).
+const FLAG_CLOSED: i64 = 1;
+/// POLYLINE flags (group 70, DXF Reference "POLYLINE"): 3D polyline, 3D
+/// polygon mesh, polyface mesh.
+const POLYLINE_3D: i64 = 8;
+const POLYLINE_POLYGON_MESH: i64 = 16;
+const POLYLINE_POLYFACE_MESH: i64 = 64;
+/// VERTEX flag (group 70, DXF Reference "VERTEX"): spline frame control
+/// point, a vertex of the frame a spline-fit POLYLINE was fitted to, not of
+/// the curve.
+const VERTEX_SPLINE_FRAME: i64 = 16;
+
+/// A normalised extrusion direction whose X and Y are both within this of
+/// zero is ±Z: the entity lies in the XY plane. The XY projection of its
+/// OCS axes then differs from (±1, 0), (0, 1) by under 1e-12, which moves
+/// no point within the coordinate limit measurably.
+const PLANAR_NORMAL_EPS: f64 = 1e-6;
 
 /// Collects the shapes of a drawing, in document order.
 pub(super) struct Walker<'a> {
@@ -62,13 +95,9 @@ pub(super) struct Walker<'a> {
 }
 
 impl<'a> Walker<'a> {
-    pub(super) fn new(
-        blocks: impl Iterator<Item = &'a Block>,
-        tolerance_mm: f64,
-        max_vertices: usize,
-    ) -> Self {
+    pub(super) fn new(blocks: &'a [Block], tolerance_mm: f64, max_vertices: usize) -> Self {
         Self {
-            blocks: blocks.map(|b| (b.name.as_str(), b)).collect(),
+            blocks: blocks.iter().map(|b| (b.name.as_str(), b)).collect(),
             tolerance_mm,
             max_vertices,
             vertex_count: 0,
@@ -83,6 +112,14 @@ impl<'a> Walker<'a> {
     /// (block inserts above it, then the unit scale). `inherited` is the
     /// layer of the INSERT whose block this entity belongs to; `depth` how
     /// many INSERTs deep it is.
+    ///
+    /// Group codes are those of the DXF Reference's entity pages: LINE
+    /// 10/20 start, 11/21 end; CIRCLE and ARC 10/20 centre, 40 radius,
+    /// 50/51 start and end angle (degrees); LWPOLYLINE 70 flags, 10/20
+    /// vertex, 42 bulge; POLYLINE 70 flags with VERTEX 10/20 location, 42
+    /// bulge, 70 flags; SPLINE 70 flags, 71 degree, 40 knots, 41 weights,
+    /// 10/20 control points, 11/21 fit points. Common to all: 8 layer,
+    /// 210/220/230 extrusion direction.
     pub(super) fn walk(
         &mut self,
         entity: &Entity,
@@ -90,55 +127,66 @@ impl<'a> Walker<'a> {
         inherited: Option<&str>,
         depth: usize,
     ) -> Result<(), ImportError> {
-        let layer = resolve_layer(&entity.common.layer, inherited);
-        match &entity.specific {
-            EntityType::Line(line) => {
-                let polyline =
-                    Polyline::new(vec![vertex(&line.p1, 0.0), vertex(&line.p2, 0.0)], false);
+        let layer = resolve_layer(entity.layer(), inherited);
+        let kind = entity.kind.as_str();
+        match kind {
+            // LINE and SPLINE points are world coordinates; their
+            // extrusion only orients thickness and the curve's plane.
+            "LINE" | "3DLINE" => {
+                let polyline = Polyline::new(
+                    vec![line_vertex(entity.point(10)), line_vertex(entity.point(11))],
+                    false,
+                );
                 self.add_polyline(polyline, transform, &layer, "LINE")
             }
-            EntityType::Circle(circle) => {
-                if !(circle.radius.is_finite() && circle.radius > 0.0) {
+            "CIRCLE" => {
+                let Some(ocs) = self.ocs(entity, kind) else {
+                    return Ok(());
+                };
+                let radius = entity.real_or(40, 0.0);
+                if !(radius.is_finite() && radius > 0.0) {
                     return self.skip("CIRCLE (degenerate)");
                 }
-                let polyline = Polyline::circle(point(&circle.center), circle.radius);
-                self.add_polyline(polyline, transform, &layer, "CIRCLE")
+                let polyline = Polyline::circle(entity.point(10), radius);
+                self.add_polyline(polyline, ocs.then(transform), &layer, "CIRCLE")
             }
-            EntityType::Arc(arc) => {
-                if !(arc.radius.is_finite() && arc.radius > 0.0) {
+            "ARC" => {
+                let Some(ocs) = self.ocs(entity, kind) else {
+                    return Ok(());
+                };
+                let radius = entity.real_or(40, 0.0);
+                if !(radius.is_finite() && radius > 0.0) {
                     return self.skip("ARC (degenerate)");
                 }
                 let polyline = arc_polyline(
-                    point(&arc.center),
-                    arc.radius,
-                    arc.start_angle.to_radians(),
-                    arc.end_angle.to_radians(),
+                    entity.point(10),
+                    radius,
+                    entity.real_or(50, 0.0).to_radians(),
+                    entity.real_or(51, 360.0).to_radians(),
                 );
-                self.add_polyline(polyline, transform, &layer, "ARC")
+                self.add_polyline(polyline, ocs.then(transform), &layer, "ARC")
             }
-            EntityType::LwPolyline(poly) => {
-                let vertices = poly
-                    .vertices
-                    .iter()
-                    .map(|v| Vertex::new(v.x, v.y, v.bulge))
-                    .collect();
-                let polyline = Polyline::new(vertices, poly.is_closed());
-                self.add_polyline(polyline, transform, &layer, "LWPOLYLINE")
-            }
-            EntityType::Polyline(poly) => {
-                if poly.is_3d_polygon_mesh() || poly.is_polyface_mesh() {
-                    return self.skip("POLYLINE (mesh)");
+            "LWPOLYLINE" => {
+                let Some(ocs) = self.ocs(entity, kind) else {
+                    return Ok(());
+                };
+                let mut vertices: Vec<Vertex> = Vec::new();
+                for g in entity.groups() {
+                    let value = g.real().unwrap_or(0.0);
+                    match (g.code, vertices.last_mut()) {
+                        (10, _) => vertices.push(Vertex::new(value, 0.0, 0.0)),
+                        (20, Some(v)) => v.y = value,
+                        (42, Some(v)) => v.bulge = value,
+                        _ => {}
+                    }
                 }
-                let vertices = poly
-                    .vertices()
-                    .map(|v| vertex(&v.location, v.bulge))
-                    .collect();
-                let polyline = Polyline::new(vertices, poly.is_closed());
-                self.add_polyline(polyline, transform, &layer, "POLYLINE")
+                let polyline = Polyline::new(vertices, entity.int(70) & FLAG_CLOSED != 0);
+                self.add_polyline(polyline, ocs.then(transform), &layer, "LWPOLYLINE")
             }
-            EntityType::Spline(spline) => {
-                let control: Vec<Point> = spline.control_points.iter().map(point).collect();
-                let fit: Vec<Point> = spline.fit_points.iter().map(point).collect();
+            "POLYLINE" => self.add_polyline_entity(entity, transform, &layer),
+            "SPLINE" => {
+                let control = entity.points(10);
+                let fit = entity.points(11);
                 if control.iter().chain(&fit).any(|p| !is_finite(*p)) {
                     return Err(ImportError::NonFinite { path: layer });
                 }
@@ -147,13 +195,10 @@ impl<'a> Walker<'a> {
                 // the tolerance is defined.
                 let control: Vec<Point> = control.iter().map(|p| transform.apply(*p)).collect();
                 let fit: Vec<Point> = fit.iter().map(|p| transform.apply(*p)).collect();
-                let degree = usize::try_from(spline.degree_of_curve).unwrap_or(0);
-                let points = match BSpline::new(
-                    degree,
-                    &spline.knot_values,
-                    &control,
-                    &spline.weight_values,
-                ) {
+                let degree = usize::try_from(entity.int(71)).unwrap_or(0);
+                let knots = entity.reals(40);
+                let weights = entity.reals(41);
+                let points = match BSpline::new(degree, &knots, &control, &weights) {
                     Some(curve) => curve.sample(self.tolerance_mm),
                     // Upstream's fallback: the fit points, else the control
                     // polygon.
@@ -161,83 +206,199 @@ impl<'a> Walker<'a> {
                     None => control,
                 };
                 let vertices = points.into_iter().map(|p| Vertex::line(p.x, p.y)).collect();
-                let polyline = Polyline::new(vertices, spline.is_closed());
+                let polyline = Polyline::new(vertices, entity.int(70) & FLAG_CLOSED != 0);
                 self.add_mm_polyline(polyline, &layer, "SPLINE")
             }
-            EntityType::Ellipse(ellipse) => {
-                let centre = point(&ellipse.center);
-                let major = Vec2::new(ellipse.major_axis.x, ellipse.major_axis.y);
-                let values = [
-                    centre.x,
-                    centre.y,
-                    major.x,
-                    major.y,
-                    ellipse.minor_axis_ratio,
-                    ellipse.start_parameter,
-                    ellipse.end_parameter,
-                ];
-                if values.iter().any(|v| !v.is_finite()) {
-                    return Err(ImportError::NonFinite { path: layer });
-                }
-                let a = major.length();
-                let b = a * ellipse.minor_axis_ratio;
-                if a <= EPS_MM || b <= EPS_MM {
-                    return self.skip("ELLIPSE (degenerate)");
-                }
-                let sweep = (ellipse.end_parameter - ellipse.start_parameter)
-                    .rem_euclid(std::f64::consts::TAU);
-                let full = sweep <= 1e-12;
-                let arc = kurbo::Arc::new(
-                    (centre.x, centre.y),
-                    (a, b),
-                    ellipse.start_parameter,
-                    if full { std::f64::consts::TAU } else { sweep },
-                    major.y.atan2(major.x),
-                );
-                // kurbo transforms the arc exactly (an ellipse under an
-                // affine map is an ellipse), so the Bézier approximation and
-                // the flattening both happen in millimetres.
-                let mut path = (transform.as_kurbo() * arc).to_path(self.tolerance_mm);
-                if full {
-                    path.close_path();
-                }
-                self.add_path(path, &layer)
-            }
-            EntityType::Insert(insert) => {
-                let Some(block) = self.blocks.get(insert.name.as_str()).copied() else {
-                    self.missing.push(insert.name.clone());
-                    return Ok(());
-                };
-                if !should_expand(&entity.common.layer, block) {
-                    return Ok(());
-                }
-                if depth > MAX_INSERT_DEPTH {
-                    self.too_deep.push(block.name.clone());
-                    return Ok(());
-                }
-                let (sx, sy) = (insert.x_scale_factor, insert.y_scale_factor);
-                let placement = [insert.location.x, insert.location.y, insert.rotation];
-                if !(sx.is_finite() && sy.is_finite() && sx != 0.0 && sy != 0.0)
-                    || placement.iter().any(|v| !v.is_finite())
-                {
-                    return self.skip("INSERT (degenerate)");
-                }
-                // T(insert) · R(rotation) · S(xscale, yscale) · T(−base).
-                let local = Transform::translate(-block.base_point.x, -block.base_point.y)
-                    .then(Transform::scale(sx, sy))
-                    .then(Transform::rotate(insert.rotation.to_radians()))
-                    .then(Transform::translate(insert.location.x, insert.location.y));
-                let child_transform = local.then(transform);
-                for child in &block.entities {
-                    self.walk(child, child_transform, Some(&layer), depth + 1)?;
-                }
-                Ok(())
-            }
+            "ELLIPSE" => self.add_ellipse(entity, transform, &layer),
+            "INSERT" => self.expand_insert(entity, transform, &layer, depth),
             // Structural: VERTEX rows belong to their POLYLINE and SEQEND
             // ends an INSERT's attributes or a POLYLINE.
-            EntityType::Vertex(_) | EntityType::Seqend(_) => Ok(()),
-            other => self.skip(type_name(other)),
+            "VERTEX" | "SEQEND" => Ok(()),
+            other => self.skip(other),
         }
+    }
+
+    /// The map from the entity's object coordinate system to world XY, or
+    /// `None` (and the entity counted) when it does not lie in the XY
+    /// plane. See [`ocs_to_world`].
+    fn ocs(&mut self, entity: &Entity, kind: &str) -> Option<Transform> {
+        match ocs_to_world(entity.extrusion()) {
+            Ok(ocs) => Some(ocs),
+            Err(reason) => {
+                *self
+                    .skipped
+                    .entry(format!("{kind} ({reason})"))
+                    .or_insert(0) += 1;
+                None
+            }
+        }
+    }
+
+    /// A POLYLINE and its VERTEX rows. Meshes are skipped. A 2D polyline's
+    /// vertices are in its OCS, a 3D polyline's (flag 8) in world
+    /// coordinates. A spline-fit polyline (flag 4) also holds the frame it
+    /// was fitted to, as flag-16 vertices; the curve is the other vertices
+    /// (flag 8), so the frame is dropped, unless the file holds nothing but
+    /// the frame, which is then kept as SPLINE keeps its control polygon.
+    /// A curve-fit polyline (flag 2) keeps every vertex: the ones curve
+    /// fitting added (flag 1) and their bulges are the curve.
+    fn add_polyline_entity(
+        &mut self,
+        entity: &Entity,
+        transform: Transform,
+        layer: &str,
+    ) -> Result<(), ImportError> {
+        let flags = entity.int(70);
+        if flags & (POLYLINE_POLYGON_MESH | POLYLINE_POLYFACE_MESH) != 0 {
+            return self.skip("POLYLINE (mesh)");
+        }
+        let ocs = if flags & POLYLINE_3D != 0 {
+            Transform::IDENTITY
+        } else {
+            let Some(ocs) = self.ocs(entity, "POLYLINE") else {
+                return Ok(());
+            };
+            ocs
+        };
+        let on_curve = |v: &Entity| v.int(70) & VERTEX_SPLINE_FRAME == 0;
+        let only_frame = !entity.vertices.iter().any(on_curve);
+        let vertices = entity
+            .vertices
+            .iter()
+            .filter(|v| only_frame || on_curve(v))
+            .map(|v| {
+                let p = v.point(10);
+                Vertex::new(p.x, p.y, v.real_or(42, 0.0))
+            })
+            .collect();
+        let polyline = Polyline::new(vertices, flags & FLAG_CLOSED != 0);
+        self.add_polyline(polyline, ocs.then(transform), layer, "POLYLINE")
+    }
+
+    /// An ELLIPSE (10/20 centre, 11/21 major axis end relative to the
+    /// centre, 40 minor-to-major ratio, 41/42 start and end parameter).
+    /// Centre and major axis are world coordinates; the extrusion decides
+    /// the side of the minor axis (normal × major axis), so under −Z the
+    /// parameter runs clockwise.
+    fn add_ellipse(
+        &mut self,
+        entity: &Entity,
+        transform: Transform,
+        layer: &str,
+    ) -> Result<(), ImportError> {
+        let Some(ocs) = self.ocs(entity, "ELLIPSE") else {
+            return Ok(());
+        };
+        let centre = entity.point(10);
+        let major = Vec2::new(entity.real_or(11, 0.0), entity.real_or(21, 0.0));
+        let ratio = entity.real_or(40, 1.0);
+        let start = entity.real_or(41, 0.0);
+        let end = entity.real_or(42, std::f64::consts::TAU);
+        let values = [centre.x, centre.y, major.x, major.y, ratio, start, end];
+        if values.iter().any(|v| !v.is_finite()) {
+            return Err(ImportError::NonFinite {
+                path: layer.to_owned(),
+            });
+        }
+        let a = major.length();
+        let b = a * ratio;
+        if a <= EPS_MM || b <= EPS_MM {
+            return self.skip("ELLIPSE (degenerate)");
+        }
+        let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
+        let full = sweep <= 1e-12;
+        let sweep = if full { std::f64::consts::TAU } else { sweep };
+        // Under a mirrored OCS the minor axis is mirrored too: the point at
+        // parameter t is the +Z ellipse's point at −t.
+        let direction = if ocs == Transform::IDENTITY {
+            1.0
+        } else {
+            -1.0
+        };
+        let arc = kurbo::Arc::new(
+            (centre.x, centre.y),
+            (a, b),
+            direction * start,
+            direction * sweep,
+            major.y.atan2(major.x),
+        );
+        // kurbo transforms the arc exactly (an ellipse under an affine map
+        // is an ellipse), so the Bézier approximation and the flattening
+        // both happen in millimetres.
+        let mut path = (transform.as_kurbo() * arc).to_path(self.tolerance_mm);
+        if full {
+            path.close_path();
+        }
+        self.add_path(path, layer)
+    }
+
+    /// An INSERT (2 block name, 10/20 insertion point, 41/42 X and Y
+    /// scale, 50 rotation in degrees, 70/71 column and row count, 44/45
+    /// column and row spacing): the block's entities placed by
+    /// `T(insert) · R(rotation) · S(xscale, yscale) · T(−base)` in the
+    /// insert's OCS, once per cell of a MINSERT array. Cell (column c, row
+    /// r) is offset by (c · column spacing, r · row spacing), rotated with
+    /// the insert and not scaled.
+    fn expand_insert(
+        &mut self,
+        entity: &Entity,
+        transform: Transform,
+        layer: &str,
+        depth: usize,
+    ) -> Result<(), ImportError> {
+        let name = entity.text(2).unwrap_or_default();
+        let Some(block) = self.blocks.get(name).copied() else {
+            self.missing.push(name.to_owned());
+            return Ok(());
+        };
+        if !should_expand(entity.layer(), block) {
+            return Ok(());
+        }
+        if depth > MAX_INSERT_DEPTH {
+            self.too_deep.push(block.name.clone());
+            return Ok(());
+        }
+        let Some(ocs) = self.ocs(entity, "INSERT") else {
+            return Ok(());
+        };
+        let (sx, sy) = (entity.real_or(41, 1.0), entity.real_or(42, 1.0));
+        let location = entity.point(10);
+        let rotation_deg = entity.real_or(50, 0.0);
+        let (dx, dy) = (entity.real_or(44, 0.0), entity.real_or(45, 0.0));
+        let placement = [location.x, location.y, rotation_deg, dx, dy];
+        if !(sx.is_finite() && sy.is_finite() && sx != 0.0 && sy != 0.0)
+            || placement.iter().any(|v| !v.is_finite())
+        {
+            return self.skip("INSERT (degenerate)");
+        }
+        // Counts below 1 are the default single placement.
+        let columns = entity.int(70).clamp(1, i64::from(i16::MAX));
+        let rows = entity.int(71).clamp(1, i64::from(i16::MAX));
+        // Every placed cell adds at least one shape of two vertices or
+        // nothing at all; an array of more cells than the vertex limit is
+        // refused before it is walked.
+        let cells = usize::try_from(columns * rows).unwrap_or(usize::MAX);
+        if columns * rows > 1 && cells > self.max_vertices {
+            return Err(ImportError::TooManyVertices {
+                limit: self.max_vertices,
+            });
+        }
+        let scale =
+            Transform::translate(-block.base.x, -block.base.y).then(Transform::scale(sx, sy));
+        let place = Transform::rotate(rotation_deg.to_radians())
+            .then(Transform::translate(location.x, location.y))
+            .then(ocs)
+            .then(transform);
+        for row in 0..rows {
+            for column in 0..columns {
+                let offset = Transform::translate(cell(column) * dx, cell(row) * dy);
+                let child_transform = scale.then(offset).then(place);
+                for child in &block.entities {
+                    self.walk(child, child_transform, Some(layer), depth + 1)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Counts a skipped entity; `Ok` so a `walk` arm can return it.
@@ -381,132 +542,43 @@ fn should_expand(insert_layer: &str, block: &Block) -> bool {
     if name.starts_with('_') || IGNORED_INSERT_BLOCKS.contains(&name) {
         return false;
     }
-    block.entities.iter().any(|e| {
-        matches!(
-            e.specific,
-            EntityType::Line(_)
-                | EntityType::Arc(_)
-                | EntityType::Circle(_)
-                | EntityType::LwPolyline(_)
-                | EntityType::Polyline(_)
-                | EntityType::Spline(_)
-                | EntityType::Ellipse(_)
-                | EntityType::Insert(_)
-        )
+    block
+        .entities
+        .iter()
+        .any(|e| READ_TYPES.contains(&e.kind.as_str()))
+}
+
+/// The OCS of an entity with extrusion direction `normal`, as a map to
+/// world XY, by the DXF Reference's arbitrary axis algorithm ("Object
+/// Coordinate Systems (OCS)", "Arbitrary Axis Algorithm"): for a normal
+/// near ±Z the OCS X axis is world Y × N and its Y axis N × X. For
+/// N = (0, 0, 1) that is the world frame; for N = (0, 0, −1) X is world −X
+/// and Y is world Y, a mirror in X that also reverses arcs (angles and
+/// bulges turn counter-clockwise about N). Any other normal tilts the
+/// entity out of the XY plane, and `Err` says so.
+fn ocs_to_world(normal: [f64; 3]) -> Result<Transform, &'static str> {
+    let [x, y, z] = normal;
+    let length = (x * x + y * y + z * z).sqrt();
+    if !(length.is_finite() && length > PLANAR_NORMAL_EPS) {
+        return Err("degenerate");
+    }
+    if (x / length).abs() > PLANAR_NORMAL_EPS || (y / length).abs() > PLANAR_NORMAL_EPS {
+        return Err("not in the XY plane");
+    }
+    Ok(if z > 0.0 {
+        Transform::IDENTITY
+    } else {
+        Transform::scale(-1.0, 1.0)
     })
 }
 
-/// The DXF type name of an entity DreamCarve does not read, for the
-/// skipped-entity counts.
-fn type_name(entity: &EntityType) -> &'static str {
-    match entity {
-        EntityType::Text(_) => "TEXT",
-        EntityType::MText(_) => "MTEXT",
-        EntityType::RotatedDimension(_)
-        | EntityType::RadialDimension(_)
-        | EntityType::DiameterDimension(_)
-        | EntityType::AngularThreePointDimension(_)
-        | EntityType::OrdinateDimension(_) => "DIMENSION",
-        EntityType::Attribute(_) => "ATTRIB",
-        EntityType::AttributeDefinition(_) => "ATTDEF",
-        EntityType::Face3D(_) => "3DFACE",
-        EntityType::Solid3D(_) => "3DSOLID",
-        EntityType::ProxyEntity(_) => "ACAD_PROXY_ENTITY",
-        EntityType::ArcAlignedText(_) => "ARCALIGNEDTEXT",
-        EntityType::Body(_) => "BODY",
-        EntityType::Helix(_) => "HELIX",
-        EntityType::Image(_) => "IMAGE",
-        EntityType::Leader(_) => "LEADER",
-        EntityType::Light(_) => "LIGHT",
-        EntityType::MLine(_) => "MLINE",
-        EntityType::OleFrame(_) => "OLEFRAME",
-        EntityType::Ole2Frame(_) => "OLE2FRAME",
-        EntityType::ModelPoint(_) => "POINT",
-        EntityType::Ray(_) => "RAY",
-        EntityType::Region(_) => "REGION",
-        EntityType::RText(_) => "RTEXT",
-        EntityType::Section(_) => "SECTION",
-        EntityType::Shape(_) => "SHAPE",
-        EntityType::Solid(_) => "SOLID",
-        EntityType::Tolerance(_) => "TOLERANCE",
-        EntityType::Trace(_) => "TRACE",
-        EntityType::DgnUnderlay(_) => "DGNUNDERLAY",
-        EntityType::DwfUnderlay(_) => "DWFUNDERLAY",
-        EntityType::PdfUnderlay(_) => "PDFUNDERLAY",
-        EntityType::Wipeout(_) => "WIPEOUT",
-        EntityType::XLine(_) => "XLINE",
-        // Read by `walk`, never counted.
-        EntityType::Line(_)
-        | EntityType::Circle(_)
-        | EntityType::Arc(_)
-        | EntityType::LwPolyline(_)
-        | EntityType::Polyline(_)
-        | EntityType::Spline(_)
-        | EntityType::Ellipse(_)
-        | EntityType::Insert(_)
-        | EntityType::Vertex(_)
-        | EntityType::Seqend(_) => "ENTITY",
-    }
+/// A MINSERT cell index (at most 32767) as a spacing multiplier.
+fn cell(index: i64) -> f64 {
+    i32::try_from(index).map_or(0.0, f64::from)
 }
 
-/// The DXF type names the `dxf` crate parses. Any other entity type in
-/// the file is swallowed by the parser before DreamCarve sees it, so the
-/// importer counts those from the raw text.
-pub(super) const PARSED_TYPE_NAMES: [&str; 45] = [
-    "3DFACE",
-    "3DSOLID",
-    "ACAD_PROXY_ENTITY",
-    "ARC",
-    "ARCALIGNEDTEXT",
-    "ATTDEF",
-    "ATTRIB",
-    "BODY",
-    "CIRCLE",
-    "DIMENSION",
-    "ELLIPSE",
-    "HELIX",
-    "IMAGE",
-    "INSERT",
-    "LEADER",
-    "LIGHT",
-    "LINE",
-    "3DLINE",
-    "LWPOLYLINE",
-    "MLINE",
-    "MTEXT",
-    "OLEFRAME",
-    "OLE2FRAME",
-    "POINT",
-    "POLYLINE",
-    "RAY",
-    "REGION",
-    "RTEXT",
-    "SECTION",
-    "SEQEND",
-    "SHAPE",
-    "SOLID",
-    "SPLINE",
-    "TEXT",
-    "TOLERANCE",
-    "TRACE",
-    "DGNUNDERLAY",
-    "DWFUNDERLAY",
-    "PDFUNDERLAY",
-    "VERTEX",
-    "WIPEOUT",
-    "XLINE",
-    // Section and block bookkeeping, never entities.
-    "ENDSEC",
-    "EOF",
-    "ENDBLK",
-];
-
-fn point(p: &DxfPoint) -> Point {
-    Point::new(p.x, p.y)
-}
-
-fn vertex(p: &DxfPoint, bulge: f64) -> Vertex {
-    Vertex::new(p.x, p.y, bulge)
+fn line_vertex(p: Point) -> Vertex {
+    Vertex::line(p.x, p.y)
 }
 
 fn is_finite(p: Point) -> bool {
@@ -654,5 +726,22 @@ mod tests {
         let out = without_repeats(p);
         assert_eq!(out.vertices().len(), 3);
         assert!(out.is_closed());
+    }
+
+    /// The arbitrary axis algorithm for the two normals in the XY plane,
+    /// a normal not quite of unit length, and normals out of the plane.
+    #[test]
+    fn ocs_of_plus_and_minus_z_and_tilted_normals() {
+        assert_eq!(ocs_to_world([0.0, 0.0, 1.0]), Ok(Transform::IDENTITY));
+        assert_eq!(ocs_to_world([-0.0, 1e-17, 2.0]), Ok(Transform::IDENTITY));
+        let mirror = ocs_to_world([0.0, 0.0, -1.0]).unwrap();
+        assert_eq!(mirror, Transform::scale(-1.0, 1.0));
+        let p = mirror.apply(Point::new(3.0, 4.0));
+        assert_approx_eq!(p.x, -3.0, 0.0);
+        assert_approx_eq!(p.y, 4.0, 0.0);
+        assert_eq!(ocs_to_world([0.0, 1.0, 0.0]), Err("not in the XY plane"));
+        assert_eq!(ocs_to_world([1e-3, 0.0, 1.0]), Err("not in the XY plane"));
+        assert_eq!(ocs_to_world([0.0, 0.0, 0.0]), Err("degenerate"));
+        assert_eq!(ocs_to_world([f64::NAN, 0.0, 1.0]), Err("degenerate"));
     }
 }

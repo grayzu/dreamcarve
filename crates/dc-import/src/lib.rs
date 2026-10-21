@@ -13,7 +13,8 @@ pub mod dxf;
 pub mod svg;
 
 pub use dxf::{
-    DxfImport, DxfImportOptions, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM, MAX_INSERT_DEPTH, import_dxf,
+    DxfImport, DxfImportOptions, DxfReadError, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM,
+    MAX_INSERT_DEPTH, import_dxf,
 };
 pub use svg::{
     MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM, RootUnits, SvgImport, SvgImportOptions,
@@ -27,10 +28,10 @@ pub enum ImportError {
     /// well-formed XML, compressed SVGZ, or no valid size).
     #[error("SVG could not be read: {0}")]
     Svg(#[from] usvg::Error),
-    /// The bytes are not a DXF document the `dxf` crate can read (a group
-    /// code or value that does not parse, or a truncated file).
+    /// The bytes are not a readable DXF document (a group code or value
+    /// that does not parse, or a truncated file).
     #[error("DXF could not be read: {0}")]
-    Dxf(#[from] ::dxf::DxfError),
+    Dxf(#[from] DxfReadError),
     /// The DXF declares no units DreamCarve can scale from (`$INSUNITS`
     /// absent, 0, or a unit outside inch, foot, mile, mm, cm, m) and the
     /// caller gave no override.

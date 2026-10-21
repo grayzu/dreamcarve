@@ -9,16 +9,21 @@
 //! with one instance, named after its layer (`docs/specs/phase-2/design.md`,
 //! "Algorithms → DXF import (dc-import::dxf)").
 //!
-//! Parsing (group codes, sections, blocks, entity structs) is delegated to
-//! the `dxf` crate. The `$INSUNITS` table, the entity set, bulge arcs, the
-//! INSERT transform and its skip rules, stitching with closing, and the
-//! dedupe follow PureCutCNC. Changed from upstream: DXF is already Y-up, so
-//! there is no Y flip and no arc-direction flip (ADR-0001); `ELLIPSE` is
-//! read; the join tolerance defaults to 0.01 mm instead of 0.5 mm; every
-//! skipped entity is counted in a warning instead of dropped silently; and
-//! arcs stay arcs (bulges) instead of being sampled.
+//! The file is read by DreamCarve's own group-code reader (`groups`, then
+//! `document`), ASCII and binary, as upstream parses it itself; every
+//! group code read is cited from Autodesk's published DXF Reference. The
+//! `$INSUNITS` table, the entity set, bulge arcs, the INSERT transform and
+//! its skip rules, stitching with closing, and the dedupe follow
+//! PureCutCNC. Changed from upstream: DXF is already Y-up, so there is no Y
+//! flip and no arc-direction flip (ADR-0001); `ELLIPSE` is read; the
+//! extrusion direction and MINSERT arrays are applied; the join tolerance
+//! defaults to 0.01 mm instead of 0.5 mm; every skipped entity is counted
+//! in a warning instead of dropped silently; and arcs stay arcs (bulges)
+//! instead of being sampled.
 
+mod document;
 mod entities;
+mod groups;
 mod spline;
 mod stitch;
 
@@ -29,7 +34,58 @@ use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Transform};
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, Units};
 
 use crate::svg::{MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM};
-use entities::{PARSED_TYPE_NAMES, Shape, Walker};
+use entities::{Shape, Walker};
+
+/// Why bytes are not a readable DXF file: a group that cannot be framed or
+/// whose value does not fit its code's type (DXF Reference, "Group Code
+/// Value Types"). Lines count from 1; binary offsets from the file's first
+/// byte.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DxfReadError {
+    /// An ASCII group code line that is not an integer.
+    #[error("line {line}: `{text}` is not a group code")]
+    BadCode {
+        /// The line of the code.
+        line: usize,
+        /// What the line holds.
+        text: String,
+    },
+    /// An ASCII value that does not parse as its code's type.
+    #[error("line {line}: group code {code} needs a {expected}, not `{text}`")]
+    BadValue {
+        /// The line of the value.
+        line: usize,
+        /// The group code.
+        code: i32,
+        /// The type the code's value has.
+        expected: &'static str,
+        /// What the line holds.
+        text: String,
+    },
+    /// The file ends after a group code, before its value.
+    #[error("line {line}: group code {code} has no value; the file ends early")]
+    MissingValue {
+        /// The line of the code.
+        line: usize,
+        /// The group code.
+        code: i32,
+    },
+    /// A binary file ends inside a group.
+    #[error("binary DXF ends inside the group at byte {offset}")]
+    TruncatedBinary {
+        /// Where the cut-off value starts.
+        offset: usize,
+    },
+    /// A binary group code the reference does not define, so its value's
+    /// length is unknown.
+    #[error("binary DXF has group code {code} at byte {offset}, which DXF does not define")]
+    UnknownBinaryCode {
+        /// The group code.
+        code: i32,
+        /// Where the code starts.
+        offset: usize,
+    },
+}
 
 /// Default distance within which the ends of two open segments on one
 /// layer are joined, mm. CAD programs write touching ends exactly; this
@@ -182,36 +238,32 @@ pub fn import_dxf(
         });
     }
 
-    let mut reader = bytes;
-    let drawing = ::dxf::Drawing::load(&mut reader)?;
+    let document = document::read(&groups::read(bytes)?);
 
-    let declared = DxfUnits::from_insunits(drawing.header.default_drawing_units);
+    let declared = document.insunits.and_then(DxfUnits::from_insunits);
     let mm_per_unit = match (options.units, declared) {
         (Some(Units::Mm), _) => 1.0,
         (Some(Units::Inch), _) => 25.4,
         (None, Some(units)) => units.mm_per_unit(),
         (None, None) => {
             return Err(ImportError::UnitsUnknown {
-                declared: format!("{:?}", drawing.header.default_drawing_units).to_lowercase(),
+                declared: insunits_name(document.insunits.unwrap_or(0)),
             });
         }
     };
 
     // No Y flip: DXF is Y-up (ADR-0001). The scale is the whole transform.
     let scale = Transform::scale(mm_per_unit, mm_per_unit);
-    let mut walker = Walker::new(drawing.blocks(), tolerance_mm, options.max_vertices);
-    for entity in drawing.entities() {
-        if entity.common.is_in_paper_space {
+    let mut walker = Walker::new(&document.blocks, tolerance_mm, options.max_vertices);
+    for entity in &document.entities {
+        if entity.in_paper_space() {
             continue;
         }
         walker.walk(entity, scale, None, 0)?;
     }
 
     let mut warnings = Vec::new();
-    let mut skipped = walker.skipped;
-    for (kind, count) in swallowed_entity_counts(bytes) {
-        *skipped.entry(kind).or_insert(0) += count;
-    }
+    let skipped = walker.skipped;
     if !skipped.is_empty() {
         warnings.push(ImportWarning::DxfEntitiesSkipped { counts: skipped });
     }
@@ -306,18 +358,46 @@ pub fn import_dxf(
 impl DxfUnits {
     /// The `$INSUNITS` value as units DreamCarve scales from; `None` for 0
     /// (unitless) and every unit outside the six.
-    fn from_insunits(units: ::dxf::enums::Units) -> Option<Self> {
-        use ::dxf::enums::Units as U;
-        match units {
-            U::Inches => Some(Self::Inches),
-            U::Feet => Some(Self::Feet),
-            U::Miles => Some(Self::Miles),
-            U::Millimeters => Some(Self::Millimetres),
-            U::Centimeters => Some(Self::Centimetres),
-            U::Meters => Some(Self::Metres),
+    const fn from_insunits(code: i64) -> Option<Self> {
+        match code {
+            1 => Some(Self::Inches),
+            2 => Some(Self::Feet),
+            3 => Some(Self::Miles),
+            4 => Some(Self::Millimetres),
+            5 => Some(Self::Centimetres),
+            6 => Some(Self::Metres),
             _ => None,
         }
     }
+}
+
+/// The name of an `$INSUNITS` value DreamCarve does not scale from, for
+/// [`ImportError::UnitsUnknown`] (DXF Reference, "HEADER Section Group
+/// Codes", `$INSUNITS`).
+fn insunits_name(code: i64) -> String {
+    let name = match code {
+        0 => "unitless",
+        7 => "kilometres",
+        8 => "microinches",
+        9 => "mils",
+        10 => "yards",
+        11 => "angstroms",
+        12 => "nanometres",
+        13 => "microns",
+        14 => "decimetres",
+        15 => "decametres",
+        16 => "hectometres",
+        17 => "gigametres",
+        18 => "astronomical units",
+        19 => "light years",
+        20 => "parsecs",
+        21 => "US survey feet",
+        22 => "US survey inches",
+        23 => "US survey yards",
+        24 => "US survey miles",
+        other => return format!("{other}, which DXF does not define"),
+    };
+    name.to_owned()
 }
 
 /// The first occurrence of each name, in order.
@@ -329,46 +409,6 @@ fn unique(names: Vec<String>) -> Vec<String> {
         }
     }
     out
-}
-
-/// Counts, per type name, the entities of the ENTITIES section whose type
-/// the `dxf` crate does not parse (HATCH, MESH, ...): the parser swallows
-/// them, so they are counted from the raw text. Binary DXF is not scanned.
-/// The scan is forgiving, as upstream's `parsePairs`: lines are read in
-/// code/value pairs and a code that is not a number skips its pair.
-fn swallowed_entity_counts(bytes: &[u8]) -> BTreeMap<String, usize> {
-    let mut counts = BTreeMap::new();
-    if bytes.starts_with(b"AutoCAD Binary DXF") {
-        return counts;
-    }
-    let text = String::from_utf8_lossy(bytes);
-    let mut lines = text.lines().map(str::trim);
-    let mut in_entities = false;
-    let mut expect_section_name = false;
-    while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-        let Ok(code) = code.parse::<i32>() else {
-            continue;
-        };
-        match code {
-            0 => {
-                expect_section_name = value == "SECTION";
-                if value == "SECTION" || value == "ENDSEC" {
-                    in_entities = false;
-                } else if in_entities {
-                    let name = value.to_ascii_uppercase();
-                    if !PARSED_TYPE_NAMES.contains(&name.as_str()) {
-                        *counts.entry(name).or_insert(0) += 1;
-                    }
-                }
-            }
-            2 if expect_section_name => {
-                in_entities = value.eq_ignore_ascii_case("ENTITIES");
-                expect_section_name = false;
-            }
-            _ => expect_section_name = false,
-        }
-    }
-    counts
 }
 
 #[cfg(test)]
@@ -1265,11 +1305,11 @@ mod tests {
             assert_approx_eq!(got.2, want.2, TOL_MM);
         }
         assert_eq!(got.len(), 3);
-        // The bulge's arc now bulges up, to y = +2.5 at the chord's middle.
+        // The arc's middle, (5, −2.5) in the OCS, is mirrored with it.
         let seg = lw.segments().next().unwrap();
         let (middle, _) = seg.point_at(seg.length_mm() / 2.0).unwrap();
         assert_approx_eq!(middle.x, -5.0, TOL_MM);
-        assert_approx_eq!(middle.y, 2.5, TOL_MM);
+        assert_approx_eq!(middle.y, -2.5, TOL_MM);
 
         // The block's square is placed at OCS (100, 0): world x −110..−100,
         // wound clockwise.
