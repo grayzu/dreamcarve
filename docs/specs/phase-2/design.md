@@ -543,19 +543,40 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    pieces under `tolerance × perimeter` dropped as noise. A ring sweeps
    `r` either side, so those are the points neither the node's rings nor
    its children's subtrees reach; every one lies under `s ≤ 2r` from the
-   node's rings, so one ring round each piece reaches all of it. They are
-   ordinary rings in the walk (visited nearest-first with the children,
-   `cleared` their own region); with `none` the root's are omitted with
-   the root's rings. At `s ≤ r` there are none, so 40 % output and the
-   goldens are unchanged. (changed in #258: above half the diameter the
-   innermost ring could lie up to `s` from the middle of its region and
-   reach only `r`, a 4.3 mm pin standing in a 17 mm circle at step-over
-   1.0, and above `(1 + √2/2)·r` each ring's right-angle corners were
-   more than `r` from the ring inside, 2.2 mm² a corner a level on the
-   100 × 50 rect; PureCutCNC's contour pocket has the same gap, and its
-   trochoidal `appendResidualCoreGuides` adds a ring to leaves only.
-   Raster has no such gap: its lines are `s ≤ 2r` apart and the wall
-   pass cuts within `r` of the edge.) The tree is built and walked with
+   node's rings, so one ring round each piece reaches all of it. Each
+   residual ring is cut from inside the lap of its node's ring
+   (`rings::Splice`): the point of the node's outer or a hole nearest a
+   vertex of the piece's ring (among vertices and arc points, so a
+   straight edge offers its corners; ties to the outer, then the earlier
+   hole and vertex), and the piece's point nearest that. When the lap
+   reaches that point it runs straight to the piece's point, round the
+   residual ring (wound by the direction rule, as an outer), and straight
+   back, at the pass Z and the feed, then goes on; a piece reached from
+   the lap's start is cut when the lap closes there. The ring has cleared
+   `r` about that point and the piece is at least `r + tol` from the
+   ring, so the link runs out through cleared material. A piece with a
+   hole, a link longer than one diameter plus `s` (the stay-down limit)
+   or one that leaves the node's region (checked exactly against its
+   edges, arcs as arcs, and sampled every 0.1 mm), and a piece whose
+   ring a rest operation does not cut (#167), is instead an ordinary
+   ring in the walk (visited nearest-first with the children, `cleared`
+   its own region). With `none` the root's residual rings are omitted
+   with the root's rings. At `s ≤ r` there are none, so 40 % output and
+   the goldens are unchanged. (changed in #258: above half the diameter
+   the innermost ring could lie up to `s` from the middle of its region
+   and reach only `r`, a 4.3 mm pin standing in a 17 mm circle at
+   step-over 1.0, and above `(1 + √2/2)·r` each ring's right-angle
+   corners were more than `r` from the ring inside, 2.2 mm² a corner a
+   level on the 100 × 50 rect; PureCutCNC's contour pocket has the same
+   gap, and its trochoidal `appendResidualCoreGuides` adds a ring to
+   leaves only. Raster has no such gap: its lines are `s ≤ 2r` apart and
+   the wall pass cuts within `r` of the edge.) (changed in #267: as rings
+   of their own, the corner pieces lay far apart and each cost a lift and
+   an entry, 13 lifts per pass on the 100 × 50 rect at step-over 1.0
+   against 1 at 0.8; cut from the lap, 1 per pass with the wall pass last
+   and 2 with it first, as at 0.8. A leaf's centre piece is now cut after
+   the leaf's ring, from it, rather than before; the corner pieces of the
+   root are cut from the wall pass.) The tree is built and walked with
    an explicit stack, capped at `MAX_RINGS` = 10 000 nodes per tool-centre
    region (`InvalidStepOver` above it), residual nodes included. At each
    node the children are visited nearest-first
@@ -1874,6 +1895,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::footprint_stays_inside_region` (S9), `pocket::footprint_stays_outside_island` (S9).
 - `pocket::offset_coverage_reaches_inset_region` — union of footprints ⊇ inset by r within 0.05 at step-over 0.4, 0.6, 0.8 and 1.0 (port: `pocketClearance.test.ts` "no stock left" spirit).
 - `pocket::offset_above_half_step_over_leaves_no_centre_pin`, `pocket::raster_above_half_step_over_leaves_no_ridge`, `pocket::rings::leaf_gets_a_residual_ring_only_when_needed`, `pocket::rings::square_corners_get_residual_rings_at_full_step_over` (#258).
+- `pocket::corner_cleanup_rings_do_not_lift` (#267: 1 lift per pass at step-over 1.0 with the wall pass last, 2 with it first, as at 0.8; `pocket::rings::leaf_gets_a_residual_ring_only_when_needed` and `pocket::rings::square_corners_get_residual_rings_at_full_step_over` check the splices).
 - `pocket::island_wall_runs_opposite_to_pocket_wall` (port: `pocketFinishIslandDirection.test.ts`).
 - `pocket::climb_on_pocket_wall_is_counter_clockwise`, `pocket::climb_on_island_is_clockwise`, `pocket::conventional_reverses_both` (Y-up re-derivation).
 - `pocket::tool_wider_than_region_warns_and_skips`.
