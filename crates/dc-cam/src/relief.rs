@@ -1961,7 +1961,9 @@ mod tests {
     /// from safe Z that stops 1 mm above that floor, not at safe Z: for a
     /// Pocket's relief pass, cut after the main path, and for an inside
     /// Profile's notches, cut among its passes. The last rapid down at a
-    /// descend point is the notch's; a lap may start there too.
+    /// descend point is the notch's. The Profile's lap starts and ends at
+    /// (22, 22), so that corner's notch is cut without a lift (#240,
+    /// [`notch_at_the_lap_end_does_not_lift`]) and is left out here.
     #[test]
     fn notch_rapids_to_just_above_the_cut_floor() {
         let p = one_tool(vec![rect(40.0, 40.0)]);
@@ -1973,8 +1975,11 @@ mod tests {
         let profile = generate_profile(&p, &profile_op(Side::Inside, CornerRelief::Dogbone))
             .unwrap()
             .0;
-        for (name, tp) in [("pocket", pocket), ("profile", profile)] {
-            for d in descend_points {
+        for (name, tp, lifted) in [
+            ("pocket", pocket, &descend_points[..]),
+            ("profile", profile, &descend_points[1..]),
+        ] {
+            for &d in lifted {
                 let at_d = |m: &Move| m.to.xy().distance_to(d) < 1e-6;
                 let i = tp
                     .moves
@@ -2532,6 +2537,68 @@ mod tests {
                     "{case}: bottom notches {bottom:?} outside the final lap \
                      {lap_reaches_bottom}..{lap_last}"
                 );
+            }
+        }
+    }
+
+    /// #240: an inside 40 × 40 mm Profile with dogbones starts and ends
+    /// each lap on the descend point at (22, 22), and that corner's notch
+    /// is cut right after the lap. It is reached from where the lap left
+    /// the tool, in the column the lap just cut, with no rapid between the
+    /// lap's last cut and the notch's first: no lift to safe Z and back.
+    /// Cases: one pass (2 mm deep) and two (4 mm, a notch level per pass),
+    /// both machining orders.
+    #[test]
+    fn notch_at_the_lap_end_does_not_lift() {
+        let p = one_tool(vec![rect(40.0, 40.0)]);
+        let d = at(2.0, 2.0);
+        for depth_mm in [2.0, 4.0] {
+            for order in [MachiningOrder::FullDepthFirst, MachiningOrder::PassFirst] {
+                let op = ProfileOp {
+                    depth_mm: Some(depth_mm),
+                    machining_order: order,
+                    ..profile_op(Side::Inside, CornerRelief::Dogbone)
+                };
+                let case = format!("{depth_mm} mm {order:?}");
+                let (with, warnings, _) = profile_run(&p, &op);
+                assert!(relief_codes(&warnings).is_empty(), "{case}: {warnings:?}");
+                let none = ProfileOp {
+                    corner_relief: CornerRelief::None,
+                    ..op.clone()
+                };
+                let (without, _) = generate_profile(&p, &none).unwrap();
+                let relief = interleaved_relief(&with, &without);
+                let is_relief = |i: usize| relief.iter().any(|(k, _)| *k == i);
+                let first = with.moves.first().map(|m| m.to).unwrap();
+                let all = xy_cuts(first, &with.moves);
+                // The first cut of each notch at `d` and the main-path cut
+                // just before it.
+                let mut notches = 0;
+                for pair in all.windows(2) {
+                    let [(lap_i, lap), (notch_i, notch)] = pair else {
+                        continue;
+                    };
+                    if is_relief(*lap_i)
+                        || !is_relief(*notch_i)
+                        || notch.0.start.distance_to(d) > 1e-6
+                    {
+                        continue;
+                    }
+                    notches += 1;
+                    assert!(
+                        lap.0.end.distance_to(d) < 1e-6,
+                        "{case}: the lap before the notch at {d:?} ends at {:?}",
+                        lap.0.end
+                    );
+                    let between = &with.moves[lap_i + 1..*notch_i];
+                    assert!(
+                        between.iter().all(|m| !m.is_rapid()),
+                        "{case}: the notch at {d:?} lifts after the lap: {between:?}"
+                    );
+                }
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let passes = (depth_mm / 2.0) as usize;
+                assert_eq!(notches, passes, "{case}: notches at {d:?} after a lap");
             }
         }
     }

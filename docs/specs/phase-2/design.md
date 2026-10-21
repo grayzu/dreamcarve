@@ -1243,6 +1243,17 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
    - same shape, next pass, different start (lead-in moved the seam, or
      alternation): rapid up to safe Z, rapid to `b.descent_from`,
      descend;
+   - same shape, not the next pass, `b.descent_from` equals the tool's
+     position (within `EPS_MM`), `b.descent` opens with a straight plunge
+     there (empty, or a first `Linear` move straight up or down at
+     `b.descent_from`), and a cut of `a` passed through `b.descent_from`
+     (within `CLEARED_POINT_TOLERANCE_MM`) at or below the Z that plunge
+     ends at: no link; the plunge runs from where the tool is, straight up
+     or down at the plunge rate in the column `a` just cut, then the rest
+     of `b.descent`. A Profile's relief notch whose descend point is where
+     the lap ended is cut this way. Other shapes keep the retract (O3).
+     (changed in #240: the notch lifted to safe Z and came straight back
+     down at the same point);
    - `b.cleared` and `a.cleared` are both `Some` at `b.z_mm == a.z_mm`,
      and the link is no longer than the flatten tolerance, or the
      straight link lies inside `a.cleared ∪ b.cleared` and its length
