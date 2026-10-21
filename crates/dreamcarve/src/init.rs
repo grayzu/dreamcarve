@@ -1,12 +1,15 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `dreamcarve init <svg>`: imports the drawing with `dc-import` and writes
-//! a `.dcv` project with the defaults of `docs/specs/phase-1/design.md`,
+//! `dreamcarve init <svg|dxf>`: imports the drawing with `dc-import` and
+//! writes a `.dcv` project with the defaults of `docs/specs/phase-1/design.md`,
 //! "CLI (dreamcarve)": stock = drawing bounds plus a 10 mm margin on each
 //! side; origin bottom-left at the stock top; one placeholder tool "Set me"
 //! (6.35 mm, 2 flutes, no feeds or step-down); one outside climb Profile of
-//! every closed shape, safe Z 5 mm, four 8 × 3 mm rectangular tabs.
+//! every closed shape, safe Z 5 mm, four 8 × 3 mm rectangular tabs. The
+//! format is the file's extension; a DXF takes the DXF-only `--units`
+//! override, `--join-tolerance` and `--layer` (`docs/specs/phase-2/design.md`,
+//! "CLI additions").
 //!
 //! The stock thickness, the Profile depth, the feeds, the spindle speed and
 //! the step-down are left unset (`null`), so `export` refuses the project
@@ -21,14 +24,18 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Rect, Transform};
-use dc_import::{SvgImport, SvgImportOptions, import_svg};
+use dc_import::{
+    DxfImportOptions, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
+    import_dxf, import_svg,
+};
 use dc_project::{
-    CURRENT_VERSION, CornerRelief, CutDirection, Entry, MachineOrigin, MachiningOrder, Operation,
-    OperationId, OriginXy, OriginZ, PostProcessorRef, ProfileOp, Project, Side, SourceMap, Stock,
-    TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units, validate,
+    CURRENT_VERSION, CornerRelief, CutDirection, Entry, FeatureDefinition, FeatureInstance,
+    MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PostProcessorRef,
+    ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId,
+    ToolKind, Units, validate,
 };
 
-use crate::cli::{Failure, InitArgs, StagedFile, lookup_post, read_file};
+use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
 
 /// Margin between the drawing's bounds and each stock edge, mm.
 const STOCK_MARGIN_MM: f64 = 10.0;
@@ -57,13 +64,29 @@ const TAB_COUNT: u8 = 4;
 const TAB_WIDTH_MM: f64 = 8.0;
 const TAB_HEIGHT_MM: f64 = 3.0;
 
+/// What an importer produced, whichever format it read.
+struct Imported {
+    definitions: Vec<FeatureDefinition>,
+    instances: Vec<FeatureInstance>,
+    bounds: Option<Rect>,
+}
+
 /// Runs `init`.
 pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     let post = lookup_post(&args.post)?;
+    let is_dxf = args
+        .drawing
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("dxf"));
+    if !is_dxf && (args.join_tolerance.is_some() || !args.layers.is_empty()) {
+        return Err(Failure::usage(
+            "--join-tolerance and --layer apply to DXF drawings only",
+        ));
+    }
     let output = args
         .output
         .clone()
-        .unwrap_or_else(|| args.svg.with_extension("dcv"));
+        .unwrap_or_else(|| args.drawing.with_extension("dcv"));
     if output.exists() {
         // The .dcv is where the user's edits live; never overwrite one.
         return Err(Failure::error(format!(
@@ -72,28 +95,25 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
         )));
     }
 
-    let bytes = read_file(&args.svg)?;
-    let (import, warnings) = import_svg(&bytes, &SvgImportOptions::new())
-        .map_err(|e| Failure::error(format!("cannot import {}: {e}", args.svg.display())))?;
+    let bytes = read_file(&args.drawing)?;
+    let (import, warnings) = if is_dxf {
+        import_dxf_drawing(args, &bytes)?
+    } else {
+        import_svg_drawing(args, &bytes)?
+    };
     for warning in &warnings {
         eprintln!("warning: {warning}");
     }
     let Some(bounds) = import.bounds else {
         return Err(Failure::error(format!(
             "{} contains no shapes to import",
-            args.svg.display()
+            args.drawing.display()
         )));
     };
-    println!(
-        "Imported {} shape(s) from {}: page units {}, 1 user unit = {:.4} mm.",
-        import.definitions.len(),
-        args.svg.display(),
-        import.units,
-        import.mm_per_user_unit
-    );
 
-    let name = project_name(&args.svg);
-    let project = default_project(name, import, bounds, post, args.units.into());
+    let name = project_name(&args.drawing);
+    let display_units = args.units.unwrap_or(UnitsArg::Mm).into();
+    let project = default_project(name, import, bounds, post, display_units);
     // The drawing imported within the limit, but the margin can push the
     // stock past it; refuse rather than write a project `check` rejects.
     let stock = &project.stock;
@@ -101,7 +121,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
         return Err(Failure::error(format!(
             "{} with a {STOCK_MARGIN_MM} mm margin needs a {:.2} × {:.2} mm stock, \
              larger than the {MAX_COORDINATE_MM} mm limit; make the drawing smaller",
-            args.svg.display(),
+            args.drawing.display(),
             stock.width_mm,
             stock.height_mm,
         )));
@@ -113,9 +133,77 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The project name: the SVG's file name without its extension.
-fn project_name(svg: &Path) -> String {
-    svg.file_stem().map_or_else(
+/// Imports an SVG and prints what was read.
+fn import_svg_drawing(
+    args: &InitArgs,
+    bytes: &[u8],
+) -> Result<(Imported, Vec<ImportWarning>), Failure> {
+    let (import, warnings) = import_svg(bytes, &SvgImportOptions::new())
+        .map_err(|e| Failure::error(format!("cannot import {}: {e}", args.drawing.display())))?;
+    println!(
+        "Imported {} shape(s) from {}: page units {}, 1 user unit = {:.4} mm.",
+        import.definitions.len(),
+        args.drawing.display(),
+        import.units,
+        import.mm_per_user_unit
+    );
+    Ok((
+        Imported {
+            definitions: import.definitions,
+            instances: import.instances,
+            bounds: import.bounds,
+        },
+        warnings,
+    ))
+}
+
+/// Imports a DXF with the DXF-only flags and prints what was read. A file
+/// with no usable `$INSUNITS` is refused with the flag to pass.
+fn import_dxf_drawing(
+    args: &InitArgs,
+    bytes: &[u8],
+) -> Result<(Imported, Vec<ImportWarning>), Failure> {
+    let options = DxfImportOptions {
+        units: args.units.map(Into::into),
+        join_tolerance_mm: args.join_tolerance.unwrap_or(JOIN_TOLERANCE_DEFAULT_MM),
+        layers: (!args.layers.is_empty()).then(|| args.layers.clone()),
+        ..DxfImportOptions::new()
+    };
+    let (import, warnings) = import_dxf(bytes, &options).map_err(|e| {
+        let hint = match e {
+            ImportError::UnitsUnknown { .. } => "; pass `--units mm|inch`",
+            _ => "",
+        };
+        Failure::error(format!(
+            "cannot import {}: {e}{hint}",
+            args.drawing.display()
+        ))
+    })?;
+    let units = match (args.units, import.units) {
+        (Some(units), _) => format!("units {units} (from --units)"),
+        (None, Some(units)) => format!("units {units} (from $INSUNITS)"),
+        // Unreachable: without either, the import fails above.
+        (None, None) => "units unknown".to_owned(),
+    };
+    println!(
+        "Imported {} shape(s) from {}: {units}, 1 drawing unit = {:.4} mm.",
+        import.definitions.len(),
+        args.drawing.display(),
+        import.mm_per_unit
+    );
+    Ok((
+        Imported {
+            definitions: import.definitions,
+            instances: import.instances,
+            bounds: import.bounds,
+        },
+        warnings,
+    ))
+}
+
+/// The project name: the drawing's file name without its extension.
+fn project_name(drawing: &Path) -> String {
+    drawing.file_stem().map_or_else(
         || "untitled".to_owned(),
         |s| s.to_string_lossy().into_owned(),
     )
@@ -136,7 +224,7 @@ fn round_up_mm(value_mm: f64) -> f64 {
 /// file reads cleanly.
 fn default_project(
     name: String,
-    import: SvgImport,
+    import: Imported,
     bounds: Rect,
     post_processor: PostProcessorRef,
     display_units: Units,

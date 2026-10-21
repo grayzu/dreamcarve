@@ -524,7 +524,7 @@ fn close_if_returned(out: &mut BezPath, start: kurbo::Point, open: bool) {
 /// origin on each axis. Besides matching what `.dcv` validation accepts,
 /// the bound limits how many segments a curve can flatten into, so an
 /// untrusted file cannot exhaust memory.
-fn element_is_within_limit(el: &PathEl) -> bool {
+pub(crate) fn element_is_within_limit(el: &PathEl) -> bool {
     let within =
         |p: &kurbo::Point| p.x.abs() <= MAX_COORDINATE_MM && p.y.abs() <= MAX_COORDINATE_MM;
     match el {
@@ -541,7 +541,7 @@ fn element_is_within_limit(el: &PathEl) -> bool {
 /// practice. Coordinates are within [`MAX_COORDINATE_MM`] and the tolerance
 /// at least [`MIN_FLATTEN_TOLERANCE_MM`], so each curve's count is at most
 /// a few tens of thousands.
-fn estimated_vertices(path: &BezPath, tolerance_mm: f64) -> usize {
+pub(crate) fn estimated_vertices(path: &BezPath, tolerance_mm: f64) -> usize {
     let mut current = kurbo::Point::ZERO;
     let mut total: usize = 0;
     for el in path.elements() {
@@ -587,7 +587,7 @@ fn wang_segments(scaled_second_difference_mm: f64, tolerance_mm: f64) -> usize {
     segments.max(1)
 }
 
-fn element_is_finite(el: &PathEl) -> bool {
+pub(crate) fn element_is_finite(el: &PathEl) -> bool {
     let finite = |p: &kurbo::Point| p.x.is_finite() && p.y.is_finite();
     match el {
         PathEl::MoveTo(p) | PathEl::LineTo(p) => finite(p),

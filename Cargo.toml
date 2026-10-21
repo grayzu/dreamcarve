@@ -51,6 +51,9 @@ i_overlay = { version = "9.1", default-features = false }
 # features are off: they add text shaping, system font loading (file I/O),
 # svgz, and the writer, none of which an importer needs.
 usvg = { version = "0.48", default-features = false }
+# DXF parsing (group codes, sections, blocks, entity structs). The `serialize`
+# feature is the only optional one and stays off.
+dxf = { version = "0.6", default-features = false }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic

@@ -46,6 +46,14 @@ generated from Cargo.lock at release time.
   Copyright (c) 2014-2020 Optimal Computing (NZ) Ltd
 - imagesize 0.15 (MIT), https://github.com/Roughsketch/imagesize
   Copyright (c) 2017 Maiddog
+- dxf 0.6 (MIT), https://github.com/ixmilia/dxf-rs
+  Copyright (c) IxMilia. All rights reserved.
+- enum_primitive 0.1 (MIT), https://github.com/andersk/enum_primitive-rs
+  Copyright (c) 2015 Anders Kaseorg
+- encoding_rs 0.8 ((Apache-2.0 OR MIT) AND BSD-3-Clause),
+  https://github.com/hsivonen/encoding_rs
+  Copyright Mozilla Foundation. Includes data derived from the WHATWG
+  Encoding Standard, under the BSD 3-Clause License.
 - i_float 5.0 (MIT), https://github.com/iShape-Rust/iFloat
   Copyright (c) 2023 iShape-Rust
 - i_shape 5.0 (MIT), https://github.com/iShape-Rust/i_shape
