@@ -32,14 +32,13 @@ use crate::footprint::footprint_at;
 use crate::passes::pass_z_mm;
 use crate::profile::{
     contour_contains, crossing_error, hole_shapes, outer_shape, rates_of, resolve_targets,
-    shape_warning,
 };
 use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::lap_cuts;
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::{IslandNeighbour, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryWarning, Point, Polyline, Region, area_mm2, difference, distance_mm,
     nest, union,
@@ -97,9 +96,9 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// `op.allowance_mm` ([`rings::inset_region`]), so the footprint stays the
 /// allowance off every wall and island; where it is empty the shape is
 /// skipped with
-/// [`WarningCode::PocketNoRoom`], and an island closer to the wall or
+/// [`Warning::PocketNoRoom`], and an island closer to the wall or
 /// another island than the tool's diameter plus twice the allowance warns
-/// [`WarningCode::PocketIslandTooClose`]. With the offset strategy each
+/// [`Warning::PocketIslandTooClose`]. With the offset strategy each
 /// tool-centre region's rings step in by `diameter × step_over_fraction`
 /// ([`RingTree`]); per depth pass they are cut innermost first, with the
 /// wall and island rings last, first, or not at all per `op.wall_pass`,
@@ -120,7 +119,7 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// built on that as on any tool-centre region, less the root rings that
 /// would sweep only cleared area ([`rest::in_air`], #167). When nothing is
 /// left that this tool reaches the operation warns
-/// [`WarningCode::RestOfClearsNothing`] and has no cutting move. The
+/// [`Warning::RestOfClearsNothing`] and has no cutting move. The
 /// reference must be an enabled Pocket with the same targets listed before
 /// `op` ([`CamError::RestOfInvalid`]).
 ///
@@ -139,8 +138,8 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// step 9, [`entry`]): a helix or zigzag ramp placed once per ring or line
 /// in the tool-centre region its pass cuts, from safe Z on the first pass
 /// and from the previous pass Z after; where it does not fit the entry
-/// falls back to a ramp, then a plunge ([`WarningCode::EntryFallback`],
-/// [`WarningCode::HelixDiameterReduced`]). A ring or line reached by a
+/// falls back to a ramp, then a plunge ([`Warning::EntryFallback`],
+/// [`Warning::HelixDiameterReduced`]). A ring or line reached by a
 /// stay-down link skips its descent.
 ///
 /// With `op.corner_relief` a dogbone or T-bone notch is cut in every
@@ -148,9 +147,9 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// concave corners of its islands, sized to the wall the allowance
 /// leaves, after the main passes and stepping down at the tool's
 /// step-down (the `relief` module); S9 then allows each notch its corner's lobe.
-/// A tool with no step-down skips it ([`WarningCode::ReliefSkipped`]);
-/// corners it cannot relieve warn [`WarningCode::ReliefCornerTooTight`]
-/// or [`WarningCode::ReliefCornerNotCut`].
+/// A tool with no step-down skips it ([`Warning::ReliefSkipped`]);
+/// corners it cannot relieve warn [`Warning::ReliefCornerTooTight`]
+/// or [`Warning::ReliefCornerNotCut`].
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_pocket(
     project: &Project,
@@ -271,11 +270,10 @@ pub fn generate_pocket(
         } = warning;
         if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
         {
-            warnings.push(
-                shape_warning(WarningCode::DuplicateShapeDropped, dropped)
-                    .with("duplicate_of_instance", &kept.instance)
-                    .with("duplicate_of_profile", kept.profile),
-            );
+            warnings.push(Warning::DuplicateShapeDropped {
+                shape: dropped.clone(),
+                duplicate_of: kept.clone(),
+            });
         }
     }
 
@@ -315,12 +313,13 @@ pub fn generate_pocket(
         // wall and island.
         let tool_centre = inset_region(region, radius_mm + op.allowance_mm, tolerance_mm);
         if tool_centre.is_empty() {
-            warnings.push(
-                shape_warning(WarningCode::PocketNoRoom, shape)
-                    .with("op", &op.id)
-                    .with("tool", &tool.name)
-                    .with("diameter_mm", tool.diameter_mm),
-            );
+            warnings.push(Warning::PocketNoRoom {
+                op: op.id.clone(),
+                shape: shape.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
+                diameter_mm: tool.diameter_mm,
+            });
             continue;
         }
         // Design step 3: a rest operation keeps only the tool centres that
@@ -399,12 +398,12 @@ pub fn generate_pocket(
     }
 
     if let Some(rest_of) = op.rest_of.as_ref().filter(|_| rest_had_room && !rest_found) {
-        warnings.push(
-            Warning::new(WarningCode::RestOfClearsNothing)
-                .with("op", &op.id)
-                .with("rest_of", rest_of)
-                .with("tool", &tool.name),
-        );
+        warnings.push(Warning::RestOfClearsNothing {
+            op: op.id.clone(),
+            rest_of: rest_of.clone(),
+            tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
+        });
     }
 
     let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
@@ -587,7 +586,7 @@ fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
     }
 }
 
-/// [`WarningCode::PocketIslandTooClose`] for every island of `region`
+/// [`Warning::PocketIslandTooClose`] for every island of `region`
 /// nearer the wall or a later island than the tool needs to pass between
 /// them: its diameter plus twice `op.allowance_mm` (#168), the gap at which
 /// the tool-centre region splits.
@@ -600,27 +599,32 @@ fn island_gap_warnings(
 ) -> Vec<Warning> {
     let mut warnings = Vec::new();
     let needed_mm = tool.diameter_mm + 2.0 * op.allowance_mm;
-    let warn = |island: &ShapeRef, other: String, gap_mm: f64| {
-        shape_warning(WarningCode::PocketIslandTooClose, shape)
-            .with("op", &op.id)
-            .with("island", island.profile)
-            .with("other", other)
-            .with("gap_mm", gap_mm)
-            .with("needed_mm", needed_mm)
-            .with("allowance_mm", op.allowance_mm)
-            .with("tool", &tool.name)
-            .with("diameter_mm", tool.diameter_mm)
+    let warn = |island: &ShapeRef, other, gap_mm| Warning::PocketIslandTooClose {
+        op: op.id.clone(),
+        shape: shape.clone(),
+        island: island.profile,
+        other,
+        gap_mm,
+        needed_mm,
+        allowance_mm: op.allowance_mm,
+        tool: tool.name.clone(),
+        tool_id: tool.id.clone(),
+        diameter_mm: tool.diameter_mm,
     };
     let holes: Vec<(&Contour, &ShapeRef)> = hole_shapes(region, shapes).collect();
     for (i, &(hole, island)) in holes.iter().enumerate() {
         let gap_mm = distance_mm(hole.polyline(), region.outer().polyline());
         if gap_mm < needed_mm - EPS_MM {
-            warnings.push(warn(island, "wall".into(), gap_mm));
+            warnings.push(warn(island, IslandNeighbour::Wall, gap_mm));
         }
         for &(other, other_shape) in holes.iter().skip(i + 1) {
             let gap_mm = distance_mm(hole.polyline(), other.polyline());
             if gap_mm < needed_mm - EPS_MM {
-                warnings.push(warn(island, other_shape.profile.to_string(), gap_mm));
+                warnings.push(warn(
+                    island,
+                    IslandNeighbour::Island(other_shape.profile),
+                    gap_mm,
+                ));
             }
         }
     }
@@ -1383,10 +1387,15 @@ mod tests {
         let p = project(vec![rect_100x50(), slot], &[("i1", at_20_20())]);
         let (tp, warnings) = generate(&p, &pocket_op(&p, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::PocketNoRoom]);
-        assert_eq!(warnings[0].param("instance"), Some("i1"));
-        assert_eq!(warnings[0].param("profile"), Some("1"));
-        assert_eq!(warnings[0].param("tool"), Some("6.35 mm upcut"));
-        assert_eq!(warnings[0].param("op"), Some("o1"));
+        let Warning::PocketNoRoom {
+            op, shape, tool, ..
+        } = &warnings[0]
+        else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!((shape.instance.as_str(), shape.profile), ("i1", 1));
+        assert_eq!(tool, "6.35 mm upcut");
+        assert_eq!(op.as_str(), "o1");
         for ring in &rings(&tp) {
             assert!(
                 ring.bounds.max.x <= wall().max.x - RADIUS_MM + RING_TOL,
@@ -1411,13 +1420,17 @@ mod tests {
             .filter(|w| w.code() == WarningCode::PocketIslandTooClose)
             .collect();
         assert!(!close.is_empty(), "{warnings:?}");
-        assert_eq!(close[0].param("island"), Some("1"));
-        assert_eq!(close[0].param("other"), Some("wall"));
-        assert_approx_eq!(
-            close[0].param("gap_mm").unwrap().parse::<f64>().unwrap(),
-            1.0,
-            RING_TOL
-        );
+        let Warning::PocketIslandTooClose {
+            island,
+            other,
+            gap_mm,
+            ..
+        } = close[0]
+        else {
+            panic!("{:?}", close[0]);
+        };
+        assert_eq!((*island, *other), (1, IslandNeighbour::Wall));
+        assert_approx_eq!(*gap_mm, 1.0, RING_TOL);
         assert!(
             warnings
                 .iter()
@@ -1481,29 +1494,44 @@ mod tests {
             "{warnings:?}"
         );
         let w = &warnings[0];
-        assert_eq!(w.param("island"), Some("1"));
-        assert_eq!(w.param("other"), Some("wall"));
-        let number = |key: &str| w.param(key).unwrap().parse::<f64>().unwrap();
-        assert_approx_eq!(number("gap_mm"), 7.0, RING_TOL);
-        assert_approx_eq!(number("needed_mm"), DIAMETER_MM + 1.0, TOL);
-        assert_approx_eq!(number("allowance_mm"), 0.5, TOL);
-        assert_approx_eq!(number("diameter_mm"), DIAMETER_MM, TOL);
+        let Warning::PocketIslandTooClose {
+            island,
+            other,
+            gap_mm,
+            needed_mm,
+            allowance_mm,
+            diameter_mm,
+            ..
+        } = w
+        else {
+            panic!("{w:?}");
+        };
+        assert_eq!((*island, *other), (1, IslandNeighbour::Wall));
+        assert_approx_eq!(*gap_mm, 7.0, RING_TOL);
+        assert_approx_eq!(*needed_mm, DIAMETER_MM + 1.0, TOL);
+        assert_approx_eq!(*allowance_mm, 0.5, TOL);
+        assert_approx_eq!(*diameter_mm, DIAMETER_MM, TOL);
         assert_eq!(
             w.to_string(),
             "in the pocket of `Shape i1` (instance `i1`, profile 0), island profile 1 is 7 mm from the pocket wall, closer than tool `6.35 mm upcut` needs with a 0.5 mm allowance (7.35 mm), so the material between them is left uncut"
         );
         // At allowance 0 the message is as before.
-        let w = Warning::new(WarningCode::PocketIslandTooClose)
-            .with("instance", "i1")
-            .with("instance_name", "Shape i1")
-            .with("profile", 0)
-            .with("island", 1)
-            .with("other", "wall")
-            .with("gap_mm", 5.0)
-            .with("needed_mm", 6.35)
-            .with("allowance_mm", 0.0)
-            .with("tool", "t")
-            .with("diameter_mm", 6.35);
+        let w = Warning::PocketIslandTooClose {
+            op: "o1".into(),
+            shape: ShapeRef {
+                instance: "i1".into(),
+                instance_name: "Shape i1".to_owned(),
+                profile: 0,
+            },
+            island: 1,
+            other: IslandNeighbour::Wall,
+            gap_mm: 5.0,
+            needed_mm: 6.35,
+            allowance_mm: 0.0,
+            tool: "t".to_owned(),
+            tool_id: "t1".into(),
+            diameter_mm: 6.35,
+        };
         assert_eq!(
             w.to_string(),
             "in the pocket of `Shape i1` (instance `i1`, profile 0), island profile 1 is 5 mm from the pocket wall, closer than the 6.35 mm tool `t` is wide, so the material between them is left uncut"
@@ -2084,22 +2112,26 @@ mod tests {
                 vec![WarningCode::RestOfClearsNothing],
                 "{what}"
             );
-            assert_eq!(warnings[0].param("op"), Some("o2"), "{what}");
-            assert_eq!(warnings[0].param("rest_of"), Some("o1"), "{what}");
-            assert_eq!(
-                warnings[0].param("tool"),
-                Some(format!("{rest_mm} mm end mill").as_str()),
-                "{what}"
-            );
+            let Warning::RestOfClearsNothing {
+                op, rest_of, tool, ..
+            } = &warnings[0]
+            else {
+                panic!("{what}: {:?}", warnings[0]);
+            };
+            assert_eq!(op.as_str(), "o2", "{what}");
+            assert_eq!(rest_of.as_str(), "o1", "{what}");
+            assert_eq!(*tool, format!("{rest_mm} mm end mill"), "{what}");
             assert!(
                 tp.moves.iter().all(Move::is_rapid),
                 "{what}: no cutting move: {tp:?}"
             );
         }
-        let w = Warning::new(WarningCode::RestOfClearsNothing)
-            .with("op", "o2")
-            .with("rest_of", "o1")
-            .with("tool", "12.7 mm end mill");
+        let w = Warning::RestOfClearsNothing {
+            op: "o2".into(),
+            rest_of: "o1".into(),
+            tool: "12.7 mm end mill".to_owned(),
+            tool_id: "t2".into(),
+        };
         assert_eq!(
             w.to_string(),
             "operation `o1`, which this one rests on, already reaches everything tool `12.7 mm end mill` can, so this operation cuts nothing; use a smaller tool, or remove it"
