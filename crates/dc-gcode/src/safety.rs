@@ -739,11 +739,12 @@ pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
 const MACHINE_G: [f64; 1] = [53.0];
 /// `G50`, every scale factor back to 1, and `G69`, no coordinate rotation,
 /// as Mach3 and UCCNC define them (#312; Using Mach3Mill 1.84, 10.7.15,
-/// 10.7.20; UCCNC user's manual 1.0047, 4.1.1). Each only cancels a mode
-/// DreamCarve never turns on, but it is accepted only from a definition
-/// whose header writes it ([`header_cancel_codes`]): LinuxCNC, grblHAL,
-/// GRBL and RS274/NGC do not have them, and in other dialects `G50` is a
-/// different command. `G51` and `G68`, which scale and rotate every
+/// 10.7.20; UCCNC user's manual 1.0047, 4.1.1), and `G50` as grblHAL
+/// defines it (#316; `grblHAL/core` `gcode.c` 1766-1770, 2798-2799). Each
+/// only cancels a mode DreamCarve never turns on, but it is accepted only
+/// from a definition whose header writes it ([`header_cancel_codes`]):
+/// LinuxCNC, GRBL and RS274/NGC do not have them, grblHAL has no `G69`,
+/// and in other dialects `G50` is a different command. `G51` and `G68`, which scale and rotate every
 /// coordinate the program writes, are never accepted: this pass reads the
 /// program as written.
 const HEADER_CANCEL_G: [(&str, f64); 2] = [("G50", 50.0), ("G69", 69.0)];

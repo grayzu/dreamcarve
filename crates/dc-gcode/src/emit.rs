@@ -1674,7 +1674,8 @@ const ABSOLUTE_COMMAND: &str = "G90";
 /// motion, and `G91.1` selects incremental arc centres, each the state
 /// DreamCarve assumes (#154; LinuxCNC and Mach3 headers). `G50` and `G69`
 /// set every scale factor to 1 and cancel coordinate rotation on Mach3 and
-/// UCCNC (#312), which only their version 3 headers write.
+/// UCCNC (#312), which only their version 3 headers write. grblHAL's
+/// version 4 header writes `G50` too, with the same meaning (#316).
 const MODAL_SETUP_CODES: [&str; 17] = [
     "G17", "G20", "G21", "G40", "G49", "G50", "G54", "G55", "G56", "G57", "G58", "G59", "G69",
     "G80", "G90", "G91.1", "G94",

@@ -454,6 +454,7 @@ G17
 G94
 G80
 G40
+G50
 G21
 G54
 ( Operation 1: Panel )
@@ -525,6 +526,7 @@ G17
 G94
 G80
 G40
+G50
 G21
 G54
 ( Operation 1: Border and squiggle )

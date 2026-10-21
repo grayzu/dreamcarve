@@ -297,6 +297,7 @@ G17
 G94
 G80
 G40
+G50
 G21
 G54
 ( Operation 1: Profile )
@@ -313,7 +314,7 @@ G2 X6.825 Y55.000 I-48.175 J0.000
 
 | Lines | What they do |
 | --- | --- |
-| `G90 G17 G94 G80 G40 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, no drilling cycle, no cutter compensation, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
+| `G90 G17 G94 G80 G40 G50 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, no drilling cycle, no cutter compensation, no scaling, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
 | `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) that go sideways happen only at or above this height. |
 | `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `X103.175 Y55.000` | Rapid to the start of the cut, still at safe Z. |
