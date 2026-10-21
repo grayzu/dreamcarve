@@ -1068,6 +1068,13 @@ pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
     }
 }
 
+/// What `export` tells the user about axis scaling before a program for
+/// `post` runs (#320). Not implemented yet.
+#[must_use]
+pub fn scaling_note(_post: &PostProcessor) -> Option<&'static str> {
+    None
+}
+
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under
 /// [`crate::MAX_LINE_CHARS`]; the safety pass rejects any that does not.
