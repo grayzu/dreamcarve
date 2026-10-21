@@ -124,6 +124,14 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
+- **Toolpath preview.** `export --preview part.svg` and `check --preview
+  part.svg` draw every operation's toolpath over the stock and the shapes, at
+  1:1 in millimetres: cuts in each operation's colour, rapids dashed, a heavy
+  mark where the bit rises over a tab, and a circle the size of the bit with a
+  tick in the cut direction where each pass starts, so you can see where
+  `at_distances` tabs are measured from. `export` writes it with the programs,
+  all or none; it is never written over the project, a program, or a file that
+  is not an earlier preview ([#281]).
 - **Inch input.** Any length or feed in a project or tool library file may be
   written with its unit: `"depth_mm": "0.5 in"`, `"1 1/4 in"`,
   `"feed_mm_min": "60 in/min"`, `"safe_z_mm": "5 mm"`. Inches are converted to
@@ -356,5 +364,6 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
+[#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
