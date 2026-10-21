@@ -33,14 +33,14 @@
 
 use crate::error::ShapeRef;
 use crate::profile::MEETING_REACH_DIAMETERS;
-use crate::warning::{Warning, WarningCode};
+use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, Polyline, Rect, Region, SelfBand, distance_mm};
 use dc_project::{Side, Tool};
 
 /// One tool-centre path in cut order, with the shape it cuts.
 pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 
-/// One [`WarningCode::ToolpathsOverlap`] per pair of shapes, from different
+/// One [`Warning::ToolpathsOverlap`] per pair of shapes, from different
 /// regions, where either one's tool path comes closer than the tool radius
 /// to the other's line. `paths` are in cut order; so are the warnings, by
 /// the first path of each pair and then the second, and the shape cut
@@ -92,18 +92,14 @@ pub(crate) fn overlap_warnings(
         })
         .collect();
 
-    let warning = |a: &ShapeRef, b: &ShapeRef, gap_mm: f64| {
-        Warning::new(WarningCode::ToolpathsOverlap)
-            .with("instance", &a.instance)
-            .with("instance_name", &a.instance_name)
-            .with("profile", a.profile)
-            .with("other_instance", &b.instance)
-            .with("other_instance_name", &b.instance_name)
-            .with("other_profile", b.profile)
-            .with("gap_mm", gap_mm)
-            .with("tool", &tool.name)
-            .with("diameter_mm", tool.diameter_mm)
-            .with("needed_mm", needed_gap_mm(side, tool.diameter_mm))
+    let warning = |a: &ShapeRef, b: &ShapeRef, gap_mm: f64| Warning::ToolpathsOverlap {
+        shape: a.clone(),
+        other: b.clone(),
+        gap_mm,
+        tool: tool.name.clone(),
+        tool_id: tool.id.clone(),
+        diameter_mm: tool.diameter_mm,
+        needed_mm: needed_gap_mm(side, tool.diameter_mm),
     };
     let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
     let mut warnings = Vec::new();
@@ -188,6 +184,7 @@ mod tests {
     #![allow(clippy::unwrap_used, reason = "tests fail loudly on a bad fixture")]
     #![allow(clippy::indexing_slicing, reason = "tests index fixed fixtures")]
 
+    use crate::error::ShapeRef;
     use crate::profile::generate_profile;
     use crate::toolpath::{MoveKind, Toolpath};
     use crate::warning::{Warning, WarningCode};
@@ -288,16 +285,39 @@ mod tests {
             .collect()
     }
 
+    /// The shapes, gap and needed gap of a `toolpaths_overlap` warning.
+    fn overlap(warning: &Warning) -> (&ShapeRef, &ShapeRef, f64, f64) {
+        let Warning::ToolpathsOverlap {
+            shape,
+            other,
+            gap_mm,
+            needed_mm,
+            ..
+        } = warning
+        else {
+            panic!("{warning:?}");
+        };
+        (shape, other, *gap_mm, *needed_mm)
+    }
+
     fn gap_mm(warning: &Warning) -> f64 {
-        warning.param("gap_mm").unwrap().parse().unwrap()
+        overlap(warning).2
+    }
+
+    fn needed_mm(warning: &Warning) -> f64 {
+        overlap(warning).3
     }
 
     /// The instances a warning names, first then other.
     fn named(warning: &Warning) -> (&str, &str) {
-        (
-            warning.param("instance").unwrap(),
-            warning.param("other_instance").unwrap(),
-        )
+        let (shape, other, _, _) = overlap(warning);
+        (shape.instance.as_str(), other.instance.as_str())
+    }
+
+    /// The profiles a warning names, first then other.
+    fn profiles(warning: &Warning) -> (usize, usize) {
+        let (shape, other, _, _) = overlap(warning);
+        (shape.profile, other.profile)
     }
 
     #[test]
@@ -311,8 +331,7 @@ mod tests {
         let mut pair = [first, other];
         pair.sort_unstable();
         assert_eq!(pair, ["a", "b"]);
-        assert_eq!(w.param("profile"), Some("0"));
-        assert_eq!(w.param("other_profile"), Some("0"));
+        assert_eq!(profiles(w), (0, 0));
         assert!((gap_mm(w) - 2.0).abs() < TOL, "{w:?}");
         let text = w.to_string();
         assert!(
@@ -342,7 +361,7 @@ mod tests {
         let (_, warnings) = generate_profile(&close, &profile_op(&close, Side::OnLine)).unwrap();
         let found = overlaps(&warnings);
         assert_eq!(found.len(), 1, "{warnings:?}");
-        assert_eq!(found[0].param("needed_mm"), Some("3"));
+        assert!((needed_mm(found[0]) - 3.0).abs() < TOL, "{:?}", found[0]);
         let apart = squares(&[("a", 20.0), ("b", 43.5)]);
         let (_, warnings) = generate_profile(&apart, &profile_op(&apart, Side::OnLine)).unwrap();
         assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
@@ -397,11 +416,11 @@ mod tests {
         pair.sort_unstable();
         assert_eq!(pair, ["coaster", "frame"]);
         let frame_profile = if first == "frame" {
-            w.param("profile")
+            profiles(w).0
         } else {
-            w.param("other_profile")
+            profiles(w).1
         };
-        assert_eq!(frame_profile, Some("1"), "the frame's hole: {w:?}");
+        assert_eq!(frame_profile, 1, "the frame's hole: {w:?}");
         assert!((gap_mm(w) - 1.0).abs() < TOL, "{w:?}");
     }
 
@@ -471,9 +490,8 @@ mod tests {
         let mut pair = [first, other];
         pair.sort_unstable();
         assert_eq!(pair, ["a", "l"]);
-        assert_eq!(w.param("profile"), Some("0"));
-        assert_eq!(w.param("other_profile"), Some("0"));
-        assert_eq!(w.param("needed_mm"), Some("3"));
+        assert_eq!(profiles(w), (0, 0));
+        assert!((needed_mm(w) - 3.0).abs() < TOL, "{:?}", w);
         assert!((gap_mm(w) - 2.0).abs() < TOL, "{w:?}");
 
         // Across the square's left edge: the gap is nothing.
@@ -576,9 +594,8 @@ mod tests {
             assert_eq!(found.len(), 1, "{case}: {warnings:?}");
             let w = found[0];
             assert_eq!(named(w), ("l", "l"), "{case}");
-            assert_eq!(w.param("profile"), Some("0"), "{case}");
-            assert_eq!(w.param("other_profile"), Some("0"), "{case}");
-            assert_eq!(w.param("needed_mm"), Some("3"), "{case}");
+            assert_eq!(profiles(w), (0, 0), "{case}");
+            assert!((needed_mm(w) - 3.0).abs() < TOL, "{case}");
             assert!((gap_mm(w) - 2.0).abs() < TOL, "{case}: {w:?}");
         }
         let wide = square_and_lines(&[(
