@@ -290,6 +290,8 @@ fn default_project(
             width_mm: TAB_WIDTH_MM,
             height_mm: TAB_HEIGHT_MM,
             shape: TabShape::Rect,
+            // #109: a hole's slug is waste.
+            on_holes: false,
         }),
         machining_order: MachiningOrder::FullDepthFirst,
         entry: Entry::Ramp {

@@ -50,6 +50,9 @@
 //!   `use_canned_cycles: false` to the post-processor settings: the values
 //!   that keep a phase 1 project cutting the same. Pocket, Drill and
 //!   Engrave operations exist from this version on.
+//! - **9**: adds `on_holes` to each Profile's `tabs`, set to `true` by the
+//!   migration (#109): a Profile now leaves its holes without tabs unless
+//!   `on_holes` is set, and every outline had tabs before.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -60,7 +63,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 8;
+pub const CURRENT_VERSION: u32 = 9;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -77,6 +80,7 @@ fn step(from: u32) -> Option<Step> {
         5 => Some(v5_to_v6),
         6 => Some(v6_to_v7),
         7 => Some(v7_to_v8),
+        8 => Some(v8_to_v9),
         _ => None,
     }
 }
@@ -404,6 +408,31 @@ fn v7_to_v8(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
+/// Version 8 → 9 (#109): `on_holes: true` at the end of each Profile's
+/// `tabs` object, so a project whose holes had tabs keeps them. A Profile
+/// with `tabs: null` and the other operations are unchanged. Fails if the
+/// key is already there: that is not a version 8 file.
+fn v8_to_v9(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Some(tabs) = op.get_mut("tabs").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if tabs.contains_key("on_holes") {
+            return Err(format!(
+                "a version 8 file has no `operations[{i}].tabs.on_holes`, but this one does"
+            ));
+        }
+        tabs.insert("on_holes".into(), Value::from(true));
+    }
+    Ok(root)
+}
+
 /// `map` with `key: value` inserted right after `after`, or at the end
 /// when `after` is absent. Fails if `key` is already there, naming it
 /// under `at` (a path prefix such as `tools[0].`).
@@ -564,6 +593,13 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 9 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                if let Some(tabs) = op["tabs"].as_object_mut() {
+                    tabs.shift_remove("on_holes");
+                }
+            }
+        }
         if version < 8 {
             // `shift_remove`: `remove` swaps the last key in, which would
             // scramble the order the tests compare.
@@ -1061,7 +1097,12 @@ mod tests {
     /// file saves with the same layout as a new one.
     #[test]
     fn v7_to_v8_writes_the_defaults() {
-        let migrated = migrate(sample_root_at(7), 7).unwrap();
+        // The one step: `migrate` would go on to the current version.
+        let Value::Object(root) = sample_root_at(7) else {
+            panic!("the sample is an object");
+        };
+        let mut migrated = Value::Object(v7_to_v8(root).unwrap());
+        migrated["version"] = Value::from(8);
         assert_eq!(migrated, sample_root_at(8));
         assert_eq!(
             serde_json::to_string_pretty(&migrated).unwrap(),
@@ -1100,6 +1141,55 @@ mod tests {
                 "{key}: {err:?}"
             );
         }
+    }
+
+    // Version 8 → 9 (#109): holes get no tabs unless `tabs.on_holes` is
+    // set, so a project from before keeps them on its holes.
+
+    const V8_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v8/sample.dcv");
+
+    #[test]
+    fn version_8_fixture_loads() {
+        let loaded = load(V8_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #109: a version 8 Profile put its tabs on every outline it cut,
+    /// holes included. The migration writes `on_holes: true` into every
+    /// Profile's tabs, so the project cuts the same; a Profile with no
+    /// tabs stays `null`. The key lands where a version 9 file writes it.
+    #[test]
+    fn v8_tabs_keep_their_holes_tabbed() {
+        let root: Value = serde_json::from_slice(V8_FIXTURE).unwrap();
+        let migrated = migrate(root, 8).unwrap();
+        assert_eq!(migrated["operations"][0]["tabs"]["on_holes"], json!(true));
+
+        let migrated = migrate(sample_root_at(8), 8).unwrap();
+        assert_eq!(migrated, sample_root_at(9));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(9)).unwrap(),
+            "key order"
+        );
+
+        let mut untabbed = sample_root_at(8);
+        untabbed["operations"][0]["tabs"] = Value::Null;
+        let migrated = migrate(untabbed, 8).unwrap();
+        assert_eq!(migrated["operations"][0]["tabs"], Value::Null);
+    }
+
+    #[test]
+    fn v8_with_on_holes_already_present_fails() {
+        let mut root = sample_root_at(8);
+        root["operations"][0]["tabs"]["on_holes"] = json!(false);
+        let err = migrate(root, 8).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 8, to: 9, message }
+                if message.contains("on_holes")),
+            "{err:?}"
+        );
     }
 
     #[test]
