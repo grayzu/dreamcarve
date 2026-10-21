@@ -1088,13 +1088,110 @@ mod golden {
 /// The filled-in coaster with post-processor `id` at version 1, as a
 /// project saved before #286 names it.
 fn coaster_at_v1(dir: &Path, id: &str) {
+    coaster_at(dir, id, 1);
+}
+
+/// The filled-in coaster with post-processor `id` at `version`.
+fn coaster_at(dir: &Path, id: &str, version: u32) {
     let dcv = init_coaster(dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
-    project.post_processor = dc_project::bundled_definition(id, 1)
-        .expect("version 1 is bundled")
+    project.post_processor = dc_project::bundled_definition(id, version)
+        .expect("the version is bundled")
         .default_ref();
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+}
+
+/// `program`'s lines without Mach3's `N` line numbers, which shift when a
+/// header line is added.
+fn unnumbered(program: &str) -> Vec<String> {
+    program
+        .lines()
+        .map(|l| match l.split_once(' ') {
+            Some((n, rest))
+                if n.len() > 1
+                    && n.starts_with('N')
+                    && n[1..].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                rest.to_owned()
+            }
+            _ => l.to_owned(),
+        })
+        .collect()
+}
+
+/// `lines` with `G50` and `G69` after the header's modal line, the one
+/// with `G80`: what version 3 of Mach3 and UCCNC adds (#312).
+fn with_scale_rotate_cancel(mut lines: Vec<String>) -> Vec<String> {
+    let modal = lines
+        .iter()
+        .position(|l| l.split_whitespace().any(|w| w == "G80"))
+        .expect("the header has a G80 line");
+    lines.splice(modal + 1..modal + 1, ["G50".to_owned(), "G69".to_owned()]);
+    lines
+}
+
+/// Whether Mach3 line numbers run `N10`, `N20`, ... with no gap, every
+/// line but `%` numbered.
+fn numbered_in_tens(program: &str) -> bool {
+    program
+        .lines()
+        .filter(|l| *l != "%")
+        .enumerate()
+        .all(|(i, l)| l.starts_with(&format!("N{} ", (i + 1) * 10)))
+}
+
+/// #312, ADR-0004: a project that names version 2 of Mach3 exports the
+/// bytes it did before version 3 added `G50` and `G69` to the header
+/// (`tests/expected/coaster-mach3-v2.tap`, the golden program as it was
+/// captured with version 2).
+#[test]
+fn mach3_v2_project_still_exports_byte_identically() {
+    let dir = work_dir("mach3_v2_project_still_exports_byte_identically");
+    coaster_at(&dir, "mach3", 2);
+    assert_exports_match(&dir, &[], &[("coaster.tap", "coaster-mach3-v2.tap")]);
+}
+
+/// #312: the same for UCCNC.
+#[test]
+fn uccnc_v2_project_still_exports_byte_identically() {
+    let dir = work_dir("uccnc_v2_project_still_exports_byte_identically");
+    coaster_at(&dir, "uccnc", 2);
+    assert_exports_match(&dir, &[], &[("coaster.txt", "coaster-uccnc-v2.txt")]);
+}
+
+/// #312: `export --post` upgrades a version 2 Mach3 or UCCNC project to
+/// version 3, and the only change is a `G50` line and a `G69` line after
+/// the header's modal line (Mach3 numbers every line, so the numbers
+/// after them move on by 20).
+#[test]
+fn mach3_and_uccnc_v2_projects_upgrade_to_v3() {
+    for (id, program) in [("mach3", "coaster.tap"), ("uccnc", "coaster.txt")] {
+        let dir = work_dir(&format!("v2_project_upgrades_to_v3_{id}"));
+        coaster_at(&dir, id, 2);
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let v2 = std::fs::read_to_string(dir.join(program)).expect("program written");
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v2 → v3,")),
+            "{id}: {report}"
+        );
+        let v3 = std::fs::read_to_string(dir.join(program)).expect("program rewritten");
+        assert_eq!(
+            unnumbered(&v3),
+            with_scale_rotate_cancel(unnumbered(&v2)),
+            "{id}: only G50 and G69 join the program"
+        );
+        if id == "mach3" {
+            assert!(numbered_in_tens(&v3), "{v3}");
+        }
+    }
 }
 
 /// #286, ADR-0004: a project that names version 1 of LinuxCNC exports the
@@ -1122,15 +1219,15 @@ fn mach3_and_uccnc_v1_projects_still_export_byte_identically() {
 }
 
 /// #286: `export --post` upgrades a version 1 LinuxCNC, Mach3 or UCCNC
-/// project to version 2, and the only line that changes is the header's
-/// modal line, which loses `G49` (Mach3 numbers every line, so its line
-/// numbers stay the same).
+/// project to the latest version, and the header's modal line loses
+/// `G49`. On LinuxCNC (version 2) nothing else changes. Mach3 and UCCNC go
+/// to version 3, which also adds `G50` and `G69` (#312).
 #[test]
-fn slice17_v1_project_upgrades_to_v2_without_g49() {
-    for (id, program) in [
-        ("linuxcnc", "coaster.ngc"),
-        ("mach3", "coaster.tap"),
-        ("uccnc", "coaster.txt"),
+fn slice17_v1_project_upgrades_to_latest_without_g49() {
+    for (id, program, latest) in [
+        ("linuxcnc", "coaster.ngc", 2),
+        ("mach3", "coaster.tap", 3),
+        ("uccnc", "coaster.txt", 3),
     ] {
         let dir = work_dir(&format!("slice17_v1_project_upgrades_{id}"));
         coaster_at_v1(&dir, id);
@@ -1144,15 +1241,23 @@ fn slice17_v1_project_upgrades_to_v2_without_g49() {
         assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
         let report = stdout(&out);
         assert!(
-            report.contains(&format!("post-processor {id} v1 → v2,")),
+            report.contains(&format!("post-processor {id} v1 → v{latest},")),
             "{id}: {report}"
         );
-        let v2 = std::fs::read_to_string(dir.join(program)).expect("program rewritten");
-        assert!(!v2.contains("G49"), "{id}:\n{v2}");
-        let expected: Vec<String> = v1.lines().map(|l| l.replace(" G49", "")).collect();
-        let actual: Vec<&str> = v2.lines().collect();
-        assert_eq!(actual, expected, "{id}: only G49 leaves the program");
-        assert_ne!(v1, v2, "{id}: v1 had G49");
+        let upgraded = std::fs::read_to_string(dir.join(program)).expect("program rewritten");
+        assert!(!upgraded.contains("G49"), "{id}:\n{upgraded}");
+        let without_g49 = v1.replace(" G49", "");
+        let expected = if latest == 3 {
+            with_scale_rotate_cancel(unnumbered(&without_g49))
+        } else {
+            unnumbered(&without_g49)
+        };
+        assert_eq!(
+            unnumbered(&upgraded),
+            expected,
+            "{id}: only G49 leaves the program"
+        );
+        assert_ne!(v1, upgraded, "{id}: v1 had G49");
     }
 }
 

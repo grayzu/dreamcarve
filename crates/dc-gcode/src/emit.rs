@@ -3819,6 +3819,50 @@ mod tests {
         assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
     }
 
+    /// #312: Mach3 v3 and UCCNC v3 cancel scaling (`G50`) and rotation
+    /// (`G69`) in the header, before the first move, and again in the
+    /// setup written after every stop that more motion follows, here the
+    /// manual-spindle `M0`s, since the user may set either at the
+    /// controller while it waits. Only those definitions write them.
+    #[test]
+    fn setup_after_stop_repeats_g50_g69() {
+        for post in ["mach3", "uccnc"] {
+            let mut project = project_with(post);
+            project.post_processor.spindle_control = SpindleControl::Manual;
+            let text = emit(&project, &ops_for(&project), DATE).unwrap().0.text;
+            let lines: Vec<&str> = text.lines().collect();
+            let moves = |l: &str| {
+                let c = code(l);
+                c.contains('X') || c.contains('Y') || c.contains('Z')
+            };
+            let first_move = first_index(&lines, moves).unwrap();
+            for word in ["G50", "G69"] {
+                assert!(
+                    lines[..first_move].iter().any(|l| has_word(l, word)),
+                    "{post}: no {word} before the first move:\n{text}"
+                );
+            }
+            let pauses = after_pauses(&text);
+            assert!(!pauses.is_empty(), "{post}: no pause:\n{text}");
+            for (line, between) in pauses {
+                for word in ["G50", "G69"] {
+                    assert!(
+                        between.iter().any(|l| has_word(l, word)),
+                        "{post}: no {word} after the stop on line {line}: {between:?}"
+                    );
+                }
+            }
+        }
+        for (case, text) in every_program() {
+            for word in ["G50", "G51", "G68", "G69"] {
+                assert!(
+                    !text.lines().any(|l| has_word(l, word)),
+                    "{case}: {word}:\n{text}"
+                );
+            }
+        }
+    }
+
     /// #279: in `G80` mode a line with axis words and no motion word is an
     /// error on grblHAL and GRBL (`definitions/README.md`, "Header modal
     /// state"). So the first line that moves after the header's `G80`, and

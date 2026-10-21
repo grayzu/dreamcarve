@@ -1656,7 +1656,7 @@ mod tests {
         // `default_settings.use_canned_cycles` reached every version, and
         // in #283 when `work_coordinates.machine_command` did (schema-wide
         // fields; see `definitions/README.md`, "Versions").
-        const PINNED: [(&str, u64); 13] = [
+        const PINNED: [(&str, u64); 15] = [
             ("grblhal/v1.json", 0x4069_e336_d88c_fe81),
             // #171: the project name no longer opens a comment.
             ("grblhal/v2.json", 0xabe7_6c89_c5f8_6bf8),
@@ -1672,8 +1672,11 @@ mod tests {
             ("linuxcnc/v2.json", 0x7608_f5d6_1b74_9cd7),
             ("mach3/v1.json", 0xeff3_be07_97a2_28bf),
             ("mach3/v2.json", 0x7604_07ca_afcf_53d5),
+            // #312: the header cancels scaling and rotation (`G50`, `G69`).
+            ("mach3/v3.json", 0xc840_8d2b_7fd4_33a9),
             ("uccnc/v1.json", 0x1c80_d6fb_1d78_ab36),
             ("uccnc/v2.json", 0xfae6_efe4_6cee_ccbc),
+            ("uccnc/v3.json", 0x7822_1085_2958_badc),
             ("generic/v1.json", 0x0fa6_f809_7b33_a95c),
         ];
         let bundled = bundled_definitions().unwrap();

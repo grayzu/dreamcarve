@@ -738,17 +738,19 @@ fn no_header_cancels_tool_length_offset() {
 /// by the offset, so version 2 of `id` is version 1 with `G49` taken out
 /// of the header and nothing else changed; no line of it can set or
 /// cancel an offset (`G43`, `G44`, `G49`), so the offset the user zeroed
-/// with stays in force for the whole program.
+/// with stays in force for the whole program. Later versions keep it out
+/// too (Mach3 and UCCNC v3, #312).
 fn assert_v2_header_has_no_g49(id: &str) {
+    let v2 = bundled_definition(id, 2).unwrap().post_processor();
     let latest = latest_definition(id).unwrap();
-    assert_eq!(latest.version, 2, "{id}");
-    let v2 = latest.post_processor();
-    for line in every_line(v2) {
-        for word in words(&line) {
-            assert!(
-                !["G43", "G44", "G49"].iter().any(|g| word.starts_with(g)),
-                "{id} v2: {line}"
-            );
+    for (version, post) in [(2, v2), (latest.version, latest.post_processor())] {
+        for line in every_line(post) {
+            for word in words(&line) {
+                assert!(
+                    !["G43", "G44", "G49"].iter().any(|g| word.starts_with(g)),
+                    "{id} v{version}: {line}"
+                );
+            }
         }
     }
     let mut v1 = bundled_definition(id, 1).unwrap().post_processor().clone();
@@ -775,6 +777,75 @@ fn mach3_v2_header_has_no_g49() {
 #[test]
 fn uccnc_v2_header_has_no_g49() {
     assert_v2_header_has_no_g49("uccnc");
+}
+
+/// The codes that set or cancel axis scaling (`G50`, `G51`) and
+/// coordinate rotation (`G68`, `G69`) on Mach3 and UCCNC.
+const SCALE_ROTATE_CODES: [&str; 4] = ["G50", "G51", "G68", "G69"];
+
+/// #312: Mach3 and UCCNC keep a `G51` scale factor and a `G68` rotation
+/// until they are cancelled, and neither `M2` nor `M30` cancels them
+/// (`definitions/README.md`, "Scaling and rotation"). So version 3 of `id`
+/// is version 2 with `G50` (all scale factors to 1) and then `G69` (no
+/// rotation), each on a line of its own, right after the modal line that
+/// holds `G80`, and nothing else changed.
+fn assert_v3_header_cancels_scaling_and_rotation(id: &str) {
+    let latest = latest_definition(id).unwrap();
+    assert_eq!(latest.version, 3, "{id}");
+    let v3 = latest.post_processor();
+    let mut v2 = bundled_definition(id, 2).unwrap().post_processor().clone();
+    let modal = v2
+        .program
+        .header
+        .iter()
+        .position(|line| words(line).iter().any(|w| w == "G80"))
+        .unwrap_or_else(|| panic!("{id} v2 has a G80 line"));
+    v2.program
+        .header
+        .splice(modal + 1..modal + 1, ["G50".to_owned(), "G69".to_owned()]);
+    assert_eq!(&v2, v3, "{id}: v3 is v2 with G50, G69 after the modal line");
+    // No line of v3 sets a scale or a rotation.
+    for line in every_line(v3) {
+        for word in words(&line) {
+            assert!(word != "G51" && word != "G68", "{id} v3: {line}");
+        }
+    }
+}
+
+#[test]
+fn mach3_v3_header_cancels_scaling_and_rotation() {
+    assert_v3_header_cancels_scaling_and_rotation("mach3");
+}
+
+#[test]
+fn uccnc_v3_header_cancels_scaling_and_rotation() {
+    assert_v3_header_cancels_scaling_and_rotation("uccnc");
+}
+
+/// #312: LinuxCNC has no `G50`, `G51`, `G68` or `G69` (rs274ngc reports
+/// "Unknown g code used"), RS274/NGC has none of them, and grblHAL and
+/// GRBL have none either, so no version of those definitions writes one.
+/// Before version 3, Mach3 and UCCNC had none.
+#[test]
+fn scaling_and_rotation_words_only_where_supported() {
+    let mut checked = 0;
+    for definition in bundled_definitions().unwrap() {
+        let supported = ["mach3", "uccnc"].contains(&definition.id) && definition.version >= 3;
+        if supported {
+            continue;
+        }
+        checked += 1;
+        for line in every_line(definition.post_processor()) {
+            for word in words(&line) {
+                assert!(
+                    !SCALE_ROTATE_CODES.contains(&word.as_str()),
+                    "{}: {line}",
+                    definition.path
+                );
+            }
+        }
+    }
+    assert!(checked >= 11, "{checked}");
 }
 
 /// Design spec, "Canned cycles": a definition has a cycle's command only

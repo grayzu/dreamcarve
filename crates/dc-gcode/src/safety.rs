@@ -2560,6 +2560,61 @@ mod tests {
         }
     }
 
+    /// #312: `G50` (scale factors to 1) and `G69` (no rotation) are
+    /// accepted from a definition whose header has them, Mach3 v3 and
+    /// UCCNC v3, and from no other: LinuxCNC, grblHAL, GRBL and RS274/NGC
+    /// do not have them, and on other dialects `G50` means something else.
+    /// `G51` and `G68`, which scale and rotate what the program writes,
+    /// are refused everywhere: the safety pass reads the program as
+    /// written.
+    #[test]
+    fn g50_g69_accepted() {
+        let post = |id: &str, version: u32| {
+            dc_project::bundled_definition(id, version)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let cancels = "G21 G90\nG54\nG0 Z11\nG50\nG69\nM30\n";
+        let with_them = [
+            ("mach3 v3", post("mach3", 3)),
+            ("uccnc v3", post("uccnc", 3)),
+        ];
+        let without = [
+            ("mach3 v2", post("mach3", 2)),
+            ("uccnc v2", post("uccnc", 2)),
+            ("linuxcnc v2", post("linuxcnc", 2)),
+            ("grblhal v3", post("grblhal", 3)),
+            ("grbl v3", post("grbl", 3)),
+            ("generic v1", post("generic", 1)),
+        ];
+        for (case, p) in &with_them {
+            let ok = check_text_on(cancels, p.clone(), SpindleControl::Automatic);
+            assert!(ok.is_ok(), "{case}: {ok:?}");
+        }
+        for (case, p) in &without {
+            for word in ["G50", "G69"] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{word}\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 4, word: w } if w == word),
+                    "{case} {word}: {err:?}"
+                );
+            }
+        }
+        for (case, p) in with_them.iter().chain(&without) {
+            for (code, word) in [("G51 Z-1", "G51"), ("G68 R45", "G68")] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{code}\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 4, word: w } if w == word),
+                    "{case} {code}: {err:?}"
+                );
+            }
+        }
+    }
+
     /// RS274/NGC (NIST IR 6556, 3.1) and Mach3 (Using Mach3Mill 1.84,
     /// 10.5.5): a line holding only `%` delimits the program and is not
     /// run.
