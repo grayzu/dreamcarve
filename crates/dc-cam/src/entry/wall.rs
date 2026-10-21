@@ -482,9 +482,10 @@ mod tests {
     /// #234 for the On line ramp: over 4.0018 legs' depth (12 mm legs at
     /// 5° along a 50 mm line), the fifth leg would fall 0.0019 mm over
     /// 0.02 mm, a fragment the program writes level at the scaled feed.
-    /// Falling less than `RAMP_MIN_LAST_DROP_MM`, it runs the whole 12 mm
-    /// leg instead, shallower; no descending move is shorter than a tenth
-    /// of a leg or steeper than 5°, and the drops sum to the depth.
+    /// Falling less than `RAMP_MIN_LAST_DROP_MM`, it shares the depth with
+    /// the fourth instead (#273), each at 5° over 6.01 mm; no descending
+    /// move is shorter than a tenth of a leg or steeper than 5°, and the
+    /// drops sum to the depth.
     #[test]
     fn along_path_has_no_fragment_leg() {
         let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
@@ -506,5 +507,106 @@ mod tests {
             from = mv.to;
         }
         assert_approx_eq!(total, depth_mm, 1e-9);
+    }
+
+    /// One unit in the last place of an inch program with 4 decimals, mm.
+    const INCH_QUANTUM_MM: f64 = 0.00254;
+
+    /// #273 (the Profile property, `PROPTEST_RNG_SEED=500`): an On line
+    /// ramp in an inch program wrote a chord level at the plunge-limited
+    /// feed, which S3 refuses, because a leg ended 0.0055 mm past a chord
+    /// vertex and its last piece fell 0.0014 mm, under the program's last
+    /// place (0.00254 mm). Three such legs: cut short 0.0055 mm past a
+    /// vertex of a line; turning 0.002 mm past one; and on that issue's
+    /// 14.33 mm circle by a 1.614 mm bit at 14.3°, a depth one leg and
+    /// 0.004 mm deep, whose last leg run whole and shallower (#234) fell
+    /// under 0.001 mm a chord. Every descending move falls at least a unit
+    /// and runs at least √2 units in XY, so its ends round apart (as the
+    /// helix's, #265); none leaves the path by more than the flatten
+    /// tolerance and a unit; the drops sum to the depth.
+    #[test]
+    fn along_path_writes_no_move_too_short_for_the_program() {
+        let line = |x: f64| {
+            Polyline::new(
+                vec![
+                    Vertex::line(0.0, 0.0),
+                    Vertex::line(x, 0.0),
+                    Vertex::line(50.0, 0.0),
+                ],
+                false,
+            )
+        };
+        let (bit, circle_bit) = (
+            EntryTool {
+                quantum_mm: INCH_QUANTUM_MM,
+                ..tool()
+            },
+            EntryTool {
+                diameter_mm: 1.614_062_019_946_190_8,
+                quantum_mm: INCH_QUANTUM_MM,
+                ..tool()
+            },
+        );
+        let circle_r_mm = 14.332_509_386_700_824;
+        let tan15 = 15.0_f64.to_radians().tan();
+        let tan14 = 14.301_902_402_989_514_f64.to_radians().tan();
+        let cases = [
+            (line(3.0), 15.0, 3.0055 * tan15, &bit),
+            (line(11.998), 15.0, 18.0 * tan15, &bit),
+            (
+                Polyline::circle(Point::new(0.0, 0.0), circle_r_mm),
+                14.301_902_402_989_514,
+                3.0 * circle_bit.diameter_mm * tan14 + 0.004,
+                &circle_bit,
+            ),
+        ];
+        for (k, (path, angle_deg, depth_mm, t)) in cases.iter().enumerate() {
+            let d = along_path(path, *angle_deg, f64::INFINITY, *depth_mm, 0.0, t, 0.01);
+            assert_eq!(d.used, EntryKind::Ramp, "case {k}");
+            let mut from = Point3::new(d.from.x, d.from.y, *depth_mm);
+            let mut total = 0.0;
+            for (i, mv) in d.moves.iter().enumerate() {
+                let (run, drop) = (from.xy().distance_to(mv.to.xy()), from.z - mv.to.z);
+                if drop > EPS_MM {
+                    assert!(
+                        drop >= INCH_QUANTUM_MM
+                            && run >= std::f64::consts::SQRT_2 * INCH_QUANTUM_MM,
+                        "case {k}: move {i} falls {drop} mm over {run} mm"
+                    );
+                    total += drop;
+                }
+                if k == 2 {
+                    let middle = from.xy() + (mv.to.xy() - from.xy()) * 0.5;
+                    for p in [middle, mv.to.xy()] {
+                        let off = (p.distance_to(Point::new(0.0, 0.0)) - circle_r_mm).abs();
+                        assert!(
+                            off <= 0.01 + INCH_QUANTUM_MM,
+                            "case {k}: move {i} is {off} mm off the circle"
+                        );
+                    }
+                }
+                from = mv.to;
+            }
+            assert_approx_eq!(total, *depth_mm, 1e-9);
+            assert!(from.xy().distance_to(d.from) <= EPS_MM, "case {k}");
+        }
+    }
+
+    /// #273: a run whose every leg falls less than a unit (0.05 mm at 15°
+    /// falls 0.0134 mm, under the 0.0254 mm of a 3-decimal inch program)
+    /// cannot be written as a ramp; it falls back to a plunge, reason
+    /// `too_small`, as a helix that small does (#265).
+    #[test]
+    fn along_path_too_small_to_write_falls_back_to_a_plunge() {
+        let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
+        let t = EntryTool {
+            diameter_mm: 1.0,
+            quantum_mm: 0.0254,
+            ..tool()
+        };
+        let d = along_path(&line, 15.0, 0.05, 2.0, 0.0, &t, 0.01);
+        assert_eq!(d.used, EntryKind::Plunge);
+        assert_eq!(d.reason, Some(FallbackReason::TooSmall));
+        assert!(d.moves.is_empty());
     }
 }
