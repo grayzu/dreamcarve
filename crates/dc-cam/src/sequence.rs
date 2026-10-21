@@ -1536,6 +1536,59 @@ mod tests {
         );
     }
 
+    /// Link rule 1 (#240): a block of the same shape and pass whose
+    /// descent is a straight plunge starting where the tool is, inside the
+    /// column the previous block just cut to at least the plunge's end,
+    /// has no link. The plunge goes from where the tool is (dropped when
+    /// it is already there, a move up at the plunge rate when the block
+    /// starts higher), not via safe Z. A block of another shape, or one
+    /// that would plunge below what was cut there, still retracts.
+    #[test]
+    fn block_starting_where_the_tool_is_in_its_own_cut_does_not_lift() {
+        let square = square("s", 0.0, 0.0, 20.0, 0, 1);
+        let lap_end = Point3::new(0.0, 0.0, 4.0);
+        // A relief notch block as `relief` builds it: its descent is one
+        // plunge at the descend point from safe Z.
+        let relief_notch = |name: &str, z: f64| {
+            let mut block = notch(name, 0.0, 0.0, 0);
+            block.z_mm = z;
+            block.descent = vec![Move::linear(Point3::new(0.0, 0.0, z), PLUNGE_MM_MIN)];
+            for cut in &mut block.cuts {
+                cut.to.z = z;
+            }
+            block
+        };
+        let sequenced = |next: CutBlock| {
+            let first_cut = next.cuts[0];
+            let tp = run(&input(
+                vec![square.clone(), next],
+                MachiningOrder::FullDepthFirst,
+                &[],
+            ));
+            assert_eq!(tp.moves[6].to, lap_end, "the square's last cut");
+            let notch_at = tp.moves.iter().position(|m| *m == first_cut).unwrap();
+            tp.moves[7..notch_at].to_vec()
+        };
+
+        // At the lap's Z: nothing between the two blocks.
+        assert_eq!(sequenced(notch("s", 0.0, 0.0, 0)), vec![]);
+        assert_eq!(sequenced(relief_notch("s", 4.0)), vec![]);
+        // Above it: straight up in the open column.
+        assert_eq!(
+            sequenced(relief_notch("s", 5.0)),
+            vec![Move::linear(Point3::new(0.0, 0.0, 5.0), PLUNGE_MM_MIN)]
+        );
+        // Another shape, or below the cut: up to safe Z and back down.
+        for next in [relief_notch("t", 4.0), relief_notch("s", 2.0)] {
+            let link = sequenced(next);
+            assert_eq!(
+                link.first(),
+                Some(&Move::rapid(Point3::new(0.0, 0.0, SAFE_Z_MM))),
+                "{link:?}"
+            );
+        }
+    }
+
     #[test]
     fn first_and_last_moves_are_rapids_at_safe_z() {
         let blocks = [
