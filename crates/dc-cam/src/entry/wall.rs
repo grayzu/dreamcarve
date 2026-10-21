@@ -28,8 +28,9 @@
 
 use super::{
     Area, Descent, ENTRY_EPS, EntryDomain, EntryKind, EntryPlan, EntryTool, FallbackReason,
-    MAX_RAMP_RUN_DIAMETERS, MIN_RAMP_RUN_FRACTION, RAMP_DIRECTIONS, RampPlacement,
-    boundary_safety_mm, count_within_cap, is_descent_move, move_feed_mm_min, plan_with,
+    MAX_RAMP_RUN_DIAMETERS, MIN_RAMP_RUN_FRACTION, RAMP_DIRECTIONS, RAMP_MIN_LAST_RUN_FRACTION,
+    RampPlacement, boundary_safety_mm, count_within_cap, is_descent_move, move_feed_mm_min,
+    plan_with,
 };
 use crate::toolpath::Move;
 use dc_geometry::{EPS_MM, Point, Point3, Polyline, Vec2};
@@ -255,7 +256,9 @@ impl Flat {
 /// The On line ramp (design spec, "On line ramp"): from the start vertex
 /// of `path` at `start_z_mm`, forward along the path for `run = min(3·D,
 /// L, max_run_mm)` and back, again and again, each leg descending at
-/// `angle_deg` until `z_mm`, the final leg cut short there; arcs are split
+/// `angle_deg` until `z_mm`, the final leg cut short there, or run whole at
+/// a shallower slope when it would fall less than
+/// [`RAMP_MIN_LAST_RUN_FRACTION`] of a full leg (#234); arcs are split
 /// into chords within `tolerance_mm` while Z changes. The tool then
 /// returns along the path at `z_mm` to the start vertex, where the lap
 /// starts, so the ramped stretch is cut again at full depth. On an open
@@ -320,12 +323,19 @@ pub fn along_path(
             (run_mm, 0.0)
         };
         let leg_z = current.z;
+        // #234: a last leg that would fall less than a share of a full one
+        // runs the whole leg, shallower, rather than a fragment.
+        let leg_slope = if leg_z - z_mm < RAMP_MIN_LAST_RUN_FRACTION * run_mm * slope {
+            (leg_z - z_mm) / run_mm
+        } else {
+            slope
+        };
         let mut stops = flat.between(leg_from, leg_to);
         stops.push(leg_to);
         for stop in stops {
-            let z_at = leg_z - (stop - leg_from).abs() * slope;
+            let z_at = leg_z - (stop - leg_from).abs() * leg_slope;
             let (s, z, done) = if z_at <= z_mm + EPS_MM {
-                let reach = (leg_z - z_mm) / slope;
+                let reach = ((leg_z - z_mm) / leg_slope).min(run_mm);
                 let s = if leg_to >= leg_from {
                     leg_from + reach
                 } else {
@@ -466,5 +476,34 @@ mod tests {
         assert_eq!(d.used, EntryKind::Plunge);
         assert_eq!(d.reason, Some(FallbackReason::NoRoom));
         assert!(d.moves.is_empty());
+    }
+
+    /// #234 for the On line ramp: over 4.0018 legs' depth (12 mm legs at
+    /// 5° along a 50 mm line), the fifth leg would fall 0.0019 mm over
+    /// 0.02 mm, a fragment the program writes level at the scaled feed.
+    /// It runs the whole 12 mm leg instead, shallower; no descending move
+    /// is shorter than a tenth of a leg or steeper than 5°, and the drops
+    /// sum to the depth.
+    #[test]
+    fn along_path_has_no_fragment_leg() {
+        let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
+        let tan = 5.0_f64.to_radians().tan();
+        let depth_mm = 4.0018 * 12.0 * tan;
+        let d = along_path(&line, 5.0, f64::INFINITY, depth_mm, 0.0, &tool(), 0.01);
+        assert_eq!(d.used, EntryKind::Ramp);
+        let mut from = Point3::new(d.from.x, d.from.y, depth_mm);
+        let mut total = 0.0;
+        for (i, mv) in d.moves.iter().enumerate() {
+            let (run, drop) = (from.xy().distance_to(mv.to.xy()), from.z - mv.to.z);
+            if drop > 0.0 {
+                assert!(
+                    run >= 0.1 * 12.0 - 1e-9 && drop <= run * tan + 1e-9,
+                    "move {i} falls {drop} mm over {run} mm"
+                );
+                total += drop;
+            }
+            from = mv.to;
+        }
+        assert_approx_eq!(total, depth_mm, 1e-9);
     }
 }
