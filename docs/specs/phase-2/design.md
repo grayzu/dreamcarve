@@ -8,27 +8,28 @@
 Phase 2 adds three generators to `dc-cam` (Pocket, Drill, Engrave), extends
 the Profile generator (entry, leads, corner relief), and puts one shared
 sequencing step between every generator and the post-processor. It adds a
-DXF importer to `dc-import`, four post-processor definitions and arc
-fitting to `dc-gcode`, and a new pure crate `dc-library` for the tool
+DXF importer to `dc-import`, four post-processor definitions to
+`dc-project` (where #106 put them), arc fitting and canned cycles to
+`dc-gcode`, and a new pure crate `dc-library` for the tool
 library and the Fusion importer. The CLI gains `tools`, `config` and the
 export flags, and reads the user config directory.
 
 ```
 SVG / DXF ──dc-import──▶ FeatureDefinitions ──┐
-                                              ├─▶ Project (.dcv v7, dc-project)
+                                              ├─▶ Project (.dcv v8, dc-project)
 user edits .dcv ──────────────────────────────┘        │
 tool library (dc-library) ─ tools add ─────────────────┘
                                                        ▼
    dc-cam::{profile, pocket, drill, engrave}::generate(project, op)
                          │  Vec<CutBlock> + Vec<Warning>
                          ▼
-   dc-cam::sequence::sequence(blocks, order, links) ─▶ Toolpath (project coords, mm, Y-up)
+   dc-cam::sequence::sequence(&SequenceInput) ─▶ Toolpath (project coords, mm, Y-up)
                          │
                          ▼
    dc-cam::order::check(project, toolpaths) ─▶ cut_inside_freed_part, tool_change_avoidable
                          │
                          ▼
-   dc-gcode::emit_programs(project, ops, mode) ─▶ arc fitting ─▶ Programs + warnings
+   dc-gcode::emit_programs(project, ops, split, date) ─▶ arc fitting ─▶ Programs + warnings
                          │
                          ▼
    safety pass on the parsed Program (S1–S15; canned cycles expanded first)
@@ -40,11 +41,12 @@ Where this spec names a PureCutCNC rule that depends on its Y-down frame,
 the Y-up form is stated and the Y-down form is noted so the port can be
 checked against upstream tests.
 
-**Assumption on #106.** If "Post-processor as versioned reference plus
-user settings" lands before the post-processor slice starts, the four new
-definitions are added as `definitions/<id>/v1.json` and the new settings
-(`use_canned_cycles`) go in the settings block. Otherwise they follow
-phase 1's embedded layout. The emitter is the same either way.
+**#106 landed first.** "Post-processor as versioned reference plus user
+settings" (ADR-0004) took format version 7, so phase 2's format is
+version 8. The four new definitions are
+`crates/dc-project/src/definitions/<id>/v1.json`, and `use_canned_cycles`
+is a project setting beside the post-processor reference. (changed in
+slice 2, #117: #106 took version 7 first.)
 
 ## PureCutCNC sources
 
@@ -61,7 +63,7 @@ phase 1's embedded layout. The emitter is the same either way.
 | `dc-cam::order` | `src/engine/operations/camPlan/createCamPlan.ts` (outside-last as a planning rule) | DreamCarve warns instead of planning: `cut_inside_freed_part`, `tool_change_avoidable`. |
 | `dc-gcode::arcfit` | `src/engine/gcode/arcFitting.ts` (`fitArcsInMachineMoves`, `splitArc`, `resolveEmittedArc`, `runSurvivesFormatting`, `applyEmittedArcFallback`), `arcReconstruction.ts` (`findArcRunsInPoints`, Kasa fit, endpoint projection, gates), `arcFitting.test.ts` | Runs in project space before the machine transform (no mirror, so handedness is preserved). Tolerance from the project. S12 gates added to the safety pass. |
 | `dc-gcode::emit` canned cycles | `src/engine/gcode/postprocessor.ts` lines 301–430 | One cycle word per Drill operation; mixed cycles expand. `G4` dwell on expansion. Safety pass expands cycles (S11). |
-| `dc-gcode/definitions/{linuxcnc,mach3,uccnc,generic}.json` | `src/engine/gcode/definitions/*.json` | Data start point only. Every line re-verified against the controller's documentation; `G43 H` lines removed; `G40 G49 G80` kept where the controller documents them; see "Post-processor definitions". |
+| `dc-project/src/definitions/{linuxcnc,mach3,uccnc,generic}/v1.json` | `src/engine/gcode/definitions/*.json` | Data start point only. Every line re-verified against the controller's documentation or source; `G43 H` and `M6` lines removed; `G40 G49 G80` kept where the controller documents them; see "Post-processor definitions". |
 | `dc-import::dxf` | `src/import/dxf.ts` (entity set, `$INSUNITS` table, bulge-to-arc, INSERT transform and skip rules, stitching and closing, dedupe) | Parsing delegated to the `dxf` crate. No Y flip (DXF is Y-up). `ELLIPSE` added. Join tolerance 0.01 mm. Entity skips are warned with counts. |
 | `dc-library::fusion` | none (PureCutCNC has no Fusion tool import; `src/toolLibrary.ts` is a bundled list) | New. Written against Autodesk's statements and vendor-published `.tools` files; see "Fusion import". |
 | `dc-library::library` | `src/toolLibrary.ts` (`parseToolLibraryFile` validation rules) | Validation rules ported (positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)). Persistence is DreamCarve's. |
@@ -72,10 +74,10 @@ header.
 
 ## Data model
 
-### dc-project (format version 7)
+### dc-project (format version 8)
 
 ```rust
-pub const CURRENT_VERSION: u32 = 7;
+pub const CURRENT_VERSION: u32 = 8;   // #106 took 7 (slice 2, #117)
 
 pub struct Project {
     // phase 1 fields unchanged, plus:
@@ -109,7 +111,7 @@ pub enum Entry {
     /// Pocket: zigzag inside the region. Profile: along the cut path.
     Ramp { angle_deg: f64 },                         // init: 15.0; valid (0, 45]
     /// Pocket and Profile (Inside, Outside): a helix in removed material.
-    Helix { diameter_fraction: f64, angle_deg: f64 }, // init: 0.8, 5.0; fraction in (0, 1]
+    Helix { diameter_fraction: f64, angle_deg: f64 }, // init: 0.8, 5.0; fraction in (0, 1]; angle (0, 45]
 }
 
 pub struct Lead {
@@ -179,24 +181,38 @@ pub struct EngraveOp {
 }
 ```
 
-`Operation::{id, name, enabled, tool, targets, safe_z_mm, depth_mm}` are
-accessors over every variant. `PostProcessor` gains one user setting:
+`Operation::{id, name, enabled, tool, targets, safe_z_mm, depth_mm,
+through_cut_allowance_mm}` are accessors over every variant. The project's
+post-processor settings gain one user setting:
 
 ```rust
-pub struct CannedCycles { /* phase 1 fields */ }
-pub struct ToolChange { /* phase 1 fields */ }
-/// New top-level field on `PostProcessor` (or on the settings block after #106):
+pub struct CannedCycles { /* phase 1 fields */ pub reentry_gap_mm: Option<f64> }
+pub struct SpindleDwell { /* phase 1 fields */ pub units: DwellUnits }   // Seconds | Milliseconds
+/// The sixth project setting beside the post-processor reference (#106):
 pub use_canned_cycles: bool,   // migration: false
 ```
 
-**Migration v6 → v7** (`migrate::v6_to_v7`): add `arc_fit_tolerance_mm:
+**Migration v7 → v8** (`migrate::v7_to_v8`): add `arc_fit_tolerance_mm:
 0.01` to the project (fitting on; a user who wants the phase 1 bytes sets
-`null`), `machining_order: "full_depth_first"`, `entry: "plunge"`, `lead:
-null`, `corner_relief: "none"` to every Profile, and `use_canned_cycles:
-false` to the post-processor. A fixture at `tests/fixtures/dcv/v6/` loads
-and, with `arc_fit_tolerance_mm` set back to `null`, exports byte-identical
-G-code (acceptance 37). Open question 8 in the functional spec records why
-this is a migration and not a serde default.
+`null`), `number: null` to every tool, `machining_order:
+"full_depth_first"`, `entry: "plunge"`, `lead: null`, `corner_relief:
+"none"` to every Profile, and `use_canned_cycles: false` to the
+post-processor settings. Each key goes where a version 8 file writes it,
+and the migration fails if one is already there. The fixture
+`crates/dc-project/tests/fixtures/dcv/v7/sample.dcv` loads and exports
+the same program as before (`cli::v7_project_exports_the_same_program`);
+with `arc_fit_tolerance_mm` set back to `null` the output is
+byte-identical (acceptance 37). Open question 8 in the functional spec
+records why this is a migration and not a serde default. (changed in
+slice 2, #117: #106 took version 7, so this is `v7_to_v8`, not
+`v6_to_v7`.)
+
+`DwellUnits` and `reentry_gap_mm` are definition fields, and every
+definition field is required, so the bundled `v1.json` files were edited
+in place and re-pinned; their emitted bytes do not change
+(`definitions/README.md`, "Versions"). `v6_to_v7` gives a version 6
+embedded copy `"seconds"` and `null` before comparing it with the bundled
+dialect.
 
 **Tool numbers.** `Tool::number` set → `T<number>` in every program and
 in `<stem>-<k>-T<n>` file names; unset → the tool's 1-based position, as
@@ -210,7 +226,7 @@ outside (0, 1] on the tool or operation; a Pocket or Engrave with no
 step-down on operation or tool; a Drill whose `peck_depth_mm` is unset
 when the tool has no step-down; a `Lead` radius ≤ 0 or sweep outside
 (0, 180]; an `Entry::Ramp` angle outside (0, 45]; a `Helix` fraction
-outside (0, 1]; `Entry::Helix` on a `Side::OnLine` Profile
+outside (0, 1]; an `Entry::Helix` angle outside (0, 45]; `Entry::Helix` on a `Side::OnLine` Profile
 (`Problem::HelixNeedsWasteSide`); `use_canned_cycles: true` on a
 definition whose `canned_cycles` is `null`; `tool_change.mode: "m6"`
 without an `M6` line (phase 1). Warnings: a Drill whose tool is not
@@ -229,9 +245,10 @@ pub struct CutBlock {
     pub shape: ShapeRef,             // (instance, profile index) the block belongs to
     pub pass: usize,                 // 0-based pass index, top first
     pub z_mm: f64,                   // pass Z in project space
-    pub entry: Point,                // XY where the descent ends and cutting begins
-    pub descent: Vec<Move>,          // ramp/helix/plunge moves from `descent_from` to entry; empty = plunge
+    pub descent_from: Point,         // XY where the descent begins: `entry` for a plunge, the ramp or helix start otherwise
     pub descent_from_z_mm: f64,      // Z the descent may start at (safe Z, or the previous pass Z of this shape)
+    pub descent: Vec<Move>,          // ramp/helix moves from `descent_from` to entry; empty = straight plunge; a Drill's is one rapid to retract_z
+    pub entry: Point,                // XY where the descent ends and cutting begins
     pub cuts: Vec<Move>,             // Linear/Arc moves at z_mm (tabs may raise within)
     pub exit: Point,                 // XY of the last cut
     pub frees: bool,                 // this block's end frees material (final pass reaching the floor)
@@ -245,9 +262,15 @@ pub struct SequenceInput<'a> {
     pub containment: &'a [(ShapeRef, ShapeRef)],   // (inner, encloser) pairs from `nest` depth
     pub safe_z_mm: f64,
     pub tool_diameter_mm: f64,
+    pub stepover_mm: f64,            // 0 for Profile; stay-down links ≤ tool_diameter_mm + stepover_mm
     pub feed_mm_min: f64, pub plunge_mm_min: f64,
 }
-pub fn sequence(input: SequenceInput) -> Toolpath;
+/// The block order, as indices into `blocks`, so a generator can count
+/// contours "in cut order" in its warnings before it sequences.
+pub fn plan(input: &SequenceInput) -> Result<Vec<usize>, CamError>;
+pub fn sequence(input: &SequenceInput) -> Result<Toolpath, CamError>;
+// CamError::InvalidBlock { shape, pass, problem: BlockProblem }  (step 1 fails)
+// CamError::ContainmentCycle { shape }                           (no shape can be cut first)
 
 pub fn generate_profile(project: &Project, op: &ProfileOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 pub fn generate_pocket(project: &Project, op: &PocketOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
@@ -268,42 +291,67 @@ pub mod order {
 }
 ```
 
-New `WarningCode`s (params in parentheses): `EntryFallback (op, instance,
-profile, requested, used)`, `HelixDiameterReduced (op, instance,
-requested_mm, used_mm)`, `LeadShrunk (op, instance, requested_mm,
-used_mm)`, `LeadDropped (op, instance, reason)`, `ReliefCornerTooTight
-(op, instance, x_mm, y_mm)`, `ReliefCornerNotCut (…)`, `ReliefSkipped
-(op, reason)`, `PocketNoRoom (op, instance, pass)` (tool wider than the
-region at that pass), `PocketIslandTooClose (op, instance, island,
-gap_mm)`, `DrillTargetNotCircle (op, instance, profile)`,
-`DrillToolWiderThanHole (op, instance, hole_mm, tool_mm)`,
-`DrillPeckDeeperThanHole (op, instance)`, `EngravePathDegenerate (op,
+(changed in slice 1, #127: `CutBlock::descent_from`,
+`SequenceInput::stepover_mm`, `plan` and the `Result` returns added; a
+library crate never panics, so step 1 of "Sequence" returns an error.)
+
+New `WarningCode`s (params in parentheses; a shape is named by
+`instance`, `instance_name` and `profile`): `EntryFallback (op, instance,
+instance_name, profile, requested, used, reason)` (`reason`: `no_room` or
+`too_many_moves`; once per shape and entry used), `HelixDiameterReduced
+(op, instance, requested_mm, used_mm)` (once per shape, the smallest
+diameter cut), `LeadShrunk (op, instance, requested_mm, used_mm)`,
+`LeadDropped (op, instance, reason)`, `ReliefCornerTooTight (op,
+instance, x_mm, y_mm)`, `ReliefCornerNotCut (…)`, `ReliefSkipped (op,
+reason)`, `PocketNoRoom (op, instance, instance_name, profile, tool,
+diameter_mm)` (tool wider than the region; the tool-centre region does
+not depend on the pass, so there is no `pass`), `PocketIslandTooClose
+(op, instance, island, other, gap_mm, tool, diameter_mm)` (once per
+island-wall or island-island pair; `other` is `wall` or a profile index),
+`DrillTargetNotCircle (op, instance, profile)`, `DrillToolWiderThanHole
+(op, instance, hole_mm, tool_mm)`, `DrillPeckDeeperThanHole (op, peck_mm,
+depth_mm)` (once per operation: every hole has the same depth),
+`DrillRetractBelowStockTop (op, requested_mm, used_mm)` (a negative
+`retract_mm` is raised to the stock top), `EngravePathDegenerate (op,
 instance, profile)`, `CutInsideFreedPart (op, earlier_op, instance)`,
-`ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of, tool)`.
-All phase 1 codes stay.
+`ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of,
+tool)`. All phase 1 codes stay. (changed in slices 4, 7 and 9, #137,
+#138, #147: params as built.)
 
 ### dc-gcode
 
 ```rust
 pub enum ProgramSplit { ProjectDefault, OneProgram, ProgramPerTool }   // CLI flags
-pub fn emit_programs(project: &Project, ops: &[EmitOp<'_>], split: ProgramSplit) -> Result<(Vec<Program>, Vec<Warning>), ExportError>;
-pub struct EmitOp<'a> { pub op: &'a Operation, pub tool: &'a Tool, pub toolpath: &'a Toolpath, pub holes: Option<&'a [DrillHole]> }
+pub fn emit_programs(project: &Project, ops: &[EmitOp], split: ProgramSplit, date: &str) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError>;
+/// Owns its data, like phase 1's tuple; `From<(Operation, Tool, Toolpath)>` builds one without holes.
+pub struct EmitOp { pub op: Operation, pub tool: Tool, pub toolpath: Toolpath, pub holes: Option<Vec<DrillHole>> }
 
 pub mod arcfit {
     pub const ARC_FIT_MAX_SWEEP_DEG: f64 = 90.0;
     pub const ARC_RADIUS_CONSISTENCY_MM: f64 = 0.005;   // GRBL's check, grbl/gcode.c
     pub const ARC_RADIUS_GROSS_MM: f64 = 0.5;
     pub const ARC_RADIUS_RELATIVE: f64 = 0.001;
-    pub fn fit(moves: &[Move], tolerance_mm: f64) -> Vec<Fitted>;   // Fitted::{Arc{..., fallback: Vec<Move>}, Line(Move)}
+    pub const MAX_CANDIDATE_POINTS: usize = 128;        // longest run tried at once
+    pub const MIN_RUN_CHORDS: usize = 3;
+    pub fn fit(moves: &[Move], tolerance_mm: f64) -> Vec<Fitted>;
+    pub enum Fitted { Move(Move), Arc(ArcRun) }         // Move: passed through (rapids, plunges, toolpath arcs, unfitted lines)
+    pub struct ArcRun { pub arcs: Vec<SubArc>, pub feed_mm_min: f64, pub fallback: Vec<Move> }
 }
 ```
 
-`ExportError` adds `OneProgramNeedsM6 { post }`, `CannedCycleUnsupported
-{ post, cycle }` (only when `use_canned_cycles` is on and the definition
-lacks that cycle's command: the emitter then expands, so this is a
-warning `canned_cycle_expanded`, not an error), `EntryTooSteep { op, line
-}` (S10), `OffMaterial { op, line }` (S9 on the parsed program), and
-`ArcFitViolation { op, line }` (S12).
+(changed in slice 15, #148: `EmitOp` owns its data instead of borrowing.
+Changed in slice 14, #128: the pass-through variant is `Fitted::Move`, not
+`Line`, because rapids and toolpath arcs pass through too. Changed in
+slice 18, #126: `emit_programs` takes the program date.)
+
+`ExportError` adds `OneProgramNeedsM6 { post }`, `RapidIntoUncut { line,
+z_mm, cut_mm }` (S15 on the parsed program), `EntryTooSteep { op, line }` (S10), `OffMaterial {
+op, line }` (S9 on the parsed program), and `ArcFitViolation { op, line }`
+(S12). `ExportWarning` adds `ArcFitFallback { op, runs }`,
+`CannedCycleExpanded { op, reason }` (the emitter wrote a Drill as plain
+moves although `use_canned_cycles` is on) and `UnitsSetByController {
+post, units }` (a definition with no units words; the CLI prints it once
+per export).
 
 ### dc-library
 
@@ -312,15 +360,34 @@ pub const LIBRARY_VERSION: u32 = 1;
 pub struct Library { pub version: u32, pub tools: Vec<LibraryTool> }
 pub struct LibraryTool { pub id: LibraryToolId, pub tool: Tool /* id ignored */, pub source: Option<String> }  // source: "fusion:<guid>:<preset>" or None
 pub fn load(bytes: &[u8]) -> Result<Library, LibraryError>;
-pub fn save(lib: &Library) -> String;                       // stable key order, one tool per block
-pub fn add(lib: &mut Library, tool: Tool, source: Option<String>) -> AddOutcome;   // Added | AlreadyPresent (same fields)
+pub fn save(lib: &Library) -> Result<String, LibraryError>;   // stable key order, one tool per block; refuses NaN/inf
+pub fn add(lib: &mut Library, tool: Tool, source: Option<String>) -> Result<AddOutcome, LibraryError>;   // Added | AlreadyPresent (same fields)
+pub fn replace(lib: &mut Library, tool: Tool, source: Option<String>) -> Result<AddOutcome, LibraryError>; // Replaced when `source` matches, else as `add`
 pub fn find(lib: &Library, key: &str) -> Result<&LibraryTool, LibraryError>;  // by id, else unique name
+pub fn remove(lib: &mut Library, key: &str) -> Result<LibraryTool, LibraryError>;
+pub fn validate_tool(id: &LibraryToolId, tool: &Tool) -> Result<(), LibraryError>;
 pub mod fusion {
+    pub const MIN_FUSION_VERSION: u64 = 11;
+    pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;   // unpacked document cap (zip bombs)
+    pub fn is_fusion_library(bytes: &[u8]) -> bool;          // zip signature, or a JSON object with a `data` array
     pub fn import(bytes: &[u8]) -> Result<FusionImport, LibraryError>;    // .tools (zip) or .json
-    pub struct FusionImport { pub tools: Vec<(Tool, String)>, pub skipped: Vec<Skipped> }
+    pub struct FusionImport { pub tools: Vec<ImportedTool>, pub skipped: Vec<Skipped> }
+    pub struct ImportedTool { pub tool: Tool, pub source: String, pub notes: Vec<ImportNote> }
+    pub enum ImportNote { NoPresets, FeedUnset, PlungeUnset, RpmUnset, FlutesUnset, StepOverClamped { step_over_mm, diameter_mm } }
     pub struct Skipped { pub description: String, pub reason: SkipReason }
+    pub enum SkipReason {
+        UnsupportedType(String), UnknownType(String), MissingType,
+        UnknownUnit(Option<String>), NoDiameter, NoTaperAngle,
+        Invalid { field: String, message: String },
+    }
 }
+// LibraryError (Fusion): NotAFusionLibrary, MissingVersion, FusionVersion { found }, FusionArchive { message }
 ```
+
+(changed in slice 20, #136: `save`, `add` and `replace` return `Result`,
+because an invalid tool is refused. Changed in slice 21, #152:
+`ImportedTool` carries the notes the report prints, and more skip
+reasons, so one bad item never fails the whole file.)
 
 ### User config (CLI only)
 
@@ -331,12 +398,17 @@ pub mod fusion {
 tool_change_mode = "separate_programs"   # or "m6"; applied by `init` and `--post`
 ```
 
-`<config dir>/dreamcarve/tools.json` is the library. `<config dir>` is
-`directories::ProjectDirs::from("", "", "dreamcarve").config_dir()`:
-`~/Library/Application Support/dreamcarve` on macOS, `%APPDATA%\dreamcarve`
-on Windows, `~/.config/dreamcarve` on Linux. `DREAMCARVE_CONFIG_DIR`
-overrides it (tests use this). A missing config file means the defaults; a
-malformed one is an error naming the file and line.
+`<config dir>/dreamcarve/tools.json` is the library. `config.rs` finds
+`<config dir>` with std only: `DREAMCARVE_CONFIG_DIR` first (tests use
+this); else `$HOME/Library/Application Support/dreamcarve` on macOS,
+`%APPDATA%\dreamcarve` on Windows, and `$XDG_CONFIG_HOME/dreamcarve`,
+falling back to `$HOME/.config/dreamcarve`, on Linux and everything else.
+An unset or empty `HOME` or `APPDATA` is an error naming the variable.
+Only `init` and `export --post` read the config, so a project exports the
+same on every machine. A missing config file means the defaults; a
+malformed one, or an unknown key, is an error naming the file, line and
+column. (changed in slice 18, #126: `directories` pulls in an MPL-2.0
+crate, and std fits.)
 
 ## Algorithms
 
@@ -353,10 +425,15 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    `tc = inset_region(region, inset)`: outer offset by −inset, islands by
    +inset, then boolean difference (i_overlay, non-zero), split into
    regions (an island can split a pocket into several). An empty result
-   warns `PocketNoRoom` and the region is skipped. A miter join on the
-   outer, round on islands (PureCutCNC's `jtMiter`/`jtRound` choice), so
-   wall corners are reached as far as the tool allows and island corners
-   are wrapped.
+   warns `PocketNoRoom` and the region is skipped. Joins are round on the
+   outer and on islands: `dc_geometry::offset` (cavalier_contours) has
+   round joins only. An inward offset keeps the outer's convex corners
+   sharp either way, and at a reflex corner a round join keeps the tool
+   centre exactly `r` from the corner. When the offset islands lie apart
+   inside the offset outer, the region is built from the offsets with
+   `nest`, so arcs stay arcs; otherwise the boolean difference gives a
+   polygonal result. (changed in slice 4, #137: PureCutCNC mitres the
+   outer; cavalier_contours cannot.)
 3. **Rest region** (`rest_of` set): let `R` be the earlier Pocket's tool
    radius and `A` its allowance, read from the project (S14: never its
    toolpath). Its reachable area is `offset(inset_region(region, R + A),
@@ -392,18 +469,29 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    With `wall_pass: first` the root's rings are emitted before the walk;
    with `none` the root's rings are omitted and the first child becomes
    the outermost ring (the pocket is undersize by `s`, as VCarve's "No
-   Profile Pass" warns). Ring blocks of one pass share a `group` so
-   `sequence` keeps the inner-first order. Each ring's `cleared` area is
-   the ring's own region grown by `r`, so the link from a ring to the
-   next one outward (at most `s` away, inside material the inner rings
-   have already cleared plus the tool's own width) stays down under the
-   `sequence` link rule; a link to a ring of another root region, or
-   across an island, retracts. Each ring's start vertex is the vertex
-   nearest the previous ring's end (`rotateContourToNearestEntry`).
+   Profile Pass" warns; a region too small for a second ring is then not
+   cut). The tree is built and walked with an explicit stack, capped at
+   `MAX_RINGS` = 10 000 nodes per tool-centre region (`InvalidStepOver`
+   above it). At each node the children are visited nearest-first
+   (upstream `orderNodesGreedy`), then the node's own rings. Ring blocks
+   of one pass share a `group` so `sequence` keeps the inner-first order.
+   Each ring's `cleared` area is the ring's node region in tool-centre
+   terms, not grown by `r`, so a stay-down link's centre line stays in the
+   tool-centre region and the tool stays in the pocket. The link from a
+   ring to the next one outward still stays down under the `sequence`
+   link rule; a link to a ring of another root region, or across an
+   island, retracts. Each ring's start vertex is the vertex nearest the
+   previous ring's end (`rotateContourToNearestEntry`), computed once
+   from pass 0's walk and reused for every pass. (changed in slice 4,
+   #137: grown by `r`, a link could reach `r` past the wall of a concave
+   pocket.)
 7. **Raster strategy.** Rotate the tool-centre region by `−angle_deg`
    about the origin (so lines at `angle` become horizontal), scan
    horizontal lines from `min_y + s/2` to `max_y − s/2` in steps of `s`
-   (PureCutCNC's scan; one line in a region narrower than `s`), intersect
+   (PureCutCNC's scan; one line in a region narrower than `s`; one more
+   line at `max_y − s/2` when the scan stops more than `s` short of the
+   far edge, where upstream's last line can sit up to `1.5·s` away),
+   intersect
    each with the region (even-odd over outer and islands; horizontal
    edges ignored, crossing rule `a.y ≤ y < b.y` or `b.y ≤ y < a.y`),
    rotate the segments back by `+angle_deg`. Lines alternate direction;
@@ -431,8 +519,11 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
 9. **Entry** (`entry` module, below) gives each block's descent; the
    block's `entry` point is where the descent ends, which for a ring is
    its start vertex and for a raster line its start. Helix and ramp are
-   placed in the pass's tool-centre region (the material this pass
-   removes).
+   placed once per ring or line (`entry::plan`) in the tool-centre region
+   that ring or line's pass cuts: the root region, or with `wall_pass:
+   none` the root's children, so a descent never starts over the uncut
+   band. Each pass then builds its descent (`EntryPlan::descend`), from
+   safe Z on pass 0 and from the previous pass Z after that.
 10. **Corner relief** (`relief` module): after all passes, with
     `cleared = region inset by allowance` and `walls = tool-centre
     region's root rings`, collect corners and emit the notch blocks in
@@ -440,8 +531,11 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
 11. **Blocks → `sequence`** with containment pairs from `nest` depth.
 12. **Footprint check** (S9): `footprint(toolpath, r)` must lie inside
     `region` inset by `allowance_mm` (offset by `+EPS_MM`) and outside
-    every island grown by it; else `CamError::OffMaterial`. A rest
-    operation is checked against its own region the same way (S14).
+    every island grown by it; else `CamError::OffMaterial`. Descents are
+    checked on their tool centres against the tool-centre regions, which
+    is exact for a round tool; sweeping a helix's chords through
+    `footprint` is too slow (#158). A rest operation is checked against
+    its own region the same way (S14).
     Stock bounds as Profile step 8.
 
 Coverage check (acceptance 19, 22): `union(footprint per pass) ⊇
@@ -453,42 +547,64 @@ tolerance.
 ### Drill (dc-cam::drill)
 
 1. Resolve targets. For each closed profile, **circle test**: let `c` be
-   the centroid of the vertices; the profile is circular if every vertex
-   and every arc's midpoint lies within `flatten_tolerance_mm` of the
+   the centroid of the vertices; the profile is circular if every vertex,
+   every arc's midpoint and every line segment's midpoint (so a square is
+   not taken for a circle) lies within `flatten_tolerance_mm` of the
    circle of radius `mean(|v − c|)` about `c`, and (for polylines with
    arcs) every arc's centre is within the tolerance of `c`. Non-circular
    or open profiles warn `DrillTargetNotCircle` and are skipped. Hole
    diameter `2 × mean radius` is kept for warnings: tool wider than the
    hole warns `DrillToolWiderThanHole`.
 2. `top = thickness`, `bottom = thickness − depth` (S1 with allowance),
-   `retract_z = min(safe_z, top + retract_mm)`, `peck = peck_depth_mm
-   .or(tool.step_down_mm)` (validation guarantees one), `chip gap` from
-   `retract`.
+   `retract_z = min(safe_z, top + max(retract_mm, 0))` (a negative
+   `retract_mm` warns `DrillRetractBelowStockTop`; validation already
+   rejects it, but the generator does not trust that), `peck =
+   peck_depth_mm.or(tool.step_down_mm)` (validation guarantees one),
+   `chip gap` from `retract`. Peck levels come from `passes::pass_z_mm`,
+   so only the last peck is shorter; a peck at least the hole depth warns
+   `DrillPeckDeeperThanHole` once per operation. A non-positive gap or a
+   negative dwell is `CamError::InvalidDrillSetting`. Only the plunge rate
+   is required by the generator.
 3. Order: nearest neighbour from the first circle in drawing order, ties
    by drawing order (D5).
-4. Per hole, one block whose `descent` is empty and whose `cuts` are:
+4. Per hole, one block whose `descent` is one `Rapid` straight down to
+   `retract_z` (above the stock), and whose `cuts` are:
    - Simple: `Linear` down to `bottom` at plunge; (dwell) `Dwell(s)`
-     pseudo-move; `Rapid` up to `retract_z`.
+     pseudo-move; `Rapid` up to safe Z.
    - Peck, full retract: for `z_k = max(bottom, top − k·peck)`: `Linear`
      down to `z_k` at plunge, (dwell), `Rapid` up to `retract_z`, then
-     `Rapid` down to `z_k + PECK_REENTRY_MM` (0.5 mm, a named constant:
-     the tool re-enters the hole by rapid only through air it has
-     already cut) and the next `Linear` continues from there, until
-     `z_k == bottom`; final `Rapid` to `retract_z`. A controller's `G83`
-     re-enters by its own documented gap; S11 compares with that gap as
-     the tolerance (see "Canned cycles").
-   - Chip break: as peck but each retract is `Rapid` up by `gap_mm` only
-     and the next `Linear` resumes from there.
-   The block's `entry` is the centre; `sequence` rapids to it at safe Z
-   and descends to `retract_z` by rapid (above material), then the block's
-   first cut starts at `retract_z`. Between holes the link is at safe Z.
+     `Rapid` down to `min(z_k + PECK_REENTRY_MM, retract_z)`
+     (`PECK_REENTRY_MM` = 0.5 mm, a named constant: the tool re-enters
+     the hole by rapid only through air it has already cut) and the next
+     `Linear` continues from there, until `z_k == bottom`; final `Rapid`
+     to safe Z. A controller's `G83` re-enters by its own documented gap;
+     S11 compares with that gap as the tolerance (see "Canned cycles").
+   - Chip break: as peck but each retract is `Rapid` up by `gap_mm` only,
+     capped at `retract_z`, and the next `Linear` resumes from there.
+   The block's `descent_from` and `entry` are the centre; `sequence`
+   rapids to it at safe Z, then the block's descent takes the tool down
+   to `retract_z` by rapid. In `sequence` an empty descent means a
+   straight plunge from safe Z, so the rapid is the descent. Each hole
+   ends with a rapid to safe Z, which is `G98`'s return to the initial Z,
+   so S11's expansion of `G81`–`G83` matches the toolpath move for move
+   and acceptance 23's "one retract to safe Z" holds. Between pecks a
+   full retract still goes to `retract_z` (`R`). Between holes the link
+   is at safe Z. (changed in slice 7, #138: the spec had an empty
+   descent and a last rapid to `retract_z`.)
 5. `Move` gains `MoveKind::Dwell { seconds: f64 }` (no motion; emitted as
-   `G4 P<seconds>` in seconds; the safety parser treats it as no motion).
+   the definition's dwell command in its `units`, `G4 P0.500` for
+   seconds and `G4 P500` for milliseconds; the safety parser treats it as
+   no motion, and S6 matches each toolpath dwell to a `G4` of the same
+   seconds between the surrounding motion lines). The spindle-on dwell
+   reads the same `units`.
 6. `DrillHole` records per hole for the emitter, with `cycle` = `G81`
    (simple, no dwell), `G82` (simple + dwell), `G83` (peck full, no
    dwell), `G73` (chip break, no dwell), else `Expanded`.
-7. S15: every `Rapid` that descends ends at or above the deepest Z this
-   hole has been cut to plus `gap`, checked in `sequence`'s output test.
+7. S15: every `Rapid` that descends ends at or above the stock top, or
+   no deeper than a cut has reached at that XY. `assert_safe` checks it
+   on the toolpath; the safety pass checks it inside a Drill span and
+   fails with `ExportError::RapidIntoUncut`. S2 is unchanged for every
+   other operation.
 
 ### Engrave (dc-cam::engrave)
 
@@ -626,14 +742,24 @@ Ported from `cornerRelief.ts`.
 
 ### Sequence (dc-cam::sequence)
 
-New, per D10 and research §5.5. Pure function of `SequenceInput`.
+New, per D10 and research §5.5. Pure functions of `SequenceInput`:
+`plan` returns the block order (steps 1–3), and `sequence` returns the
+toolpath in that order (steps 4–5). A generator that counts contours "in
+cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
+`ToolpathsOverlap`) plans, warns, then sequences.
 
 1. **Validate:** every block's `cuts` is at `z_mm` (tabs may rise above);
-   each shape's passes are consecutive integers from 0.
+   each shape's passes are consecutive integers from 0; a block with an
+   empty descent has `descent_from == entry`. A failure is
+   `CamError::InvalidBlock { shape, pass, problem }`; containment pairs
+   that leave no shape cuttable are `CamError::ContainmentCycle`.
 2. **Units:** a *unit* is one shape's blocks at one pass (full depth
    first groups a shape's units into a *stack*; pass first groups all
    shapes' units of one pass into a *layer*). Blocks within a unit keep
-   generator order (`group`).
+   generator order (`group`). A shape whose offset splits into several
+   tool-centre loops is one unit per pass: its loops are cut together,
+   pass by pass, under both orders (phase 1 cut each loop to full depth
+   on its own). (decided in slice 1, #127.)
 3. **Order:**
    - `FullDepthFirst`: order shapes by a greedy walk: start from the
      first shape in drawing order; from the current shape's exit, pick the
@@ -647,23 +773,36 @@ New, per D10 and research §5.5. Pure function of `SequenceInput`.
      The walk for each pass starts from the previous pass's last exit.
    - Drill: one pass per hole; the two orders coincide.
 4. **Links:** between consecutive blocks `a → b`:
-   - same shape, next pass, `b.entry == a.exit` (within `EPS_MM`): no
-     link; `b.descent` starts at `a.z_mm` (`descent_from_z_mm`), a
-     straight plunge if empty;
-   - same shape, next pass, different entry (lead-in moved the seam, or
-     alternation): rapid up to safe Z, rapid to `b`'s descent start,
+   - same shape, next pass, `b.descent_from` equals the tool's position
+     (within `EPS_MM`): no link; `b.descent` starts at `a.z_mm`
+     (`descent_from_z_mm`), a straight plunge if empty. Comparing with the
+     tool's position, not `b.entry` with `a.exit`, lets a ramp that starts
+     at the previous exit stay down; a plunge behaves as before;
+   - same shape, next pass, different start (lead-in moved the seam, or
+     alternation): rapid up to safe Z, rapid to `b.descent_from`,
      descend;
    - `b.cleared` and `a.cleared` are both `Some`, the straight link lies
      inside `a.cleared ∪ b.cleared` at `b.z_mm == a.z_mm`, and its length
-     ≤ `tool_diameter + stepover` (`SequenceInput` carries the threshold):
-     stay down, `Linear` at feed (O3);
-   - otherwise: rapid up to safe Z, rapid in XY, then `b.descent` from
-     safe Z (or a plunge at the plunge rate).
+     ≤ `tool_diameter_mm + stepover_mm`: stay down, `Linear` at feed to
+     `b.entry`, and `b`'s descent is not cut (the tool is already at
+     `b`'s Z in cleared material; replaying a helix would climb back
+     through air) (O3). "Inside" means both ends in one piece of the
+     union, no crossing of its boundary, and every sample point, at most
+     0.5 mm apart along the link, inside;
+   - otherwise: rapid up to safe Z, rapid in XY to `b.descent_from`, then
+     `b.descent` from safe Z (or a plunge at the plunge rate). When
+     `b.descent_from_z_mm` is below safe Z (the generator expected to stay
+     down), a vertical plunge to that Z comes first, then the descent.
    The first block is reached by a rapid to safe Z then XY; the last is
-   followed by a rapid to safe Z.
-5. **Output:** one `Toolpath`. Every `Rapid` is at safe Z except the Z
-   rapids down to a drill's `retract_z` and the descents inside a block
-   (which are `Linear` at feed/plunge, never `Rapid`).
+   followed by a rapid to safe Z. Zero-length moves are never written
+   (so a tab over the lap start stays byte-identical to phase 1); dwells
+   are kept. (changed in slice 1, #127, and slice 9, #147: rule 1 compares
+   `descent_from`, a stay-down link skips the descent, and a retract
+   before a below-safe-Z descent plunges first.)
+5. **Output:** one `Toolpath`. Every `Rapid` is at safe Z except a
+   Drill's descent, one Z rapid down to its `retract_z`, and the peck
+   rapids inside its cuts. The other descents are `Linear` at
+   feed/plunge, never `Rapid`.
 6. **Invariants O1–O10** are the module's tests.
 
 `generate_profile` moves onto `sequence` in the first phase 2 slice
@@ -673,15 +812,23 @@ for the ring case.
 
 ### Operation-order warnings (dc-cam::order)
 
-For operations `i < j`, both enabled: if `i` is a Profile whose final pass
-reaches the stock bottom (depth ≥ thickness) and its side is Outside or
-OnLine, every closed target of `j` whose transformed outline lies inside
-one of `i`'s target outlines (point-in-polygon on the centroid plus no
-crossing) yields `CutInsideFreedPart (op: j, earlier_op: i, instance)`.
-An Inside Profile through the stock frees the slug of its hole, so a later
-operation inside that hole warns too. Tool hint: the sequence of tools of
-enabled operations in order; whenever a tool recurs after a different one,
-`ToolChangeAvoidable (tool, ops)` once per tool.
+For operations `i < j`, both enabled: `i` frees its targets when it is a
+Profile with no tabs and a cutting move of its toolpath reaches Z ≤ 0
+(within `EPS_MM`), which means depth ≥ thickness. Any side counts:
+Outside and On line free the part, and Inside frees the slug of its
+hole. A tabbed Profile frees nothing, because the tabs hold the part.
+Every closed target of `j` nested in one of `i`'s freed outlines, or the
+same outline, by `dc_geometry::nest` on the true curves, yields
+`CutInsideFreedPart (op: j, earlier_op: i, instance)`. Crossing shapes
+do not count, and a shape that encloses the freed outline is never
+inside it. Targets are resolved from `Operation::targets()`, so the
+check never needs the toolpath of an operation that failed; unresolvable
+targets are skipped because validation reports them. Tool hint: the
+tools of enabled operations in project order; one `ToolChangeAvoidable
+(tool, ops)` per tool whose uses are not one contiguous run, ordered by
+first use, with `ops` listing every operation that uses it. A disabled
+operation does not split a run. (changed in slice 13, #134: tabs hold
+the part, and `nest` is stricter than a centroid test.)
 
 ### Arc fitting (dc-gcode::arcfit)
 
@@ -690,17 +837,26 @@ project space and before the machine transform (the transform is a
 translation and signed axis map, never a mirror, so handedness survives;
 the fitted centre is transformed like a point).
 
-1. Runs: maximal sequences of consecutive `Linear` cutting moves at one Z
-   with one feed (`Arc` moves break runs; they are already arcs). Fewer
-   than 4 points → unchanged.
+1. Runs: maximal sequences of consecutive straight cutting moves at one
+   Z with one feed, started from a known position. An `Arc` move whose
+   sagitta is within `tolerance` joins a run as its chord, and its
+   midpoint is checked against the fitted circle like a vertex; deeper
+   `Arc` moves break runs (they are already arcs). Fewer than 4 points
+   (`MIN_RUN_CHORDS` + 1) → unchanged. (changed in slice 14, #128: a
+   Profile of an imported curve puts a shallow corner arc between every
+   two facets, for the coaster r 3.175 mm, sweep 2.25°, sagitta
+   0.0006 mm, so runs of `Linear` moves alone never pass one move and
+   acceptance 37 could not hold.)
 2. Greedy longest-first: for `end` from `min(n−1, i+127)` down to `i+3`,
    Kasa least-squares circle through points `i..=end`; project the centre
    onto the perpendicular bisector of the endpoints and set `r` from the
-   start (endpoints exact); accept if every point is within `tolerance`
-   of the circle, every angular step ≤ 90°, the largest step ≤ 4 × the
-   median, the total sweep ≥ 0.5°, and the chord ≥ 0.15·r (or a full
-   circle). Direction from the sign of the summed cross products
-   (negative = clockwise = `G2`).
+   start (endpoints exact); accept if every point (and every shallow-arc
+   midpoint) is within `tolerance` of the circle, every angular step ≤
+   90°, the largest step ≤ 4 × the median, the total sweep ≥ 0.5°, and
+   the chord ≥ 0.15·r (or a full circle). The median gate leaves out the
+   shallow-arc joints: their tiny steps are not chord steps, and counting
+   them fails every odd-length window on a faceted curve. Direction from
+   the sign of the summed cross products (negative = clockwise = `G2`).
 3. Split each fitted run into arcs of ≤ 90° with intermediate endpoints on
    the circle and the last endpoint exactly the source point; `I`,`J` per
    sub-arc from its own start.
@@ -709,21 +865,42 @@ the fitted centre is transformed like a point).
    ±2 quanta to minimise the radius disagreement; accept when
    `|r_end − r_start| ≤ 0.005 mm`, reject above 0.5 mm, else accept when ≤
    0.1 % of `r`; with `r` format, repair a chord/2 rounding shortfall of
-   up to 2 quanta, else reject. A rejected sub-arc reverts its whole run to
-   the original lines and warns `ArcFitFallback (op, runs)`. A full circle
+   up to 2 quanta, else reject. Each run is judged from the emitted
+   position, with the post's number format; a run with no known emitted
+   start falls back (upstream judges it from its own start; this cannot
+   happen after a rapid). A rejected sub-arc reverts its whole run to the
+   original moves and warns `ArcFitFallback (op, runs)`. A full circle
    never emits as one arc (phase 1 `FullCircleArc`): a run that closes is
    split at 90° so no sub-arc's end equals its start.
-5. Not fitted: rapids, plunges, dwells, descents (helix descents change
-   Z; the flat bottom revolution of a helix *is* fitted, which is correct
-   and matches a hand-written circle), drill moves, lead arcs (already
-   `Arc`).
+5. Not fitted, passed through as `Fitted::Move`: rapids, plunges, dwells,
+   descents (helix descents change Z; the flat bottom revolution of a
+   helix *is* fitted, which is correct and matches a hand-written
+   circle), drill moves, and toolpath arcs deeper than the tolerance
+   (lead arcs among them).
 
-**S12 in the safety pass:** `parse_motion` returns each `G2`/`G3`; S6
-accepts an arc where the toolpath has lines when the arc's start and end
-are toolpath vertices, every toolpath vertex between them lies within
-`tolerance + one unit in the last place` of the arc, the arc's sweep ≤
-90°, and the arc's direction matches the sign of the vertices' turn.
-`fitted_arcs_pass_s6` and `arc_off_the_vertices_fails_s6` are the tests.
+**S12 in the safety pass:** `parse_motion` returns each `G2`/`G3`;
+`check` takes `Tolerances { flatten_mm, arc_fit_mm }`. Step 3 splits a
+run at synthesised points on the circle, so only the run's ends are
+toolpath vertices, and S6 checks a chain of sub-arcs, not one arc. It
+accepts consecutive `G2`/`G3` where the toolpath has straight moves (and
+shallow arcs) when:
+
+- each piece's centre is within `tolerance + one unit in the last place`
+  of the previous piece's (this absorbs the per-arc `I`/`J` snap);
+- each piece sweeps at most 90°;
+- the chain starts and ends on toolpath vertices and covers at least
+  three toolpath moves;
+- every vertex and shallow-arc midpoint between lies on its piece within
+  that tolerance;
+- the direction matches the sign of the vertices' turn.
+
+A wrong arc in place of a deep toolpath arc stays `MotionMismatch`. A
+failure is `ExportError::ArcFitViolation`. `fitted_arcs_pass_s6`,
+`arc_off_the_vertices_fails_s6` and `arc_over_90_degrees_fails_s12` are
+the tests. (changed in slice 14, #128: one arc per run could not match a
+split run; slice 4, #137, chained each piece's centre to the previous
+piece's rather than the first, because snapped centres drift along a
+run.)
 
 ### Canned cycles (dc-gcode::emit)
 
@@ -736,19 +913,39 @@ first, then XY, as phase 1 rapids), write `retract_mode` (`G98`: return to
 the initial Z, which is safe Z) once, then one line per hole: the command
 word (modal), `X Y`, `Z` (bottom, machine coordinates), `R` (retract
 plane), `Q` (peck for `G83`/`G73`), `P` (dwell seconds for `G82`), `F`
-(plunge rate, once). Close with `cancel_command` (`G80`). Any hole whose
-cycle is `Expanded`, or a missing command, makes the whole operation
-expand (one warning `canned_cycle_expanded (op, reason)`), so a program
-never mixes cycles and moves for one operation.
+(plunge rate, once). Every line carries its own `Z`, `R` and `Q`/`P`,
+because controllers differ in which words they keep from line to line.
+Close with `cancel_command` (`G80`). Only the standard codes are written
+(`G98`, `G80`, the `Q` word, commands exactly `G81`/`G82`/`G83`/`G73`),
+because the safety pass expands only those; `G99` is refused. The
+emitter expands its own lines from the rounded numbers with the same
+controller model (`canned.rs`) and compares them with the toolpath before
+it writes them. Any hole whose cycle is `Expanded`, a missing command, a
+non-standard definition field, a missing `reentry_gap_mm` for `G83`/`G73`,
+or a difference in motion makes the whole operation expand (one warning
+`canned_cycle_expanded (op, reason)`), so a program never mixes cycles and
+moves for one operation. `G83` and `G73` are written only when `R` is the
+stock top (`retract_mm: 0`): controllers measure pecks from `R`, and the
+Drill toolpath measures them from the stock top, as PureCutCNC does
+(#153). (changed in slice 15, #148.)
 
-**Chip-break re-entry.** `G73` on LinuxCNC retracts by the controller's
-`G73` setting, not by `Q`; Mach3 and UCCNC document `G73` as "retract by a
-fixed amount". The expansion in the safety pass (S11) therefore uses
-`chip_break.gap_mm` for the toolpath and the controller's documented
-behaviour for the program; where the documentation gives no fixed value
-(LinuxCNC's `G73` uses the `$` `[RS274NGC]` parameter), the definition
-sets `chip_break_drill_command: null` and chip-break always expands. The
-definitions README records this per controller.
+**Chip-break re-entry.** No bundled definition writes `G83` or `G73`, so
+peck and chip-break Drills are always plain moves (changed in slice 17,
+#164; `definitions/README.md` gives the sources):
+
+- LinuxCNC 2.9 backs both cycles off a fixed 0.254 mm (0.010 in). In
+  2.10 (master) the distance is an INI setting, `G83_PECK_CLEARANCE` and
+  `G73_PECK_CLEARANCE` (default 1 mm, in machine units), or a `D` word.
+  A program cannot know which, so neither command is written.
+- Mach3 documents `G83` as "backed off a bit", and its `G73` lift is a
+  Pullback setting.
+- UCCNC has no canned cycles in its definition: its manual's `G81` text
+  has no rapid to `R`, so its motion is not the RS274/NGC motion S11
+  models.
+
+`reentry_gap_mm` states both the `G83` re-entry and the `G73` lift; the
+definition has no other field for the lift. A definition without it
+never writes `G83` or `G73`, and a hand-written one is unparseable.
 
 **S11 expansion** (`safety.rs`): on `G81`–`G83`/`G73` lines, the parser
 synthesises the motion the controller performs: rapid XY at the current
@@ -756,32 +953,61 @@ Z; rapid to `R`; `G81`: feed to `Z`, rapid to `R` (`G99`) or initial Z
 (`G98`); `G82`: plus a dwell; `G83`: feed `Q` increments with a rapid to
 `R` and back to the previous depth + the controller's re-entry gap
 (documented per controller, written in the README) between; `G73`: feed
-`Q` increments with a short rapid retract between. The expansion is then
-compared with the Drill toolpath move for move (S6) with the re-entry gap
-tolerance stated in the definition (`canned_cycles.reentry_gap_mm`, a new
-definition field, `null` where the controller retracts fully). Only
-controllers whose documentation states these semantics get canned-cycle
-commands in their definition.
+`Q` increments with a rapid lift of the re-entry gap between. A cycle is
+refused as unparseable when Z is unknown, when neither `G98` nor `G99`
+is in force, when a word is missing, or (`G83`, `G73`) when the
+definition states no gap. The expansion is then compared with the Drill
+toolpath move for move (S6), a Z-only rapid inside a hole matching
+within the re-entry gap stated in the definition
+(`canned_cycles.reentry_gap_mm`, a new definition field, `null` where no
+fixed gap is documented); S1 and S15 still check where that rapid ends.
+Only controllers whose documentation states these semantics get
+canned-cycle commands in their definition.
 
-### Post-processor definitions (dc-gcode/definitions)
+### Post-processor definitions (dc-project/src/definitions)
 
-Four new files, started from PureCutCNC's and then checked line by line.
-The README gets one section per controller with the document and section
-each line was verified against. Checks required before merge (the slice's
-tests assert the resulting bytes):
+Four new files, `<id>/v1.json`, started from PureCutCNC's and then
+checked line by line. `crates/dc-project/src/definitions/README.md` has
+one section per controller with the document and section each line was
+verified against, a "Not used, and why" list and a "Changed from
+PureCutCNC" table; `post::every_definition_line_is_cited_in_readme`
+checks that every line is there. The README's sources are the
+authority: a source that settles a row the other way makes a new
+definition version, not a spec edit. The rows below are what the
+definitions write (changed in slice 17, #164: the controllers'
+documents disagreed with the spec's expectations in several rows):
 
-| Controller | Source to cite | Lines to verify |
+| Controller | Sources (README) | As written |
 | --- | --- | --- |
-| LinuxCNC | LinuxCNC G-code reference (`gcode.html`), "G-code Quick Reference", `G81`–`G83`, `G73`, `G98`/`G99`, `M2`/`M30`, `M6`, `G43`, `G53`, `G4 P` seconds, comments `( )` and `;`, `%` | header `G90 G17 G40 G49 G80 G94`; `G21`/`G20`; `G54`; `M3 S`; `G4 P` (seconds); tool change `M5`, `T{n} M6` (no `G43 H`: tool length offsets need a tool table DreamCarve does not write; the user sets Z zero per tool as on grblHAL); footer `M5`, `M2`; `.ngc` |
-| Mach3 | Mach3 Mill manual (ArtSoft, "Mach3Mill 1.84"), G and M code chapters | `%`, `O0001`, line numbers `N10` step 10; `G90 G94 G17 G40 G49 G80`; `G4 P` **milliseconds** (Mach3 documents `P` in ms unless configured otherwise; the definition's dwell command is `G4 P{milliseconds}` with a `dwell_units` field `ms`); `M6 T{n}` then `M0`? (Mach3 `M6` runs the tool-change macro; `pause_after_change` false); `M30`; `.tap` |
-| UCCNC | UCCNC Users Manual (CNCdrive), G-code and M-code lists | as Mach3 where the manual agrees; `G4 P` seconds per the UCCNC manual (verify; differs from Mach3); `.txt` |
-| generic | RS274/NGC (NIST, Kramer, Proctor, Messina 2000) | `( )` comments, no line numbers, `G90 G17 G94`, `G21`/`G20`, `G54`, `M3 S`, `G4 P` seconds, no tool change `M6` (tool change block `M5`, `M0` with message, so `"m6"` mode is refused), `M30`, trailing zeros off, `.nc` |
+| LinuxCNC | LinuxCNC 2.9.10 `g-code.html`, `m-code.html`, `overview.html`, `hal_manualtoolchange(1)`; source on branch `2.9` and `master` | header `( Project: {programName} )`, `G90 G17 G40 G49 G80 G94`, `G91.1`, `G21`/`G20`, `G54`; `M3 S`; `G4 P` seconds; no `%`; no line numbers; no `M6`, no `G43 H`; canned `G81`, `G82` only, with `G98` and `G80`; footer `M5`, `M2`; `.ngc` |
+| Mach3 | Using Mach3Mill 1.84-A2; Mach3 Install & Config v3 | `%` (never numbered), no `O0001` (an `O` word is a subroutine label and "The O line may not have a line number", 10.5.2, 10.8.7); line numbers `N10` step 10 on every line but the `%`; `G90 G94 G17 G40 G49 G80`, `G91.1`, `G21`/`G20`, `G54`; `G4 P` **seconds** (the unit is a setting, shown as seconds in both manuals, and `G82 P` is documented in seconds); no `M6`; canned `G81`, `G82` only; footer `M5`, `M30`; `.tap` |
+| UCCNC | UCCNC user's manual 1.0047 (software 1.2113) | no `%`, no `O0001`, no line numbers (the manual documents none of them); `G90 G17 G40 G49 G80 G94`, `G54`; no `G20`/`G21` (not in the code list: lengths are in the profile's units, so the program has no units word and `export` warns `units_set_by_controller`); `G4 P` **milliseconds** (the default); no `M6`; no canned cycles; footer `M5`, `M30`; `.txt` |
+| generic | RS274/NGC (NIST IR 6556, Kramer, Proctor, Messina 2000) | `( )` comments, no line numbers, `G90`, `G17`, `G94`, `G21`/`G20`, `G54`, `M3 S`, `G4 P` seconds, no `M6`, no canned cycles, footer `M5`, `M30`, trailing zeros off, `.nc` |
 
-`SpindleDwell` gains `units: Seconds | Milliseconds` so the Mach3 dwell is
-written right; phase 1 definitions set `seconds` in the migration (format
-change inside the embedded post-processor; covered by v6 → v7). `G4`
-dwell for Drill uses the same field. Tool-change height, `G53` parking and
-`G43` stay out (#73).
+Rules for all four (README, "Rules for the slice 17 definitions"):
+
+- **No `M6`, so `"m6"` mode is refused** on every new definition, not
+  only on generic. LinuxCNC's `hal_manualtoolchange` documents no
+  touch-off at its dialog, and a stock configuration without a changer
+  loops `tool-change` back so `M6` does not stop. On Mach3 and UCCNC what
+  `M6` does is a user setting, one of whose values is "ignore". Each
+  definition's tool change is `M5`, `M0`, and it is never written.
+- **No `G43 H`.** Tool length offsets need a tool table DreamCarve does
+  not write; the user sets Z zero per tool, as on grblHAL.
+- **User text never opens a comment.** LinuxCNC acts on comments that
+  start with a keyword (`(LOGOPEN,file)` truncates a file), so the first
+  header comment is `( Project: {programName} )`.
+- **Header modal codes.** `G40`, `G49`, `G80` and `G91.1` are accepted
+  in any program and written again after every pause; `G90.1` is
+  refused (#154).
+
+`SpindleDwell` gains `units: Seconds | Milliseconds` so a millisecond
+dwell (UCCNC) is written right; the bundled phase 1 definitions carry
+`seconds` (see "Migration v7 → v8"). `G4` dwell for Drill uses the same
+field. A definition with no units commands writes no units word; S5 then
+does not require one, and the parser starts in the program's units. A `%` line is a program delimiter: the parser skips it and the
+writer never numbers it. Line numbers wrap after `N99999`. Tool-change
+height, `G53` parking and `G43` stay out (#73).
 
 ### DXF import (dc-import::dxf)
 
@@ -849,7 +1075,12 @@ From the schema:
 
 - Root: `{ "version": integer ≥ 11, "data": [ … ] }`. Each item is a
   Tool (Turning, Milling, Cutting, Depositing, Probe, Hole Making) or an
-  Adaptive Item (holder). `data` missing → `LibraryError::NotAFusionLibrary`.
+  Adaptive Item (holder). Not an object, or `data` missing →
+  `LibraryError::NotAFusionLibrary`; `version` missing →
+  `LibraryError::MissingVersion`; below 11 or not an integer →
+  `LibraryError::FusionVersion { found }`. These, invalid JSON and a
+  damaged archive are the only errors: one bad item never fails the
+  whole file.
 - `type` is an enum per family. Milling: `"flat end mill"`, `"ball end
   mill"`, `"bull nose end mill"`, `"chamfer mill"`, `"radius mill"`,
   `"tapered mill"`, `"dovetail mill"`, `"face mill"`, `"slot mill"`,
@@ -877,9 +1108,12 @@ From the schema:
 
 Mapping:
 
-1. **Container:** bytes starting `PK` → zip (`zip` crate, MIT); the entry
-   named `tools.json` (or the only `.json`) is the document. Otherwise the
-   bytes are the document.
+1. **Container:** bytes starting `PK` → zip (`zip` crate, MIT, deflate
+   decoding only); the entry named `tools.json` (or the only `.json`) is
+   the document, capped at `MAX_DOCUMENT_BYTES` (64 MiB) unpacked against
+   zip bombs. An archive that cannot be read, or holds no JSON document,
+   is `LibraryError::FusionArchive { message }`. Otherwise the bytes are
+   the document.
 2. **Per tool, by `type`:** `"flat end mill"`, `"bull nose end mill"`
    (corner radius `RE` ignored; the tool name gets ` (bull nose r<RE>)`),
    `"slot mill"` → `EndMill`; `"ball end mill"` → `BallNose`; `"chamfer
@@ -887,7 +1121,9 @@ Mapping:
    `"center drill"`, `"counter sink"`, `"counter bore"`, `"reamer"` →
    `Drill`; every other milling, hole-making, turning, probe and holder
    type → `Skipped { UnsupportedType(type) }`; a string outside the
-   schema's enums → `Skipped { UnknownType(type) }`.
+   schema's enums → `Skipped { UnknownType(type) }`; an item that is not
+   an object or has no `type` → `Skipped { MissingType }`. A chamfer mill
+   without `TA` → `Skipped { NoTaperAngle }`.
    - **Chamfer angle.** `TA` is the half angle: `included_angle_deg =
      2·TA`, so a 90° V-bit carries `TA` 45. Settled by the maintainer
      against IDC Woodcraft's published Fusion library (the schema's
@@ -895,30 +1131,49 @@ Mapping:
      is noted in the module doc so nobody re-derives it).
 3. **Units:** every length (`DC`, `stepdown`, `stepover`) and feed
    (`v_f`, `v_f_plunge`) is in `unit` and converted to mm or mm/min; `n`
-   is RPM; `NOF` → flutes (0 or absent → 1, noted in the report).
+   is RPM; `NOF` → flutes (0 or absent → 1, noted in the report). A
+   `unit` that is missing or not `millimeters`/`inches` →
+   `Skipped { UnknownUnit }`; the unit is never guessed.
    `stepover` becomes `stepover / DC` (a fraction, clamped to (0, 1] with
    a report note when above 1); `stepdown` → `step_down_mm`. Both only
    when their `use-*` flag is true or absent.
 4. **Presets:** one `Tool` per preset: name `description` for one preset,
-   `"<description> (<preset name>)"` for several; `source =
-   "fusion:<tool guid>:<preset guid or index>"` so a re-import recognises
-   it. No presets → one tool with feeds unset. Missing `n`, `v_f` or
-   `v_f_plunge` leave the field `None` (never defaulted; export refuses
-   until set), and the report says so. A drill preset usually has
+   `"<description> (<preset name>)"` for several. A tool with no
+   `description` takes its `product-id`, else `<DC> <mm|in> <type>` (for
+   example `6.7 mm drill`; Autodesk's metric sample has 179 drills with
+   no description). In the bull nose suffix, `RE` is written in the
+   file's unit. `source = "fusion:<tool guid>:<preset guid or index>"` so
+   a re-import recognises it; a tool with no presets gets
+   `fusion:<guid>:no-preset`, and a tool with no guid uses
+   `data[<index>]` in place of the guid. No presets → one tool with feeds
+   unset. Missing `n`, `v_f` or `v_f_plunge`, or a zero or negative one,
+   leave the field `None` (never defaulted; export refuses until set),
+   and the report says so. Each `ImportedTool` carries its `notes`
+   (`ImportNote`): unset feed, plunge or RPM, no presets, flutes
+   defaulted to 1, stepover clamped to 1. A drill preset usually has
    `v_f_plunge` and no `v_f` (Autodesk's sample): the tool imports with
    `feed_mm_min` unset, which Drill never needs but validation reports
    for a tool a Profile uses.
-5. `DC ≤ 0` or absent → `Skipped { NoDiameter }`.
+5. `DC ≤ 0` or absent → `Skipped { NoDiameter }`. A mapped tool that
+   fails `validate_tool` (for example `TA` ≥ 90) →
+   `Skipped { Invalid { field, message } }`.
 5a. **Tool number:** `post-process.number` > 0 → `Tool::number`; 0 or
    absent → `None`. Every preset of one Fusion tool shares the number,
    so a library with several presets of one tool holds several tools
    with the same number; `tools add` copies the number, and validation
    reports the clash only when two such tools are used in one project.
-6. **Report:** `tools import` prints one line per tool: `imported`,
-   `already present`, or `skipped: <reason>`, then the counts.
+6. **Report:** `tools import` prints one line per imported tool
+   (`imported`, `imported as <name> (2)`, `replaced` or `already
+   present`, then its notes, for example `` `5 mm Drill`: imported (lt6);
+   feed unset ``), then one line per skipped item with its reason, then
+   the counts. For a Fusion import the counts gain `, N skipped`: `N
+   imported, N already present, N replaced, N skipped; library: <file>`.
+
+(changed in slice 21, #152: the skip reasons, errors, notes and name and
+source fallbacks beyond the first draft.)
 
 **Tool numbers** (functional open question 7, decided 2026-10-20): the
-optional field is added in v7 (see "Data model", `Tool::number`). Why:
+optional field is added in version 8 (see "Data model", `Tool::number`). Why:
 Fusion's `post-process.number` and VCarve's Tool Number are explicit and
 stable per tool, which a tool table on LinuxCNC or Mach3 needs (`T5 M6`
 must match the machine's slot 5), and adding the field later would cost a
@@ -964,20 +1219,25 @@ it and the warnings per operation, each as `<code>: <message>`.
 
 ```
 crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection on Regions), circle.rs (circle test, Kasa fit)}
-crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder), migrate.rs (v6_to_v7), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm)}
+crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder), migrate.rs (v7_to_v8), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
 crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, overlap.rs, stock.rs, warning.rs}
-crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4), definitions/{README.md, grblhal.json, grbl.json, linuxcnc.json, mach3.json, uccnc.json, generic.json}}
+crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, canned.rs (controller model of G81–G83/G73), safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4, `%`), post.rs (definition checks)}
 crates/dc-import/src/{svg.rs, dxf.rs, dxf/{entities.rs, spline.rs, stitch.rs}}
 crates/dc-library/src/{lib.rs, library.rs, fusion.rs, error.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs, tools.rs, config.rs}
 tests/golden/{pocket-offset-rect, pocket-offset-island, pocket-raster-0deg, pocket-raster-45deg, pocket-rough-then-rest, drill-simple, drill-peck, engrave-open-closed, profile-ramp, profile-helix-inside, profile-lead, profile-dogbone, order-full-depth-first, order-pass-first, post-linuxcnc-coaster, post-mach3-coaster, post-uccnc-coaster, post-generic-coaster}/
-tests/fixtures/{plaque.svg, plaque.dxf, dxf/*.dxf, fusion/{sample.tools, sample.json}, dcv/v6/*.dcv}
+tests/fixtures/{plaque.svg, plaque.dxf, dxf/*.dxf, fusion/{sample.tools, sample.json}}
+crates/dc-project/tests/fixtures/dcv/{v7, v8}/sample.dcv
 ```
 
 New dependencies: `i_overlay` (MIT, booleans; already a settled decision),
-`dxf` (MIT), `zip` (MIT, `default-features = false`, deflate only),
-`directories` (MIT/Apache-2.0), `toml` (MIT/Apache-2.0). `NOTICE` entries
-as their licenses require.
+`dxf` (MIT), `zip` (MIT, `default-features = false`, `features =
+["deflate-flate2-zlib-rs"]`: deflate decoding only, the Fusion `.tools`
+container), `toml` (MIT/Apache-2.0, the CLI only). `NOTICE` entries as
+their licenses require (`zip` and `nix` are listed). `directories` is not
+used: it pulls in `option-ext` (MPL-2.0), and std finds the config
+directory (see "User config"). (changed in slice 18, #126, and slice 21,
+#152.)
 
 ## Test plan
 
@@ -990,8 +1250,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `circle::sixteen_facets_are_a_circle_within_tolerance`, `circle::two_bulge_arcs_are_a_circle`, `circle::ellipse_is_not_a_circle`, `circle::kasa_fit_recovers_centre_and_radius`.
 
 **dc-project**
-- `migrate::v6_profile_gains_phase_2_fields_with_defaults` — fixture loads with `machining_order: full_depth_first`, `entry: plunge`, `lead: null`, `corner_relief: none`, `arc_fit_tolerance_mm: 0.01`, `use_canned_cycles: false`.
-- `migrate::v6_fixture_exports_phase_1_bytes_with_fitting_off`.
+- `migrate::v7_profile_gains_phase_2_fields_with_defaults` — fixture loads with `machining_order: full_depth_first`, `entry: plunge`, `lead: null`, `corner_relief: none`, `arc_fit_tolerance_mm: 0.01`, `use_canned_cycles: false`; `migrate::v7_to_v8_writes_the_defaults`, `migrate::v7_with_phase_2_field_already_present_fails`.
+- `cli::v7_project_exports_the_same_program` (the spec's `v6_fixture_exports_phase_1_bytes_with_fitting_off` at version 8).
 - `serialize::tool_number_round_trips`, `validate::duplicate_tool_number_is_error`, `validate::set_number_clashing_with_positional_is_error`, `validate::tool_number_zero_is_error`, `emit::set_tool_number_is_written_as_t_word_and_file_name`, `emit::unset_tool_number_falls_back_to_position`.
 - `serialize::pocket_drill_engrave_round_trip`, `serialize::entry_variants_serialize_as_string_or_object`, `serialize::clearance_strategy_raster_carries_angle`.
 - `validate::rest_of_must_be_an_earlier_enabled_pocket_with_the_same_targets`, `validate::step_over_fraction_outside_unit_interval_is_error`, `validate::pocket_without_step_down_is_error`, `validate::peck_without_depth_or_tool_step_down_is_error`, `validate::helix_on_on_line_profile_is_error`, `validate::lead_radius_must_be_positive`, `validate::ramp_angle_range`, `validate::canned_cycles_on_definition_without_them_is_error`, `validate::drill_with_v_bit_warns`, `validate::relief_without_step_down_warns`.
@@ -1023,6 +1283,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::rest_region_is_corners_and_wall_band`, `pocket::rest_coverage_with_rough_reaches_small_tool_inset` (acceptance 22), `pocket::rest_of_that_clears_nothing_warns`, `pocket::rest_footprint_stays_inside_region` (S14).
 - `pocket::step_down_from_tool_when_operation_unset`, `pocket::depth_below_bottom_is_error`.
 - `pocket::levels_rapid_at_safe_z_before_plunging` (port: "level transitions rapid at safe Z").
+- `pocket::helix_in_narrow_slot_falls_back_to_ramp` (7 mm slot), `pocket::helix_in_small_hole_falls_back_to_plunge` (7 mm hole) (acceptance 27).
 
 **dc-cam — drill**
 - `drill::simple_is_one_plunge_and_retract`, `drill::dwell_adds_dwell_move_at_bottom`, `drill::peck_full_retracts_above_hole_top`, `drill::chip_break_retracts_by_gap`, `drill::peck_depth_from_tool_step_down`, `drill::last_peck_is_shallower_never_deeper`.
@@ -1067,11 +1328,11 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::fitted_arcs_pass_s6`, `safety::arc_off_the_vertices_fails_s6`, `safety::arc_over_90_degrees_fails_s12` (S12).
 
 **dc-gcode — emit, canned cycles, posts**
-- `emit::drill_simple_writes_g81_per_hole_after_g98_and_ends_g80` (port: `testCannedSimpleG81`), `emit::dwell_writes_g82_with_p` (port), `emit::peck_writes_g83_with_q` (port), `emit::chip_break_writes_g73_with_q` (port), `emit::grbl_never_writes_canned_cycles` (port: `testRegressionGrblNoCannedCycles`), `emit::canned_cycles_off_by_default`, `emit::mixed_cycles_expand_whole_operation_with_warning`, `emit::expanded_dwell_writes_g4`, `emit::mach3_dwell_is_milliseconds`.
+- `emit::drill_simple_writes_g81_per_hole_after_g98_and_ends_g80` (port: `testCannedSimpleG81`), `emit::dwell_writes_g82_with_p` (port), `emit::peck_writes_g83_with_q` (port), `emit::chip_break_writes_g73_with_q` (port), `emit::grbl_never_writes_canned_cycles` (port: `testRegressionGrblNoCannedCycles`), `emit::canned_cycles_off_by_default`, `emit::mixed_cycles_expand_whole_operation_with_warning`, `emit::expanded_dwell_writes_g4`, `emit::uccnc_dwell_is_milliseconds` (UCCNC's dwell is milliseconds, Mach3's seconds; slice 17, #164).
 - `safety::canned_cycle_expansion_matches_drill_toolpath` (S11), `safety::canned_cycle_below_floor_fails_s1`, `safety::canned_cycle_rapid_into_uncut_fails`.
 - `safety::ramp_steeper_than_plunge_fails_s10`, `safety::helix_feed_scaled_passes_s10`.
 - `safety::pocket_cut_outside_region_fails_s9` (on the toolpath via `footprint`).
-- `post::six_definitions_validate`, `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect` (acceptance 36), `post::mach3_and_uccnc_number_every_line`, `post::generic_strips_trailing_zeros`, `post::generic_refuses_m6_mode`, `post::no_definition_has_g43`, `post::every_definition_line_is_cited_in_readme` (a test that scans the README for each non-placeholder header/footer/tool-change line).
+- `post::six_definitions_validate`, `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect` (acceptance 36), `post::mach3_numbers_every_line`, `post::uccnc_writes_no_line_numbers_percent_or_units_word`, `post::generic_strips_trailing_zeros`, `post::generic_refuses_m6_mode`, `post::linuxcnc_mach3_uccnc_refuse_m6_mode`, `post::canned_cycles_only_where_documented`, `post::no_definition_has_g43`, `post::every_definition_line_is_cited_in_readme` (a test that scans the README for each non-placeholder header/footer/tool-change line).
 - `emit::one_program_flag_writes_m6_on_grblhal`, `emit::one_program_flag_on_grbl_is_error`, `emit::programs_per_tool_flag_overrides_m6_mode_without_saving`.
 
 **dc-import — dxf**
@@ -1085,7 +1346,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 
 **dc-library**
 - `library::round_trip_is_byte_identical`, `library::add_detects_already_present`, `library::find_by_id_then_unique_name`, `library::ambiguous_name_is_error`, `library::validation_rules_from_upstream` (port of `parseToolLibraryFile` rules: positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)).
-- `fusion::zip_and_plain_json_both_read`, `fusion::flat_end_mill_maps_with_geometry_and_preset`, `fusion::inch_tool_converts_to_mm`, `fusion::chamfer_mill_is_v_bit_with_double_taper`, `fusion::drill_types_map_to_drill`, `fusion::two_presets_become_two_tools`, `fusion::no_presets_imports_with_feeds_unset`, `fusion::missing_feed_stays_none`, `fusion::stepover_length_becomes_fraction`, `fusion::use_stepdown_false_leaves_step_down_unset`, `fusion::unsupported_types_skipped_by_name`, `fusion::unknown_keys_are_ignored`, `fusion::not_a_library_is_error`, `fusion::sample_library_imports_every_supported_type_and_skips_the_rest` (the hand-written fixture: flat, ball, bull nose and slot mills, chamfer mill, drill, spot drill, counter sink, counter bore, reamer import; thread mill, tap, face, form, lollipop, dovetail and tapered mills, a turning tool, a probe and a holder skipped by name), `fusion::chamfer_mill_ta_45_is_a_90_degree_v_bit`, `fusion::drill_preset_without_v_f_imports_with_feed_unset`, `fusion::tool_number_is_read_when_non_zero`, `fusion::tool_number_zero_is_none`, `fusion::schema_version_below_11_is_rejected`.
+- `fusion::zip_and_plain_json_both_read`, `fusion::flat_end_mill_maps_with_geometry_and_preset`, `fusion::inch_tool_converts_to_mm`, `fusion::chamfer_mill_is_v_bit_with_double_taper`, `fusion::drill_types_map_to_drill`, `fusion::two_presets_become_two_tools`, `fusion::no_presets_imports_with_feeds_unset`, `fusion::missing_feed_stays_none`, `fusion::stepover_length_becomes_fraction`, `fusion::use_stepdown_false_leaves_step_down_unset`, `fusion::unsupported_types_skipped_by_name`, `fusion::unknown_keys_are_ignored`, `fusion::not_a_library_is_error`, `fusion::sample_library_imports_every_supported_type_and_skips_the_rest` (the hand-written fixture: flat, ball, bull nose and slot mills, chamfer mill, drill, spot drill, counter sink, counter bore, reamer import; thread mill, tap, face, form, lollipop, dovetail and tapered mills, a turning tool, a probe and a holder skipped by name), `fusion::chamfer_mill_ta_45_is_a_90_degree_v_bit`, `fusion::drill_preset_without_v_f_imports_with_feed_unset`, `fusion::tool_number_is_read_when_non_zero`, `fusion::tool_number_zero_is_none`, `fusion::schema_version_below_11_is_rejected`, `fusion::missing_description_names_tool_by_diameter_and_type` (slice 21, #152).
 
 **dreamcarve (integration, `tests/`)**
 - `cli::plaque_svg_exports_two_programs_in_order` (acceptance 18), `cli::plaque_dxf_exports_same_programs_as_svg`.
@@ -1106,7 +1367,7 @@ Ordered; each is one issue and one PR. Dependencies in brackets.
 1. **Sequence module and Profile on blocks.** `block.rs`, `sequence.rs`,
    `generate_profile` emitting blocks; O1–O10 tests; phase 1 goldens
    unchanged. Tests: dc-cam sequence group, `profile::one_shape_golden…`.
-2. **Format v7: model, migration, validation.** All new types with
+2. **Format v8: model, migration, validation** (v7 in the first draft; #106 took it). All new types with
    `Entry::Plunge`, `lead: None`, `CornerRelief::None` wired; `ToolKind::Drill`;
    `arc_fit_tolerance_mm`; `use_canned_cycles`; `SpindleDwell::units`.
    Tests: dc-project groups. [none]
