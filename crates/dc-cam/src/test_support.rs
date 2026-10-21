@@ -14,7 +14,53 @@
 
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use dc_geometry::{EPS_MM, approx_eq};
-use dc_project::{ProfileOp, Project};
+use dc_project::{Operation, PocketOp, ProfileOp, Project, ToolId};
+
+/// What [`assert_safe`] reads from an operation of any kind.
+pub trait OpLimits {
+    /// The tool the operation cuts with.
+    fn tool(&self) -> &ToolId;
+    /// Retract height above the stock top, mm.
+    fn safe_z_mm(&self) -> f64;
+    /// How far below the stock bottom the cut may go, mm.
+    fn through_cut_allowance_mm(&self) -> f64;
+}
+
+impl OpLimits for ProfileOp {
+    fn tool(&self) -> &ToolId {
+        &self.tool
+    }
+    fn safe_z_mm(&self) -> f64 {
+        self.safe_z_mm
+    }
+    fn through_cut_allowance_mm(&self) -> f64 {
+        self.through_cut_allowance_mm
+    }
+}
+
+impl OpLimits for PocketOp {
+    fn tool(&self) -> &ToolId {
+        &self.tool
+    }
+    fn safe_z_mm(&self) -> f64 {
+        self.safe_z_mm
+    }
+    fn through_cut_allowance_mm(&self) -> f64 {
+        self.through_cut_allowance_mm
+    }
+}
+
+impl OpLimits for Operation {
+    fn tool(&self) -> &ToolId {
+        Operation::tool(self)
+    }
+    fn safe_z_mm(&self) -> f64 {
+        Operation::safe_z_mm(self)
+    }
+    fn through_cut_allowance_mm(&self) -> f64 {
+        Operation::through_cut_allowance_mm(self)
+    }
+}
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -34,17 +80,17 @@ use dc_project::{ProfileOp, Project};
 ///    tool's feed rate.
 ///
 /// Panics with the offending move index on the first violation.
-pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
+pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &impl OpLimits) {
     let tool = project
         .tools
         .iter()
-        .find(|t| t.id == op.tool)
+        .find(|t| &t.id == op.tool())
         .expect("operation's tool is in the project");
     assert_safe_within(
         toolpath,
         &Limits {
-            safe_z_mm: project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm,
-            floor_z_mm: -op.through_cut_allowance_mm,
+            safe_z_mm: project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm(),
+            floor_z_mm: -op.through_cut_allowance_mm(),
             feed_mm_min: tool.feed_mm_min.expect("tool has a feed"),
             plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
         },

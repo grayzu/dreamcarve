@@ -25,7 +25,7 @@ use dc_geometry::{Rect, assert_approx_eq};
 #[allow(dead_code, reason = "the test uses only the timestamp")]
 mod clock;
 use dc_gcode::MachineMove;
-use dc_project::test_support::sample_pocket;
+use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
     CornerRelief, Entry, FeatureInstance, Loaded, MachiningOrder, Operation, OperationId,
     ProfileOp, Project, Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, load, save,
@@ -813,35 +813,66 @@ fn v7_project_exports_the_same_program() {
     assert!(!from_v7.is_empty());
 }
 
-/// Pocket, Drill and Engrave load and validate from this slice on, but
-/// their generators land in later slices. Until then an enabled one is an
-/// export error that names it, never a silent skip.
+/// Drill and Engrave load and validate, but their generators land in
+/// later slices. Until then an enabled one is an export error that names
+/// it, never a silent skip.
 #[test]
-fn export_refuses_pocket_until_its_slice_lands() {
-    let dir = work_dir("export_refuses_pocket_until_its_slice_lands");
+fn export_refuses_drill_until_its_slice_lands() {
+    let dir = work_dir("export_refuses_drill_until_its_slice_lands");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut drill = sample_drill();
+    drill.targets = project.operations[0].targets().to_vec();
+    drill.tool = project.operations[0].tool().clone();
+    project.operations.push(Operation::Drill(drill));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    // `check` runs the same build as `export`, so it says so first.
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert!(report.contains("not supported"), "{report}");
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_ne!(out.status.code(), Some(0), "export must fail");
+    let err = stderr(&out);
+    assert!(err.contains("`o3`"), "{err}");
+    assert!(err.contains("drill"), "{err}");
+    assert!(err.contains("not supported"), "{err}");
+    assert!(!dir.join("coaster.nc").exists(), "nothing written");
+}
+
+/// Functional spec capability 12, S9 (slice 4, #137): a project with an
+/// offset Pocket of the coaster before its cut-out exports one program,
+/// which the emitter's safety pass (S1–S7) accepted; `check` finds no
+/// error. The Pocket's rings are in the program at its 3 mm depth.
+#[test]
+fn pocket_exports_and_passes_safety() {
+    let dir = work_dir("pocket_exports_and_passes_safety");
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
     let mut pocket = sample_pocket();
     pocket.targets = project.operations[0].targets().to_vec();
     pocket.tool = project.operations[0].tool().clone();
-    project.operations.push(Operation::Pocket(pocket));
+    pocket.step_over_fraction = Some(0.4);
+    // Inside the part, so cut before the Profile frees it.
+    project.operations.insert(0, Operation::Pocket(pocket));
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
-    // `check` runs the same build as `export`, so it says so first; the
-    // project itself validates (no `error:` about a field).
     let check = run(&dir, &["check", "coaster.dcv"]);
     let report = format!("{}{}", stdout(&check), stderr(&check));
-    assert!(report.contains("1 error(s)"), "{report}");
-    assert!(report.contains("not supported"), "{report}");
-    assert!(!report.contains("operations[o2]"), "{report}");
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(" 0 error(s)"), "{report}");
+
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
-    assert_ne!(out.status.code(), Some(0), "export must fail");
-    let err = stderr(&out);
-    assert!(err.contains("`o2`"), "{err}");
-    assert!(err.contains("pocket"), "{err}");
-    assert!(err.contains("not supported"), "{err}");
-    assert!(!dir.join("coaster.nc").exists(), "nothing written");
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    assert!(program.contains("Pocket"), "the operation is named");
+    // Z is from the stock top (init's origin), so the pocket floor is -3.
+    assert!(
+        program.lines().any(|l| l.contains("Z-3")),
+        "the pocket reaches its depth"
+    );
 }
 
 /// The output extension is a setting in the `.dcv`, so a shared project

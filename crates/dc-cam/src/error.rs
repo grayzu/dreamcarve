@@ -125,12 +125,12 @@ pub enum CamError {
         /// Which rate is missing.
         field: FeedField,
     },
-    /// The tool is not a flat end mill and the side is Outside or Inside.
-    /// Those sides offset the path by half the diameter, which only a flat end mill cuts at every depth, so any
-    /// other cutter makes the part the wrong size (#67). Validation reports
-    /// this first.
+    /// The tool is not a flat end mill and the operation offsets by half
+    /// the diameter: an Outside or Inside Profile, or a Pocket. Only a flat
+    /// end mill cuts that offset at every depth, so any other cutter makes
+    /// the part the wrong size (#67). Validation reports this first.
     #[error(
-        "operation `{op}` cuts with tool `{tool}`, {cutter}; Profile needs a flat end mill, or the part comes out the wrong size"
+        "operation `{op}` cuts with tool `{tool}`, {cutter}; offsetting by half the diameter needs a flat end mill, or the part comes out the wrong size"
     )]
     CutterNotFlat {
         /// The operation.
@@ -147,6 +147,51 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
+    },
+    /// Neither the Pocket nor its tool sets a step-over fraction.
+    #[error("operation `{op}` has no step_over_fraction and tool `{tool}` sets none")]
+    MissingStepOver {
+        /// The operation.
+        op: OperationId,
+        /// The tool's name.
+        tool: String,
+    },
+    /// The step-over fraction in effect is not in (0, 1], or is so small
+    /// that one pass would need more than [`crate::pocket::MAX_RINGS`]
+    /// rings.
+    #[error(
+        "operation `{op}` has step-over fraction {step_over_fraction}; it must be more than 0 and at most 1"
+    )]
+    InvalidStepOver {
+        /// The operation.
+        op: OperationId,
+        /// The fraction in effect.
+        step_over_fraction: f64,
+    },
+    /// The operation asks for something this build does not generate yet.
+    /// Validation accepts it, so a project may carry it; export refuses it
+    /// rather than cutting something else.
+    #[error("operation `{op}` uses {feature}, which is not supported by this build yet")]
+    NotSupportedYet {
+        /// The operation.
+        op: OperationId,
+        /// The feature, as the user would name it (`a raster strategy`).
+        feature: String,
+    },
+    /// A Pocket's cuts would leave its region or enter an island (S9): the
+    /// tool's footprint along the toolpath covers `area_mm2` of material
+    /// the operation must not touch. A defect in the generator, never in
+    /// the user's project.
+    #[error(
+        "operation `{op}` would cut {area_mm2:.3} mm² outside the material of {shape}; no toolpath was produced"
+    )]
+    OffMaterial {
+        /// The operation.
+        op: OperationId,
+        /// The pocket's outline.
+        shape: ShapeRef,
+        /// How much of the footprint lies off the material, mm².
+        area_mm2: f64,
     },
     /// The step-down in effect is not a positive number, or is so small
     /// that the depth would need more than

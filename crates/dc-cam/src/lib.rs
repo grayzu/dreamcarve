@@ -13,8 +13,10 @@
 
 mod block;
 mod error;
+mod footprint;
 mod overlap;
 pub mod passes;
+pub mod pocket;
 mod profile;
 mod sequence;
 mod stock;
@@ -27,6 +29,8 @@ pub mod test_support;
 
 pub use block::CutBlock;
 pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
+pub use footprint::footprint;
+pub use pocket::generate_pocket;
 pub use profile::{Wall, generate_profile, traversal_is_ccw};
 pub use sequence::{SequenceInput, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
