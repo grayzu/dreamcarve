@@ -161,6 +161,7 @@ pub fn generate_engrave(
         stepover_mm: 0.0,
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
+        cut_before: &[],
     };
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
@@ -522,7 +523,9 @@ mod tests {
     }
 
     /// Spec step 3: without alternation every pass starts at the path's
-    /// first vertex: a retract to safe Z, a rapid back, and a plunge.
+    /// first vertex: a retract to safe Z, a rapid back, a rapid down to
+    /// 1 mm above the floor just cut, and a plunge (changed in #227: the
+    /// plunge started at safe Z).
     #[test]
     fn no_alternation_retracts_between_passes() {
         let p = l_project();
@@ -532,7 +535,7 @@ mod tests {
         assert_points(&laps[0].points, &L_FORWARD);
         assert_points(&laps[1].points, &L_FORWARD);
         let between = &tp.moves[laps[0].last + 1..laps[1].first];
-        assert_eq!(between.len(), 3, "{between:?}");
+        assert_eq!(between.len(), 4, "{between:?}");
         assert!(between[0].is_rapid(), "{between:?}");
         assert_approx_eq!(between[0].to.x, 30.0, TOL);
         assert_approx_eq!(between[0].to.y, 30.0, TOL);
@@ -541,9 +544,44 @@ mod tests {
         assert_approx_eq!(between[1].to.x, 20.0, TOL);
         assert_approx_eq!(between[1].to.y, 20.0, TOL);
         assert_approx_eq!(between[1].to.z, SAFE_Z_MM, TOL);
-        assert_eq!(between[2].kind, MoveKind::Linear);
-        assert_approx_eq!(between[2].to.z, PASS_Z_MM[1], TOL);
-        assert_approx_eq!(between[2].feed_mm_min.unwrap(), PLUNGE_MM_MIN, TOL);
+        assert!(between[2].is_rapid(), "{between:?}");
+        assert_approx_eq!(between[2].to.z, PASS_Z_MM[0] + 1.0, TOL);
+        assert_eq!(between[3].kind, MoveKind::Linear);
+        assert_approx_eq!(between[3].to.z, PASS_Z_MM[1], TOL);
+        assert_approx_eq!(between[3].feed_mm_min.unwrap(), PLUNGE_MM_MIN, TOL);
+    }
+
+    /// #227, S2: every pass reaches its plunge by a rapid straight down
+    /// from safe Z, and plunges at the plunge rate only from 1 mm above
+    /// the stock top (the first pass) or 1 mm above the floor the pass
+    /// before cut at the path's start (a later pass after a lift).
+    #[test]
+    fn later_pass_rapids_to_just_above_its_floor() {
+        let p = l_project();
+        let (tp, _) = generate(&p, &engrave_op(&p, 0.5));
+        let downs: Vec<(usize, Move)> = tp
+            .moves
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(i, m)| m.is_rapid() && *i > 0 && m.to.z < tp.moves[i - 1].to.z - EPS_MM)
+            .collect();
+        let expected = [
+            (THICKNESS_MM + 1.0, PASS_Z_MM[0]),
+            (PASS_Z_MM[0] + 1.0, PASS_Z_MM[1]),
+        ];
+        assert_eq!(downs.len(), expected.len(), "{:?}", tp.moves);
+        for (&(i, rapid), (rapid_z, pass_z)) in downs.iter().zip(expected) {
+            assert_eq!(
+                tp.moves[i - 1],
+                Move::rapid(Point3::new(20.0, 20.0, SAFE_Z_MM))
+            );
+            assert_eq!(rapid, Move::rapid(Point3::new(20.0, 20.0, rapid_z)));
+            assert_eq!(
+                tp.moves[i + 1],
+                Move::linear(Point3::new(20.0, 20.0, pass_z), PLUNGE_MM_MIN)
+            );
+        }
     }
 
     /// Capability 15: any cutter, as with Profile's On line, and the cutter

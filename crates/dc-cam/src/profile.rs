@@ -619,6 +619,7 @@ pub fn generate_profile(
         stepover_mm: 0.0,
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
+        cut_before: &[],
     };
 
     // Warnings name contours by their position in the cut order, which
@@ -1609,6 +1610,34 @@ mod tests {
         }
     }
 
+    /// #227, S2: with `entry: plunge` the tool rapids straight down from
+    /// safe Z to 1 mm above the stock top and plunges at the plunge rate
+    /// from there, not from safe Z through the air. A later pass after a
+    /// lift (the rect's next pass follows at its start, so none here) would
+    /// stop 1 mm above the floor already cut.
+    #[test]
+    fn plunge_entry_rapids_to_just_above_the_stock() {
+        let p = rect_project();
+        let (tp, _) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+        let first = tp.moves[0];
+        assert!(first.is_rapid(), "{first:?}");
+        assert_approx_eq!(first.to.z, SAFE_Z_MM, TOL);
+        let (rapid, plunge) = (tp.moves[1], tp.moves[2]);
+        assert_eq!(
+            rapid,
+            Move::rapid(Point3::new(first.to.x, first.to.y, THICKNESS_MM + 1.0)),
+            "{:?}",
+            &tp.moves[..4]
+        );
+        assert_eq!(
+            plunge,
+            Move::linear(
+                Point3::new(first.to.x, first.to.y, PASS_Z_MM[0]),
+                PLUNGE_MM_MIN
+            )
+        );
+    }
+
     #[test]
     fn inside_rect_offsets_inward() {
         let p = rect_project();
@@ -2085,7 +2114,12 @@ mod tests {
         let mut descents = 0;
         for pair in tp.moves.windows(2) {
             let (prev, mv) = (pair[0], pair[1]);
-            if mv.to.z < prev.to.z - EPS_MM {
+            if mv.is_rapid() && mv.to.z < prev.to.z - EPS_MM {
+                // #227: from safe Z straight down to 1 mm above the stock.
+                assert_approx_eq!(prev.to.z, SAFE_Z_MM, TOL);
+                assert_approx_eq!(mv.to.z, THICKNESS_MM + 1.0, TOL);
+                assert!(prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM, "vertical");
+            } else if mv.to.z < prev.to.z - EPS_MM {
                 descents += 1;
                 assert_eq!(mv.kind, MoveKind::Linear, "{mv:?}");
                 assert_approx_eq!(mv.feed_mm_min.unwrap(), PLUNGE_MM_MIN, EPS_MM);
@@ -2105,6 +2139,14 @@ mod tests {
             if !mv.is_rapid() {
                 continue;
             }
+            if mv.to.z < prev.to.z - EPS_MM {
+                // #227: down from safe Z to 1 mm above the stock, in Z
+                // alone, before a plunge.
+                assert_approx_eq!(prev.to.z, SAFE_Z_MM, TOL);
+                assert_approx_eq!(mv.to.z, THICKNESS_MM + 1.0, TOL);
+                assert!(prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM);
+                continue;
+            }
             assert_approx_eq!(mv.to.z, SAFE_Z_MM, TOL);
             if prev.to.z < SAFE_Z_MM - EPS_MM {
                 retracts += 1;
@@ -2117,9 +2159,10 @@ mod tests {
             }
         }
         assert_eq!(retracts, 2, "one retract after each contour");
-        // Hole done, retract, rapid across at safe Z, outer starts.
+        // Hole done, retract, rapid across at safe Z, outer starts; and a
+        // rapid down before each contour's first plunge (#227).
         let rapids: Vec<&Move> = tp.moves.iter().filter(|m| m.is_rapid()).collect();
-        assert_eq!(rapids.len(), 4);
+        assert_eq!(rapids.len(), 4 + 2);
     }
 
     #[test]
@@ -2357,6 +2400,8 @@ mod tests {
     /// start at safe Z, then per pass a plunge at the plunge rate and one
     /// lap at the feed rate, then a rapid up. The expected lap is built here
     /// from the offset contour directly, not through the sequencer.
+    /// (changed in #227: the first plunge starts from a rapid straight down
+    /// to 1 mm above the stock, not from safe Z.)
     #[test]
     fn one_shape_golden_is_byte_identical_after_sequence() {
         let p = rect_project();
@@ -2375,7 +2420,10 @@ mod tests {
             centre.into_polyline()
         };
         let start = path.vertices()[0].point();
-        let mut expected = vec![Move::rapid(Point3::new(start.x, start.y, SAFE_Z_MM))];
+        let mut expected = vec![
+            Move::rapid(Point3::new(start.x, start.y, SAFE_Z_MM)),
+            Move::rapid(Point3::new(start.x, start.y, THICKNESS_MM + 1.0)),
+        ];
         for z in PASS_Z_MM {
             expected.push(Move::linear(
                 Point3::new(start.x, start.y, z),

@@ -157,7 +157,8 @@ of an outline (VCarve's "Ramps"; Fusion's "Ramp Type"). `init` writes a
 15° ramp; a project upgraded from format version 7 keeps `"plunge"`, so it
 cuts exactly as before.
 
-- `"plunge"`: straight down at the tool's plunge rate. A bit that does
+- `"plunge"`: straight down at the tool's plunge rate, from 1 mm above the
+  stock or the floor already cut there (the bit rapids that far). A bit that does
   not cut well at its centre, as most do not, takes this hard, and it
   leaves a mark on the wall where it went in.
 - `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag, going down `angle_deg`

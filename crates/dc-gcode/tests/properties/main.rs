@@ -132,11 +132,11 @@ proptest! {
 
     /// Pocket: offset and raster at any angle, any wall pass, allowance,
     /// step-over, entry (plunge, ramp, helix) and corner relief. Ignored
-    /// until its four bugs are fixed: a raster link into an island (#232),
-    /// arc fitting off a long chord (#233), a micrometre ramp leg (#234)
-    /// and a ring too small to write (#235).
+    /// until its three remaining bugs are fixed: a raster link into an
+    /// island (#232), a micrometre ramp leg (#234) and a ring too small to
+    /// write (#235). Arc fitting off a long chord (#233) is fixed.
     #[test]
-    #[ignore = "#232, #233, #234, #235"]
+    #[ignore = "#232, #234, #235"]
     fn random_valid_pockets_never_panic_and_pass_safety(project in projects::pocket_project()) {
         exports_safely(&project)?;
     }

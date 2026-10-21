@@ -1199,6 +1199,47 @@ fn pocket_exports_and_passes_safety() {
     );
 }
 
+/// #229, S12: an On line Profile of a plain 7 mm or 20 mm square exports
+/// with arc fitting on (the default). The square's four corners lie on one
+/// circle, and its sides are far longer than the tolerance allows a chord
+/// to be, so the lap stays four straight moves; before, it was written as
+/// four 90° arcs bowing off the line and the export failed S9.
+#[test]
+fn on_line_square_exports_with_arc_fitting_on() {
+    for size_mm in [7.0, 20.0] {
+        let dir = work_dir(&format!(
+            "on_line_square_exports_with_arc_fitting_on_{size_mm}"
+        ));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let mut project = load_file(&dcv).project;
+        assert!(project.arc_fit_tolerance_mm.is_some(), "arc fitting is on");
+        for def in project.definitions.values_mut() {
+            def.profiles = vec![Polyline::rect(Point::new(20.0, 20.0), size_mm, size_mm)];
+        }
+        for op in project.operations.iter_mut().map(as_profile_mut) {
+            op.side = Side::OnLine;
+            op.tabs = None;
+            op.depth_mm = Some(1.0);
+        }
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{size_mm} mm square: {}",
+            stderr(&out)
+        );
+        let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+        let arcs: Vec<&str> = program
+            .lines()
+            .filter(|l| code_words(l).iter().any(|w| w == "G2" || w == "G3"))
+            .collect();
+        assert!(arcs.is_empty(), "{size_mm} mm square has arcs: {arcs:?}");
+    }
+}
+
 /// Slice 6 (#163), capabilities 12 and 13, S9 and S14 end to end: a 40 ×
 /// 20 mm rectangle with a 6 × 6 mm notch inside the coaster, roughed with
 /// the coaster's 6.35 mm bit at a 0.5 mm allowance and then rest-machined
@@ -4299,8 +4340,10 @@ fn engrave_exports_and_passes_safety() {
         "the border's passes run the same way: {b1:?} then {b2:?}"
     );
 
-    // Safety: rapids at safe Z (5 mm above the stock top), nothing below
-    // the stock bottom.
+    // Safety: rapids at safe Z (5 mm above the stock top), except a rapid
+    // straight down from there to 1 mm above the stock top or above the
+    // pass before's floor, before a plunge (#227); nothing below the stock
+    // bottom.
     for (k, m) in moves.iter().enumerate() {
         let z = m.to.z.expect("Z is known after the first move");
         assert!(
@@ -4308,7 +4351,16 @@ fn engrave_exports_and_passes_safety() {
             "move {k} below the stock: {m:?}"
         );
         if !m.kind.is_cut() {
-            assert!(z >= 5.0 - 1e-6, "rapid {k} below safe Z: {m:?}");
+            let down = m.from.x == m.to.x && m.from.y == m.to.y && m.from.z >= Some(5.0 - 1e-6);
+            let floor = if down { -0.5 + 1.0 } else { 5.0 };
+            assert!(z >= floor - 1e-6, "rapid {k} below safe Z: {m:?}");
+            if down && z < 5.0 - 1e-6 {
+                let next = &moves[k + 1];
+                assert!(
+                    next.kind.is_cut() && next.to.z < Some(z),
+                    "a plunge follows rapid {k}: {next:?}"
+                );
+            }
         }
     }
 }
