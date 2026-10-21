@@ -269,6 +269,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dc-library"
+version = "0.1.1"
+dependencies = [
+ "dc-project",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "thiserror",
+]
+
+[[package]]
 name = "dc-project"
 version = "0.1.1"
 dependencies = [
@@ -295,6 +306,7 @@ dependencies = [
  "dc-gcode",
  "dc-geometry",
  "dc-import",
+ "dc-library",
  "dc-project",
  "serde",
  "serde_json",

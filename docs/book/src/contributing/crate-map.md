@@ -22,6 +22,7 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | Crate | Owns | Depends on |
 | --- | --- | --- |
 | `dreamcarve` | The command line. All file, terminal, clock and exit-code handling. | every `dc-` crate |
+| `dc-library` | The tool library: its file format, load and save, adding, finding and removing tools. Bytes in, values out; the binary owns `tools.json`. | `dc-project` |
 | `dc-gcode` | G-code emission and the safety pass that parses every emitted program. | `dc-cam`, `dc-project`, `dc-geometry` |
 | `dc-cam` | Toolpath generators. Pure functions from project and operation to toolpath plus warnings. | `dc-project`, `dc-geometry` |
 | `dc-import` | Importers. Flips imported Y into the internal Y-up frame. | `dc-project`, `dc-geometry` |
@@ -91,6 +92,14 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | `safety.rs` | Checks S1–S7 on the parsed program and measures its extents. Every violation is an error. |
 | `error.rs` | `ExportError`. |
 
+### `dc-library` (`crates/dc-library/src/`)
+
+| Module | Contents |
+| --- | --- |
+| `library.rs` | `Library`, `LibraryTool`, `LibraryToolId` (`lt<n>`), `LIBRARY_VERSION`; `load` (strict, validated), `save`, `add` (`Added` or `AlreadyPresent`), `replace`, `find` (by id, else unique name), `remove`. Validation rules ported from PureCutCNC `src/toolLibrary.ts`. |
+| `fusion.rs` | Fusion 360 library import. Recognises a Fusion file today; the import itself lands in phase 2 slice 21. |
+| `error.rs` | `LibraryError`. |
+
 ### `dreamcarve` (`crates/dreamcarve/src/`)
 
 | Module | Contents |
@@ -99,6 +108,8 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | `init.rs` | `init`: import and the default project. |
 | `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares. |
 | `check.rs` | `check`. |
+| `config.rs` | The user config directory and `config.toml`; `config path`. |
+| `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: reads and writes `tools.json` and, for `add`, the project. |
 
 Behaviour tests for the binary are in `crates/dreamcarve/tests/`.
 `quick_start.rs` runs the commands of the

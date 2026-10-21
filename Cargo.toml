@@ -9,6 +9,7 @@ members = [
     "crates/dc-cam",
     "crates/dc-gcode",
     "crates/dc-import",
+    "crates/dc-library",
     "crates/dreamcarve",
     "tools/check-headers",
     "tools/doc-figures",
@@ -30,6 +31,7 @@ dc-project = { path = "crates/dc-project", version = "0.1.1" }
 dc-cam = { path = "crates/dc-cam", version = "0.1.1" }
 dc-gcode = { path = "crates/dc-gcode", version = "0.1.1" }
 dc-import = { path = "crates/dc-import", version = "0.1.1" }
+dc-library = { path = "crates/dc-library", version = "0.1.1" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.
 serde = { version = "1.0", features = ["derive"] }
