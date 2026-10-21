@@ -14,6 +14,14 @@ use crate::polyline::{Polyline, Vertex};
 /// `flatten_tolerance_mm` default.
 pub const FLATTEN_TOLERANCE_DEFAULT_MM: f64 = 0.01;
 
+/// The fraction of the tolerance kurbo is asked to flatten within (#225).
+/// kurbo's bound is approximate, "not absolutely guaranteed" in its own
+/// docs: on random cubics a polyline flattened at the tolerance strays up
+/// to 1.34 × it from the curve. At half the tolerance the worst measured
+/// is 0.66 × it, for about √2 times as many segments. The property test
+/// `flatten_stays_within_tolerance` guards the bound.
+pub const KURBO_FLATTEN_SAFETY: f64 = 0.5;
+
 /// Flattens `path` into one polyline per subpath, with no vertex or
 /// segment further than `tolerance_mm` from the curve. Coordinates pass
 /// through unchanged: the caller has already transformed, scaled, and
@@ -24,7 +32,7 @@ pub const FLATTEN_TOLERANCE_DEFAULT_MM: f64 = 0.01;
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline> {
     let mut out = Vec::new();
     let mut current: Vec<Point> = Vec::new();
-    kurbo::flatten(path, tolerance_mm, |el| match el {
+    kurbo::flatten(path, tolerance_mm * KURBO_FLATTEN_SAFETY, |el| match el {
         kurbo::PathEl::MoveTo(p) => {
             finish(&mut out, std::mem::take(&mut current), false);
             current.push(Point::new(p.x, p.y));

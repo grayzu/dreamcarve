@@ -30,8 +30,8 @@ mod arc;
 use crate::{ImportError, ImportWarning};
 use arc::ArcPiece;
 use dc_geometry::{
-    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Point, Polyline, Rect, Transform,
-    Vertex,
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, MAX_COORDINATE_MM, Point, Polyline,
+    Rect, Transform, Vertex,
 };
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId};
 use kurbo::{Affine, BezPath, PathEl};
@@ -617,7 +617,7 @@ fn build_profiles(path: &MmPath, tolerance_mm: f64) -> Vec<Polyline> {
                 let mut curve = BezPath::new();
                 curve.move_to(current);
                 curve.push(*el);
-                kurbo::flatten(&curve, tolerance_mm, |flat| {
+                kurbo::flatten(&curve, tolerance_mm * KURBO_FLATTEN_SAFETY, |flat| {
                     if let PathEl::LineTo(p) = flat {
                         profile.push(point(p), None);
                     }
