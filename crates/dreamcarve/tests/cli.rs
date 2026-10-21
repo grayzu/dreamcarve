@@ -2121,7 +2121,8 @@ fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
 /// on it run again against the new one. A tool with no spindle speed is
 /// fine while the router is switched by hand; switching to grblHAL, which
 /// sets the speed with `S`, must report validation's missing-rpm problem,
-/// fail, and write nothing.
+/// fail, and write nothing. `--reset-settings` drops the manual control,
+/// which a plain `--post` keeps (#277).
 #[test]
 fn post_override_revalidates() {
     let dir = work_dir("post_override_revalidates");
@@ -2139,7 +2140,16 @@ fn post_override_revalidates() {
     assert_eq!(out.status.code(), Some(0), "manual post passes: {report}");
 
     let before = std::fs::read(&dcv).expect("dcv readable");
-    let out = run(&dir, &["export", "coaster.dcv", "--post", "grblhal"]);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--reset-settings",
+        ],
+    );
     let stderr = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "exits 1: {stderr}");
     assert!(
@@ -2156,7 +2166,10 @@ fn post_override_revalidates() {
 
 /// #61, the reverse: a problem that only the embedded post-processor
 /// causes (here an extension that would overwrite the project) fails
-/// `check`, but `export --post grblhal` replaces that post and exports.
+/// `check`, but `export --post grblhal --reset-settings` replaces that
+/// post and its settings and exports. A plain `--post` keeps the
+/// extension the user set (#277), so it fails the same check and writes
+/// nothing.
 #[test]
 fn post_override_to_valid_post_succeeds() {
     let dir = work_dir("post_override_to_valid_post_succeeds");
@@ -2170,6 +2183,21 @@ fn post_override_to_valid_post_succeeds() {
     let report = format!("{}{}", stdout(&out), stderr(&out));
     assert_eq!(out.status.code(), Some(1), "embedded post fails: {report}");
 
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--post", "grblhal"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "kept extension: {}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("`dcv`"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(&dcv).expect("dcv readable"),
+        before,
+        "the .dcv is untouched"
+    );
+
     let out = run(
         &dir,
         &[
@@ -2177,6 +2205,7 @@ fn post_override_to_valid_post_succeeds() {
             "coaster.dcv",
             "--post",
             "grblhal",
+            "--reset-settings",
             "--date",
             FIXED_DATE,
         ],

@@ -66,11 +66,13 @@ It saves the project with the latest version and exports, and says which
 version it came from:
 
 ```text
-Updated coaster.dcv: post-processor grblhal v1 → v2, with its default settings.
+Updated coaster.dcv: post-processor grblhal v1 → v2, keeping your settings.
 ```
 
-The settings are reset to the new version's defaults, so set any you had
-changed again.
+Your [settings](#settings) are kept, so an upgrade changes only
+`definition_version`. To take every setting from the new version's defaults
+instead, add `--reset-settings`
+([Switching keeps your settings](#switching-keeps-your-settings)).
 
 | Version | What changed |
 | --- | --- |
@@ -113,14 +115,47 @@ the same way, and the message offers the bundled one closest to it.
   grblHAL is the default.
 - `dreamcarve export part.dcv --post grbl` switches an existing project to
   the latest version of GRBL, saves the project with it, and exports. Your
-  settings, such as a longer spindle dwell, are reset to GRBL's defaults.
+  settings, such as a longer spindle dwell, are kept where GRBL can use
+  them ([Switching keeps your settings](#switching-keeps-your-settings)).
   The project is checked against the new post-processor, so the result
   can differ from what `check` reported. For example, a tool with no
-  `rpm` passes with manual spindle control but fails after switching to a
-  bundled post-processor, which sets the speed itself. If export fails,
-  nothing is written and the project keeps its old post-processor.
+  `rpm` passes with manual spindle control but fails after
+  `--post grblhal --reset-settings`, which turns automatic spindle control
+  back on, so the program sets the speed itself. If export fails, nothing
+  is written and the project keeps its old post-processor.
 
 An unknown id is a usage error (exit code 2) that lists the known ones.
+
+### Switching keeps your settings
+
+`export --post` decides each of the six [settings](#settings) by one rule:
+
+- A setting still at the old post-processor's default takes the new one's
+  default. grblHAL's `file_extension` `nc` becomes `ngc` when you switch to
+  LinuxCNC.
+- A setting you changed is kept: a `spindle_on_dwell_s` of 6, an extension
+  of `gcode`, manual spindle control.
+- Unless the new post-processor cannot use it. Then it takes the new
+  default, and `export` says so, with both values and why. Two settings can
+  be reset this way: `tool_change_mode: "m6"` on a post-processor without
+  `M6` (every one but grblHAL), and `use_canned_cycles: true` on one without
+  [canned cycles](#canned-cycles) (all but LinuxCNC and Mach3):
+
+```text
+Updated coaster.dcv: post-processor grblhal v2 → grbl v2, keeping your settings.
+  Reset tool_change_mode "m6" → "separate_programs": post-processor grbl has no M6 tool change.
+```
+
+Your [configured](configuration.md) `tool_change_mode` applies only when
+the mode is reset; a mode the switch keeps stays as it is.
+
+`--reset-settings` (only with `--post`) takes every setting from the new
+post-processor's defaults, with your configured `tool_change_mode` on
+top, as `init` writes them:
+
+```text
+dreamcarve export coaster.dcv --post grblhal --reset-settings
+```
 
 ## What a program contains
 

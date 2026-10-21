@@ -941,8 +941,57 @@ pub fn switch_post(
     old: &PostProcessorRef,
     id: &str,
 ) -> Result<(PostProcessorRef, Vec<SettingReset>), PostProcessorError> {
-    let _ = old.definition()?;
-    Ok((latest_definition(id)?.default_ref(), Vec::new()))
+    let old_default = old.definition()?.default_ref();
+    let target = latest_definition(id)?;
+    let post = target.post_processor();
+    let mut new = target.default_ref();
+    let mut resets = Vec::new();
+
+    if old.file_extension != old_default.file_extension {
+        new.file_extension.clone_from(&old.file_extension);
+    }
+    if old.spindle_control != old_default.spindle_control {
+        new.spindle_control = old.spindle_control;
+    }
+    // Bit equality, not a tolerance: the question is whether the user
+    // changed the number, and an unchanged one is the default's own bits,
+    // read from the same JSON text.
+    if old.spindle_on_dwell_s.to_bits() != old_default.spindle_on_dwell_s.to_bits() {
+        new.spindle_on_dwell_s = old.spindle_on_dwell_s;
+    }
+    if old.decimal_places != old_default.decimal_places {
+        new.decimal_places = old.decimal_places;
+    }
+    if old.tool_change_mode != old_default.tool_change_mode {
+        if old.tool_change_mode == ToolChangeMode::M6 && !post.tool_change.has_m6() {
+            resets.push(SettingReset {
+                setting: "tool_change_mode",
+                from: setting_text(&old.tool_change_mode),
+                to: setting_text(&new.tool_change_mode),
+                reason: ResetReason::NoM6,
+            });
+        } else {
+            new.tool_change_mode = old.tool_change_mode;
+        }
+    }
+    if old.use_canned_cycles != old_default.use_canned_cycles {
+        if old.use_canned_cycles && post.canned_cycles.is_none() {
+            resets.push(SettingReset {
+                setting: "use_canned_cycles",
+                from: setting_text(&old.use_canned_cycles),
+                to: setting_text(&new.use_canned_cycles),
+                reason: ResetReason::NoCannedCycles,
+            });
+        } else {
+            new.use_canned_cycles = old.use_canned_cycles;
+        }
+    }
+    Ok((new, resets))
+}
+
+/// `value` as the `.dcv` writes it: `"m6"`, `true`.
+fn setting_text(value: &impl Serialize) -> String {
+    serde_json::to_string(value).unwrap_or_default()
 }
 
 /// [`PostProcessorError::UnknownId`] for `id`, listing the bundled ids
