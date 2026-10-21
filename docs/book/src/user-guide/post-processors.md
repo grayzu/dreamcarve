@@ -79,6 +79,7 @@ instead, add `--reset-settings`
 | grblHAL v2, GRBL v2 | The first line is `( Project: coaster )` (GRBL: `; Project: coaster`) instead of `( coaster )` (`; coaster`). Some controllers act on a comment that starts with a keyword, such as `(MSG, …)` or `(ABORT, …)` on grblHAL, so the project name never starts one. Nothing else in the program changes. |
 | grblHAL v3, GRBL v3 | The header has `G80` and then `G40` after `G94`, and so does the setup written again after every pause and tool change. They cancel a drilling cycle and cutter compensation left on by an earlier job or by commands you typed, so neither changes the program's moves. Nothing else in the program changes. See [Modes the header cancels](#modes-the-header-cancels). |
 | LinuxCNC v2, Mach3 v2, UCCNC v2 | The header no longer has `G49` (`G90 G17 G40 G80 G94`; Mach3 `G90 G94 G17 G40 G80`). If a tool length offset was active when you set Z zero, version 1's `G49` cancelled it and moved every Z by its length, which could cut deeper than the drawing. Nothing else in the program changes. Upgrade a version 1 project with `export --post <id>`. |
+| Mach3 v3, UCCNC v3 | The header has a `G50` line and a `G69` line after the modal line, and so does the setup written again after every pause. `G50` sets every axis scale back to 1 and `G69` cancels a rotation, so a `G51` or `G68` left on by an earlier program or by commands you typed cannot scale, mirror or rotate the job. Nothing else in the program changes, except that Mach3's line numbers after them move on by 20. Upgrade a version 1 or 2 project with `export --post <id>`. See [Controllers compared](#controllers-compared). |
 
 A file that names a post-processor or a version this DreamCarve does not
 have is refused when it is loaded, with the line and column of the value
@@ -434,7 +435,7 @@ program is exactly what it was before they existed.
 | Setting | What it does | Like |
 | --- | --- | --- |
 | `clearance_mm` | Above the stock top. Moves between parts, between operations, before a tool change and at the end rise to it. Moves between the passes of one part stay at that operation's `safe_z_mm`. It must be at least every enabled operation's `safe_z_mm`. | VCarve's Clearance gap (Z1); Fusion's clearance height, with `safe_z_mm` as its retract height. |
-| `tool_change_machine_z_mm` | A height in machine coordinates. Before every tool-change stop and at the end of every program, the bit lifts to it with `G53 G0 Z…`. grblHAL and GRBL only. | Fusion's tool-change retract to the machine's home Z. |
+| `tool_change_machine_z_mm` | A height in machine coordinates. Before every tool-change stop and at the end of every program, the bit lifts to it with `G53 G0 Z…`. grblHAL, GRBL and LinuxCNC only. | Fusion's tool-change retract to the machine's home Z. |
 | `park` | `{ "x_mm": …, "y_mm": … }`, in project coordinates (from the stock's front left corner, like the shapes). At the end the bit rises to the clearance height, moves there, then lifts to the machine Z if set. | VCarve's Home position, without its Z. |
 
 ```json
@@ -481,13 +482,13 @@ switched on. DreamCarve cannot check that, so when a program has a lift
 `export` says:
 
 ```text
-Before you start: home the machine; this program moves to machine Z -5.000 mm (G53).
+Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). Z must home upward, or soft limits must be on ($20=1).
 ```
 
 and the program's header says it too (on GRBL v3, after `;`):
 
 ```text
-( Lifts to machine Z with G53: home the machine before running )
+( Lifts to machine Z with G53: home the machine before running. Needs Z to home upward, or soft limits on with $20=1 )
 ```
 
 Turn soft limits on (`$20=1`): then a machine Z outside the travel stops
@@ -496,6 +497,20 @@ into a limit. A machine that homes Z downward, to the bottom of its travel
 (possible on GRBL built with `HOMING_FORCE_SET_ORIGIN`, or grblHAL with
 "force set origin"), has no machine Z below 0 inside its travel, so the
 setting cannot be used there.
+
+LinuxCNC needs no setting for either. It refuses to run a program until
+the machine is homed, unless your configuration sets `[TRAJ]
+NO_FORCE_HOMING = 1`; leave it unset. Its note and header say that
+instead of `$20=1`:
+
+```text
+Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.
+( Lifts to machine Z with G53: home the machine before running. Soft limits apply only once homed: leave NO_FORCE_HOMING unset )
+```
+ Once homed, its soft limits
+(`[AXIS_Z] MIN_LIMIT`, `MAX_LIMIT`) always apply, and a lift outside them
+stops the program with "Linear move on line … would exceed Z's … limit"
+before the machine moves.
 
 **Choosing the machine Z.** grblHAL and GRBL home Z to the top of its
 travel and call that just below machine Z 0: `−pulloff` (`$27`), or 0
@@ -509,23 +524,52 @@ that would move the bit down, straight down at the spot it is over.
 write it as 0 (under 0.0005 mm in a millimetre program, 0.00127 mm in an
 inch one).
 
+On LinuxCNC, machine Z after homing is your configuration's `[JOINT_n]
+HOME` (usually 0), and the Z travel is its `MIN_LIMIT` to `MAX_LIMIT`.
+Stepconf and PnCconf set Z up from −100 to 0 mm (−4 to 0 in) with home
+at 0, the top, so the rule is the same as on grblHAL: below 0, and above
+your clearance height. Not every configuration puts 0 at the top, so take
+the value from the machine itself: home it, jog Z to the height you want,
+and read Z with the display in machine coordinates (in AXIS, View >
+Show Machine Position). A configuration whose Z travel is all above 0
+cannot use the setting, since `check` accepts only values below 0.
+
 With manual spindle control, the program stops for you to switch the
 router off right after the lift. You may jog there, so before the tool
 change it lifts to the machine Z again.
 
 **Only where `G53` is documented.** The lift is written only for a
 post-processor whose definition documents `G53`
-(`work_coordinates.machine_command`): grblHAL and GRBL, every version,
-checked against their source (definitions README, "Machine-coordinate
-moves"). On LinuxCNC, Mach3, UCCNC and generic, `check` and `export` refuse
-`tool_change_machine_z_mm` until their documents are checked; the
-clearance height and the park point work on every post-processor.
+(`work_coordinates.machine_command`): grblHAL, GRBL and LinuxCNC, every
+version, checked against their source (definitions README,
+"Machine-coordinate moves"). On LinuxCNC, which has no `M6` here, every
+program of a run per tool ends with the lift, before `M5` and `M2`:
+
+```text
+Z20.000
+X0.000 Y0.000
+G53 G0 Z-5.000
+M5
+M2
+```
+
+On Mach3, UCCNC and generic, `check` and `export` refuse
+`tool_change_machine_z_mm` (`machine_z_needs_g53`): their manuals do not
+say what `G53` does with a tool length offset (and on UCCNC with `G51`
+scaling), and machine Z after homing is a setting with no convention to
+check against. Generic is for controllers nobody has checked, so it never
+will. The clearance height and the park point work on every
+post-processor.
 
 **Canned cycles.** A Drill whose holes are separate parts crosses between
-them at the clearance height, which a canned cycle's `G98` return cannot
-do (it returns to the height of the first hole). With a clearance height
-set, such a Drill is written as plain moves, with the warning
-`canned_cycle_expanded` (`clearance_height`).
+them at the clearance height. With canned cycles on, it rapids over the
+first hole at the clearance height before `G98`, so every cycle returns to
+the clearance height ([Drill: canned cycles](drill.md#canned-cycles)). A
+Drill that crosses between some holes at the clearance height and between
+others at safe Z (separate parts and a part with several holes) is written
+as one `G98` series per part, each from safe Z and ended by `G80`, with the
+rise to the clearance height between them: `G98` returns every hole of a
+series to one height.
 
 ## grblHAL and GRBL compared
 
@@ -549,7 +593,7 @@ canned cycle, and no `M6`. The sources, line by line, are in
 | --- | --- | --- | --- | --- |
 | Checked against | LinuxCNC 2.9 G-code and M-code references, and its source | *Using Mach3Mill* 1.84 and the Mach3 configuration guide | UCCNC user's manual 1.0047 | NIST RS274/NGC version 3 (NISTIR 6556) |
 | Extension | `.ngc` | `.tap` | `.txt` | `.nc` |
-| Header | `G90 G17 G40 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G80`, `G91.1`, units, `G54` | `G90 G17 G40 G80 G94`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
+| Header | `G90 G17 G40 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G80`, `G50`, `G69`, `G91.1`, units, `G54` | `G90 G17 G40 G80 G94`, `G50`, `G69`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
 | Line numbers | No | Every line, `N10` up in tens | No | No |
 | Spin-up wait | `G4 P3.000` (seconds) | `G4 P3.000` (seconds) | `G4 P3000` (milliseconds) | `G4 P3` (seconds) |
 | Numbers | `10.500` | `10.500` | `10.500` | `10.5` |
@@ -565,7 +609,26 @@ it would move every Z by its length, possibly into the spoilboard. So the
 program leaves it as you set it. If your setup applies an offset, set it
 before you set Z zero, and do not change it until the program ends. Version
 1 of these three post-processors did write `G49`; see
-[Versions](#versions). `G91.1` makes arc
+[Versions](#versions).
+
+On Mach3 and UCCNC, `G50` sets every axis's scale factor back to 1 and
+`G69` cancels a coordinate rotation. Both controllers keep a scale set
+with `G51` (or Mach3's Scale DRO) and a rotation set with `G68` until
+something cancels them, and the end of a program does not. A `G51 Z-1`
+left from an earlier job would mirror every Z, so a retract would become a
+plunge. The program therefore cancels both before it moves, and again
+after every pause. This also cancels a scale or rotation you set on
+purpose: a DreamCarve program always cuts the project at its own size and
+angle, so make a change of size or angle in the project. Version 2 and
+earlier of these two post-processors do not cancel them; see
+[Versions](#versions). LinuxCNC has no scaling or rotation codes (it
+rotates only through the work offset, which is part of the zero you set),
+and neither does the generic RS274/NGC post-processor, so neither header
+writes them. grblHAL does have `G51` scaling, which its header does not
+cancel yet (#316): do not leave a `G51` set on grblHAL. A soft reset
+clears it.
+
+`G91.1` makes arc
 centres (`I`, `J`) relative to the arc's start, which is how DreamCarve
 writes them. On Mach3 this is a setting you can change, so the header sets
 it.
@@ -672,7 +735,9 @@ What is written, and when DreamCarve writes plain moves instead, is in
 
 - `G98` once, so the bit returns to safe Z after every hole, one cycle
   line per hole with `X Y Z R` and `Q` or `P`, `F` on the first, and `G80`
-  at the end.
+  at the end. With a clearance height, the cycles start from it, or there
+  is one such series per part when the Drill also has parts with several
+  holes.
 - `export` reads every cycle line back as the moves the controller makes,
   from the controller's documentation, and checks those moves with the
   same safety rules as plain moves, and against the Drill's own moves

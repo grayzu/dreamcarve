@@ -2009,7 +2009,10 @@ command the definition has (`G81 → drill_command`, `G82 →
 drill_with_dwell_command`, `G83 → peck_drill_command`, `G73 →
 chip_break_drill_command`): rapid to the first hole's XY at safe Z (Z
 first, then XY, as phase 1 rapids), write `retract_mode` (`G98`: return to
-the initial Z, which is safe Z) once, then one line per hole: the command
+the initial Z, which is safe Z) once (changed in #305: at the clearance
+height, when the project sets one and every link between holes is at it;
+changed in #314: once per part when the links are at both heights; see
+"As built (#283)"), then one line per hole: the command
 word (modal), `X Y`, `Z` (bottom, machine coordinates), `R` (retract
 plane), `Q` (peck for `G83`/`G73`), `P` (dwell seconds for `G82`), `F`
 (plunge rate, once). Every line carries its own `Z`, `R` and `Q`/`P`,
@@ -2060,6 +2063,15 @@ toolpath move for move (S6), a Z-only rapid inside a hole matching
 within the re-entry gap stated in the definition
 (`canned_cycles.reentry_gap_mm`, a new definition field, `null` where no
 fixed gap is documented); S1 and S15 still check where that rapid ends.
+In a Drill written as cycles, a toolpath rapid in Z alone may also end
+partway along one rapid of the controller's in Z alone at its XY, when
+the toolpath goes on the same way along that line by a rapid in Z alone,
+or ends there going up (changed in #305: cycles from the clearance height
+go straight from it to `R` and from the bottom back to it, where the
+toolpath stops at safe Z). A series of cycles ends with `G80`: any other
+motion, or a `G53` lift, while a cycle is the motion mode is
+unparseable, and the next cycle after `G80` starts a new series from the
+Z it is at (changed in #314: other motion also ended a series).
 Only controllers whose documentation states these semantics get
 canned-cycle commands in their definition.
 
@@ -2079,8 +2091,8 @@ documents disagreed with the spec's expectations in several rows):
 | Controller | Sources (README) | As written |
 | --- | --- | --- |
 | LinuxCNC | LinuxCNC 2.9.10 `g-code.html`, `m-code.html`, `overview.html`, `hal_manualtoolchange(1)`; source on branch `2.9` and `master` | header `( Project: {programName} )`, `G90 G17 G40 G49 G80 G94`, `G91.1`, `G21`/`G20`, `G54`; `M3 S`; `G4 P` seconds; no `%`; no line numbers; no `M6`, no `G43 H`; canned `G81`, `G82` only, with `G98` and `G80`; footer `M5`, `M2`; `.ngc` |
-| Mach3 | Using Mach3Mill 1.84-A2; Mach3 Install & Config v3 | `%` (never numbered), no `O0001` (an `O` word is a subroutine label and "The O line may not have a line number", 10.5.2, 10.8.7); line numbers `N10` step 10 on every line but the `%`; `G90 G94 G17 G40 G49 G80`, `G91.1`, `G21`/`G20`, `G54`; `G4 P` **seconds** (the unit is a setting, shown as seconds in both manuals, and `G82 P` is documented in seconds); no `M6`; canned `G81`, `G82` only; footer `M5`, `M30`; `.tap` |
-| UCCNC | UCCNC user's manual 1.0047 (software 1.2113) | no `%`, no `O0001`, no line numbers (the manual documents none of them); `G90 G17 G40 G49 G80 G94`, `G54`; no `G20`/`G21` (not in the code list: lengths are in the profile's units, so the program has no units word and `export` warns `units_set_by_controller`); `G4 P` **milliseconds** (the default); no `M6`; no canned cycles; footer `M5`, `M30`; `.txt` |
+| Mach3 | Using Mach3Mill 1.84-A2; Mach3 Install & Config v3 | `%` (never numbered), no `O0001` (an `O` word is a subroutine label and "The O line may not have a line number", 10.5.2, 10.8.7); line numbers `N10` step 10 on every line but the `%`; `G90 G94 G17 G40 G49 G80`, `G91.1`, `G21`/`G20`, `G54` (changed in #286: version 2 has no `G49`; changed in #312: version 3 adds `G50` and `G69`, each on its own line, after the modal line, to cancel a `G51` scale and a `G68` rotation, which `M30` does not reset, Using Mach3Mill 1.84 10.7.15, 10.7.20, 10.8.1); `G4 P` **seconds** (the unit is a setting, shown as seconds in both manuals, and `G82 P` is documented in seconds); no `M6`; canned `G81`, `G82` only; footer `M5`, `M30`; `.tap` |
+| UCCNC | UCCNC user's manual 1.0047 (software 1.2113) | no `%`, no `O0001`, no line numbers (the manual documents none of them); `G90 G17 G40 G49 G80 G94`, `G54` (changed in #286: version 2 has no `G49`; changed in #312: version 3 adds `G50` and `G69` after the modal line, user's manual 4.1.1 p. 58-60, since "Reset on file load G68 and G51" is only a checkbox, 3.6 p. 35); no `G20`/`G21` (not in the code list: lengths are in the profile's units, so the program has no units word and `export` warns `units_set_by_controller`); `G4 P` **milliseconds** (the default); no `M6`; no canned cycles; footer `M5`, `M30`; `.txt` |
 | generic | RS274/NGC (NIST IR 6556, Kramer, Proctor, Messina 2000) | `( )` comments, no line numbers, `G90`, `G17`, `G94`, `G21`/`G20`, `G54`, `M3 S`, `G4 P` seconds, no `M6`, no canned cycles, footer `M5`, `M30`, trailing zeros off, `.nc` |
 
 Rules for all four (README, "Rules for the slice 17 definitions"):
@@ -2099,7 +2111,13 @@ Rules for all four (README, "Rules for the slice 17 definitions"):
   same header in version 2 of each (#171).
 - **Header modal codes.** `G40`, `G49`, `G80` and `G91.1` are accepted
   in any program and written again after every pause; `G90.1` is
-  refused (#154).
+  refused (#154). (changed in #312: `G50` and `G69` are written again
+  after every pause too, and accepted only from a definition whose header
+  has them, Mach3 v3 and UCCNC v3, alone on a line, in the header or the
+  setup after a stop; anywhere else the export fails with
+  `MisplacedSetupWord`. `G51` and `G68` are refused everywhere. LinuxCNC,
+  GRBL and RS274/NGC have no such codes; grblHAL's `G50`/`G51` are
+  #316.)
 
 `SpindleDwell` gains `units: Seconds | Milliseconds` so a millisecond
 dwell (UCCNC) is written right; the bundled phase 1 definitions carry
@@ -2916,9 +2934,20 @@ tool offsets. The homed envelope is negative: grblHAL
 `−pulloff`), GRBL `limits.c` 382 (Z homes to `−pulloff`) and `system.c`
 348 (soft limits allow `[max_travel, 0]`). So the validation rule is
 `tool_change_machine_z_mm < 0`, and the chapter says to stay at least the
-pull-off below 0. The four other controllers' documents were not checked
-for `G53` for this addendum, so they stay `null` until a follow-up cites
-the section for each (as the slice 17 tables do) and sets it.
+pull-off below 0. LinuxCNC v1 and v2 are `"G53"`, set in place and
+re-pinned (changed in #306: they were `null` because their documents had
+not been checked). The README cites the 2.9 interpreter at `a33293f`:
+`interp_array.cc` 109 (group 0), `interp_check.cc` 103-108 (`G0` or
+`G1`, absolute), `interp_convert.cc` 4855-4857 (no cutter compensation),
+`interp_find.cc` 170-200 with `get_abs_position` (no work, `G92` or tool
+length offset), and 2749-2830 (program units); and for machine Z,
+`emctaskmain.cc` 2302-2303 (no program before homing, by default),
+`motion/command.c` 1011-1025 (a move past a soft limit is refused before
+it runs) and stepconf's and pncconf's Z travel of −100 to 0 mm. The
+validation rule and S16 are unchanged. Mach3, UCCNC and generic stay
+`null`, with the reason in the README: their manuals do not say what
+`G53` does with a tool length offset (UCCNC: nor with `G51` scaling), and
+machine Z after homing is a user setting there; generic cannot be checked.
 
 **Validation** (errors): `clearance_mm` below any enabled operation's
 `safe_z_mm` (`Problem::ClearanceBelowSafeZ`, at the field, naming the
@@ -2942,7 +2971,9 @@ work Z unknown. At the end, before that lift: rapid at the clearance
 height (or the last operation's safe Z) to `park` if set. XY moves before
 the lift, at a work Z the safety pass can check, rather than after it.
 `export` prints `Before you start: home the machine; this program moves to
-machine Z <v> (G53).` when the program has a lift. The README's "Tool
+machine Z <v> (G53). Z must home upward, or soft limits must be on
+($20=1).` when the program has a lift (changed in #308: the soft-limits
+sentence added). The README's "Tool
 changes" paragraph "The tool-change height is not set" is replaced.
 
 **Safety** (`dc-gcode::safety`, `parse`): S16 as in the functional spec;
@@ -2993,6 +3024,72 @@ above:
   the clearance height, which `G98` cannot follow, so with a clearance
   height above safe Z it is written as moves with
   `CannedExpansion::ClearanceHeight`. Holes of one instance keep cycles.
+  (Changed in #305: such a Drill is written as cycles from the clearance
+  height; see the next item. Only a Drill whose links are at both
+  heights is still written as moves with that reason. Changed in #314:
+  that Drill is written as a series per part; see the item after next.)
+- Canned cycles from the clearance height (#305). `G98` returns each hole
+  to the Z before the first cycle of the series (LinuxCNC 2.9
+  `interp_cycles.cc` 926-931 and 976, the initial level `cycle_il`, reset
+  by any motion that is not a cycle, `interp_convert.cc` 3818-3819; [G]
+  `#gcode:g98-g99`; Mach3Mill 10.7.29, whose "just before the canned
+  cycle started" gives the same height in a `G98` series, since each line
+  starts where the one before returned). So when the project sets a
+  clearance height and every link between holes is at it (holes that are
+  separate parts, or one hole), `canned_plan` takes it as the initial Z:
+  the rapid over the first hole is at the clearance height, where the
+  operation starts, and `G98` brings every hole back to it. Links at safe
+  Z keep safe Z as the initial Z, as before; links at both fail the
+  comparison (`ClearanceHeight`). The controller then rapids from the
+  clearance height straight to `R` (preliminary motion, [G]
+  `#gcode:preliminary-motion`, Mach3Mill 10.7.24.1) and from the bottom
+  straight back up, where the toolpath stops at safe Z both ways. The
+  toolpath is unchanged; `expansion_is_toolpath` and S6 instead take
+  rapids along one vertical line in one direction as one rapid
+  (`join_rapids`; `safety::match_rapid_on_the_way`), only for a Drill
+  written as cycles, so plain programs are held to every move as before.
+  Tests: `emit::canned_cycles_at_the_clearance_height` (the plaque on
+  LinuxCNC, `G81` and `G82`),
+  `emit::canned_motion_from_the_clearance_height_equals_plain_program`
+  (`G81`, `G82`, `G83`, `G73` on the test definition, the same pecks),
+  `emit::canned_cycles_with_the_clearance_height_at_safe_z`,
+  `emit::canned_cycles_from_the_clearance_height_with_the_lift_on_linuxcnc`
+  (with #306's `G53` lift: `G80`, the park, the lift, the footer),
+  `emit::clearance_height_expands_canned_cycles` (links at both heights),
+  `safety::canned_cycles_from_clearance_match_the_toolpath`,
+  `safety::vertical_rapids_join_only_along_a_cycle_rapid`.
+- A series per part (#314). A Drill linked at the clearance height
+  between parts and at safe Z between the holes of one part is written as
+  one `G98` series per run of holes linked at safe Z. Each series is a
+  rapid over its first hole at safe Z, `G98`, its cycle lines (the code,
+  `X Y Z R`, `Q`/`P` and `F` on the first line again), and `G80`; between
+  series the tool rises with `G0 Z<clearance>`, crosses at it and comes
+  down to safe Z. `G80`, like any motion that is not a cycle, resets the
+  initial level (LinuxCNC `interp_convert.cc` 3818-3819 in
+  `convert_motion`, which runs `G80` too; [G] `#gcode:g98-g99`), and a
+  new series needs its `Z` and `R` again (`interp_cycles.cc` 729-734,
+  920-923; Mach3Mill 10.7.24, sticky numbers). Every line of every series
+  starts at safe Z, so Mach3Mill 10.7.29's "just before the canned cycle
+  started" gives safe Z however it is read. The motion is the plain
+  program's move for move: the toolpath already stops at safe Z on the
+  way down from the clearance height, so nothing is joined. `G99` is not
+  used: it returns to `R`, below safe Z. `canned_plan` splits the holes at
+  each link at the clearance height (`CycleLines::series`), and
+  `expansion_is_toolpath` adds the rise after a series and the descent
+  to safe Z before the next. Links at any other height keep the fallback
+  (`ClearanceHeight`); a Drill from `generate_drill` never has them. The
+  parser refuses any motion or `G53` lift while a cycle is the motion
+  mode, so S11 never relies on a series ended without `G80`, which
+  Mach3Mill does not document. Tests:
+  `emit::canned_series_per_part_at_the_clearance_height` (`G81`, `G82`,
+  `G83`, `G73` on the test definition: four series, crossings at Z 20
+  between parts and at Z 5 within the pair, the same pecks, the plain
+  program's motion), `emit::canned_series_per_part_on_linuxcnc_and_mach3`
+  (mm and inch, and with #306's lift on LinuxCNC),
+  `emit::clearance_height_expands_canned_cycles` (links at a third
+  height), `safety::series_per_part_match_the_toolpath` (refuses a series
+  without its `G80`, one from the clearance height, and `G99`),
+  `parse::a_series_of_cycles_ends_with_g80`.
 - Corner relief. A Pocket's notches, sequenced one corner at a time after
   its main path, are reached at the clearance height when the corner is of
   another instance than the one before, and the first one always (where
@@ -3020,7 +3117,27 @@ above:
   S6 holds them to the toolpath, whose links the sequencer writes and
   `sequence::links_between_instances_rise_to_clearance` checks. (4) A
   program with a machine Z has the header comment `( Lifts to machine Z
-  with G53: home the machine before running )`; others are unchanged.
+  with G53: home the machine before running. Needs Z to home upward, or
+  soft limits on with $20=1 )`; others are unchanged (changed in #308:
+  the soft-limits sentence added).
+- Soft limits (#308). On GRBL or grblHAL with Z homing downward
+  (`HOMING_FORCE_SET_ORIGIN`, grblHAL "force set origin"), every negative
+  machine Z is below the travel: with soft limits on the controller
+  alarms before the lift moves, with them off the lift drives Z down. The
+  export note and the header comment name both conditions. DreamCarve
+  cannot read the homing direction or `$20`, so it is a note, not a
+  refusal. Header bytes change only for a program with a machine Z, so
+  no definition version is added. The wording is per controller, since
+  `$20` is GRBL's: on LinuxCNC (#306), whose soft limits always apply once
+  homed and which runs no program unhomed unless `[TRAJ] NO_FORCE_HOMING`
+  is set, the header says `Soft limits apply only once homed: leave
+  NO_FORCE_HOMING unset` and the note `LinuxCNC applies soft limits only
+  once homed: leave [TRAJ] NO_FORCE_HOMING unset.`
+  (`dc_gcode::machine_lift_limits_note`). Tests:
+  `emit::machine_z_header_comment`,
+  `emit::machine_z_header_comment_on_linuxcnc`,
+  `cli::export_machine_z_note_names_soft_limits`,
+  `cli::export_machine_z_note_on_linuxcnc`.
 - The estimate (A4). A `G53` lift has no work-coordinate motion, so
   `dc-gcode::estimate` leaves its distance, and that of the rise after it
   from an unknown Z, out of the rapid distance.

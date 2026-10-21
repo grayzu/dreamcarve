@@ -243,7 +243,7 @@ as it did before format version 12.
 | Field | Meaning |
 | --- | --- |
 | `clearance_mm` | Millimetres above the stock top. Moves between parts and between operations, a tool change, and the end rise to it; moves between the passes of one part stay at the operation's `safe_z_mm`. At least every enabled operation's `safe_z_mm`, or `check` reports `clearance_below_safe_z`. `null`: each operation's `safe_z_mm`, as before. |
-| `tool_change_machine_z_mm` | Millimetres, machine coordinates. Before each tool-change stop and at the end of each program, the program lifts to it with `G53 G0 Z…`. Below 0 (`machine_z_not_below_home`), and only on a post-processor that documents `G53`, grblHAL and GRBL (`machine_z_needs_g53`). Needs a homed machine. |
+| `tool_change_machine_z_mm` | Millimetres, machine coordinates. Before each tool-change stop and at the end of each program, the program lifts to it with `G53 G0 Z…`. Below 0 (`machine_z_not_below_home`), and only on a post-processor that documents `G53`: grblHAL, GRBL and LinuxCNC (`machine_z_needs_g53` on Mach3, UCCNC and generic). Needs a homed machine. |
 | `park` | `{ "x_mm": …, "y_mm": … }`, project coordinates. Where the program ends, at the clearance height (or the highest safe Z), before the lift. `null`: the program ends over the last cut. |
 
 See [Post-processors](post-processors.md#heights-clearance-tool-change-and-park)

@@ -2,8 +2,17 @@
 
 The quick-start coaster (`fixtures/coaster.svg`: a 90 mm circle on 100 mm
 stock, 11.8 mm thick, cut through in 4 mm passes at feed 1500, plunge 500,
-18000 RPM) exported with the bundled `mach3` post-processor, version 2.
+18000 RPM) exported with the bundled `mach3` post-processor, version 3.
 
+- Recaptured in #312 for version 3, whose header cancels scaling and
+  rotation with `G50` and `G69`, each on a line of its own after the
+  modal line: a `G51` or `G68` left set by MDI or an earlier program
+  would scale, mirror or rotate every coordinate. Only those two lines
+  were added. Mach3 numbers every line, so every line number after them
+  moves on by 20. The version 2 program is kept as
+  `crates/dreamcarve/tests/expected/coaster-mach3-v2.tap`, which a
+  version 2 project must still export
+  (`cli::mach3_v2_project_still_exports_byte_identically`).
 - Recaptured in #286 for version 2, whose header has no `G49`
   (`N30 G90 G94 G17 G40 G80`): a Z zero set with a tool length offset
   active includes it, so cancelling it moved every Z. Only that line

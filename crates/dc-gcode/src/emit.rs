@@ -225,9 +225,12 @@ pub enum CannedExpansion {
     /// controller does (#153), so this means a toolpath or hole records
     /// from elsewhere, or numbers rounded too far apart.
     MotionDiffers,
-    /// The project's clearance height links holes of different parts
-    /// above safe Z (#283), and a cycle's `G98` returns to the height of
-    /// its first hole: the controller's motion would not be the toolpath.
+    /// The toolpath links some holes above safe Z, and not as the cycles
+    /// can follow: a series of cycles' `G98` returns every hole to the Z
+    /// before its first cycle. Holes linked all at the clearance height
+    /// (#305), all at safe Z, or at the clearance height between parts and
+    /// safe Z within one (one series per part, #314) keep their cycles, so
+    /// a Drill from [`dc_cam::generate_drill`] never has this reason.
     ClearanceHeight,
 }
 
@@ -276,7 +279,7 @@ impl std::fmt::Display for CannedExpansion {
             ),
             Self::ClearanceHeight => write!(
                 f,
-                "the holes are linked at the clearance height, which a canned cycle's G98 return does not follow"
+                "the holes are linked above safe Z at a height no series of canned cycles returns to"
             ),
         }
     }
@@ -617,8 +620,10 @@ fn emit_enabled(
     // height set, so no other program's bytes change.
     if heights.machine_z_mm.is_some() {
         let comment = format!(
-            "{} {MACHINE_LIFT_COMMENT} {}",
-            post.program.comment_prefix, post.program.comment_suffix
+            "{} {} {}",
+            post.program.comment_prefix,
+            machine_lift_comment(&post.id),
+            post.program.comment_suffix
         );
         w.line(comment.trim_end());
     }
@@ -778,7 +783,15 @@ fn emit_enabled(
         // the controller's motion for them is the toolpath; otherwise as
         // its moves, with a warning when cycles were asked for. Never
         // both for one operation.
-        let written = match canned_plan(&w, op, tool, toolpath, holes, safe_z_mm)? {
+        let written = match canned_plan(
+            &w,
+            op,
+            tool,
+            toolpath,
+            holes,
+            safe_z_mm,
+            heights.clearance_z_mm,
+        )? {
             CannedPlan::NotAsked => w.toolpath(op, toolpath)?,
             CannedPlan::Expand(reason) => {
                 warnings.push(ExportWarning::CannedCycleExpanded {
@@ -788,7 +801,7 @@ fn emit_enabled(
                 w.toolpath(op, toolpath)?
             }
             CannedPlan::Cycles(lines) => {
-                w.cycles(&lines, safe_z_mm)?;
+                w.cycles(&lines)?;
                 Written::default()
             }
         };
@@ -1014,8 +1027,46 @@ impl Lifts {
     }
 }
 
-/// The header comment of a program that lifts with `G53` (#283).
-const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running";
+/// The start of the header comment of a program that lifts with `G53`
+/// (#283).
+const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running.";
+
+/// The header comment of a program that lifts with `G53` on the
+/// definition `post_id` (#283): home the machine, then what keeps a lift
+/// outside the travel from moving (#308; definitions README,
+/// "Machine-coordinate moves"). On grblHAL and GRBL, where a machine that
+/// homes Z downward has every negative machine Z below the travel, Z
+/// homing upward or soft limits on (`$20=1`). On LinuxCNC, whose soft
+/// limits always apply once homed, homing that is not skipped with
+/// `NO_FORCE_HOMING`. No `( ) ;` inside, which would end the comment
+/// early; `$` starts a GRBL system command only at the start of a line.
+fn machine_lift_comment(post_id: &str) -> String {
+    let limits = match post_id {
+        "grblhal" | "grbl" => Some("Needs Z to home upward, or soft limits on with $20=1"),
+        "linuxcnc" => Some("Soft limits apply only once homed: leave NO_FORCE_HOMING unset"),
+        _ => None,
+    };
+    limits.map_or_else(
+        || MACHINE_LIFT_COMMENT.to_owned(),
+        |limits| format!("{MACHINE_LIFT_COMMENT} {limits}"),
+    )
+}
+
+/// What the export note of a program that lifts with `G53` on the
+/// definition `post_id` adds after "home the machine" (#308): the
+/// controller's own condition for a lift outside the travel to stop before
+/// it moves, as in [`machine_lift_comment`]. `None` for a definition that
+/// has no such check documented.
+#[must_use]
+pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
+    match post_id {
+        "grblhal" | "grbl" => Some("Z must home upward, or soft limits must be on ($20=1)."),
+        "linuxcnc" => Some(
+            "LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.",
+        ),
+        _ => None,
+    }
+}
 
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under
@@ -1062,20 +1113,37 @@ enum CannedPlan {
     Cycles(CycleLines),
 }
 
-/// A Drill as canned-cycle lines: rapid to the first hole at safe Z, the
-/// retract mode, one line per hole, the cancel.
+/// A Drill as canned-cycle lines: one or more series, each a rapid to its
+/// first hole at the initial Z, the retract mode, one line per hole, the
+/// cancel; between series, a rise to the clearance height (#314).
 #[derive(Debug)]
 struct CycleLines {
-    /// The first hole's centre at safe Z, project space.
-    first: Point3,
-    /// The last hole's centre at safe Z, where the cycles leave the tool.
-    last: Point3,
+    /// In cut order. One, unless the toolpath links its holes at the
+    /// clearance height between parts and at safe Z within one: then one
+    /// per run of holes linked at safe Z (#314).
+    series: Vec<Series>,
+    /// With more than one series, the clearance height, project space,
+    /// which the tool rises to after each series but the last, and crosses
+    /// at to the next.
+    rise_z_mm: Option<f64>,
     /// `G98`.
     retract_mode: &'static str,
     /// `G80`.
     cancel: String,
     /// The plunge rate, as the `F` number is written.
     feed: String,
+}
+
+/// One series of canned cycles: `G98` returns each of its holes to the Z
+/// the tool is at before its first cycle, the initial Z.
+#[derive(Debug)]
+struct Series {
+    /// The first hole's centre at the initial Z, project space: safe Z, or
+    /// the clearance height when every link between holes is at it (#305).
+    first: Point3,
+    /// The last hole's centre at the initial Z, where the series leaves the
+    /// tool.
+    last: Point3,
     /// One per hole, in cut order.
     holes: Vec<CycleLine>,
 }
@@ -1123,6 +1191,19 @@ fn command_of(cycles: &CannedCycles, cycle: Cycle) -> Option<&str> {
 /// definition's re-entry gap for a peck's re-entry or chip-break retract.
 /// Anything else is written as moves, with the reason when cycles were
 /// asked for. The safety pass checks the written cycles again (S11).
+///
+/// #305: `G98` returns each hole to the Z the tool was at before the
+/// first cycle of the series, so the cycles start from the height the
+/// toolpath links its holes at: the clearance height `clearance_z_mm`
+/// when every link is at it (holes that are separate parts, or one hole),
+/// otherwise safe Z.
+///
+/// #314: when the links are at both heights, the clearance height between
+/// parts and safe Z between the holes of one part, each run of holes
+/// linked at safe Z is a series of its own from safe Z, and between series
+/// the tool rises to the clearance height, crosses, and comes down to safe
+/// Z over the next run's first hole. Links at any other height fail the
+/// comparison and are written as moves (`CannedExpansion::ClearanceHeight`).
 fn canned_plan(
     w: &Writer<'_>,
     op: &Operation,
@@ -1130,6 +1211,7 @@ fn canned_plan(
     toolpath: &Toolpath,
     holes: Option<&[DrillHole]>,
     safe_z_mm: f64,
+    clearance_z_mm: Option<f64>,
 ) -> Result<CannedPlan, ExportError> {
     use CannedExpansion as Why;
     let post = w.post;
@@ -1201,30 +1283,105 @@ fn canned_plan(
             p,
         });
     }
-    let at_safe = |hole: &DrillHole| Point3::new(hole.centre.x, hole.centre.y, safe_z_mm);
-    let (Some(first), Some(last)) = (holes.first(), holes.last()) else {
-        return expand(Why::NoHoleRecords);
+    let links: Vec<f64> = link_heights_mm(toolpath).collect();
+    let at = |z_mm: f64, height_mm: f64| (z_mm - height_mm).abs() <= EPS_MM;
+    let (initial_z_mm, split_at) = match clearance_z_mm {
+        // #305: one series from the clearance height.
+        Some(clearance_mm) if links.iter().all(|&z| at(z, clearance_mm)) => (clearance_mm, None),
+        // #314: one series per run of holes linked at safe Z, from it.
+        Some(clearance_mm)
+            if links.len() + 1 == holes.len()
+                && links
+                    .iter()
+                    .all(|&z| at(z, clearance_mm) || at(z, safe_z_mm)) =>
+        {
+            (safe_z_mm, Some(clearance_mm))
+        }
+        _ => (safe_z_mm, None),
     };
+    // Whether the series follow every link: all at the initial Z, or, with
+    // a series per part, at safe Z or the clearance height.
+    let links_followed = split_at.is_some() || links.iter().all(|&z| at(z, initial_z_mm));
+    let at_initial = |hole: &DrillHole| Point3::new(hole.centre.x, hole.centre.y, initial_z_mm);
+    let mut series: Vec<Series> = Vec::new();
+    for (k, (hole, line)) in holes.iter().zip(lines).enumerate() {
+        // Linked to the hole before at the clearance height: a new series.
+        let crosses = k > 0
+            && split_at
+                .is_some_and(|clearance_mm| links.get(k - 1).is_some_and(|&z| at(z, clearance_mm)));
+        match series.last_mut() {
+            Some(current) if !crosses => {
+                current.last = at_initial(hole);
+                current.holes.push(line);
+            }
+            _ => series.push(Series {
+                first: at_initial(hole),
+                last: at_initial(hole),
+                holes: vec![line],
+            }),
+        }
+    }
+    if series.is_empty() {
+        return expand(Why::NoHoleRecords);
+    }
     let plan = CycleLines {
-        first: at_safe(first),
-        last: at_safe(last),
+        rise_z_mm: split_at.filter(|_| series.len() > 1),
+        series,
         retract_mode: "G98",
         cancel: cycles.cancel_command.trim().to_owned(),
         feed: w.number(plunge_mm_min / transform.mm_per_unit())?,
-        holes: lines,
     };
-    if expansion_is_toolpath(w, &plan, toolpath, plunge_mm_min, gap_mm)? {
+    if expansion_is_toolpath(w, &plan, toolpath, plunge_mm_min, gap_mm, clearance_z_mm)? {
         Ok(CannedPlan::Cycles(plan))
-    } else if toolpath
-        .moves
-        .iter()
-        .any(|m| m.is_rapid() && m.to.z > safe_z_mm + EPS_MM)
-    {
-        // #283: links between parts at the clearance height.
+    } else if !links_followed {
+        // #283, #314: links at a height no series of cycles returns to.
         expand(Why::ClearanceHeight)
     } else {
         expand(Why::MotionDiffers)
     }
+}
+
+/// The Z of every move of `toolpath` across the work but its first: the
+/// heights its holes are linked at, mm, project space.
+fn link_heights_mm(toolpath: &Toolpath) -> impl Iterator<Item = f64> + '_ {
+    toolpath.moves.windows(2).filter_map(|pair| match pair {
+        [from, to] if from.to.xy().distance_to(to.to.xy()) > EPS_MM => Some(to.to.z),
+        _ => None,
+    })
+}
+
+/// `steps`, from Z `start_z`, with each run of rapids that keep going the
+/// same way along the hole's vertical line joined into one: the
+/// controller does not stop between them, and the motion is the same
+/// (#305).
+fn join_rapids(start_z: f64, steps: &[HoleStep]) -> Vec<HoleStep> {
+    let mut joined: Vec<HoleStep> = Vec::with_capacity(steps.len());
+    // The Z before the last step in `joined`, and after it.
+    let (mut before, mut z) = (start_z, start_z);
+    for &step in steps {
+        // A rapid to where the tool already is moves nothing: the clearance
+        // height equal to safe Z.
+        if matches!(step, HoleStep::Rapid(to) if (to - z).abs() <= EPS_MM) {
+            continue;
+        }
+        if let (HoleStep::Rapid(to), Some(HoleStep::Rapid(last))) = (step, joined.last_mut()) {
+            let same_way = (*last - before) * (to - *last) > 0.0;
+            if same_way {
+                *last = to;
+                z = to;
+                continue;
+            }
+        }
+        match step {
+            HoleStep::Rapid(to) | HoleStep::Feed(to) => {
+                before = z;
+                z = to;
+            }
+            HoleStep::Dwell(_) => before = z,
+        }
+        joined.push(step);
+    }
+    joined
 }
 
 /// One thing the tool does at a hole, project Z, mm.
@@ -1238,22 +1395,36 @@ enum HoleStep {
 
 /// Whether the motion the controller makes for `plan`'s lines, from the
 /// numbers as written, is `toolpath`: each hole's arrival over its centre
-/// at safe Z, then its moves in Z and dwells, in the same order, each Z
-/// within one unit in the last place, a rapid inside a hole already cut
-/// within the re-entry gap `gap_mm`, every cut at the plunge rate.
+/// at the initial Z, then its moves in Z and dwells, in the same order,
+/// each Z within one unit in the last place, a rapid inside a hole
+/// already cut within the re-entry gap `gap_mm`, every cut at the plunge
+/// rate. Rapids along the hole's vertical line that keep going the same
+/// way are one rapid ([`join_rapids`], #305): with the cycles from the
+/// clearance height the controller goes straight from it to `R` and from
+/// the bottom back to it, where the toolpath stops at safe Z. The first
+/// hole is reached at safe Z below the initial Z, which the tool is at
+/// (the operation starts at the clearance height), and after the last the
+/// operation rises to the clearance height `clearance_z_mm`. With a
+/// series per part (#314) the initial Z is safe Z, each series' last hole
+/// is followed by the rise to the clearance height, and the next series'
+/// first hole is reached at it, then at safe Z, as the toolpath does.
 fn expansion_is_toolpath(
     w: &Writer<'_>,
     plan: &CycleLines,
     toolpath: &Toolpath,
     plunge_mm_min: f64,
     gap_mm: Option<f64>,
+    clearance_z_mm: Option<f64>,
 ) -> Result<bool, ExportError> {
     let transform = w.transform;
     let units = transform.output_units();
     let tolerance_mm = w.quantum() * transform.mm_per_unit() + EPS_MM;
-    let initial_mm = plan.first.z;
+    let Some(first) = plan.series.first().map(|s| s.first) else {
+        return Ok(false);
+    };
+    let initial_mm = first.z;
     let read = |text: &str| read_back(text).ok_or(ExportError::NonFiniteNumber { value: f64::NAN });
-    let initial = read(&w.number(transform.to_machine(plan.first).z)?)?;
+    let initial = read(&w.number(transform.to_machine(first).z)?)?;
     let gap = gap_mm.map(|g| g / transform.mm_per_unit());
     let dwell_s = |p: f64| match w.post.feed_speed.spindle_on_dwell.units {
         DwellUnits::Seconds => p,
@@ -1290,17 +1461,60 @@ fn expansion_is_toolpath(
             _ => return Ok(false),
         });
     }
-    if groups.len() != plan.holes.len() {
+    // Each hole's line, whether the tool comes to it from the clearance
+    // height after the series before (#314: it goes down to the initial Z
+    // over it first), and whether it rises to the clearance height after it,
+    // the last hole of a series but the last.
+    let count = plan.series.len();
+    let lines: Vec<(&CycleLine, bool, bool)> = plan
+        .series
+        .iter()
+        .enumerate()
+        .flat_map(|(k, series)| {
+            let n = series.holes.len();
+            series
+                .holes
+                .iter()
+                .enumerate()
+                .map(move |(j, line)| (line, k > 0 && j == 0, k + 1 < count && j + 1 == n))
+        })
+        .collect();
+    if groups.len() != lines.len() {
         return Ok(false);
     }
+    // #305: after the last hole the operation rises to the clearance
+    // height, which is where the cycles return to when they start from it.
+    if let (Some(clearance_mm), Some((_, last))) = (clearance_z_mm, groups.last_mut())
+        && (clearance_mm - initial_mm).abs() <= EPS_MM
+    {
+        last.push(HoleStep::Rapid(clearance_mm));
+    }
 
-    for ((arrival, actual), line) in groups.iter().zip(&plan.holes) {
+    for ((arrival, actual), &(line, crossed, rises)) in groups.iter().zip(&lines) {
         let centre = transform.to_project(Point3::new(line.x.value, line.y.value, 0.0), units);
-        if centre.xy().distance_to(arrival.xy()) > tolerance_mm
-            || (arrival.z - initial_mm).abs() > tolerance_mm
-        {
+        // Where the tool is over the hole before its cycle's first move:
+        // the clearance height the series before rose to (#314), or the
+        // initial Z.
+        let (before_mm, crossed) = match plan.rise_z_mm {
+            Some(rise_mm) if crossed => (rise_mm, true),
+            _ => (initial_mm, false),
+        };
+        let arrives = if crossed {
+            (arrival.z - before_mm).abs() <= tolerance_mm
+        } else {
+            arrival.z <= initial_mm + tolerance_mm
+        };
+        if centre.xy().distance_to(arrival.xy()) > tolerance_mm || !arrives {
             return Ok(false);
         }
+        // Reached below the initial Z (the first hole, at safe Z): the
+        // tool is over it at the initial Z, then goes down to there.
+        let mut from_initial = Vec::with_capacity(actual.len() + 1);
+        if !crossed && arrival.z < initial_mm - tolerance_mm {
+            from_initial.push(HoleStep::Rapid(arrival.z));
+        }
+        from_initial.extend_from_slice(actual);
+        let actual = join_rapids(before_mm, &from_initial);
         let words = CycleWords {
             cycle: line.cycle,
             z: read(&line.z)?,
@@ -1312,8 +1526,14 @@ fn expansion_is_toolpath(
             return Ok(false);
         };
         // The controller's moves at the hole, without those to where it
-        // already is: down to R (it arrives at the initial Z), the cycle.
-        let mut expected = Vec::with_capacity(steps.len() + 1);
+        // already is: from the clearance height down to the initial Z, the
+        // `G0` the writer puts before the series (#314); down to R (it
+        // arrives at the initial Z), the cycle; then, after the series'
+        // `G80`, the rise to the clearance height (#314).
+        let mut expected = Vec::with_capacity(steps.len() + 3);
+        if crossed {
+            expected.push(HoleStep::Rapid(initial_mm));
+        }
         let mut z = initial;
         for step in [Step::Rapid(words.r)].into_iter().chain(steps) {
             match step {
@@ -1329,11 +1549,15 @@ fn expansion_is_toolpath(
                 Step::Dwell(p) => expected.push(HoleStep::Dwell(dwell_s(p))),
             }
         }
+        if let Some(rise_mm) = plan.rise_z_mm.filter(|_| rises) {
+            expected.push(HoleStep::Rapid(rise_mm));
+        }
+        let expected = join_rapids(before_mm, &expected);
         if expected.len() != actual.len() {
             return Ok(false);
         }
         let mut cut = false;
-        for (e, a) in expected.iter().zip(actual) {
+        for (e, a) in expected.iter().zip(&actual) {
             let same = match (*e, *a) {
                 (HoleStep::Rapid(e), HoleStep::Rapid(a)) => {
                     let slack = if cut { gap_mm.unwrap_or(0.0) } else { 0.0 };
@@ -1538,10 +1762,12 @@ const ABSOLUTE_COMMAND: &str = "G90";
 /// pause: they set modal state and nothing else (S5). `G40`, `G49` and
 /// `G80` cancel cutter compensation, tool length offset and canned-cycle
 /// motion, and `G91.1` selects incremental arc centres, each the state
-/// DreamCarve assumes (#154; LinuxCNC and Mach3 headers).
-const MODAL_SETUP_CODES: [&str; 15] = [
-    "G17", "G20", "G21", "G40", "G49", "G54", "G55", "G56", "G57", "G58", "G59", "G80", "G90",
-    "G91.1", "G94",
+/// DreamCarve assumes (#154; LinuxCNC and Mach3 headers). `G50` and `G69`
+/// set every scale factor to 1 and cancel coordinate rotation on Mach3 and
+/// UCCNC (#312), which only their version 3 headers write.
+const MODAL_SETUP_CODES: [&str; 17] = [
+    "G17", "G20", "G21", "G40", "G49", "G50", "G54", "G55", "G56", "G57", "G58", "G59", "G69",
+    "G80", "G90", "G91.1", "G94",
 ];
 
 /// Whether `line` sets modal state and does nothing else: it has code
@@ -1564,7 +1790,7 @@ fn only_pauses(line: &str) -> bool {
 }
 
 /// The code words of `line`, outside `( )` and `;` comments, upper-cased.
-fn code_words(line: &str) -> Vec<String> {
+pub(crate) fn code_words(line: &str) -> Vec<String> {
     let mut code = String::new();
     let mut in_comment = false;
     for c in line.chars() {
@@ -2078,17 +2304,38 @@ impl<'a> Writer<'a> {
     }
 
     /// Writes a Drill as canned cycles (`docs/specs/phase-2/design.md`,
-    /// "Canned cycles", ported from `runPostProcessor`): a rapid to the
-    /// first hole at safe Z, Z first, so `G98`'s initial Z is safe Z; the
-    /// retract mode once; one line per hole with the command word (when it
-    /// changes, or always unless motion is modal), `X Y`, `Z` (bottom), `R`
-    /// (retract plane), `Q` (peck) or `P` (dwell), and `F` (plunge) on the
-    /// first; then the cancel, which leaves no motion mode. Unlike upstream
-    /// every line carries its `Z`, `R`, `Q` and `P`: controllers differ in
-    /// which of them they keep, and the safety pass expands each line from
-    /// its own words.
-    fn cycles(&mut self, plan: &CycleLines, safe_z_mm: f64) -> Result<(), ExportError> {
-        self.rapid(plan.first)?;
+    /// "Canned cycles", ported from `runPostProcessor`), one series at a
+    /// time: a rapid to the series' first hole at the plan's initial Z
+    /// (safe Z, or the clearance height, #305), so `G98`'s initial Z is
+    /// that height; the retract mode; one line per hole with the command
+    /// word (on the series' first line, then when it changes, or always
+    /// unless motion is modal), `X Y`, `Z` (bottom), `R` (retract plane),
+    /// `Q` (peck) or `P` (dwell), and `F` (plunge) on the first; then the
+    /// cancel, which leaves no motion mode. Unlike upstream every line
+    /// carries its `Z`, `R`, `Q` and `P`: controllers differ in which of
+    /// them they keep, and the safety pass expands each line from its own
+    /// words. #314: between series, after the cancel, a rapid up to the
+    /// clearance height, across at it and down to the initial Z over the
+    /// next series' first hole. Each series states every word again, as
+    /// after `G80` LinuxCNC requires `Z` and `R` (`interp_cycles.cc`
+    /// 729-734, 920-923) and Mach3 needs a sticky number "the first time"
+    /// (Mach3Mill 10.7.24).
+    fn cycles(&mut self, plan: &CycleLines) -> Result<(), ExportError> {
+        let mut previous: Option<Point3> = None;
+        for series in &plan.series {
+            if let (Some(last), Some(rise_z_mm)) = (previous, plan.rise_z_mm) {
+                self.rapid(Point3::new(last.x, last.y, rise_z_mm))?;
+            }
+            self.series(plan, series)?;
+            previous = Some(series.last);
+        }
+        Ok(())
+    }
+
+    /// Writes one series of [`Self::cycles`], from the rapid over its first
+    /// hole to its cancel.
+    fn series(&mut self, plan: &CycleLines, series: &Series) -> Result<(), ExportError> {
+        self.rapid(series.first)?;
         self.line(plan.retract_mode);
         let fs = &self.post.feed_speed;
         let feed_word = format!("{}{}", fs.feed_command, plan.feed);
@@ -2098,7 +2345,7 @@ impl<'a> Writer<'a> {
             self.line(&feed_word);
         }
         let mut command: Option<Cycle> = None;
-        for (k, hole) in plan.holes.iter().enumerate() {
+        for (k, hole) in series.holes.iter().enumerate() {
             let mut words = Vec::with_capacity(8);
             if !modal || command != Some(hole.cycle) {
                 words.push(hole.cycle.code().to_owned());
@@ -2121,14 +2368,14 @@ impl<'a> Writer<'a> {
         }
         self.line(&plan.cancel);
         // `G80` leaves no motion mode. The tool is over the last hole at
-        // the initial Z, safe Z, which the rapid above wrote.
+        // the initial Z, which the rapid above wrote.
         self.motion = None;
         self.feed = Some(plan.feed.clone());
-        if let Some(last) = plan.holes.last() {
+        if let Some(last) = series.holes.last() {
             self.axes[0] = Some(last.x.clone());
             self.axes[1] = Some(last.y.clone());
         }
-        self.position = Some(Point3::new(plan.last.x, plan.last.y, safe_z_mm));
+        self.position = Some(series.last);
         Ok(())
     }
 
@@ -3819,6 +4066,50 @@ mod tests {
         assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
     }
 
+    /// #312: Mach3 v3 and UCCNC v3 cancel scaling (`G50`) and rotation
+    /// (`G69`) in the header, before the first move, and again in the
+    /// setup written after every stop that more motion follows, here the
+    /// manual-spindle `M0`s, since the user may set either at the
+    /// controller while it waits. Only those definitions write them.
+    #[test]
+    fn setup_after_stop_repeats_g50_g69() {
+        for post in ["mach3", "uccnc"] {
+            let mut project = project_with(post);
+            project.post_processor.spindle_control = SpindleControl::Manual;
+            let text = emit(&project, &ops_for(&project), DATE).unwrap().0.text;
+            let lines: Vec<&str> = text.lines().collect();
+            let moves = |l: &str| {
+                let c = code(l);
+                c.contains('X') || c.contains('Y') || c.contains('Z')
+            };
+            let first_move = first_index(&lines, moves).unwrap();
+            for word in ["G50", "G69"] {
+                assert!(
+                    lines[..first_move].iter().any(|l| has_word(l, word)),
+                    "{post}: no {word} before the first move:\n{text}"
+                );
+            }
+            let pauses = after_pauses(&text);
+            assert!(!pauses.is_empty(), "{post}: no pause:\n{text}");
+            for (line, between) in pauses {
+                for word in ["G50", "G69"] {
+                    assert!(
+                        between.iter().any(|l| has_word(l, word)),
+                        "{post}: no {word} after the stop on line {line}: {between:?}"
+                    );
+                }
+            }
+        }
+        for (case, text) in every_program() {
+            for word in ["G50", "G51", "G68", "G69"] {
+                assert!(
+                    !text.lines().any(|l| has_word(l, word)),
+                    "{case}: {word}:\n{text}"
+                );
+            }
+        }
+    }
+
     /// #279: in `G80` mode a line with axis words and no motion word is an
     /// error on grblHAL and GRBL (`definitions/README.md`, "Header modal
     /// state"). So the first line that moves after the header's `G80`, and
@@ -5161,10 +5452,10 @@ mod tests {
 
     /// Design addendum A7: a program per tool run ends each program with
     /// the park and the lift, which is the tool-change height on GRBL; a
-    /// definition without `G53` (LinuxCNC) refuses the machine Z, while
-    /// the clearance height and the park need none.
+    /// definition without `G53` (Mach3, UCCNC, generic; #306) refuses the
+    /// machine Z, while the clearance height and the park need none.
     #[test]
-    fn every_program_ends_with_the_lift_and_linuxcnc_refuses_it() {
+    fn every_program_ends_with_the_lift_and_unchecked_definitions_refuse_it() {
         let mut project = plaque();
         project.heights = acceptance_45_heights();
         let (programs, _) = emit_programs(
@@ -5183,27 +5474,167 @@ mod tests {
                 .collect();
             assert_eq!(tail, ["X0.000 Y0.000", "G53 G0 Z-5.000", "M5", "M30"]);
         }
+        for id in ["mach3", "uccnc", "generic"] {
+            let mut project = project.clone();
+            project.post_processor = PostProcessorRef::latest(id).unwrap();
+            let err = emit_programs(
+                &project,
+                &generated_ops(&project),
+                ProgramSplit::ProjectDefault,
+                DATE,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&err, ExportError::MachineZNeedsG53 { post } if post == id),
+                "{id}: {err:?}"
+            );
+            project.heights.tool_change_machine_z_mm = None;
+            let (programs, _) = emit_programs(
+                &project,
+                &generated_ops(&project),
+                ProgramSplit::ProjectDefault,
+                DATE,
+            )
+            .unwrap();
+            assert!(programs.iter().all(|p| !p.text.contains("G53")), "{id}");
+        }
+    }
+
+    /// #306: LinuxCNC documents `G53` (`interp_find.cc` 170-191: the
+    /// work, `G92` and tool length offsets are taken out of the Z word;
+    /// `interp_check.cc` 103-108: `G0` or `G1`, absolute), so on both of
+    /// its versions each program of a run per tool lifts to the machine Z
+    /// in the program's units, after the park, right before the footer
+    /// `M5`, `M2`, and nowhere else. `emit` runs the safety pass (S16), so
+    /// a program returned is one it accepted.
+    #[test]
+    fn machine_lift_on_linuxcnc() {
+        for version in [1, 2] {
+            for (units, park, lift, note) in [
+                (Units::Mm, "X0.000 Y0.000", "G53 G0 Z-5.000", "-5.000 mm"),
+                (
+                    Units::Inch,
+                    "X0.0000 Y0.0000",
+                    "G53 G0 Z-0.1969",
+                    "-0.1969 inch",
+                ),
+            ] {
+                let mut project = project_with("linuxcnc");
+                project.post_processor.definition_version = version;
+                project.display_units = units;
+                let ops = two_tool_ops(&mut project);
+                // No `M6` on LinuxCNC: one program per tool run.
+                project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+                project.heights = dc_project::Heights {
+                    clearance_mm: Some(10.0),
+                    tool_change_machine_z_mm: Some(-5.0),
+                    park: Some(dc_project::ParkXy {
+                        x_mm: 0.0,
+                        y_mm: 0.0,
+                    }),
+                };
+                let (programs, _) =
+                    emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE)
+                        .unwrap_or_else(|e| panic!("v{version} {units:?}: {e:?}"));
+                assert_eq!(programs.len(), 2, "v{version} {units:?}");
+                for program in &programs {
+                    let lines = code_lines(&program.text);
+                    let tail: Vec<&str> = lines[lines.len() - 4..]
+                        .iter()
+                        .map(String::as_str)
+                        .collect();
+                    assert_eq!(
+                        tail,
+                        [park, lift, "M5", "M2"],
+                        "v{version} {units:?}\n{}",
+                        program.text
+                    );
+                    assert_eq!(
+                        lines.iter().filter(|l| l.starts_with("G53")).count(),
+                        1,
+                        "{}",
+                        program.text
+                    );
+                    assert_eq!(program.machine_lift.as_deref(), Some(note));
+                    assert!(
+                        program
+                            .text
+                            .lines()
+                            .any(|l| l == format!("( {} )", machine_lift_comment("linuxcnc"))),
+                        "{}",
+                        program.text
+                    );
+                }
+            }
+        }
+    }
+
+    /// #306 with manual spindle control on LinuxCNC: the lift comes right
+    /// before the router-off pause `M0` at the end of each program, with
+    /// no retract in work coordinates between them, and the footer has no
+    /// `M5`.
+    #[test]
+    fn machine_lift_before_router_off_on_linuxcnc() {
+        for units in [Units::Mm, Units::Inch] {
+            let mut project = manual_project("linuxcnc");
+            project.display_units = units;
+            project.heights.tool_change_machine_z_mm = Some(-5.0);
+            let text = emit_text(&project);
+            let lines = code_lines(&text);
+            let lift = lines
+                .iter()
+                .position(|l| l.starts_with("G53 G0 Z-"))
+                .unwrap_or_else(|| panic!("{units:?}\n{text}"));
+            assert_eq!(lines[lift + 1..], ["M0", "M2"], "{units:?}\n{text}");
+        }
+    }
+
+    /// #306: LinuxCNC with canned cycles: the series of `G81` cycles is
+    /// cancelled with `G80` before the lift (`G53` needs `G0` or `G1`,
+    /// `interp_check.cc` 104-105, and the lift's `G0` sets it), and the
+    /// safety pass accepts the lift from the `G98` return height.
+    #[test]
+    fn machine_lift_after_canned_cycles_on_linuxcnc() {
+        let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
         project.post_processor = PostProcessorRef::latest("linuxcnc").unwrap();
-        let err = emit_programs(
-            &project,
-            &generated_ops(&project),
-            ProgramSplit::ProjectDefault,
-            DATE,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, ExportError::MachineZNeedsG53 { post } if post == "linuxcnc"),
-            "{err:?}"
-        );
-        project.heights.tool_change_machine_z_mm = None;
-        let (programs, _) = emit_programs(
-            &project,
-            &generated_ops(&project),
-            ProgramSplit::ProjectDefault,
-            DATE,
-        )
-        .unwrap();
-        assert!(programs.iter().all(|p| !p.text.contains("G53")));
+        project.post_processor.use_canned_cycles = true;
+        project.heights.tool_change_machine_z_mm = Some(-5.0);
+        let (program, warnings) = emit(&project, &drill_entry(&project, &op), DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lines = code_lines(&program.text);
+        assert!(has_cycle_word(&program.text), "{}", program.text);
+        let lift = lines.iter().position(|l| l == "G53 G0 Z-5.000").unwrap();
+        let cancel = lines.iter().rposition(|l| l == "G80").unwrap();
+        assert!(cancel < lift, "{}", program.text);
+        assert_eq!(lines[lift + 1..], ["M5", "M2"], "{}", program.text);
+    }
+
+    /// #306, ADR-0004: a definition's `machine_command` writes nothing
+    /// unless the project sets the machine Z, so enabling it in place on
+    /// a released version changes no program that version could export
+    /// before. Every bundled version exports the sample project, in mm and
+    /// inch, with the same bytes whether its `machine_command` is set or
+    /// not.
+    #[test]
+    fn machine_command_writes_nothing_without_the_height() {
+        for definition in dc_project::bundled_definitions().unwrap() {
+            for units in [Units::Mm, Units::Inch] {
+                let mut project = sample_project();
+                project.post_processor = definition.default_ref();
+                project.display_units = units;
+                assert_eq!(project.heights, dc_project::Heights::unset());
+                let post = post_of(&project);
+                let mut without = post.clone();
+                without.work_coordinates.machine_command = None;
+                let text = emit_text(&project);
+                assert!(!text.contains("G53"), "{}", definition.path);
+                assert!(
+                    text == emit_text_with(&project, &without),
+                    "{} {units:?}",
+                    definition.path
+                );
+            }
+        }
     }
 
     /// Design addendum A7, validation repeated at export: a clearance
@@ -5320,17 +5751,49 @@ mod tests {
         );
     }
 
-    /// #304 review: with a tool-change machine Z, the header says the
-    /// program uses machine coordinates and needs a homed machine, in a
-    /// comment; without one the header is as before (the goldens and the
-    /// heights-migration corpus prove the bytes).
+    /// #308 on LinuxCNC (#306): `$20` is a GRBL setting, so the header names
+    /// LinuxCNC's own condition instead. Its soft limits always apply once
+    /// the machine is homed ("The axis must be homed before MIN_LIMIT is in
+    /// force", INI document; `motion/command.c` 1011-1025), and a program
+    /// does not run unhomed unless `[TRAJ] NO_FORCE_HOMING` is set
+    /// (`emctaskmain.cc` 121, 2302-2303; definitions README,
+    /// "Machine-coordinate moves"). In mm and inches, and no `$20` anywhere.
+    #[test]
+    fn machine_z_header_comment_on_linuxcnc() {
+        let comment = "( Lifts to machine Z with G53: home the machine before running. \
+                       Soft limits apply only once homed: leave NO_FORCE_HOMING unset )";
+        for units in [Units::Mm, Units::Inch] {
+            let mut project = project_with("linuxcnc");
+            project.display_units = units;
+            project.heights.tool_change_machine_z_mm = Some(-5.0);
+            let text = emit_text(&project);
+            assert_eq!(
+                text.lines().filter(|l| *l == comment).count(),
+                1,
+                "{units:?}\n{text}"
+            );
+            assert!(!text.contains("$20"), "{units:?}\n{text}");
+        }
+    }
+
+    /// #304 review, #308: with a tool-change machine Z, the header says
+    /// the program uses machine coordinates and needs a homed machine, and
+    /// names what keeps the lift from driving Z down on a machine that
+    /// homes Z downward: soft limits (`$20=1`), which alarm before the move
+    /// (GRBL `motion_control.c` 34-38, grblHAL `motion_control.c` 96-99;
+    /// definitions README, "Machine-coordinate moves"). In the definition's
+    /// comment syntax: `( )` on grblHAL, `;` on GRBL v3. Without the height
+    /// the header is as before (the goldens and the heights-migration
+    /// corpus prove the bytes).
     #[test]
     fn machine_z_header_comment() {
         let mut project = project_with("grblhal");
-        let comment = "( Lifts to machine Z with G53: home the machine before running )";
+        let comment = "( Lifts to machine Z with G53: home the machine before running. \
+                       Needs Z to home upward, or soft limits on with $20=1 )";
         let text = emit_text(&project);
         assert!(!text.contains("G53"), "{text}");
         assert!(!text.contains("home the machine"), "{text}");
+        assert!(!text.contains("soft limits"), "{text}");
         project.heights.tool_change_machine_z_mm = Some(-5.0);
         let text = emit_text(&project);
         let lines: Vec<&str> = text.lines().collect();
@@ -5340,8 +5803,17 @@ mod tests {
             .unwrap_or_else(|| panic!("{text}"));
         let first_motion = lines.iter().position(|l| l.starts_with("G0")).unwrap();
         assert!(at < first_motion, "in the header\n{text}");
-        // In inches, on GRBL, and in every program of a run per tool.
-        for (post, units) in [("grbl", Units::Inch), ("grblhal", Units::Mm)] {
+        // In inches on GRBL v3, in mm on grblHAL, and in every program of a
+        // run per tool.
+        for (post, units, expected) in [
+            (
+                "grbl",
+                Units::Inch,
+                "; Lifts to machine Z with G53: home the machine before running. \
+                 Needs Z to home upward, or soft limits on with $20=1",
+            ),
+            ("grblhal", Units::Mm, comment),
+        ] {
             let mut project = project_with(post);
             project.display_units = units;
             let ops = two_tool_ops(&mut project);
@@ -5350,16 +5822,17 @@ mod tests {
                 emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE).unwrap();
             assert_eq!(programs.len(), 2);
             for program in &programs {
-                let definition = post_of(&project);
-                let expected = format!(
-                    "{} {MACHINE_LIFT_COMMENT} {}",
-                    definition.program.comment_prefix, definition.program.comment_suffix
-                );
                 assert!(
-                    program.text.lines().any(|l| l == expected.trim_end()),
+                    program.text.lines().any(|l| l == expected),
                     "{post} {units:?}\n{}",
                     program.text
                 );
+                let named = program
+                    .text
+                    .lines()
+                    .filter(|l| l.contains("soft limits") && l.contains("$20=1"))
+                    .count();
+                assert_eq!(named, 1, "{post} {units:?}\n{}", program.text);
             }
         }
         // The clearance height and the park point need no homing.
@@ -5372,21 +5845,73 @@ mod tests {
         assert!(!emit_text(&project).contains(comment));
     }
 
-    /// #304 review: a Drill of separate holes, with canned cycles asked
-    /// for, is written as cycles without a clearance height and as moves,
-    /// with the `clearance_height` reason, with one: its holes are crossed
-    /// at the clearance height, which `G98` does not follow.
+    /// [`drill_project`] with a fourth target, `h4`: one part with two
+    /// 8 mm holes, at (20, 40) and (20, 50). Nearest neighbour from the
+    /// first hole, (20, 20), the Drill goes to (20, 40), then to (20, 50)
+    /// in the same part, so with a clearance height one link between holes
+    /// is at safe Z and the others are at the clearance height.
+    fn drill_project_with_two_hole_part() -> (Project, dc_project::DrillOp) {
+        drill_project_with_two_hole_part_as(dc_project::DrillCycle::Simple, 0.0)
+    }
+
+    /// [`drill_project_with_two_hole_part`] drilled with `cycle` and
+    /// `dwell_s`.
+    fn drill_project_with_two_hole_part_as(
+        cycle: dc_project::DrillCycle,
+        dwell_s: f64,
+    ) -> (Project, dc_project::DrillOp) {
+        let (mut project, mut op) = drill_project(cycle, dwell_s, 1.0);
+        let pair = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d3"),
+            name: "Pair".into(),
+            profiles: vec![
+                dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0),
+                dc_geometry::Polyline::circle(Point::new(0.0, 10.0), 4.0),
+            ],
+        };
+        project.definitions.insert(pair.id.clone(), pair);
+        let id = dc_project::InstanceId::new("h4");
+        project.instances.push(dc_project::FeatureInstance {
+            id: id.clone(),
+            definition: dc_project::DefinitionId::new("d3"),
+            transform: dc_geometry::Transform::translate(20.0, 40.0),
+            name: "Pair".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        op.targets.push(id);
+        project.operations = vec![Operation::Drill(op.clone())];
+        (project, op)
+    }
+
+    /// #304 review, #305, #314: a Drill linked at a height that is neither
+    /// safe Z nor the clearance height follows no series of cycles, and is
+    /// written as moves with the `clearance_height` reason. The sequencer
+    /// never links holes so; here the first crossing of
+    /// [`drill_project_with_two_hole_part`] is moved down to Z 16, between
+    /// safe Z (11) and the clearance height (26). Without a clearance
+    /// height every link is at safe Z, and the Drill is written as cycles.
     #[test]
     fn clearance_height_expands_canned_cycles() {
-        let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        let (mut project, op) = drill_project_with_two_hole_part();
         let post = canned_post(&project);
         let (program, warnings) =
             emit_with(&project, &post, &drill_entry(&project, &op), DATE).unwrap();
         assert!(has_cycle_word(&program.text), "{}", program.text);
         assert!(warnings.is_empty(), "{warnings:?}");
         project.heights.clearance_mm = Some(20.0);
-        let (program, warnings) =
-            emit_with(&project, &post, &drill_entry(&project, &op), DATE).unwrap();
+        let mut ops = drill_entry(&project, &op);
+        let moves = &mut ops[0].toolpath.moves;
+        let first_crossing = moves
+            .windows(2)
+            .position(|pair| pair[0].to.xy() != pair[1].to.xy())
+            .unwrap();
+        assert_approx_eq!(moves[first_crossing].to.z, 26.0, 1e-9);
+        moves[first_crossing].to.z = 16.0;
+        moves[first_crossing + 1].to.z = 16.0;
+        let (program, warnings) = emit_with(&project, &post, &ops, DATE).unwrap();
         assert!(!has_cycle_word(&program.text), "{}", program.text);
         assert_eq!(
             warnings,
@@ -5396,5 +5921,534 @@ mod tests {
             }]
         );
         assert_eq!(CannedExpansion::ClearanceHeight.code(), "clearance_height");
+    }
+
+    /// The parsed motion of `text`, canned cycles expanded with `post`'s
+    /// model, move for move, with nothing joined.
+    fn exact_motion(text: &str, post: &PostProcessor) -> Vec<MoveShape> {
+        let model = crate::parse::CycleModel::of(post);
+        crate::parse::parse_motion_with(text, &model)
+            .unwrap()
+            .iter()
+            .map(|m| {
+                let feed = m.kind.is_cut().then_some(m.feed).flatten();
+                (m.kind, m.to.x, m.to.y, m.to.z, feed)
+            })
+            .collect()
+    }
+
+    /// The code lines of each canned-cycle series in `text`, from the line
+    /// after its `G98` to the line before its `G80`, with the code line
+    /// before the `G98` and the one after the `G80`. A `G80` before the
+    /// first `G98` is the header's (#279).
+    fn series_of(text: &str) -> Vec<(String, Vec<String>, Option<String>)> {
+        // Without line numbers (Mach3).
+        let lines: Vec<String> = code_lines(text)
+            .into_iter()
+            .map(|line| {
+                let mut words = line.split_whitespace().peekable();
+                words.next_if(|w| w.starts_with('N'));
+                words.collect::<Vec<_>>().join(" ")
+            })
+            .collect();
+        let mut series = Vec::new();
+        let mut at = 0;
+        while let Some(g98) = lines[at..].iter().position(|l| l == "G98") {
+            let g98 = at + g98;
+            let g80 = g98
+                + lines[g98..]
+                    .iter()
+                    .position(|l| l == "G80")
+                    .unwrap_or_else(|| panic!("a G80 after line {g98}\n{text}"));
+            series.push((
+                lines[g98 - 1].clone(),
+                lines[g98 + 1..g80].to_vec(),
+                lines.get(g80 + 1).cloned(),
+            ));
+            at = g80 + 1;
+        }
+        series
+    }
+
+    /// #314: [`drill_project_with_two_hole_part`] with `clearance_mm: 20`
+    /// crosses between parts at the clearance height (Z 20) and between
+    /// the two holes of the pair at safe Z (Z 5). On the test definition,
+    /// with every cycle it has (`G81`, `G82`, `G83`, `G73`), it is written
+    /// with no warning as one `G98` series per part, each closed by `G80`:
+    /// the holes in cut order are (20, 20), the pair (20, 40) and
+    /// (20, 50), then (50, 70) and (80, 30), so four series of 1, 2, 1
+    /// and 1 holes. Each series starts after `Z5.000` over its first hole
+    /// (`G98` returns every hole of it to safe Z), and each `G80` but the
+    /// last is followed by the rise to the clearance height, `G0 Z20.000`,
+    /// on which `G80` makes `G0` necessary. The expansion (S11) crosses
+    /// between parts at Z 20 and between the pair's holes at Z 5; pecks
+    /// at the same depths as the plain program (Z 1, −3, −5 per hole);
+    /// nothing goes below the hole bottom, Z −5, or the material bottom,
+    /// Z −6; and the motion is the plain program's move for move, so also
+    /// once collinear rapids are joined.
+    #[test]
+    fn canned_series_per_part_at_the_clearance_height() {
+        let peck = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::Full,
+        };
+        let chip = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::ChipBreak { gap_mm: 0.5 },
+        };
+        let order = [
+            (20.0, 20.0),
+            (20.0, 40.0),
+            (20.0, 50.0),
+            (50.0, 70.0),
+            (80.0, 30.0),
+        ];
+        for (cycle, dwell_s, word) in [
+            (dc_project::DrillCycle::Simple, 0.0, "G81"),
+            (dc_project::DrillCycle::Simple, 0.5, "G82"),
+            (peck, 0.0, "G83"),
+            (chip, 0.0, "G73"),
+        ] {
+            let (mut project, op) = drill_project_with_two_hole_part_as(cycle, dwell_s);
+            project.heights.clearance_mm = Some(20.0);
+            let ops = drill_entry(&project, &op);
+            assert_eq!(cut_order(&ops[0]), order, "{word}");
+            let post = canned_post(&project);
+            let (canned, warnings) = emit_with(&project, &post, &ops, DATE).unwrap();
+            let text = &canned.text;
+            assert!(warnings.is_empty(), "{word}: {warnings:?}\n{text}");
+
+            let series = series_of(text);
+            let sizes: Vec<usize> = series.iter().map(|s| s.1.len()).collect();
+            assert_eq!(sizes, [1, 2, 1, 1], "{word}\n{text}");
+            let mut hole = 0;
+            for (k, (before, lines, after)) in series.iter().enumerate() {
+                assert_eq!(before, "Z5.000", "{word}: series {k} from safe Z\n{text}");
+                assert!(lines[0].starts_with(word), "{word}: series {k}\n{text}");
+                for line in lines {
+                    let (x, y) = order[hole];
+                    assert!(
+                        line.contains(&format!("X{x:.3} Y{y:.3} Z-5.000 R1.000")),
+                        "{word}: {line}"
+                    );
+                    hole += 1;
+                }
+                let last = k + 1 == series.len();
+                if !last {
+                    assert_eq!(after.as_deref(), Some("G0 Z20.000"), "{word}\n{text}");
+                }
+            }
+            assert_eq!(hole, order.len());
+
+            let model = crate::parse::CycleModel::of(&post);
+            let moves = crate::parse::parse_motion_with(text, &model).unwrap();
+            // The pair is the only part with two holes.
+            let in_pair = |p: (f64, f64)| (p.0 - 20.0).abs() < 1e-9 && p.1 > 30.0;
+            for (i, mv) in moves.iter().enumerate() {
+                let z = mv.to.z.unwrap();
+                assert!(
+                    z >= -5.0 - 1e-9,
+                    "{word}: move {i} below the bottom: {mv:?}"
+                );
+                assert!(z >= -6.0, "{word}: move {i} below the material: {mv:?}");
+                if mv.from.x == mv.to.x && mv.from.y == mv.to.y {
+                    continue;
+                }
+                assert_eq!(mv.kind, MotionKind::Rapid, "{word}: move {i}: {mv:?}");
+                let (Some(from_x), Some(from_y)) = (mv.from.x, mv.from.y) else {
+                    // Over the first hole, from where the user left the
+                    // bit: at the clearance height.
+                    assert_eq!((mv.from.z, mv.to.z), (Some(20.0), Some(20.0)), "{mv:?}");
+                    continue;
+                };
+                let from = (from_x, from_y);
+                let to = (mv.to.x.unwrap(), mv.to.y.unwrap());
+                let link_z = if in_pair(from) && in_pair(to) {
+                    5.0
+                } else {
+                    20.0
+                };
+                assert_eq!(
+                    (mv.from.z, mv.to.z),
+                    (Some(link_z), Some(link_z)),
+                    "{word}: move {i} from {from:?} to {to:?}\n{text}"
+                );
+            }
+            let feeds: Vec<f64> = moves
+                .iter()
+                .filter(|m| m.kind == MotionKind::Linear)
+                .filter_map(|m| m.to.z)
+                .collect();
+            let per_hole: &[f64] = if word == "G83" || word == "G73" {
+                &[-1.0, -3.0, -5.0]
+            } else {
+                &[-5.0]
+            };
+            assert_eq!(feeds, per_hole.repeat(order.len()), "{word}\n{text}");
+
+            let plain = emit(&project, &ops, DATE).unwrap().0.text;
+            let plain_post = post_of(&project);
+            assert!(!has_cycle_word(&plain), "{plain}");
+            assert_eq!(
+                exact_motion(text, &post),
+                exact_motion(&plain, &plain_post),
+                "{word}\n{text}\n{plain}"
+            );
+            assert_eq!(
+                joined_motion(text, &post),
+                joined_motion(&plain, &plain_post),
+                "{word}\n{text}\n{plain}"
+            );
+        }
+    }
+
+    /// #314 on the bundled definitions with canned cycles, LinuxCNC and
+    /// Mach3, in mm and inch, simple and with a dwell: the Drill of
+    /// [`drill_project_with_two_hole_part`] with `clearance_mm: 20` is
+    /// four `G98` series with no warning, and `emit` ran the safety pass
+    /// on it. Between series, `G80` then `G0` up to the clearance height.
+    /// On LinuxCNC also with acceptance 45's lift and park.
+    #[test]
+    fn canned_series_per_part_on_linuxcnc_and_mach3() {
+        for post_id in ["linuxcnc", "mach3"] {
+            for (units, rise) in [(Units::Mm, "G0 Z20.000"), (Units::Inch, "G0 Z0.7874")] {
+                for (dwell_s, word) in [(0.0, "G81"), (0.5, "G82")] {
+                    let (mut project, op) = drill_project_with_two_hole_part_as(
+                        dc_project::DrillCycle::Simple,
+                        dwell_s,
+                    );
+                    project.post_processor = PostProcessorRef::latest(post_id).unwrap();
+                    project.post_processor.use_canned_cycles = true;
+                    project.display_units = units;
+                    project.heights.clearance_mm = Some(20.0);
+                    let ops = drill_entry(&project, &op);
+                    let label = format!("{post_id} {units:?} {word}");
+                    let (program, warnings) =
+                        emit(&project, &ops, DATE).unwrap_or_else(|e| panic!("{label}: {e:?}"));
+                    let text = &program.text;
+                    assert!(warnings.is_empty(), "{label}: {warnings:?}\n{text}");
+                    let series = series_of(text);
+                    let sizes: Vec<usize> = series.iter().map(|s| s.1.len()).collect();
+                    assert_eq!(sizes, [1, 2, 1, 1], "{label}\n{text}");
+                    for (_, lines, after) in &series[..series.len() - 1] {
+                        assert!(lines[0].starts_with(word), "{label}\n{text}");
+                        assert_eq!(after.as_deref(), Some(rise), "{label}\n{text}");
+                    }
+                    if post_id == "linuxcnc" {
+                        // With #306's lift and the park, the program still
+                        // passes, and lifts once, after the last `G80`.
+                        project.heights = acceptance_45_heights();
+                        let (program, warnings) = emit(&project, &ops, DATE)
+                            .unwrap_or_else(|e| panic!("{label} lift: {e:?}"));
+                        let text = &program.text;
+                        assert!(warnings.is_empty(), "{label}: {warnings:?}\n{text}");
+                        assert_eq!(series_of(text).len(), 4, "{label}\n{text}");
+                        let lines = code_lines(text);
+                        let lift = lines.iter().position(|l| l.starts_with("G53")).unwrap();
+                        let cancel = lines.iter().rposition(|l| l == "G80").unwrap();
+                        assert!(cancel < lift, "{label}\n{text}");
+                        let lifts = lines.iter().filter(|l| l.starts_with("G53")).count();
+                        assert_eq!(lifts, 1, "{label}\n{text}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A parsed move's kind, end (X, Y, Z) and, for a cut, feed.
+    type MoveShape = (
+        MotionKind,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+        Option<f64>,
+    );
+
+    /// The parsed motion of `text`, canned cycles expanded with `post`'s
+    /// model, with each run of rapids in Z alone along one vertical line in
+    /// one direction joined into one rapid: the motion is the same, the
+    /// controller only does not stop between them (#305).
+    fn joined_motion(text: &str, post: &PostProcessor) -> Vec<MoveShape> {
+        let model = crate::parse::CycleModel::of(post);
+        let moves = crate::parse::parse_motion_with(text, &model).unwrap();
+        let vertical = |m: &crate::MachineMove| {
+            m.kind == MotionKind::Rapid && m.from.x == m.to.x && m.from.y == m.to.y
+        };
+        let rise = |m: &crate::MachineMove| match (m.from.z, m.to.z) {
+            (Some(from), Some(to)) => Some(to > from),
+            _ => None,
+        };
+        let mut joined: Vec<crate::MachineMove> = Vec::new();
+        for mv in moves {
+            if let Some(last) = joined.last_mut()
+                && vertical(last)
+                && vertical(&mv)
+                && rise(last).is_some()
+                && rise(last) == rise(&mv)
+            {
+                last.to = mv.to;
+                continue;
+            }
+            joined.push(mv);
+        }
+        joined
+            .iter()
+            .map(|m| {
+                let feed = m.kind.is_cut().then_some(m.feed).flatten();
+                (m.kind, m.to.x, m.to.y, m.to.z, feed)
+            })
+            .collect()
+    }
+
+    /// The plaque's Drill alone, on LinuxCNC with canned cycles on and a
+    /// 20 mm clearance height, as a simple cycle with `dwell_s`.
+    fn plaque_drill_on_linuxcnc(dwell_s: f64) -> (Project, Vec<EmitOp>) {
+        let mut project = plaque();
+        project.post_processor = PostProcessorRef::latest("linuxcnc").unwrap();
+        project.post_processor.use_canned_cycles = true;
+        project.heights.clearance_mm = Some(20.0);
+        for op in &mut project.operations {
+            if let Operation::Drill(drill) = op {
+                drill.cycle = dc_project::DrillCycle::Simple;
+                drill.dwell_s = dwell_s;
+            }
+        }
+        let ops = generated_ops(&project)
+            .into_iter()
+            .filter(|entry| matches!(entry.op, Operation::Drill(_)))
+            .collect();
+        (project, ops)
+    }
+
+    /// #305: the plaque's four screw holes are four parts, linked at the
+    /// clearance height. On LinuxCNC with `clearance_mm: 20` and canned
+    /// cycles on, the Drill is a rapid over the first hole at the
+    /// clearance height, `G98` once, one `G81` (or `G82 … P`) line per
+    /// hole, `G80`, and no warning. `G98` returns each hole to the Z
+    /// before the first cycle of the series ([G] `#gcode:g98-g99`;
+    /// `interp_cycles.cc` 926-931, 976), here Z 20, so the controller
+    /// crosses between holes at the clearance height. The expansion
+    /// (S11) plunges each hole from `R` to the bottom (Z −12, the stock
+    /// bottom less the 0.2 mm allowance), goes back to Z 20 after each,
+    /// never lower, and is the plain program's motion once its rapids
+    /// along one vertical line are joined.
+    #[test]
+    fn canned_cycles_at_the_clearance_height() {
+        for (dwell_s, word) in [(0.0, "G81"), (0.5, "G82")] {
+            let (project, ops) = plaque_drill_on_linuxcnc(dwell_s);
+            let post = post_of(&project);
+            let (program, warnings) = emit(&project, &ops, DATE).unwrap();
+            let text = &program.text;
+            assert!(warnings.is_empty(), "{word}: {warnings:?}\n{text}");
+            let codes = code_lines(text);
+            let g98 = codes
+                .iter()
+                .position(|l| l == "G98")
+                .unwrap_or_else(|| panic!("{word}: no G98\n{text}"));
+            assert_eq!(codes.iter().filter(|l| has_word(l, "G98")).count(), 1);
+            let before_z = codes[..g98]
+                .iter()
+                .rev()
+                .find(|l| l.split_whitespace().any(|w| w.starts_with('Z')))
+                .unwrap();
+            assert_eq!(before_z, "G0 Z20.000", "{word}: the initial Z\n{text}");
+            let holes: Vec<&String> = codes[g98 + 1..]
+                .iter()
+                .take_while(|l| *l != "G80")
+                .collect();
+            assert_eq!(holes.len(), 4, "{word}\n{text}");
+            assert!(holes[0].starts_with(word), "{word}\n{text}");
+            for hole in &holes {
+                assert!(hole.contains(" Z-12.000 R1.000"), "{word}: {hole}");
+                assert_eq!(hole.contains(" P0.500"), dwell_s > 0.0, "{word}: {hole}");
+            }
+
+            let model = crate::parse::CycleModel::of(&post);
+            let moves = crate::parse::parse_motion_with(text, &model).unwrap();
+            let bottom = -12.0;
+            let mut returns = 0;
+            for (i, mv) in moves.iter().enumerate() {
+                let z = mv.to.z.unwrap();
+                assert!(
+                    z >= bottom - 1e-9,
+                    "{word}: move {i} below the bottom: {mv:?}"
+                );
+                let across = mv.from.x != mv.to.x || mv.from.y != mv.to.y;
+                if across {
+                    assert_eq!(mv.kind, MotionKind::Rapid, "{word}: move {i}: {mv:?}");
+                    assert!(
+                        (mv.from.z.unwrap() - 20.0).abs() < 1e-9 && (z - 20.0).abs() < 1e-9,
+                        "{word}: move {i} crosses below the clearance height: {mv:?}"
+                    );
+                }
+                if mv.kind == MotionKind::Linear {
+                    assert!((z - bottom).abs() < 1e-9, "{word}: move {i}: {mv:?}");
+                    assert_eq!(mv.feed, ops[0].tool.plunge_mm_min, "{word}: {mv:?}");
+                    let out = &moves[i + 1];
+                    assert_eq!(out.kind, MotionKind::Rapid, "{word}: {out:?}");
+                    assert_eq!(out.to.z, Some(20.0), "{word}: back to Z 20: {out:?}");
+                    returns += 1;
+                }
+            }
+            assert_eq!(returns, 4, "{word}\n{text}");
+
+            let mut plain_post = post.clone();
+            plain_post.use_canned_cycles = false;
+            let (plain, _) = emit_with(&project, &plain_post, &ops, DATE).unwrap();
+            assert_eq!(
+                joined_motion(text, &post),
+                joined_motion(&plain.text, &plain_post),
+                "{word}\n{text}\n{}",
+                plain.text
+            );
+        }
+    }
+
+    /// #305 with #306: on LinuxCNC, cycles from the clearance height and
+    /// the `G53` lift in one program. With acceptance 45's heights (machine
+    /// Z −5, park at the origin), automatic and manual spindle control, mm
+    /// and inch, the plaque's Drill is still written as cycles with no
+    /// warning, the program passes the safety pass (`emit` runs it), and
+    /// after `G80` it parks at the clearance height, lifts once and ends:
+    /// `G0 X0 Y0` (with its `G0`: `G80` leaves no motion mode),
+    /// `G53 G0 Z…`, then `M5`, `M2` (or the router-off `M0`). No
+    /// move comes between the cycles' return to the clearance height and
+    /// the park, so the lift is from at least safe Z (S16).
+    #[test]
+    fn canned_cycles_from_the_clearance_height_with_the_lift_on_linuxcnc() {
+        for control in [SpindleControl::Automatic, SpindleControl::Manual] {
+            for (units, z20, lift, park) in [
+                (Units::Mm, "Z20.000", "G53 G0 Z-5.000", "G0 X0.000 Y0.000"),
+                (
+                    Units::Inch,
+                    "Z0.7874",
+                    "G53 G0 Z-0.1969",
+                    "G0 X0.0000 Y0.0000",
+                ),
+            ] {
+                let (mut project, ops) = plaque_drill_on_linuxcnc(0.0);
+                project.post_processor.spindle_control = control;
+                project.display_units = units;
+                project.heights = acceptance_45_heights();
+                let (program, warnings) = emit(&project, &ops, DATE)
+                    .unwrap_or_else(|e| panic!("{control:?} {units:?}: {e:?}"));
+                let text = &program.text;
+                assert!(
+                    warnings.is_empty(),
+                    "{control:?} {units:?}: {warnings:?}\n{text}"
+                );
+                let lines = code_lines(text);
+                let g98 = lines.iter().position(|l| l == "G98").unwrap();
+                assert!(
+                    lines[g98 - 1].starts_with('X')
+                        && lines[..g98].iter().any(|l| l.ends_with(z20)),
+                    "{control:?} {units:?}: over the first hole at the clearance height\n{text}"
+                );
+                let cancel = lines.iter().position(|l| l == "G80").unwrap();
+                assert_eq!(lines[g98 + 1..cancel].len(), 4, "{text}");
+                let at = lines.iter().position(|l| l == lift).unwrap();
+                assert_eq!(
+                    lines.iter().filter(|l| l.starts_with("G53")).count(),
+                    1,
+                    "{text}"
+                );
+                assert_eq!(
+                    lines[cancel + 1..at],
+                    [park],
+                    "{control:?} {units:?}\n{text}"
+                );
+                let end: &[&str] = match control {
+                    SpindleControl::Automatic => &["M5", "M2"],
+                    SpindleControl::Manual => &["M2"],
+                };
+                let tail: Vec<&str> = lines[at + 1..]
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|l| !l.starts_with("M0"))
+                    .collect();
+                assert_eq!(tail, end, "{control:?} {units:?}\n{text}");
+            }
+        }
+    }
+
+    /// #305: a clearance height equal to the Drill's safe Z (validation
+    /// allows it) links the parts at safe Z. The cycles start from it, as
+    /// without a clearance height, with no warning, and the program is the
+    /// one without the clearance height.
+    #[test]
+    fn canned_cycles_with_the_clearance_height_at_safe_z() {
+        let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        let post = canned_post(&project);
+        let without = emit_with(&project, &post, &drill_entry(&project, &op), DATE)
+            .unwrap()
+            .0
+            .text;
+        project.heights.clearance_mm = Some(op.safe_z_mm);
+        let (program, warnings) =
+            emit_with(&project, &post, &drill_entry(&project, &op), DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}\n{}", program.text);
+        assert!(has_cycle_word(&program.text), "{}", program.text);
+        assert_eq!(program.text, without);
+    }
+
+    /// #305, acceptance 24 with a clearance height: holes that are separate
+    /// parts, with every cycle the test definition has (`G81`, `G82`,
+    /// `G83`, `G73`), are written as cycles from the clearance height with
+    /// no warning, and the expansion is the plain program's motion once
+    /// its rapids along one vertical line are joined: the same pecks from
+    /// `R` (Z 1, then 2 mm a peck to Z −5), the same re-entries, the same
+    /// dwell. Every move across the work is at the clearance height, Z 20,
+    /// and nothing goes below the hole bottom, Z −5.
+    #[test]
+    fn canned_motion_from_the_clearance_height_equals_plain_program() {
+        let peck = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::Full,
+        };
+        let chip = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::ChipBreak { gap_mm: 0.5 },
+        };
+        for (cycle, dwell_s, word) in [
+            (dc_project::DrillCycle::Simple, 0.0, "G81"),
+            (dc_project::DrillCycle::Simple, 0.5, "G82"),
+            (peck, 0.0, "G83"),
+            (chip, 0.0, "G73"),
+        ] {
+            let (mut project, op) = drill_project(cycle, dwell_s, 1.0);
+            project.heights.clearance_mm = Some(20.0);
+            let ops = drill_entry(&project, &op);
+            let post = canned_post(&project);
+            let (canned, warnings) = emit_with(&project, &post, &ops, DATE).unwrap();
+            let canned = canned.text;
+            assert!(warnings.is_empty(), "{word}: {warnings:?}\n{canned}");
+            assert!(canned.lines().any(|l| has_word(l, word)), "{canned}");
+            let plain = emit(&project, &ops, DATE).unwrap().0.text;
+            let expanded = joined_motion(&canned, &post);
+            assert_eq!(
+                expanded,
+                joined_motion(&plain, &post_of(&project)),
+                "{word}\n{canned}\n{plain}"
+            );
+            let feeds: Vec<f64> = expanded
+                .iter()
+                .filter(|m| m.0 == MotionKind::Linear)
+                .filter_map(|m| m.3)
+                .collect();
+            let per_hole: &[f64] = if word == "G83" || word == "G73" {
+                &[-1.0, -3.0, -5.0]
+            } else {
+                &[-5.0]
+            };
+            assert_eq!(feeds, per_hole.repeat(HOLES.len()), "{word}\n{canned}");
+            let model = crate::parse::CycleModel::of(&post);
+            let moves = crate::parse::parse_motion_with(&canned, &model).unwrap();
+            for (i, mv) in moves.iter().enumerate() {
+                assert!(mv.to.z.unwrap() >= -5.0 - 1e-9, "{word}: move {i}: {mv:?}");
+                if mv.from.x != mv.to.x || mv.from.y != mv.to.y {
+                    assert_eq!(mv.to.z, Some(20.0), "{word}: move {i}: {mv:?}");
+                }
+            }
+        }
     }
 }

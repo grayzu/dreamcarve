@@ -104,7 +104,8 @@ written. There are no safety warnings, only errors.
     controller makes for it, and rules 1, 2, 8 and 9 are checked on those
     moves: they must be the Drill's own moves, hole for hole, depth for
     depth. A cycle the check cannot read back exactly, such as one with a
-    word missing, is refused.
+    word missing, is refused, and so is any other move before the `G80`
+    that ends the cycles.
 11. **Nothing goes down faster than the plunge rate.** For every cutting
     move that goes down, the check works out its slope from the numbers
     written in the program, and its speed straight down: the feed rate
@@ -162,7 +163,7 @@ written. There are no safety warnings, only errors.
 13. **Machine coordinates only for the tool-change lift.** A program
     writes `G53` only as `G53 G0 Z<v>`, alone on its line, where `<v>` is
     the project's `tool_change_machine_z_mm` (below 0), on a
-    post-processor that documents `G53` (grblHAL, GRBL), and only right
+    post-processor that documents `G53` (grblHAL, GRBL, LinuxCNC), and only right
     before a tool-change stop or the end of the program, from at or above
     safe Z, at the spot the bit is already over, or again right after a
     stop that followed a lift (the router-off pause, then the tool change)

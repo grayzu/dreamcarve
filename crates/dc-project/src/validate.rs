@@ -933,7 +933,7 @@ impl fmt::Display for Problem {
             ),
             Self::MachineZNotBelowHome { machine_z_mm } => write!(
                 f,
-                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL home Z at the top of its travel, where machine Z is just below 0, so the lift must be below 0, at least the homing pull-off below it"
+                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL, and LinuxCNC as its configuration tools set it up, home Z at the top of its travel, where machine Z is 0 or just below, so the lift must be below 0, at least the homing pull-off below it"
             ),
             Self::MachineZNeedsG53 { post } => write!(
                 f,
@@ -4329,26 +4329,58 @@ mod tests {
     /// on GRBL (the sample's) it is valid.
     #[test]
     fn machine_z_needs_g53_definition() {
-        let mut p = sample_project();
-        p.heights.tool_change_machine_z_mm = Some(-5.0);
-        p.post_processor = crate::PostProcessorRef::latest("linuxcnc").unwrap();
-        let problems = validate(&p);
-        assert_eq!(
-            problems,
-            vec![Problem::MachineZNeedsG53 {
-                post: "linuxcnc".into()
-            }]
-        );
-        assert!(problems[0].is_error());
-        assert!(
-            problems[0].to_string().contains("linuxcnc"),
-            "{}",
-            problems[0]
-        );
-        assert_eq!(
-            problems[0].field().as_deref(),
-            Some("heights.tool_change_machine_z_mm")
-        );
+        // #306: Mach3, UCCNC and generic document no `G53` that DreamCarve
+        // could check, on any version.
+        for definition in crate::bundled_definitions()
+            .unwrap()
+            .iter()
+            .filter(|d| ["mach3", "uccnc", "generic"].contains(&d.id))
+        {
+            let mut p = sample_project();
+            p.heights.tool_change_machine_z_mm = Some(-5.0);
+            p.post_processor = definition.default_ref();
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::MachineZNeedsG53 {
+                    post: definition.id.into()
+                }],
+                "{}",
+                definition.path
+            );
+            assert!(problems[0].is_error());
+            assert!(
+                problems[0].to_string().contains(definition.id),
+                "{}",
+                problems[0]
+            );
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("heights.tool_change_machine_z_mm")
+            );
+        }
+    }
+
+    /// #306: LinuxCNC documents `G53` (definitions README,
+    /// "Machine-coordinate moves"), so both versions accept a machine Z,
+    /// with the same rule as grblHAL and GRBL: below 0 as written.
+    #[test]
+    fn machine_z_accepted_on_linuxcnc() {
+        for version in [1, 2] {
+            let mut p = sample_project();
+            p.post_processor = crate::PostProcessorRef::latest("linuxcnc").unwrap();
+            p.post_processor.definition_version = version;
+            p.heights.tool_change_machine_z_mm = Some(-5.0);
+            assert_eq!(validate(&p), vec![], "v{version}");
+            for machine_z_mm in [0.0, 5.0, -0.0004] {
+                p.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+                assert_eq!(
+                    validate(&p),
+                    vec![Problem::MachineZNotBelowHome { machine_z_mm }],
+                    "v{version} {machine_z_mm}"
+                );
+            }
+        }
     }
 
     /// #283: the park point is a coordinate, within the 6000 mm limit

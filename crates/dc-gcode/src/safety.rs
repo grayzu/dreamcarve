@@ -17,7 +17,9 @@
 //! as the moves the controller makes for it. The parser expands each one
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
 //! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
-//! the motion the machine makes.
+//! the motion the machine makes. A series of cycles must end with `G80`
+//! before any other motion (#314): the parser models `G98`'s return level
+//! only from one `G80` to the next.
 //!
 //! S16 (#283; `docs/specs/phase-2/functional.md`, "Safety (addendum)"):
 //! the parser reads `G53 G0 Z` lines as machine-coordinate lifts and
@@ -44,10 +46,10 @@ use dc_project::{
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
-use crate::emit::{changes_tools_in_program, controller_sets_units};
+use crate::emit::{changes_tools_in_program, code_words, controller_sets_units};
 use crate::material::{self, Material};
 use crate::parse::{
-    Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
+    Block, CycleModel, MachineMove, MachinePosition, MotionKind, Word, is_code, parse_program_with,
 };
 use crate::transform::{MachineTransform, mm_per_unit};
 
@@ -355,6 +357,7 @@ fn check_rules(
         changes_tools_in_program(post),
         writes_canned_cycles(post),
         with_g53,
+        &header_cancel_codes(post),
     )?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
@@ -736,6 +739,30 @@ pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
 }
 /// `G53`, accepted on a machine-coordinate lift only (S16).
 const MACHINE_G: [f64; 1] = [53.0];
+/// `G50`, every scale factor back to 1, and `G69`, no coordinate rotation,
+/// as Mach3 and UCCNC define them (#312; Using Mach3Mill 1.84, 10.7.15,
+/// 10.7.20; UCCNC user's manual 1.0047, 4.1.1). Each only cancels a mode
+/// DreamCarve never turns on, but it is accepted only from a definition
+/// whose header writes it ([`header_cancel_codes`]): LinuxCNC, grblHAL,
+/// GRBL and RS274/NGC do not have them, and in other dialects `G50` is a
+/// different command. `G51` and `G68`, which scale and rotate every
+/// coordinate the program writes, are never accepted: this pass reads the
+/// program as written.
+const HEADER_CANCEL_G: [(&str, f64); 2] = [("G50", 50.0), ("G69", 69.0)];
+
+/// The codes of [`HEADER_CANCEL_G`] that `post`'s header writes.
+fn header_cancel_codes(post: &PostProcessor) -> Vec<f64> {
+    HEADER_CANCEL_G
+        .iter()
+        .filter(|(word, _)| {
+            post.program
+                .header
+                .iter()
+                .any(|line| code_words(line).iter().any(|w| w == word))
+        })
+        .map(|&(_, code)| code)
+        .collect()
+}
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
 /// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
 /// `M61`, which sets the current tool number without a stop or a move.
@@ -778,15 +805,22 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 /// change tools with `M6` (`with_m6`), those in [`CANNED_G`] when it
 /// may hold canned cycles (`with_canned`), and `G53` on the lines the
 /// parser read as a machine-coordinate lift when the definition documents
-/// it and the project sets the height (`with_g53`, S16).
+/// it and the project sets the height (`with_g53`, S16). The definition's
+/// own header cancels, `header_g` ([`header_cancel_codes`]), are allowed
+/// only where [`check_header_cancel`] places them.
 fn check_words(
     blocks: &[Block],
     with_m6: bool,
     with_canned: bool,
     with_g53: bool,
+    header_g: &[f64],
 ) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
+    // #312: true in the header, before the first move or spindle start,
+    // and again after each stop until the next one: the two places `emit`
+    // writes the setup lines.
+    let mut in_setup = true;
     for block in blocks {
         let lift: &[f64] = if with_g53 && block.machine_lift_mm.is_some() {
             &MACHINE_G
@@ -794,6 +828,10 @@ fn check_words(
             &[]
         };
         for word in &block.words {
+            if word.letter == 'G' && header_g.iter().any(|&code| is_code(word.value, code)) {
+                check_header_cancel(block, word, in_setup)?;
+                continue;
+            }
             let (allowed, extra): (&[f64], &[f64]) = match word.letter {
                 'G' if !lift.is_empty() => (&ALLOWED_G, lift),
                 'G' => (&ALLOWED_G, canned),
@@ -811,8 +849,39 @@ fn check_words(
                 });
             }
         }
+        if block.motion.is_some() || block.machine_lift_mm.is_some() || block.has('M', 3.0) {
+            in_setup = false;
+        }
+        if block.has('M', 0.0) || block.has('M', 1.0) || (with_m6 && block.has('M', 6.0)) {
+            in_setup = true;
+        }
     }
     Ok(())
+}
+
+/// #312: `word`, one of the definition's header cancels (`G50`, `G69`),
+/// is accepted only as `emit` writes it: alone on its line, but for a line
+/// number, so no axis, feed, speed or other value word can ride with it,
+/// and only in the header or in the setup after a stop (`in_setup`). On a
+/// dialect where `G50` takes axis words it is a different command, so
+/// anything else is refused.
+fn check_header_cancel(block: &Block, word: &Word, in_setup: bool) -> Result<(), ExportError> {
+    let alone = block.words.iter().filter(|w| w.letter != 'N').count() == 1;
+    let reason = if !alone {
+        Some("it shares its line with other words")
+    } else if !in_setup {
+        Some("it is outside the header and the setup after a stop")
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(ExportError::MisplacedSetupWord {
+            line: block.line,
+            word: format!("{}{}", word.letter, word.value),
+            reason,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// One output unit in the last written decimal place of a feed, in
@@ -1267,7 +1336,11 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 ///
 /// - a rapid by one rapid that ends at its end point, or two whose first
 ///   moves in Z alone or in XY alone towards it (`emit` splits a rapid so
-///   it never travels sideways below either end);
+///   it never travels sideways below either end); in a Drill written as
+///   canned cycles, also by none, or by a rapid in XY alone over it, when
+///   a rapid in Z alone passes through its end point and the toolpath
+///   goes on the same way along that line (#305,
+///   [`match_rapid_on_the_way`]);
 /// - a straight cut by one `G1` that ends at its end point;
 /// - a dwell by a `G4` with the same seconds (within a millisecond, in
 ///   the definition's dwell units) between the motion lines around it;
@@ -1327,10 +1400,11 @@ fn check_reproduces(
     // own (the definition's `reentry_gap_mm`), not the toolpath's, so a
     // rapid in Z alone inside a hole matches within that gap. Every other
     // move matches as for plain moves.
-    let reentry_gap_mm = (matches!(span.op, Operation::Drill(_))
-        && blocks.iter().any(|b| b.synthetic && in_span(b)))
-    .then(|| CycleModel::of(post).reentry_gap_mm)
-    .flatten();
+    let canned =
+        matches!(span.op, Operation::Drill(_)) && blocks.iter().any(|b| b.synthetic && in_span(b));
+    let reentry_gap_mm = canned
+        .then(|| CycleModel::of(post).reentry_gap_mm)
+        .flatten();
     // Where the last straight cut of the toolpath ended, in XY.
     let mut last_cut: Option<Point> = None;
     let mut next_dwell = 0;
@@ -1358,10 +1432,18 @@ fn check_reproduces(
             previous.is_some_and(|p| at(p.xy())) && last_cut.is_some_and(at)
         };
         let consumed = match mv.kind {
-            MoveKind::Rapid => match_rapid(rest, mv.to, already_there).or_else(|| {
-                let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
-                match_in_hole_rapid(rest, mv.to, gap_mm)
-            }),
+            MoveKind::Rapid => match_rapid(rest, mv.to, already_there)
+                .or_else(|| {
+                    let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
+                    match_in_hole_rapid(rest, mv.to, gap_mm)
+                })
+                .or_else(|| {
+                    // #305: a cycle from the clearance height goes through
+                    // safe Z without stopping.
+                    canned
+                        .then(|| match_rapid_on_the_way(rest, mv.to, moves.get(index + 1)))
+                        .flatten()
+                }),
             MoveKind::Dwell { seconds } => {
                 // A `G4` with these seconds after the last motion matched
                 // and before the next; it moves nothing.
@@ -1562,6 +1644,59 @@ fn match_in_hole_rapid(rest: &[ReadMove<'_>], target: Point3, gap_mm: f64) -> Op
         .to_z
         .is_some_and(|z| approx_eq(z, target.z, gap_mm + tolerance));
     (z_only && at_xy && within).then_some(1)
+}
+
+/// S11 (#305): how many of `rest` a rapid to `target` takes when the
+/// controller goes through `target` without stopping there: one rapid of
+/// the controller's in Z alone, at the target's XY, passes through it on
+/// the way to a Z beyond it, and the toolpath goes on the same way along
+/// that line, by a rapid in Z alone (`next`), or the target is the
+/// toolpath's last move and the controller's rapid goes up, the retract
+/// [`check_reproduces`] accepts after the last move. Coming down, a rapid
+/// in XY alone to over the target may come first: the emitter's split of
+/// the move over the first hole, made at the clearance height. The lines
+/// taken are that one, or none; the rapid in Z stays for the next move.
+/// Only for a Drill written as canned cycles, whose `G98` returns each
+/// hole to the clearance height where the toolpath stops at safe Z.
+fn match_rapid_on_the_way(
+    rest: &[ReadMove<'_>],
+    target: Point3,
+    next: Option<&Move>,
+) -> Option<usize> {
+    let rapid = |m: &&ReadMove<'_>| m.mv.kind == MotionKind::Rapid;
+    let first = rest.first().filter(rapid)?;
+    let tolerance = first.tolerance_mm;
+    let over =
+        |p: Point| approx_eq(p.x, target.x, tolerance) && approx_eq(p.y, target.y, tolerance);
+    let xy_only = !differs(first.mv.from.z, first.mv.to.z) && first.to_xy.is_some_and(over);
+    let (taken, along) = if xy_only {
+        (1, rest.get(1).filter(rapid)?)
+    } else {
+        (0, first)
+    };
+    let (from, to) = (along.from?, along.to?);
+    if !(over(from.xy()) && over(to.xy())) {
+        return None;
+    }
+    let up = to.z > from.z;
+    let through = if up {
+        from.z + tolerance < target.z && target.z < to.z - tolerance
+    } else {
+        to.z + tolerance < target.z && target.z < from.z - tolerance
+    };
+    let goes_on = match next {
+        Some(n) => {
+            n.kind == MoveKind::Rapid
+                && over(n.to.xy())
+                && if up {
+                    n.to.z > target.z + tolerance
+                } else {
+                    n.to.z < target.z - tolerance
+                }
+        }
+        None => up && taken == 0,
+    };
+    (through && goes_on && !(xy_only && up)).then_some(taken)
 }
 
 /// How many of `rest` a straight cut to `target` takes, if they match it.
@@ -2557,6 +2692,142 @@ mod tests {
             "G90 G94 G17 G40 G49 G80\nG91.1\nG21\nG54\nG0 Z11\nM30\n",
         ] {
             assert!(check_text(text).is_ok(), "{text}: {:?}", check_text(text));
+        }
+    }
+
+    /// #312: `G50` (scale factors to 1) and `G69` (no rotation) are
+    /// accepted from a definition whose header has them, Mach3 v3 and
+    /// UCCNC v3, and from no other: LinuxCNC, grblHAL, GRBL and RS274/NGC
+    /// do not have them, and on other dialects `G50` means something else.
+    /// `G51` and `G68`, which scale and rotate what the program writes,
+    /// are refused everywhere: the safety pass reads the program as
+    /// written.
+    #[test]
+    fn g50_g69_accepted() {
+        let post = |id: &str, version: u32| {
+            dc_project::bundled_definition(id, version)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let cancels = "G21 G90\nG54\nG50\nG69\nG0 Z11\nM30\n";
+        let with_them = [
+            ("mach3 v3", post("mach3", 3)),
+            ("uccnc v3", post("uccnc", 3)),
+        ];
+        let without = [
+            ("mach3 v2", post("mach3", 2)),
+            ("uccnc v2", post("uccnc", 2)),
+            ("linuxcnc v2", post("linuxcnc", 2)),
+            ("grblhal v3", post("grblhal", 3)),
+            ("grbl v3", post("grbl", 3)),
+            ("generic v1", post("generic", 1)),
+        ];
+        for (case, p) in &with_them {
+            let ok = check_text_on(cancels, p.clone(), SpindleControl::Automatic);
+            assert!(ok.is_ok(), "{case}: {ok:?}");
+        }
+        for (case, p) in &without {
+            for word in ["G50", "G69"] {
+                let text = format!("G21 G90\nG54\n{word}\nG0 Z11\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == word),
+                    "{case} {word}: {err:?}"
+                );
+            }
+        }
+        for (case, p) in with_them.iter().chain(&without) {
+            for (code, word) in [("G51 Z-1", "G51"), ("G68", "G68")] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{code}\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 4, word: w } if w == word),
+                    "{case} {code}: {err:?}"
+                );
+            }
+        }
+    }
+
+    /// #312: on a definition whose header writes them, `G50` and `G69` are
+    /// accepted only as `emit` writes them: alone on a line (a line number
+    /// aside), in the header or in the setup after a stop. With a value
+    /// word, `G50` is another command on some dialects (it would pass a
+    /// check that reads it as a cancel), and anywhere else it is not
+    /// DreamCarve's line, so both are refused with
+    /// [`ExportError::MisplacedSetupWord`]. The real headers pass.
+    #[test]
+    fn g50_g69_only_where_emit_writes_them() {
+        let post = |id: &str| {
+            dc_project::bundled_definition(id, 3)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let mach3_header = "%\nN10 ( Project: x )\nN20 ( Generated by DreamCarve on 2026-10-15 )\n\
+            N30 G90 G94 G17 G40 G80\nN40 G50\nN50 G69\nN60 G91.1\nN70 G21\nN80 G54\n\
+            N90 G0 Z11\nN100 M30\n";
+        let ok = check_text_on(mach3_header, post("mach3"), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "mach3: {ok:?}");
+        let uccnc_header = "( Project: x )\n( Generated by DreamCarve on 2026-10-15 )\n\
+            G90 G17 G40 G80 G94\nG50\nG69\nG54\nG0 Z11\nM30\n";
+        let ok = check_text_on(uccnc_header, post("uccnc"), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "uccnc: {ok:?}");
+        // Again in the setup after a stop.
+        let after_stop =
+            "G21 G90\nG54\nG50\nG69\nG0 Z11\nM0\nG50\nG69\nG21 G90\nG54\nG0 Z11\nM30\n";
+        for id in ["mach3", "uccnc"] {
+            let ok = check_text_on(after_stop, post(id), SpindleControl::Automatic);
+            assert!(ok.is_ok(), "{id} after a stop: {ok:?}");
+        }
+        let misplaced = |id: &str, text: &str, line: usize, word: &str, why: &str| {
+            let err = check_text_on(text, post(id), SpindleControl::Automatic).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::MisplacedSetupWord { line: l, word: w, reason }
+                        if *l == line && w == word && reason.contains(why)
+                ),
+                "{id}: {text}: {err:?}"
+            );
+        };
+        for id in ["mach3", "uccnc"] {
+            // With a value word, in the setup after a stop, where it would
+            // pass alone. `G0` is still the motion mode there, so the
+            // parser reads `G50 X0` as a move as well.
+            for code in [
+                "G50 X0",
+                "G50 Z-1",
+                "G50 F100",
+                "G50 S1000",
+                "G50 P1",
+                "G69 X0",
+                "G69 F100",
+                "G50 G69",
+            ] {
+                let word = &code[..3];
+                let text = format!("G21 G90\nG54\nG0 Z11\nM0\n{code}\nG21 G90\nG54\nG0 Z11\nM30\n");
+                misplaced(id, &text, 5, word, "other words");
+            }
+            // In the header, the value word fails the same way where the
+            // parser reads it.
+            for code in ["G50 F100", "G50 S1000", "G50 P1", "G50 G69"] {
+                let word = &code[..3];
+                let text = format!("G21 G90\nG54\n{code}\nG0 Z11\nM30\n");
+                misplaced(id, &text, 3, word, "other words");
+            }
+            // Alone, but after the first move, with no stop since.
+            for word in ["G50", "G69"] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{word}\nM30\n");
+                misplaced(id, &text, 4, word, "outside");
+                let spindle = format!("G21 G90\nG54\nM3 S18000\n{word}\nG0 Z11\nM5\nM30\n");
+                misplaced(id, &spindle, 4, word, "outside");
+                let resumed =
+                    format!("G21 G90\nG54\nG0 Z11\nM0\nG21 G90\nG54\nG0 Z11\n{word}\nM30\n");
+                misplaced(id, &resumed, 8, word, "outside");
+            }
         }
     }
 
@@ -3877,6 +4148,228 @@ mod tests {
                 "{word} Q3: {result:?}"
             );
         }
+    }
+
+    /// The fixture's clearance height for the #305 tests: work Z 10,
+    /// absolute 16, above safe Z (work 5, absolute 11).
+    const CLEARANCE_Z_MM: f64 = 16.0;
+
+    /// The whole safety pass on `text` as the fixture's Drill with
+    /// `toolpath`, written for `post`, with the clearance height
+    /// [`CLEARANCE_Z_MM`].
+    fn check_drill_at_clearance(
+        text: &str,
+        toolpath: &Toolpath,
+        post: &PostProcessor,
+    ) -> Result<(), ExportError> {
+        let (project, _, tool) = fixture();
+        let transform = MachineTransform::new(&project, post).unwrap();
+        let op = drill();
+        let material = holes_under(toolpath);
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath,
+            material: &material,
+            lines: 1..text.lines().count() + 1,
+        }];
+        check(
+            text,
+            post,
+            &transform,
+            &project.stock,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: None,
+            },
+            ProgramHeights {
+                machine_lift_mm: None,
+                clearance_z_mm: Some(CLEARANCE_Z_MM),
+            },
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// The sequencer's Drill toolpath for simple holes at `xs` (Y 50),
+    /// each a part of its own, with the clearance height
+    /// [`CLEARANCE_Z_MM`]: the first hole is reached at safe Z (11); each
+    /// hole goes down to the retract plane (7), plunges to 3 mm and goes
+    /// out to safe Z; between holes the tool rises to `link_z`, crosses
+    /// there and comes down to safe Z again.
+    fn holes_linked_at(xs: &[f64], link_z: f64) -> Toolpath {
+        let mut moves = Vec::new();
+        for (k, &x) in xs.iter().enumerate() {
+            let at = |z: f64| Point3::new(x, 50.0, z);
+            if k > 0 {
+                moves.push(Move::rapid(at(link_z)));
+            }
+            moves.extend([
+                Move::rapid(at(11.0)),
+                Move::rapid(at(7.0)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(11.0)),
+            ]);
+            if k + 1 < xs.len() && link_z > 11.0 {
+                moves.push(Move::rapid(at(link_z)));
+            }
+        }
+        Toolpath { moves }
+    }
+
+    /// A program on the fixture that rises to the clearance height (work
+    /// Z 10), rapids over (50, 50) there, writes `G98`, then `cycles`.
+    fn clearance_cycle_program(cycles: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nG98\n{cycles}G80\nM5\n")
+    }
+
+    /// #305, S11: cycles written from the clearance height. `G98` returns
+    /// each hole to the Z before the first cycle of the series (LinuxCNC
+    /// `interp_cycles.cc` 926-931 and 976; Mach3Mill 10.7.29), work Z 10,
+    /// so the controller rapids from there straight to `R` and from the
+    /// bottom straight back, where the toolpath has two rapids along the
+    /// same vertical line, through safe Z. S6 takes them as one: the
+    /// program passes. A cycle whose `R` or `Z` differs from the toolpath
+    /// still fails, and so does the same program against a toolpath whose
+    /// holes are linked at safe Z, which `G98` from the clearance height
+    /// does not follow.
+    #[test]
+    fn canned_cycles_from_clearance_match_the_toolpath() {
+        let post = canned(Some(0.5));
+        let linked = holes_linked_at(&[50.0, 60.0], CLEARANCE_Z_MM);
+        let g81 = |z: &str, r: &str| {
+            clearance_cycle_program(&format!("G81 X50 Y50 Z{z} R{r} F300\nX60 Y50 Z{z} R{r}\n"))
+        };
+        check_drill_at_clearance(&g81("-3", "1"), &linked, &post).unwrap();
+        for (z, r) in [("-2.5", "1"), ("-3", "2"), ("-3", "0.5")] {
+            let result = check_drill_at_clearance(&g81(z, r), &linked, &post);
+            assert!(
+                matches!(result, Err(ExportError::MotionMismatch { .. })),
+                "Z{z} R{r}: {result:?}"
+            );
+        }
+        let at_safe_z = holes_linked_at(&[50.0, 60.0], 11.0);
+        let result = check_drill_at_clearance(&g81("-3", "1"), &at_safe_z, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "links at safe Z: {result:?}"
+        );
+    }
+
+    /// #305: S6 joins toolpath rapids along one vertical line only where
+    /// they lie on one rapid of the controller's in the same direction,
+    /// and only for a Drill written as canned cycles. A toolpath that goes
+    /// up past safe Z and then back down is not the cycle's one rapid up;
+    /// and a plain program with one `G0 Z` where the toolpath has two
+    /// still fails, as before, while the program that writes both passes.
+    #[test]
+    fn vertical_rapids_join_only_along_a_cycle_rapid() {
+        let post = canned(Some(0.5));
+        let at = |z: f64| Point3::new(50.0, 50.0, z);
+        let back_down = Toolpath {
+            moves: vec![
+                Move::rapid(at(11.0)),
+                Move::rapid(at(7.0)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(13.0)),
+                Move::rapid(at(11.0)),
+            ],
+        };
+        let text = clearance_cycle_program("G81 X50 Y50 Z-3 R1 F300\n");
+        let result = check_drill_at_clearance(&text, &back_down, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "up past safe Z, then down: {result:?}"
+        );
+
+        let linked = holes_linked_at(&[50.0, 60.0], CLEARANCE_Z_MM);
+        let one_rapid = "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ1\nG1 Z-3 F300\nG0 Z10\nX60 Y50\nZ1\nG1 Z-3\nG0 Z5\nM5\n";
+        let result = check_drill_at_clearance(one_rapid, &linked, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "plain program, one rapid for two: {result:?}"
+        );
+        let both = "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ5\nZ1\nG1 Z-3 F300\nG0 Z5\nZ10\nX60 Y50\nZ5\nZ1\nG1 Z-3\nG0 Z5\nM5\n";
+        check_drill_at_clearance(both, &linked, &post).unwrap();
+    }
+
+    /// The sequencer's Drill toolpath for a hole at X 50, its own part,
+    /// then a part with holes at X 60 and X 70 (Y 50), with the clearance
+    /// height [`CLEARANCE_Z_MM`]: each hole goes down from safe Z (11) to
+    /// the retract plane (7), plunges to 3 mm and goes out to safe Z; the
+    /// tool rises to the clearance height between the parts, comes down
+    /// to safe Z over X 60, and crosses to X 70 at safe Z.
+    fn holes_of_two_parts() -> Toolpath {
+        let at = |x: f64, z: f64| Point3::new(x, 50.0, z);
+        let hole = |x: f64| {
+            [
+                Move::rapid(at(x, 7.0)),
+                Move::linear(at(x, 3.0), 300.0),
+                Move::rapid(at(x, 11.0)),
+            ]
+        };
+        let mut moves = vec![Move::rapid(at(50.0, 11.0))];
+        moves.extend(hole(50.0));
+        moves.extend([
+            Move::rapid(at(50.0, CLEARANCE_Z_MM)),
+            Move::rapid(at(60.0, CLEARANCE_Z_MM)),
+            Move::rapid(at(60.0, 11.0)),
+        ]);
+        moves.extend(hole(60.0));
+        moves.push(Move::rapid(at(70.0, 11.0)));
+        moves.extend(hole(70.0));
+        Toolpath { moves }
+    }
+
+    /// The program `emit` writes for [`holes_of_two_parts`] on the
+    /// fixture (work Z: safe Z 5, clearance 10): a `G98` series per part,
+    /// each from safe Z over its first hole and closed by `G80`, the rise
+    /// to the clearance height between them. `second` is what comes
+    /// between the crossing to X 60 and the second series' first cycle,
+    /// `close` what closes the first series.
+    fn series_per_part_program(close: &str, second: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ5\nG98\n\
+             G81 X50 Y50 Z-3 R1 F300\n{close}G0 Z10\nX60\n{second}\
+             G81 X60 Y50 Z-3 R1 F300\nX70 Y50 Z-3 R1\nG80\nG0 Z10\nM5\n"
+        )
+    }
+
+    /// #314, S11: a Drill linked at both heights, written as one `G98`
+    /// series per part. `G80`, and any motion that is not a cycle, ends a
+    /// series, and the next cycle starts a new one from the Z it is at
+    /// (LinuxCNC `interp_convert.cc` 3818-3819, `interp_cycles.cc`
+    /// 926-931), here safe Z, so the second series returns both holes of
+    /// its part to safe Z and crosses between them there. The expansion is
+    /// the toolpath move for move: the program passes. It fails when the
+    /// first series lacks the `G80` before the rise (unparseable: S11
+    /// models no series ended by other motion), when the second series
+    /// starts from the clearance height (no `Z5` before its `G98`: `G98`
+    /// then returns to Z 10, and the pair is crossed there), and with
+    /// `G99`, which returns to `R`, below safe Z.
+    #[test]
+    fn series_per_part_match_the_toolpath() {
+        let post = canned(Some(0.5));
+        let toolpath = holes_of_two_parts();
+        let text = series_per_part_program("G80\n", "Z5\nG98\n");
+        check_drill_at_clearance(&text, &toolpath, &post).unwrap();
+
+        let no_cancel = series_per_part_program("", "Z5\nG98\n");
+        let result = check_drill_at_clearance(&no_cancel, &toolpath, &post);
+        assert!(
+            matches!(result, Err(ExportError::Unparseable { line: 10, .. })),
+            "no G80 before the rise: {result:?}"
+        );
+        let from_clearance = series_per_part_program("G80\n", "G98\n");
+        let result = check_drill_at_clearance(&from_clearance, &toolpath, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "second series from the clearance height: {result:?}"
+        );
+        let g99 = series_per_part_program("G80\n", "Z5\nG99\n");
+        let result = check_drill_at_clearance(&g99, &toolpath, &post);
+        assert!(result.is_err(), "G99: {result:?}");
     }
 
     /// S1 on the expansion: a `G81` whose bottom is below the stock bottom
@@ -5781,7 +6274,8 @@ mod tests {
 
     /// S16: a `G53` is refused, as before #283, in a program whose project
     /// sets no tool-change machine Z, and on a definition that documents
-    /// no machine-coordinate move (LinuxCNC), whatever the project sets.
+    /// no machine-coordinate move (Mach3, UCCNC, generic; #306), whatever
+    /// the project sets.
     #[test]
     fn g53_refused_without_height() {
         let text = lift_program("G53 G0 Z-5\nM5\n");
@@ -5790,17 +6284,76 @@ mod tests {
             matches!(&err, ExportError::ForbiddenWord { line: 9, word } if word == "G53"),
             "{err:?}"
         );
-        let linuxcnc = dc_project::latest_definition("linuxcnc")
+        for id in ["mach3", "uccnc", "generic"] {
+            for definition in dc_project::bundled_definitions()
+                .unwrap()
+                .iter()
+                .filter(|d| d.id == id)
+            {
+                let post = definition.post_processor().clone();
+                assert!(
+                    post.work_coordinates.machine_command.is_none(),
+                    "{}",
+                    definition.path
+                );
+                let err = check_text_lifting(&text, post, SpindleControl::Automatic, Some(-5.0))
+                    .unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
+                    "{}: {err:?}",
+                    definition.path
+                );
+            }
+        }
+    }
+
+    /// #306, S16 on LinuxCNC, with the strictness of grblHAL and GRBL:
+    /// both versions accept the lift to the project's machine Z, and
+    /// refuse it without the project's height, to another Z, at or above
+    /// machine Z 0, below safe Z, and in any other form. (The inch lift
+    /// is checked through `emit::machine_lift_on_linuxcnc`, whose programs
+    /// pass this pass.)
+    #[test]
+    fn g53_on_linuxcnc() {
+        for definition in dc_project::bundled_definitions()
             .unwrap()
-            .post_processor()
-            .clone();
-        assert!(linuxcnc.work_coordinates.machine_command.is_none());
-        let err =
-            check_text_lifting(&text, linuxcnc, SpindleControl::Automatic, Some(-5.0)).unwrap_err();
-        assert!(
-            matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
-            "{err:?}"
-        );
+            .iter()
+            .filter(|d| d.id == "linuxcnc")
+        {
+            let post = || definition.post_processor().clone();
+            let check = |text: &str, lift: Option<f64>| {
+                check_text_lifting(text, post(), SpindleControl::Automatic, lift)
+            };
+            let path = definition.path;
+            check(&lift_program("G53 G0 Z-5\nM5\n"), Some(-5.0))
+                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let err = check(&lift_program("G53 G0 Z-5\nM5\n"), None).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
+                "{path}: {err:?}"
+            );
+            for (tail, lift) in [("G53 G0 Z-4\nM5\n", -5.0), ("G53 G0 Z0\nM5\n", 0.0)] {
+                let err = check(&lift_program(tail), Some(lift)).unwrap_err();
+                assert!(
+                    matches!(err, ExportError::MachineLiftWrongZ { .. }),
+                    "{path} {tail}: {err:?}"
+                );
+            }
+            let low = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\n\
+                       G53 G0 Z-5\nM5\n";
+            let err = check(low, Some(-5.0)).unwrap_err();
+            assert!(
+                matches!(err, ExportError::MachineLiftNotAtSafeZ { .. }),
+                "{path}: {err:?}"
+            );
+            for line in ["G53 G0 X0", "G53 G1 Z-5", "G53 Z-5", "G53 G0 Z-5 X0"] {
+                let err = check(&lift_program(&format!("{line}\nM5\n")), Some(-5.0)).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::Unparseable { reason, .. } if reason.contains("S16")),
+                    "{path} {line}: {err:?}"
+                );
+            }
+        }
     }
 
     /// #304 review, S16: with manual spindle control the user may jog at
