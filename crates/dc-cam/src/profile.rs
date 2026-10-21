@@ -1623,6 +1623,65 @@ mod tests {
         );
     }
 
+    /// The band a refused Profile of `p` names: its two shapes' profiles
+    /// and its width.
+    fn refused_band(p: &Project, side: Side) -> (usize, usize, f64) {
+        let err = generate_profile(p, &profile_op(p, side, CutDirection::Climb))
+            .expect_err("a band narrower than the bit is refused");
+        let CamError::BandNarrowerThanTool {
+            op,
+            shape,
+            other,
+            band_mm,
+            diameter_mm,
+        } = &err
+        else {
+            panic!("expected BandNarrowerThanTool, got {err:?}");
+        };
+        assert_eq!(op.as_str(), "o1");
+        assert_approx_eq!(*diameter_mm, 6.35, TOL);
+        (shape.profile, other.profile, *band_mm)
+    }
+
+    /// #199: On line, the tool centre follows each line and the bit cuts
+    /// `r` of the ring on both sides of it, so the outline's cut and the
+    /// hole's together cut through a ring narrower than the bit: the part
+    /// loses material it keeps, as in #192's Inside band. A 3 mm ring
+    /// (closer than `r`, the issue's case) and a 4.5 mm one (wider than
+    /// `r`, narrower than the 6.35 mm bit) are both refused, and so is a
+    /// 2 mm web between two holes of one part.
+    #[test]
+    fn on_line_ring_narrower_than_tool_is_refused() {
+        for band_mm in [3.0, 4.5] {
+            let (shape, other, band) = refused_band(&ring_project(25.0 - band_mm), Side::OnLine);
+            assert_eq!((shape, other), (0, 1), "outline first");
+            assert_approx_eq!(band, band_mm, TOL);
+        }
+        let web = project(
+            vec![
+                rect_100x50(),
+                Polyline::circle(Point::new(30.0, 25.0), 10.0),
+                Polyline::circle(Point::new(52.0, 25.0), 10.0),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let (shape, other, band) = refused_band(&web, Side::OnLine);
+        assert_eq!((shape, other), (1, 2), "the two holes, in drawing order");
+        assert_approx_eq!(band, 2.0, TOL);
+    }
+
+    /// #199: an On line ring wider than the bit is cut as drawn, both
+    /// lines at every pass, with no finding.
+    #[test]
+    fn on_line_ring_wider_than_the_tool_is_cut() {
+        let p = ring_project(18.0);
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for z in PASS_Z_MM {
+            assert_eq!(laps_at(&tp, z).len(), 2, "both lines at Z {z}");
+        }
+    }
+
     #[test]
     fn every_cut_move_has_feed_and_every_rapid_has_none() {
         let p = ring_project(10.0);
