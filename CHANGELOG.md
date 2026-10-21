@@ -343,6 +343,11 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   back to that vertex with a move too short to write. With arc fitting on,
   arc fitting counted that move as a chord the program does not write, and
   export failed S12 ([#321]).
+- A T-bone or dogbone notch that would come nearer another wall than the bit's
+  radius is no longer cut. A T-bone in a hole whose part is thinner past the
+  hole's wall than the bit's radius cut through the part into the outside,
+  and export failed S9. Such a corner is now skipped with
+  `relief_corner_too_tight` and keeps the bit's radius ([#322]).
 
 ### Safety
 
@@ -463,3 +468,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#306]: https://github.com/grayzu/dreamcarve/issues/306
 [#308]: https://github.com/grayzu/dreamcarve/issues/308
 [#321]: https://github.com/grayzu/dreamcarve/issues/321
+[#322]: https://github.com/grayzu/dreamcarve/issues/322

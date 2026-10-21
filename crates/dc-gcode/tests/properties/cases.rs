@@ -10,7 +10,7 @@
 
 use super::{DATE, generate};
 use dc_cam::entry::EntryKind;
-use dc_cam::{MoveKind, Warning, WarningCode, generate_profile};
+use dc_cam::{MoveKind, ReliefCornerReason, Warning, WarningCode, generate_profile};
 use dc_gcode::emit;
 use dc_geometry::{Point, Point3, Polyline, Transform, Vertex};
 use dc_project::test_support::{sample_pocket, sample_project};
@@ -163,6 +163,16 @@ fn outside_t_bone_in_a_hole_just_wider_than_the_bit_exports() {
         .filter(|w| w.code() == WarningCode::ReliefCornerTooTight)
         .collect();
     assert_eq!(skipped.len(), 4, "the hole's four corners: {warnings:?}");
+    assert!(
+        skipped.iter().all(|w| matches!(
+            w,
+            Warning::ReliefCornerTooTight {
+                reason: ReliefCornerReason::NearOtherWall,
+                ..
+            }
+        )),
+        "{warnings:?}"
+    );
 
     let instance = &project.instances[0];
     let to_local = instance.transform.inverse().expect("a rotation inverts");
