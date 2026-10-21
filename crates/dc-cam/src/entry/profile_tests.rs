@@ -464,15 +464,18 @@ fn tabs_are_kept_out_of_the_entry() {
     );
     let lap = plunged_lap_points(&plunged, PASS_Z_MM[0]);
     assert!(lap.len() > 90, "a lap: {lap:?}");
-    // A 10 mm tab whose span (width + D) starts 3.5 mm past the lap
-    // start, so the start itself stays a radius clear of it: the tab's
-    // material runs from 3.5 + r to 3.5 + r + 10 mm along the path.
+    // The lap runs counter-clockwise from (58, 40) and the untabbed helix
+    // sits just before its start. A 10 mm tab whose span (width + D) ends
+    // 3.5 mm before the lap start, so the start itself stays a radius
+    // clear of it: the tab's material runs from L − 3.5 − r − 10 to
+    // L − 3.5 − r along the path.
+    let length_mm = std::f64::consts::TAU * (BOSS.2 + TOOL_RADIUS_MM);
     let width_mm = 10.0;
-    let span_start_mm = 3.5;
-    let centre_mm = span_start_mm + (width_mm + TOOL_DIAMETER_MM) / 2.0;
+    let span_end_mm = length_mm - 3.5;
+    let centre_mm = span_end_mm - (width_mm + TOOL_DIAMETER_MM) / 2.0;
     let (from_mm, to_mm) = (
-        span_start_mm + TOOL_RADIUS_MM,
-        span_start_mm + TOOL_RADIUS_MM + width_mm,
+        span_end_mm - TOOL_RADIUS_MM - width_mm,
+        span_end_mm - TOOL_RADIUS_MM,
     );
     let tab_top_mm = 5.0;
     let mut tabbed = plain.clone();
@@ -494,8 +497,8 @@ fn tabs_are_kept_out_of_the_entry() {
             .map(bite)
             .fold(0.0, f64::max)
     };
-    // Upstream plants its tab square on the helix; here the tab must start
-    // a radius past the lap start, so the untabbed helix bites its end.
+    // Upstream plants its tab square on the helix; here the tab must end
+    // a radius before the lap start, so the untabbed helix bites its end.
     assert!(
         worst(&untabbed) >= 0.5,
         "the fixture plants the tab on the natural entry: {}",
@@ -759,8 +762,7 @@ fn on_line_lap_recuts_ramped_stretch_at_full_depth() {
         // From the last move reaching this pass Z, the flat moves at it.
         let m = &tp.moves;
         let arrive = (1..m.len())
-            .filter(|&i| sloped(m[i - 1].to, &m[i]) && (m[i].to.z - z).abs() <= EPS_MM)
-            .last()
+            .rfind(|&i| sloped(m[i - 1].to, &m[i]) && (m[i].to.z - z).abs() <= EPS_MM)
             .expect("the pass is ramped into");
         let mut at = m[arrive].to.xy();
         let mut back_home = (at.distance_to(start) <= EPS_MM).then_some(at);
