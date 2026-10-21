@@ -280,8 +280,11 @@ the path's ends, so the bit's edge reaches the end vertex and goes no
 further on the part side. The side the bit runs on is waste and the
 other side is the part: a cut that would cross another of the
 operation's lines, or reach the strip one radius wide that a line keeps
-on its part side, is an error. Direction is as for On line open paths
-(conventional starts beside the first vertex, climb beside the last);
+on its part side, is an error. Direction is the milling mode, as on a
+closed shape: climb keeps the part on the right of travel, so Left climb
+starts beside the first vertex and Right climb beside the last, and
+conventional is the reverse (changed in #287: #207 used On line's
+start-point rule, which made a Left `climb` mill conventional);
 ramps run along the offset path and tabs are measured along it from the
 end beside the first vertex; there is no lead, no corner relief and no
 helix, as VCarve gives open profiles none. Closed targets are skipped
