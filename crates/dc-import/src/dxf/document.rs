@@ -8,7 +8,8 @@
 
 //! The parts of a DXF file the importer reads, from its groups
 //! (`docs/specs/phase-2/design.md`, "Algorithms → DXF import", step 1): the
-//! `$INSUNITS` header variable, the block definitions, and the entities of
+//! `$INSUNITS`, `$ACADVER` and `$DWGCODEPAGE` header variables, the block
+//! definitions, and the entities of
 //! the ENTITIES section, each entity being its type and its own groups,
 //! with a POLYLINE's VERTEX rows attached to it. Every entity is kept,
 //! whatever its type, so the importer sees (and counts) each one it does
@@ -26,6 +27,12 @@ use super::groups::Group;
 pub(super) struct Document {
     /// `$INSUNITS` (header variable, group 70), when present.
     pub insunits: Option<i64>,
+    /// `$ACADVER` (group 1), the AutoCAD version the file is saved as:
+    /// `AC1015` for R2000, `AC1021` for R2007.
+    pub acadver: Option<String>,
+    /// `$DWGCODEPAGE` (group 3), the code page text is written in before
+    /// R2007: `ANSI_1252`, `ANSI_1251`, ...
+    pub dwgcodepage: Option<String>,
     /// Block definitions, in file order.
     pub blocks: Vec<Block>,
     /// The ENTITIES section, in file order.
@@ -155,7 +162,11 @@ pub(super) fn read(groups: &[Group]) -> Document {
             continue;
         }
         match name.text().map(str::to_ascii_uppercase).as_deref() {
-            Some("HEADER") => document.insunits = header_int(body, "$INSUNITS", 70),
+            Some("HEADER") => {
+                document.insunits = header(body, "$INSUNITS", 70).and_then(Group::int);
+                document.acadver = header_text(body, "$ACADVER", 1);
+                document.dwgcodepage = header_text(body, "$DWGCODEPAGE", 3);
+            }
             Some("BLOCKS") => document.blocks = blocks(body),
             Some("ENTITIES") => document.entities = assemble(records(body)),
             _ => {}
@@ -164,8 +175,20 @@ pub(super) fn read(groups: &[Group]) -> Document {
     document
 }
 
-/// The value of `code` under the header variable `name` (group 9).
-fn header_int(body: &[Group], name: &str, code: i32) -> Option<i64> {
+impl Document {
+    /// Whether the file's text is UTF-8: `$ACADVER` is R2007 (`AC1021`) or
+    /// later. Earlier files, and files that do not say, are written in
+    /// `$DWGCODEPAGE`.
+    pub(super) fn text_is_utf8(&self) -> bool {
+        self.acadver
+            .as_deref()
+            .and_then(|v| v.trim().get(2..)?.parse::<u32>().ok())
+            .is_some_and(|version| version >= 1021)
+    }
+}
+
+/// The group `code` under the header variable `name` (group 9).
+fn header<'a>(body: &'a [Group], name: &str, code: i32) -> Option<&'a Group> {
     let at = body
         .iter()
         .position(|g| g.code == 9 && g.text() == Some(name))?;
@@ -173,7 +196,15 @@ fn header_int(body: &[Group], name: &str, code: i32) -> Option<i64> {
         .iter()
         .take_while(|g| g.code != 9)
         .find(|g| g.code == code)
-        .and_then(Group::int)
+}
+
+/// The text of `code` under the header variable `name`, when not empty.
+fn header_text(body: &[Group], name: &str, code: i32) -> Option<String> {
+    header(body, name, code)
+        .and_then(Group::text)
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
 }
 
 /// An entity's type name (group 0, upper case) and the groups after it.
@@ -279,10 +310,15 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 
     use super::*;
+    use crate::dxf::code_page::CodePage;
     use crate::dxf::groups;
 
     fn doc(text: &str) -> Document {
-        read(&groups::read(text.as_bytes()).unwrap())
+        read(
+            &groups::read(text.as_bytes(), CodePage::WINDOWS_1252)
+                .unwrap()
+                .groups,
+        )
     }
 
     #[test]
@@ -295,6 +331,9 @@ mod tests {
             0\nVERTEX\n0\nhatch\n8\nh\n0\nENDSEC\n0\nEOF\n",
         );
         assert_eq!(d.insunits, Some(6));
+        assert_eq!(d.acadver.as_deref(), Some("AC1015"));
+        assert_eq!(d.dwgcodepage, None);
+        assert!(!d.text_is_utf8());
         assert_eq!(d.blocks.len(), 1);
         assert_eq!(d.blocks[0].name, "B");
         assert_eq!(d.blocks[0].base, Point::new(1.0, 2.0));
@@ -331,5 +370,18 @@ mod tests {
                 .zip([0.0, 0.0, 1.0])
                 .all(|(a, b)| (a - b).abs() < 1e-12)
         );
+    }
+
+    #[test]
+    fn version_says_whether_text_is_utf8() {
+        let header = |vars: &str| doc(&format!("0\nSECTION\n2\nHEADER\n{vars}0\nENDSEC\n"));
+        let d = header("9\n$ACADVER\n1\nAC1021\n9\n$DWGCODEPAGE\n3\nANSI_1251\n");
+        assert!(d.text_is_utf8());
+        assert_eq!(d.dwgcodepage.as_deref(), Some("ANSI_1251"));
+        assert!(header("9\n$ACADVER\n1\nAC1032\n").text_is_utf8());
+        assert!(!header("9\n$ACADVER\n1\nAC1018\n").text_is_utf8());
+        assert!(!header("9\n$ACADVER\n1\nAC1009\n").text_is_utf8());
+        assert!(!header("9\n$DWGCODEPAGE\n3\n\n").text_is_utf8());
+        assert_eq!(header("9\n$DWGCODEPAGE\n3\n\n").dwgcodepage, None);
     }
 }

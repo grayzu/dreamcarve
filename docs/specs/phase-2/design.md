@@ -1891,6 +1891,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::plaque_dxf_matches_plaque_svg_within_0_01` (acceptance 34), `dxf::coordinate_limit_applies`.
 - `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
 - `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
+- `dxf::cp1251_layer_names_decode`, `dxf::unknown_code_page_warns_and_falls_back`, `dxf::utf8_file_is_unchanged` (#209).
 
 **dc-library**
 - `library::round_trip_is_byte_identical`, `library::add_detects_already_present`, `library::find_by_id_then_unique_name`, `library::ambiguous_name_is_error`, `library::validation_rules_from_upstream` (port of `parseToolLibraryFile` rules: positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)).
@@ -1903,6 +1904,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::config_tool_change_mode_seeds_init`, `cli::one_program_and_programs_per_tool_flags` (acceptance 33).
 - `cli::check_reports_order_warnings`, `cli::warnings_print_code_and_message`.
 - `cli::posts_lists_six`.
+- `cli::broken_pipe_does_not_panic`, `cli::stdout_write_error_fails_with_message` (Linux only; #216).
 - `cli::canned_cycles_linuxcnc_opt_in` (acceptance 24).
 
 **dc-gcode (integration, `tests/golden.rs`)**
