@@ -2376,6 +2376,33 @@ mod tests {
         );
     }
 
+    /// #120: a tool's set `number` is its `T` word, so `M61 Q<n>` and
+    /// `T<n> M6` carry any number, not only a place in the tool list. The
+    /// `M6` and `M61` checks are the same for them: accepted with `"m6"`,
+    /// `M6` still a pause that must be at safe Z, both refused in
+    /// `"separate_programs"` mode.
+    #[test]
+    fn tool_change_checks_hold_for_explicit_tool_numbers() {
+        let ok = "G21 G90\nG54\nM61 Q7\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\nT12 M6\nG21 G90 G54 G0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\nM5\n";
+        check_text_on(ok, grblhal_m6(), SpindleControl::Automatic).unwrap();
+
+        let low = "G21 G90\nG54\nM61 Q7\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nM5\nT12 M6\n";
+        let err = check_text_on(low, grblhal_m6(), SpindleControl::Automatic).unwrap_err();
+        assert!(
+            matches!(err, ExportError::PauseNotAtSafeZ { line: 10 }),
+            "{err:?}"
+        );
+
+        for (text, word) in [(ok, "M61"), ("G21 G90\nG54\nG0 Z5\nM5\nT12 M6\n", "M6")] {
+            let err =
+                check_text_on(text, bundled_grblhal(), SpindleControl::Automatic).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { word: w, .. } if w == word),
+                "{text:?}: {err:?}"
+            );
+        }
+    }
+
     /// #95: with `"separate_programs"`, the bundled default, each program
     /// has one tool, so `M6` and `M61` are refused even on grblHAL.
     #[test]
