@@ -23,7 +23,10 @@
 //! explicit stack here, so a fine step-over on a large pocket cannot
 //! exhaust the call stack.
 
-use dc_geometry::{Contour, Point, Region, difference, nest, offset};
+use dc_geometry::{
+    Arc, Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, difference, nest, offset,
+};
+use std::f64::consts::TAU;
 
 /// `region` inset by `inset_mm`: its outer offset inward and its islands
 /// outward by `inset_mm`, the islands then cut from the outer. An island
@@ -119,8 +122,9 @@ pub struct Ring {
     pub kind: RingKind,
     /// Index of the node in [`RingTree::nodes`].
     pub node: usize,
-    /// The vertex the ring starts and ends at: the one nearest the end of
-    /// the ring before it.
+    /// The point the ring starts and ends at: its point nearest the end of
+    /// the ring before it ([`nearest`]), a vertex or a point inside a
+    /// segment, which [`split_at`] makes a vertex of the ring's path.
     pub start: Point,
 }
 
@@ -178,8 +182,8 @@ impl RingTree {
     /// walk that, at each node, visits the child whose outer comes nearest
     /// `anchor` (the end of the last ring, ties by child order), then cuts
     /// the node's own rings, nearest first. The root's rings go where
-    /// `wall` says. `anchor` is updated to each ring's start vertex nearest
-    /// it, which is where that ring will start and end.
+    /// `wall` says. `anchor` is updated to each ring's point nearest it,
+    /// which is where that ring will start and end.
     pub fn walk(&self, wall: WallRings, anchor: &mut Option<Point>) -> Vec<Ring> {
         let mut out = Vec::new();
         if wall == WallRings::First {
@@ -255,33 +259,131 @@ impl RingTree {
     }
 }
 
-/// The vertex of `contour` nearest `anchor` (upstream
-/// `contourNearestVertexIndex`, the first on a tie) and its distance; the
-/// first vertex and 0 with no anchor.
+/// Where a ring starts: the point of `contour` nearest `anchor` among its
+/// vertices and along its arcs, and its distance; the first vertex and 0
+/// with no anchor. Upstream (`contourNearestVertexIndex`) takes the
+/// nearest vertex of a Clipper polygon, whose arcs are sampled densely, so
+/// on an arc its nearest vertex is in effect the nearest point, and on a
+/// straight edge it is a corner. DreamCarve keeps arcs, so a circle has
+/// two vertices and its nearest vertex can be far from its nearest point
+/// (#196); the nearest point of an arc stands in for upstream's dense
+/// vertices. A straight edge offers only its corners, as upstream's does
+/// (the `pocket-offset-rect` golden case links its rings corner to
+/// corner). A point within [`EPS_MM`] of an arc's end is that end, so no
+/// sliver arc is made. Ties go to the earlier segment.
 #[must_use]
 pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
-    let vertices = contour.polyline().vertices();
-    let first = vertices.first().map_or(Point::new(0.0, 0.0), |v| v.point());
+    let polyline = contour.polyline();
+    let first = polyline
+        .vertices()
+        .first()
+        .map_or(Point::new(0.0, 0.0), |v| v.point());
     let Some(anchor) = anchor else {
         return (first, 0.0);
     };
-    vertices
-        .iter()
-        .map(|v| (v.point(), v.point().distance_to(anchor)))
-        .fold((first, f64::INFINITY), |best, candidate| {
-            if candidate.1 < best.1 {
-                candidate
-            } else {
-                best
+    let mut best = (first, first.distance_to(anchor));
+    for segment in polyline.segments() {
+        let mut point = if segment.arc().is_some() {
+            closest_on_segment(segment, anchor)
+        } else {
+            segment.start
+        };
+        for end in [segment.start, segment.end] {
+            if point.distance_to(end) <= EPS_MM {
+                point = end;
             }
-        })
+        }
+        let d = point.distance_to(anchor);
+        if d < best.1 {
+            best = (point, d);
+        }
+    }
+    best
+}
+
+/// The point of `segment` nearest `p`, following an arc.
+fn closest_on_segment(segment: Segment, p: Point) -> Point {
+    let nearer_end = || {
+        if p.distance_to(segment.start) <= p.distance_to(segment.end) {
+            segment.start
+        } else {
+            segment.end
+        }
+    };
+    match segment.arc() {
+        Some(arc) => {
+            let v = p - arc.centre;
+            match v.normalized() {
+                Some(unit) if sweep_to(arc, v.y.atan2(v.x)).is_some() => {
+                    arc.centre + unit * arc.radius_mm
+                }
+                _ => nearer_end(),
+            }
+        }
+        None => {
+            let d = segment.end - segment.start;
+            let len2 = d.dot(d);
+            if len2 <= EPS_MM * EPS_MM {
+                return segment.start;
+            }
+            let t = ((p - segment.start).dot(d) / len2).clamp(0.0, 1.0);
+            segment.start + d * t
+        }
+    }
+}
+
+/// The signed sweep from `arc`'s start to the direction `angle_rad` from
+/// its centre, when that direction lies within the arc.
+fn sweep_to(arc: Arc, angle_rad: f64) -> Option<f64> {
+    let from_start = if arc.sweep_rad > 0.0 {
+        (angle_rad - arc.start_angle_rad).rem_euclid(TAU)
+    } else {
+        (arc.start_angle_rad - angle_rad).rem_euclid(TAU)
+    };
+    (from_start <= arc.sweep_rad.abs()).then(|| from_start.copysign(arc.sweep_rad))
+}
+
+/// The closed `path` with a vertex at `at`, a point on it: the segment
+/// `at` lies inside (more than [`EPS_MM`] from both its ends) is split
+/// there, an arc into two arcs of the same circle. Unchanged when `at` is
+/// already a vertex or is on no segment.
+#[must_use]
+pub fn split_at(path: &Polyline, at: Point) -> Polyline {
+    let vertices = path.vertices();
+    if vertices.iter().any(|v| v.point().distance_to(at) <= EPS_MM) {
+        return path.clone();
+    }
+    for (index, segment) in path.segments().enumerate() {
+        if closest_on_segment(segment, at).distance_to(at) > EPS_MM {
+            continue;
+        }
+        // The bulges of the two parts: tan(θ/4) of each part's sweep.
+        let (before, after) = match segment.arc() {
+            Some(arc) => {
+                let v = at - arc.centre;
+                let Some(sweep) = sweep_to(arc, v.y.atan2(v.x)) else {
+                    continue;
+                };
+                ((sweep / 4.0).tan(), ((arc.sweep_rad - sweep) / 4.0).tan())
+            }
+            None => (0.0, 0.0),
+        };
+        let mut out = vertices.to_vec();
+        if let Some(v) = out.get_mut(index) {
+            v.bulge = before;
+        }
+        out.insert((index + 1).min(out.len()), Vertex::new(at.x, at.y, after));
+        return Polyline::new(out, path.is_closed());
+    }
+    path.clone()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Polyline, area_mm2, assert_approx_eq};
-    use std::f64::consts::TAU;
+    use crate::pocket::ring_path;
+    use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, area_mm2, assert_approx_eq};
+    use dc_project::CutDirection;
 
     fn region(polylines: Vec<Polyline>) -> Region {
         let contours = polylines
@@ -357,21 +459,40 @@ mod tests {
             rings[0].start
         );
         assert_eq!(anchor, Some(rings[0].start));
-        let contour = rings[0].contour.polyline();
-        assert!(
-            contour
-                .vertices()
-                .iter()
-                .any(|v| v.point().distance_to(want) <= EPS_MM),
-            "{contour:?}"
-        );
-        // Splitting keeps the circle: same length and area.
-        assert_approx_eq!(contour.length_mm(), TAU * 10.0, 1e-9);
-        assert_approx_eq!(
-            contour.signed_area_mm2(),
-            std::f64::consts::PI * 100.0,
-            1e-9
-        );
+        // The ring's path starts there, split into arcs of the same
+        // circle: the same length and area.
+        let start = rings[0].start;
+        for direction in [CutDirection::Climb, CutDirection::Conventional] {
+            let path = ring_path(rings[0].clone(), direction);
+            let first = path.vertices().first().unwrap().point();
+            assert!(first.distance_to(start) <= EPS_MM, "{path:?}");
+            assert_eq!(path.vertices().len(), 3, "{path:?}");
+            assert_approx_eq!(path.length_mm(), TAU * 10.0, 1e-9);
+            assert_approx_eq!(
+                path.signed_area_mm2().abs(),
+                std::f64::consts::PI * 100.0,
+                1e-9
+            );
+        }
+    }
+
+    /// Splitting a line keeps both halves straight; a point that is a
+    /// vertex, or on no segment, changes nothing.
+    #[test]
+    fn split_at_a_line_and_at_a_vertex() {
+        let rect = Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0);
+        let split = split_at(&rect, Point::new(5.0, 0.0));
+        assert_eq!(split.vertices().len(), 5);
+        assert!(split.segments().all(|s| s.is_line()));
+        assert_approx_eq!(split.length_mm(), 60.0, 1e-9);
+        assert_eq!(split_at(&rect, Point::new(20.0, 0.0)), rect);
+        assert_eq!(split_at(&rect, Point::new(5.0, 5.0)), rect);
+        // A straight edge offers only its corners, as upstream's polygon
+        // does: from inside the rect, its nearest corner.
+        let r = region(vec![rect]);
+        let (p, d) = nearest(r.outer(), Some(Point::new(5.0, 2.0)));
+        assert!(p.distance_to(Point::new(0.0, 0.0)) <= EPS_MM, "{p:?}");
+        assert_approx_eq!(d, 29.0_f64.sqrt(), 1e-9);
     }
 
     #[test]

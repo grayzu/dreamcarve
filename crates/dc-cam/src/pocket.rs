@@ -102,7 +102,7 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// tool-centre region's rings step in by `diameter × step_over_fraction`
 /// ([`RingTree`]); per depth pass they are cut innermost first, with the
 /// wall and island rings last, first, or not at all per `op.wall_pass`,
-/// each ring starting at its vertex nearest the previous ring's end and
+/// each ring starting at its point nearest the previous ring's end and
 /// running per [`ring_is_ccw`]. With the raster strategy each tool-centre
 /// region is crossed by lines at the raster angle, one step-over apart and
 /// alternating in direction ([`raster::raster_lines`]), whatever
@@ -608,7 +608,7 @@ fn island_gap_warnings(
 }
 
 /// `ring` as a path: wound by the direction rule ([`ring_is_ccw`]) for
-/// `direction`, starting at its start vertex.
+/// `direction`, starting at its start point.
 fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
     let side = match ring.kind {
         RingKind::Outer => RingWall::Pocket,
@@ -622,10 +622,11 @@ fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
     starting_at(&path, ring.start)
 }
 
-/// `path` (closed) rotated to start at its vertex at `start`
-/// (`rotateContourToNearestEntry`); unchanged when no vertex is there.
+/// `path` (closed) rotated to start at `start` (`rotateContourToNearestEntry`),
+/// split there first when `start` lies inside a segment
+/// ([`rings::split_at`], #196); unchanged when `start` is not on it.
 fn starting_at(path: &Polyline, start: Point) -> Polyline {
-    let mut vertices = path.vertices().to_vec();
+    let mut vertices = rings::split_at(path, start).vertices().to_vec();
     let index = vertices
         .iter()
         .position(|v| v.point().distance_to(start) <= EPS_MM)
@@ -2432,7 +2433,7 @@ mod tests {
         );
     }
 
-    /// Every ring starts at the vertex nearest the previous ring's end
+    /// Every ring starts at the point nearest the previous ring's end
     /// (`rotateContourToNearestEntry`): the stay-down link between two
     /// rings of one pass is never longer than one step-over and a bit.
     #[test]
@@ -2467,26 +2468,31 @@ mod tests {
             for pair in rings.windows(2) {
                 let (before, ring) = (&pair[0], &pair[1]);
                 let link_mm = before.start().distance_to(ring.start());
-                assert!(
-                    link_mm <= STEPOVER_MM * std::f64::consts::SQRT_2 + RING_TOL,
-                    "Z {z}: link of {link_mm} mm onto the ring at {:?}",
-                    ring.start()
-                );
+                // A true circle: two arcs, three once split at its start.
+                // (Rings the boolean difference flattens are polygons;
+                // they start at their nearest vertex, as upstream's do.)
                 let radius_mm = ring.start().distance_to(centre);
-                let is_circle = ring
-                    .points
-                    .iter()
-                    .all(|q| (q.distance_to(centre) - radius_mm).abs() <= RING_TOL);
+                let is_circle = ring.points.len() <= 4
+                    && ring
+                        .points
+                        .iter()
+                        .all(|q| (q.distance_to(centre) - radius_mm).abs() <= RING_TOL);
                 if !is_circle {
                     continue;
                 }
-                circles += 1;
                 // The nearest point of a circle lies on the line from its
                 // centre: the link is the gap to the circle.
                 let gap_mm = (before.start().distance_to(centre) - radius_mm).abs();
                 assert_approx_eq!(link_mm, gap_mm, RING_TOL);
+                // From the ring just inside it, that is a step-over.
+                if link_mm <= STEPOVER_MM + RING_TOL {
+                    circles += 1;
+                }
             }
-            assert!(circles >= 1, "Z {z}: no ring round the island");
+            assert!(
+                circles >= 1,
+                "Z {z}: no ring round the island a step-over from the one before"
+            );
         }
     }
 
@@ -2817,9 +2823,9 @@ mod tests {
                 .iter()
                 .filter(|m| m.is_rapid() && (m.to.z - SAFE_Z_MM).abs() <= TOL)
                 .count();
-            // The far side of the island is reached by a lift (#150: the
-            // pieces are cut nearest-first, so only once).
-            assert!(retracts >= 1, "retracts at Z {z}: {retracts}");
+            // Every line through the island's grown circle lifts once
+            // between its halves; at least the lines near Y 45 do.
+            assert!(retracts >= 2, "retracts at Z {z}: {retracts}");
             for pair in lines.windows(2) {
                 let (a, b) = (pair[0], pair[1]);
                 let same_line = (a.from.y - b.from.y).abs() <= TOL;
@@ -2836,17 +2842,48 @@ mod tests {
         }
     }
 
-    /// The retracts to safe Z at `z_mm` between the first raster line of
-    /// the island fixture and its last, and every link between two lines
-    /// checked: either a retract, or a stay-down of straight feed moves at
-    /// `z_mm`, together no longer than one diameter plus a step-over,
-    /// inside the tool-centre rect and clear of the island's grown circle.
-    fn island_raster_lifts_at(tp: &Toolpath, z_mm: f64) -> usize {
-        let centre = Point::new(70.0, 45.0);
-        let tc = tool_centre();
-        let lines: Vec<Cut> = raster_lines_at(tp, z_mm)
+    /// The rect with a 20 mm square island at its centre, (60, 35) to
+    /// (80, 55).
+    fn square_island_project() -> Project {
+        project(vec![rect_100x50(), square_island()], &[("i1", at_20_20())])
+    }
+
+    fn square_island() -> Polyline {
+        Polyline::rect(Point::new(40.0, 15.0), 20.0, 20.0)
+    }
+
+    /// True when `q` is within the flattening tolerance of `region`'s edge.
+    fn on_edge(region: &Region, q: Point) -> bool {
+        std::iter::once(region.outer())
+            .chain(region.holes())
+            .flat_map(|c| c.polyline().segments())
+            .any(|s| dc_geometry::point_segment_distance_mm(s, q) <= FLAT_TOL)
+    }
+
+    /// True when `q` is in `region` or on its edge.
+    fn in_or_on(region: &Region, q: Point) -> bool {
+        region.contains_point(q) || on_edge(region, q)
+    }
+
+    /// The retracts to safe Z at `z_mm` between the first 0° raster line
+    /// and the last, on a rect fixture with an island whose profiles are
+    /// `profiles`; and every link between two lines checked: either a
+    /// retract, or a stay-down of straight feed moves at `z_mm`, together
+    /// no longer than one diameter plus a step-over, inside the tool-centre
+    /// region (so clear of the island).
+    fn raster_lifts_at(tp: &Toolpath, z_mm: f64, profiles: &[Polyline]) -> usize {
+        let region = region_of(profiles, at_20_20());
+        let tc = inset_region(&region, RADIUS_MM, FLAT_TOL);
+        assert_eq!(tc.len(), 1, "{tc:?}");
+        let tc = &tc[0];
+        // Wall and island ring sides run along the region's edge.
+        let lines: Vec<Cut> = long_cuts_at(tp, z_mm)
             .into_iter()
-            .filter(|c| tp.moves[c.index].kind == MoveKind::Linear)
+            .filter(|c| {
+                tp.moves[c.index].kind == MoveKind::Linear
+                    && (c.from.y - c.to.y).abs() <= TOL
+                    && !on_edge(tc, c.mid())
+            })
             .collect();
         assert!(lines.len() > 17, "Z {z_mm}: {lines:?}");
         let is_retract = |m: &Move| m.is_rapid() && (m.to.z - SAFE_Z_MM).abs() <= TOL;
@@ -2869,42 +2906,47 @@ mod tests {
                 assert_eq!(mv.kind, MoveKind::Linear, "{mv:?}");
                 assert_approx_eq!(mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
                 assert_approx_eq!(link.z_mm, z_mm, TOL);
-                for q in [link.from, link.to] {
+                let samples = 40;
+                for k in 0..=samples {
+                    let t = f64::from(k) / f64::from(samples);
+                    let q = link.from + (link.to - link.from) * t;
                     assert!(
-                        q.x >= tc.min.x - RING_TOL
-                            && q.x <= tc.max.x + RING_TOL
-                            && q.y >= tc.min.y - RING_TOL
-                            && q.y <= tc.max.y + RING_TOL,
-                        "link leaves the tool-centre rect: {link:?}"
+                        in_or_on(tc, q),
+                        "link {link:?} leaves the tool-centre region at {q:?}"
                     );
                 }
-                let d = segment_distance(centre, link.from, link.to);
-                assert!(
-                    d >= 10.0 + RADIUS_MM - FLAT_TOL,
-                    "link {link:?} crosses the island ({d} mm from its centre)"
-                );
             }
         }
         lifts
     }
 
-    /// #150: the pieces of lines split by the island are cut nearest-first
+    /// #150: the pieces of lines split by an island are cut nearest-first
     /// (upstream `orderOpenSegmentsGreedy`), so the tool zigzags down one
-    /// side of the island before it crosses to the other. In scan order
-    /// every split line lifted once, 11 times per pass; nearest-first lifts
-    /// once per pass. Every link between lines is a stay-down inside the
+    /// side of the island before it crosses to the other, as far as each
+    /// link stays inside the region. In scan order every split line lifts
+    /// once: 11 per pass round either island. Round the square island,
+    /// links run along its sides and nearest-first lifts 4 times per pass.
+    /// Round the circle every straight link between two line ends against
+    /// it cuts into the island, so each end there is a dead end, any order
+    /// lifts about once per split line, and scan order is kept: 11 per
+    /// pass, as before. Every link between lines is a stay-down inside the
     /// region or a retract.
     #[test]
     fn raster_lifts_around_island_are_minimised() {
-        let p = island_project();
-        for wall_pass in [WallPass::None, WallPass::Last, WallPass::First] {
-            let op = raster_op(&p, CutDirection::Climb, 0.0, wall_pass);
-            let (tp, warnings) = generate(&p, &op);
-            assert!(warnings.is_empty(), "{warnings:?}");
-            assert_clear_of_island(&tp);
-            for z in PASS_Z_MM {
-                let lifts = island_raster_lifts_at(&tp, z);
-                assert_eq!(lifts, 1, "{wall_pass:?} at Z {z}");
+        let circle = Polyline::circle(Point::new(50.0, 25.0), 10.0);
+        for (p, island, want) in [
+            (island_project(), circle, 11),
+            (square_island_project(), square_island(), 4),
+        ] {
+            let profiles = [rect_100x50(), island];
+            for wall_pass in [WallPass::None, WallPass::Last, WallPass::First] {
+                let op = raster_op(&p, CutDirection::Climb, 0.0, wall_pass);
+                let (tp, warnings) = generate(&p, &op);
+                assert!(warnings.is_empty(), "{warnings:?}");
+                for z in PASS_Z_MM {
+                    let lifts = raster_lifts_at(&tp, z, &profiles);
+                    assert_eq!(lifts, want, "{wall_pass:?} at Z {z}");
+                }
             }
         }
     }

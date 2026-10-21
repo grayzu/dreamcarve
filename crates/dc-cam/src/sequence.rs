@@ -505,7 +505,7 @@ fn distance_3d(a: Point3, b: Point3) -> f64 {
 /// two cleared areas: its ends are in one piece of the union, it crosses
 /// no boundary edge of that piece properly, and every sample point along
 /// it (at most [`LINK_SAMPLE_STEP_MM`] apart) is inside.
-fn link_inside_cleared(a: &Region, b: &Region, from: Point, to: Point) -> bool {
+pub(crate) fn link_inside_cleared(a: &Region, b: &Region, from: Point, to: Point) -> bool {
     let pieces = union(
         std::slice::from_ref(a),
         std::slice::from_ref(b),
