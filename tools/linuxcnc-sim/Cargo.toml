@@ -1,0 +1,31 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "linuxcnc-sim"
+description = "Runs DreamCarve's LinuxCNC programs through LinuxCNC's full simulation, headless, and checks motion, soft limits, homing, M0 pauses and the final position"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "linuxcnc_sim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "linuxcnc-sim"
+path = "src/main.rs"
+
+[dependencies]
+dc-geometry.workspace = true
+dc-gcode.workspace = true
+dc-project.workspace = true
+rs274-motion = { path = "../rs274-motion" }
+thiserror.workspace = true
+
+[lints]
+workspace = true
