@@ -2493,6 +2493,65 @@ mod tests {
         );
     }
 
+    /// The feed lines of `text` with the motion lines they come before:
+    /// for each cut, whether the line just before it is an `F` line on
+    /// its own. Fails if any motion line carries an `F` word.
+    fn separate_feeds(text: &str) -> (Vec<String>, Vec<bool>) {
+        let lines: Vec<String> = text.lines().map(code).collect();
+        let is_feed = |l: &String| l.starts_with('F');
+        for l in lines.iter().filter(|l| !is_feed(l)) {
+            assert!(
+                !l.split_whitespace().any(|w| w.starts_with('F')),
+                "F on a motion line: {l}"
+            );
+        }
+        let cuts = parse_motion(text)
+            .unwrap()
+            .iter()
+            .filter(|m| m.kind.is_cut())
+            .map(|m| {
+                m.line
+                    .checked_sub(2)
+                    .and_then(|i| lines.get(i))
+                    .is_some_and(is_feed)
+            })
+            .collect();
+        (lines.into_iter().filter(is_feed).collect(), cuts)
+    }
+
+    /// A definition that writes the feed on a line of its own
+    /// (`inline_with_motion: false`) and keeps it modal writes an `F` line
+    /// only when the rate changes, never the same rate twice running
+    /// (#71).
+    #[test]
+    fn separate_feed_line_is_not_repeated_when_modal() {
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.feed_speed.inline_with_motion = false;
+        let (feeds, before_cut) = separate_feeds(&emit_text_with(&project, &post));
+        assert!(!feeds.is_empty());
+        for pair in feeds.windows(2) {
+            assert_ne!(pair[0], pair[1], "feed repeated: {feeds:?}");
+        }
+        assert!(feeds.len() < before_cut.len(), "{feeds:?}");
+    }
+
+    /// With `modal_feed_speed: false` the feed is written before every
+    /// feed move, on a line of its own when the definition says so (#71).
+    /// It used to be repeated only when written inline.
+    #[test]
+    fn separate_feed_line_is_repeated_when_not_modal() {
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.feed_speed.inline_with_motion = false;
+        post.feed_speed.modal_feed_speed = false;
+        let (feeds, before_cut) = separate_feeds(&emit_text_with(&project, &post));
+        assert_eq!(feeds.len(), before_cut.len(), "{feeds:?}");
+        for (k, preceded) in before_cut.iter().enumerate() {
+            assert!(preceded, "cut {k} has no F line before it");
+        }
+    }
+
     #[test]
     fn mirroring_axis_map_reverses_arc_direction() {
         // With machine X inverted, the clockwise corners of a climb
