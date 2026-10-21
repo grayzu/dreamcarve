@@ -486,6 +486,58 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The names in `dir`, sorted.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// #71: export moves every staged file into place or none. When a
+    /// later rename fails (here its destination is a directory, which no
+    /// file can replace), the files already moved are put back as they
+    /// were, a file that did not exist is gone again, and no temporary
+    /// file is left behind.
+    #[test]
+    fn failed_second_rename_leaves_no_partial_export() {
+        let dir = scratch("all-or-none");
+        let replaced = dir.join("coaster.nc");
+        std::fs::write(&replaced, b"old program\n").unwrap();
+        let created = dir.join("coaster-2-T2.nc");
+        let blocked = dir.join("coaster.dcv");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("inside"), b"x").unwrap();
+        let staged = vec![
+            StagedFile::write(&replaced, b"new program\n").unwrap(),
+            StagedFile::write(&created, b"second program\n").unwrap(),
+            StagedFile::write(&blocked, b"project\n").unwrap(),
+        ];
+        assert!(commit_all(staged).is_err(), "the last rename must fail");
+        assert_eq!(std::fs::read(&replaced).unwrap(), b"old program\n");
+        assert!(!created.exists(), "a new file was left in place");
+        assert_eq!(names_in(&dir), ["coaster.dcv", "coaster.nc"]);
+
+        // Without the obstacle every file moves, and nothing else is left.
+        std::fs::remove_dir_all(&blocked).unwrap();
+        let staged = vec![
+            StagedFile::write(&replaced, b"new program\n").unwrap(),
+            StagedFile::write(&created, b"second program\n").unwrap(),
+            StagedFile::write(&blocked, b"project\n").unwrap(),
+        ];
+        commit_all(staged).unwrap();
+        assert_eq!(std::fs::read(&replaced).unwrap(), b"new program\n");
+        assert_eq!(std::fs::read(&created).unwrap(), b"second program\n");
+        assert_eq!(std::fs::read(&blocked).unwrap(), b"project\n");
+        assert_eq!(
+            names_in(&dir),
+            ["coaster-2-T2.nc", "coaster.dcv", "coaster.nc"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn staged_file_fails_when_every_name_is_taken() {
         let dir = scratch("all-taken");
