@@ -28,7 +28,7 @@
 
 use super::{
     Area, Descent, ENTRY_EPS, EntryDomain, EntryKind, EntryPlan, EntryTool, FallbackReason,
-    MAX_RAMP_RUN_DIAMETERS, MIN_RAMP_RUN_FRACTION, RAMP_DIRECTIONS, RAMP_MIN_LAST_RUN_FRACTION,
+    MAX_RAMP_RUN_DIAMETERS, MIN_RAMP_RUN_FRACTION, RAMP_DIRECTIONS, RAMP_MIN_LAST_DROP_MM,
     RampPlacement, boundary_safety_mm, count_within_cap, is_descent_move, move_feed_mm_min,
     plan_with,
 };
@@ -258,7 +258,7 @@ impl Flat {
 /// L, max_run_mm)` and back, again and again, each leg descending at
 /// `angle_deg` until `z_mm`, the final leg cut short there, or run whole at
 /// a shallower slope when it would fall less than
-/// [`RAMP_MIN_LAST_RUN_FRACTION`] of a full leg (#234); arcs are split
+/// [`RAMP_MIN_LAST_DROP_MM`] (#234); arcs are split
 /// into chords within `tolerance_mm` while Z changes. The tool then
 /// returns along the path at `z_mm` to the start vertex, where the lap
 /// starts, so the ramped stretch is cut again at full depth. On an open
@@ -323,9 +323,9 @@ pub fn along_path(
             (run_mm, 0.0)
         };
         let leg_z = current.z;
-        // #234: a last leg that would fall less than a share of a full one
-        // runs the whole leg, shallower, rather than a fragment.
-        let leg_slope = if leg_z - z_mm < RAMP_MIN_LAST_RUN_FRACTION * run_mm * slope {
+        // #234: a last leg that would fall less than the least drop runs
+        // the whole leg, shallower, rather than a fragment.
+        let leg_slope = if leg_z - z_mm < RAMP_MIN_LAST_DROP_MM {
             (leg_z - z_mm) / run_mm
         } else {
             slope
@@ -481,9 +481,9 @@ mod tests {
     /// #234 for the On line ramp: over 4.0018 legs' depth (12 mm legs at
     /// 5° along a 50 mm line), the fifth leg would fall 0.0019 mm over
     /// 0.02 mm, a fragment the program writes level at the scaled feed.
-    /// It runs the whole 12 mm leg instead, shallower; no descending move
-    /// is shorter than a tenth of a leg or steeper than 5°, and the drops
-    /// sum to the depth.
+    /// Falling less than `RAMP_MIN_LAST_DROP_MM`, it runs the whole 12 mm
+    /// leg instead, shallower; no descending move is shorter than a tenth
+    /// of a leg or steeper than 5°, and the drops sum to the depth.
     #[test]
     fn along_path_has_no_fragment_leg() {
         let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);

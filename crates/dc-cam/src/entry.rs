@@ -69,11 +69,12 @@ pub const MIN_BOUNDARY_SAFETY_MM: f64 = 1e-4;
 /// A ramp run is at most this many tool diameters long: a local zigzag
 /// near the entry point, not a traverse of the pocket.
 pub const MAX_RAMP_RUN_DIAMETERS: f64 = 3.0;
-/// The least share of a full run a zigzag or On line ramp's last leg may
-/// fall over a share of the run (#234): one that would fall less runs the
-/// whole run at a shallower slope instead, so it is never a fragment
-/// whose ends round to one Z.
-pub const RAMP_MIN_LAST_RUN_FRACTION: f64 = 0.1;
+/// The least a zigzag or On line ramp's last leg may fall, mm (#234): five
+/// units of the coarsest place a post-processor may write in mm, and two
+/// in inches, so its ends never round to one Z. A last leg that would
+/// fall less is not cut as it stands (see `EntryPlan::emit_ramp` and
+/// [`along_path`]).
+pub const RAMP_MIN_LAST_DROP_MM: f64 = 0.05;
 /// Most descending moves one descent may have; an entry that needs more
 /// falls back to the next in the chain.
 pub const MAX_DESCENT_MOVES: usize = 20_000;
@@ -555,28 +556,35 @@ impl EntryPlan {
 
     /// The zigzag of upstream `emitRamp`: `n` runs alternating between the
     /// placement's ends, each falling `run × tan(angle)`, the last cut
-    /// short at `z_mm`; then the handoff to the target. A last run that
-    /// would fall less than [`RAMP_MIN_LAST_RUN_FRACTION`] of a full one
-    /// runs the whole run instead, falling the rest at a shallower slope,
-    /// so it is never steeper than asked. (Changed in #234: a depth a
-    /// sliver over a whole number of runs left a last run a few
+    /// short at `z_mm`; then the handoff to the target. When that last run
+    /// would fall less than [`RAMP_MIN_LAST_DROP_MM`], the last two runs
+    /// share their depth instead: each falls half of it at the angle, the
+    /// first cut short and the second back to where the first began. A
+    /// ramp of one such run runs the whole run, shallower. So no run is a
+    /// fragment, and none is steeper than asked. (Changed in #234: a depth
+    /// a sliver over a whole number of runs left a last run a few
     /// micrometres long, whose ends the program writes at one Z, a level
     /// move at the ramp's plunge-limited feed, which S3 refuses.)
     fn emit_ramp(&self, r: &RampPlacement, n: usize, start_z_mm: f64, z_mm: f64) -> Vec<Move> {
         let drop_mm = r.start.distance_to(r.end) * self.angle_deg.to_radians().tan();
+        let rest_mm = start_z_mm - z_mm - n.saturating_sub(1) as f64 * drop_mm;
+        let short_last = rest_mm < RAMP_MIN_LAST_DROP_MM;
         let mut moves = Vec::with_capacity(n + 1);
         let mut current = Point3::new(r.start.x, r.start.y, start_z_mm);
         let mut towards = r.end;
         for k in 1..=n {
             let next = if k == n {
-                let ratio = (current.z - z_mm) / drop_mm;
-                let ratio = if ratio < RAMP_MIN_LAST_RUN_FRACTION {
+                let ratio = if short_last {
                     1.0
                 } else {
-                    ratio.min(1.0)
+                    ((current.z - z_mm) / drop_mm).min(1.0)
                 };
                 let p = current.xy() + (towards - current.xy()) * ratio;
                 Point3::new(p.x, p.y, z_mm)
+            } else if short_last && k + 1 == n {
+                let ratio = (drop_mm + rest_mm) / (2.0 * drop_mm);
+                let p = current.xy() + (towards - current.xy()) * ratio;
+                Point3::new(p.x, p.y, current.z - drop_mm * ratio)
             } else {
                 Point3::new(towards.x, towards.y, current.z - drop_mm)
             };
@@ -1810,19 +1818,43 @@ mod tests {
     }
 
     /// #234 (found by the dc-gcode property test): a ramp over 7.0018
-    /// legs' depth ended with an eighth leg 0.18 % of a run long, which
-    /// the program writes level at the ramp's plunge-limited feed (S3).
-    /// That last leg now runs the whole 12 mm run, falling the rest at a
-    /// shallower slope; the others keep the 5°. With 7.6 legs' depth the
-    /// last leg, over [`RAMP_MIN_LAST_RUN_FRACTION`] of a run, is cut short
-    /// at 5° as upstream's. Either way no leg is shorter than that share of
-    /// a run or steeper than asked, and the drops sum to the depth.
+    /// legs' depth ended with an eighth leg falling 0.0019 mm over
+    /// 0.02 mm, which the program writes level at the ramp's
+    /// plunge-limited feed (S3). Now the last two legs share their
+    /// 1.0519 mm: each runs 50.09 % of the 12 mm run at 5°, out and back.
+    /// With 7.6 legs' depth the last leg falls 0.63 mm, more than
+    /// [`RAMP_MIN_LAST_DROP_MM`], and is cut short at 60 % of the run as
+    /// upstream's. Either way every leg runs at 5°, none falls less than
+    /// the least drop, and the drops sum to the depth.
     #[test]
     fn ramp_has_no_fragment_leg() {
         let ramp = Entry::Ramp { angle_deg: 5.0 };
+        let tan = 5.0_f64.to_radians().tan();
         let run_mm = 3.0 * D_MM;
-        let full_mm = run_mm * 5.0_f64.to_radians().tan();
-        for (legs, last_run_mm) in [(7.0018, run_mm), (7.6, 0.6 * run_mm)] {
+        let full_mm = run_mm * tan;
+        let shared = (1.0 + 0.0018) / 2.0 * run_mm;
+        let cases = [
+            (
+                7.0018,
+                [
+                    run_mm, run_mm, run_mm, run_mm, run_mm, run_mm, shared, shared,
+                ],
+            ),
+            (
+                7.6,
+                [
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    0.6 * run_mm,
+                ],
+            ),
+        ];
+        for (legs, runs) in cases {
             let depth_mm = legs * full_mm;
             let d = entry(
                 rectangle(200.0, 200.0),
@@ -1837,13 +1869,13 @@ mod tests {
                 .filter(|(from, mv)| descends(*from, mv))
                 .map(|(from, mv)| (xy_len(from, mv.to), from.z - mv.to.z))
                 .collect();
-            assert_eq!(sloped.len(), 8, "{legs}: {sloped:?}");
-            for (i, (run, drop)) in sloped.iter().enumerate() {
-                let want_mm = if i == 7 { last_run_mm } else { run_mm };
-                assert_approx_eq!(*run, want_mm, 1e-9);
+            assert_eq!(sloped.len(), runs.len(), "{legs}: {sloped:?}");
+            for (i, ((run, drop), want_mm)) in sloped.iter().zip(runs).enumerate() {
                 assert!(
-                    *drop <= run * 5.0_f64.to_radians().tan() + 1e-9,
-                    "{legs}: leg {i} drops {drop} mm over {run} mm"
+                    (run - want_mm).abs() <= 1e-9
+                        && (drop - run * tan).abs() <= 1e-9
+                        && *drop >= RAMP_MIN_LAST_DROP_MM,
+                    "{legs}: leg {i} falls {drop} mm over {run} mm, not {want_mm} mm at 5°"
                 );
             }
             let total: f64 = sloped.iter().map(|(_, drop)| drop).sum();
