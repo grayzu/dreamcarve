@@ -52,6 +52,10 @@ pub enum WarningCode {
     /// `needed_mm` (the gap this side needs: the diameter for Outside, the
     /// radius for On line). The shapes are cut as drawn.
     ToolpathsOverlap,
+    /// An Engrave target path has fewer than two distinct points, so there
+    /// is nothing to trace; it was skipped. Params: `op`, `instance`,
+    /// `instance_name`, `profile`.
+    EngravePathDegenerate,
     /// A closed target of this operation lies inside an outline an earlier
     /// operation cuts free of the stock, so the cut would run in a loose
     /// part (`docs/specs/phase-2/design.md`, "Operation-order warnings";
@@ -79,6 +83,7 @@ impl WarningCode {
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
             Self::ToolpathsOverlap => "toolpaths_overlap",
+            Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
         }
@@ -264,6 +269,11 @@ impl fmt::Display for Warning {
                 self.mm("diameter_mm"),
                 self.mm("needed_mm")
             ),
+            WarningCode::EngravePathDegenerate => write!(
+                f,
+                "{} has fewer than two distinct points, so there is nothing to engrave; it is skipped",
+                self.shape()
+            ),
             WarningCode::CutInsideFreedPart => write!(
                 f,
                 "{} lies inside `{}` (instance `{}`, profile {}), which operation `{}` cuts free of the stock first, so this cut would run in a loose part; move this operation before `{}`, or hold that part with tabs",
@@ -347,6 +357,19 @@ mod tests {
         assert_eq!(
             w.to_string(),
             "tabs on `Hole` (instance `i1`, profile 1) cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole may not cut free. To let it cut free, even one tab this wide covers more than half: this outline is too short for tabs with this bit, so consider removing them. The tabs are cut as set."
+        );
+    }
+
+    #[test]
+    fn engrave_path_degenerate_names_the_shape() {
+        let w = Warning::new(WarningCode::EngravePathDegenerate)
+            .with("op", "o4")
+            .with("instance", "i2")
+            .with("instance_name", "Dot")
+            .with("profile", 0);
+        assert_eq!(
+            w.to_string(),
+            "`Dot` (instance `i2`, profile 0) has fewer than two distinct points, so there is nothing to engrave; it is skipped"
         );
     }
 

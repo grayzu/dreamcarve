@@ -333,8 +333,13 @@ mod tests {
         };
         let tool = project.tools[0].clone();
         let (toolpath, _) = generate_profile(&project, &op).unwrap();
-        dc_cam::test_support::assert_safe(&toolpath, &project, &op);
-        let (program, _) = emit(&project, &[(op, tool, toolpath.clone())], "2026-10-15").unwrap();
+        dc_cam::test_support::assert_safe(&toolpath, &project, &Operation::Profile(op.clone()));
+        let (program, _) = emit(
+            &project,
+            &[(Operation::Profile(op), tool, toolpath.clone())],
+            "2026-10-15",
+        )
+        .unwrap();
 
         let t =
             MachineTransform::new(&project, &project.post_processor.resolve().unwrap()).unwrap();

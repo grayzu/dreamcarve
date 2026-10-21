@@ -1,8 +1,9 @@
 # User guide
 
-DreamCarve turns a 2D drawing into a G-code program for a CNC router. In
-phase 1 it is a command line tool with one operation, Profile, which cuts
-along closed outlines.
+DreamCarve turns a 2D drawing into a G-code program for a CNC router. It
+is a command line tool. **Profile** cuts along closed outlines, to cut a
+part out or a hole through; **Engrave** follows lines, open or closed,
+with the bit's centre on the line ([Engrave](engrave.md)).
 
 ## The workflow
 

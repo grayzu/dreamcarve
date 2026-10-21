@@ -1,8 +1,8 @@
 # Profile operation
 
 A **Profile** cuts along the outline of closed shapes: to cut a part out of
-the stock, or to cut a hole through it. It is the only operation in
-phase 1.
+the stock, or to cut a hole through it. To follow a line with the bit's
+centre on it, open or closed, use [Engrave](engrave.md).
 
 ```json
 {

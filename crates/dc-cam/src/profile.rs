@@ -106,7 +106,7 @@ fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
 
 /// The rates every cut of this operation uses, exactly as the user set
 /// them on the tool.
-fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
+pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
     let missing = |field| CamError::MissingFeed {
         tool: tool.name.clone(),
         field,
@@ -437,7 +437,7 @@ fn contour_block(
 /// outer, and every region of depth 2 or more before the hole it sits in,
 /// so a part inside another part's hole is cut out before that hole frees
 /// the waste around it.
-fn containment_pairs(
+pub(crate) fn containment_pairs(
     regions: &[Region],
     shapes: &[(ShapeRef, Contour)],
 ) -> Vec<(ShapeRef, ShapeRef)> {
@@ -549,7 +549,7 @@ fn crossing_error(error: GeometryError, shapes: &[(ShapeRef, Contour)]) -> CamEr
 
 /// A warning about `shape`, with its `instance`, `instance_name`, and
 /// `profile` params set.
-fn shape_warning(code: WarningCode, shape: &ShapeRef) -> Warning {
+pub(crate) fn shape_warning(code: WarningCode, shape: &ShapeRef) -> Warning {
     Warning::new(code)
         .with("instance", &shape.instance)
         .with("instance_name", &shape.instance_name)
@@ -574,7 +574,8 @@ mod tests {
     use dc_project::test_support::sample_project;
     use dc_project::{
         CornerRelief, DefinitionId, Entry, FeatureDefinition, FeatureInstance, InstanceId,
-        MachiningOrder, OperationId, Side, Stock, TabPlacement, TabShape, TabSpec, ToolId,
+        MachiningOrder, Operation, OperationId, Side, Stock, TabPlacement, TabShape, TabSpec,
+        ToolId,
     };
     use std::collections::BTreeMap;
     use std::f64::consts::{PI, TAU};
@@ -668,7 +669,7 @@ mod tests {
     /// Generates, and checks the result with [`assert_safe`].
     fn generate(project: &Project, op: &ProfileOp) -> (Toolpath, Vec<Warning>) {
         let (toolpath, warnings) = generate_profile(project, op).unwrap();
-        assert_safe(&toolpath, project, op);
+        assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
         (toolpath, warnings)
     }
 
@@ -1293,9 +1294,8 @@ mod tests {
             let mut p = rect_project();
             p.tools[0].cutter = cutter;
             let op = profile_op(&p, Side::OnLine, CutDirection::Climb);
-            let (tp, warnings) = generate(&p, &op);
+            let (_, warnings) = generate(&p, &op);
             assert!(warnings.is_empty(), "{warnings:?}");
-            assert_safe(&tp, &p, &op);
         }
     }
 

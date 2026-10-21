@@ -14,7 +14,7 @@
 
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use dc_geometry::{EPS_MM, approx_eq};
-use dc_project::{ProfileOp, Project};
+use dc_project::{Operation, Project};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -34,17 +34,17 @@ use dc_project::{ProfileOp, Project};
 ///    tool's feed rate.
 ///
 /// Panics with the offending move index on the first violation.
-pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
+pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
     let tool = project
         .tools
         .iter()
-        .find(|t| t.id == op.tool)
+        .find(|t| &t.id == op.tool())
         .expect("operation's tool is in the project");
     assert_safe_within(
         toolpath,
         &Limits {
-            safe_z_mm: project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm,
-            floor_z_mm: -op.through_cut_allowance_mm,
+            safe_z_mm: project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm(),
+            floor_z_mm: -op.through_cut_allowance_mm(),
             feed_mm_min: tool.feed_mm_min.expect("tool has a feed"),
             plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
         },
@@ -141,16 +141,17 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
 mod tests {
     use super::*;
     use dc_geometry::Point3;
-    use dc_project::Operation;
     use dc_project::test_support::sample_project;
 
     /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
     /// plunge 300) and its profile operation.
-    fn fixture() -> (Project, ProfileOp) {
+    fn fixture() -> (Project, Operation) {
         let project = sample_project();
-        let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
-            panic!("sample project has a profile operation");
-        };
+        let op = project
+            .operations
+            .first()
+            .cloned()
+            .expect("sample project has an operation");
         (project, op)
     }
 
