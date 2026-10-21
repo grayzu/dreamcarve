@@ -7,6 +7,8 @@
 //! Polylines carry arcs as DXF-style bulges; closed outer contours are
 //! counter-clockwise and holes clockwise.
 
+mod boolean;
+mod circle;
 mod contour;
 mod distance;
 mod flatten;
@@ -16,13 +18,15 @@ mod polyline;
 mod region;
 mod transform;
 
+pub use boolean::{BooleanOp, boolean, difference, intersection, union};
+pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;
 pub use distance::distance_mm;
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, flatten};
 pub use offset::offset;
 pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq};
 pub use polyline::{Arc, Polyline, Segment, Vertex};
-pub use region::{Region, nest};
+pub use region::{Region, area_mm2, nest};
 
 /// Something the caller should know about that still gives a usable
 /// result. Indices refer to positions in the caller's input.

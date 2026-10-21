@@ -45,6 +45,31 @@ impl Region {
     pub fn depth(&self) -> usize {
         self.depth
     }
+
+    /// Material area, mm²: the outer's area less the holes'.
+    #[must_use]
+    pub fn area_mm2(&self) -> f64 {
+        // Holes are clockwise, so their signed areas are negative.
+        self.outer.signed_area_mm2() + self.holes.iter().map(Contour::signed_area_mm2).sum::<f64>()
+    }
+
+    /// True when `p` lies in the material: inside the outer and in no hole.
+    /// A point within [`EPS_MM`] of the outer or a hole boundary counts as
+    /// inside, so a tool centred on a wall is still "in" the region.
+    #[must_use]
+    pub fn contains_point(&self, p: Point) -> bool {
+        if on_boundary(&self.outer, p) || self.holes.iter().any(|h| on_boundary(h, p)) {
+            return true;
+        }
+        winding_number(&self.outer, p) != 0 && self.holes.iter().all(|h| winding_number(h, p) == 0)
+    }
+}
+
+/// Total material area of `regions`, mm²: each outer's area less its
+/// holes'. Regions are assumed not to overlap.
+#[must_use]
+pub fn area_mm2(regions: &[Region]) -> f64 {
+    regions.iter().map(Region::area_mm2).sum()
 }
 
 /// Groups closed contours (millimetres, Y-up) into regions by even-odd
@@ -153,7 +178,7 @@ fn shared_area_mm2(a: &Contour, b: &Contour) -> f64 {
 }
 
 /// Nesting proper, for contours already known not to cross or repeat.
-fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
+pub(crate) fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
     let areas_mm2: Vec<f64> = contours.iter().map(|c| c.signed_area_mm2().abs()).collect();
     let sized: Vec<(&Contour, f64)> = contours.iter().zip(areas_mm2.iter().copied()).collect();
 
