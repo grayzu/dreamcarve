@@ -398,6 +398,58 @@ pub fn split_at(path: &Polyline, at: Point) -> Polyline {
     path.clone()
 }
 
+/// The point of `path` nearest `p`, along its lines and arcs, and its
+/// distance; `None` for a path with no segment. Ties go to the earlier
+/// segment.
+#[must_use]
+pub fn closest_point(path: &Polyline, p: Point) -> Option<(Point, f64)> {
+    path.segments()
+        .map(|segment| {
+            let q = closest_on_segment(segment, p);
+            (q, q.distance_to(p))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// The part of the closed `ring` from `from` to `to`, two points on it,
+/// the shorter way round, as an open path keeping the ring's arcs (#202).
+/// Ties go the ring's own way. `None` when either point is not on it.
+#[must_use]
+pub fn shorter_way(ring: &Polyline, from: Point, to: Point) -> Option<Polyline> {
+    let forward = way_along(ring, from, to)?;
+    let backward = way_along(&ring.reversed(), from, to)?;
+    Some(if backward.length_mm() < forward.length_mm() - EPS_MM {
+        backward
+    } else {
+        forward
+    })
+}
+
+/// The part of the closed `ring` from `from` to `to` in its own direction.
+fn way_along(ring: &Polyline, from: Point, to: Point) -> Option<Polyline> {
+    let split = split_at(&split_at(ring, from), to);
+    let vertices = split.vertices();
+    let at = |p: Point| {
+        vertices
+            .iter()
+            .position(|v| v.point().distance_to(p) <= EPS_MM)
+    };
+    let (first, last) = (at(from)?, at(to)?);
+    let mut out = Vec::new();
+    let mut index = first;
+    for _ in 0..vertices.len() {
+        out.push(*vertices.get(index)?);
+        if index == last {
+            break;
+        }
+        index = (index + 1) % vertices.len();
+    }
+    if let Some(end) = out.last_mut() {
+        end.bulge = 0.0;
+    }
+    Some(Polyline::new(out, false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
