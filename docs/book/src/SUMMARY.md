@@ -12,6 +12,7 @@
 
 - [Overview](user-guide/overview.md)
 - [The project file](user-guide/project-file.md)
+- [Importing DXF](user-guide/importing-dxf.md)
 - [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
 - [Profile operation](user-guide/profile.md)
 - [Tabs](user-guide/tabs.md)

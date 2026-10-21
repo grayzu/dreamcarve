@@ -61,6 +61,10 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | Module | Contents |
 | --- | --- |
 | `svg.rs` | `import_svg`: usvg parses; each path becomes one definition and one instance, flattened and flipped to Y-up. |
+| `dxf.rs` | `import_dxf`: the `dxf` crate parses; `$INSUNITS` scaling (no Y flip: DXF is Y-up), layer names and filter, naming. |
+| `dxf/entities.rs` | Each entity as a bulge polyline; INSERT expansion with its transform, depth limit and skip rules; SPLINE and ELLIPSE flattening. |
+| `dxf/spline.rs` | Rational B-spline evaluation (de Boor) and sampling to the tolerance. |
+| `dxf/stitch.rs` | Joining open segments whose ends meet, closing chains, dropping duplicates. |
 | `lib.rs` | `ImportError`, `ImportWarning`. |
 
 ### `dc-cam` (`crates/dc-cam/src/`)

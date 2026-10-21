@@ -18,11 +18,18 @@
 //! skipped entity is counted in a warning instead of dropped silently; and
 //! arcs stay arcs (bulges) instead of being sampled.
 
+mod entities;
+mod spline;
+mod stitch;
+
+use std::collections::BTreeMap;
+
 use crate::{ImportError, ImportWarning};
-use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Rect};
-use dc_project::{FeatureDefinition, FeatureInstance, Units};
+use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Transform};
+use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, Units};
 
 use crate::svg::{MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM};
+use entities::{PARSED_TYPE_NAMES, Shape, Walker};
 
 /// Default distance within which the ends of two open segments on one
 /// layer are joined, mm. CAD programs write touching ends exactly; this
@@ -174,8 +181,194 @@ pub fn import_dxf(
             tolerance_mm: join_mm,
         });
     }
-    let _ = bytes;
-    Err(ImportError::Unimplemented)
+
+    let mut reader = bytes;
+    let drawing = ::dxf::Drawing::load(&mut reader)?;
+
+    let declared = DxfUnits::from_insunits(drawing.header.default_drawing_units);
+    let mm_per_unit = match (options.units, declared) {
+        (Some(Units::Mm), _) => 1.0,
+        (Some(Units::Inch), _) => 25.4,
+        (None, Some(units)) => units.mm_per_unit(),
+        (None, None) => {
+            return Err(ImportError::UnitsUnknown {
+                declared: format!("{:?}", drawing.header.default_drawing_units).to_lowercase(),
+            });
+        }
+    };
+
+    // No Y flip: DXF is Y-up (ADR-0001). The scale is the whole transform.
+    let scale = Transform::scale(mm_per_unit, mm_per_unit);
+    let mut walker = Walker::new(drawing.blocks(), tolerance_mm, options.max_vertices);
+    for entity in drawing.entities() {
+        if entity.common.is_in_paper_space {
+            continue;
+        }
+        walker.walk(entity, scale, None, 0)?;
+    }
+
+    let mut warnings = Vec::new();
+    let mut skipped = walker.skipped;
+    for (kind, count) in swallowed_entity_counts(bytes) {
+        *skipped.entry(kind).or_insert(0) += count;
+    }
+    if !skipped.is_empty() {
+        warnings.push(ImportWarning::DxfEntitiesSkipped { counts: skipped });
+    }
+    for block in unique(walker.too_deep) {
+        warnings.push(ImportWarning::DxfInsertTooDeep { block });
+    }
+    for block in unique(walker.missing) {
+        warnings.push(ImportWarning::DxfBlockMissing { block });
+    }
+
+    let shapes: Vec<Shape> = walker
+        .shapes
+        .into_iter()
+        .filter(|s| {
+            options
+                .layers
+                .as_ref()
+                .is_none_or(|layers| layers.contains(&s.layer))
+        })
+        .collect();
+    let shapes = stitch::stitch(stitch::dedupe(shapes), join_mm);
+    // A chain that closed on itself can enclose nothing (collinear lines).
+    let shapes: Vec<Shape> = shapes
+        .into_iter()
+        .filter(|s| {
+            let empty =
+                s.polyline.is_closed() && s.polyline.signed_area_mm2().abs() <= EPS_MM * EPS_MM;
+            if empty {
+                warnings.push(ImportWarning::ZeroAreaDropped {
+                    path: s.layer.clone(),
+                    subpath: 0,
+                });
+            }
+            !empty
+        })
+        .collect();
+
+    // Names: the layer, numbered when the layer holds several shapes.
+    let mut per_layer: BTreeMap<&str, usize> = BTreeMap::new();
+    for shape in &shapes {
+        *per_layer.entry(shape.layer.as_str()).or_insert(0) += 1;
+    }
+    let mut numbered: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut definitions = Vec::with_capacity(shapes.len());
+    let mut instances = Vec::with_capacity(shapes.len());
+    let mut bounds: Option<Rect> = None;
+    for shape in &shapes {
+        let name = if per_layer.get(shape.layer.as_str()).copied().unwrap_or(0) > 1 {
+            let k = numbered.entry(shape.layer.as_str()).or_insert(0);
+            *k += 1;
+            format!("{}-{k}", shape.layer)
+        } else {
+            shape.layer.clone()
+        };
+        if let Some(b) = shape.polyline.bounds() {
+            bounds = Some(match bounds {
+                Some(acc) => acc.including(b.min).including(b.max),
+                None => b,
+            });
+        }
+        let n = definitions.len() + 1;
+        let definition = DefinitionId::new(format!("d{n}"));
+        instances.push(FeatureInstance {
+            id: InstanceId::new(format!("i{n}")),
+            definition: definition.clone(),
+            transform: Transform::IDENTITY,
+            name: name.clone(),
+            visible: true,
+            locked: false,
+            z_top_mm: None,
+            z_bottom_mm: None,
+        });
+        definitions.push(FeatureDefinition {
+            id: definition,
+            name,
+            profiles: vec![shape.polyline.clone()],
+        });
+    }
+
+    Ok((
+        DxfImport {
+            definitions,
+            instances,
+            bounds,
+            units: declared,
+            mm_per_unit,
+        },
+        warnings,
+    ))
+}
+
+impl DxfUnits {
+    /// The `$INSUNITS` value as units DreamCarve scales from; `None` for 0
+    /// (unitless) and every unit outside the six.
+    fn from_insunits(units: ::dxf::enums::Units) -> Option<Self> {
+        use ::dxf::enums::Units as U;
+        match units {
+            U::Inches => Some(Self::Inches),
+            U::Feet => Some(Self::Feet),
+            U::Miles => Some(Self::Miles),
+            U::Millimeters => Some(Self::Millimetres),
+            U::Centimeters => Some(Self::Centimetres),
+            U::Meters => Some(Self::Metres),
+            _ => None,
+        }
+    }
+}
+
+/// The first occurrence of each name, in order.
+fn unique(names: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// Counts, per type name, the entities of the ENTITIES section whose type
+/// the `dxf` crate does not parse (HATCH, MESH, ...): the parser swallows
+/// them, so they are counted from the raw text. Binary DXF is not scanned.
+/// The scan is forgiving, as upstream's `parsePairs`: lines are read in
+/// code/value pairs and a code that is not a number skips its pair.
+fn swallowed_entity_counts(bytes: &[u8]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    if bytes.starts_with(b"AutoCAD Binary DXF") {
+        return counts;
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let mut lines = text.lines().map(str::trim);
+    let mut in_entities = false;
+    let mut expect_section_name = false;
+    while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
+        let Ok(code) = code.parse::<i32>() else {
+            continue;
+        };
+        match code {
+            0 => {
+                expect_section_name = value == "SECTION";
+                if value == "SECTION" || value == "ENDSEC" {
+                    in_entities = false;
+                } else if in_entities {
+                    let name = value.to_ascii_uppercase();
+                    if !PARSED_TYPE_NAMES.contains(&name.as_str()) {
+                        *counts.entry(name).or_insert(0) += 1;
+                    }
+                }
+            }
+            2 if expect_section_name => {
+                in_entities = value.eq_ignore_ascii_case("ENTITIES");
+                expect_section_name = false;
+            }
+            _ => expect_section_name = false,
+        }
+    }
+    counts
 }
 
 #[cfg(test)]

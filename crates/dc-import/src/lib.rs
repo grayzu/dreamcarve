@@ -48,9 +48,6 @@ pub enum ImportError {
         /// The rejected tolerance, millimetres.
         tolerance_mm: f64,
     },
-    /// DXF import is not implemented yet (#116).
-    #[error("DXF import is not implemented")]
-    Unimplemented,
     /// A path's coordinates are NaN or infinite after transforming to mm.
     #[error("path `{path}` has a coordinate that is not a finite number")]
     NonFinite {
