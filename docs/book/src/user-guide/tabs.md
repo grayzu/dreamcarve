@@ -148,7 +148,7 @@ prints `coaster.dcv has no tabs.`
 
 ```sh
 dreamcarve tabs clear coaster.dcv              # every tab
-dreamcarve tabs clear coaster.dcv op1          # the tabs on the shapes op1 targets
+dreamcarve tabs clear coaster.dcv op1          # the tabs the Profile op1 cuts round
 dreamcarve tabs clear coaster.dcv --tab tab2   # one tab; repeat --tab for more
 ```
 
@@ -157,6 +157,16 @@ how many are left. Like `tabs place`, it first places every enabled
 Profile's tab request, so clearing all tabs also clears what `init`
 asked for. A `--tab` id the project does not have fails (exit code 1)
 and changes nothing.
+
+`tabs clear <dcv> <op>` takes a Profile only. A tab is on the part, so
+every Profile that cuts its outline rises over it: clearing a finish
+pass's tabs clears the cut-out's too. When the tabs removed leave a part
+that an enabled Profile cuts through the stock with no tab, `tabs clear`
+says so:
+
+```text
+Note: operation `op1` now cuts `coaster` (instance `i1`, profile 0) through the stock with no tab, so the part comes loose on its last pass.
+```
 
 ## A placed tab in the file
 
@@ -221,7 +231,12 @@ place it by name with `tabs place <dcv> <op>`. `check`, `export`,
 | `on_holes` | `false`: holes get no tabs, so each hole's slug comes loose. `true`: holes get the tabs too. `init` writes `false`. |
 
 `at_distances` measures along the bit's path, not the outline, from a
-start DreamCarve chooses and does not show before you export. On an open
+start DreamCarve chooses. To see where that start is and where the tabs
+land, draw the toolpath with `dreamcarve check part.dcv --preview
+part-preview.svg` ([Toolpath preview](overview.md#toolpath-preview)):
+each pass starts at a circle the size of the bit, its tick pointing the
+way the cut goes, and each tab shows as a heavy mark on every pass that
+rises over it. On an open
 path cut `on_line` ([Profile: open paths](profile.md#open-paths)) it
 measures from the path's first vertex as drawn, whichever end the cut
 starts at. To put tabs at known places, use `tabs place --at`, which
@@ -232,7 +247,9 @@ measures along the outline from its first vertex.
 Every enabled Profile that cuts the tab's outline rises over it: an
 Outside and an Inside Profile of the same outline both do, whichever
 placed it. A Profile crosses a tab when its tool path passes within the
-bit's radius plus half the tab width of where the tab meets the outline.
+bit's radius plus half the tab width of where the tab meets the outline,
+and its cut goes below the tab's top: a shallow score pass or engraving
+Profile of a tabbed outline does not rise over the tabs.
 A path farther off than that, such as an Outside cut past a narrow notch
 the bit cannot reach into, does not cut round the tab, so it does not
 rise. A tab no enabled Profile crosses warns `tab_not_crossed`
@@ -381,7 +398,7 @@ and `export` warn `tab_on_hole`, because a held slug is usually waste you then h
 by hand. If you did not mean to keep the slug, remove the tab:
 
 ```text
-warning: tab_on_hole: operation `op1`: tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear --tab tab3`) unless you mean to keep the slug
+warning: tab_on_hole: operation `op1`: tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`) unless you mean to keep the slug
 ```
 
 A project from before format version 9 opens with `"on_holes": true` in
@@ -414,12 +431,12 @@ prints those it finds while placing.
 | "the tab top is ... but the deepest pass stops at ..." | No pass goes below the tab top, so the tabs change nothing. The cut is shallower than the stock, or the tabs are taller than the depth reaches. |
 | "the tab top is ... higher than the ... stock top" | The tab top is above the stock top. The tabs still apply: over each tab, every pass lifts clear of the stock, leaving its full thickness. |
 | "tab ... is on ..., which this operation cuts as a hole" (`tab_on_hole`) | A tab is on a hole, so it holds the slug. See [Parts with holes](#parts-with-holes). |
-| "tab ... on ... is crossed by no enabled Profile operation" (`tab_not_crossed`) | No enabled Profile rises over the tab, so it holds nothing: no enabled Profile cuts that outline (it is cut only by a Pocket or a disabled Profile, or not at all), or every one that does runs too far from the tab. Cut the outline with a Profile, move the tab, or remove it with `dreamcarve tabs clear <dcv> --tab <id>`. |
+| "tab ... on ... is crossed by no enabled Profile operation" (`tab_not_crossed`) | No enabled Profile rises over the tab, so it holds nothing: no enabled Profile cuts that outline (it is cut only by a Pocket or a disabled Profile, or not at all), or every one that does runs too far from the tab or stops above its top. Cut the outline with a Profile, move the tab, or remove it with `dreamcarve tabs clear <dcv> --tab <id>`. |
 
 `tab_not_crossed` reads, in full:
 
 ```text
-warning: tab_not_crossed: tab `tab3` on `Shape` (instance `i1`, profile 2) is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear --tab tab3`)
+warning: tab_not_crossed: tab `tab3` on `Shape` (instance `i1`, profile 2) is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`)
 ```
 
 ## Cutting the tabs off

@@ -895,8 +895,9 @@ pub(crate) struct TabPlan {
 /// at the path's point nearest the tab ([`nearest_point`]), when that
 /// path comes within the tool radius plus half the tab's width of where
 /// the tab meets the outline (its foot, [`crate::placed_tabs`]): closer,
-/// the cutter would cut into the tab. A tab farther from every path is
-/// not crossed. Fails with [`CamError::InvalidTab`] for a crossed tab whose
+/// the cutter would cut into the tab, and when the cut goes below the
+/// tab's top. A tab farther from every path, or taller than the cut is
+/// deep, is not crossed. Fails with [`CamError::InvalidTab`] for a crossed tab whose
 /// width or height is not a positive number.
 fn plan_tabs(
     project: &Project,
@@ -946,10 +947,19 @@ fn plan_tabs(
     let mut placed: Vec<Vec<TabCut>> = vec![Vec::new(); paths.len()];
     let mut crossed = Vec::new();
     let mut on_holes = Vec::new();
+    // The cut's floor, mm above the stock bottom: a Profile whose cut
+    // stops at or above a tab's top crosses nothing of it. Unknown while
+    // the thickness or depth is unset, when every tab in reach counts.
+    let floor_z_mm = project
+        .stock
+        .thickness_mm
+        .zip(op.depth_mm)
+        .map(|(thickness_mm, depth_mm)| thickness_mm - depth_mm);
     for tab in project
         .tabs
         .iter()
         .filter(|t| op.targets.contains(&t.instance))
+        .filter(|t| floor_z_mm.is_none_or(|floor| floor < t.height_mm - EPS_MM))
     {
         let Some(point) = crate::placed_tabs::tab_point(project, tab) else {
             continue;

@@ -16,6 +16,8 @@ Upstream paths, at commit `2ebab10e5e17c48281ff96805d5e936af135cb58`:
 
 `grblhal/v2.json` and `grbl/v2.json` are version 1 of each with one line
 changed; see "Comments on grblHAL and GRBL" below (#171).
+`grblhal/v3.json` and `grbl/v3.json` are version 2 of each with two header
+lines added; see "Header modal state" below (#279).
 `linuxcnc/v2.json`, `mach3/v2.json` and `uccnc/v2.json` are version 1 of
 each without `G49` in the header; see "Tool length offset at touch-off"
 below (#286).
@@ -85,6 +87,8 @@ These files were modified from the upstream copies (Apache-2.0 §4(b)):
   "Versions" above).
 - Version 2 of grblHAL and GRBL opens with `( Project: {programName} )`
   and `; Project: {programName}` (#171; "Comments on grblHAL and GRBL").
+- Version 3 of grblHAL and GRBL adds `G80` and `G40` to the header (#279;
+  "Header modal state").
 - Version 2 of LinuxCNC, Mach3 and UCCNC has no `G49` in its header
   (#286; "Tool length offset at touch-off").
 - The safety and correctness changes listed under "Verification" below,
@@ -236,8 +240,10 @@ cites) and `gnea/grbl` at commit `bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e`
 | --- | --- | --- |
 | `grblhal/v1.json` | `G53` | grblHAL `gcode.c` 1543-1545: `G53` is a non-modal command of modal group 0. 3317-3325: it needs `G0` or `G1` in force (`Status_GcodeG53InvalidMotionMode`) and fails with cutter compensation on. 3254-3277: its axis words are machine positions, with no work, `G92` or tool length offset added (`gc_get_block_offset` is skipped). 2831: in `G20` the axis words are inches, converted to mm. |
 | `grblhal/v2.json` | `G53` | As `grblhal/v1.json`. |
+| `grblhal/v3.json` | `G53` | As `grblhal/v1.json`. Its header's `G40` also keeps cutter compensation off, which `G53` needs. |
 | `grbl/v1.json` | `G53` | GRBL `grbl/gcode.c` 154-156: `G53` is a non-modal command of modal group 0. 635-640: it needs `G0` or `G1` in force (`STATUS_GCODE_G53_INVALID_MOTION_MODE`). 592-597: its axis words get no work, `G92` or tool length offset. 474-478: in `G20` the axis words are inches, converted to mm. |
 | `grbl/v2.json` | `G53` | As `grbl/v1.json`. |
+| `grbl/v3.json` | `G53` | As `grbl/v1.json`. |
 | `linuxcnc/v1.json`, `linuxcnc/v2.json` | `null` | Not checked for `G53` in #283; a follow-up cites the section and sets it. |
 | `mach3/v1.json`, `mach3/v2.json` | `null` | As LinuxCNC. |
 | `uccnc/v1.json`, `uccnc/v2.json` | `null` | As LinuxCNC. |
@@ -371,6 +377,42 @@ Checked on 2026-10-21 against `grblHAL/core` at commit
 every definition; `post::grbl_v2_project_comment_opens_with_fixed_text`
 checks that version 2 differs from version 1 only in that line.
 
+## Header modal state (`grblhal/v3.json`, `grbl/v3.json`)
+
+Versions 1 and 2 set `G90`, `G17`, `G94`, the units and the work
+coordinates, and cancel no other mode (#73). A canned-cycle motion mode or
+cutter compensation left by MDI, or by a program stopped without
+`M2`/`M30`, would survive into the job. Version 3 is version 2 with two
+header lines added after `G94`: `G80`, then `G40` (#279). It is a new
+version, not an edit, because it changes emitted bytes ("Versions"
+above); a project that names version 1 or 2 keeps it until the user runs
+`export --post <id>`.
+
+Checked on 2026-10-21 against `grblHAL/core` at commit
+`4ec1ae44b857a70d2f9298344feac4b43ed0eb6b` and `gnea/grbl` at
+`bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e` (v1.1h), the commits cited
+above. Line numbers are at those commits; `gcode.c` is the file unless
+another is named.
+
+| Code | grblHAL | GRBL | Decision |
+| --- | --- | --- | --- |
+| `G80` | 1592-1597: sets motion mode `None` (80) and clears `canned_cycle_active`. Canned cycles `G73`, `G81`-`G86`, `G89` exist (1613-1620), so a cycle mode can be left by MDI or by a program stopped without `M2`/`M30`; program end sets motion `G1` and clears it (5031-5033). Its only error is an axis word on a line in `G80` mode (3335-3340, "Axis word are programmed while G80 is active"); the header line has none, and the next motion line carries `G0` or `G1`. | 169-171 with `gcode.h` 77 (`MOTION_MODE_NONE 80`): sets motion mode none. GRBL has no canned cycles ("Not supported: Canned cycles", 1137-1139; "group 1 = {G81 - G89}", 1150), so it cancels nothing; its only error is the same axis-word rule (646-649). | Added on both. Harmless on both, useful on grblHAL, and a GRBL program also runs on grblHAL. |
+| `G40` | 1662-1668: always accepted ("When cutter comp is not supported G40 still is since it often appear in g-code program headers to setup defaults"). With `CUTTER_COMP_ENABLE` (default `Off`, `config.h` 226-227) it turns compensation off; "A standalone G40 is modal-only" (2853), and in a block while a canned cycle is active it fails with `Status_CutterCompConflict` (2855-2861), so it is written after `G80`, on a line of its own. Program end also turns compensation off (5040-5043). | 203-208 ("Only here to support G40 commands that often appear in g-code program headers to setup defaults") and 483-486 ("Grbl supports G40 only for the purpose to not error when G40 is sent with a g-code program header"): accepted, does nothing. | Added on both, after `G80`. |
+| `G49` (cancels `G43.1`) | 1670-1677 and 969-971: sets the tool length offset to 0. The offset survives program end (groups 8 and others "do not reset", 5023-5026) and a soft reset (`gc_init` keeps it, 789-793), and the tool-change modes that touch off set one (`tool_change.c` 81, 345-346). But `G10 L20`, which sets work zero and which senders' "zero Z" sends, subtracts the active offset: "WCS = MPos - G92 - TLO - WPos" (3095-3098). | 209-222 and 984-993: sets the offset to 0. It survives program end (1092-1095) but not a reset (`gc_init` clears all state, 42-44). `G10 L20` and `G92` subtract it (550-553, 568-571). | **Not added on either.** If an offset was active when the user set Z zero, it is part of that zero, and `G49` would move every Z by it, down when it was positive. The program leaves it alone, and `export` prints for every grblHAL and GRBL program: "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero." |
+| `G43`, `G43.2` | 1678-1681: need a tool table (`grbl.tool_table.n_tools`; `N_TOOLS` defaults to 0, `config.h` 548). | 218-220: only `G43.1`; any other `G43.x` is unsupported. | Not added. DreamCarve writes no tool table ("No `G43 H`" below). |
+
+The emitter already writes a header line that only sets modal state again
+after every stop that the program moves after (#55), in header order, so
+`G80` and `G40` come back after an `M6` and after a manual-spindle `M0`
+(`emit::setup_after_stop_repeats_g80_g40`). After a stop it writes the next
+motion word in full, so the first move after each `G80` carries `G0` or
+`G1` (`emit::first_motion_after_g80_has_motion_word`). The safety pass
+already accepts `G40` and `G80` in any program (#154).
+
+`post::grbl_v3_header_cancels_modes` checks that version 3 is version 2
+with `G80`, `G40` after `G94`; `post::no_header_cancels_tool_length_offset`
+checks that no version of either has `G49` or `G43`.
+
 ## Rules for the slice 17 definitions
 
 LinuxCNC, Mach3, UCCNC and generic were checked on 2026-10-20 and
@@ -393,7 +435,8 @@ Choices that apply to all four:
   a tool table DreamCarve does not write. The user sets Z zero with each
   bit, as on grblHAL. Version 1 of each header cancelled any offset with
   `G49`; version 2 leaves the offset alone, because the zero the user set
-  includes it (see "Tool length offset at touch-off").
+  includes it (see "Tool length offset at touch-off", and for grblHAL and
+  GRBL "Header modal state").
 - **User text never opens a comment.** LinuxCNC acts on a comment that
   starts with a keyword: `(MSG,`, `(DEBUG,`, `(PRINT,`, `(LOG,`,
   `(LOGOPEN,file)`, which truncates the file, and `(PROBEOPEN file)`

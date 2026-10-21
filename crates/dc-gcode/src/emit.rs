@@ -2702,7 +2702,7 @@ mod tests {
             for line in &lines[..units] {
                 let c = code(line);
                 assert!(
-                    c.is_empty() || ["G90", "G17", "G94"].contains(&c.as_str()),
+                    c.is_empty() || ["G90", "G17", "G94", "G80", "G40"].contains(&c.as_str()),
                     "{post}: {line}"
                 );
             }
@@ -3751,6 +3751,72 @@ mod tests {
         assert!(checked > 0);
     }
 
+    /// #279, acceptance 41: grblHAL v3 and GRBL v3 cancel canned-cycle
+    /// motion and cutter compensation again in the setup written after
+    /// every stop, `G80` before `G40` as in the header, after an `M6` and
+    /// after a manual-spindle `M0`.
+    #[test]
+    fn setup_after_stop_repeats_g80_g40() {
+        let (mut after_m6, mut after_m0) = (0, 0);
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            for (line, between) in after_pauses(&text) {
+                if has_word(lines[line - 1], "M6") {
+                    after_m6 += 1;
+                } else {
+                    after_m0 += 1;
+                }
+                let at = |word: &str| between.iter().position(|l| has_word(l, word));
+                let (g80, g40) = (at("G80"), at("G40"));
+                assert!(
+                    g80.is_some() && g40.is_some(),
+                    "{case}: no G80 or G40 after the stop on line {line}: {between:?}"
+                );
+                assert!(
+                    g80 < g40,
+                    "{case}: G40 before G80 after the stop on line {line}: {between:?}"
+                );
+            }
+        }
+        assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
+    }
+
+    /// #279: in `G80` mode a line with axis words and no motion word is an
+    /// error on grblHAL and GRBL (`definitions/README.md`, "Header modal
+    /// state"). So the first line that moves after the header's `G80`, and
+    /// after each `G80` of a setup written again after a stop, carries
+    /// `G0` or `G1`.
+    #[test]
+    fn first_motion_after_g80_has_motion_word() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let moves = |l: &str| {
+                let c = code(l);
+                c.contains('X') || c.contains('Y') || c.contains('Z')
+            };
+            let cancels: Vec<usize> = (0..lines.len())
+                .filter(|&i| has_word(lines[i], "G80"))
+                .collect();
+            let first_move = first_index(&lines, moves).unwrap();
+            assert!(
+                cancels.first().is_some_and(|&i| i < first_move),
+                "{case}: no G80 before the first move: {text}"
+            );
+            let stops = after_pauses(&text).len();
+            assert_eq!(cancels.len(), 1 + stops, "{case}: {text}");
+            for i in cancels {
+                let next = (i + 1..lines.len()).find(|&k| moves(lines[k])).unwrap();
+                assert!(
+                    has_word(lines[next], "G0") || has_word(lines[next], "G1"),
+                    "{case}: line {} moves after the G80 on line {} without G0 or G1: {}",
+                    next + 1,
+                    i + 1,
+                    lines[next]
+                );
+            }
+        }
+    }
+
     /// #55: an inch project sets inches again after a pause, never
     /// millimetres.
     #[test]
@@ -4478,25 +4544,30 @@ mod tests {
         text.lines().map(code).collect()
     }
 
-    /// Whether `text` has any canned-cycle word.
+    /// Whether `text` has any canned-cycle word. `G80` alone is no cycle:
+    /// the grblHAL and GRBL v3 headers write it to cancel one (#279).
     fn has_cycle_word(text: &str) -> bool {
-        ["G73", "G80", "G81", "G82", "G83", "G98", "G99"]
+        ["G73", "G81", "G82", "G83", "G98", "G99"]
             .iter()
             .any(|w| text.lines().any(|l| has_word(l, w)))
     }
 
-    /// The lines between the one `G98` and the one `G80` of `text`; also
-    /// asserts the line before `G98` is the rapid over the first hole.
+    /// The lines between the one `G98` and the one `G80` after it of
+    /// `text`; also asserts the line before `G98` is the rapid over the
+    /// first hole. A `G80` before the `G98` is the header's (#279).
     fn cycle_lines(text: &str, first: (f64, f64)) -> Vec<String> {
         let codes = codes(text);
-        let at = |word: &str| -> usize {
-            let found: Vec<usize> = (0..codes.len())
+        let all = |word: &str, from: usize| -> Vec<usize> {
+            (from..codes.len())
                 .filter(|&i| codes[i].split_whitespace().any(|w| w == word))
-                .collect();
-            assert_eq!(found.len(), 1, "one {word} in\n{text}");
-            found[0]
+                .collect()
         };
-        let (g98, g80) = (at("G98"), at("G80"));
+        let [g98] = all("G98", 0)[..] else {
+            panic!("one G98 in\n{text}");
+        };
+        let [g80] = all("G80", g98)[..] else {
+            panic!("one G80 after the G98 in\n{text}");
+        };
         assert_eq!(codes[g98], "G98", "{text}");
         assert_eq!(codes[g80], "G80", "{text}");
         assert_eq!(
@@ -4850,7 +4921,7 @@ mod tests {
     // A7, acceptance 45).
 
     /// The repository's plaque: four operations with a 1/4" end mill, then
-    /// an Engrave with a 1/8" one, every safe Z 15 mm, on grblHAL v2.
+    /// an Engrave with a 1/8" one, every safe Z 15 mm, on grblHAL.
     fn plaque() -> Project {
         dc_project::load(include_bytes!("../../../tests/fixtures/plaque.dcv"))
             .unwrap()
@@ -5016,13 +5087,19 @@ mod tests {
     }
 
     /// Design addendum A7: with all three heights unset, as every older
-    /// project migrates, the plaque exports the programs it did before
-    /// #283, byte for byte. The expected programs are the tabs-migration
+    /// project migrates, the version 11 plaque exports the programs it did
+    /// before #283, byte for byte. The expected programs are the tabs-migration
     /// corpus's, exported by the build before #105 and checked unchanged
     /// since by `cli::version_9_tab_settings_export_byte_identical_programs`.
     #[test]
     fn unset_heights_are_byte_identical() {
-        let project = plaque();
+        // The plaque as the build before #283 saved it, at version 11 on
+        // grblHAL v2, from the heights-migration corpus.
+        let project = dc_project::load(include_bytes!(
+            "../../dreamcarve/tests/fixtures/heights-migration/plaque.dcv"
+        ))
+        .unwrap()
+        .project;
         assert_eq!(project.heights, dc_project::Heights::unset());
         let (programs, _) = emit_programs(
             &project,

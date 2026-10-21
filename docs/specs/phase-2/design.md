@@ -1208,9 +1208,20 @@ middle of the path's corner arc, not at one end of it. The tab's foot is
 the outline's point nearest the tab (`placed_tabs::outline_foot`; a tab
 on the outline is its own foot).
 
+**One tab alone.** A single tab whose span (width plus diameter) covers
+its whole path overlaps nothing: it warns `tabs_cover_most_of_contour`
+only, not `tabs_overlap`, for a request and a placed tab alike (changed
+in #105 review: it warned both, and as a placed tab got the words for
+the one tab a part keeps).
+
 **Crossing.** A Profile crosses a tab when that nearest path point lies
 within `r + w/2` of the foot (`w` the tab width): closer, the cutter
-would cut into the tab. A path farther off, such as an Outside path past
+would cut into the tab. The cut must also go below the tab's top: with
+the stock thickness and the Profile's depth set, a tab whose top is at
+or below the cut's floor (`thickness − depth`) is not crossed, so a
+shallow score pass of a tabbed outline neither rises nor warns
+`tabs_outside_cut_range` (changed in #105 review: depth was ignored).
+With either unset every tab in reach counts. A path farther off, such as an Outside path past
 a narrow notch the tool cannot reach into, does not cross it.
 `crossed_by` lists the tabs a Profile crosses; only the tab's own
 outline counts, so a neighbouring part's path, a Pocket or an Engrave
@@ -2300,9 +2311,19 @@ following the chapters, which each carry a complete JSON block to paste.
   foot along its outline from the first vertex as drawn, `CUT_BY` the
   enabled Profiles that cross it (`-` for none). Requests are shown as
   the tabs they place, with a note line; nothing is saved.
-- `tabs clear <dcv>` removes every tab, `tabs clear <dcv> <op>` those on
-  the instances `op` targets, `--tab <id>` (repeatable) the ones named;
-  an unknown id fails (exit 1) and saves nothing.
+- `tabs clear <dcv>` removes every tab, `tabs clear <dcv> <op>` the
+  tabs the Profile `op` crosses (`crossed_by`; another kind of operation
+  fails, exit 1), `--tab <id>` (repeatable) the ones named; an unknown
+  id fails (exit 1) and saves nothing. After removing, each part an
+  enabled Profile through the stock now cuts with no tab
+  (`placed_tabs::freed_parts`, compared before and after) is named on
+  stdout: "Note: operation `op1` now cuts `coaster` (instance `i1`,
+  profile 0) through the stock with no tab, so the part comes loose on
+  its last pass." (changed in #105 review: `<op>` removed every tab on
+  the instances it targeted, so clearing a finish pass or a Pocket freed
+  the part silently.)
+- `tabs place` refuses `--count 0`, and `--width`, `--height`,
+  `--shape` or `--on-holes` without `--count` or `--at` (exit 2).
 - `place` and `clear` first run `place_requests`, then save through
   `dc_project::save`, staged and renamed into place. An unknown
   operation fails with "operation `op9` is not in coaster.dcv", one that
@@ -2927,6 +2948,9 @@ above:
   start: home the machine; this program moves to machine Z -5.000 mm
   (G53).`; with one program per tool run, once, as "each program moves".
   `Program::machine_lift` carries it.
+- The estimate (A4). A `G53` lift has no work-coordinate motion, so
+  `dc-gcode::estimate` leaves its distance, and that of the rise after it
+  from an unknown Z, out of the rapid distance.
 - The v11 corpus. `crates/dreamcarve/tests/fixtures/heights-migration/`
   holds the 16 tabs-migration projects saved at version 11 by the build
   before #283 (`tabs place`); `cli::version_11_projects_export_byte_identical_programs`

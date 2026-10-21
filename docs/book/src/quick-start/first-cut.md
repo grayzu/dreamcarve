@@ -231,8 +231,9 @@ dreamcarve check coaster.dcv
 it found:
 
 ```text
-Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
-  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 coaster.dcv: 0 error(s), 0 warning(s)
 ```
 
@@ -249,11 +250,13 @@ dreamcarve export coaster.dcv
 ```
 
 ```text
-Wrote coaster.nc (45 lines, post-processor grblhal).
-  op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
+Wrote coaster.nc (47 lines, post-processor grblhal).
+  op1 `Profile`: tool `t1` (Set me), 1 target(s), 12.000 mm deep
 Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
   The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Before you start: fit T1 Set me and set work zero with it.
+This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
 ```
 
 `coaster.nc` is the G-code program. The **extents** are where it takes the
@@ -264,10 +267,22 @@ the 6.35 mm diameter further out, between X 3.65 and 107.16 mm (Y between
 the circle on the right). Z runs from −12, the deepest cut, up to 5, safe Z. You place
 clamps from these numbers in step 8.
 
+The **estimated time** is how long the cutting and the spindle's spin-up
+wait take at the feed rates you set. It leaves out the rapids, because
+DreamCarve does not know how fast your machine moves; set your machine's
+rapid rate in the [configuration](../user-guide/configuration.md#estimated-run-time)
+to include them. The real job takes a little longer: the machine also
+speeds up and slows down.
+
 The program does not stop for its first bit: you fit it and set work zero
-with it before you start, as the last line says. A program that stops, for a second bit or for a router you
+with it before you start, as the "Before you start" line says. A program that stops, for a second bit or for a router you
 switch by hand, also lists every place where it stops and waits for you.
 Your sender may not show why it stopped, so note them.
+
+The last line is for senders that measure each bit with a tool setter and
+store its length on the controller: that length becomes part of the Z
+zero you set, so the program leaves it alone. If you set Z zero by
+touching the bit to the stock, as this chapter does, you can ignore it.
 
 ## 7. Read the start of the program
 
@@ -280,6 +295,8 @@ Open `coaster.nc`. It starts like this (your date will differ):
 G90
 G17
 G94
+G80
+G40
 G21
 G54
 ( Operation 1: Profile )
@@ -296,7 +313,7 @@ G2 X6.825 Y55.000 I-48.175 J0.000
 
 | Lines | What they do |
 | --- | --- |
-| `G90 G17 G94 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
+| `G90 G17 G94 G80 G40 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, no drilling cycle, no cutter compensation, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
 | `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) that go sideways happen only at or above this height. |
 | `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `X103.175 Y55.000` | Rapid to the start of the cut, still at safe Z. |

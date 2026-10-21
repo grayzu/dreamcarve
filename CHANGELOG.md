@@ -102,9 +102,18 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   the tab setting (none on holes unless `--on-holes`, fewer on a short
   outline), `--at d1,d2,…` puts them at distances along each outline,
   `tabs list` shows every tab and the Profiles that cut round it, and
-  `tabs clear` removes them. `check` warns `tab_not_crossed` for a tab no
-  enabled Profile cuts round, and `tab_on_hole` for a tab that holds a hole's
-  slug.
+  `tabs clear` removes them (`tabs clear <dcv> <op>` the tabs one Profile cuts
+  round, naming any part a through cut then frees with no tab). A Profile cuts
+  round a tab only when its cut goes below the tab's top. `check` warns
+  `tab_not_crossed` for a tab no enabled Profile cuts round, and `tab_on_hole`
+  for a tab that holds a hole's slug.
+- **Estimated run time.** `export` and `check` print how long each program,
+  and all of them together, should take: feed moves at their feed rates
+  (arcs by their length), dwells, and rapids at the rate you set in the new
+  `[estimate] rapid_mm_min` of `config.toml`, all times `scale_factor`.
+  Without a rapid rate the rapids' distance is printed instead of a guessed
+  time. Acceleration and the time at pauses and tool changes are left out,
+  and the line says so ([#280]). The estimate never changes a program.
 - **Clearance, tool-change and park heights; project format version 12.**
   The project's `heights` sets a clearance height above the stock, for moves
   between parts, between operations, at a tool change and at the end (each
@@ -121,6 +130,20 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
+- **Toolpath preview.** `export --preview part.svg` and `check --preview
+  part.svg` draw every operation's toolpath over the stock and the shapes, at
+  1:1 in millimetres: cuts in each operation's colour, rapids dashed, a heavy
+  mark where the bit rises over a tab, and a circle the size of the bit with a
+  tick in the cut direction where each pass starts, so you can see where
+  `at_distances` tabs are measured from. `export` writes it with the programs,
+  all or none; it is never written over the project, a program, or a file that
+  is not an earlier preview ([#281]).
+- **Inch input.** Any length or feed in a project or tool library file may be
+  written with its unit: `"depth_mm": "0.5 in"`, `"1 1/4 in"`,
+  `"feed_mm_min": "60 in/min"`, `"safe_z_mm": "5 mm"`. Inches are converted to
+  millimetres exactly when the file is read, so the program is the one the
+  millimetre numbers give; a bad unit is an error at its line and column. A
+  command that saves the file writes millimetre numbers back ([#282]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -135,6 +158,9 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   strictly in drawing order (research decision D5, [#127]). A shape inside a hole
   is still cut before the hole, and ties keep drawing order ([#215]). A
   one-shape operation exports exactly as before.
+- **One tab alone no longer warns `tabs_overlap`.** A single tab whose span
+  covers its whole tool path warns only `tabs_cover_most_of_contour`; before,
+  it warned that tabs overlapped as well ([#105]). The program is the same.
 - **`init` writes a 15° ramp entry** for its Profile ([#119]). Projects from 0.1
   keep `entry: "plunge"` when upgraded, so they cut as before.
 - **Ramps, helixes and straight plunges start 1 mm above the stock.** The bit
@@ -159,6 +185,14 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   name can never start a controller command such as `( MSG, ...)` ([#171]). `init`
   writes version 2. A version 1 project keeps exporting version 1 bytes until
   you run `export --post <id>`, which upgrades it and says so.
+- **grblHAL and GRBL definitions version 3.** The header, and the setup
+  written again after every pause and tool change, cancel a canned-cycle
+  motion mode (`G80`) and then cutter compensation (`G40`) after `G94`, so a
+  mode left by an earlier job or by MDI cannot change the program ([#279]).
+  `G49` is not added: both controllers fold an active tool length offset into
+  the work zero you set, so cancelling it would move every Z. `export` now
+  says so for grblHAL and GRBL programs. `init` writes version 3; a version 1
+  or 2 project keeps its bytes until `export --post <id>`.
 - **LinuxCNC, Mach3 and UCCNC definitions version 2** leave the tool length
   offset alone: the header no longer has `G49` ([#286]). The work zero you
   set with a tool length offset active includes the offset, so cancelling it
@@ -210,6 +244,10 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   only by its tabs, such as a hole cut after its tabbed part ([#269]). A
   lighter cut, such as a shallow engraving, stays quiet. A tabbed part used to count as
   held, so this order gave no warning.
+- `export`'s summary states each operation's depth in the project's display
+  units, with the post-processor's decimal places for them: `0.5000 in deep`
+  in an inch project, `12.000 mm deep` (was `12 mm deep`) in a millimetre one
+  ([#282]).
 - **Names in comments keep their letters** ([#278]). Accented letters and
   common symbols in project, operation and tool names are spelled in ASCII
   instead of dropped: "Café Ø6 ½" is written `Cafe O6 1/2`, not `Caf 6`.
@@ -335,6 +373,10 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
 [#278]: https://github.com/grayzu/dreamcarve/issues/278
 [#277]: https://github.com/grayzu/dreamcarve/issues/277
+[#280]: https://github.com/grayzu/dreamcarve/issues/280
+[#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#283]: https://github.com/grayzu/dreamcarve/issues/283
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
+[#281]: https://github.com/grayzu/dreamcarve/issues/281
+[#282]: https://github.com/grayzu/dreamcarve/issues/282

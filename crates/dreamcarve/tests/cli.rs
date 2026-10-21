@@ -2953,15 +2953,19 @@ fn init_writes_post_processor_reference() {
     );
 }
 
-/// #171: `init` writes grblHAL version 2, whose program opens with fixed
-/// text, so the project name never starts a comment.
+/// #171: `init` writes the latest grblHAL version, whose program opens
+/// with fixed text, so the project name never starts a comment.
 #[test]
-fn init_writes_grblhal_v2() {
-    let dir = work_dir("init_writes_grblhal_v2");
+fn init_writes_latest_grblhal() {
+    let dir = work_dir("init_writes_latest_grblhal");
     let dcv = init_coaster(&dir);
     let block = post_processor_block(&dcv);
+    let latest = dc_project::latest_definition("grblhal").expect("grblHAL is bundled");
     assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
-    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+    assert_eq!(
+        block.get("definition_version"),
+        Some(&serde_json::json!(latest.version))
+    );
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
@@ -2969,12 +2973,42 @@ fn init_writes_grblhal_v2() {
     assert_eq!(program.lines().next(), Some("( Project: coaster )"));
 }
 
-/// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
-/// exports the bytes it did before version 2 existed
+/// The lines of an older grblHAL or GRBL program as version 3 writes
+/// them: the first line `first`, and `G80`, `G40` after `G94` (#279).
+fn as_v3(program: &str, first: &str) -> Vec<String> {
+    let mut lines: Vec<String> = program.lines().map(str::to_owned).collect();
+    if let Some(line) = lines.first_mut() {
+        first.clone_into(line);
+    }
+    let g94 = lines
+        .iter()
+        .position(|l| l == "G94")
+        .expect("the header has G94");
+    lines.splice(g94 + 1..g94 + 1, ["G80".to_owned(), "G40".to_owned()]);
+    lines
+}
+
+/// Writes the coaster project in `dir`, filled in as the quick start does,
+/// naming version `version` of `id`'s definition with its default
+/// settings.
+fn coaster_at_version(dir: &Path, id: &str, version: u32) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::bundled_definition(id, version)
+        .expect("the version is bundled")
+        .default_ref();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// #171, #279, ADR-0004: a project that names version 1 of grblHAL or
+/// GRBL exports the bytes it did before version 2 existed
 /// (`tests/expected/coaster-<id>-v1.nc`, committed before #171; its ramp
 /// re-captured in #214, which changed the motion, not the format) until the
-/// user runs `export --post <id>`. That upgrades it to version 2, says so,
-/// and changes only the program's first line.
+/// user runs `export --post <id>`. That upgrades it to the latest version,
+/// says so, and changes only the program's first line and the header's
+/// `G80`, `G40`.
 #[test]
 fn v1_project_exports_v1_bytes_until_upgraded() {
     for (id, expected, first) in [
@@ -2982,13 +3016,7 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
         ("grbl", "coaster-grbl-v1.nc", "; Project: coaster"),
     ] {
         let dir = work_dir(&format!("v1_project_exports_v1_bytes_{id}"));
-        let dcv = init_coaster(&dir);
-        fill_in(&dcv, 1500.0, 500.0, 18000);
-        let mut project = load_file(&dcv).project;
-        project.post_processor = dc_project::bundled_definition(id, 1)
-            .expect("version 1 is bundled")
-            .default_ref();
-        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let dcv = coaster_at_version(&dir, id, 1);
         assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
         let v1 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
 
@@ -2999,18 +3027,102 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
         assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
         let report = stdout(&out);
         assert!(
-            report.contains(&format!("post-processor {id} v1 → v2,")),
+            report.contains(&format!("post-processor {id} v1 → v3,")),
             "{report}"
         );
         let block = post_processor_block(&dcv);
-        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
-        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
-        assert_eq!(v2.lines().next(), Some(first), "{id}");
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+        let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
         assert!(
-            v2.lines().skip(1).eq(v1.lines().skip(1)),
-            "{id}: only the first line changes\nv1:\n{v1}\nv2:\n{v2}"
+            v3.lines().eq(as_v3(&v1, first).iter().map(String::as_str)),
+            "{id}: only the first line and G80, G40 change\nv1:\n{v1}\nv3:\n{v3}"
         );
     }
+}
+
+/// #279, acceptance 41, ADR-0004: `init` writes grblHAL version 3, and a
+/// project that names version 2 of grblHAL or GRBL exports the bytes it
+/// did before version 3 existed (`tests/expected/coaster-<id>-v2.nc`,
+/// committed before #279) until `export --post <id>` upgrades it, which
+/// adds only `G80` and `G40` after `G94`.
+#[test]
+fn v2_project_exports_v2_bytes() {
+    let dir = work_dir("v2_project_exports_v2_bytes_init");
+    let dcv = init_coaster(&dir);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+
+    for (id, expected, first) in [
+        ("grblhal", "coaster-grblhal-v2.nc", "( Project: coaster )"),
+        ("grbl", "coaster-grbl-v2.nc", "; Project: coaster"),
+    ] {
+        let dir = work_dir(&format!("v2_project_exports_v2_bytes_{id}"));
+        let dcv = coaster_at_version(&dir, id, 2);
+        assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
+        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+        assert!(!v2.lines().any(|l| l == "G80" || l == "G40"), "{id}: {v2}");
+
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v2 → v3,")),
+            "{report}"
+        );
+        let block = post_processor_block(&dcv);
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+        let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+        assert!(
+            v3.lines().eq(as_v3(&v2, first).iter().map(String::as_str)),
+            "{id}: only G80, G40 are added\nv2:\n{v2}\nv3:\n{v3}"
+        );
+    }
+}
+
+/// The note `export` prints for grblHAL and GRBL programs (functional
+/// capability 29): the program leaves the tool length offset alone.
+const TOOL_LENGTH_NOTE: &str = "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.";
+
+/// #279: grblHAL and GRBL fold an active tool length offset into the work
+/// zero the user sets, so their programs leave it alone and `export` says
+/// so, once, for one program and for one program per tool run. The note
+/// names grblHAL's and GRBL's `G43.1`, so it is not printed for LinuxCNC
+/// (functional spec, capability 29).
+#[test]
+fn export_grblhal_prints_tool_length_note() {
+    for (post, notes) in [("grblhal", 1), ("grbl", 1), ("linuxcnc", 0)] {
+        let dir = work_dir(&format!("export_tool_length_note_{post}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "coaster.dcv",
+                "--post",
+                post,
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{post}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert_eq!(
+            report.matches(TOOL_LENGTH_NOTE).count(),
+            notes,
+            "{post}: {report}"
+        );
+    }
+    let dir = work_dir("export_tool_length_note_runs");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains("Wrote 2 programs"), "{report}");
+    assert_eq!(report.matches(TOOL_LENGTH_NOTE).count(), 1, "{report}");
 }
 
 /// The motion of `program`: every move, as where it goes, at what feed,
@@ -5858,6 +5970,19 @@ fn tabs_place_refuses_what_it_cannot_place() {
         "{}",
         stderr(&out)
     );
+    // No count of 0, and no size or shape with nothing to place.
+    for args in [
+        &["--count", "0"][..],
+        &["--width", "5"][..],
+        &["--height", "2"][..],
+        &["--shape", "smooth"][..],
+        &["--on-holes"][..],
+    ] {
+        let mut all = vec!["tabs", "place", "coaster.dcv", "op1"];
+        all.extend_from_slice(args);
+        let out = run(&dir, &all);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+    }
     assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
 }
 
@@ -5963,6 +6088,613 @@ fn left_profile_of_an_svg_line_exports_on_its_left() {
         (first.from.x.expect("X known") - x0).abs() <= 1e-3,
         "climb starts beside the first vertex: {first:?}"
     );
+}
+
+/// #105 review: `tabs clear <dcv> <op>` removes only the tabs that Profile
+/// cuts round, refuses an operation that is not a Profile, and says when
+/// the tabs it removed leave a part a through cut frees with no tab. The
+/// coaster's four tabs are crossed by its cut-out `op1`; a 1 mm On line
+/// score pass `op3` stops above the tab tops, so it crosses none and
+/// removes none; clearing `op1` removes all four and names the part.
+#[test]
+fn tabs_clear_op_removes_only_the_tabs_it_cuts_round() {
+    let dir = work_dir("tabs_clear_op_removes_only_the_tabs_it_cuts_round");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mut project = load_file(&dcv).project;
+    let mut score = as_profile(&project.operations[0]).clone();
+    score.id = OperationId::new("op3");
+    score.side = Side::OnLine;
+    score.depth_mm = Some(1.0);
+    score.through_cut_allowance_mm = 0.0;
+    project.operations.push(Operation::Pocket(sample_pocket()));
+    project.operations.push(Operation::Profile(score));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "o2"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("only a Profile"), "{}", stderr(&out));
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op3"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Removed 0 tab(s)"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(load_file(&dcv).project.tabs.len(), 4);
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert!(printed.contains("Removed 4 tab(s)"), "{printed}");
+    assert!(
+        printed.contains("`coaster` (instance `i1`, profile 0)") && printed.contains("no tab"),
+        "names the part op1 now cuts free: {printed}"
+    );
+}
+
+/// One open, straight line 98 mm long.
+const ESTIMATE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="40mm" viewBox="0 0 120 40">
+  <path id="line" d="M 10 20 L 108 20"/>
+</svg>
+"#;
+
+/// A project whose program is, besides setup lines, acceptance test 42's:
+/// one Engrave of a 98 mm line, 1 mm deep in one pass, at safe Z 25 mm,
+/// feed and plunge 600 mm/min and the 3 s spin-up dwell. So the program
+/// feeds 100 mm (the 2 mm plunge from 1 mm above the stock, then the
+/// line), 10 s, and rapids 50 mm: 24 mm down to 1 mm above the stock and
+/// 26 mm back up. The first rapid starts where the machine was left, so it
+/// has no length.
+fn estimate_project(dir: &Path) -> PathBuf {
+    std::fs::write(dir.join("line.svg"), ESTIMATE_SVG).expect("svg written");
+    let out = run(dir, &["init", "line.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("line.dcv");
+    fill_in(&dcv, 600.0, 600.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.operations = vec![Operation::Engrave(EngraveOp {
+        id: OperationId::new("op1"),
+        name: "Engrave".into(),
+        enabled: true,
+        targets: project.instances.iter().map(|i| i.id.clone()).collect(),
+        tool: project
+            .tools
+            .first()
+            .expect("init writes a tool")
+            .id
+            .clone(),
+        depth_mm: Some(1.0),
+        step_down_mm: Some(1.0),
+        alternate_direction: false,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 25.0,
+    })];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// The line `export` prints for [`estimate_project`] with no `[estimate]`.
+const ESTIMATE_LINE: &str = "Estimated time: 13 s (cutting 10 s, dwells 3 s); 50 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.";
+
+/// The line of `report` that starts with `prefix`, trimmed.
+fn line_starting<'a>(report: &'a str, prefix: &str) -> Option<&'a str> {
+    report
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with(prefix))
+}
+
+/// Capability 30 on the quick start's coaster, whose program is pinned in
+/// `tests/expected/coaster-grblhal.nc`: its estimate is pinned with it.
+/// The rapids are the 4 mm down to the ramp's start and the 17 mm back up
+/// to safe Z. With manual spindle control the program pauses twice, to
+/// turn the router on and off, and the line says those are left out.
+#[test]
+fn coaster_prints_estimate() {
+    let dir = work_dir("coaster_prints_estimate");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration."
+        ),
+        "{report}"
+    );
+    set_spindle_control(&dcv, SpindleControl::Manual);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    let line = line_starting(&report, "Estimated time:")
+        .unwrap_or_else(|| panic!("an estimate: {report}"));
+    assert!(
+        line.ends_with("Excludes acceleration and 2 pauses."),
+        "{line}"
+    );
+}
+
+/// Acceptance 42 (functional capability 30): a program of 100 mm of feed
+/// at F600, a 3 s spin-up dwell and 50 mm of rapids is estimated at 10 s
+/// cutting and 3 s dwell, and with no rapid rate configured the 50 mm is
+/// named and left out, with how to include it. `check` prints the same
+/// line once the program builds.
+#[test]
+fn export_prints_estimate() {
+    let dir = work_dir("export_prints_estimate");
+    estimate_project(&dir);
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(ESTIMATE_LINE),
+        "{report}"
+    );
+    let check = run(&dir, &["check", "line.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "check: {}", stdout(&check));
+    let report = stdout(&check);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(ESTIMATE_LINE),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: with `rapid_mm_min = 3000`, the 50 mm of rapids take
+/// 1 s, which the estimate adds.
+#[test]
+fn estimate_with_rapid_rate() {
+    let dir = work_dir("estimate_with_rapid_rate");
+    estimate_project(&dir);
+    write_config(&dir, "[estimate]\nrapid_mm_min = 3000\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 14 s (cutting 10 s, dwells 3 s, rapids 1 s at 3000 mm/min). Excludes acceleration."
+        ),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: `scale_factor = 2` doubles every time, the rapids' too.
+#[test]
+fn estimate_scale_factor_multiplies() {
+    let dir = work_dir("estimate_scale_factor_multiplies");
+    estimate_project(&dir);
+    write_config(&dir, "[estimate]\nscale_factor = 2\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 26 s (cutting 20 s, dwells 6 s; scale factor 2); 50 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration."
+        ),
+        "{report}"
+    );
+    write_config(&dir, "[estimate]\nscale_factor = 2\nrapid_mm_min = 3000\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 28 s (cutting 20 s, dwells 6 s, rapids 2 s at 3000 mm/min; scale factor 2). Excludes acceleration."
+        ),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: the estimate never changes a program. The bytes are the
+/// same with and without `[estimate]`. A bad `[estimate]` value fails the
+/// export at its line and column, and nothing is written.
+#[test]
+fn estimate_config_does_not_change_program() {
+    let dir = work_dir("estimate_config_does_not_change_program");
+    estimate_project(&dir);
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let without = std::fs::read(dir.join("line.nc")).expect("line.nc written");
+    write_config(&dir, "[estimate]\nrapid_mm_min = 3000\nscale_factor = 2\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let with = std::fs::read(dir.join("line.nc")).expect("line.nc written");
+    assert!(with == without, "the program changed with [estimate]");
+
+    std::fs::remove_file(dir.join("line.nc")).expect("line.nc removed");
+    let config = write_config(&dir, "[estimate]\nrapid_mm_min = 0\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let message = stderr(&out);
+    assert!(
+        message.contains(&format!("{}:2:16:", config.display())),
+        "{message}"
+    );
+    assert!(!dir.join("line.nc").exists(), "nothing is written");
+}
+
+/// Capability 30: one program per tool run gets an estimate each, then
+/// the total of them.
+#[test]
+fn estimate_per_program_and_total() {
+    let dir = work_dir("estimate_per_program_and_total");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    let lines: Vec<&str> = report
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("Estimated time:"))
+        .collect();
+    assert_eq!(lines.len(), 2, "one per program: {report}");
+    let total = line_starting(&report, "Estimated total time:")
+        .unwrap_or_else(|| panic!("a total: {report}"));
+    assert!(total.contains("rapids not included"), "{total}");
+    // The total is the programs' sum, to the second.
+    let seconds = |line: &str| -> u64 {
+        let time = line
+            .split(':')
+            .nth(1)
+            .and_then(|rest| rest.split('(').next())
+            .unwrap_or_else(|| panic!("a time in {line}"))
+            .trim();
+        let mut words = time.split_whitespace();
+        let mut sum = 0;
+        while let (Some(n), Some(unit)) = (words.next(), words.next()) {
+            let n: u64 = n.parse().unwrap_or_else(|_| panic!("{line}"));
+            sum += n * match unit {
+                "h" => 3600,
+                "min" => 60,
+                "s" => 1,
+                other => panic!("unit {other} in {line}"),
+            };
+        }
+        sum
+    };
+    let parts: u64 = lines.iter().map(|l| seconds(l)).sum();
+    assert!(
+        seconds(total).abs_diff(parts) <= 1,
+        "{total} is not the sum of {lines:?}"
+    );
+}
+
+/// The text of every element of `svg` whose `class` is `class`, from its
+/// name to its closing `>`.
+fn svg_elements<'a>(svg: &'a str, class: &str) -> Vec<&'a str> {
+    let wanted = format!(" class=\"{class}\"");
+    svg.split('<').filter(|e| e.contains(&wanted)).collect()
+}
+
+/// The value of attribute `name` in `element`.
+fn svg_attr<'a>(element: &'a str, name: &str) -> &'a str {
+    let key = format!(" {name}=\"");
+    let (_, rest) = element.split_once(&key).expect("attribute present");
+    rest.split('"').next().expect("attribute closed")
+}
+
+/// The end point of each command of SVG path data `d` written as the
+/// preview writes it: `M x y`, `L x y`, `A rx ry rot large sweep x y`.
+fn svg_path_points(d: &str) -> Vec<(f64, f64)> {
+    let mut tokens = d.split_whitespace();
+    let mut points = Vec::new();
+    let number = |t: Option<&str>| -> f64 {
+        t.expect("a number follows")
+            .parse()
+            .expect("path numbers parse")
+    };
+    while let Some(command) = tokens.next() {
+        match command {
+            "M" | "L" => {}
+            "A" => {
+                for _ in 0..5 {
+                    tokens.next();
+                }
+            }
+            other => panic!("unexpected path command {other} in {d}"),
+        }
+        let x = number(tokens.next());
+        let y = number(tokens.next());
+        points.push((x, y));
+    }
+    points
+}
+
+/// Acceptance test 43: the coaster's preview is one SVG framed by the
+/// stock whose cut paths pass through every point of the toolpath, Y
+/// flipped, within 0.001 mm; one tab mark per tab on the one pass below
+/// the tab top, one start circle per pass, and the same bytes twice.
+#[test]
+fn export_preview_coaster() {
+    let dir = work_dir("export_preview_coaster");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let args = [
+        "export",
+        "coaster.dcv",
+        "--preview",
+        "preview.svg",
+        "--date",
+        FIXED_DATE,
+    ];
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert!(stdout(&out).contains("preview.svg"), "{}", stdout(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    assert!(program == include_str!("expected/coaster-grblhal.nc"));
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+
+    let project = load_file(&dcv).project;
+    let (width, height) = (project.stock.width_mm, project.stock.height_mm);
+    assert!(
+        svg.contains(&format!(" viewBox=\"0 0 {width:.3} {height:.3}\"")),
+        "{svg}"
+    );
+    assert!(!svg.contains("transform"), "{svg}");
+
+    let drawn: Vec<(f64, f64)> = svg_elements(&svg, "cut")
+        .iter()
+        .flat_map(|cut| svg_path_points(svg_attr(cut, "d")))
+        .collect();
+    let (toolpath, _) =
+        dc_cam::generate_profile(&project, as_profile(&project.operations[0])).expect("generates");
+    let mut at: Option<(f64, f64)> = None;
+    let mut checked = 0;
+    for m in &toolpath.moves {
+        let to = (m.to.x, m.to.y);
+        let moved = at.is_some_and(|(x, y)| (to.0 - x).hypot(to.1 - y) > 1e-9);
+        if m.is_cut() && moved {
+            let flipped = (to.0, height - to.1);
+            assert!(
+                drawn
+                    .iter()
+                    .any(|p| (p.0 - flipped.0).abs() <= 1e-3 && (p.1 - flipped.1).abs() <= 1e-3),
+                "toolpath point {to:?} not drawn at {flipped:?}"
+            );
+            checked += 1;
+        }
+        at = Some(to);
+    }
+    assert!(checked > 10, "the coaster cuts: {checked}");
+    // The 12 mm cut in 4 mm passes rises over the 4 tabs on its last pass
+    // only: the tabs stand 3 mm, above the 8 mm pass's floor.
+    assert_eq!(svg_elements(&svg, "tab").len(), 4, "{svg}");
+    let starts = svg_elements(&svg, "start");
+    assert_eq!(starts.len(), 3, "one per pass: {svg}");
+    assert_eq!(svg_attr(starts[0], "r"), "3.175");
+
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let again = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+    assert!(again == svg, "the preview changed between exports");
+}
+
+/// Addendum A5: `check --preview` writes the picture and no program.
+#[test]
+fn check_preview_writes_file() {
+    let dir = work_dir("check_preview_writes_file");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["check", "coaster.dcv", "--preview", "preview.svg"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+    assert!(stdout(&out).contains("preview.svg"), "{}", stdout(&out));
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+    assert!(svg.starts_with("<?xml"), "{svg}");
+    assert_eq!(svg_elements(&svg, "tab").len(), 4, "{svg}");
+    assert!(!dir.join("coaster.nc").exists(), "check wrote a program");
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+
+    // An operation that cannot generate: no preview.
+    let fresh = work_dir("check_preview_writes_file_fresh");
+    init_coaster(&fresh);
+    let out = run(
+        &fresh,
+        &["check", "coaster.dcv", "--preview", "preview.svg"],
+    );
+    assert_eq!(out.status.code(), Some(1), "check: {}", stdout(&out));
+    assert!(
+        !fresh.join("preview.svg").exists(),
+        "preview of a project with errors"
+    );
+}
+
+/// Addendum A5: `--preview` naming the project or a program is refused,
+/// and nothing is written.
+#[test]
+fn export_preview_refuses_dcv_path() {
+    let dir = work_dir("export_preview_refuses_dcv_path");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let names_before = {
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    for (command, preview) in [
+        ("export", "coaster.dcv"),
+        ("export", "coaster.nc"),
+        ("export", "other.dcv"),
+        ("check", "coaster.dcv"),
+        ("check", "coaster.nc"),
+        // The drawing the project came from: an SVG, but not a preview.
+        ("export", "coaster.svg"),
+        ("check", "coaster.svg"),
+    ] {
+        let out = run(&dir, &[command, "coaster.dcv", "--preview", preview]);
+        assert_eq!(out.status.code(), Some(1), "{command} --preview {preview}");
+        let err = stderr(&out);
+        assert!(err.contains("--preview"), "{command} {preview}: {err}");
+        assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+        assert_eq!(
+            std::fs::read(dir.join("coaster.svg")).expect("drawing readable"),
+            std::fs::read(repo_fixture("coaster.svg")).expect("fixture readable"),
+            "{command} --preview {preview} changed the drawing"
+        );
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, names_before, "{command} --preview {preview} wrote");
+    }
+    // The program's own `-o` path is refused too.
+    let args = [
+        "export",
+        "coaster.dcv",
+        "-o",
+        "part.svg",
+        "--preview",
+        "part.svg",
+    ];
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!dir.join("part.svg").exists());
+}
+
+/// The coaster in an inch project, every value set as the quick start
+/// sets it but in inches: `(field, inch string, the same value in mm)`,
+/// the millimetres being the product the loader computes (addendum A6).
+const COASTER_INCH_VALUES: [(&str, &str, f64); 7] = [
+    ("thickness_mm", "1/2 in", 0.5 * 25.4),
+    ("depth_mm", "1/2 in", 0.5 * 25.4),
+    ("through_cut_allowance_mm", "1/64 in", (1.0 / 64.0) * 25.4),
+    ("feed_mm_min", "60 in/min", 60.0 * 25.4),
+    ("plunge_mm_min", "20 in/min", 20.0 * 25.4),
+    ("step_down_mm", "1/8 in", 0.125 * 25.4),
+    ("safe_z_mm", "0.2 in", 0.2 * 25.4),
+];
+
+/// The millimetres [`COASTER_INCH_VALUES`] lists for `field`.
+fn coaster_inch_mm(field: &str) -> f64 {
+    COASTER_INCH_VALUES
+        .iter()
+        .find(|(f, _, _)| *f == field)
+        .map(|(_, _, mm)| *mm)
+        .expect("value listed")
+}
+
+/// The inch string [`COASTER_INCH_VALUES`] lists for `field`, as JSON.
+fn coaster_inch_string(field: &str) -> serde_json::Value {
+    COASTER_INCH_VALUES
+        .iter()
+        .find(|(f, _, _)| *f == field)
+        .map(|(_, text, _)| serde_json::Value::String((*text).to_owned()))
+        .expect("value listed")
+}
+
+/// `init --units inch` on the coaster, then its values filled in twice:
+/// `coaster-mm.dcv` with the millimetre numbers and `coaster-in.dcv` with
+/// the inch strings of [`COASTER_INCH_VALUES`]. Returns the two paths.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "indexing a JSON object inserts the key; a saved project has these"
+)]
+fn coaster_inch_twins(dir: &Path) -> (PathBuf, PathBuf) {
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    let out = run(dir, &["init", "coaster.svg", "--units", "inch"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let mut project = load_file(&dir.join("coaster.dcv")).project;
+    project.stock.thickness_mm = Some(coaster_inch_mm("thickness_mm"));
+    for tool in &mut project.tools {
+        tool.feed_mm_min = Some(coaster_inch_mm("feed_mm_min"));
+        tool.plunge_mm_min = Some(coaster_inch_mm("plunge_mm_min"));
+        tool.rpm = Some(18000);
+        tool.step_down_mm = Some(coaster_inch_mm("step_down_mm"));
+    }
+    for op in project.operations.iter_mut().map(as_profile_mut) {
+        op.depth_mm = Some(coaster_inch_mm("depth_mm"));
+        op.through_cut_allowance_mm = coaster_inch_mm("through_cut_allowance_mm");
+        op.safe_z_mm = coaster_inch_mm("safe_z_mm");
+    }
+    let text = save(&project).expect("project saves");
+    let mm_path = dir.join("coaster-mm.dcv");
+    std::fs::write(&mm_path, &text).expect("dcv written");
+
+    // The same project with the values as strings.
+    let mut root: serde_json::Value = serde_json::from_str(&text).expect("json");
+    root["stock"]["thickness_mm"] = coaster_inch_string("thickness_mm");
+    for tool in root["tools"].as_array_mut().expect("tools") {
+        for field in ["feed_mm_min", "plunge_mm_min", "step_down_mm"] {
+            tool[field] = coaster_inch_string(field);
+        }
+    }
+    for op in root["operations"].as_array_mut().expect("operations") {
+        for field in ["depth_mm", "through_cut_allowance_mm", "safe_z_mm"] {
+            op[field] = coaster_inch_string(field);
+        }
+    }
+    let in_path = dir.join("coaster-in.dcv");
+    let text = serde_json::to_string_pretty(&root).expect("json written");
+    std::fs::write(&in_path, text).expect("dcv written");
+    (mm_path, in_path)
+}
+
+/// Acceptance test 44: a project whose lengths and feeds are written in
+/// inches exports the program its millimetre twin exports, byte for byte.
+#[test]
+fn inch_input_exports_same_program() {
+    let dir = work_dir("inch_input_exports_same_program");
+    let (mm_path, in_path) = coaster_inch_twins(&dir);
+    let in_text = std::fs::read_to_string(&in_path).expect("dcv readable");
+    assert!(in_text.contains("\"1/2 in\""), "{in_text}");
+    assert!(in_text.contains("\"60 in/min\""), "{in_text}");
+    let export = |dcv: &Path, nc: &str| {
+        let dcv = dcv.to_str().expect("utf-8 path");
+        let out = run(&dir, &["export", dcv, "-o", nc, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "export {dcv}: {}", stderr(&out));
+        std::fs::read_to_string(dir.join(nc)).expect("program written")
+    };
+    let from_mm = export(&mm_path, "from-mm.nc");
+    let from_in = export(&in_path, "from-in.nc");
+    assert!(from_mm.contains("G20"), "an inch program: {from_mm}");
+    assert!(
+        from_in == from_mm,
+        "programs differ:\n{from_in}\n---\n{from_mm}"
+    );
+    // `check` reads the strings too, and finds nothing wrong.
+    let out = run(&dir, &["check", in_path.to_str().expect("utf-8 path")]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+}
+
+/// Addendum A6: export's summary states each operation's depth in the
+/// project's display units, with that unit's decimal places.
+#[test]
+fn inch_project_summary_in_inches() {
+    let dir = work_dir("inch_project_summary_in_inches");
+    let (_, in_path) = coaster_inch_twins(&dir);
+    let dcv = in_path.to_str().expect("utf-8 path");
+    let out = run(&dir, &["export", dcv, "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(summary.contains(", 0.5000 in deep"), "{summary}");
+    assert!(!summary.contains("mm deep"), "{summary}");
+
+    // A millimetre project keeps millimetres, at their decimal places.
+    let dir = work_dir("inch_project_summary_in_inches_mm");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(summary.contains(", 12.000 mm deep"), "{summary}");
 }
 
 // ── #283: clearance, tool-change and park heights ──
@@ -6132,7 +6864,7 @@ fn heights_plaque_one_program() {
 /// checked for `G53`, the machine Z is an error naming the setting at its
 /// place in the file; a clearance below an enabled operation's safe Z (15
 /// on the plaque) is an error naming the operation. With all three unset
-/// the plaque exports the programs it did before #283.
+/// the version 11 plaque exports the programs it did before #283.
 #[test]
 fn heights_errors_and_unset_heights() {
     let dir = work_dir("heights_errors_and_unset_heights");
@@ -6169,7 +6901,13 @@ fn heights_errors_and_unset_heights() {
         stderr(&out)
     );
 
-    plaque_with_heights(&dir, dc_project::Heights::unset());
+    // The plaque as the build before #283 saved it (version 11, grblHAL
+    // v2), against the expected programs of that build.
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/heights-migration/plaque.dcv"),
+        &dcv,
+    )
+    .expect("corpus plaque copied");
     let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_corpus_programs(&dir, "plaque", "heights unset");

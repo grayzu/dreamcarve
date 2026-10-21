@@ -130,7 +130,11 @@ when not set):
 | `source` | Where the tool came from: `"fusion:<guid>:<preset>"` for a tool imported from Fusion 360, `null` otherwise. `--replace` matches on it. |
 | `tool` | The tool, with the fields described in [The project file](project-file.md#tools). Its `id` repeats the library id and is ignored when the file is read. |
 
-You can edit the file by hand. As with a project, a field DreamCarve does
+You can edit the file by hand. As with a project, a length or feed may be
+written with its unit (`"diameter_mm": "1/4 in"`, `"feed_mm_min": "60
+in/min"`; see [Values with units](project-file.md#values-with-units)), and
+the library is saved with millimetre numbers the next time a command
+changes it. A field DreamCarve does
 not know, or a missing one, is an error naming where it is, never silently
 ignored. Each tool must also follow these rules, which come from
 PureCutCNC's tool library:

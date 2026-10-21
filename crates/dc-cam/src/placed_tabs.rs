@@ -262,6 +262,53 @@ pub fn crossed_by(project: &Project, op: &ProfileOp) -> Result<Vec<TabId>, CamEr
     Ok(op_tabs(project, op)?.plan.crossed)
 }
 
+/// The parts of `project` an enabled Profile cuts through the stock with
+/// no tab, by that Profile: each closed outline it cuts as a part (not as
+/// a hole) on whose every tool path it places no tab and crosses none, so
+/// its last pass frees it. A Profile whose depth or the stock's thickness
+/// is unset, or that cannot be cut, is left out. In operation order, then
+/// drawing order. `tabs clear` compares this before and after to say which
+/// parts the tabs it removed held (#105).
+#[must_use]
+pub fn freed_parts(project: &Project) -> Vec<(OperationId, ShapeRef)> {
+    let mut freed = Vec::new();
+    for op in &project.operations {
+        let Operation::Profile(profile) = op else {
+            continue;
+        };
+        let through = match (project.stock.thickness_mm, profile.depth_mm) {
+            (Some(thickness_mm), Some(depth_mm)) => depth_mm >= thickness_mm - EPS_MM,
+            _ => false,
+        };
+        if !profile.enabled || !through {
+            continue;
+        }
+        let Ok(cut) = op_tabs(project, profile) else {
+            continue;
+        };
+        let mut parts: Vec<(&ShapeRef, bool)> = Vec::new();
+        for (((path, shape), &hole), layout) in
+            cut.paths.iter().zip(&cut.holes).zip(&cut.plan.layouts)
+        {
+            if hole || !path.is_closed() {
+                continue;
+            }
+            let tabbed = layout.as_ref().is_some_and(|(l, _)| !l.is_untabbed());
+            match parts.iter_mut().find(|(s, _)| *s == shape) {
+                Some((_, any)) => *any |= tabbed,
+                None => parts.push((shape, tabbed)),
+            }
+        }
+        freed.extend(
+            parts
+                .into_iter()
+                .filter(|(_, tabbed)| !tabbed)
+                .map(|(shape, _)| (profile.id.clone(), shape.clone())),
+        );
+    }
+    freed
+}
+
 /// [`Warning::TabNotCrossed`] for every placed tab of `project` that no
 /// Profile of `generated` crosses ([`crossed_by`]), in project order.
 /// `generated` holds every enabled operation whose toolpath was
@@ -852,6 +899,35 @@ mod tests {
             assert!(cover[0].contains("It is cut, as placed"), "{}", cover[0]);
             assert!(!cover[0].contains("a part keeps"), "{}", cover[0]);
         }
+    }
+
+    /// #105 review: a Profile crosses a tab only when its cut goes below
+    /// the tab's top. A 1 mm On line score pass of the rectangle stops at
+    /// Z 5, above a 3 mm tab, so it does not cross it: it warns nothing
+    /// about the tab's range, and alone it leaves the tab `tab_not_crossed`.
+    /// The full-depth cut-out crosses it.
+    #[test]
+    fn a_profile_above_a_tab_does_not_cross_it() {
+        let mut p = untabbed();
+        p.tabs = vec![PlacedTab {
+            height_mm: 3.0,
+            ..sample_tab("tab1", 25.0, 0.0)
+        }];
+        let mut score = profile_mut(&mut p).clone();
+        score.id = OperationId::new("o2");
+        score.side = Side::OnLine;
+        score.depth_mm = Some(1.0);
+        let full = profile_mut(&mut p).clone();
+        p.operations.push(Operation::Profile(score.clone()));
+        assert!(crossed_by(&p, &score).unwrap().is_empty());
+        assert_eq!(crossed_by(&p, &full).unwrap(), vec![TabId::new("tab1")]);
+        let score_op = Operation::Profile(score);
+        let (tp, warnings) = generate_of(&p, &score_op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            codes(&check(&p, &[(&score_op, &tp)])),
+            vec![WarningCode::TabNotCrossed]
+        );
     }
 
     /// #105: placing the same tabs again adds none, and new tabs take the

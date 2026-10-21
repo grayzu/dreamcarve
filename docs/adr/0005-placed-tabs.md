@@ -40,7 +40,7 @@ The open questions in #105 were decided as follows.
   the request's centre on that Profile's tool path, a tool radius off the
   outline. Each is crossed by any Profile whose path passes within its
   tool radius plus half the tab's width of where the tab meets the
-  outline.
+  outline, and whose cut goes below the tab's top.
 - **Project-level, keyed by instance.** Tabs live in one list in the
   project, as PureCutCNC keeps them, rather than inside each instance.
   `tabs list` and the warnings can then see them all. The point is in
