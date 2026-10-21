@@ -94,6 +94,9 @@ pub enum WarningCode {
     /// tab over it, or no wall pass), so the notch would plunge into
     /// uncut material.
     ReliefCornerNotCut,
+    /// A Profile has a last pass, but its cut is one pass deep, so that
+    /// pass is the last and no pass leaves the allowance (#310 review).
+    LastPassUnused,
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped.
     EngravePathDegenerate,
@@ -156,6 +159,7 @@ impl WarningCode {
             Self::ReliefSkipped => "relief_skipped",
             Self::ReliefCornerTooTight => "relief_corner_too_tight",
             Self::ReliefCornerNotCut => "relief_corner_not_cut",
+            Self::LastPassUnused => "last_pass_unused",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::CutInsideTabHeldPart => "cut_inside_tab_held_part",
@@ -498,6 +502,11 @@ pub enum Warning {
         /// The corner's Y.
         y_mm: f64,
     },
+    /// [`WarningCode::LastPassUnused`].
+    LastPassUnused {
+        /// The operation.
+        op: OperationId,
+    },
     /// [`WarningCode::EngravePathDegenerate`].
     EngravePathDegenerate {
         /// The operation.
@@ -611,6 +620,7 @@ impl Warning {
             Self::ReliefSkipped { .. } => WarningCode::ReliefSkipped,
             Self::ReliefCornerTooTight { .. } => WarningCode::ReliefCornerTooTight,
             Self::ReliefCornerNotCut { .. } => WarningCode::ReliefCornerNotCut,
+            Self::LastPassUnused { .. } => WarningCode::LastPassUnused,
             Self::EngravePathDegenerate { .. } => WarningCode::EngravePathDegenerate,
             Self::CutInsideFreedPart { .. } => WarningCode::CutInsideFreedPart,
             Self::CutInsideTabHeldPart { .. } => WarningCode::CutInsideTabHeldPart,
@@ -640,6 +650,7 @@ impl Warning {
             | Self::ReliefSkipped { op, .. }
             | Self::ReliefCornerTooTight { op, .. }
             | Self::ReliefCornerNotCut { op, .. }
+            | Self::LastPassUnused { op }
             | Self::EngravePathDegenerate { op, .. }
             | Self::CutInsideFreedPart { op, .. }
             | Self::CutInsideTabHeldPart { op, .. }
@@ -1082,6 +1093,9 @@ impl fmt::Display for Warning {
                 "the corner of {shape} at ({}, {}) mm is not relieved because the main passes did not cut to full depth where its notch starts (a tab over it, or no wall pass), and a notch must not plunge into uncut material; it keeps the bit's radius",
                 mm(*x_mm),
                 mm(*y_mm)
+            ),
+            Self::LastPassUnused { .. } => f.write_str(
+                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
             ),
             Self::EngravePathDegenerate { shape, .. } => write!(
                 f,
@@ -1587,6 +1601,10 @@ mod tests {
                 "the corner of `Shape` (instance `i1`, profile 2) at (-3, 40.12) mm is not relieved because the main passes did not cut to full depth where its notch starts (a tab over it, or no wall pass), and a notch must not plunge into uncut material; it keeps the bit's radius",
             ),
             (
+                Warning::LastPassUnused { op: op() },
+                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
+            ),
+            (
                 Warning::EngravePathDegenerate {
                     op: op(),
                     shape: shape(),
@@ -1702,7 +1720,8 @@ mod tests {
             C::LeadDropped => C::ReliefSkipped,
             C::ReliefSkipped => C::ReliefCornerTooTight,
             C::ReliefCornerTooTight => C::ReliefCornerNotCut,
-            C::ReliefCornerNotCut => C::EngravePathDegenerate,
+            C::ReliefCornerNotCut => C::LastPassUnused,
+            C::LastPassUnused => C::EngravePathDegenerate,
             C::EngravePathDegenerate => C::CutInsideFreedPart,
             C::CutInsideFreedPart => C::CutInsideTabHeldPart,
             C::CutInsideTabHeldPart => C::ToolChangeAvoidable,
@@ -1748,7 +1767,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 29);
+        assert_eq!(count, 30);
     }
 
     #[test]

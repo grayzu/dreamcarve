@@ -89,6 +89,18 @@ Allowance, which is depth below the stock.
 _Avoid_: Stock to leave, offset, finish allowance
 _PureCutCNC_: stockToLeaveRadial
 
+**Last Pass Allowance**:
+Material every pass of a Profile but the last leaves on the wall,
+`last_pass.allowance_mm` (more than 0, at most a third of the bit), so the
+last pass, on the part's path at full depth, takes an even skin off the
+whole wall and leaves no step marks. The passes before it run on the
+**allowance path**, the part's path that much farther into the waste.
+VCarve's "Last Pass Allowance"; Fusion's radial stock to leave with a
+finishing pass.
+_Avoid_: Finishing pass (it is the same operation's last pass), Pocket
+Allowance (a Pocket's, left for another operation), stock to leave
+_PureCutCNC_: none (a separate operation with stockToLeaveRadial)
+
 **Corner Relief**:
 A short out-and-back notch a Pocket or Profile cuts into each inside corner
 its round tool cannot reach, after its main passes, so a square part fits:

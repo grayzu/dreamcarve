@@ -49,7 +49,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v12/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v13/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -109,6 +109,7 @@ pub fn sample_project() -> Project {
             entry: Entry::Plunge,
             lead: None,
             corner_relief: CornerRelief::None,
+            last_pass: None,
         })],
         // No placed tabs: the Profile's tab request is placed by `dc-cam`
         // (#105), so the sample is a project as a format 10 file migrates.

@@ -66,6 +66,9 @@
 //! - **12**: adds the project's `heights` after `origin` (#283):
 //!   `clearance_mm`, `tool_change_machine_z_mm` and `park`, all `null`,
 //!   which exports what an earlier file did.
+//! - **13**: adds each Profile's last pass allowance, `last_pass: null`
+//!   after `corner_relief` (#284): every pass cuts on the part's path, as
+//!   before.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -76,7 +79,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 12;
+pub const CURRENT_VERSION: u32 = 13;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -97,6 +100,7 @@ fn step(from: u32) -> Option<Step> {
         9 => Some(v9_to_v10),
         10 => Some(v10_to_v11),
         11 => Some(v11_to_v12),
+        12 => Some(v12_to_v13),
         _ => None,
     }
 }
@@ -127,8 +131,14 @@ pub fn migrate(root: Value, from_version: u32) -> Result<Value, LoadError> {
             from,
             to,
             message: "no migration step is defined".into(),
+            at: None,
         })?;
-        obj = step(obj).map_err(|message| LoadError::Migration { from, to, message })?;
+        obj = step(obj).map_err(|message| LoadError::Migration {
+            from,
+            to,
+            message,
+            at: None,
+        })?;
     }
     obj.insert("version".into(), Value::from(CURRENT_VERSION));
     Ok(Value::Object(obj))
@@ -529,6 +539,44 @@ fn v11_to_v12(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(out)
 }
 
+/// Version 12 → 13 (#284): `last_pass: null` right after each Profile's
+/// `corner_relief`, so every pass cuts on the part's path as before. Other
+/// operations are unchanged. Fails if a Profile already has the key: that
+/// is not a version 12 file.
+fn v12_to_v13(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("last_pass") {
+            return Err(format!(
+                "a version 12 file has no `operations[{i}].last_pass`, but this one does"
+            ));
+        }
+        let mut out = Map::with_capacity(fields.len() + 1);
+        let mut inserted = false;
+        for (key, value) in fields {
+            let after_this = key == "corner_relief";
+            out.insert(key, value);
+            if after_this {
+                out.insert("last_pass".into(), Value::Null);
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("last_pass".into(), Value::Null);
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
 /// `map` with `key: value` inserted right after `after`, or at the end
 /// when `after` is absent. Fails if `key` is already there, naming it
 /// under `at` (a path prefix such as `tools[0].`).
@@ -689,6 +737,11 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 13 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                op.as_object_mut().unwrap().shift_remove("last_pass");
+            }
+        }
         if version < 12 {
             root.as_object_mut().unwrap().shift_remove("heights");
         }
@@ -880,7 +933,7 @@ mod tests {
             root["instances"][0][key] = Value::Null;
             let err = migrate(root, 5).unwrap_err();
             assert!(
-                matches!(&err, LoadError::Migration { from: 5, to: 6, message }
+                matches!(&err, LoadError::Migration { from: 5, to: 6, message, .. }
                     if message.contains(&format!("instances[0].{key}"))),
                 "{err:?}"
             );
@@ -1036,7 +1089,7 @@ mod tests {
         root.as_object_mut().unwrap().remove("post_processor");
         let err = migrate(root, 6).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 6, to: 7, message }
+            matches!(&err, LoadError::Migration { from: 6, to: 7, message, .. }
                 if message.contains("post_processor")),
             "{err:?}"
         );
@@ -1105,6 +1158,7 @@ mod tests {
                 from: 6,
                 to: 7,
                 message,
+                ..
             }) => message,
             other => panic!("a migration error from 6 to 7: {other:?}"),
         }
@@ -1238,7 +1292,7 @@ mod tests {
             edit(&mut root);
             let err = migrate(root, 7).unwrap_err();
             assert!(
-                matches!(&err, LoadError::Migration { from: 7, to: 8, message }
+                matches!(&err, LoadError::Migration { from: 7, to: 8, message, .. }
                     if message.contains(key)),
                 "{key}: {err:?}"
             );
@@ -1288,7 +1342,7 @@ mod tests {
         root["operations"][0]["tabs"]["on_holes"] = json!(false);
         let err = migrate(root, 8).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 8, to: 9, message }
+            matches!(&err, LoadError::Migration { from: 8, to: 9, message, .. }
                 if message.contains("on_holes")),
             "{err:?}"
         );
@@ -1341,7 +1395,7 @@ mod tests {
         root["tabs"] = json!([]);
         let err = migrate(root, 10).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 10, to: 11, message }
+            matches!(&err, LoadError::Migration { from: 10, to: 11, message, .. }
                 if message.contains("tabs")),
             "{err:?}"
         );
@@ -1390,7 +1444,12 @@ mod tests {
     #[test]
     fn v11_to_v12_adds_null_heights() {
         let root: Value = serde_json::from_slice(V11_FIXTURE).unwrap();
-        let migrated = migrate(root.clone(), 11).unwrap();
+        let Value::Object(map) = root.clone() else {
+            panic!("the fixture is an object");
+        };
+        // The one step: `migrate` would go on to the current version.
+        let mut migrated = Value::Object(v11_to_v12(map).unwrap());
+        migrated["version"] = Value::from(12);
         assert_eq!(
             migrated["heights"],
             json!({ "clearance_mm": null, "tool_change_machine_z_mm": null, "park": null })
@@ -1408,16 +1467,134 @@ mod tests {
         without.as_object_mut().unwrap().shift_remove("heights");
         without["version"] = Value::from(11);
         assert_eq!(without, root, "nothing else changes");
-        assert_eq!(migrate(sample_root_at(11), 11).unwrap(), sample_root_at(12));
+        assert_eq!(
+            migrate(sample_root_at(11), 11).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
 
         let mut already = sample_root_at(11);
         already["heights"] = json!({});
         let err = migrate(already, 11).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 11, to: 12, message }
+            matches!(&err, LoadError::Migration { from: 11, to: 12, message, .. }
                 if message.contains("heights")),
             "{err:?}"
         );
+    }
+
+    // Version 12 → 13 (#284): the Profile last pass allowance.
+
+    const V12_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v12/sample.dcv");
+
+    #[test]
+    fn version_12_fixture_loads() {
+        let loaded = load(V12_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #284: every Profile of a version 12 file gains `last_pass: null`
+    /// right after `corner_relief`, so each pass cuts on the line as
+    /// before; other operations are unchanged. The fixture then loads as
+    /// the sample, whose program `dreamcarve`'s migration corpus test
+    /// holds byte for byte.
+    #[test]
+    fn v12_to_v13_adds_null_last_pass() {
+        let mut root: Value = serde_json::from_slice(V12_FIXTURE).unwrap();
+        let profile = root["operations"][0].clone();
+        let mut second = profile.clone();
+        second["id"] = json!("o2");
+        let pocket = serde_json::to_value(crate::Operation::Pocket(
+            crate::test_support::sample_pocket(),
+        ))
+        .unwrap();
+        let operations = root["operations"].as_array_mut().unwrap();
+        operations.push(second);
+        operations.push(pocket.clone());
+        let migrated = migrate(root, 12).unwrap();
+        let operations = migrated["operations"].as_array().unwrap();
+        for op in operations.iter().take(2) {
+            assert_eq!(op["last_pass"], Value::Null, "{op}");
+            let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
+            let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+            assert_eq!(at("last_pass"), at("corner_relief") + 1, "{keys:?}");
+            assert_eq!(keys.len(), at("last_pass") + 1, "{keys:?}");
+        }
+        assert_eq!(operations[2], pocket, "a Pocket has no last pass");
+
+        let migrated = migrate(sample_root_at(12), 12).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
+            "key order"
+        );
+        let mut loaded = load(V12_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(
+            crate::test_support::profile_mut(&mut loaded.project).last_pass,
+            None
+        );
+    }
+
+    #[test]
+    fn v12_with_last_pass_already_present_fails() {
+        let mut root = sample_root_at(12);
+        root["operations"][0]["last_pass"] = Value::Null;
+        let err = migrate(root, 12).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 12, to: 13, message, .. }
+                if message.contains("last_pass")),
+            "{err:?}"
+        );
+    }
+
+    /// #310 review: loaded from a file, a migration that fails on a key
+    /// the file should not have says where that key is, as a schema error
+    /// does.
+    #[test]
+    fn v12_with_last_pass_says_where() {
+        let text = String::from_utf8(V12_FIXTURE.to_vec()).unwrap().replacen(
+            "\"corner_relief\": \"none\"",
+            "\"corner_relief\": \"none\",\n      \"last_pass\": null",
+            1,
+        );
+        let line = text
+            .lines()
+            .position(|l| l.contains("\"last_pass\""))
+            .unwrap()
+            + 1;
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 12, to: 13, at: Some(at), .. }
+                if at.line == line && at.column == 20),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("(line {line}, column 20)")),
+            "{err}"
+        );
+    }
+
+    /// #284: a last pass saves with every field and loads back.
+    #[test]
+    fn last_pass_round_trips() {
+        let mut p = sample_project();
+        crate::test_support::profile_mut(&mut p).last_pass = Some(crate::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: Some(1.0),
+            reverse: true,
+        });
+        let text = save(&p).unwrap();
+        assert!(
+            text.contains(
+                "\"last_pass\": {\n        \"allowance_mm\": 0.5,\n        \"thickness_mm\": 1.0,\n        \"reverse\": true\n      }"
+            ),
+            "{text}"
+        );
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
     }
 
     /// #283: the version 11 fixture loads as the sample project, whose

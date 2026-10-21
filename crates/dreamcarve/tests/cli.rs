@@ -6082,6 +6082,123 @@ fn version_9_tab_settings_export_byte_identical_programs() {
     }
 }
 
+// ── #284: the last pass allowance ──
+
+/// #284 (`migrate::v12_to_v13_adds_null_last_pass`): every project of
+/// the corpus saved at format 12 (the #105 corpus without its version 6
+/// file, six golden Profile and Pocket projects, and the `dc-project`
+/// sample fixture) migrates to format 13 with `last_pass: null` on every
+/// Profile and exports byte for byte the programs the build before #284
+/// wrote, committed under `tests/expected/last-pass-migration/`.
+#[test]
+fn version_12_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_12_projects_export_byte_identical_programs");
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/last-pass-migration");
+    let expected_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/last-pass-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&corpus)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 22, "{names:?}");
+    for (name, path) in names {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 12"),
+            "{name} is a version 12 file"
+        );
+        assert!(!text.contains("last_pass"), "{name} has no last pass");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        for op in &project.operations {
+            if let Operation::Profile(p) = op {
+                assert_eq!(p.last_pass, None, "{name}: {}", p.id);
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let programs = exported_programs(&dir, &name);
+        assert!(!programs.is_empty(), "{name} exported nothing");
+        for (program, text) in programs {
+            let expected = std::fs::read_to_string(expected_dir.join(&program))
+                .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{name}: {program} differs from the program before #284:\n{text}"
+            );
+        }
+    }
+}
+
+/// #284 (acceptance 46) from the CLI: the coaster with a 0.5 mm last pass
+/// exports; every pass but the last runs 0.5 mm farther out, and the last
+/// on the phase 1 path, which the program without a last pass cuts on
+/// every pass. A 2.2 mm allowance with the 6.35 mm bit, or a last pass on
+/// an On line Profile, fails `check` and `export` naming the setting.
+#[test]
+fn last_pass_exports_and_refuses_what_cannot_work() {
+    let dir = work_dir("last_pass_exports_and_refuses_what_cannot_work");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let plain = std::fs::read_to_string(dir.join("coaster.nc")).expect("program");
+
+    let set_last_pass = |side: Side, allowance_mm: f64| {
+        let mut project = load_file(&dcv).project;
+        for op in &mut project.operations {
+            if let Operation::Profile(p) = op {
+                p.side = side;
+                p.last_pass = Some(dc_project::LastPass {
+                    allowance_mm,
+                    thickness_mm: None,
+                    reverse: false,
+                });
+            }
+        }
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    };
+    set_last_pass(Side::Outside, 0.5);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let with = std::fs::read_to_string(dir.join("coaster.nc")).expect("program");
+    assert_ne!(with, plain);
+    assert!(
+        load_file(&dcv).project.version == dc_project::CURRENT_VERSION,
+        "saved at the current version"
+    );
+
+    for (side, allowance_mm, needle) in [
+        (Side::Outside, 2.2, "a third of the bit"),
+        (Side::OnLine, 0.5, "Inside or Outside"),
+    ] {
+        set_last_pass(side, allowance_mm);
+        if dir.join("coaster.nc").exists() {
+            std::fs::remove_file(dir.join("coaster.nc")).expect("program removed");
+        }
+        for args in [
+            &["check", "coaster.dcv"][..],
+            &["export", "coaster.dcv", "--date", FIXED_DATE],
+        ] {
+            let out = run(&dir, args);
+            let report = format!("{}{}", stdout(&out), stderr(&out));
+            assert_eq!(out.status.code(), Some(1), "{args:?}: {report}");
+            assert!(report.contains(needle), "{args:?}: {report}");
+            assert!(report.contains("last_pass"), "{args:?}: {report}");
+        }
+        assert!(!dir.join("coaster.nc").exists(), "export wrote nothing");
+    }
+}
+
 /// #105: `init` asks for four tabs on each part with a tab request and
 /// places none: its one Profile cuts every closed shape, which the user
 /// then cuts with operations of their own. `tabs place` with no count

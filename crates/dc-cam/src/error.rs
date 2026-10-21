@@ -397,6 +397,80 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
+    /// A Profile's last pass has an allowance that is not more than 0 and
+    /// at most a third of the bit's diameter, or a thickness that is not
+    /// more than 0 and at most the depth (#284). Validation rejects both;
+    /// the generator does not trust its callers.
+    #[error("operation `{op}` has last_pass.{field} {value} mm; it must be {range}")]
+    InvalidLastPass {
+        /// The operation.
+        op: OperationId,
+        /// `allowance_mm` or `thickness_mm`.
+        field: &'static str,
+        /// The value set, mm.
+        value: f64,
+        /// The allowed range, as the user reads it.
+        range: String,
+    },
+    /// A Profile that cuts On line, Left or Right has a last pass (#284):
+    /// only Inside and Outside leave a wall to take the allowance off.
+    /// Validation rejects it; the generator refuses it too.
+    #[error(
+        "operation `{op}` has a last_pass but does not cut Inside or Outside; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside or Outside"
+    )]
+    LastPassNeedsSide {
+        /// The operation.
+        op: OperationId,
+    },
+    /// #284: a Profile with a last pass allowance cuts two lines closer
+    /// than its passes before the last need, `needed_mm`. Inside, two
+    /// lines of one region need the tool and the allowance on both,
+    /// `diameter + 2 · allowance`: those passes, `allowance_mm` farther
+    /// from each line, would cut into the skin the other line's passes
+    /// leave, or into the part. Between two regions (a part and another
+    /// part, or one inside another's hole) the passes need
+    /// `diameter + allowance`, or they would come within the radius of the
+    /// other part (#310 review). `shape` is the one drawn first; `other`
+    /// is boxed to keep the error small.
+    #[error(
+        "operation `{op}` cuts {shape} and {other} with a {allowance_mm} mm last pass allowance, but the gap between them is {band_mm:.3} mm, narrower than the {needed_mm:.3} mm its {diameter_mm} mm tool and the allowance need there, so the passes before the last would cut into material the Profile keeps; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    BandNarrowerThanAllowance {
+        /// The operation.
+        op: OperationId,
+        /// One line of the band, the one drawn first.
+        shape: ShapeRef,
+        /// The other line.
+        other: Box<ShapeRef>,
+        /// The narrowest distance between the two lines, mm.
+        band_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+        /// The gap the passes before the last need, mm.
+        needed_mm: f64,
+    },
+    /// #284, #310 review: somewhere the last pass on `shape` would take
+    /// off more than the allowance, `√2` times it as in a square corner
+    /// (plus 0.05 mm): a neck, slot, notch or small hole wider than the
+    /// tool but narrower than the tool plus the allowance on both sides,
+    /// which the passes before the last skip, or a corner sharper than
+    /// 90°, where they stop short of the last pass. The last pass would
+    /// cut that material at full depth in one go.
+    #[error(
+        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the last pass would take off more than the allowance at full depth, where the passes before it cannot follow it: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a corner sharper than 90°; make last_pass.allowance_mm smaller (it does not help a sharp corner) or set last_pass to null; no toolpath was produced"
+    )]
+    ShapeNarrowerThanAllowance {
+        /// The operation.
+        op: OperationId,
+        /// The shape the allowance passes cannot follow.
+        shape: ShapeRef,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+    },
     /// A Left or Right Profile's cut beside one open path comes within the
     /// tool radius of another line of the operation, or of the strip one
     /// radius wide that a line keeps on the side away from its own cut
