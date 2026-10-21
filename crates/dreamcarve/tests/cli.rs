@@ -276,6 +276,35 @@ fn init_round_trip() {
     assert_approx_eq!(project.stock.height_mm, 110.0, tol);
 }
 
+/// #70: the coaster's `<circle>` is imported as the circle it is, two
+/// half-circle bulge arcs (bulge −1: usvg draws circles clockwise as seen
+/// on the page), not 160 flattened edges. Placed on the stock it is the
+/// 90 mm circle centred at (55, 55), and Drill's circle test finds it
+/// exactly.
+#[test]
+fn init_imports_coaster_as_two_bulge_vertices() {
+    let dir = work_dir("init_imports_coaster_as_two_bulge_vertices");
+    let project = load_file(&init_coaster(&dir)).project;
+    assert_eq!(project.definitions.len(), 1, "one definition");
+    let definition = project.definitions.values().next().expect("a definition");
+    assert_eq!(definition.profiles.len(), 1, "one profile");
+    let profile = &definition.profiles[0];
+    assert!(profile.is_closed());
+    assert_eq!(profile.vertices().len(), 2, "{:?}", profile.vertices());
+    for v in profile.vertices() {
+        assert_approx_eq!(v.bulge, -1.0, 0.0);
+    }
+    let instance = &project.instances[0];
+    let placed = instance
+        .transform
+        .apply_polyline(profile)
+        .expect("transform applies");
+    let (centre, radius_mm) = dc_geometry::as_circle(&placed, 1e-6).expect("a circle");
+    assert_approx_eq!(centre.x, 55.0, 1e-4);
+    assert_approx_eq!(centre.y, 55.0, 1e-4);
+    assert_approx_eq!(radius_mm, 45.0, 1e-4);
+}
+
 /// #64: `init` cannot know the material, so like the feeds it leaves the
 /// stock thickness and the Profile depth unset (`null` in the file) rather
 /// than default them. A default thickness that is wrong moves every pass

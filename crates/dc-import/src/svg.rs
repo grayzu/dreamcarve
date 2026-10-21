@@ -608,7 +608,7 @@ mod tests {
     )]
 
     use super::*;
-    use dc_geometry::{Point, Polyline, Transform, assert_approx_eq};
+    use dc_geometry::{Polyline, Transform, assert_approx_eq};
     use dc_project::{DefinitionId, InstanceId};
 
     /// Coordinates pass through usvg as f32; at workpiece scale that is a
@@ -778,30 +778,216 @@ mod tests {
         assert_rect(bounds(slot), (50.0, 50.0), (80.0, 50.0));
     }
 
-    #[test]
-    fn circle_flattens_within_tolerance() {
-        let options = SvgImportOptions::new();
-        let (result, _) =
-            import_svg(include_bytes!("../tests/fixtures/circle.svg"), &options).unwrap();
-        assert_eq!(result.definitions.len(), 1);
-        let profiles = &result.definitions[0].profiles;
-        assert_eq!(profiles.len(), 1);
-        assert!(profiles[0].is_closed());
-        assert!(profiles[0].vertices().len() > 8);
+    // ── arcs (#70) ───────────────────────────────────────────────────────
 
-        // usvg turns the circle into four cubic Béziers before we flatten;
-        // that approximation strays up to 2.7e-4 × r (0.0122 mm at r = 45)
-        // from the true circle. Flattening adds at most the tolerance.
-        let bezier_error_mm = 2.75e-4 * 45.0;
-        let allowed_mm = options.flatten_tolerance_mm + bezier_error_mm + TOL_MM;
-        let centre = Point::new(50.0, 50.0);
-        for seg in profiles[0].segments() {
-            assert!(seg.is_line());
-            for p in [seg.start, seg.start + (seg.end - seg.start) * 0.5] {
-                let err = (p.distance_to(centre) - 45.0).abs();
-                assert!(err <= allowed_mm, "{p:?} is {err} mm off the circle");
-            }
+    /// Bulges an arc import computes from usvg's f32 control points, not
+    /// snapped, agree with the exact value to this. Dimensionless.
+    const BULGE_TOL: f64 = 1e-6;
+
+    fn vertex_points(polyline: &Polyline) -> Vec<(f64, f64)> {
+        polyline.vertices().iter().map(|v| (v.x, v.y)).collect()
+    }
+
+    fn assert_points(polyline: &Polyline, expected: &[(f64, f64)]) {
+        let got = vertex_points(polyline);
+        assert_eq!(got.len(), expected.len(), "vertices {got:?}");
+        for (g, e) in got.iter().zip(expected) {
+            assert_approx_eq!(g.0, e.0, TOL_MM);
+            assert_approx_eq!(g.1, e.1, TOL_MM);
         }
+    }
+
+    fn assert_all_lines(polyline: &Polyline) {
+        for (i, seg) in polyline.segments().enumerate() {
+            assert!(seg.is_line(), "segment {i} is an arc: {seg:?}");
+        }
+    }
+
+    /// A `<circle>` is two half-circle arcs, as `Polyline::circle` and a
+    /// DXF `CIRCLE` are: the start point usvg uses, (cx + r, cy), and the
+    /// point opposite. usvg draws circles towards +y in SVG's Y-down page,
+    /// clockwise as seen; the Y flip keeps that clockwise, so both bulges
+    /// are exactly −1.
+    #[test]
+    fn circle_imports_as_two_bulge_arcs() {
+        let (result, warnings) = import(include_bytes!("../tests/fixtures/circle.svg"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let profile = only_profile(&result);
+        assert!(profile.is_closed());
+        assert_points(profile, &[(95.0, 50.0), (5.0, 50.0)]);
+        for v in profile.vertices() {
+            assert_approx_eq!(v.bulge, -1.0, 0.0);
+        }
+        let (centre, radius_mm) = dc_geometry::as_circle(profile, EPS_MM).expect("a circle");
+        assert_approx_eq!(centre.x, 50.0, TOL_MM);
+        assert_approx_eq!(centre.y, 50.0, TOL_MM);
+        assert_approx_eq!(radius_mm, 45.0, TOL_MM);
+    }
+
+    /// An `<ellipse>` with rx = ry is a circle.
+    #[test]
+    fn ellipse_with_equal_radii_imports_as_two_bulge_arcs() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><ellipse cx="40" cy="30" rx="12" ry="12"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert_points(profile, &[(52.0, 70.0), (28.0, 70.0)]);
+        for v in profile.vertices() {
+            assert_approx_eq!(v.bulge, -1.0, 0.0);
+        }
+    }
+
+    /// SVG `A` with rx = ry is one bulge segment per arc of up to 180°,
+    /// though usvg hands it over as several Bézier pieces. The half circle
+    /// from (10, 50) to (90, 50) with sweep-flag 1 runs through SVG (50, 10)
+    /// (positive angles are clockwise on SVG's Y-down page), which is
+    /// Y-up (50, 90): clockwise, bulge −1. The quarter from SVG (60, 20) to
+    /// (70, 10), sweep-flag 0, is centred on SVG (60, 10), Y-up (60, 90),
+    /// and runs counter-clockwise in Y-up: bulge +tan(22.5°).
+    #[test]
+    fn circular_arc_command_imports_as_bulge() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100">
+                <path id="half" d="M 10 50 A 40 40 0 0 1 90 50" fill="none"/>
+                <path id="quarter" d="M 60 20 A 10 10 0 0 0 70 10" fill="none"/>
+            </svg>"#,
+        );
+        let half = &def(&result, "half").profiles;
+        assert_eq!(half.len(), 1);
+        assert!(!half[0].is_closed());
+        assert_points(&half[0], &[(10.0, 50.0), (90.0, 50.0)]);
+        assert_approx_eq!(half[0].vertices()[0].bulge, -1.0, BULGE_TOL);
+
+        let quarter = &def(&result, "quarter").profiles;
+        assert_eq!(quarter.len(), 1);
+        assert_points(&quarter[0], &[(60.0, 80.0), (70.0, 90.0)]);
+        let b = (std::f64::consts::FRAC_PI_8).tan();
+        assert_approx_eq!(quarter[0].vertices()[0].bulge, b, BULGE_TOL);
+        let arc = quarter[0]
+            .segments()
+            .next()
+            .and_then(|s| s.arc())
+            .expect("an arc");
+        assert_approx_eq!(arc.centre.x, 60.0, TOL_MM);
+        assert_approx_eq!(arc.centre.y, 90.0, TOL_MM);
+        assert_approx_eq!(arc.radius_mm, 10.0, TOL_MM);
+    }
+
+    /// A rounded rectangle with rx = ry has circular corners, which usvg
+    /// draws with the same arc command: four quarter arcs between four
+    /// straight edges, eight vertices instead of a flattened polygon.
+    #[test]
+    fn rounded_rect_corners_import_as_quarter_arcs() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><rect x="10" y="10" width="40" height="20" rx="5" ry="5"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert_eq!(profile.vertices().len(), 8);
+        let b = (std::f64::consts::FRAC_PI_8).tan();
+        let arcs: Vec<f64> = profile
+            .vertices()
+            .iter()
+            .map(|v| v.bulge)
+            .filter(|bulge| bulge.abs() > BULGE_TOL)
+            .collect();
+        assert_eq!(arcs.len(), 4, "bulges {:?}", profile.vertices());
+        for bulge in arcs {
+            assert_approx_eq!(bulge.abs(), b, BULGE_TOL);
+        }
+        assert_rect(
+            bounds(&result.definitions[0].profiles),
+            (10.0, 70.0),
+            (50.0, 90.0),
+        );
+    }
+
+    /// No bulge holds an ellipse, so one with rx ≠ ry is flattened.
+    #[test]
+    fn ellipse_with_unequal_radii_is_still_flattened() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><ellipse cx="50" cy="50" rx="40" ry="20"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert!(profile.is_closed());
+        assert!(profile.vertices().len() > 8);
+        assert_all_lines(profile);
+        assert_rect(
+            bounds(&result.definitions[0].profiles),
+            (10.0, 30.0),
+            (90.0, 70.0),
+        );
+    }
+
+    /// A circle under scale(2, 1) is an ellipse on the page: flattened.
+    #[test]
+    fn circle_under_non_uniform_scale_is_flattened() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><circle cx="20" cy="50" r="10" transform="scale(2 1)"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert!(profile.vertices().len() > 8);
+        assert_all_lines(profile);
+        assert_rect(
+            bounds(&result.definitions[0].profiles),
+            (20.0, 40.0),
+            (60.0, 60.0),
+        );
+    }
+
+    /// Rotation and uniform scale keep a circle a circle: still two exact
+    /// half-circle arcs, at the scaled radius.
+    #[test]
+    fn circle_under_rotation_and_uniform_scale_stays_two_arcs() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><g transform="translate(50 50) rotate(30) scale(2)"><circle cx="0" cy="0" r="10"/></g></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert_eq!(profile.vertices().len(), 2);
+        for v in profile.vertices() {
+            assert_approx_eq!(v.bulge, -1.0, 0.0);
+        }
+        let (centre, radius_mm) = dc_geometry::as_circle(profile, EPS_MM).expect("a circle");
+        assert_approx_eq!(centre.x, 50.0, TOL_MM);
+        assert_approx_eq!(centre.y, 50.0, TOL_MM);
+        assert_approx_eq!(radius_mm, 20.0, TOL_MM);
+    }
+
+    /// A reflection keeps a circle a circle but reverses its direction, so
+    /// the mirrored circle's bulges are +1 where the plain one's are −1.
+    /// scale(−1, 1) moves the centre from x −70 to 70.
+    #[test]
+    fn mirrored_circle_keeps_its_radius_and_flips_direction() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100">
+                <circle id="plain" cx="30" cy="50" r="10"/>
+                <circle id="mirrored" cx="-70" cy="50" r="10" transform="scale(-1 1)"/>
+            </svg>"#,
+        );
+        for (name, centre_x, bulge) in [("plain", 30.0, -1.0), ("mirrored", 70.0, 1.0)] {
+            let profiles = &def(&result, name).profiles;
+            assert_eq!(profiles.len(), 1, "{name}");
+            assert_eq!(profiles[0].vertices().len(), 2, "{name}");
+            for v in profiles[0].vertices() {
+                assert_approx_eq!(v.bulge, bulge, 0.0);
+            }
+            let (centre, radius_mm) =
+                dc_geometry::as_circle(&profiles[0], EPS_MM).expect("a circle");
+            assert_approx_eq!(centre.x, centre_x, TOL_MM);
+            assert_approx_eq!(centre.y, 50.0, TOL_MM);
+            assert_approx_eq!(radius_mm, 10.0, TOL_MM);
+        }
+    }
+
+    /// A cubic Bézier that is not a circular arc's is flattened, even when
+    /// it bends like one: the plaque's squiggle.
+    #[test]
+    fn non_circular_cubic_is_still_flattened() {
+        let result = parse(
+            r#"<svg width="150mm" height="100mm" viewBox="0 0 150 100"><path d="M 95,88 C 105,65 120,100 130,75" fill="none"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert!(profile.vertices().len() > 4);
+        assert_all_lines(profile);
     }
 
     #[test]
@@ -1031,12 +1217,15 @@ mod tests {
 
     #[test]
     fn vertex_cap_is_enforced_while_flattening() {
-        // The circle flattens to far more than 10 vertices.
+        // The ellipse flattens to far more than 10 vertices.
         let options = SvgImportOptions {
             max_vertices: 10,
             ..SvgImportOptions::new()
         };
-        let err = import_svg(include_bytes!("../tests/fixtures/circle.svg"), &options).unwrap_err();
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+            <ellipse cx="50" cy="50" rx="45" ry="30"/>
+        </svg>"#;
+        let err = import_svg(svg, &options).unwrap_err();
         assert!(
             matches!(err, ImportError::TooManyVertices { limit: 10 }),
             "{err:?}"
