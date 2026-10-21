@@ -97,6 +97,14 @@ intent. The rules are in the phase 1 and phase 2 functional specs
       set with an offset active does not include it: the user's zero may
       include an offset, and cancelling it moves every Z (#286; definitions
       README, "Tool length offset at touch-off").
+- [ ] **Stale modes.** If the controller keeps a mode that changes every
+      coordinate (scaling, rotation, a canned-cycle motion mode, cutter
+      compensation) after the program ends, the header cancels it with the
+      code the documentation gives, on a line the emitter can write again
+      after each stop, and the safety pass accepts that code only from
+      this definition's header (#279, #312; definitions README, "Header
+      modal state", "Scaling and rotation"). Never write a code the
+      controller does not document.
 - [ ] **Pauses.** A manual-spindle or tool-change pause is `M0`, with a
       message only in a syntax the controller documents; `export` lists
       every pause either way.

@@ -44,10 +44,10 @@ use dc_project::{
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
-use crate::emit::{changes_tools_in_program, controller_sets_units};
+use crate::emit::{changes_tools_in_program, code_words, controller_sets_units};
 use crate::material::{self, Material};
 use crate::parse::{
-    Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
+    Block, CycleModel, MachineMove, MachinePosition, MotionKind, Word, is_code, parse_program_with,
 };
 use crate::transform::{MachineTransform, mm_per_unit};
 
@@ -355,6 +355,7 @@ fn check_rules(
         changes_tools_in_program(post),
         writes_canned_cycles(post),
         with_g53,
+        &header_cancel_codes(post),
     )?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
@@ -736,6 +737,30 @@ pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
 }
 /// `G53`, accepted on a machine-coordinate lift only (S16).
 const MACHINE_G: [f64; 1] = [53.0];
+/// `G50`, every scale factor back to 1, and `G69`, no coordinate rotation,
+/// as Mach3 and UCCNC define them (#312; Using Mach3Mill 1.84, 10.7.15,
+/// 10.7.20; UCCNC user's manual 1.0047, 4.1.1). Each only cancels a mode
+/// DreamCarve never turns on, but it is accepted only from a definition
+/// whose header writes it ([`header_cancel_codes`]): LinuxCNC, grblHAL,
+/// GRBL and RS274/NGC do not have them, and in other dialects `G50` is a
+/// different command. `G51` and `G68`, which scale and rotate every
+/// coordinate the program writes, are never accepted: this pass reads the
+/// program as written.
+const HEADER_CANCEL_G: [(&str, f64); 2] = [("G50", 50.0), ("G69", 69.0)];
+
+/// The codes of [`HEADER_CANCEL_G`] that `post`'s header writes.
+fn header_cancel_codes(post: &PostProcessor) -> Vec<f64> {
+    HEADER_CANCEL_G
+        .iter()
+        .filter(|(word, _)| {
+            post.program
+                .header
+                .iter()
+                .any(|line| code_words(line).iter().any(|w| w == word))
+        })
+        .map(|&(_, code)| code)
+        .collect()
+}
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
 /// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
 /// `M61`, which sets the current tool number without a stop or a move.
@@ -778,15 +803,22 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 /// change tools with `M6` (`with_m6`), those in [`CANNED_G`] when it
 /// may hold canned cycles (`with_canned`), and `G53` on the lines the
 /// parser read as a machine-coordinate lift when the definition documents
-/// it and the project sets the height (`with_g53`, S16).
+/// it and the project sets the height (`with_g53`, S16). The definition's
+/// own header cancels, `header_g` ([`header_cancel_codes`]), are allowed
+/// only where [`check_header_cancel`] places them.
 fn check_words(
     blocks: &[Block],
     with_m6: bool,
     with_canned: bool,
     with_g53: bool,
+    header_g: &[f64],
 ) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
+    // #312: true in the header, before the first move or spindle start,
+    // and again after each stop until the next one: the two places `emit`
+    // writes the setup lines.
+    let mut in_setup = true;
     for block in blocks {
         let lift: &[f64] = if with_g53 && block.machine_lift_mm.is_some() {
             &MACHINE_G
@@ -794,6 +826,10 @@ fn check_words(
             &[]
         };
         for word in &block.words {
+            if word.letter == 'G' && header_g.iter().any(|&code| is_code(word.value, code)) {
+                check_header_cancel(block, word, in_setup)?;
+                continue;
+            }
             let (allowed, extra): (&[f64], &[f64]) = match word.letter {
                 'G' if !lift.is_empty() => (&ALLOWED_G, lift),
                 'G' => (&ALLOWED_G, canned),
@@ -811,8 +847,39 @@ fn check_words(
                 });
             }
         }
+        if block.motion.is_some() || block.machine_lift_mm.is_some() || block.has('M', 3.0) {
+            in_setup = false;
+        }
+        if block.has('M', 0.0) || block.has('M', 1.0) || (with_m6 && block.has('M', 6.0)) {
+            in_setup = true;
+        }
     }
     Ok(())
+}
+
+/// #312: `word`, one of the definition's header cancels (`G50`, `G69`),
+/// is accepted only as `emit` writes it: alone on its line, but for a line
+/// number, so no axis, feed, speed or other value word can ride with it,
+/// and only in the header or in the setup after a stop (`in_setup`). On a
+/// dialect where `G50` takes axis words it is a different command, so
+/// anything else is refused.
+fn check_header_cancel(block: &Block, word: &Word, in_setup: bool) -> Result<(), ExportError> {
+    let alone = block.words.iter().filter(|w| w.letter != 'N').count() == 1;
+    let reason = if !alone {
+        Some("it shares its line with other words")
+    } else if !in_setup {
+        Some("it is outside the header and the setup after a stop")
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(ExportError::MisplacedSetupWord {
+            line: block.line,
+            word: format!("{}{}", word.letter, word.value),
+            reason,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// One output unit in the last written decimal place of a feed, in
@@ -2623,6 +2690,142 @@ mod tests {
             "G90 G94 G17 G40 G49 G80\nG91.1\nG21\nG54\nG0 Z11\nM30\n",
         ] {
             assert!(check_text(text).is_ok(), "{text}: {:?}", check_text(text));
+        }
+    }
+
+    /// #312: `G50` (scale factors to 1) and `G69` (no rotation) are
+    /// accepted from a definition whose header has them, Mach3 v3 and
+    /// UCCNC v3, and from no other: LinuxCNC, grblHAL, GRBL and RS274/NGC
+    /// do not have them, and on other dialects `G50` means something else.
+    /// `G51` and `G68`, which scale and rotate what the program writes,
+    /// are refused everywhere: the safety pass reads the program as
+    /// written.
+    #[test]
+    fn g50_g69_accepted() {
+        let post = |id: &str, version: u32| {
+            dc_project::bundled_definition(id, version)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let cancels = "G21 G90\nG54\nG50\nG69\nG0 Z11\nM30\n";
+        let with_them = [
+            ("mach3 v3", post("mach3", 3)),
+            ("uccnc v3", post("uccnc", 3)),
+        ];
+        let without = [
+            ("mach3 v2", post("mach3", 2)),
+            ("uccnc v2", post("uccnc", 2)),
+            ("linuxcnc v2", post("linuxcnc", 2)),
+            ("grblhal v3", post("grblhal", 3)),
+            ("grbl v3", post("grbl", 3)),
+            ("generic v1", post("generic", 1)),
+        ];
+        for (case, p) in &with_them {
+            let ok = check_text_on(cancels, p.clone(), SpindleControl::Automatic);
+            assert!(ok.is_ok(), "{case}: {ok:?}");
+        }
+        for (case, p) in &without {
+            for word in ["G50", "G69"] {
+                let text = format!("G21 G90\nG54\n{word}\nG0 Z11\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == word),
+                    "{case} {word}: {err:?}"
+                );
+            }
+        }
+        for (case, p) in with_them.iter().chain(&without) {
+            for (code, word) in [("G51 Z-1", "G51"), ("G68", "G68")] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{code}\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 4, word: w } if w == word),
+                    "{case} {code}: {err:?}"
+                );
+            }
+        }
+    }
+
+    /// #312: on a definition whose header writes them, `G50` and `G69` are
+    /// accepted only as `emit` writes them: alone on a line (a line number
+    /// aside), in the header or in the setup after a stop. With a value
+    /// word, `G50` is another command on some dialects (it would pass a
+    /// check that reads it as a cancel), and anywhere else it is not
+    /// DreamCarve's line, so both are refused with
+    /// [`ExportError::MisplacedSetupWord`]. The real headers pass.
+    #[test]
+    fn g50_g69_only_where_emit_writes_them() {
+        let post = |id: &str| {
+            dc_project::bundled_definition(id, 3)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let mach3_header = "%\nN10 ( Project: x )\nN20 ( Generated by DreamCarve on 2026-10-15 )\n\
+            N30 G90 G94 G17 G40 G80\nN40 G50\nN50 G69\nN60 G91.1\nN70 G21\nN80 G54\n\
+            N90 G0 Z11\nN100 M30\n";
+        let ok = check_text_on(mach3_header, post("mach3"), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "mach3: {ok:?}");
+        let uccnc_header = "( Project: x )\n( Generated by DreamCarve on 2026-10-15 )\n\
+            G90 G17 G40 G80 G94\nG50\nG69\nG54\nG0 Z11\nM30\n";
+        let ok = check_text_on(uccnc_header, post("uccnc"), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "uccnc: {ok:?}");
+        // Again in the setup after a stop.
+        let after_stop =
+            "G21 G90\nG54\nG50\nG69\nG0 Z11\nM0\nG50\nG69\nG21 G90\nG54\nG0 Z11\nM30\n";
+        for id in ["mach3", "uccnc"] {
+            let ok = check_text_on(after_stop, post(id), SpindleControl::Automatic);
+            assert!(ok.is_ok(), "{id} after a stop: {ok:?}");
+        }
+        let misplaced = |id: &str, text: &str, line: usize, word: &str, why: &str| {
+            let err = check_text_on(text, post(id), SpindleControl::Automatic).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::MisplacedSetupWord { line: l, word: w, reason }
+                        if *l == line && w == word && reason.contains(why)
+                ),
+                "{id}: {text}: {err:?}"
+            );
+        };
+        for id in ["mach3", "uccnc"] {
+            // With a value word, in the setup after a stop, where it would
+            // pass alone. `G0` is still the motion mode there, so the
+            // parser reads `G50 X0` as a move as well.
+            for code in [
+                "G50 X0",
+                "G50 Z-1",
+                "G50 F100",
+                "G50 S1000",
+                "G50 P1",
+                "G69 X0",
+                "G69 F100",
+                "G50 G69",
+            ] {
+                let word = &code[..3];
+                let text = format!("G21 G90\nG54\nG0 Z11\nM0\n{code}\nG21 G90\nG54\nG0 Z11\nM30\n");
+                misplaced(id, &text, 5, word, "other words");
+            }
+            // In the header, the value word fails the same way where the
+            // parser reads it.
+            for code in ["G50 F100", "G50 S1000", "G50 P1", "G50 G69"] {
+                let word = &code[..3];
+                let text = format!("G21 G90\nG54\n{code}\nG0 Z11\nM30\n");
+                misplaced(id, &text, 3, word, "other words");
+            }
+            // Alone, but after the first move, with no stop since.
+            for word in ["G50", "G69"] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{word}\nM30\n");
+                misplaced(id, &text, 4, word, "outside");
+                let spindle = format!("G21 G90\nG54\nM3 S18000\n{word}\nG0 Z11\nM5\nM30\n");
+                misplaced(id, &spindle, 4, word, "outside");
+                let resumed =
+                    format!("G21 G90\nG54\nG0 Z11\nM0\nG21 G90\nG54\nG0 Z11\n{word}\nM30\n");
+                misplaced(id, &resumed, 8, word, "outside");
+            }
         }
     }
 
