@@ -530,7 +530,15 @@ cut direction and cut side.
   `bandEntryPolicy` with `cutSide: 'internal'` for inside routes and
   `outsideEntryPolicy` with `'external'` for outside routes; the domain is
   the same one the lead uses). The ramp ends with a straight handoff to
-  the block's entry point at pass Z.
+  the block's entry point at pass Z. Slice 10: the run is anchored with
+  one end on the entry point (the longest chord from it into the domain,
+  shrunk by `safety` at the far end only, at most `3·D`) instead of
+  centred on it, because only the kerf is cleared at the previous pass Z:
+  each later pass starts its zigzag where the previous lap ended. A
+  helix after the first pass rejoins the bore the previous pass's helix
+  cut (target → helix end → helix start, flat), or descends from safe Z
+  if that pass cut none. A contour whose start lies under a tab span
+  plunges there (`EntryFallback`, `no_room`).
 - **On line ramp:** an On line Profile removes only its own kerf, so the
   ramp runs along the cut path itself: from the start vertex, forward
   along the path for `run = min(3·D, L)` and back, descending at `angle`

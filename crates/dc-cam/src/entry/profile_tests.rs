@@ -1008,3 +1008,36 @@ fn ramp_default_angle_is_15_degrees() {
         assert!((slope - 15.0).abs() <= 1e-6, "slope {slope}");
     }
 }
+
+/// Under `pass_first` the tool leaves each contour between passes and
+/// comes back at safe Z: it goes straight down only through the kerf the
+/// previous pass cut, to that pass's floor, and then ramps or helixes
+/// into the new pass at the contour start.
+#[test]
+fn pass_first_entries_start_at_the_contour() {
+    let p = project_of(&[
+        ("a", vec![circle((30.0, 30.0, 12.0))]),
+        ("b", vec![circle((85.0, 85.0, 12.0))]),
+    ]);
+    for entry in ramped() {
+        let mut o = op(&p, Side::Outside, entry.clone());
+        o.machining_order = MachiningOrder::PassFirst;
+        let (tp, warnings) = generate(&p, &o);
+        assert!(fallbacks(&warnings).is_empty(), "{entry:?}: {warnings:?}");
+        for z in PASS_Z_MM {
+            let arrivals = sloped_moves(&tp)
+                .iter()
+                .filter(|(_, mv)| (mv.to.z - z).abs() <= EPS_MM)
+                .count();
+            assert!(arrivals >= 2, "{entry:?}: both contours enter pass {z}");
+        }
+        for (from, mv) in plunges_into_stock(&tp) {
+            assert!(
+                [PASS_Z_MM[0], PASS_Z_MM[1]]
+                    .iter()
+                    .any(|z| (mv.to.z - z).abs() <= EPS_MM),
+                "{entry:?}: only down to a floor already cut: {from:?} -> {mv:?}"
+            );
+        }
+    }
+}
