@@ -704,6 +704,12 @@ tolerance.
 4. No direction, no entry policy (plunge), no tabs. Containment pairs
    still apply to closed paths (an engraved outline inside another is
    cut first; harmless but deterministic).
+5. No D6 `ToolpathsOverlap`, for open or closed paths. (changed in #206:
+   recorded when open paths joined D6 for On line Profile. Engrave cuts
+   every line as drawn at one depth; lines that cross or meet, as in
+   lettering, a hatch or a border, are the design, and a line has no kept
+   side for another's cut to gouge. O8 does apply to an Engrave's open
+   paths.)
 
 ### Entry (dc-cam::entry)
 
@@ -929,6 +935,22 @@ is Engrave's job, and Engrave has no such rule. The threshold is the
 diameter, not the issue's radius, because a ring between `r` and `d` wide
 is cut through too, by the two cuts together.)
 
+An open path an On line Profile cuts (#175) takes part in D6 by the same
+On line rule: its line is its tool-centre path, and it warns
+`ToolpathsOverlap` with another shape when either comes closer than `r`
+(less `EPS_MM`) to the other's line, crossing included (`gap_mm` 0). It
+belongs to the region whose material holds all of it (every vertex and
+every segment's middle, `Region::contains_point`, lines included) and is
+not compared with that region's lines, as a hole is not; held by no
+region (in the waste, in a hole's slug, or across a line) it is a group
+of its own, compared with every other closed shape and open path but
+never with itself. The pairs keep cut order. (changed in #206: an open
+path was dropped before any pair was compared, so a line drawn beside or
+across a part, or across another line, cut into it with no warning. A
+line inside a part is a cut into that part, not a second shape beside
+it, so it follows the same-region rule; whether it needs a band check
+like #199's is #210.)
+
 ### Corner relief (dc-cam::relief)
 
 Ported from `cornerRelief.ts`.
@@ -1074,6 +1096,16 @@ tools of enabled operations in project order; one `ToolChangeAvoidable
 first use, with `ops` listing every operation that uses it. A disabled
 operation does not split a run. (changed in slice 13, #134: tabs hold
 the part, and `nest` is stricter than a centroid test.)
+
+The targets of `j` include the open paths it cuts: every open path of an
+Engrave and of an On line Profile (Inside and Outside Profile, Pocket and
+Drill skip them; one of no length is skipped). An open path is inside a
+freed outline when all of it is inside or on it (every vertex and every
+segment's middle, `Region::contains_point` on the outline's region), so
+one that crosses the outline does not count, as crossing outlines do not.
+An open path frees nothing. (changed in #206: O8 read closed targets
+only, so an Engrave or an On line Profile of a line inside a freed part
+ran in the loose part with no warning.)
 
 ### Arc fitting (dc-gcode::arcfit)
 
@@ -1596,8 +1628,12 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
+**dc-cam — overlap**
+- `overlap::open_on_line_path_too_close_to_a_part_warns`, `overlap::open_line_far_from_shapes_is_quiet`, `overlap::open_lines_too_close_to_each_other_warn`, `overlap::open_path_in_a_part_is_not_compared_with_its_lines`, `engrave::crossing_lines_do_not_warn_toolpaths_overlap` (#206).
+
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.
+- `order::open_path_inside_freed_part_warns` (#206: an Engrave and an On line Profile of a line in a freed part warn; an Inside Profile of it is quiet), `order::open_path_crossing_a_freed_outline_is_quiet` (#206).
 
 **dc-gcode — arcfit**
 - Ports from `arcFitting.test.ts`: `accepted_circular_run_gives_four_arcs`, `clockwise_is_g2`, `rejects_straight_run`, `rejects_z_changing_run`, `rejects_mixed_feed_run`, `rejects_discontinuous_run`, `splits_around_rapids`, `short_run_stays_linear`, `rejects_ambiguous_direction`, `rejects_high_residual_ellipse`, `splits_large_arc_at_90_degrees`, `split_arc_offsets_relative`, `rejects_near_collinear_run`, `rejects_long_straight_with_corner_fragment` (inch tolerance), `accepts_ordinary_arc_after_collinear_gate`, `full_circle_loop_is_four_arcs`, `partial_arc_with_straight_leads`, `adjacent_runs_share_endpoints_exactly`, `fitted_arcs_pass_through_source_endpoints`, `ij_derived_from_previous_emitted_point` (#447), `invalid_run_falls_back_to_original_moves`, `fallback_leaves_valid_runs_alone`, `r_format_rejects_unrepresentable_chord`, `inch_output_uses_millimetre_budget`, `snapping_never_worsens_agreement`, `r_format_repairs_rounding_shortfall_only`.

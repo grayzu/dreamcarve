@@ -695,6 +695,40 @@ mod tests {
         assert_approx_eq!(laps[1].x_extent_mm(), 20.0, TOL);
     }
 
+    /// #206: Engrave takes no part in D6. It cuts every line as drawn at
+    /// one depth, so lines that cross or touch (lettering, a hatch, a
+    /// border meeting its corners) are the design, not two shapes cut
+    /// into each other: crossing lines and a line touching an outline
+    /// give no `toolpaths_overlap`.
+    #[test]
+    fn crossing_lines_do_not_warn_toolpaths_overlap() {
+        let p = project(
+            vec![
+                rect_100x50(),
+                Polyline::new(
+                    vec![Vertex::line(50.0, 0.0), Vertex::line(50.0, 50.0)],
+                    false,
+                ),
+                Polyline::new(
+                    vec![Vertex::line(10.0, 25.0), Vertex::line(90.0, 25.0)],
+                    false,
+                ),
+                Polyline::new(
+                    vec![Vertex::line(20.0, 50.0), Vertex::line(20.0, 70.0)],
+                    false,
+                ),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let (_, warnings) = generate(&p, &engrave_op(&p, 1.0));
+        assert!(
+            warnings
+                .iter()
+                .all(|w| w.code != WarningCode::ToolpathsOverlap),
+            "{warnings:?}"
+        );
+    }
+
     /// Capability 11 on Engrave: pass first cuts every path at one depth
     /// before stepping down; full depth first finishes each path.
     #[test]
