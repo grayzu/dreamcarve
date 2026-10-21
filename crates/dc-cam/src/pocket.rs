@@ -21,14 +21,30 @@
 
 pub mod rings;
 
-use crate::error::CamError;
+use crate::block::CutBlock;
+use crate::error::{CamError, ShapeRef};
+use crate::footprint::footprint_at;
+use crate::passes::pass_z_mm;
+use crate::profile::{
+    contour_contains, crossing_error, rates_of, resolve_targets, shape_of, shape_warning,
+};
+use crate::sequence::{SequenceInput, sequence};
+use crate::stock::{stock_overhang, swept_bounds};
+use crate::tabs::lap_cuts;
 use crate::toolpath::Toolpath;
-use crate::warning::Warning;
-use dc_project::{CutDirection, PocketOp, Project};
+use crate::warning::{Warning, WarningCode};
+use dc_geometry::{
+    Contour, EPS_MM, GeometryWarning, Point, Polyline, Region, area_mm2, difference, distance_mm,
+    nest,
+};
+use dc_project::{
+    ClearanceStrategy, CornerRelief, CutDirection, Entry, PocketOp, Project, Tool, WallPass,
+};
+use rings::{RingKind, RingTree, WallRings, inset_region};
 
-/// Most rings one pass of one tool-centre region may have. Bounds the work
-/// a tiny step-over can cause (0.001 of a 6 mm tool on a metre-wide pocket
-/// is still well under it).
+/// Most rings one tool-centre region may have. Bounds the work a tiny
+/// step-over can cause (a 0.01 step-over of a 6 mm tool on a 1 m wide
+/// pocket is still under it).
 pub const MAX_RINGS: usize = 10_000;
 
 /// Which wall a ring runs along.
@@ -52,25 +68,430 @@ pub enum RingWall {
 /// reverse of climb. Interior rings follow the wall they step in from.
 #[must_use]
 pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
-    let _ = (wall, direction);
-    false
+    let climb_is_ccw = match wall {
+        RingWall::Pocket => true,
+        RingWall::Island => false,
+    };
+    match direction {
+        CutDirection::Climb => climb_is_ccw,
+        CutDirection::Conventional => !climb_is_ccw,
+    }
 }
 
 /// Generates the Pocket toolpath for `op` in `project`, in project space
 /// (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness + op.safe_z_mm`).
 ///
-/// Not yet generated: a raster strategy, an allowance, and rest machining
-/// fail with [`CamError::NotSupportedYet`].
+/// Each target instance's closed profiles are placed and nested; each
+/// region is a pocket and its holes are islands, and a region inside an
+/// island is a pocket of its own, cut after the pocket around it. The
+/// tool-centre region is the pocket inset by the tool radius
+/// ([`rings::inset_region`]); where it is empty the shape is skipped with
+/// [`WarningCode::PocketNoRoom`], and an island closer than the tool's
+/// diameter to the wall or another island warns
+/// [`WarningCode::PocketIslandTooClose`]. Each tool-centre region's rings
+/// step in by `diameter × step_over_fraction` ([`RingTree`]); per depth
+/// pass they are cut innermost first, with the wall and island rings last,
+/// first, or not at all per `op.wall_pass`, each ring starting at its
+/// vertex nearest the previous ring's end and running per [`ring_is_ccw`].
+/// [`sequence`] orders and links the rings (stay-down links inside the
+/// cleared tool-centre area, else a retract to safe Z).
+///
+/// Fails without a toolpath when a rate, the step-down or the step-over is
+/// missing, when the depth goes below the stock bottom plus allowance, when
+/// targets cross, when an id does not resolve, when the cutter is not a
+/// flat end mill, when the cutter would leave the stock
+/// ([`CamError::OffStock`]) or its footprint would leave the pocket's
+/// material (S9, [`CamError::OffMaterial`]). Not yet generated: a raster
+/// strategy, an allowance, and rest machining fail with
+/// [`CamError::NotSupportedYet`]; a ramp or helix entry plunges instead
+/// ([`WarningCode::EntryFallback`]) and corner relief is skipped
+/// ([`WarningCode::ReliefSkipped`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_pocket(
     project: &Project,
     op: &PocketOp,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
-    let _ = project;
-    Err(CamError::NotSupportedYet {
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: op.id.clone(),
+            tool: op.tool.clone(),
+        })?;
+    // The tool-centre region is the pocket inset by half the diameter,
+    // right only for a flat end mill (#67).
+    if !tool.cutter.is_flat() {
+        return Err(CamError::CutterNotFlat {
+            op: op.id.clone(),
+            tool: tool.name.clone(),
+            cutter: tool.cutter.describe(),
+        });
+    }
+    let rates = rates_of(tool)?;
+    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+        return Err(CamError::InvalidToolDiameter {
+            tool: tool.name.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
+    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
+        return Err(CamError::InvalidSafeZ {
+            op: op.id.clone(),
+            safe_z_mm: op.safe_z_mm,
+        });
+    }
+    refuse_later_slices(op)?;
+    let step_down_mm =
+        op.step_down_mm
+            .or(tool.step_down_mm)
+            .ok_or_else(|| CamError::MissingStepDown {
+                op: op.id.clone(),
+                tool: tool.name.clone(),
+            })?;
+    let thickness_mm = project
+        .stock
+        .thickness_mm
+        .ok_or(CamError::MissingThickness)?;
+    let depth_mm = op
+        .depth_mm
+        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
+    let pass_z = pass_z_mm(
+        &op.id,
+        thickness_mm,
+        depth_mm,
+        step_down_mm,
+        op.through_cut_allowance_mm,
+    )?;
+    let safe_z_mm = thickness_mm + op.safe_z_mm;
+    let step_over_fraction = op
+        .step_over_fraction
+        .or(tool.step_over_fraction)
+        .ok_or_else(|| CamError::MissingStepOver {
+            op: op.id.clone(),
+            tool: tool.name.clone(),
+        })?;
+    let invalid_step_over = || CamError::InvalidStepOver {
         op: op.id.clone(),
-        feature: "a pocket".into(),
-    })
+        step_over_fraction,
+    };
+    if !(step_over_fraction.is_finite() && step_over_fraction > 0.0 && step_over_fraction <= 1.0) {
+        return Err(invalid_step_over());
+    }
+    let stepover_mm = tool.diameter_mm * step_over_fraction;
+    let radius_mm = tool.diameter_mm / 2.0;
+    let tolerance_mm = project.flatten_tolerance_mm;
+
+    let mut warnings = fallback_warnings(op);
+    let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
+    let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
+    let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
+    for warning in nest_warnings {
+        let GeometryWarning::DuplicateContourDropped {
+            index,
+            duplicate_of,
+        } = warning;
+        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
+        {
+            warnings.push(
+                shape_warning(WarningCode::DuplicateShapeDropped, dropped)
+                    .with("duplicate_of_instance", &kept.instance)
+                    .with("duplicate_of_profile", kept.profile),
+            );
+        }
+    }
+
+    let wall = match op.wall_pass {
+        WallPass::Last => WallRings::Last,
+        WallPass::First => WallRings::First,
+        WallPass::None => WallRings::Omitted,
+    };
+    // Every ring in cut order: its shape, its path (oriented, starting at
+    // its entry), and the tool-centre area it lies in.
+    let mut rings: Vec<(ShapeRef, Polyline, Region)> = Vec::new();
+    let mut anchor: Option<Point> = None;
+    for region in &regions {
+        // `nest` keeps every contour or reverses it, so this always finds
+        // the shape.
+        let Some(shape) = shape_of(&shapes, region.outer()) else {
+            continue;
+        };
+        warnings.extend(island_gap_warnings(op, tool, region, &shapes, shape));
+        let tool_centre = inset_region(region, radius_mm, tolerance_mm);
+        if tool_centre.is_empty() {
+            warnings.push(
+                shape_warning(WarningCode::PocketNoRoom, shape)
+                    .with("op", &op.id)
+                    .with("tool", &tool.name)
+                    .with("diameter_mm", tool.diameter_mm),
+            );
+            continue;
+        }
+        for root in tool_centre {
+            let tree = RingTree::build(root, stepover_mm, tolerance_mm, MAX_RINGS)
+                .ok_or_else(invalid_step_over)?;
+            for ring in tree.walk(wall, &mut anchor) {
+                let side = match ring.kind {
+                    RingKind::Outer => RingWall::Pocket,
+                    RingKind::Hole => RingWall::Island,
+                };
+                let ccw = ring_is_ccw(side, op.direction);
+                let path = if ring.contour.is_ccw() == ccw {
+                    ring.contour.into_polyline()
+                } else {
+                    ring.contour.reversed().into_polyline()
+                };
+                let Some(node) = tree.nodes.get(ring.node) else {
+                    continue;
+                };
+                rings.push((
+                    shape.clone(),
+                    starting_at(&path, ring.start),
+                    node.region.clone(),
+                ));
+            }
+        }
+    }
+
+    let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
+    for (pass, &z_mm) in pass_z.iter().enumerate() {
+        let descent_from_z_mm = pass
+            .checked_sub(1)
+            .and_then(|k| pass_z.get(k).copied())
+            .unwrap_or(safe_z_mm);
+        for (shape, path, cleared) in &rings {
+            let Some(start) = path.vertices().first().map(|v| v.point()) else {
+                continue;
+            };
+            let Some(lap) = lap_cuts(path, z_mm, None, rates) else {
+                continue;
+            };
+            blocks.push(CutBlock {
+                shape: shape.clone(),
+                pass,
+                z_mm,
+                descent_from: start,
+                descent_from_z_mm,
+                descent: Vec::new(),
+                entry: start,
+                cuts: lap.moves,
+                exit: start,
+                // A pocket never cuts a part free.
+                frees: false,
+                cleared: Some(cleared.clone()),
+                group: pass,
+            });
+        }
+    }
+    let containment = nested_pockets(&regions, &shapes);
+    let input = SequenceInput {
+        blocks,
+        order: op.machining_order,
+        containment: &containment,
+        safe_z_mm,
+        tool_diameter_mm: tool.diameter_mm,
+        stepover_mm,
+        feed_mm_min: rates.feed_mm_min,
+        plunge_mm_min: rates.plunge_mm_min,
+    };
+    let toolpath = sequence(&input)?;
+
+    // #62: the cutter must stay on the stock.
+    if let Some(overhang) =
+        swept_bounds(&toolpath, radius_mm).and_then(|swept| stock_overhang(&project.stock, swept))
+    {
+        return Err(CamError::OffStock {
+            op: op.id.clone(),
+            overhang,
+        });
+    }
+    check_in_material(op, &toolpath, radius_mm, tolerance_mm, &regions, &shapes)?;
+    Ok((toolpath, warnings))
+}
+
+/// Typed errors for what later slices generate: raster (slice 5), an
+/// allowance and rest machining (slice 6). Each would cut something other
+/// than what was asked, so none is silently ignored.
+fn refuse_later_slices(op: &PocketOp) -> Result<(), CamError> {
+    let feature = if let ClearanceStrategy::Raster { .. } = op.strategy {
+        Some("a raster strategy")
+    } else if op.allowance_mm > 0.0 {
+        Some("a pocket allowance (allowance_mm)")
+    } else if op.rest_of.is_some() {
+        Some("rest machining (rest_of)")
+    } else {
+        None
+    };
+    match feature {
+        Some(feature) => Err(CamError::NotSupportedYet {
+            op: op.id.clone(),
+            feature: feature.into(),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// Warnings for the entry and corner relief this build replaces with a
+/// plunge and nothing (slices 9 and 12). Both still give the pocket asked
+/// for, so they warn rather than fail.
+fn fallback_warnings(op: &PocketOp) -> Vec<Warning> {
+    let mut warnings = Vec::new();
+    let entry = match op.entry {
+        Entry::Plunge => None,
+        Entry::Ramp { .. } => Some("ramp"),
+        Entry::Helix { .. } => Some("helix"),
+    };
+    if let Some(requested) = entry {
+        warnings.push(
+            Warning::new(WarningCode::EntryFallback)
+                .with("op", &op.id)
+                .with("requested", requested)
+                .with("used", "plunge")
+                .with("reason", "not_supported_yet"),
+        );
+    }
+    let relief = match op.corner_relief {
+        CornerRelief::None => None,
+        CornerRelief::Dogbone => Some("dogbone"),
+        CornerRelief::TBone => Some("t_bone"),
+    };
+    if let Some(requested) = relief {
+        warnings.push(
+            Warning::new(WarningCode::ReliefSkipped)
+                .with("op", &op.id)
+                .with("requested", requested)
+                .with("reason", "not_supported_yet"),
+        );
+    }
+    warnings
+}
+
+/// [`WarningCode::PocketIslandTooClose`] for every island of `region`
+/// nearer than the tool's diameter to the wall or to a later island.
+fn island_gap_warnings(
+    op: &PocketOp,
+    tool: &Tool,
+    region: &Region,
+    shapes: &[(ShapeRef, Contour)],
+    shape: &ShapeRef,
+) -> Vec<Warning> {
+    let mut warnings = Vec::new();
+    let warn = |island: &ShapeRef, other: String, gap_mm: f64| {
+        shape_warning(WarningCode::PocketIslandTooClose, shape)
+            .with("op", &op.id)
+            .with("island", island.profile)
+            .with("other", other)
+            .with("gap_mm", gap_mm)
+            .with("tool", &tool.name)
+            .with("diameter_mm", tool.diameter_mm)
+    };
+    let holes = region.holes();
+    for (i, hole) in holes.iter().enumerate() {
+        let Some(island) = shape_of(shapes, hole) else {
+            continue;
+        };
+        let gap_mm = distance_mm(hole.polyline(), region.outer().polyline());
+        if gap_mm < tool.diameter_mm - EPS_MM {
+            warnings.push(warn(island, "wall".into(), gap_mm));
+        }
+        for other in holes.iter().skip(i + 1) {
+            let Some(other_shape) = shape_of(shapes, other) else {
+                continue;
+            };
+            let gap_mm = distance_mm(hole.polyline(), other.polyline());
+            if gap_mm < tool.diameter_mm - EPS_MM {
+                warnings.push(warn(island, other_shape.profile.to_string(), gap_mm));
+            }
+        }
+    }
+    warnings
+}
+
+/// `path` (closed) rotated to start at its vertex at `start`
+/// (`rotateContourToNearestEntry`); unchanged when no vertex is there.
+fn starting_at(path: &Polyline, start: Point) -> Polyline {
+    let mut vertices = path.vertices().to_vec();
+    let index = vertices
+        .iter()
+        .position(|v| v.point().distance_to(start) <= EPS_MM)
+        .unwrap_or(0);
+    // A vertex carries the bulge of the segment it starts, so rotating the
+    // list keeps every arc.
+    vertices.rotate_left(index);
+    Polyline::new(vertices, true)
+}
+
+/// Containment pairs for `sequence`: a pocket inside an island (a region of
+/// depth 2 or more) is cut after the pocket that holds the island, so each
+/// pair is `(pocket around, pocket inside)`. Pockets free nothing, so this
+/// orders the work only; it is the design's "after the island".
+fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(ShapeRef, ShapeRef)> {
+    let mut pairs = Vec::new();
+    for region in regions {
+        let Some(parent_depth) = region.depth().checked_sub(2) else {
+            continue;
+        };
+        let (Some(inner), Some(probe)) = (
+            shape_of(shapes, region.outer()),
+            region.outer().polyline().vertices().first(),
+        ) else {
+            continue;
+        };
+        let around = regions
+            .iter()
+            .filter(|r| r.depth() == parent_depth)
+            .find(|r| r.holes().iter().any(|h| contour_contains(h, probe.point())));
+        if let Some(outer) = around.and_then(|r| shape_of(shapes, r.outer())) {
+            pairs.push((outer.clone(), inner.clone()));
+        }
+    }
+    pairs
+}
+
+/// S9: the tool's footprint along `toolpath` lies in the pockets'
+/// material, inside every region and outside every island. Flattening
+/// moves both outlines by up to `tolerance_mm`, so area within that band
+/// of the boundaries is allowed.
+fn check_in_material(
+    op: &PocketOp,
+    toolpath: &Toolpath,
+    radius_mm: f64,
+    tolerance_mm: f64,
+    regions: &[Region],
+    shapes: &[(ShapeRef, Contour)],
+) -> Result<(), CamError> {
+    let swept = footprint_at(toolpath, radius_mm, tolerance_mm);
+    if swept.is_empty() {
+        return Ok(());
+    }
+    let outside = difference(&swept, regions, tolerance_mm);
+    let boundary_mm: f64 = regions
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .map(|c| c.polyline().length_mm())
+        .sum();
+    let allowed_mm2 = (tolerance_mm + EPS_MM) * boundary_mm;
+    let area = area_mm2(&outside);
+    if area <= allowed_mm2 {
+        return Ok(());
+    }
+    // Name the pocket whose outline holds the stray area, else the first.
+    let probe = outside
+        .iter()
+        .find_map(|r| r.outer().polyline().vertices().first().map(|v| v.point()));
+    let named = regions
+        .iter()
+        .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
+        .or_else(|| regions.first())
+        .and_then(|r| shape_of(shapes, r.outer()));
+    match named {
+        Some(shape) => Err(CamError::OffMaterial {
+            op: op.id.clone(),
+            shape: shape.clone(),
+            area_mm2: area,
+        }),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]

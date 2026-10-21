@@ -226,7 +226,7 @@ impl fmt::Display for Warning {
         match self.code {
             WarningCode::OpenPathSkipped => write!(
                 f,
-                "{} is an open path; Profile cuts only closed shapes, so it is not cut",
+                "{} is an open path; Profile and Pocket cut only closed shapes, so it is not cut",
                 self.shape()
             ),
             WarningCode::ToolTooLarge => write!(
