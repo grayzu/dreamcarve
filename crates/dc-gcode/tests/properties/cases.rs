@@ -234,9 +234,18 @@ fn outside_t_bone_in_a_hole_just_wider_than_the_bit_exports() {
             continue;
         }
         cuts += 1;
+        // Every feed is the tool's, or a ramp's feed the emitter derived
+        // from them and rounded down (#325): never above the feed, and
+        // never descending faster than the plunge rate.
         let feed = mv.feed.expect("a cut has a feed");
+        let [feed_mm_min, plunge_mm_min] = rates;
+        let derived = feed <= feed_mm_min + 0.0005 && {
+            let length_mm = (to.x - from.x).hypot(to.y - from.y).hypot(to.z - from.z);
+            let drop_mm = from.z - to.z;
+            drop_mm <= 0.0 || feed * drop_mm / length_mm <= plunge_mm_min + 0.0005
+        };
         assert!(
-            rates.iter().any(|r| (feed - r).abs() <= 0.0005),
+            rates.iter().any(|r| (feed - r).abs() <= 0.0005) || derived,
             "line {}: feed {feed} is not the tool's",
             mv.line
         );
