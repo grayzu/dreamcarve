@@ -39,6 +39,7 @@ centre on it, open or closed, use [Engrave](engrave.md).
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
 | `tabs` | Holding tabs, or `null` for none. See [Tabs](tabs.md). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](#machining-order). |
+| `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
 
 ## Side
 
@@ -140,6 +141,74 @@ it (a hole before its outline, a part inside a hole before that hole), so a
 part is freed only by its last contour. See [Shapes and holes, rule
 6](shapes-and-holes.md#6-order-follows-the-drawing).
 
+## Entry
+
+`entry` says how the bit gets down to the depth of each pass at the start
+of an outline (VCarve's "Ramps"; Fusion's "Ramp Type"). `init` writes a
+15° ramp; a project upgraded from format version 7 keeps `"plunge"`, so it
+cuts exactly as before.
+
+- `"plunge"`: straight down at the tool's plunge rate. A bit that does
+  not cut well at its centre, as most do not, takes this hard, and it
+  leaves a mark on the wall where it went in.
+- `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag, going down `angle_deg`
+  from the horizontal until it reaches the pass depth.
+- `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`: a spiral
+  down, `diameter_fraction` of the bit's diameter across (5.08 mm for a
+  6.35 mm bit at 0.8), at `angle_deg`, then one flat turn at the pass
+  depth, then on to the start of the outline. Inside and Outside only.
+
+The angle must be more than 0 and at most 45 degrees, the fraction more
+than 0 and at most 1.
+
+**Where it goes.** The ramp or helix is in material the operation cuts
+away anyway, never in the part:
+
+- **Inside:** in the hole, inside the tool-centre path.
+- **Outside:** in the waste around the part, kept on the stock, out of
+  every other part this operation cuts and out of the path the bit takes
+  round it. A hole in an Outside part is entered inside the hole.
+- **On line:** the bit removes only the width of its own cut, so the ramp
+  runs back and forth along the line itself, from the start of the outline
+  forward three bit diameters (less on a shorter outline) and back. Curves
+  are followed in short straight moves, 0.01 mm from the curve at most
+  (the project's `flatten_tolerance_mm`). Once at depth the bit goes back
+  to the start and cuts the whole outline, so the ramped stretch is cut
+  again at full depth. A helix is an error on On line: `check` reports
+  it, and export refuses.
+
+An Inside or Outside ramp starts at the start of the outline and runs into
+the waste along the longest straight line that fits, at most three bit
+diameters, stopping a tenth of the bit's diameter short of anything it must
+not touch; then it comes back. A helix is placed next to the start of the
+outline, where it fits with the same margin. A climb cut turns its helix
+the way the outline runs: counter-clockwise inside a hole, clockwise
+round a part; conventional turns it the other way.
+
+The first pass descends from safe Z. Each pass after starts where the lap
+before it ended, at the start of the outline on the floor of that pass, so
+the bit does not ramp down through air it has already cut.
+
+**Tabs.** On every pass below the tab top, the ramp or helix keeps clear
+of the tabs, and an On line ramp stops short of the first tab. When a tab
+covers the start of the outline the bit plunges there, as without an
+entry, and `entry_fallback` says so.
+
+**Feed rate.** A ramp or helix moves at the tool's feed rate, except that
+its speed straight down is never faster than the plunge rate: when
+`feed × sin(angle)` would exceed the plunge rate, the feed of each
+descending move is reduced until it does not. A 15° ramp with a 1500
+mm/min feed and a 500 mm/min plunge runs at the full 1500 (its speed down
+is 388 mm/min); with a 100 mm/min plunge it runs at 386 mm/min.
+
+**When it does not fit.** A helix that does not fit at full size is made
+smaller, halving up to three times, and `helix_diameter_reduced` says how
+small. A helix that does not fit at all falls back to a ramp, and a ramp
+that does not fit, as in a hole barely wider than the bit (a 7 mm hole
+with a 6.35 mm bit), falls back to a plunge. Each fallback warns
+`entry_fallback`, naming the shape and both entries. A shape that can
+only be plunged warns on every export until its `entry` is `"plunge"`.
+
 ## Cut order between operations
 
 Operations run in the order the project lists them, whichever tools they
@@ -171,10 +240,12 @@ before that hole, however deep the nesting, so it is never cut out of loose
 waste. Otherwise shapes are visited nearest first, starting from the first
 one drawn (see [Machining order](#machining-order)). For each outline:
 
-1. Rapid to safe Z, then to the start of the outline.
-2. Plunge to the first pass at the plunge rate.
+1. Rapid to safe Z, then to the start of the outline (or of its helix).
+2. Go down to the first pass by the [entry](#entry): ramp, helix or
+   plunge.
 3. Cut one full lap at the feed rate, ending where it began.
-4. Plunge to the next pass and cut another lap, until the last pass. Under
+4. Go down to the next pass the same way, from the floor of the last, and
+   cut another lap, until the last pass. Under
    `"pass_first"` the tool instead rapids up to safe Z and goes on to the
    next shape, coming back for the next pass once every shape has had this
    one.

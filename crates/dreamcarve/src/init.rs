@@ -64,6 +64,9 @@ const SAFE_Z_MM: f64 = 5.0;
 const TAB_COUNT: u8 = 4;
 const TAB_WIDTH_MM: f64 = 8.0;
 const TAB_HEIGHT_MM: f64 = 3.0;
+/// The ramp angle a new project's Profile enters each pass at, degrees
+/// (functional spec, capability 16; #119).
+const INIT_RAMP_ANGLE_DEG: f64 = dc_cam::entry::INIT_RAMP_ANGLE_DEG;
 
 /// What an importer produced, whichever format it read.
 struct Imported {
@@ -288,10 +291,9 @@ fn default_project(
             shape: TabShape::Rect,
         }),
         machining_order: MachiningOrder::FullDepthFirst,
-        // The design spec has `init` write a 15° ramp; until the ramp
-        // generator lands (slice 10) a new project plunges, as phase 1
-        // did, so it exports. The follow-up issue is linked from #117.
-        entry: Entry::Plunge,
+        entry: Entry::Ramp {
+            angle_deg: INIT_RAMP_ANGLE_DEG,
+        },
         lead: None,
         corner_relief: CornerRelief::None,
     };

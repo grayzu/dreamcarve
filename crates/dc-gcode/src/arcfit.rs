@@ -426,6 +426,10 @@ fn gates_pass(
     let angle = |p: &Point| (p.y - centre.y).atan2(p.x - centre.x);
     let mut steps = Vec::with_capacity(points.len());
     let mut total_sweep = 0.0;
+    // 2a. Every step turns the same way round the centre: a run that goes
+    // back along the circle (a Profile ramp's return to its entry point,
+    // then the lap) is not one arc, though every point is on it.
+    let mut turn = 0.0_f64;
     for (k, pair) in points.windows(2).enumerate() {
         let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else {
             return false;
@@ -440,6 +444,12 @@ fn gates_pass(
         let step = diff.abs();
         if step > MAX_STEP_RAD {
             return false;
+        }
+        if step > SWEEP_EPS {
+            if turn * diff < 0.0 {
+                return false;
+            }
+            turn = diff;
         }
         if mids.get(k).is_none_or(Option::is_none) {
             steps.push(step);
@@ -895,6 +905,31 @@ mod tests {
         // The run replaces every chord; the rapid passes through.
         assert_eq!(lines_of(&fitted), 0);
         assert_eq!(moves_of(&fitted).len(), 1);
+    }
+
+    /// A run that goes out along a circle and back (a Profile's ramp
+    /// returning to its entry point before the lap) lies on the circle
+    /// but is not one arc: every fitted run turns one way, so the moves
+    /// it replaces are the moves it follows.
+    #[test]
+    fn run_that_turns_back_is_not_one_arc() {
+        let mut moves = chords(10.0, 8, 0.0, FRAC_PI_2, 0.0);
+        moves.extend(chords(10.0, 8, FRAC_PI_2, 0.0, 0.0).into_iter().skip(1));
+        moves.extend(chords(10.0, 16, 0.0, PI, 0.0).into_iter().skip(1));
+        let fitted = fit(&moves, TOL);
+        assert!(runs_of(&fitted) > 0, "the one-way stretches still fit");
+        for f in &fitted {
+            let Fitted::Arc(run) = f else { continue };
+            let mut from = run.arcs[0].start;
+            let mut sense = 0.0_f64;
+            for mv in &run.fallback {
+                let o = Point::new(0.0, 0.0);
+                let turn = (from.xy() - o).cross(mv.to.xy() - o);
+                assert!(sense * turn >= 0.0, "a run turns back: {run:?}");
+                sense = turn;
+                from = mv.to;
+            }
+        }
     }
 
     #[test]

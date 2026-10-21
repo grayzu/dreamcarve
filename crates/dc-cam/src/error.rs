@@ -194,6 +194,16 @@ pub enum CamError {
         /// The angle given, degrees.
         angle_deg: f64,
     },
+    /// A helix entry on an On line Profile, which removes nothing but its
+    /// own kerf, so no material is there to helix in. Validation reports
+    /// it (`helix_needs_waste_side`); the generator refuses it too.
+    #[error(
+        "operation `{op}` cuts on the line and asks for a helix entry; a helix needs waste beside the cut, so use ramp or plunge"
+    )]
+    HelixNeedsWasteSide {
+        /// The operation.
+        op: OperationId,
+    },
     /// The operation asks for something this build does not generate yet.
     /// Validation accepts it, so a project may carry it; export refuses it
     /// rather than cutting something else.

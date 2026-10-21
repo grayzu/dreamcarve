@@ -295,7 +295,7 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
     "shape": "rect"
   },
   "machining_order": "full_depth_first",
-  "entry": "plunge",
+  "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
   "corner_relief": "none"
 }
@@ -307,14 +307,15 @@ you set it. It also leaves `step_down_mm` as `null`, so the operation uses
 the tool's depth per pass; set it only to override the tool's.
 
 The last four fields came with format version 8 and are shared with the
-other kinds. This build reads and checks them; the cutting they describe
-lands in phase 2, slice by slice, so until then a Profile cuts as if they
-held the values above:
+other kinds. This build reads and checks them. A Profile cuts
+`machining_order` and `entry` as set; the cutting `lead` and
+`corner_relief` describe lands later in phase 2, so until then a Profile
+cuts as if they held the values above:
 
 | Field | Values |
 | --- | --- |
 | `machining_order` | `"full_depth_first"` (each shape to full depth before the next) or `"pass_first"` (each pass across every shape before the next, deeper pass). |
-| `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line Profile. |
+| `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
 | `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only. |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each internal corner a round tool cannot reach. Pocket and Profile. Steps down at the tool's `step_down_mm`, so that must be set. |
 

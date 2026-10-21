@@ -69,7 +69,7 @@ reads). `init` fills it with these defaults:
 | Stock | The drawing's bounds plus 10 mm on each side: 110 × 110 mm here, **no thickness** |
 | Work zero | X and Y at the stock's bottom-left corner, Z at the stock top |
 | Tool `t1`, named "Set me" | 6.35 mm end mill, 2 flutes, **no feed, plunge rate, spindle speed or depth per pass** |
-| Operation `op1` | A Profile of every closed shape: outside the line, climb, **no depth**, passes as deep as the tool's depth per pass, safe Z 5 mm |
+| Operation `op1` | A Profile of every closed shape: outside the line, climb, **no depth**, passes as deep as the tool's depth per pass, a 15° ramp into each pass, safe Z 5 mm |
 | Tabs | 4 tabs, 8 mm wide and 3 mm tall, square |
 | Post-processor | grblHAL, millimetres |
 
@@ -196,7 +196,8 @@ Save the file.
 - `feed_mm_min` is the **feed rate**: how fast the bit moves along the
   outline while cutting, in millimetres per minute.
 - `plunge_mm_min` is the **plunge rate**: how fast it moves straight down
-  into the material, in millimetres per minute.
+  into the material, in millimetres per minute. The profile ramps into
+  each pass rather than plunging, but never descends faster than this.
 - `rpm` is the spindle speed, in revolutions per minute.
 - `step_down_mm` is the **depth per pass**: the most the bit cuts deeper
   on each trip around the outline, in millimetres. The 12 mm cut takes
@@ -242,18 +243,19 @@ dreamcarve export coaster.dcv
 ```
 
 ```text
-Wrote coaster.nc (53 lines, post-processor grblhal).
+Wrote coaster.nc (57 lines, post-processor grblhal).
   op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
-Extents (machine coordinates, mm, tool centre): X 6.817..103.178, Y 6.817..103.183, Z -12.000..5.000
-  The cutter's edge reaches X 3.642..106.353, Y 3.642..106.358; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.817..103.969, Y 6.817..103.183, Z -12.000..5.000
+  The cutter's edge reaches X 3.642..107.144, Y 3.642..106.358; keep clamps outside that.
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
 `coaster.nc` is the G-code program. The **extents** are where it takes the
 bit, in the coordinates your controller shows once work zero is set: the
-centre of the bit stays between X 6.817 and 103.178 mm, and its edge, half
-the 6.35 mm diameter further out, between X 3.64 and 106.36 mm (Y nearly
-the same). Z runs from −12, the deepest cut, up to 5, safe Z. You place
+centre of the bit stays between X 6.817 and 103.969 mm, and its edge, half
+the 6.35 mm diameter further out, between X 3.64 and 107.14 mm (Y between
+3.64 and 106.36 mm: the ramp into each pass, step 7, reaches a little past
+the circle on the right). Z runs from −12, the deepest cut, up to 5, safe Z. You place
 clamps from these numbers in step 8.
 
 The program does not stop for its first bit: you fit it and set work zero
@@ -280,8 +282,10 @@ G0 Z5.000
 M3 S18000
 G4 P3.000
 X103.139 Y56.863
-G1 Z-4.000 F500.000
-G2 X86.245 Y18.324 I-48.139 J-1.870 F1500.000
+G1 X103.969 Y37.831 Z-0.104 F1500.000
+X103.335 Y52.356 Z-4.000
+X103.139 Y56.863
+G2 X86.245 Y18.324 I-48.139 J-1.870
 ```
 
 | Lines | What they do |
@@ -290,8 +294,9 @@ G2 X86.245 Y18.324 I-48.139 J-1.870 F1500.000
 | `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) happen only at or above this height. |
 | `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `X103.139 Y56.863` | Rapid to the start of the cut, still at safe Z. |
-| `G1 Z-4.000 F500.000` | Plunge to the first pass, 4 mm deep, at the plunge rate. |
-| `G2 X86.245 Y18.324 I-48.139 J-1.870 F1500.000` | Cut along the outline at the feed rate, as a clockwise arc (`G2`) whose centre is `I`, `J` from the start. |
+| `G1 X103.969 Y37.831 Z-0.104 F1500.000`, `X103.335 Y52.356 Z-4.000` | **Ramp** down to the first pass, 4 mm deep: two straight moves at 15° in the waste outside the coaster, out and back, at the feed rate. The bit enters the wood on a slope instead of drilling straight down, which is easier on the bit and leaves no plunge mark. `G1` stays in effect, so the next lines are cuts too. |
+| `X103.139 Y56.863` | Back to the start of the cut, at the pass depth. |
+| `G2 X86.245 Y18.324 I-48.139 J-1.870` | Cut along the outline at the feed rate, as a clockwise arc (`G2`) whose centre is `I`, `J` from the start. |
 
 The drawing's circle was imported as 160 short straight edges, and the
 program would be a thousand lines of `G1` moves. Instead `export` writes
@@ -299,7 +304,8 @@ each lap as a few arcs that pass within 0.01 mm of every corner of the
 outline ([Arc fitting](../user-guide/project-file.md#arc-fitting)); the
 cut is the same, only smoother.
 
-The circle is cut in three passes: Z −4, −8 and −12. The bottom of the
+The circle is cut in three passes: Z −4, −8 and −12, each ramped into
+from the floor of the pass before. The bottom of the
 plywood is at Z −11.8, so the last pass goes 0.2 mm into the spoilboard. On
 that pass the bit rises to Z −8.8 over each tab, leaving 3 mm of wood. Then
 it retracts to safe Z, stops the spindle (`M5`) and ends (`M30`).
@@ -311,7 +317,7 @@ job:
 
 1. **Fix the stock.** The program uses the 110 × 110 mm square that starts
    at your XY zero. Use the extents `export` printed (step 6) to place
-   clamps: the bit's edge reaches X 3.64 to 106.36 mm and Y 3.64 to
+   clamps: the bit's edge reaches X 3.64 to 107.14 mm and Y 3.64 to
    106.36 mm from your XY zero, so keep clamps and screws outside that area,
    with room to spare for the collet nut. Your board can be bigger. If you
    change the project, export again and use the new extents.

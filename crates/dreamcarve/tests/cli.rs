@@ -961,7 +961,6 @@ fn init_writes_phase_2_defaults() {
     assert!(text.contains("\"version\": 8,"), "{text}");
     assert!(text.contains("\"arc_fit_tolerance_mm\": 0.01,"), "{text}");
     assert!(text.contains("\"number\": null,"), "{text}");
-    assert!(text.contains("\"entry\": \"plunge\","), "{text}");
     assert!(text.contains("\"lead\": null,"), "{text}");
     assert!(text.contains("\"use_canned_cycles\": false"), "{text}");
     let project = load_file(&dcv).project;
@@ -972,7 +971,6 @@ fn init_writes_phase_2_defaults() {
     );
     for op in project.operations.iter().map(as_profile) {
         assert_eq!(op.machining_order, MachiningOrder::FullDepthFirst);
-        assert_eq!(op.entry, Entry::Plunge);
         assert_eq!(op.lead, None);
         assert_eq!(op.corner_relief, CornerRelief::None);
     }
@@ -984,6 +982,28 @@ fn init_writes_phase_2_defaults() {
     for word in ["entry", "number", "canned", "arc_fit"] {
         assert!(!report.contains(word), "{word} in {report}");
     }
+}
+
+/// #119: a new project's Profile ramps in at 15° (functional spec,
+/// capability 16, open question 6), written as the one-key object, and
+/// `check` has nothing to say about it.
+#[test]
+fn init_writes_ramp_entry() {
+    let dir = work_dir("init_writes_ramp_entry");
+    let dcv = init_coaster(&dir);
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let compact: String = text.split_whitespace().collect();
+    assert!(
+        compact.contains("\"entry\":{\"ramp\":{\"angle_deg\":15.0}}"),
+        "{text}"
+    );
+    let project = load_file(&dcv).project;
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.entry, Entry::Ramp { angle_deg: 15.0 });
+    }
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert!(!report.contains("entry"), "{report}");
 }
 
 /// The spec's `v6_fixture_exports_phase_1_bytes_with_fitting_off`, for
@@ -1210,9 +1230,18 @@ fn pocket_helix_entry_exports_and_passes_safety() {
         !scaled.is_empty(),
         "the helix runs at a plunge-limited feed:\n{program}"
     );
-    // 100 / sin 5° = 1147 mm/min, a little less on the chords.
+    // 100 / sin 5° = 1147 mm/min, a little less on the chords. The
+    // Profile's 15° ramp (init's entry) is plunge-limited too, at
+    // 100 / sin 15° = 386 mm/min.
+    assert!(
+        scaled.iter().any(|f| (1100.0..1150.0).contains(f)),
+        "the helix is cut: {scaled:?}"
+    );
     for f in scaled {
-        assert!((1100.0..1150.0).contains(&f), "helix feed {f}");
+        assert!(
+            (1100.0..1150.0).contains(&f) || (f - 100.0 / 15f64.to_radians().sin()).abs() < 0.01,
+            "helix or ramp feed {f}"
+        );
     }
 }
 
@@ -1872,10 +1901,12 @@ fn printed_range(summary: &str, label: char) -> (f64, f64) {
     )
 }
 
-/// Functional acceptance 37: with `arc_fit_tolerance_mm: null` the program
-/// is the phase 1 program, byte for byte:
-/// `tests/expected/coaster-grblhal-unfitted.nc` is `coaster-grblhal.nc` as
-/// it was before arc fitting.
+/// Functional acceptance 37, on the `init` coaster: with
+/// `arc_fit_tolerance_mm: null` nothing is fitted:
+/// `tests/expected/coaster-grblhal-unfitted.nc` is `coaster-grblhal.nc`
+/// with every lap its straight moves. (It ramps into each pass, as `init`
+/// projects do since #119, so it is no longer the phase 1 program; the
+/// migrated phase 1 fixture keeps that, `v7_project_exports_the_same_program`.)
 #[test]
 fn null_arc_fit_tolerance_exports_the_unfitted_program() {
     let dir = work_dir("null_arc_fit_tolerance");
@@ -1925,12 +1956,13 @@ fn export_prints_extents() {
         for axis in ['X', 'Y'] {
             let (min, max) = printed_range(&summary, axis);
             let (word_min, word_max) = word_range(expected, axis);
+            // The entry ramp's straight moves may reach past the circle.
             assert!(
-                min <= word_min && (min - CIRCLE_MIN_MM).abs() <= SLACK_MM,
+                min <= word_min && (min - CIRCLE_MIN_MM.min(word_min)).abs() <= SLACK_MM,
                 "{command}: {axis} min {min} vs words {word_min}: {summary}"
             );
             assert!(
-                max >= word_max && (max - CIRCLE_MAX_MM).abs() <= SLACK_MM,
+                max >= word_max && (max - CIRCLE_MAX_MM.max(word_max)).abs() <= SLACK_MM,
                 "{command}: {axis} max {max} vs words {word_max}: {summary}"
             );
         }
@@ -2464,6 +2496,9 @@ fn part_and_hole_as_two_operations() {
     hole_op.targets = vec![hole];
     hole_op.side = Side::Inside;
     hole_op.tabs = None;
+    // Every hole move is checked against the tool-centre circle, so no
+    // ramp inside it (the entry has its own tests in dc-cam).
+    hole_op.entry = Entry::Plunge;
     let mut star_op = as_profile(&project.operations[0]).clone();
     star_op.id = OperationId::new("op2");
     star_op.name = "Star".into();
@@ -2540,6 +2575,8 @@ fn hole_targeted_alone_with_outside_is_oversize() {
     op.targets = vec![hole];
     op.side = Side::Outside;
     op.tabs = None;
+    // Every cut is checked against the tool-centre circle: no ramp.
+    op.entry = Entry::Plunge;
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
     let moves = export_star(&dir);
@@ -2634,7 +2671,11 @@ fn grbl_exports_match_committed_programs() {
 fn hole_role_is_decided_within_one_operation() {
     let dir = work_dir("hole_role_is_decided_within_one_operation");
     let dcv = init_star(&dir, STAR_WITH_HOLE_ONE_PATH_SVG);
-    let project = load_file(&dcv).project;
+    let mut project = load_file(&dcv).project;
+    // Every hole move is checked against the tool-centre circle, so no
+    // ramp inside it (the entry has its own tests in dc-cam).
+    as_profile_mut(&mut project.operations[0]).entry = Entry::Plunge;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     assert_eq!(project.instances.len(), 1, "one path is one instance");
     let definition = project
         .definitions
@@ -2671,6 +2712,7 @@ fn hole_role_is_decided_within_one_operation() {
     hole_op.id = OperationId::new("op2");
     hole_op.targets = vec![hole];
     hole_op.side = Side::Inside;
+    hole_op.entry = Entry::Plunge;
     project.operations = vec![Operation::Profile(star_op), Operation::Profile(hole_op)];
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     let moves = export_star(&dir);

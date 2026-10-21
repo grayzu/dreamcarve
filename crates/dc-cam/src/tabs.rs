@@ -192,6 +192,12 @@ impl Tabs {
         (layout, overlap)
     }
 
+    /// The tab top, mm above the stock bottom: a pass below it rises over
+    /// the tabs.
+    pub(crate) fn top_z_mm(&self) -> f64 {
+        self.top_z_mm
+    }
+
     /// The length of path a smooth ramp rises or falls over: half the tab
     /// width, so the bridge left is a triangle `width` wide at its base.
     fn ramp_mm(&self) -> f64 {
@@ -230,6 +236,42 @@ enum Zone {
 }
 
 impl PathTabs {
+    /// How far along the path from its start the first raised span
+    /// begins, mm: the stretch a pass below the tab top cuts at its own Z
+    /// before the first tab. 0 when a span covers the start; the path
+    /// length when there are no spans.
+    pub(crate) fn clear_from_start_mm(&self) -> f64 {
+        if self.full {
+            return 0.0;
+        }
+        let mut clear = self.length_mm;
+        for span in &self.spans {
+            let end = span.start_mm + span.length_mm;
+            if span.start_mm <= EPS_MM || end >= self.length_mm - EPS_MM {
+                return 0.0;
+            }
+            clear = clear.min(span.start_mm);
+        }
+        clear
+    }
+
+    /// Where along the path the tabs' material stands, mm, as `(from, to)`
+    /// with `to` possibly beyond the path length (a stretch through the
+    /// start): each raised span less a tool radius at either end, since the
+    /// tool rises a radius before the material and comes down a radius
+    /// after it. The whole path when the spans cover it.
+    pub(crate) fn stretches_mm(&self, tabs: &Tabs) -> Vec<(f64, f64)> {
+        if self.full {
+            return vec![(0.0, self.length_mm)];
+        }
+        let radius = tabs.diameter_mm / 2.0;
+        self.spans
+            .iter()
+            .filter(|s| s.length_mm > 2.0 * radius)
+            .map(|s| (s.start_mm + radius, s.start_mm + s.length_mm - radius))
+            .collect()
+    }
+
     /// The zone at `distance_mm` along the path.
     fn zone(&self, tabs: &Tabs, distance_mm: f64) -> Zone {
         if self.full {
