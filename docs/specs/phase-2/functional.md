@@ -366,7 +366,9 @@ operations; the reverse order is quiet. Operations using T1, T2, T1
 hint `tool_change_avoidable`.
 33. **One program with tool changes.** The plaque exported with
 `--one-program` on grblHAL yields one file with `T2 M6` between the
-Drill and the Engrave; on GRBL the flag is an error naming the
+Profile and the Engrave (changed in #252: it said the Drill, but the
+plaque's operations are Pocket, Pocket, Drill, Profile, Engrave, so the
+only tool change follows the Profile); on GRBL the flag is an error naming the
 post-processor. With `--programs-per-tool` on a project whose mode is
 `"m6"`, two files are written and the project file is unchanged. A
 user config setting `tool_change_mode = "m6"` makes `init` write that
