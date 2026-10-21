@@ -65,6 +65,22 @@ pub enum WarningCode {
     /// this is a hint. Params: `tool`, `tool_name`, `ops` (the ids of
     /// every enabled operation using the tool, comma separated, in order).
     ToolChangeAvoidable,
+    /// A Drill target is not a circle (or is an open path), so it was
+    /// skipped. Params: `op`, `instance`, `instance_name`, `profile`.
+    DrillTargetNotCircle,
+    /// The drilling tool is wider than the hole it drills; the hole comes
+    /// out the tool's size. Params: `op`, `instance`, `instance_name`,
+    /// `profile`, `hole_mm`, `tool_mm`.
+    DrillToolWiderThanHole,
+    /// The peck depth is at least the hole depth, so the hole is drilled in
+    /// one plunge. Params: `op`, `instance`, `instance_name`, `profile`,
+    /// `peck_mm`, `depth_mm`.
+    DrillPeckDeeperThanHole,
+    /// The retract height is below the stock top, so it was raised to the
+    /// top: the tool must never rapid into material. Params: `op`,
+    /// `requested_mm` (the height above the stock top as set, negative),
+    /// `used_mm` (0).
+    DrillRetractBelowStockTop,
 }
 
 impl WarningCode {
@@ -81,6 +97,10 @@ impl WarningCode {
             Self::ToolpathsOverlap => "toolpaths_overlap",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
+            Self::DrillTargetNotCircle => "drill_target_not_circle",
+            Self::DrillToolWiderThanHole => "drill_tool_wider_than_hole",
+            Self::DrillPeckDeeperThanHole => "drill_peck_deeper_than_hole",
+            Self::DrillRetractBelowStockTop => "drill_retract_below_stock_top",
         }
     }
 }
@@ -280,6 +300,30 @@ impl fmt::Display for Warning {
                 self.text("tool"),
                 self.text("tool_name"),
                 self.text("ops")
+            ),
+            WarningCode::DrillTargetNotCircle => write!(
+                f,
+                "{} is not a circle; Drill plunges only at the centre of circles, so it is not drilled",
+                self.shape()
+            ),
+            WarningCode::DrillToolWiderThanHole => write!(
+                f,
+                "the {} mm tool is wider than the {} mm hole {}, so the hole comes out the tool's size",
+                self.number("tool_mm", DIAMETER_DECIMALS),
+                self.mm("hole_mm"),
+                self.shape()
+            ),
+            WarningCode::DrillPeckDeeperThanHole => write!(
+                f,
+                "the {} mm peck is at least the {} mm depth of {}, so it is drilled in one plunge",
+                self.mm("peck_mm"),
+                self.mm("depth_mm"),
+                self.shape()
+            ),
+            WarningCode::DrillRetractBelowStockTop => write!(
+                f,
+                "retract_mm is {} mm, below the stock top; the tool retracts to the stock top instead, because it must never rapid into material",
+                self.mm("requested_mm")
             ),
             WarningCode::TabsCoverMostOfContour => {
                 let path_mm = self

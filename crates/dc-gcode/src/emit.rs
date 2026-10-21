@@ -61,7 +61,7 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use dc_cam::{FeedField, Move, MoveKind, Toolpath};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
 use dc_project::{
-    ArcFormat, OperationId, PostProcessor, ProfileOp, Project, SpindleControl, Tool,
+    ArcFormat, Operation, OperationId, PostProcessor, Project, SpindleControl, Tool,
     ToolChangeMode, ToolId, Units, is_m6_line,
 };
 
@@ -162,7 +162,7 @@ pub const MIN_DECIMAL_PLACES_MM: u8 = 2;
 pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 
 /// One operation to emit: the operation, its tool, and its toolpath.
-type OpEntry = (ProfileOp, Tool, Toolpath);
+type OpEntry = (Operation, Tool, Toolpath);
 
 /// How [`emit_programs`] splits a project whose enabled operations use
 /// more than one tool: as the project's post-processor `tool_change_mode`
@@ -293,11 +293,11 @@ fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), E
     let mut warnings = Vec::new();
     let mut enabled = Vec::with_capacity(ops.len());
     for entry in ops {
-        if entry.0.enabled {
+        if entry.0.enabled() {
             enabled.push(entry);
         } else {
             warnings.push(ExportWarning::DisabledOperationSkipped {
-                op: entry.0.id.clone(),
+                op: entry.0.id().clone(),
             });
         }
     }
@@ -329,7 +329,7 @@ fn emit_enabled(
             .position(|t| t.id == tool.id)
             .map(|i| i + 1)
             .ok_or_else(|| ExportError::UnknownTool {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 tool: tool.id.clone(),
             })?;
         planned.push((op, tool, toolpath, rates, number));
@@ -457,7 +457,7 @@ fn emit_enabled(
         let mut context = common.clone();
         context.extend([
             ("operationIndex", (index + 1).to_string()),
-            ("operationName", comment_text(&op.name)),
+            ("operationName", comment_text(op.name())),
             ("toolNumber", number.to_string()),
             ("toolName", comment_text(&tool.name)),
         ]);
@@ -466,7 +466,7 @@ fn emit_enabled(
                 "{} Operation {}: {} {}",
                 post.program.comment_prefix,
                 index + 1,
-                comment_text(&op.name),
+                comment_text(op.name()),
                 post.program.comment_suffix
             );
             w.line(comment.trim_end());
@@ -477,7 +477,7 @@ fn emit_enabled(
         }
 
         let spindle_off = post.feed_speed.spindle_off.trim();
-        let safe_z_mm = thickness_mm + op.safe_z_mm;
+        let safe_z_mm = thickness_mm + op.safe_z_mm();
         // The tool change belongs to the operation, so the safety pass
         // checks its stop against this operation's safe Z.
         let first_line = w.next_line();
@@ -551,16 +551,16 @@ fn emit_enabled(
             }
         }
 
-        let written = w.toolpath(op, toolpath)?;
+        let written = w.toolpath(op.id(), toolpath)?;
         if written.flattened > 0 {
             warnings.push(ExportWarning::ArcsFlattened {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 count: written.flattened,
             });
         }
         if written.fallback_runs > 0 {
             warnings.push(ExportWarning::ArcFitFallback {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 runs: written.fallback_runs,
             });
         }
@@ -1167,13 +1167,13 @@ impl<'a> Writer<'a> {
     /// in project space; each fitted run is then judged on its rounded
     /// machine numbers and reverts to its moves if the controller would
     /// reject any of its arcs.
-    fn toolpath(&mut self, op: &ProfileOp, toolpath: &Toolpath) -> Result<Written, ExportError> {
+    fn toolpath(&mut self, op: &OperationId, toolpath: &Toolpath) -> Result<Written, ExportError> {
         // Every cut carries a feed, checked before fitting so the error
         // names the move whatever the fitting does.
         for (index, mv) in toolpath.moves.iter().enumerate() {
             if !mv.is_rapid() && !mv.feed_mm_min.is_some_and(|f| f.is_finite() && f > 0.0) {
                 return Err(ExportError::MoveWithoutFeed {
-                    op: op.id.clone(),
+                    op: op.clone(),
                     index,
                 });
             }
@@ -1234,7 +1234,7 @@ impl<'a> Writer<'a> {
     /// be flattened (0 or 1).
     fn write_move(
         &mut self,
-        op: &ProfileOp,
+        op: &OperationId,
         index: usize,
         mv: &Move,
     ) -> Result<usize, ExportError> {
@@ -1246,10 +1246,11 @@ impl<'a> Writer<'a> {
             .feed_mm_min
             .filter(|f| f.is_finite() && *f > 0.0)
             .ok_or_else(|| ExportError::MoveWithoutFeed {
-                op: op.id.clone(),
+                op: op.clone(),
                 index,
             })?;
         let (centre, clockwise) = match mv.kind {
+            MoveKind::Dwell { .. } => return Ok(0),
             MoveKind::Rapid | MoveKind::Linear => {
                 self.linear(mv.to, feed)?;
                 return Ok(0);
@@ -1258,7 +1259,7 @@ impl<'a> Writer<'a> {
             MoveKind::ArcCcw { centre } => (centre, false),
         };
         let start = self.position.ok_or_else(|| ExportError::ArcWithoutStart {
-            op: op.id.clone(),
+            op: op.clone(),
             index,
         })?;
         self.arc(start, mv.to, centre, clockwise, feed)
@@ -1270,7 +1271,7 @@ impl<'a> Writer<'a> {
     /// already accepted the whole run from that same position.
     fn fitted_arc(
         &mut self,
-        op: &ProfileOp,
+        op: &OperationId,
         index: usize,
         arc: &SubArc,
         feed_mm_min: f64,
@@ -1278,7 +1279,7 @@ impl<'a> Writer<'a> {
         let (sx, sy) = self
             .emitted_xy()
             .ok_or_else(|| ExportError::ArcWithoutStart {
-                op: op.id.clone(),
+                op: op.clone(),
                 index,
             })?;
         let end = self.transform.to_machine(arc.end);
@@ -1599,11 +1600,19 @@ mod tests {
     use dc_geometry::{Point, Point3, assert_approx_eq};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
     use dc_project::{
-        Operation, OperationId, OriginZ, PostProcessorRef, SpindleControl, ToolChangeMode, ToolId,
-        Units,
+        Operation, OperationId, OriginZ, PostProcessorRef, ProfileOp, SpindleControl,
+        ToolChangeMode, ToolId, Units,
     };
 
     const DATE: &str = "2026-10-15";
+
+    /// `op` as the Profile every test operation is.
+    fn profile_mut(op: &mut Operation) -> &mut ProfileOp {
+        let Operation::Profile(op) = op else {
+            panic!("a Profile operation");
+        };
+        op
+    }
 
     fn profile_op(project: &Project) -> ProfileOp {
         let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
@@ -1625,7 +1634,7 @@ mod tests {
     }
 
     /// The sample project's operation, tool, and generated toolpath.
-    fn ops_for(project: &Project) -> Vec<(ProfileOp, Tool, Toolpath)> {
+    fn ops_for(project: &Project) -> Vec<(Operation, Tool, Toolpath)> {
         let op = profile_op(project);
         let tool = project
             .tools
@@ -1635,7 +1644,7 @@ mod tests {
             .clone();
         let (toolpath, _) = generate_profile(project, &op).unwrap();
         dc_cam::test_support::assert_safe(&toolpath, project, &op);
-        vec![(op, tool, toolpath)]
+        vec![(Operation::Profile(op), tool, toolpath)]
     }
 
     fn emit_text(project: &Project) -> String {
@@ -1750,7 +1759,7 @@ mod tests {
     fn no_enabled_operation_is_an_error() {
         let project = sample_project();
         let mut ops = ops_for(&project);
-        ops[0].0.enabled = false;
+        profile_mut(&mut ops[0].0).enabled = false;
         assert!(matches!(
             emit(&project, &ops, DATE),
             Err(ExportError::NoEnabledOperations)
@@ -1945,7 +1954,7 @@ mod tests {
             project.name = nasty.into();
             project.tools[0].name = nasty.into();
             let mut ops = ops_for(&project);
-            ops[0].0.name = nasty.into();
+            profile_mut(&mut ops[0].0).name = nasty.into();
             ops[0].1.name = nasty.into();
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             for line in text.lines() {
@@ -1990,7 +1999,7 @@ mod tests {
             let mut project = project_with(post);
             project.name = "P".repeat(1000);
             let mut ops = ops_for(&project);
-            ops[0].0.name = "O".repeat(1000);
+            profile_mut(&mut ops[0].0).name = "O".repeat(1000);
             ops[0].1.name = "T".repeat(1000);
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             for line in text.lines() {
@@ -2098,7 +2107,7 @@ mod tests {
     /// The sample operation, then the same with a second tool. The
     /// project's tool-change mode becomes `"m6"`, the one program with a
     /// tool change that [`emit`] writes (#95).
-    fn two_tool_ops(project: &mut Project) -> Vec<(ProfileOp, Tool, Toolpath)> {
+    fn two_tool_ops(project: &mut Project) -> Vec<(Operation, Tool, Toolpath)> {
         project.post_processor.tool_change_mode = ToolChangeMode::M6;
         project.tools.push(second_tool());
         let mut second = profile_op(project);
@@ -2108,7 +2117,7 @@ mod tests {
         project.operations.push(Operation::Profile(second.clone()));
         let mut ops = ops_for(project);
         let (toolpath, _) = generate_profile(project, &second).unwrap();
-        ops.push((second, second_tool(), toolpath));
+        ops.push((Operation::Profile(second), second_tool(), toolpath));
         ops
     }
 
@@ -2295,7 +2304,7 @@ mod tests {
     fn manual_spindle_message_includes_rpm_hint() {
         let project = manual_project("grblhal");
         let mut ops = ops_for(&project);
-        let on_line = |ops: &[(ProfileOp, Tool, Toolpath)]| -> String {
+        let on_line = |ops: &[(Operation, Tool, Toolpath)]| -> String {
             let text = emit(&project, ops, DATE).unwrap().0.text;
             text.lines()
                 .find(|l| l.contains("Turn the router ON"))
@@ -2901,7 +2910,7 @@ mod tests {
             );
 
             ops[1].1 = ops[0].1.clone();
-            ops[1].0.tool = ops[0].1.id.clone();
+            profile_mut(&mut ops[1].0).tool = ops[0].1.id.clone();
             emit(&project, &ops, DATE).unwrap();
         }
     }
@@ -3052,5 +3061,59 @@ mod tests {
         let (programs, _) =
             emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
         assert_eq!(programs.len(), 2, "separate_programs: one per tool run");
+    }
+
+    /// A one-hole Drill of the sample project at (50, 50), 3 mm deep: in
+    /// at safe Z (11), down to the retract plane 1 mm above the 6 mm stock,
+    /// plunge, dwell 0.5 s, back to safe Z. Hand-written so the emitter is
+    /// tested apart from the generator.
+    fn drill_ops(project: &Project) -> Vec<(Operation, Tool, Toolpath)> {
+        let op = dc_project::test_support::sample_drill();
+        let tool = project.tools[0].clone();
+        let toolpath = Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(50.0, 50.0, 11.0)),
+                Move::rapid(Point3::new(50.0, 50.0, 7.0)),
+                Move::linear(Point3::new(50.0, 50.0, 3.0), 300.0),
+                Move::dwell(Point3::new(50.0, 50.0, 3.0), 0.5),
+                Move::rapid(Point3::new(50.0, 50.0, 11.0)),
+            ],
+        };
+        vec![(Operation::Drill(op), tool, toolpath)]
+    }
+
+    /// The line after the plunge to the hole bottom (Z −3 on a stock-top
+    /// origin) in `text`.
+    fn line_after_plunge(text: &str) -> &str {
+        let lines: Vec<&str> = text.lines().collect();
+        let plunge = lines
+            .iter()
+            .position(|l| has_word(l, "G1") && has_word(l, "Z-3"))
+            .unwrap_or_else(|| panic!("no plunge to Z-3 in\n{text}"));
+        lines[plunge + 1]
+    }
+
+    /// Design spec, "Algorithms → Drill" step 5: a dwell is written as the
+    /// post-processor's dwell command, `G4 P<seconds>` on grblHAL, where P
+    /// is seconds (grblHAL `gcode.c`, G4), at the bottom of the hole, and
+    /// the program passes the safety pass (S6 matches the dwell, S15 the
+    /// rapid down to the retract plane).
+    #[test]
+    fn dwell_writes_g4() {
+        let project = project_with("grblhal");
+        let (program, _) = emit(&project, &drill_ops(&project), DATE).unwrap();
+        assert_eq!(line_after_plunge(&program.text), "G4 P0.500");
+    }
+
+    /// Mach3 takes `G4 P` in milliseconds (design spec, "Post-processor
+    /// definitions"); a definition whose dwell `units` are milliseconds
+    /// gets the same dwell as `P500`.
+    #[test]
+    fn dwell_in_milliseconds_when_the_post_says_so() {
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.feed_speed.spindle_on_dwell.units = dc_project::DwellUnits::Milliseconds;
+        let (program, _) = emit_with(&project, &post, &drill_ops(&project), DATE).unwrap();
+        assert_eq!(line_after_plunge(&program.text), "G4 P500");
     }
 }

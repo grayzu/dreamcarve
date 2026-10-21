@@ -257,7 +257,7 @@ impl RunMove {
             return None;
         }
         let midpoint = match mv.kind {
-            MoveKind::Rapid => return None,
+            MoveKind::Rapid | MoveKind::Dwell { .. } => return None,
             MoveKind::Linear => None,
             MoveKind::ArcCw { centre } => Some(shallow_arc_midpoint(
                 from.xy(),
@@ -1497,8 +1497,12 @@ mod tests {
         let (toolpath, warnings) = generate_profile(project, &op).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         dc_cam::test_support::assert_safe(&toolpath, project, &op);
-        let (program, warnings) =
-            emit(project, &[(op, tool, toolpath.clone())], "2026-10-15").unwrap();
+        let (program, warnings) = emit(
+            project,
+            &[(Operation::Profile(op), tool, toolpath.clone())],
+            "2026-10-15",
+        )
+        .unwrap();
         (program.text, warnings, toolpath)
     }
 

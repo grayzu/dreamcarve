@@ -13,8 +13,8 @@
 )]
 
 use crate::toolpath::{Move, MoveKind, Toolpath};
-use dc_geometry::{EPS_MM, approx_eq};
-use dc_project::{ProfileOp, Project};
+use dc_geometry::{EPS_MM, Point, approx_eq};
+use dc_project::{DrillOp, Operation, ProfileOp, Project, ToolId};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -23,32 +23,94 @@ use dc_project::{ProfileOp, Project};
 /// 1. **Depth (S1).** No move ends below `−op.through_cut_allowance_mm`.
 /// 2. **Start and end.** A non-empty toolpath starts with a rapid that ends
 ///    at or above safe Z, and its last move ends at or above safe Z.
-/// 3. **Rapids (S2).** Every rapid ends at or above safe Z and carries no
-///    feed. A rapid that moves in XY must also start at or above safe Z, so
-///    the only rapid that may begin lower is a straight vertical retract.
-///    (The first move's start is wherever the machine is; the
-///    post-processor raises Z before moving in XY.)
+/// 3. **Rapids (S2, S15).** Every rapid carries no feed. A rapid that moves
+///    in XY starts and ends at or above safe Z. A rapid in Z alone may end
+///    below safe Z only in air: at or above the stock top, or at or above
+///    the deepest Z a cutting move has already reached at that XY (a
+///    drill's retract and peck re-entry, S15). (The first move's start is
+///    wherever the machine is; the post-processor raises Z before moving
+///    in XY.)
 /// 4. **Feeds (S3).** Every linear and arc move carries `Some` positive
 ///    feed. A straight plunge (Z falls, XY stays) carries the tool's plunge
 ///    rate; any move that changes XY, including a ramp down, carries the
 ///    tool's feed rate.
+/// 5. **Dwells.** A dwell ends where the tool already is and carries no
+///    feed.
 ///
 /// Panics with the offending move index on the first violation.
 pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
+    assert_safe_within(
+        toolpath,
+        &limits_of(
+            project,
+            &op.tool,
+            op.safe_z_mm,
+            op.through_cut_allowance_mm,
+            true,
+        ),
+    );
+}
+
+/// [`assert_safe`] for a Drill operation. Drill never moves in XY while
+/// cutting, so the tool needs a plunge rate but no feed.
+pub fn assert_drill_safe(toolpath: &Toolpath, project: &Project, op: &DrillOp) {
+    assert_safe_within(
+        toolpath,
+        &limits_of(
+            project,
+            &op.tool,
+            op.safe_z_mm,
+            op.through_cut_allowance_mm,
+            false,
+        ),
+    );
+}
+
+/// [`assert_safe`] for any operation kind.
+pub fn assert_safe_op(toolpath: &Toolpath, project: &Project, op: &Operation) {
+    match op {
+        Operation::Profile(op) => assert_safe(toolpath, project, op),
+        Operation::Drill(op) => assert_drill_safe(toolpath, project, op),
+        Operation::Pocket(_) | Operation::Engrave(_) => assert_safe_within(
+            toolpath,
+            &limits_of(
+                project,
+                op.tool(),
+                op.safe_z_mm(),
+                op.through_cut_allowance_mm(),
+                true,
+            ),
+        ),
+    }
+}
+
+/// The limits of an operation on `tool` in `project`. With `needs_feed`
+/// false the feed may be unset, and then no XY cutting move is accepted.
+fn limits_of(
+    project: &Project,
+    tool: &ToolId,
+    safe_z_mm: f64,
+    through_cut_allowance_mm: f64,
+    needs_feed: bool,
+) -> Limits {
     let tool = project
         .tools
         .iter()
-        .find(|t| t.id == op.tool)
+        .find(|t| &t.id == tool)
         .expect("operation's tool is in the project");
-    assert_safe_within(
-        toolpath,
-        &Limits {
-            safe_z_mm: project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm,
-            floor_z_mm: -op.through_cut_allowance_mm,
-            feed_mm_min: tool.feed_mm_min.expect("tool has a feed"),
-            plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
-        },
-    );
+    let thickness_mm = project.stock.thickness_mm.expect("stock has a thickness");
+    let feed_mm_min = if needs_feed {
+        tool.feed_mm_min.expect("tool has a feed")
+    } else {
+        tool.feed_mm_min.unwrap_or(f64::NAN)
+    };
+    Limits {
+        safe_z_mm: thickness_mm + safe_z_mm,
+        stock_top_mm: thickness_mm,
+        floor_z_mm: -through_cut_allowance_mm,
+        feed_mm_min,
+        plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
+    }
 }
 
 /// The limits [`assert_safe_within`] checks a toolpath against, for tests
@@ -57,10 +119,13 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
 pub struct Limits {
     /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
+    /// The stock top, mm: a rapid in Z alone may end at or above it.
+    pub stock_top_mm: f64,
     /// Lowest permitted move end, mm: stock bottom minus the through-cut
     /// allowance.
     pub floor_z_mm: f64,
-    /// The tool's cutting feed, mm/min.
+    /// The tool's cutting feed, mm/min. `NaN` when the operation has none,
+    /// which then rejects every XY cutting move.
     pub feed_mm_min: f64,
     /// The tool's plunge rate, mm/min.
     pub plunge_mm_min: f64,
@@ -83,24 +148,39 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
         "move 0 must be a rapid at safe Z {safe_z}: {first:?}"
     );
 
+    // The deepest Z a cutting move has reached at the current XY (S15).
+    let mut cut_to: Option<(Point, f64)> = None;
     let mut previous: Option<&Move> = None;
     for (i, mv) in toolpath.moves.iter().enumerate() {
         assert!(
             at_or_above(mv.to.z, floor_z),
             "move {i} goes below stock bottom − allowance ({floor_z}): {mv:?}"
         );
+        let moves_xy = previous.is_some_and(|prev| prev.to.xy().distance_to(mv.to.xy()) > EPS_MM);
         match mv.kind {
             MoveKind::Rapid => {
                 assert!(mv.feed_mm_min.is_none(), "rapid {i} carries a feed: {mv:?}");
-                assert!(
-                    at_or_above(mv.to.z, safe_z),
-                    "rapid {i} ends below safe Z {safe_z}: {mv:?}"
-                );
                 if let Some(prev) = previous {
-                    let moves_xy = prev.to.xy().distance_to(mv.to.xy()) > EPS_MM;
                     assert!(
                         !moves_xy || at_or_above(prev.to.z, safe_z),
                         "rapid {i} moves in XY from below safe Z {safe_z}: {prev:?} -> {mv:?}"
+                    );
+                }
+                if moves_xy || previous.is_none() {
+                    assert!(
+                        at_or_above(mv.to.z, safe_z),
+                        "rapid {i} ends below safe Z {safe_z}: {mv:?}"
+                    );
+                } else if !at_or_above(mv.to.z, safe_z)
+                    && !at_or_above(mv.to.z, limits.stock_top_mm)
+                {
+                    let cut_z = cut_to
+                        .filter(|(at, _)| at.distance_to(mv.to.xy()) <= EPS_MM)
+                        .map(|(_, z)| z);
+                    assert!(
+                        cut_z.is_some_and(|z| at_or_above(mv.to.z, z)),
+                        "rapid {i} descends into uncut material: ends at Z {} where the deepest cut is {cut_z:?}: {mv:?}",
+                        mv.to.z
                     );
                 }
             }
@@ -111,8 +191,7 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
                 assert!(f > 0.0, "cutting move {i} has non-positive feed: {mv:?}");
                 let prev = previous.expect("a cutting move follows the first rapid");
                 let descends = mv.to.z < prev.to.z - EPS_MM;
-                let moves_xy = prev.to.xy().distance_to(mv.to.xy()) > EPS_MM
-                    || !matches!(mv.kind, MoveKind::Linear);
+                let moves_xy = moves_xy || !matches!(mv.kind, MoveKind::Linear);
                 if descends && !moves_xy {
                     assert!(
                         approx_eq(f, plunge, EPS_MM),
@@ -124,6 +203,20 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
                         "XY cutting move {i} feeds at {f}, not feed {feed}: {mv:?}"
                     );
                 }
+                let z = match cut_to {
+                    Some((at, z)) if at.distance_to(mv.to.xy()) <= EPS_MM => z.min(mv.to.z),
+                    _ => mv.to.z,
+                };
+                cut_to = Some((mv.to.xy(), z));
+            }
+            MoveKind::Dwell { seconds } => {
+                assert!(mv.feed_mm_min.is_none(), "dwell {i} carries a feed: {mv:?}");
+                assert!(seconds > 0.0, "dwell {i} waits {seconds} s: {mv:?}");
+                let prev = previous.expect("a dwell follows a move");
+                assert!(
+                    !moves_xy && approx_eq(prev.to.z, mv.to.z, EPS_MM),
+                    "dwell {i} is not where the tool is: {prev:?} -> {mv:?}"
+                );
             }
         }
         previous = Some(mv);
@@ -247,6 +340,69 @@ mod tests {
     fn rejects_ending_in_the_stock() {
         let mut moves = one_cut(0.0);
         moves.pop();
+        check(moves);
+    }
+
+    /// Rapid in, rapid down to 1 mm above the 6 mm stock, peck to 2, rapid
+    /// up to the retract height, rapid back down to `reentry_z`, peck to
+    /// 0, retract: a drill's moves (S15).
+    fn peck_cycle(reentry_z: f64) -> Vec<Move> {
+        vec![
+            Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+            Move::rapid(Point3::new(0.0, 0.0, 7.0)),
+            Move::linear(Point3::new(0.0, 0.0, 2.0), 300.0),
+            Move::rapid(Point3::new(0.0, 0.0, 7.0)),
+            Move::rapid(Point3::new(0.0, 0.0, reentry_z)),
+            Move::linear(Point3::new(0.0, 0.0, 0.0), 300.0),
+            Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+        ]
+    }
+
+    /// S15: a rapid in Z alone may end above the stock, or inside the air
+    /// a cut has already opened at that XY.
+    #[test]
+    fn z_only_rapid_into_cut_air_is_accepted() {
+        check(peck_cycle(2.5));
+        check(peck_cycle(2.0));
+    }
+
+    /// S15: below the deepest cut at that XY is uncut material.
+    #[test]
+    #[should_panic(expected = "descends into uncut material")]
+    fn z_only_rapid_below_cut_depth_is_rejected() {
+        check(peck_cycle(1.5));
+    }
+
+    /// A cut at another XY does not open this hole.
+    #[test]
+    #[should_panic(expected = "descends into uncut material")]
+    fn cut_elsewhere_does_not_open_this_hole() {
+        let moves = vec![
+            Move::rapid(Point3::new(10.0, 0.0, 11.0)),
+            Move::rapid(Point3::new(10.0, 0.0, 7.0)),
+            Move::linear(Point3::new(10.0, 0.0, 2.0), 300.0),
+            Move::rapid(Point3::new(10.0, 0.0, 11.0)),
+            Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+            Move::rapid(Point3::new(0.0, 0.0, 7.0)),
+            Move::rapid(Point3::new(0.0, 0.0, 2.5)),
+            Move::linear(Point3::new(0.0, 0.0, 0.0), 300.0),
+            Move::rapid(Point3::new(0.0, 0.0, 11.0)),
+        ];
+        check(moves);
+    }
+
+    #[test]
+    fn dwell_at_the_tool_position_is_accepted() {
+        let mut moves = one_cut(0.0);
+        moves.insert(3, Move::dwell(Point3::new(10.0, 0.0, 0.0), 0.5));
+        check(moves);
+    }
+
+    #[test]
+    #[should_panic(expected = "not where the tool is")]
+    fn dwell_away_from_the_tool_is_rejected() {
+        let mut moves = one_cut(0.0);
+        moves.insert(3, Move::dwell(Point3::new(10.0, 0.0, 1.0), 0.5));
         check(moves);
     }
 }

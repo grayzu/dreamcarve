@@ -19,16 +19,17 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use dc_geometry::{Rect, assert_approx_eq};
+use dc_geometry::{Point, Polyline, Rect, Transform, assert_approx_eq};
 
 #[path = "../src/clock.rs"]
 #[allow(dead_code, reason = "the test uses only the timestamp")]
 mod clock;
 use dc_gcode::MachineMove;
-use dc_project::test_support::sample_pocket;
+use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
-    CornerRelief, Entry, FeatureInstance, Loaded, MachiningOrder, Operation, OperationId,
-    ProfileOp, Project, Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, load, save,
+    CornerRelief, DefinitionId, DrillCycle, Entry, FeatureDefinition, FeatureInstance, InstanceId,
+    Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp, Project, Side,
+    SpindleControl, TabPlacement, ToolChangeMode, ToolId, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -842,6 +843,98 @@ fn export_refuses_pocket_until_its_slice_lands() {
     assert!(err.contains("pocket"), "{err}");
     assert!(err.contains("not supported"), "{err}");
     assert!(!dir.join("coaster.nc").exists(), "nothing written");
+}
+
+/// Slice 7 (#138), acceptance test 23 on the CLI: the coaster with an
+/// 8 mm hole at its centre, drilled through in 4 mm pecks with a full
+/// retract and a 0.25 s dwell, checks clean and exports. The program dwells
+/// at the bottom of each of the three pecks, reaches the coaster's depth at
+/// the hole, and moves in XY only at its highest Z (S2); the safety pass,
+/// S6 and S15 included, accepted it.
+#[test]
+fn drill_exports_and_passes_safety() {
+    let dir = work_dir("drill_exports_and_passes_safety");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let hole = FeatureDefinition {
+        id: DefinitionId::new("hole"),
+        name: "Hole".into(),
+        profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 4.0)],
+    };
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("hole1"),
+        definition: hole.id.clone(),
+        transform: Transform::translate(50.0, 50.0),
+        name: "Hole".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: Some(MEASURED_THICKNESS_MM),
+        z_bottom_mm: Some(0.0),
+    });
+    project.definitions.insert(hole.id.clone(), hole);
+    let mut drill = sample_drill();
+    drill.id = OperationId::new("o2");
+    drill.targets = vec![InstanceId::new("hole1")];
+    drill.tool = project.operations[0].tool().clone();
+    drill.cycle = DrillCycle::Peck {
+        peck_depth_mm: Some(4.0),
+        retract: PeckRetract::Full,
+    };
+    drill.dwell_s = 0.25;
+    drill.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
+    drill.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
+    project.operations.push(Operation::Drill(drill));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains("0 error(s), 0 warning(s)"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    let dwells = program.lines().filter(|l| l.trim() == "G4 P0.250").count();
+    assert_eq!(dwells, 3, "one dwell per peck:\n{program}");
+
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let z = |m: &MachineMove| m.to.z.expect("Z is known");
+    let top = moves.iter().map(z).fold(f64::MIN, f64::max);
+    let deepest = moves
+        .iter()
+        .filter(|m| m.kind.is_cut())
+        .map(z)
+        .fold(f64::MAX, f64::min);
+    // The hole is where the tool is at the first drill dwell.
+    let first_dwell = 1 + program
+        .lines()
+        .position(|l| l.trim() == "G4 P0.250")
+        .expect("a drill dwell");
+    let at_dwell = moves
+        .iter()
+        .rev()
+        .find(|m| m.line < first_dwell)
+        .expect("a move before the dwell");
+    let hole_cuts: Vec<f64> = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && m.to.x == at_dwell.to.x && m.to.y == at_dwell.to.y)
+        .map(z)
+        .collect();
+    assert_eq!(hole_cuts.len(), 3, "three pecks at the hole: {hole_cuts:?}");
+    assert_approx_eq!(
+        hole_cuts.iter().copied().fold(f64::MAX, f64::min),
+        deepest,
+        1e-3
+    );
+    for (i, m) in moves.iter().enumerate() {
+        let moves_xy = m.from.x != m.to.x || m.from.y != m.to.y;
+        if m.kind == dc_gcode::parse::MotionKind::Rapid && moves_xy {
+            assert_approx_eq!(m.from.z.unwrap_or(top), top, 1e-6);
+            assert_approx_eq!(z(m), top, 1e-6);
+            assert!(i > 0, "first move is an XY rapid");
+        }
+    }
 }
 
 /// The output extension is a setting in the `.dcv`, so a shared project

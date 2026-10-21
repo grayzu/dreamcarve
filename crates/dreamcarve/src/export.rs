@@ -181,20 +181,15 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                 findings.warnings.extend(warnings.iter().map(|w| {
                     Finding::coded(w.code.as_str(), format!("operation `{}`: {w}", op.id))
                 }));
-                ops.push((op.clone(), tool.clone(), toolpath));
+                ops.push((operation.clone(), tool.clone(), toolpath));
             }
             Err(e) => findings.errors.push(Finding::plain(e.to_string())),
         }
     }
     // The order check runs on whatever generated, so `check` reports it
     // even when another operation failed; it never needs a failed one.
-    let generated: Vec<(&Operation, &Toolpath)> = ops
-        .iter()
-        .filter_map(|(op, _, toolpath)| {
-            let operation = project.operations.iter().find(|o| o.id() == &op.id)?;
-            Some((operation, toolpath))
-        })
-        .collect();
+    let generated: Vec<(&Operation, &Toolpath)> =
+        ops.iter().map(|(op, _, toolpath)| (op, toolpath)).collect();
     findings
         .warnings
         .extend(order::check(project, &generated).iter().map(|w| {

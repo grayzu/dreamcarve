@@ -544,7 +544,7 @@ mod tests {
     use super::*;
     use crate::error::BlockProblem;
     use crate::test_support::{Limits, assert_safe_within};
-    use crate::toolpath::Move;
+    use crate::toolpath::{Move, MoveKind};
     use dc_geometry::{Contour, EPS_MM, Point, Point3, Polyline, Region, nest};
     use dc_project::InstanceId;
 
@@ -630,6 +630,7 @@ mod tests {
     fn limits() -> Limits {
         Limits {
             safe_z_mm: SAFE_Z_MM,
+            stock_top_mm: THICKNESS_MM,
             floor_z_mm: 0.0,
             feed_mm_min: FEED_MM_MIN,
             plunge_mm_min: PLUNGE_MM_MIN,
@@ -1180,6 +1181,23 @@ mod tests {
             Move::linear(Point3::new(5.0, 0.0, 2.0), PLUNGE_MM_MIN)
         );
         assert_eq!(m.len(), 1 + 2 + 4 + 1 + 4 + 1);
+    }
+
+    /// A dwell ends where the tool already is, but it is a pause, not a
+    /// zero-length move: it is written.
+    #[test]
+    fn dwell_moves_are_kept() {
+        let mut blocks = squares("s", 5.0, 0.0, 20.0, 1);
+        let at = blocks[0].cuts[0].to;
+        blocks[0].cuts.insert(1, Move::dwell(at, 0.5));
+        let tp = run(&input(blocks, MachiningOrder::FullDepthFirst, &[]));
+        assert!(
+            tp.moves
+                .iter()
+                .any(|m| m.kind == MoveKind::Dwell { seconds: 0.5 }),
+            "{:?}",
+            tp.moves
+        );
     }
 
     /// Two blocks of one shape at one pass are written in generator order

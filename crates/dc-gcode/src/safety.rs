@@ -18,7 +18,7 @@ use std::ops::Range;
 
 use dc_cam::{Move, MoveKind, Toolpath};
 use dc_geometry::{Arc, EPS_MM, Point, Point3, approx_eq};
-use dc_project::{PostProcessor, ProfileOp, SpindleControl, Stock, Tool, ToolId, Units};
+use dc_project::{Operation, PostProcessor, SpindleControl, Stock, Tool, ToolId, Units};
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
@@ -35,7 +35,7 @@ pub const MAX_LINE_CHARS: usize = 255;
 #[derive(Debug, Clone)]
 pub(crate) struct OpSpan<'a> {
     /// The operation.
-    pub op: &'a ProfileOp,
+    pub op: &'a Operation,
     /// Its tool.
     pub tool: &'a Tool,
     /// Its toolpath, in project space.
@@ -226,7 +226,7 @@ fn check_on_stock(
             ];
             if let Some((side, overhang_mm)) = sides.into_iter().find(|(_, o)| *o > tolerance_mm) {
                 return Err(ExportError::OffStock {
-                    op: limits.op.map(|op| op.id.clone()),
+                    op: limits.op.map(|op| op.id().clone()),
                     line: mv.line,
                     side,
                     overhang_mm,
@@ -557,7 +557,7 @@ fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
 
 /// The rules in force on one line, project space, mm.
 struct Limits<'a> {
-    op: Option<&'a ProfileOp>,
+    op: Option<&'a Operation>,
     tool: Option<&'a Tool>,
     /// Lowest permitted Z: stock bottom minus through-cut allowance.
     floor_mm: f64,
@@ -573,17 +573,17 @@ impl<'a> Limits<'a> {
             return Self {
                 op: Some(span.op),
                 tool: Some(span.tool),
-                floor_mm: -span.op.through_cut_allowance_mm,
-                safe_z_mm: stock_thickness_mm + span.op.safe_z_mm,
+                floor_mm: -span.op.through_cut_allowance_mm(),
+                safe_z_mm: stock_thickness_mm + span.op.safe_z_mm(),
             };
         }
         let floor_mm = spans
             .iter()
-            .map(|s| -s.op.through_cut_allowance_mm)
+            .map(|s| -s.op.through_cut_allowance_mm())
             .fold(0.0, f64::max);
         let safe_z_mm = spans
             .iter()
-            .map(|s| stock_thickness_mm + s.op.safe_z_mm)
+            .map(|s| stock_thickness_mm + s.op.safe_z_mm())
             .fold(stock_thickness_mm, f64::max);
         Self {
             op: None,
@@ -607,7 +607,7 @@ fn check_depth(
     let z_mm = transform.project_z(z, mv.units);
     if z_mm < limits.floor_mm - tolerance_mm {
         return Err(ExportError::BelowMaterialBottom {
-            op: limits.op.map(|op| op.id.clone()),
+            op: limits.op.map(|op| op.id().clone()),
             line: mv.line,
             z_mm,
             floor_mm: limits.floor_mm,
@@ -779,7 +779,7 @@ fn check_reproduces(
         .map(|mv| ReadMove::new(mv, post, transform))
         .collect();
     let mismatch = |index| ExportError::MotionMismatch {
-        op: span.op.id.clone(),
+        op: span.op.id().clone(),
         index,
     };
     let mut cursor = motions
@@ -802,6 +802,7 @@ fn check_reproduces(
         let already_there = here.is_some_and(|h| near(h, mv.to, tolerance_mm));
         let consumed = match mv.kind {
             MoveKind::Rapid => match_rapid(rest, mv.to, already_there),
+            MoveKind::Dwell { .. } => Some(0),
             MoveKind::Linear => match_linear(rest, mv.to, already_there),
             MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
                 let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
@@ -835,7 +836,7 @@ fn check_reproduces(
             rest, moves, index, previous, transform, arc_fit_mm,
         )
         .ok_or_else(|| ExportError::ArcFitViolation {
-            op: span.op.id.clone(),
+            op: span.op.id().clone(),
             line: read.mv.line,
         })?;
         cursor += lines;
@@ -990,7 +991,7 @@ fn match_arc(
 /// With `previous` unknown nothing is.
 fn run_eligible(previous: Option<Point3>, mv: &Move, arc_fit_mm: f64) -> bool {
     match mv.kind {
-        MoveKind::Rapid => false,
+        MoveKind::Rapid | MoveKind::Dwell { .. } => false,
         MoveKind::Linear => true,
         MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
             let cw = matches!(mv.kind, MoveKind::ArcCw { .. });
@@ -1087,7 +1088,7 @@ fn match_fitted_arc(
                 let cw = matches!(mv.kind, MoveKind::ArcCw { .. });
                 shallow_arc_midpoint(vertex.xy(), mv.to.xy(), c, cw, arc_fit_mm)
             }
-            MoveKind::Rapid | MoveKind::Linear => None,
+            MoveKind::Rapid | MoveKind::Linear | MoveKind::Dwell { .. } => None,
         };
         for p in midpoint.into_iter().chain([mv.to.xy()]) {
             // On the current piece, or past its end and on the next.
@@ -1263,7 +1264,9 @@ mod tests {
     use dc_cam::{Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3};
     use dc_project::test_support::sample_project;
-    use dc_project::{ArcFormat, Axis, Operation, Project, SpindleControl, ToolChangeMode};
+    use dc_project::{
+        ArcFormat, Axis, Operation, ProfileOp, Project, SpindleControl, ToolChangeMode,
+    };
 
     /// The sample project (100 × 100 × 6 mm stock, safe Z 11 absolute,
     /// feed 1000, plunge 300, 18000 rpm, GRBL), its operation, and its
@@ -1362,7 +1365,11 @@ mod tests {
         tool.diameter_mm = 6.0;
         let program = emit(
             &project,
-            &[(op, tool, cut_then_half_circle(10.0, 20.0, 40.0, 20.0))],
+            &[(
+                Operation::Profile(op),
+                tool,
+                cut_then_half_circle(10.0, 20.0, 40.0, 20.0),
+            )],
             "2026-10-15",
         )
         .unwrap()
@@ -1404,7 +1411,12 @@ mod tests {
         tool: &Tool,
         tp: Toolpath,
     ) -> Result<String, ExportError> {
-        emit(project, &[(op.clone(), tool.clone(), tp)], "2026-10-15").map(|(p, _)| p.text)
+        emit(
+            project,
+            &[(Operation::Profile(op.clone()), tool.clone(), tp)],
+            "2026-10-15",
+        )
+        .map(|(p, _)| p.text)
     }
 
     /// Runs S1–S5 on hand-written `text` as if it were the whole of the
@@ -1433,7 +1445,7 @@ mod tests {
         let toolpath = Toolpath::default();
         let lines = text.lines().count() + 1;
         let spans = [OpSpan {
-            op: &op,
+            op: &Operation::Profile(op.clone()),
             tool: &tool,
             toolpath: &toolpath,
             lines: 1..lines,
@@ -1637,7 +1649,11 @@ mod tests {
         // A hand-built toolpath that plunges through the spoilboard: export
         // fails outright and yields no program to write.
         let (project, op, tool) = fixture();
-        let result = emit(&project, &[(op, tool, one_cut(-1.0))], "2026-10-15");
+        let result = emit(
+            &project,
+            &[(Operation::Profile(op), tool, one_cut(-1.0))],
+            "2026-10-15",
+        );
         assert!(
             matches!(result, Err(ExportError::BelowMaterialBottom { .. })),
             "{result:?}"
@@ -2044,7 +2060,7 @@ mod tests {
         let post = project.post_processor.resolve().unwrap();
         let transform = MachineTransform::new(&project, &post).unwrap();
         let spans = [OpSpan {
-            op: &op,
+            op: &Operation::Profile(op.clone()),
             tool: &tool,
             toolpath,
             lines: 1..text.lines().count() + 1,
@@ -2062,6 +2078,111 @@ mod tests {
             &spans,
         )
         .map(|_| ())
+    }
+
+    /// [`check_against`] with the operation `op` in place of the
+    /// fixture's Profile.
+    fn check_as(text: &str, toolpath: &Toolpath, op: &Operation) -> Result<(), ExportError> {
+        let (project, _, tool) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let spans = [OpSpan {
+            op,
+            tool: &tool,
+            toolpath,
+            lines: 1..text.lines().count() + 1,
+        }];
+        check(
+            text,
+            &post,
+            &transform,
+            &project.stock,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: None,
+            },
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    fn drill() -> Operation {
+        Operation::Drill(dc_project::test_support::sample_drill())
+    }
+
+    /// A peck at (50, 50) on the 6 mm stock (stock-top origin, safe Z 5):
+    /// rapid down to the retract plane at Z 1, peck to −2, retract, rapid
+    /// back down to `reentry` (machine Z), peck to −3, out; `dwell` is
+    /// written after the last peck when given. With its toolpath.
+    fn peck_program(reentry: f64, dwell: Option<&str>) -> (String, Toolpath) {
+        let dwell_line = dwell.map_or_else(String::new, |d| format!("{d}\n"));
+        let text = format!(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX50 Y50\nZ1\nG1 Z-2 F300\nG0 Z1\nZ{reentry}\nG1 Z-3\n{dwell_line}G0 Z5\nM5\n"
+        );
+        let mut moves = vec![
+            Move::rapid(Point3::new(50.0, 50.0, 11.0)),
+            Move::rapid(Point3::new(50.0, 50.0, 7.0)),
+            Move::linear(Point3::new(50.0, 50.0, 4.0), 300.0),
+            Move::rapid(Point3::new(50.0, 50.0, 7.0)),
+            Move::rapid(Point3::new(50.0, 50.0, reentry + 6.0)),
+            Move::linear(Point3::new(50.0, 50.0, 3.0), 300.0),
+        ];
+        if dwell.is_some() {
+            moves.push(Move::dwell(Point3::new(50.0, 50.0, 3.0), 0.5));
+        }
+        moves.push(Move::rapid(Point3::new(50.0, 50.0, 11.0)));
+        (text, Toolpath { moves })
+    }
+
+    /// S15 on the program (port of `drillingRetract.test.ts`
+    /// `assertPostedRetractSafe`): inside a Drill, a rapid in Z alone may
+    /// stop below safe Z above the stock or inside the hole already
+    /// drilled, never below the depth a `G1` has reached there.
+    #[test]
+    fn drill_rapid_into_uncut_fails() {
+        for reentry in [-1.5, -2.0] {
+            let (text, toolpath) = peck_program(reentry, None);
+            check_as(&text, &toolpath, &drill())
+                .unwrap_or_else(|e| panic!("re-entry to {reentry}: {e:?}"));
+        }
+        let (text, toolpath) = peck_program(-2.5, None);
+        let err = check_as(&text, &toolpath, &drill()).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidIntoUncut { line: 10, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S2 is unchanged outside a Drill: the same rapids in a Profile fail.
+    #[test]
+    fn drill_rapid_below_safe_z_on_profile_still_fails() {
+        let (_, op, _) = fixture();
+        let (text, toolpath) = peck_program(-1.5, None);
+        let err = check_as(&text, &toolpath, &Operation::Profile(op)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowSafeZ { line: 7, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S6: a dwell in the toolpath is matched by a `G4` with the same
+    /// seconds at that point of the program; a missing or different one is
+    /// a mismatch at the dwell.
+    #[test]
+    fn missing_dwell_fails_s6() {
+        let (text, toolpath) = peck_program(-1.5, Some("G4 P0.5"));
+        check_as(&text, &toolpath, &drill()).unwrap();
+        let (text, _) = peck_program(-1.5, None);
+        assert!(
+            is_mismatch_at(&check_as(&text, &toolpath, &drill()), 6),
+            "no G4"
+        );
+        let (text, _) = peck_program(-1.5, Some("G4 P2"));
+        assert!(
+            is_mismatch_at(&check_as(&text, &toolpath, &drill()), 6),
+            "G4 P2"
+        );
     }
 
     fn is_mismatch_at(result: &Result<(), ExportError>, at: usize) -> bool {
@@ -2181,7 +2302,7 @@ mod tests {
                 emit_with(
                     &project,
                     &post,
-                    &[(op.clone(), tool.clone(), tp)],
+                    &[(Operation::Profile(op.clone()), tool.clone(), tp)],
                     "2026-10-15",
                 )
                 .unwrap();

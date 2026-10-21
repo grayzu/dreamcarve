@@ -332,6 +332,16 @@ impl Operation {
         }
     }
 
+    /// How far below the stock bottom the cut may go, millimetres.
+    pub fn through_cut_allowance_mm(&self) -> f64 {
+        match self {
+            Self::Profile(op) => op.through_cut_allowance_mm,
+            Self::Pocket(op) => op.through_cut_allowance_mm,
+            Self::Drill(op) => op.through_cut_allowance_mm,
+            Self::Engrave(op) => op.through_cut_allowance_mm,
+        }
+    }
+
     /// Final depth below the stock top, millimetres; `None` until set.
     pub fn depth_mm(&self) -> Option<f64> {
         match self {
