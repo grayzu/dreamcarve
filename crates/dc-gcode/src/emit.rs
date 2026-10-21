@@ -5466,6 +5466,31 @@ mod tests {
         );
     }
 
+    /// #308 on LinuxCNC (#306): `$20` is a GRBL setting, so the header names
+    /// LinuxCNC's own condition instead. Its soft limits always apply once
+    /// the machine is homed ("The axis must be homed before MIN_LIMIT is in
+    /// force", INI document; `motion/command.c` 1011-1025), and a program
+    /// does not run unhomed unless `[TRAJ] NO_FORCE_HOMING` is set
+    /// (`emctaskmain.cc` 121, 2302-2303; definitions README,
+    /// "Machine-coordinate moves"). In mm and inches, and no `$20` anywhere.
+    #[test]
+    fn machine_z_header_comment_on_linuxcnc() {
+        let comment = "( Lifts to machine Z with G53: home the machine before running. \
+                       Soft limits apply only once homed: leave NO_FORCE_HOMING unset )";
+        for units in [Units::Mm, Units::Inch] {
+            let mut project = project_with("linuxcnc");
+            project.display_units = units;
+            project.heights.tool_change_machine_z_mm = Some(-5.0);
+            let text = emit_text(&project);
+            assert_eq!(
+                text.lines().filter(|l| *l == comment).count(),
+                1,
+                "{units:?}\n{text}"
+            );
+            assert!(!text.contains("$20"), "{units:?}\n{text}");
+        }
+    }
+
     /// #304 review, #308: with a tool-change machine Z, the header says
     /// the program uses machine coordinates and needs a homed machine, and
     /// names what keeps the lift from driving Z down on a machine that

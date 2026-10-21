@@ -7348,6 +7348,33 @@ fn export_prints_home_note() {
     );
 }
 
+/// #308 on LinuxCNC (#306): `$20` is GRBL's, so the export note names
+/// LinuxCNC's condition: its soft limits apply only once the machine is
+/// homed, which it enforces unless `[TRAJ] NO_FORCE_HOMING` is set
+/// (definitions README, "Machine-coordinate moves").
+#[test]
+fn export_machine_z_note_on_linuxcnc() {
+    let dir = work_dir("export_machine_z_note_on_linuxcnc");
+    let dcv = plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    let note = "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53). \
+                LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.";
+    assert_eq!(text.lines().filter(|l| *l == note).count(), 1, "{text}");
+    assert!(!text.contains("$20"), "{text}");
+}
+
 /// #308: on a machine that homes Z downward every negative machine Z is
 /// below the travel (GRBL `system.c` 340-344, grblHAL `machine_limits.c`
 /// 129-131), and only soft limits stop the lift from driving Z down, so
