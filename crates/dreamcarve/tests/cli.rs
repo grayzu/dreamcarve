@@ -6475,3 +6475,131 @@ fn estimate_per_program_and_total() {
         "{total} is not the sum of {lines:?}"
     );
 }
+
+/// The coaster in an inch project, every value set as the quick start
+/// sets it but in inches: `(field, inch string, the same value in mm)`,
+/// the millimetres being the product the loader computes (addendum A6).
+const COASTER_INCH_VALUES: [(&str, &str, f64); 7] = [
+    ("thickness_mm", "1/2 in", 0.5 * 25.4),
+    ("depth_mm", "1/2 in", 0.5 * 25.4),
+    ("through_cut_allowance_mm", "1/64 in", (1.0 / 64.0) * 25.4),
+    ("feed_mm_min", "60 in/min", 60.0 * 25.4),
+    ("plunge_mm_min", "20 in/min", 20.0 * 25.4),
+    ("step_down_mm", "1/8 in", 0.125 * 25.4),
+    ("safe_z_mm", "0.2 in", 0.2 * 25.4),
+];
+
+/// The millimetres [`COASTER_INCH_VALUES`] lists for `field`.
+fn coaster_inch_mm(field: &str) -> f64 {
+    COASTER_INCH_VALUES
+        .iter()
+        .find(|(f, _, _)| *f == field)
+        .map(|(_, _, mm)| *mm)
+        .expect("value listed")
+}
+
+/// The inch string [`COASTER_INCH_VALUES`] lists for `field`, as JSON.
+fn coaster_inch_string(field: &str) -> serde_json::Value {
+    COASTER_INCH_VALUES
+        .iter()
+        .find(|(f, _, _)| *f == field)
+        .map(|(_, text, _)| serde_json::Value::String((*text).to_owned()))
+        .expect("value listed")
+}
+
+/// `init --units inch` on the coaster, then its values filled in twice:
+/// `coaster-mm.dcv` with the millimetre numbers and `coaster-in.dcv` with
+/// the inch strings of [`COASTER_INCH_VALUES`]. Returns the two paths.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "indexing a JSON object inserts the key; a saved project has these"
+)]
+fn coaster_inch_twins(dir: &Path) -> (PathBuf, PathBuf) {
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    let out = run(dir, &["init", "coaster.svg", "--units", "inch"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let mut project = load_file(&dir.join("coaster.dcv")).project;
+    project.stock.thickness_mm = Some(coaster_inch_mm("thickness_mm"));
+    for tool in &mut project.tools {
+        tool.feed_mm_min = Some(coaster_inch_mm("feed_mm_min"));
+        tool.plunge_mm_min = Some(coaster_inch_mm("plunge_mm_min"));
+        tool.rpm = Some(18000);
+        tool.step_down_mm = Some(coaster_inch_mm("step_down_mm"));
+    }
+    for op in project.operations.iter_mut().map(as_profile_mut) {
+        op.depth_mm = Some(coaster_inch_mm("depth_mm"));
+        op.through_cut_allowance_mm = coaster_inch_mm("through_cut_allowance_mm");
+        op.safe_z_mm = coaster_inch_mm("safe_z_mm");
+    }
+    let text = save(&project).expect("project saves");
+    let mm_path = dir.join("coaster-mm.dcv");
+    std::fs::write(&mm_path, &text).expect("dcv written");
+
+    // The same project with the values as strings.
+    let mut root: serde_json::Value = serde_json::from_str(&text).expect("json");
+    root["stock"]["thickness_mm"] = coaster_inch_string("thickness_mm");
+    for tool in root["tools"].as_array_mut().expect("tools") {
+        for field in ["feed_mm_min", "plunge_mm_min", "step_down_mm"] {
+            tool[field] = coaster_inch_string(field);
+        }
+    }
+    for op in root["operations"].as_array_mut().expect("operations") {
+        for field in ["depth_mm", "through_cut_allowance_mm", "safe_z_mm"] {
+            op[field] = coaster_inch_string(field);
+        }
+    }
+    let in_path = dir.join("coaster-in.dcv");
+    let text = serde_json::to_string_pretty(&root).expect("json written");
+    std::fs::write(&in_path, text).expect("dcv written");
+    (mm_path, in_path)
+}
+
+/// Acceptance test 44: a project whose lengths and feeds are written in
+/// inches exports the program its millimetre twin exports, byte for byte.
+#[test]
+fn inch_input_exports_same_program() {
+    let dir = work_dir("inch_input_exports_same_program");
+    let (mm_path, in_path) = coaster_inch_twins(&dir);
+    let in_text = std::fs::read_to_string(&in_path).expect("dcv readable");
+    assert!(in_text.contains("\"1/2 in\""), "{in_text}");
+    assert!(in_text.contains("\"60 in/min\""), "{in_text}");
+    let export = |dcv: &Path, nc: &str| {
+        let dcv = dcv.to_str().expect("utf-8 path");
+        let out = run(&dir, &["export", dcv, "-o", nc, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "export {dcv}: {}", stderr(&out));
+        std::fs::read_to_string(dir.join(nc)).expect("program written")
+    };
+    let from_mm = export(&mm_path, "from-mm.nc");
+    let from_in = export(&in_path, "from-in.nc");
+    assert!(from_mm.contains("G20"), "an inch program: {from_mm}");
+    assert!(
+        from_in == from_mm,
+        "programs differ:\n{from_in}\n---\n{from_mm}"
+    );
+    // `check` reads the strings too, and finds nothing wrong.
+    let out = run(&dir, &["check", in_path.to_str().expect("utf-8 path")]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+}
+
+/// Addendum A6: export's summary states each operation's depth in the
+/// project's display units, with that unit's decimal places.
+#[test]
+fn inch_project_summary_in_inches() {
+    let dir = work_dir("inch_project_summary_in_inches");
+    let (_, in_path) = coaster_inch_twins(&dir);
+    let dcv = in_path.to_str().expect("utf-8 path");
+    let out = run(&dir, &["export", dcv, "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(summary.contains(", 0.5000 in deep"), "{summary}");
+    assert!(!summary.contains("mm deep"), "{summary}");
+
+    // A millimetre project keeps millimetres, at their decimal places.
+    let dir = work_dir("inch_project_summary_in_inches_mm");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(summary.contains(", 12.000 mm deep"), "{summary}");
+}

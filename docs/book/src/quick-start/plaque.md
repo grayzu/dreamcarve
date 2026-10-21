@@ -397,11 +397,11 @@ Wrote 2 programs; run them in this order:
   2. plaque-2-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
 This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
 Post-processor grblhal.
-  op1 `Panel`: tool `t2` (1/4 end mill), 2 target(s), 4 mm deep
-  op2 `Square recess`: tool `t2` (1/4 end mill), 1 target(s), 6 mm deep
-  op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12 mm deep
-  op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12 mm deep
-  op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1 mm deep
+  op1 `Panel`: tool `t2` (1/4 end mill), 2 target(s), 4.000 mm deep
+  op2 `Square recess`: tool `t2` (1/4 end mill), 1 target(s), 6.000 mm deep
+  op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12.000 mm deep
+  op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12.000 mm deep
+  op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1.000 mm deep
 plaque-1-T1.nc (516 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
