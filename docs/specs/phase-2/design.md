@@ -86,6 +86,9 @@ pub struct Project {
 
 pub struct Tool {
     // phase 1 fields unchanged; `step_over_fraction` now read by Pocket.
+    /// Tool number for `T<n>` in programs and file names. `None` means
+    /// the tool's position in `Project::tools`. Migration: null.
+    pub number: Option<u32>,
 }
 
 pub enum ToolKind {
@@ -194,6 +197,12 @@ false` to the post-processor. A fixture at `tests/fixtures/dcv/v6/` loads
 and, with `arc_fit_tolerance_mm` set back to `null`, exports byte-identical
 G-code (acceptance 37). Open question 8 in the functional spec records why
 this is a migration and not a serde default.
+
+**Tool numbers.** `Tool::number` set → `T<number>` in every program and
+in `<stem>-<k>-T<n>` file names; unset → the tool's 1-based position, as
+in phase 1. Validation errors (`Problem::DuplicateToolNumber`, located at
+the second tool) when two tools used by enabled operations resolve to the
+same number, whether set or positional, and when a set number is 0.
 
 **Validation** (`validate.rs`) adds, as errors: a `rest_of` that is not an
 earlier enabled Pocket with the same target set; `step_over_fraction`
@@ -814,13 +823,12 @@ parameters per tool type with a JSON snippet each), `sample library.json`
 (version 36, every tool family, 34 tools) and `Sample Metric Tools- With
 Presets.json` (version 14, 235 milling and hole-making tools with
 presets). The `.tools` file is that JSON zipped (`ReadMeFirst.txt`). The
-two sample files become fixtures
-(`tests/fixtures/fusion/autodesk-sample-library.json`,
-`autodesk-sample-metric-presets.json`), with their source and the
-archive's date in a README. The archive carries no license statement, so
-before they are committed the maintainer confirms Autodesk's terms allow
-redistribution; otherwise the fixtures are hand-written subsets that keep
-the schema's structure and the tool types but not Autodesk's data. The parser accepts unknown keys everywhere
+archive carries no license statement, so its files are reference only
+and are not committed (maintainer decision, 2026-10-20). The fixtures
+under `tests/fixtures/fusion/` are hand-written in the schema's structure:
+`sample.tools` (zipped) and `sample.json` with one tool of each supported
+type, one of each skipped family, a tool with two presets, a drill preset
+without `v_f`, an inch tool, and a chamfer mill with `TA` 45. The parser accepts unknown keys everywhere
 (the schema itself allows additional properties on most objects and new
 versions add fields) and requires only what it maps.
 
@@ -867,15 +875,11 @@ Mapping:
    `Drill`; every other milling, hole-making, turning, probe and holder
    type → `Skipped { UnsupportedType(type) }`; a string outside the
    schema's enums → `Skipped { UnknownType(type) }`.
-   - **Chamfer angle.** The schema text calls `TA` the included angle,
-     while Autodesk's tool-editor help calls its "Taper angle" half the
-     included angle, and the sample chamfer mill (`DC` 12, `TA` 60,
-     `tip-diameter` 8, `LCF` 2.3094) is consistent with neither reading
-     exactly. The importer treats `TA` as the **half** angle (`included =
-     2·TA`), which is what Fusion's own 90° chamfer mills carry (`TA`
-     45), and `fusion::chamfer_mill_angle_matches_fixture` pins it against
-     the maintainer's exported library; if that fixture shows otherwise
-     the constant flips in one place.
+   - **Chamfer angle.** `TA` is the half angle: `included_angle_deg =
+     2·TA`, so a 90° V-bit carries `TA` 45. Settled by the maintainer
+     against IDC Woodcraft's published Fusion library (the schema's
+     wording, "included angle between generatrixes", reads otherwise, and
+     is noted in the module doc so nobody re-derives it).
 3. **Units:** every length (`DC`, `stepdown`, `stepover`) and feed
    (`v_f`, `v_f_plunge`) is in `unit` and converted to mm or mm/min; `n`
    is RPM; `NOF` → flutes (0 or absent → 1, noted in the report).
@@ -892,29 +896,20 @@ Mapping:
    `feed_mm_min` unset, which Drill never needs but validation reports
    for a tool a Profile uses.
 5. `DC ≤ 0` or absent → `Skipped { NoDiameter }`.
+5a. **Tool number:** `post-process.number` > 0 → `Tool::number`; 0 or
+   absent → `None`. Every preset of one Fusion tool shares the number,
+   so a library with several presets of one tool holds several tools
+   with the same number; `tools add` copies the number, and validation
+   reports the clash only when two such tools are used in one project.
 6. **Report:** `tools import` prints one line per tool: `imported`,
    `already present`, or `skipped: <reason>`, then the counts.
 
-**Tool numbers** (functional open question 7, still open). What the
-field would do and what it costs:
-
-- Today `T<n>` in a program is the tool's position in `project.tools`,
-  so renumbering happens by reordering the list. Fusion's
-  `post-process.number` and VCarve's "Tool Number" are explicit and
-  stable per tool, which matters for a tool table on LinuxCNC or Mach3
-  (`T5 M6` must match the machine's slot 5) and for a user who keeps
-  "T1 = 1/4 end mill" across every project.
-- Adding `Tool::number: Option<u32>` now: import carries the Fusion
-  number (0 means unset); export uses it when set, else the position;
-  validation refuses duplicates among enabled operations' tools. Cost:
-  one field in v7 (no second migration later), a rule for mixed
-  set/unset projects, and the program names `<stem>-<k>-T<n>` follow
-  it. The GUI later edits the same field.
-- Waiting: nothing to do now; a v8 migration later; users on tool tables
-  reorder `tools` by hand until then.
-- Recommendation: add the optional field in v7 (slice 2), read it on
-  import, use it at export. It is small and the migration cost only
-  grows.
+**Tool numbers** (functional open question 7, decided 2026-10-20): the
+optional field is added in v7 (see "Data model", `Tool::number`). Why:
+Fusion's `post-process.number` and VCarve's Tool Number are explicit and
+stable per tool, which a tool table on LinuxCNC or Mach3 needs (`T5 M6`
+must match the machine's slot 5), and adding the field later would cost a
+second migration.
 
 ### Tool library CLI
 
@@ -984,6 +979,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-project**
 - `migrate::v6_profile_gains_phase_2_fields_with_defaults` — fixture loads with `machining_order: full_depth_first`, `entry: plunge`, `lead: null`, `corner_relief: none`, `arc_fit_tolerance_mm: 0.01`, `use_canned_cycles: false`.
 - `migrate::v6_fixture_exports_phase_1_bytes_with_fitting_off`.
+- `serialize::tool_number_round_trips`, `validate::duplicate_tool_number_is_error`, `validate::set_number_clashing_with_positional_is_error`, `validate::tool_number_zero_is_error`, `emit::set_tool_number_is_written_as_t_word_and_file_name`, `emit::unset_tool_number_falls_back_to_position`.
 - `serialize::pocket_drill_engrave_round_trip`, `serialize::entry_variants_serialize_as_string_or_object`, `serialize::clearance_strategy_raster_carries_angle`.
 - `validate::rest_of_must_be_an_earlier_enabled_pocket_with_the_same_targets`, `validate::step_over_fraction_outside_unit_interval_is_error`, `validate::pocket_without_step_down_is_error`, `validate::peck_without_depth_or_tool_step_down_is_error`, `validate::helix_on_on_line_profile_is_error`, `validate::lead_radius_must_be_positive`, `validate::ramp_angle_range`, `validate::canned_cycles_on_definition_without_them_is_error`, `validate::drill_with_v_bit_warns`, `validate::relief_without_step_down_warns`.
 
@@ -1076,7 +1072,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 
 **dc-library**
 - `library::round_trip_is_byte_identical`, `library::add_detects_already_present`, `library::find_by_id_then_unique_name`, `library::ambiguous_name_is_error`, `library::validation_rules_from_upstream` (port of `parseToolLibraryFile` rules: positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)).
-- `fusion::zip_and_plain_json_both_read`, `fusion::flat_end_mill_maps_with_geometry_and_preset`, `fusion::inch_tool_converts_to_mm`, `fusion::chamfer_mill_is_v_bit_with_double_taper`, `fusion::drill_types_map_to_drill`, `fusion::two_presets_become_two_tools`, `fusion::no_presets_imports_with_feeds_unset`, `fusion::missing_feed_stays_none`, `fusion::stepover_length_becomes_fraction`, `fusion::use_stepdown_false_leaves_step_down_unset`, `fusion::unsupported_types_skipped_by_name`, `fusion::unknown_keys_are_ignored`, `fusion::not_a_library_is_error`, `fusion::autodesk_sample_library_imports_every_supported_type_and_skips_the_rest` (34-tool fixture: 5 flat end mills, drill, spot drill, counter sink, counter bore, reamer, slot mill import; thread mills, taps, face/form/lollipop/dovetail/tapered mills, turning, probe, holder skipped by name), `fusion::autodesk_presets_sample_imports_235_tools_as_presets` (every preset becomes a tool; drills import with `feed_mm_min` unset), `fusion::chamfer_mill_angle_matches_fixture` (`#[ignore = "needs the maintainer's exported library"]` until supplied), `fusion::schema_version_below_11_is_rejected`.
+- `fusion::zip_and_plain_json_both_read`, `fusion::flat_end_mill_maps_with_geometry_and_preset`, `fusion::inch_tool_converts_to_mm`, `fusion::chamfer_mill_is_v_bit_with_double_taper`, `fusion::drill_types_map_to_drill`, `fusion::two_presets_become_two_tools`, `fusion::no_presets_imports_with_feeds_unset`, `fusion::missing_feed_stays_none`, `fusion::stepover_length_becomes_fraction`, `fusion::use_stepdown_false_leaves_step_down_unset`, `fusion::unsupported_types_skipped_by_name`, `fusion::unknown_keys_are_ignored`, `fusion::not_a_library_is_error`, `fusion::sample_library_imports_every_supported_type_and_skips_the_rest` (the hand-written fixture: flat, ball, bull nose and slot mills, chamfer mill, drill, spot drill, counter sink, counter bore, reamer import; thread mill, tap, face, form, lollipop, dovetail and tapered mills, a turning tool, a probe and a holder skipped by name), `fusion::chamfer_mill_ta_45_is_a_90_degree_v_bit`, `fusion::drill_preset_without_v_f_imports_with_feed_unset`, `fusion::tool_number_is_read_when_non_zero`, `fusion::tool_number_zero_is_none`, `fusion::schema_version_below_11_is_rejected`.
 
 **dreamcarve (integration, `tests/`)**
 - `cli::plaque_svg_exports_two_programs_in_order` (acceptance 18), `cli::plaque_dxf_exports_same_programs_as_svg`.
@@ -1149,10 +1145,5 @@ unblock everything else.
 
 ## Open questions
 
-Resolved 2026-10-20 (the table in `functional.md`, "Open questions"),
-except:
-
-7. **Tool numbers.** See "Tool numbers" under "Fusion import" for the
-   trade-off and the recommendation (add `Tool::number: Option<u32>` in
-   v7). Until decided, the design keeps list position and the importer
-   does not read `post-process.number`.
+None. All resolved 2026-10-20; the record is the table in
+`functional.md`, "Open questions".

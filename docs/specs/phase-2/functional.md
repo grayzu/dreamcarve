@@ -190,10 +190,18 @@ reads a DreamCarve JSON or a Fusion library and reports, per tool,
 imported, skipped (with the reason) or already present. Projects keep
 embedding copies of their tools (ADR-0002): a library edit never
 changes an existing project.
+21a. **Tool numbers.** A tool may carry a `number` (`null` by default).
+    Export writes `T<number>` when it is set and the tool's position in
+    the project list otherwise; two enabled operations' tools with the
+    same number are an error. Fusion import copies the file's tool
+    number when it is non-zero. VCarve's Tool Database and Fusion's tool
+    editor both carry one.
 22. **Fusion import** reads `.tools` (a zip holding `tools.json`) and
 `.json` libraries as Fusion exports them. Flat end mills, ball end
-mills, chamfer mills (as V-bits), drills and engraving tools import
-with their diameter, flutes, angle and units; each cutting preset
+mills, chamfer mills (as V-bits, included angle twice the file's taper
+angle, as Fusion's own 90° chamfer mills carry 45°), drills, spot
+drills, countersinks, counterbores and reamers import with their
+diameter, flutes, angle, units and tool number; each cutting preset
 becomes one library tool carrying the preset's spindle speed, feed,
 plunge rate, step-down and stepover, named `<tool> (<preset>)` when a
 tool has more than one. Tool types DreamCarve has no cutter for
@@ -234,9 +242,8 @@ Engrave (VCarve's hatch and offset fill). Straight-line leads. Start depth
 (every operation starts at the stock top). Separate clearance, tool-change
 and park heights (#73; safe Z remains the one height). Drill tip
 compensation and "drill through". Tabs as placed objects (#105, with the
-GUI). Region masks and clamps as obstacles. Tool numbers other than the
-tool's position in the project list. A GUI, simulation, text, toolpath
-preview images. Reading Vectric, Carveco or Carbide Create tool databases.
+GUI). Region masks and clamps as obstacles. A GUI, simulation, text,
+toolpath preview images. Reading Vectric, Carveco or Carbide Create tool databases.
 
 ## Acceptance tests
 
@@ -347,13 +354,13 @@ ends meet form one closed shape; three that leave a 0.5 mm gap stay
 open and `check` reports them. A file with TEXT and a DIMENSION
 imports its shapes and warns `dxf_entities_skipped` with
 `TEXT: 1, DIMENSION: 1`.
-35. **Tool library.** `tools import fixtures/fusion-sample.tools` reports
-each tool as imported or skipped with a reason; a flat end mill
-imports with its diameter, flutes, units, RPM, feed, plunge rate,
-step-down and stepover from its preset; a chamfer mill imports as a
-V-bit whose included angle is twice the file's taper angle; a tool
-with two presets becomes two library tools; a thread mill is skipped
-naming its type; importing the same file again reports every tool as
+35. **Tool library.** `tools import fixtures/fusion/sample.tools` (a
+hand-written library in Autodesk's schema) reports each tool as
+imported or skipped with a reason; a flat end mill imports with its
+diameter, flutes, units, tool number, RPM, feed, plunge rate,
+step-down and stepover from its preset; a chamfer mill with `TA` 45
+imports as a 90° V-bit; a tool with two presets becomes two library
+tools; a thread mill is skipped naming its type; importing the same file again reports every tool as
 already present. `tools export` then `tools import` of the result
 round-trips byte-identically. `tools add plaque.dcv "1/4 end mill"`
 copies the tool into the project with a new project tool id; editing
@@ -489,6 +496,7 @@ the capabilities above and the design spec; the record stays here.
 | 4 | Pocket `direction` in the chapter's JSON | `climb`. |
 | 5 | Corner relief on Profile | Yes, on Pocket and Profile. |
 | 6 | Profile ramp style | Zigzag on both, as PureCutCNC does; On line ramps along the path. Default entry is `ramp` at 15° for new projects. |
-| 7 | Tool numbers | **Open.** See the design spec's "Tool numbers" note for the trade-off; the spec keeps list position until decided. |
+| 7 | Tool numbers | Add `Tool::number: Option<u32>` in v7; Fusion import reads it; export uses it when set (capability 21a). |
+| 10 | Fusion sample libraries | Autodesk's sample files are reference only, not committed; the fixtures are hand-written in the schema's structure. `TA` is the half angle (a 90° V-bit has `TA` 45), confirmed against IDC Woodcraft's Fusion library. |
 | 8 | `machining_order` migration | A v6 → v7 migration, not a serde default. |
 | 9 | Rest machining | In scope. |
