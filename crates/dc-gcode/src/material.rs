@@ -1005,7 +1005,7 @@ fn points_of(path: Segment) -> [Point; 3] {
 /// Move `mv`'s tool-centre path in XY, project space: a line, or an arc
 /// as the controller turns it (a mirroring axis map swaps its direction).
 /// `None` when a start or end coordinate is not known.
-fn project_path(mv: &MachineMove, transform: &MachineTransform) -> Option<Segment> {
+pub(crate) fn project_path(mv: &MachineMove, transform: &MachineTransform) -> Option<Segment> {
     let (sx, sy, ex, ey) = (mv.from.x?, mv.from.y?, mv.to.x?, mv.to.y?);
     let to_project = |x: f64, y: f64| transform.to_project(Point3::new(x, y, 0.0), mv.units).xy();
     let (start, end) = (to_project(sx, sy), to_project(ex, ey));

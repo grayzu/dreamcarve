@@ -366,8 +366,11 @@ fn inside_profile_ramp_zigzags_in_the_hole() {
             -closest
         );
     }
-    // A ramp zigzags: its legs alternate direction.
-    let (tp, _) = generate(&p, &op(&p, Side::Inside, ramp()));
+    // A ramp zigzags: its legs alternate direction. At 5° a leg falls
+    // less than the 3 mm from 1 mm above the stock to the first pass.
+    // (changed in #214: the first pass started at safe Z, and a 15° ramp
+    // turned back; from just above the stock one 15° leg reaches it.)
+    let (tp, _) = generate(&p, &op(&p, Side::Inside, Entry::Ramp { angle_deg: 5.0 }));
     let legs: Vec<Vec2> = sloped_moves(&tp)
         .iter()
         .take(2)
@@ -607,7 +610,9 @@ fn plunge_is_default_and_unchanged_from_phase_1() {
 
 /// Every pass after the first descends from the previous pass Z at the
 /// block's entry point, where the previous lap ended: no retract and no
-/// descent through the air above the floor already cut.
+/// descent through the air above the floor already cut. The only rapid
+/// below safe Z is the first pass's, straight down to 1 mm above the
+/// stock (#214).
 #[test]
 fn descent_reaching_a_pass_follows_the_previous_floor() {
     for entry in ramped() {
@@ -624,12 +629,16 @@ fn descent_reaching_a_pass_follows_the_previous_floor() {
                     );
                 }
             }
-            let below_safe = tp
+            let below_safe: Vec<&Move> = tp
                 .moves
                 .iter()
                 .filter(|m| m.is_rapid() && m.to.z < SAFE_Z_MM - EPS_MM)
-                .count();
-            assert_eq!(below_safe, 0, "{entry:?} {side:?}: no rapid below safe Z");
+                .collect();
+            assert!(
+                below_safe.len() == 1
+                    && (below_safe[0].to.z - (THICKNESS_MM + 1.0)).abs() <= EPS_MM,
+                "{entry:?} {side:?}: one rapid below safe Z, to the first pass's start: {below_safe:?}"
+            );
             let rapids_up = tp
                 .moves
                 .windows(2)
@@ -715,7 +724,8 @@ fn on_rect(q: Point, r: (f64, f64, f64, f64)) -> bool {
 #[test]
 fn on_line_ramp_runs_along_the_path_and_back() {
     let p = on_line_project();
-    let (tp, warnings) = generate(&p, &op(&p, Side::OnLine, ramp()));
+    let angle_deg = 5.0;
+    let (tp, warnings) = generate(&p, &op(&p, Side::OnLine, Entry::Ramp { angle_deg }));
     assert!(fallbacks(&warnings).is_empty(), "{warnings:?}");
     let legs = sloped_moves(&tp);
     assert!(legs.len() >= 2, "{legs:?}");
@@ -734,11 +744,13 @@ fn on_line_ramp_runs_along_the_path_and_back() {
         let slope = (from.z - mv.to.z)
             .atan2(from.xy().distance_to(mv.to.xy()))
             .to_degrees();
-        assert!((slope - 15.0).abs() <= 0.1, "slope {slope}");
+        assert!((slope - angle_deg).abs() <= 0.1, "slope {slope}");
         directions.push(mv.to.xy() - from.xy());
     }
-    // Back and forth: the first pass descends 7 mm (safe Z to 4) at 15°,
-    // more than one 19.05 mm leg's 5.1 mm, so it turns back.
+    // Back and forth: the first pass descends 3 mm (1 mm above the stock
+    // to 4) at 5°, more than one 19.05 mm leg's 1.67 mm, so it turns back.
+    // (changed in #214: at 15° from safe Z it descended 7 mm, more than a
+    // leg's 5.1 mm.)
     assert!(
         directions.windows(2).any(|w| w[0].dot(w[1]) < 0.0),
         "the ramp turns back: {directions:?}"

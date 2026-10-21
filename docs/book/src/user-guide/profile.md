@@ -194,9 +194,10 @@ outline, where it fits with the same margin. A climb cut turns its helix
 the way the outline runs: counter-clockwise inside a hole, clockwise
 round a part; conventional turns it the other way.
 
-The first pass descends from safe Z. Each pass after starts where the lap
-before it ended, at the start of the outline on the floor of that pass, so
-the bit does not ramp down through air it has already cut.
+The bit rapids straight down from safe Z to 1 mm above the stock top,
+and the first pass's ramp or helix starts there. Each pass after starts
+where the lap before it ended, at the start of the outline on the floor
+of that pass, so the bit does not ramp down through air.
 
 **Tabs.** On every pass below the tab top, the ramp or helix keeps clear
 of the tabs, and an On line ramp stops short of the first tab. When a tab

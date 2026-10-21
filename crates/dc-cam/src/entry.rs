@@ -88,6 +88,32 @@ pub const HELIX_ENDPOINT_ANGLE_SAMPLES: usize = 24;
 /// Most quadtree cells one clearance search visits, and the most cells its
 /// first grid may have.
 pub const MAX_CLEARANCE_CELLS: usize = 20_000;
+/// The entry clearance, mm (#214): a ramp or helix that would start at
+/// safe Z starts this far above the stock top instead, and a Pocket's
+/// later pass this far above the floor the pass before cleared
+/// (PureCutCNC `pocket.ts`, `levelEntryStartZ`, whose clearance is the
+/// project's `operationClearanceZ`). The tool gets there by a rapid
+/// straight down, which S2 allows for exactly this: ending at least this
+/// far above the stock top, or above the lowest Z a cut of the same
+/// operation reached through that point. 1 mm, a Drill's usual
+/// `retract_mm`: enough for a stock top a little off its stated thickness,
+/// little enough that the ramp barely cuts air. A constant, not a setting,
+/// until users ask for one.
+pub const ENTRY_CLEARANCE_MM: f64 = 1.0;
+/// How near, mm, a cut must pass the point a rapid stops over for the
+/// floor it reached there to count as cleared (S2, #214): a helix's start
+/// lies on the circle the pass before cut flat at its floor, which its 48
+/// chords follow within 0.0022 of its radius. The safety pass allows its
+/// own rounding and arc tolerances on top.
+pub const CLEARED_POINT_TOLERANCE_MM: f64 = 0.01;
+
+/// The Z, mm, a ramp or helix starts at on a pass whose descent would
+/// otherwise start at safe Z: [`ENTRY_CLEARANCE_MM`] above `top_z_mm` (the
+/// stock top, or a Pocket's previous pass Z), and never above safe Z.
+#[must_use]
+pub fn descent_start_z_mm(top_z_mm: f64, safe_z_mm: f64) -> f64 {
+    (top_z_mm + ENTRY_CLEARANCE_MM).min(safe_z_mm)
+}
 
 /// Tolerance of the geometric predicates here (upstream `ENTRY_EPSILON`).
 const ENTRY_EPS: f64 = 1e-9;
@@ -784,7 +810,7 @@ fn safe_endpoint(area: &Area, centre: Point, radius: f64, target: Point) -> Opti
         let offset = if i % 2 == 0 { -offset } else { offset };
         let angle = preferred + offset * step;
         let endpoint = centre + Vec2::new(angle.cos(), angle.sin()) * radius;
-        area.segment_inside(endpoint, target, ON_BOUNDARY_MM)
+        area.segment_inside(endpoint, target, area.target_slack_mm())
             .then_some(endpoint)
     })
 }
@@ -804,7 +830,8 @@ fn place_ramp(domain: &EntryDomain, target: Point, tool_diameter_mm: f64) -> Opt
         for i in 0..RAMP_DIRECTIONS {
             let angle = PI * i as f64 / RAMP_DIRECTIONS as f64;
             let direction = Vec2::new(angle.cos(), angle.sin());
-            let Some((min, max)) = area.line_interval(target, direction) else {
+            let Some((min, max)) = area.line_interval(target, direction, area.target_slack_mm())
+            else {
                 continue;
             };
             let low = min + safety;
@@ -849,6 +876,9 @@ struct Area {
     rings: Vec<Vec<Point>>,
     min: Point,
     max: Point,
+    /// The tolerance its arcs were flattened within, mm: a point on an
+    /// arc of the region may lie this far outside the flattened rings.
+    tolerance_mm: f64,
     circle: OnceCell<Option<ClearanceCircle>>,
 }
 
@@ -954,6 +984,7 @@ impl Area {
             rings,
             min,
             max,
+            tolerance_mm,
             circle: OnceCell::new(),
         })
     }
@@ -980,6 +1011,14 @@ impl Area {
         }
         let distance = nearest_sq.sqrt();
         if inside { distance } else { -distance }
+    }
+
+    /// How far outside the flattened rings a target may lie and still be
+    /// on the region, mm (#213): a ring's start on a round corner of the
+    /// tool-centre region lies on the arc, outside the chords that stand
+    /// for it here by up to the flattening tolerance.
+    fn target_slack_mm(&self) -> f64 {
+        self.tolerance_mm + ON_BOUNDARY_MM
     }
 
     /// True when `p` is in the region or on its boundary.
@@ -1114,8 +1153,15 @@ impl Area {
 
     /// Upstream `lineIntervalInsideRegion`: along the line `origin + t ·
     /// direction`, the longest interval `[min, max]` between consecutive
-    /// boundary crossings that holds `t = 0` and lies in the region.
-    fn line_interval(&self, origin: Point, direction: Vec2) -> Option<(f64, f64)> {
+    /// boundary crossings that holds `t = 0`, or starts at most
+    /// `origin_slack_mm` past it (an origin just outside the flattened
+    /// rings, #213), and lies in the region.
+    fn line_interval(
+        &self,
+        origin: Point,
+        direction: Vec2,
+        origin_slack_mm: f64,
+    ) -> Option<(f64, f64)> {
         let mut ts: Vec<f64> = self
             .edges()
             .filter_map(|(a, b)| {
@@ -1137,7 +1183,7 @@ impl Area {
         let mut best: Option<(f64, f64)> = None;
         for w in ts.windows(2) {
             let [min, max] = *w else { continue };
-            if min > ENTRY_EPS || max < -ENTRY_EPS {
+            if min > origin_slack_mm.max(ENTRY_EPS) || max < -ENTRY_EPS {
                 continue;
             }
             if !self.contains(origin + direction * ((min + max) / 2.0)) {
@@ -1839,3 +1885,12 @@ mod tests {
     reason = "tests"
 )]
 mod profile_tests;
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "tests"
+)]
+mod start_tests;

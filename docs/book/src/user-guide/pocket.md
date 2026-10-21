@@ -224,9 +224,12 @@ The angle must be more than 0 and at most 45 degrees, the fraction more
 than 0 and at most 1. A climb pocket turns its helix counter-clockwise,
 seen from above, as its rings run; conventional turns it clockwise.
 
-The first pass descends from safe Z; each pass after starts from the
-floor of the pass before, so the bit does not spiral down through air it
-has already cleared.
+The bit rapids straight down from safe Z to 1 mm above the stock top,
+and the first pass's ramp or helix starts there; each pass after starts
+1 mm above the floor of the pass before, so the bit does not ramp or
+spiral down through air. Where that pass's cut went through the start,
+the bit rapids down to it; elsewhere it rapids to 1 mm above the stock
+and comes down the rest at the plunge rate.
 
 **Feed rate.** A ramp or helix moves at the tool's feed rate, except
 that its speed straight down is never faster than the plunge rate: when

@@ -567,8 +567,10 @@ fn xy_length(m: &MachineMove) -> f64 {
 /// checked independently of the emitter's own safety pass (which `export`
 /// has already passed, or it would have written nothing): S1 no move below
 /// the stock bottom less the allowance; S2 every rapid in XY at safe Z;
-/// S15 every rapid down ends above the stock top or no deeper than a cut
-/// has reached at that point; S3 and S10 every cut has a feed no faster
+/// S2 and S15 every rapid down ends above the stock top or no deeper than
+/// a cut has reached at that point (one that ended there, or a straight
+/// cut through it: a Pocket's later pass starts its ramp just above the
+/// floor a link cut, #214); S3 and S10 every cut has a feed no faster
 /// than the tool's, and goes down no faster than its plunge rate; S4 the
 /// spindle starts before the first cut and the program ends `M5`, `M30`;
 /// and the tool's edge stays on the stock.
@@ -578,6 +580,8 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
     assert!(!moves.is_empty(), "{name} moves");
     let tol = 1e-6;
     let mut cut_depth: Vec<((f64, f64), f64)> = Vec::new();
+    // Straight cuts: from XY and Z, to XY and Z.
+    let mut straight: Vec<(Xyz, Xyz)> = Vec::new();
     let first_cut = moves
         .iter()
         .find(|m| m.kind.is_cut())
@@ -633,10 +637,22 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
                 );
             }
             if z < from_z - tol && z < -tol {
+                let through = straight.iter().filter_map(|&((ax, ay, az), (bx, by, bz))| {
+                    let (dx, dy) = (bx - ax, by - ay);
+                    let length_sq = dx * dx + dy * dy;
+                    let t = if length_sq > 0.0 {
+                        (((x - ax) * dx + (y - ay) * dy) / length_sq).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let (px, py) = (ax + dx * t, ay + dy * t);
+                    ((px - x).hypot(py - y) < 2e-3).then_some(az + (bz - az) * t)
+                });
                 let reached = cut_depth
                     .iter()
                     .filter(|((cx, cy), _)| (cx - x).abs() < 1e-3 && (cy - y).abs() < 1e-3)
                     .map(|(_, d)| *d)
+                    .chain(through)
                     .fold(f64::INFINITY, f64::min);
                 assert!(
                     z >= reached - tol,
@@ -667,8 +683,16 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
             );
         }
         cut_depth.push(((x, y), z));
+        if m.kind == MotionKind::Linear
+            && let (Some(fx), Some(fy)) = (m.from.x, m.from.y)
+        {
+            straight.push(((fx, fy, from_z), (x, y, z)));
+        }
     }
 }
+
+/// A point as written: X, Y and Z.
+type Xyz = (f64, f64, f64);
 
 /// The pieces of `line`: each number, and each run of other text.
 fn tokens(line: &str) -> Vec<&str> {

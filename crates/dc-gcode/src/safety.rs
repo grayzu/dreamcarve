@@ -28,8 +28,9 @@
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 
+use dc_cam::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
 use dc_cam::{Move, MoveKind, Toolpath};
-use dc_geometry::{Arc, EPS_MM, Point, Point3, approx_eq};
+use dc_geometry::{Arc, EPS_MM, Point, Point3, Segment, approx_eq, point_segment_distance_mm};
 use dc_project::{
     DwellUnits, Operation, PostProcessor, SpindleControl, Stock, Tool, ToolId, Units,
 };
@@ -91,7 +92,7 @@ pub(crate) fn check(
     tolerances: Tolerances,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
-    let blocks = check_rules(text, post, transform, stock_thickness_mm, spans)?;
+    let blocks = check_rules(text, post, transform, stock_thickness_mm, tolerances, spans)?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
         check_reproduces(span, &blocks, post, transform, tolerances)?;
@@ -267,6 +268,7 @@ fn check_rules(
     post: &PostProcessor,
     transform: &MachineTransform,
     stock_thickness_mm: f64,
+    tolerances: Tolerances,
     spans: &[OpSpan<'_>],
 ) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
@@ -301,6 +303,8 @@ fn check_rules(
     let mut dwell_pending = false;
     // S15: the deepest a cut has reached at the XY of the last cut.
     let mut cut_to: Option<CutTo> = None;
+    // S2 (#214): the cuts of the operation being read.
+    let mut floors = Floors::new(stock_thickness_mm, tolerances);
     for block in &blocks {
         let line = block.line;
         if block.has('G', 20.0) || block.has('G', 21.0) {
@@ -398,6 +402,7 @@ fn check_rules(
             continue;
         };
         let limits = Limits::for_line(line, spans, stock_thickness_mm);
+        floors.enter(spans.iter().position(|s| s.lines.contains(&line)));
         let tolerance_mm = quantum_mm(post, mv.units);
         // #68: Z after this move. A line without a Z word leaves Z where it
         // was, which after a pause is unknown, whatever Z the program last
@@ -422,6 +427,7 @@ fn check_rules(
             check_descent_rate(mv, &limits, transform, tolerance_mm)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
+            floors.cut(mv, transform, router.z_mm, z_after);
             if let (Some(x), Some(y), Some((z_mm, _))) = (mv.to.x, mv.to.y, z_after) {
                 let deepest_mm = cut_to
                     .filter(|cut| cut.is_at(x, y))
@@ -439,7 +445,7 @@ fn check_rules(
                 && z_mm < limits.safe_z_mm - tolerance_mm
         }) {
             check_drill_rapid(mv, below_safe, stock_thickness_mm, cut_to)?;
-        } else {
+        } else if !floors.allow_approach(mv, transform, router.z_mm, z_after, limits.safe_z_mm) {
             check_rapid(mv, &limits, router.z_mm, z_after)?;
         }
         router.moved(z_after);
@@ -724,6 +730,121 @@ fn check_rapid(
         }),
         None => Ok(()),
     }
+}
+
+/// S2 as changed in #214: a rapid straight down from safe Z may stop below
+/// it, over the start of a ramp or helix, where the tool is in the air: at
+/// or above
+/// the stock top plus [`ENTRY_CLEARANCE_MM`], or that far above the lowest
+/// Z a cut of the same operation has reached through its XY. The cuts of
+/// the operation being read, in project space, are kept to find that Z.
+struct Floors {
+    /// The stock top plus the entry clearance, mm above stock bottom.
+    above_stock_mm: f64,
+    /// How far a cut may pass from the rapid's XY and still count, less
+    /// the program's rounding: dc-cam's own reach plus the arcs the
+    /// program may write for straight moves and the reverse.
+    reach_mm: f64,
+    /// Which span the cuts belong to.
+    span: Option<usize>,
+    /// Each cut's tool-centre path in XY and its Z at start and end, mm.
+    cuts: Vec<(Segment, f64, f64)>,
+}
+
+impl Floors {
+    fn new(stock_thickness_mm: f64, tolerances: Tolerances) -> Self {
+        Self {
+            above_stock_mm: stock_thickness_mm + ENTRY_CLEARANCE_MM,
+            reach_mm: CLEARED_POINT_TOLERANCE_MM
+                + tolerances.flatten_mm
+                + tolerances.arc_fit_mm.unwrap_or(0.0)
+                + EPS_MM,
+            span: None,
+            cuts: Vec::new(),
+        }
+    }
+
+    /// The line read is in `span`: a new operation starts with no cuts.
+    fn enter(&mut self, span: Option<usize>) {
+        if span != self.span {
+            self.span = span;
+            self.cuts.clear();
+        }
+    }
+
+    /// Records cut `mv`, from `from_z` to `to_z` (Z above stock bottom
+    /// and its rounding tolerance, as written; skipped where either or its
+    /// XY is unknown).
+    fn cut(
+        &mut self,
+        mv: &MachineMove,
+        transform: &MachineTransform,
+        from_z: Option<(f64, f64)>,
+        to_z: Option<(f64, f64)>,
+    ) {
+        if let (Some(path), Some((from_mm, _)), Some((to_mm, _))) =
+            (material::project_path(mv, transform), from_z, to_z)
+        {
+            self.cuts.push((path, from_mm, to_mm));
+        }
+    }
+
+    /// Whether `mv`, a rapid, is one S2 allows below safe Z for an entry:
+    /// straight down in Z alone from (`from_z`) at or above `safe_z_mm`,
+    /// ending (`to_z`) at or above the stock top plus the entry clearance,
+    /// or at or above the entry clearance over the lowest Z a cut of this
+    /// operation reached within [`Self::reach_mm`] of its XY (plus the
+    /// rounding of the numbers either side).
+    fn allow_approach(
+        &self,
+        mv: &MachineMove,
+        transform: &MachineTransform,
+        from_z: Option<(f64, f64)>,
+        to_z: Option<(f64, f64)>,
+        safe_z_mm: f64,
+    ) -> bool {
+        let (Some((from_mm, from_tolerance_mm)), Some((z_mm, tolerance_mm))) = (from_z, to_z)
+        else {
+            return false;
+        };
+        if differs(mv.from.x, mv.to.x)
+            || differs(mv.from.y, mv.to.y)
+            || from_mm < safe_z_mm - from_tolerance_mm
+        {
+            return false;
+        }
+        if z_mm >= self.above_stock_mm - tolerance_mm {
+            return true;
+        }
+        let (Some(x), Some(y)) = (mv.to.x, mv.to.y) else {
+            return false;
+        };
+        let at = transform.to_project(Point3::new(x, y, 0.0), mv.units).xy();
+        let reach_mm = self.reach_mm + 2.0 * tolerance_mm;
+        self.cuts
+            .iter()
+            .filter_map(|&(path, from_mm, to_mm)| floor_near(path, from_mm, to_mm, at, reach_mm))
+            .any(|floor_mm| z_mm >= floor_mm + ENTRY_CLEARANCE_MM - tolerance_mm)
+    }
+}
+
+/// The Z, mm, at which the cut along `path` from Z `from_mm` to `to_mm`
+/// passes within `reach_mm` of `at`, if it does: a straight move's Z where
+/// it comes nearest, an arc's higher end Z, a move in Z alone its lower.
+fn floor_near(path: Segment, from_mm: f64, to_mm: f64, at: Point, reach_mm: f64) -> Option<f64> {
+    if point_segment_distance_mm(path, at) > reach_mm {
+        return None;
+    }
+    if path.bulge != 0.0 {
+        return Some(from_mm.max(to_mm));
+    }
+    let ab = path.end - path.start;
+    let length_sq = ab.dot(ab);
+    if length_sq <= EPS_MM * EPS_MM {
+        return Some(from_mm.min(to_mm));
+    }
+    let t = ((at - path.start).dot(ab) / length_sq).clamp(0.0, 1.0);
+    Some(from_mm + (to_mm - from_mm) * t)
 }
 
 /// The deepest Z a cut has reached at one XY: machine X and Y as written,
@@ -1775,6 +1896,10 @@ mod tests {
             &post,
             &transform,
             project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
             &spans,
         )
         .map(|_| ())
@@ -1839,6 +1964,108 @@ mod tests {
                     ..
                 }
             ),
+            "{err:?}"
+        );
+    }
+
+    /// A ramp at (20, 20) on the fixture's 6 mm stock (machine Z 0 at the
+    /// stock top, safe Z 5): rapid straight down to machine Z `first`,
+    /// ramp to Z −1 and back along X to (20, 20), lift, rapid straight
+    /// down to `second` at (`x`, 20), ramp to Z −2 at (45, 20), out.
+    fn entry_program(first: &str, x: &str, second: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX20 Y20\nZ{first}\nG1 X30 Z-1 F1000\nX20\nG0 Z5\nX{x}\nZ{second}\nG1 X45 Z-2\nG0 Z5\nM5\n"
+        )
+    }
+
+    /// S2 as changed in #214: a ramp or helix starts 1 mm above the stock
+    /// top, or 1 mm above the floor the operation's pass before cut there,
+    /// and a rapid straight down from safe Z takes the tool there. A rapid
+    /// in Z alone may end at or above the stock top plus the entry
+    /// clearance anywhere, and at or above the entry clearance over the
+    /// lowest Z a cut of the same operation has reached through its XY.
+    #[test]
+    fn rapid_down_to_entry_start_above_stock_is_accepted() {
+        // Z 1 is the stock top plus 1 mm; Z 0 is 1 mm above the Z −1 the
+        // first ramp's return along X cut through (20, 20).
+        check_text(&entry_program("1", "20", "0")).unwrap();
+        // Higher is fine too.
+        check_text(&entry_program("1.5", "20", "0.5")).unwrap();
+        // Anywhere over the stock, Z 1 is in the air.
+        check_text(&entry_program("1", "25", "1")).unwrap();
+        // The return cut passes through (25, 20) at Z −1 as well.
+        check_text(&entry_program("1", "25", "0")).unwrap();
+    }
+
+    /// S2 as changed in #214 lets a rapid in Z alone stop in the air only:
+    /// one that ends below the stock top plus the clearance where nothing
+    /// was cut, or less than the clearance above the floor a cut reached
+    /// there, or above a floor only another operation cut, is still
+    /// refused, and so is a rapid in XY below safe Z.
+    #[test]
+    fn rapid_into_the_stock_is_still_rejected() {
+        let below_at = |text: &str, at: usize| {
+            let err = check_text(text).unwrap_err();
+            assert!(
+                matches!(err, ExportError::RapidBelowSafeZ { line, .. } if line == at),
+                "line {at}: {err:?}"
+            );
+        };
+        // Less than 1 mm above the stock top, nothing cut there yet.
+        below_at(&entry_program("0.5", "20", "0"), 7);
+        below_at(&entry_program("-0.5", "20", "0"), 7);
+        // Less than 1 mm above the floor cut there.
+        below_at(&entry_program("1", "20", "-0.5"), 12);
+        // Not over the cut: (35, 20) is past the ramp's far end.
+        below_at(&entry_program("1", "35", "0"), 12);
+        // In XY below safe Z, even above the stock.
+        below_at(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX20 Y20\nZ1\nX30\nG1 Z-1 F300\nG0 Z5\nM5\n",
+            8,
+        );
+
+        // A floor another operation cut does not count: the same program
+        // split after the first ramp, the second op's rapid at line 12
+        // stops 1 mm above the first op's floor, below the stock top.
+        let (project, op, tool) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let toolpath = Toolpath::default();
+        let first = Operation::Profile(op.clone());
+        let mut second_op = op;
+        second_op.id = dc_project::OperationId::new("o2");
+        let second = Operation::Profile(second_op);
+        let text = entry_program("1", "20", "0");
+        let spans = [
+            OpSpan {
+                op: &first,
+                tool: &tool,
+                toolpath: &toolpath,
+                material: &Material::Unchecked,
+                lines: 1..10,
+            },
+            OpSpan {
+                op: &second,
+                tool: &tool,
+                toolpath: &toolpath,
+                material: &Material::Unchecked,
+                lines: 10..text.lines().count() + 1,
+            },
+        ];
+        let err = check_rules(
+            &text,
+            &post,
+            &transform,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
+            &spans,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowSafeZ { line: 12, .. }),
             "{err:?}"
         );
     }
@@ -2604,14 +2831,18 @@ mod tests {
         );
     }
 
-    /// S2 is unchanged outside a Drill: the same rapids in a Profile fail.
+    /// Outside a Drill, S15's rapids are S2's: the same rapids in a
+    /// Profile fail. The rapid from safe Z down to 1 mm above the stock
+    /// (line 7) is S2's rapid down to an entry (#214) and passes; the
+    /// retract to it (line 9) does not start at safe Z, and fails.
+    /// (changed in #214: line 7 failed.)
     #[test]
     fn drill_rapid_below_safe_z_on_profile_still_fails() {
         let (_, op, _) = fixture();
         let (text, toolpath) = peck_program(-1.5, None);
         let err = check_as(&text, &toolpath, &Operation::Profile(op)).unwrap_err();
         assert!(
-            matches!(err, ExportError::RapidBelowSafeZ { line: 7, .. }),
+            matches!(err, ExportError::RapidBelowSafeZ { line: 9, .. }),
             "{err:?}"
         );
     }
@@ -4260,16 +4491,17 @@ mod tests {
         );
     }
 
-    /// #158: S9 on the helix Pocket checks each of its more than a
-    /// thousand descent chords as a segment against the region's outlines,
+    /// #158: S9 on the helix Pocket checks each of its more than eight
+    /// hundred descent chords as a segment against the region's outlines,
     /// not as the union of swept capsules (6.7 s in a debug build in slice
-    /// 9), so it stays fast in a debug build.
+    /// 9), so it stays fast in a debug build. (changed in #214: more than a
+    /// thousand while the first pass's helices started at safe Z.)
     #[test]
     fn s9_check_is_fast_on_helix_pocket() {
         let (project, op) = island_pocket(helix(), 0.0);
         let text = emit_pocket(&project, &op, None).unwrap();
         let descents = descent_rates(&text).len();
-        assert!(descents > 1000, "{descents} descent chords");
+        assert!(descents > 800, "{descents} descent chords");
         let op = Operation::Pocket(op);
         let start = std::time::Instant::now();
         check_material_text(&text, &project, &op).unwrap();

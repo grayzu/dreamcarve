@@ -2708,7 +2708,8 @@ fn init_writes_grblhal_v2() {
 
 /// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
 /// exports the bytes it did before version 2 existed
-/// (`tests/expected/coaster-<id>-v1.nc`, committed before #171) until the
+/// (`tests/expected/coaster-<id>-v1.nc`, committed before #171; its ramp
+/// re-captured in #214, which changed the motion, not the format) until the
 /// user runs `export --post <id>`. That upgrades it to version 2, says so,
 /// and changes only the program's first line.
 #[test]

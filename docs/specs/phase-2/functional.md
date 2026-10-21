@@ -149,8 +149,12 @@ directions, saving a retract per pass (D9).
     helix sits in the same material, never in the part. When a helix does
     not fit it falls back to a ramp, and a ramp that does not fit to a
     plunge, each with a warning naming the operation and shape. The
-    descent never exceeds the plunge rate in Z. Projects from phase 1
-    keep `plunge` when migrated, so they cut the same.
+    descent never exceeds the plunge rate in Z. It starts 1 mm above the
+    stock top, or on a Pocket's later pass 1 mm above the floor the pass
+    before cut, and the bit rapids straight down from safe Z to there
+    (S2; changed in #214: it started at safe Z and ramped or spiralled
+    through the air). Projects from phase 1 keep `plunge` when migrated,
+    so they cut the same.
 17. **Lead-in and lead-out** (`lead`) on Profile (VCarve "Leads", circular;
 Fusion "Lead-In (Entry)"): an arc of `radius_mm` tangent to the path,
 so the tool enters and leaves the wall without a dwell mark. `lead_out`
@@ -418,8 +422,12 @@ multi-part cases the order of shapes is compared too.
 
 ## Safety requirements
 
-S1–S8 from phase 1 apply to every operation and every post-processor. New
-in this phase:
+S1–S8 from phase 1 apply to every operation and every post-processor,
+S2 as changed in #214: a rapid straight down from safe Z may stop over
+the start of a ramp or helix at or above the stock top plus the 1 mm
+entry clearance, or at or above that clearance over the lowest Z a cut
+of the same operation has already reached through that XY. New in this
+phase:
 
 - **S9 Every operation's cuts stay in its own material.** A Pocket's
 footprint stays inside its region and outside its islands; an entry

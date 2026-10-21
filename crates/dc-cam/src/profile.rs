@@ -291,6 +291,7 @@ pub fn generate_profile(
         op.through_cut_allowance_mm,
     )?;
     let safe_z_mm = thickness_mm + op.safe_z_mm;
+    let start_z_mm = entry::descent_start_z_mm(thickness_mm, safe_z_mm);
 
     let tabs = op
         .tabs
@@ -443,7 +444,7 @@ pub fn generate_profile(
         layouts: &layouts,
         tabs: tabs.as_ref(),
         pass_z: &pass_z,
-        safe_z_mm,
+        start_z_mm,
         entry_tool: &entry_tool,
         tolerance_mm: project.flatten_tolerance_mm,
     };
@@ -569,7 +570,7 @@ pub fn generate_profile(
                     pass,
                     z_mm,
                     below_tabs,
-                    safe_z_mm,
+                    start_z_mm,
                     tool: entry_tool(wall),
                     tolerance_mm: project.flatten_tolerance_mm,
                 };
@@ -584,8 +585,14 @@ pub fn generate_profile(
                     }
                     previous = Some((false, EntryKind::Plunge));
                 } else {
-                    let (descent, from_z_mm) =
-                        entry.descend(&pass_entry, block.descent_from_z_mm, &mut previous);
+                    // #214: the first pass's ramp or helix starts just
+                    // above the stock, not at safe Z.
+                    let from_z_mm = if pass == 0 {
+                        start_z_mm
+                    } else {
+                        block.descent_from_z_mm
+                    };
+                    let (descent, from_z_mm) = entry.descend(&pass_entry, from_z_mm, &mut previous);
                     entry_warnings.record(shape, &descent);
                     entry.check(op, shape, &pass_entry, &descent, from_z_mm, domains.get(i))?;
                     block.descent_from = descent.from;
@@ -607,6 +614,7 @@ pub fn generate_profile(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,
         feed_mm_min: rates.feed_mm_min,
@@ -2768,12 +2776,15 @@ mod tests {
     /// back and forth along the line itself, at most three diameters from
     /// its first vertex, then cuts the whole line at the pass Z. A pass
     /// after the first comes down the slot the pass above cut, to that
-    /// pass's Z, before it ramps.
+    /// pass's Z, before it ramps. At 5° a leg falls 1.67 mm, less than
+    /// every pass's descent, so each turns back. (changed in #214: at 15°
+    /// the first pass, from safe Z, turned back; from 1 mm above the stock
+    /// one leg reaches it.)
     #[test]
     fn on_line_open_path_ramps_back_and_forth_along_the_line() {
         let p = line_project();
         let mut op = profile_op(&p, Side::OnLine, CutDirection::Climb);
-        op.entry = ramp_15();
+        op.entry = Entry::Ramp { angle_deg: 5.0 };
         let (tp, warnings) = generate(&p, &op);
         assert!(warnings.is_empty(), "{warnings:?}");
         let ramp: Vec<(Point3, Move)> = tp
@@ -2799,7 +2810,7 @@ mod tests {
             let slope = (from.z - mv.to.z)
                 .atan2(from.xy().distance_to(mv.to.xy()))
                 .to_degrees();
-            assert!((slope - 15.0).abs() <= 0.1, "slope {slope}");
+            assert!((slope - 5.0).abs() <= 0.1, "slope {slope}");
         }
         for z in PASS_Z_MM {
             assert!(

@@ -69,7 +69,7 @@ fn place_wall_ramp(
         for i in 0..RAMP_DIRECTIONS {
             let angle = PI * i as f64 / RAMP_DIRECTIONS as f64;
             let direction = Vec2::new(angle.cos(), angle.sin());
-            let Some((min, max)) = area.line_interval(target, direction) else {
+            let Some((min, max)) = area.line_interval(target, direction, ENTRY_EPS) else {
                 continue;
             };
             for (sign, room) in [(1.0, max), (-1.0, -min)] {

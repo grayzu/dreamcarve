@@ -280,6 +280,7 @@ pub fn generate_drill(
         order: MachiningOrder::FullDepthFirst,
         containment: &[],
         safe_z_mm,
+        stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,
         // Holes have no cleared area, so no stay-down link is ever cut at

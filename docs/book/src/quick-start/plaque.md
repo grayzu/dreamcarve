@@ -350,7 +350,6 @@ dreamcarve check plaque.dcv
 
 ```text
 plaque.dcv:17:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
-warning: entry_fallback: operation `op1`: there is no room for a `helix` entry in `pocket` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
@@ -361,7 +360,7 @@ Program 1 (T1):
 Program 2 (T2):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
-plaque.dcv: 0 error(s), 6 warning(s)
+plaque.dcv: 0 error(s), 5 warning(s)
 ```
 
 No errors: the project exports. Each warning names what it is about:
@@ -372,14 +371,6 @@ No errors: the project exports. Each warning names what it is about:
 - `drill_tool_wider_than_hole`: the drawing's circles are 5 mm across and
   the bit is 6.35 mm, so each hole comes out 6.35 mm: clearance for an M5
   screw. A Drill never moves sideways, so a hole is always the bit's size.
-- `entry_fallback`: the panel's helix has plenty of room, so this
-  warning is wrong. It is a bug,
-  [#213](https://github.com/grayzu/dreamcarve/issues/213): after the
-  raster lines, the bit lifts and plunges straight down for the wall pass
-  round the panel, where it should spiral down or stay down. The plunge
-  lands in wood the last line has just cleared, so the program is safe;
-  leave `entry` as it is, and the warning goes away when the bug is
-  fixed.
 
 `check` gives the extents of each program separately, because you fit a
 different bit for each.
@@ -393,7 +384,6 @@ dreamcarve export plaque.dcv
 
 ```text
 plaque.dcv:17:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
-warning: entry_fallback: operation `op1`: there is no room for a `helix` entry in `pocket` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
@@ -407,7 +397,7 @@ Post-processor grblhal.
   op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12 mm deep
   op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12 mm deep
   op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1 mm deep
-plaque-1-T1.nc (986 lines):
+plaque-1-T1.nc (514 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
 plaque-2-T2.nc (40 lines):
@@ -458,30 +448,30 @@ G54
 G0 Z15.000
 M3 S18000
 G4 P3.000
-X44.066 Y94.871
-G1 X44.116 Y95.198 Z14.911 F1500.000
-X44.123 Y95.529 Z14.822
-X44.086 Y95.858 Z14.734
-X44.007 Y96.180 Z14.645
-X43.887 Y96.488 Z14.556
-X43.728 Y96.779 Z14.467
-X43.532 Y97.046 Z14.379
-X43.304 Y97.285 Z14.290
-X43.046 Y97.493 Z14.201
-X42.763 Y97.665 Z14.112
-X42.460 Y97.799 Z14.023
+X41.752 Y97.949
+Z1.000
+G1 X41.425 Y97.950 Z0.912 F1500.000
+X41.101 Y97.908 Z0.825
+X40.784 Y97.825 Z0.737
+X40.481 Y97.702 Z0.649
+X40.196 Y97.541 Z0.561
+X39.934 Y97.345 Z0.474
+X39.700 Y97.117 Z0.386
+X39.497 Y96.861 Z0.298
+X39.328 Y96.580 Z0.211
+X39.197 Y96.281 Z0.123
 ```
 
 The first lines set up the controller and start the spindle, as in the
-coaster's program. Then the panel's helix begins: each line goes a little
-further round a 5.08 mm circle (0.8 of the bit's diameter) and a little
-lower, 15° down from the horizontal, at the feed rate. The spiral starts
-at safe Z, so its first three and a half turns are in the air above the
-plywood. The panel's three spirals, one for each place the bit comes
-down in it, make up about half of the program's 986 lines. That is how
-DreamCarve places entries today
-([#214](https://github.com/grayzu/dreamcarve/issues/214)); it is safe,
-only slow.
+coaster's program. The bit rapids above the panel's helix at safe Z, then
+straight down to 1 mm above the plywood (`Z1.000`), where the helix
+begins: each line goes a little further round a 5.08 mm circle (0.8 of
+the bit's diameter) and a little lower, 15° down from the horizontal, at
+the feed rate. A ramp or helix always starts 1 mm above the wood, or 1 mm
+above the floor the pass before cut, so the bit does not spiral down
+through air. The bit comes down three times in the panel, once on each
+side of the circle and once for the ring round the circle; it follows
+the last line into the ring round the panel without lifting.
 
 The holes are drilled like this, the first of the four:
 
