@@ -573,14 +573,19 @@ fn unplaceable_entry_falls_back_out_loud() {
         let fell = fallbacks(&warnings);
         assert!(!fell.is_empty(), "{entry:?}: {warnings:?}");
         for w in &fell {
-            assert_eq!(w.param("used"), Some("plunge"), "{w:?}");
-            assert_eq!(w.param("op"), Some("o1"));
+            let Warning::EntryFallback {
+                op, shape, used, ..
+            } = w
+            else {
+                panic!("{w:?}");
+            };
+            assert_eq!(*used, EntryKind::Plunge, "{w:?}");
+            assert_eq!(op.as_str(), "o1");
+            assert!(
+                shape.instance.as_str() != "frame" || shape.profile == 1,
+                "the frame's outer wall has room: {fell:?}"
+            );
         }
-        assert!(
-            fell.iter()
-                .all(|w| w.param("instance") != Some("frame") || w.param("profile") == Some("1")),
-            "the frame's outer wall has room: {fell:?}"
-        );
         assert!(
             !sloped_moves(&tp).is_empty(),
             "{entry:?}: the contours that fit still ramp in"
@@ -934,9 +939,17 @@ fn acceptance_26_tight_hole_falls_back_to_plunge() {
     let (tp, warnings) = generate(&p, &op(&p, Side::Inside, ramp()));
     let fell = fallbacks(&warnings);
     assert_eq!(fell.len(), 1, "{warnings:?}");
-    assert_eq!(fell[0].param("requested"), Some("ramp"));
-    assert_eq!(fell[0].param("used"), Some("plunge"));
-    assert_eq!(fell[0].param("instance"), Some("hole"));
+    let Warning::EntryFallback {
+        shape,
+        requested,
+        used,
+        ..
+    } = fell[0]
+    else {
+        panic!("{:?}", fell[0]);
+    };
+    assert_eq!((*requested, *used), (EntryKind::Ramp, EntryKind::Plunge));
+    assert_eq!(shape.instance.as_str(), "hole");
     assert!(sloped_moves(&tp).is_empty());
     assert_eq!(plunges_into_stock(&tp).len(), PASS_Z_MM.len());
 }

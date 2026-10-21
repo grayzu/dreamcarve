@@ -767,7 +767,7 @@ fn check_in_material(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entry::without_descents;
+    use crate::entry::{EntryKind, without_descents};
     use crate::error::CamError;
     use crate::footprint::footprint;
     use crate::test_support::assert_safe;
@@ -2383,11 +2383,19 @@ mod tests {
         assert_eq!(entry.len(), 1, "{warnings:?}");
         let w = entry[0];
         assert_eq!(w.code(), WarningCode::EntryFallback);
-        assert_eq!(w.param("op"), Some("o1"));
-        assert_eq!(w.param("instance"), Some("i1"));
-        assert_eq!(w.param("profile"), Some("0"));
-        assert_eq!(w.param("requested"), Some("helix"));
-        assert_eq!(w.param("used"), Some("ramp"));
+        let Warning::EntryFallback {
+            op,
+            shape,
+            requested,
+            used,
+            ..
+        } = w
+        else {
+            panic!("{w:?}");
+        };
+        assert_eq!(op.as_str(), "o1");
+        assert_eq!((shape.instance.as_str(), shape.profile), ("i1", 0));
+        assert_eq!((*requested, *used), (EntryKind::Helix, EntryKind::Ramp));
         let s = sloped_moves(&tp);
         assert!(!s.is_empty(), "a ramp is cut");
         let centre_area = inset(
@@ -2428,8 +2436,18 @@ mod tests {
         let entry = entry_warnings(&warnings);
         assert_eq!(entry.len(), 1, "{warnings:?}");
         assert_eq!(entry[0].code(), WarningCode::EntryFallback);
-        assert_eq!(entry[0].param("requested"), Some("helix"));
-        assert_eq!(entry[0].param("used"), Some("plunge"));
+        assert!(
+            matches!(
+                entry[0],
+                Warning::EntryFallback {
+                    requested: EntryKind::Helix,
+                    used: EntryKind::Plunge,
+                    ..
+                }
+            ),
+            "{:?}",
+            entry[0]
+        );
         assert!(entry[0].to_string().contains("plunge"), "{}", entry[0]);
         assert!(sloped_moves(&tp).is_empty(), "no ramp or helix");
         let plunges = tp
