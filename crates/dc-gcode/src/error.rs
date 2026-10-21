@@ -198,6 +198,18 @@ pub enum ExportError {
         /// The word.
         word: String,
     },
+    /// #312: a setup code the definition's header writes (`G50`, `G69`)
+    /// appears where `emit` never writes it: with other words on its line,
+    /// or outside the header and the setup after a stop.
+    #[error("emitted line {line} has `{word}` where DreamCarve never sends it: {reason}")]
+    MisplacedSetupWord {
+        /// 1-based line number in the program.
+        line: usize,
+        /// The word.
+        word: String,
+        /// Why it is refused.
+        reason: &'static str,
+    },
     /// S5: the program does not select units, a work-coordinate system, and
     /// absolute distance mode before its first motion or spindle start.
     #[error("the program does not set {what} before it moves")]
