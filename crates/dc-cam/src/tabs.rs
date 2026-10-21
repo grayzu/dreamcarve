@@ -566,7 +566,21 @@ fn merge_closed(mut spans: Vec<Raw>, l: f64) -> (Vec<Raw>, bool) {
     (merged, overlap)
 }
 
-/// One raised stretch of a closed path for [`PathTabs::from_spans`]: from
+/// Spans of an open path, each within it, merged in start order where
+/// they overlap or touch (#311, [`PathTabs::from_spans`]).
+fn merge_open(mut spans: Vec<Raw>) -> Vec<Raw> {
+    spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
+    let mut merged: Vec<Raw> = Vec::new();
+    for span in spans {
+        match merged.last_mut() {
+            Some(last) if span.start_mm <= last.end_mm + EPS_MM => last.absorb(&span),
+            _ => merged.push(span),
+        }
+    }
+    merged
+}
+
+/// One raised stretch of a path for [`PathTabs::from_spans`]: from
 /// `start_mm` along it, `length_mm` long (it may run through the start),
 /// at `top_z_mm`; a smooth one rises over `ramp_in_mm` and falls over
 /// `ramp_out_mm`.
@@ -715,22 +729,32 @@ impl PathTabs {
         carried
     }
 
-    /// The raised stretches `spans` on a closed path `length_mm` long, laid
-    /// for `tab_count` tabs, merged where they overlap or touch (#310
-    /// review: an allowance path's spans, found from the tabs' material).
-    pub(crate) fn from_spans(length_mm: f64, tab_count: usize, spans: &[RaisedSpan]) -> Self {
+    /// The raised stretches `spans` on a path `length_mm` long, laid for
+    /// `tab_count` tabs, merged where they overlap or touch (#310 review:
+    /// an allowance path's spans, found from the tabs' material). On a
+    /// `closed` path a span may run through its start; on an open one
+    /// (#311) each is cut short at the path's ends.
+    pub(crate) fn from_spans(
+        length_mm: f64,
+        tab_count: usize,
+        spans: &[RaisedSpan],
+        closed: bool,
+    ) -> Self {
         let l = length_mm;
         let raw: Vec<Raw> = spans
             .iter()
             .map(|s| {
-                let start_mm = if l > 0.0 {
-                    s.start_mm.rem_euclid(l)
+                let (start_mm, end_mm) = if !closed {
+                    (s.start_mm.max(0.0), (s.start_mm + s.length_mm).min(l))
+                } else if l > 0.0 {
+                    let start_mm = s.start_mm.rem_euclid(l);
+                    (start_mm, start_mm + s.length_mm.max(0.0))
                 } else {
-                    s.start_mm
+                    (s.start_mm, s.start_mm + s.length_mm.max(0.0))
                 };
                 Raw {
                     start_mm,
-                    end_mm: start_mm + s.length_mm.max(0.0),
+                    end_mm: end_mm.max(start_mm),
                     top_z_mm: s.top_z_mm,
                     shape: s.shape,
                     ramp_in_mm: s.ramp_in_mm,
@@ -738,13 +762,51 @@ impl PathTabs {
                 }
             })
             .collect();
-        let (merged, _) = merge_closed(raw, l);
+        let merged = if closed {
+            merge_closed(raw, l).0
+        } else {
+            merge_open(raw)
+        };
+        let full = if closed {
+            merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM)
+        } else {
+            merged
+                .iter()
+                .any(|s| s.start_mm <= EPS_MM && s.end_mm >= l - EPS_MM)
+        };
         Self {
             length_mm: l,
-            full: merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM),
+            full,
             spans: merged.iter().map(Raw::span).collect(),
-            closed: true,
+            closed,
             tab_count,
+        }
+    }
+
+    /// These spans, laid on an open path, measured from its other end:
+    /// the layout of the path run backwards (#311, a reversed last pass),
+    /// so the tabs stay where they are. Each span's ramps swap. A closed
+    /// path's layout is returned as it is; [`PathTabs::carried`] reverses
+    /// one.
+    pub(crate) fn reversed_open(&self) -> Self {
+        if self.closed {
+            return self.clone();
+        }
+        let l = self.length_mm;
+        let mut spans: Vec<Span> = self
+            .spans
+            .iter()
+            .map(|s| Span {
+                start_mm: (l - s.end_mm()).max(0.0),
+                ramp_in_mm: s.ramp_out_mm,
+                ramp_out_mm: s.ramp_in_mm,
+                ..*s
+            })
+            .collect();
+        spans.reverse();
+        Self {
+            spans,
+            ..self.clone()
         }
     }
 

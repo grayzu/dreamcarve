@@ -433,9 +433,10 @@ pub enum Problem {
         /// The largest allowance allowed, mm: a third of the diameter.
         limit_mm: f64,
     },
-    /// A Profile has a last pass but cuts On line, Left or Right (#284):
-    /// only Inside and Outside leave material on a wall the last pass can
-    /// take off. An error.
+    /// A Profile has a last pass but cuts On line (#284): it cuts with
+    /// both flanks of the bit, so it leaves no wall for the last pass to
+    /// take the allowance off. An error. (changed in #311: Left and Right,
+    /// which cut one flank against the part, take a last pass.)
     LastPassNeedsSide {
         /// The operation.
         operation: OperationId,
@@ -866,7 +867,7 @@ impl fmt::Display for Problem {
                 side,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the allowance off a wall the other passes leave, so it needs an Inside or Outside Profile. Set last_pass to null, or cut Inside or Outside",
+                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the allowance off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line",
                 match side {
                     Side::OnLine => "on the line",
                     Side::Left => "to the left of open paths",
@@ -1569,7 +1570,7 @@ impl Validator {
                 self.out_of_range(field, thickness_mm, LAST_PASS_THICKNESS);
             }
         }
-        if !op.side.has_waste_area() {
+        if !op.side.has_wall() {
             self.problems.push(Problem::LastPassNeedsSide {
                 operation: op.id.clone(),
                 name: op.name.clone(),

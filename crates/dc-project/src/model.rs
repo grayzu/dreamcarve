@@ -819,6 +819,14 @@ impl Side {
     pub const fn has_waste_area(self) -> bool {
         matches!(self, Self::Inside | Self::Outside)
     }
+
+    /// True for the sides that cut one flank of the bit against the part,
+    /// leaving a wall a last pass can take an allowance off (#284, #311):
+    /// Inside, Outside, Left and Right. On line cuts with both flanks.
+    #[must_use]
+    pub const fn has_wall(self) -> bool {
+        !matches!(self, Self::OnLine)
+    }
 }
 
 /// Milling direction relative to the clockwise spindle.

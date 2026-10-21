@@ -176,8 +176,8 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   the other way round. Tabs, leads, ramps, helixes and corner relief work with
   it: the earlier passes rise over a slightly longer stretch round each tab,
   and the notches are cut from the last pass. The allowance must be more than
-  0 and at most a third of the bit's diameter, on an Inside or Outside
-  Profile, and `thickness_mm` at most the step-down. The last pass takes
+  0 and at most a third of the bit's diameter, on an Inside, Outside, Left
+  or Right Profile, and `thickness_mm` at most the step-down. The last pass takes
   off at most the allowance (√2 times it in a square corner), except in a
   sharp corner, where it takes the wedge the earlier passes stop short of,
   up to a third of the bit ([#324]): triangles and stars cut inside, V
@@ -188,7 +188,15 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   naming the shapes. A one-pass
   cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
-  DreamCarve versions cannot read version 13 files.
+  DreamCarve versions cannot read version 13 files. Left and Right
+  Profiles take a last pass too ([#311]): the earlier passes run the
+  allowance farther to the cut side and end on the same lines through the
+  path's ends as the last pass, so none cuts past an end and the skin is
+  taken off right up to each; `reverse` starts the last pass at the other
+  end. The earlier passes must keep the bit's radius plus the allowance
+  from every other line and the strip it keeps. On an outline or an open
+  path, the earlier passes now also rise over the thin edge of a tab where
+  the last pass rises onto it, at the far side of its cut.
 - **Post-processor end-to-end plan and motion check.** `docs/testing/post-processor-e2e.md`
   says, for LinuxCNC, Mach3, UCCNC and generic, what is checked automatically,
   what cannot be and why, and the manual and air-cut procedures for the rest.
@@ -482,6 +490,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#284]: https://github.com/grayzu/dreamcarve/issues/284
 [#324]: https://github.com/grayzu/dreamcarve/issues/324
+[#311]: https://github.com/grayzu/dreamcarve/issues/311
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306

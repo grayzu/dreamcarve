@@ -412,11 +412,12 @@ pub enum CamError {
         /// The allowed range, as the user reads it.
         range: String,
     },
-    /// A Profile that cuts On line, Left or Right has a last pass (#284):
-    /// only Inside and Outside leave a wall to take the allowance off.
-    /// Validation rejects it; the generator refuses it too.
+    /// A Profile that cuts On line has a last pass (#284): it cuts with
+    /// both flanks, so it leaves no wall to take the allowance off.
+    /// Validation rejects it; the generator refuses it too. (changed in
+    /// #311: Left and Right take a last pass.)
     #[error(
-        "operation `{op}` has a last_pass but does not cut Inside or Outside; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside or Outside"
+        "operation `{op}` has a last_pass but cuts on the line; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside, Outside, Left or Right"
     )]
     LastPassNeedsSide {
         /// The operation.

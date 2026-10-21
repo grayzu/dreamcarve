@@ -34,9 +34,11 @@ const STOCK_MM: f64 = 12.0;
 const RADIUS_MM: f64 = 6.35 / 2.0;
 const ALLOWANCE_MM: f64 = 0.5;
 const LATTICE_MM: f64 = 0.1;
-/// How far a written move may depart from the path: a unit in the last
-/// place of the program and a little for the arc sampling.
-const SLACK_MM: f64 = 0.003;
+/// How far a written move may depart from the path, as S9 lets it: the
+/// project's flatten tolerance (a smooth tab's ramp on an arc is cut as
+/// chords within it), a unit in the last place of the program, and a
+/// little for the arc sampling.
+const SLACK_MM: f64 = dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM + 0.002;
 
 /// The L, in project space: 60 mm along +X from (40, 40), then 40 mm up.
 fn ell() -> Vec<Point> {
@@ -389,7 +391,7 @@ fn check(project: &Project, expect: &Expect) {
             let s = at.signed_mm * expect.sign;
             let (b, l) = (before.at(i, j), final_pass.at(i, j));
             // No pass cuts the kept side, past the ends included.
-            if s < -0.01 {
+            if s < -SLACK_MM {
                 assert!(
                     b >= STOCK_MM && l >= STOCK_MM,
                     "{case}: the kept side at {q:?} is cut to {}",

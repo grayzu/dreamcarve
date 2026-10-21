@@ -353,7 +353,8 @@ with `side_needs_open_path`, since a closed path's direction is not
 shown in the drawing. S9 holds the cut to the offset path and clear of
 every line and kept strip. (added in #207: before, an open path could
 be cut only On line, and cutting beside one meant redrawing it a bit
-radius over.)
+radius over. Changed in #311: a Left or Right Profile takes a last pass,
+capability 34.)
 
 ## Out of scope
 
@@ -921,7 +922,19 @@ built (design addendum, "Order and format versions").
     V, W, M and K. A narrower tip is refused, and
     so is a notch, slot or inlet that the earlier passes bridge and skip,
     however thin the last pass's cut there, once it is thicker than a
-    square corner's.)
+    square corner's. Changed again in #311: Left and Right take a last
+    pass, as VCarve's Profile of an open vector does; they cut one flank
+    of the bit against the part, as Inside and Outside do, and only On
+    line, which cuts with both, is refused. The earlier passes run the
+    allowance farther to the cut side and end square on the same end
+    normals as the last pass, so no pass cuts past an end on the part
+    side and the last pass takes the skin off right up to each end;
+    `reverse` starts the last pass at the path's other end, where the
+    earlier passes end, so it mills the other way. The refusals above
+    apply to the path, a stretch at an end the earlier passes stop short
+    of counting as no corner, and the earlier passes must keep the bit's
+    radius plus the allowance from every other line and every kept
+    strip.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 
@@ -1042,4 +1055,7 @@ built (design addendum, "Order and format versions").
   into stock a tab leaves. Changed in #324: at a corner, where the
   earlier passes cut both walls, the last pass may take off up to a third
   of the bit diameter, or that bound where it is more; nowhere else more
-  than the square corner's.)
+  than the square corner's. Changed in #311: on a Left or Right Profile
+  every pass but the last runs on the targets' open paths offset by
+  `r + allowance_mm` to the side, and every pass keeps `r` from every open
+  path and kept edge, as without a last pass.)

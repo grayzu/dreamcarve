@@ -240,9 +240,18 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// allowance; entries, leads and waste domains are planned per path; every
 /// relief level is cut from the last pass. A drawing the allowance passes
 /// cannot follow is refused ([`CamError::BandNarrowerThanAllowance`],
-/// [`CamError::ShapeNarrowerThanAllowance`]), and a last pass On line,
-/// Left or Right, or out of range, is
-/// [`CamError::LastPassNeedsSide`] or [`CamError::InvalidLastPass`].
+/// [`CamError::ShapeNarrowerThanAllowance`]), and a last pass On line, or
+/// out of range, is [`CamError::LastPassNeedsSide`] or
+/// [`CamError::InvalidLastPass`]. A Left or Right Profile (#311) takes a
+/// last pass too: each open path's allowance path is its offset by
+/// `r + a` to the same side, ending square on the same end normals, so
+/// no pass cuts past an end and the last pass takes the allowance off up
+/// to each; the twin runs the way its path does, ramps along itself, and
+/// carries the tabs as a closed shape's twin does. `reverse` runs the
+/// last pass from the path's other end, where the earlier passes end. The
+/// allowance paths must follow the line ([`last_pass::open_twins`],
+/// [`CamError::ShapeNarrowerThanAllowance`]) and keep `r + a` from every
+/// other line and kept strip ([`CamError::AllowanceCutsIntoKeptSide`]).
 ///
 /// An On line Profile also cuts open paths (#175, as VCarve's Profile
 /// "On" an open vector): each pass runs the path from its first vertex to
@@ -473,12 +482,19 @@ pub fn generate_profile(
             let (Some((path, _)), Some(layout)) = (paths.get_mut(i), layouts.get_mut(i)) else {
                 continue;
             };
-            if !path.is_closed() {
-                continue;
-            }
-            let back = last_pass::reversed_from_start(path);
+            // #311: an open path's last pass runs from its other end,
+            // where the earlier passes end, its tabs measured from there.
+            let back = if path.is_closed() {
+                last_pass::reversed_from_start(path)
+            } else {
+                path.reversed()
+            };
             if let Some((l, _)) = layout {
-                *l = last_pass::carry_reversed(path, l, &back);
+                *l = if path.is_closed() {
+                    last_pass::carry_reversed(path, l, &back)
+                } else {
+                    l.reversed_open()
+                };
             }
             *path = back;
             if let Some(flag) = reversed.get_mut(i) {
@@ -876,7 +892,9 @@ struct CentrePath<'s> {
 /// climb, #242). Shapes the tool does not fit warn
 /// [`Warning::ToolTooLarge`]; bands narrower than the tool fail. With a
 /// last pass `allowance_mm` (#284) each closed shape's path has its
-/// allowance twin, or the shape is refused ([`last_pass::twins`]).
+/// allowance twin, or the shape is refused ([`last_pass::twins`]); so has
+/// each Left or Right piece of an open path (#311,
+/// [`last_pass::open_twins`]).
 #[allow(
     clippy::too_many_arguments,
     reason = "every argument is one fact about the paths; a struct would only rename them"
@@ -980,6 +998,8 @@ fn centre_paths<'s>(
         Side::Inside | Side::Outside | Side::OnLine => None,
     };
     let mut open_centres: Vec<(&ShapeRef, Vec<Polyline>)> = Vec::with_capacity(open_paths.len());
+    // The line each entry of `open_centres` offsets.
+    let mut open_lines: Vec<&Polyline> = Vec::with_capacity(open_paths.len());
     for (shape, path) in open_paths {
         let centres = match side_mm {
             Some(left_mm) => offset_open(path, left_mm),
@@ -995,26 +1015,47 @@ fn centre_paths<'s>(
             continue;
         }
         open_centres.push((shape, centres));
+        open_lines.push(path);
     }
+    // #311: each Left or Right piece's allowance twin, the path offset by
+    // `r + a` to the same side, ending on the same end normals; then the
+    // twins held to the kept-side rule with the radius grown by `a`.
+    let mut open_twins: Vec<Vec<Option<Polyline>>> = open_centres
+        .iter()
+        .map(|(_, centres)| centres.iter().map(|_| None).collect())
+        .collect();
     if let Some(left_mm) = side_mm {
-        check_kept_sides(op, tool, open_paths, &open_centres, left_mm)?;
+        check_kept_sides(op, tool, open_paths, &open_centres, left_mm, 0.0)?;
+        if let Some(allowance_mm) = allowance_mm {
+            let mut twins: Vec<(&ShapeRef, Vec<Polyline>)> = Vec::with_capacity(open_centres.len());
+            for ((shape, centres), path) in open_centres.iter().zip(&open_lines) {
+                let found =
+                    last_pass::open_twins(op, tool, (shape, path), centres, left_mm, allowance_mm)?;
+                twins.push((shape, found));
+            }
+            check_kept_sides(op, tool, open_paths, &twins, left_mm, allowance_mm)?;
+            open_twins = twins
+                .into_iter()
+                .map(|(_, found)| found.into_iter().map(Some).collect())
+                .collect();
+        }
     }
     // #175: an open path is cut On line as drawn, from the end
     // `open_runs_reversed` picks (#242 On line, #287 Left and Right); a
-    // Left or Right offset of one (#207) from the end beside that vertex.
-    // It bounds no region, so no containment and no waste domain; its
-    // wall is never asked.
+    // Left or Right offset of one (#207) from the end beside that vertex,
+    // and its allowance twin (#311) the same way. It bounds no region, so
+    // no containment and no waste domain; its wall is never asked.
     let reversed_open = open_runs_reversed(op.side, op.direction);
-    for (shape, centres) in open_centres {
-        for path in centres {
-            let path = if reversed_open { path.reversed() } else { path };
+    let as_cut = |path: Polyline| if reversed_open { path.reversed() } else { path };
+    for ((shape, centres), twins) in open_centres.into_iter().zip(open_twins) {
+        for (path, twin) in centres.into_iter().zip(twins) {
             placed.push(CentrePath {
-                path,
+                path: as_cut(path),
                 shape,
                 wall: Wall::Outside,
                 region: regions.len(),
                 hole: false,
-                twin: None,
+                twin: twin.map(as_cut),
             });
         }
     }
@@ -1514,14 +1555,23 @@ fn drop_duplicate_paths(
 /// #210: a square end that runs onto the next line of a part drawn as
 /// separate lines cuts into it. [`CamError::CutsIntoKeptSide`], the
 /// shapes in drawing order.
+///
+/// With a last pass `allowance_mm` (#311, more than 0), `centres` are the
+/// allowance paths, `r + a` from their lines, and each must keep `r + a`
+/// from every other line and every kept edge, so it takes neither another
+/// line's skin, which that line's last pass is to cut, nor any of the
+/// strip it keeps: [`CamError::AllowanceCutsIntoKeptSide`]. The kept
+/// edges stay one radius off their lines; S9 holds every pass to the
+/// radius from them.
 fn check_kept_sides(
     op: &ProfileOp,
     tool: &Tool,
     open: &[(ShapeRef, Polyline)],
     centres: &[(&ShapeRef, Vec<Polyline>)],
     left_mm: f64,
+    allowance_mm: f64,
 ) -> Result<(), CamError> {
-    let radius_mm = left_mm.abs();
+    let reach_mm = left_mm.abs() + allowance_mm;
     let kept: Vec<(&ShapeRef, &Polyline, Vec<Polyline>)> = open
         .iter()
         .map(|(shape, line)| (shape, line, offset_open(line, -left_mm)))
@@ -1529,11 +1579,11 @@ fn check_kept_sides(
     let drawn = |s: &ShapeRef| (op.targets.iter().position(|t| *t == s.instance), s.profile);
     for &(shape, ref pieces) in centres {
         for &(other, line, ref edges) in &kept {
-            let crosses = other != shape && pieces.iter().any(|c| within(c, line, radius_mm));
+            let crosses = other != shape && pieces.iter().any(|c| within(c, line, reach_mm));
             let enters = || {
                 pieces
                     .iter()
-                    .any(|c| edges.iter().any(|e| within(c, e, radius_mm)))
+                    .any(|c| edges.iter().any(|e| within(c, e, reach_mm)))
             };
             if !crosses && !enters() {
                 continue;
@@ -1543,11 +1593,21 @@ fn check_kept_sides(
             } else {
                 (other, shape)
             };
-            return Err(CamError::CutsIntoKeptSide {
-                op: op.id.clone(),
-                shape: first.clone(),
-                other: Box::new(second.clone()),
-                diameter_mm: tool.diameter_mm,
+            return Err(if allowance_mm > 0.0 {
+                CamError::AllowanceCutsIntoKeptSide {
+                    op: op.id.clone(),
+                    shape: first.clone(),
+                    other: Box::new(second.clone()),
+                    diameter_mm: tool.diameter_mm,
+                    allowance_mm,
+                }
+            } else {
+                CamError::CutsIntoKeptSide {
+                    op: op.id.clone(),
+                    shape: first.clone(),
+                    other: Box::new(second.clone()),
+                    diameter_mm: tool.diameter_mm,
+                }
             });
         }
     }
