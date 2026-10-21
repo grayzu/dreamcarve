@@ -9,13 +9,14 @@
 //! it.
 
 use super::{DATE, generate};
+use dc_cam::entry::EntryKind;
 use dc_cam::{Warning, WarningCode, generate_profile};
 use dc_gcode::emit;
 use dc_geometry::{Point, Polyline, Transform};
 use dc_project::test_support::{sample_pocket, sample_project};
 use dc_project::{
     ClearanceStrategy, CornerRelief, Entry, MachineOrigin, Operation, OriginXy, OriginZ, PocketOp,
-    ProfileOp, Project, Side, Stock, WallPass, validate,
+    PostProcessorRef, ProfileOp, Project, Side, Stock, Units, WallPass, validate,
 };
 
 /// The sample project on 240 × 160 × `thickness_mm` stock, its one
@@ -258,4 +259,63 @@ fn offset_pocket_with_a_sub_tolerance_last_ring_exports() {
     tool.feed_mm_min = Some(3_994.519);
     tool.plunge_mm_min = Some(805.055);
     exports(&project);
+}
+
+/// #265 (the Profile property, `PROPTEST_RNG_SEED=108`): an Outside
+/// Profile of a 13.847 mm circle by a 0.5508 mm tool with a 0.05 helix at
+/// 14.14°. The helix is 0.0275 mm across, and each of its chords falls
+/// 0.00045 mm over 0.0018 mm, so in three places most were written level
+/// at the plunge-limited 2643.095 mm/min, which S3 refused. The helix is
+/// not cut; the pass ramps instead and says so (`entry_fallback`), in mm
+/// and in inch.
+#[test]
+fn helix_too_small_to_write_falls_back_and_exports() {
+    let Operation::Profile(outside) = outside_profile(CornerRelief::None, 0.436_449_925_824_323_2)
+    else {
+        unreachable!("outside_profile is a Profile");
+    };
+    let op = Operation::Profile(ProfileOp {
+        entry: Entry::Helix {
+            diameter_fraction: 0.05,
+            angle_deg: 14.137_048_663_595_39,
+        },
+        ..outside
+    });
+    let circle = vec![Polyline::circle(
+        Point::new(0.0, 0.0),
+        13.847_180_826_619_223,
+    )];
+    let transform = Transform::from([
+        0.119_284_082_705_176_67,
+        0.992_860_165_186_006_7,
+        -0.992_860_165_186_006_7,
+        0.119_284_082_705_176_67,
+        40.0,
+        40.0,
+    ]);
+    for units in [Units::Mm, Units::Inch] {
+        let mut project = case(circle.clone(), transform, 8.728_998_516_486_463, op.clone());
+        project.display_units = units;
+        project.origin = MachineOrigin {
+            xy: OriginXy::BottomRight,
+            z: OriginZ::StockTop,
+        };
+        project.post_processor = PostProcessorRef::latest("mach3").expect("Mach3 is bundled");
+        let tool = &mut project.tools[0];
+        tool.diameter_mm = 0.550_832_666_619_620_7;
+        tool.feed_mm_min = Some(3_840.280_223_564_292_6);
+        tool.plunge_mm_min = Some(645.988_501_885_48);
+        let warnings = exports(&project);
+        assert!(
+            warnings.iter().any(|w| matches!(
+                w,
+                Warning::EntryFallback {
+                    requested: EntryKind::Helix,
+                    used: EntryKind::Ramp,
+                    ..
+                }
+            )),
+            "{units:?}: {warnings:?}"
+        );
+    }
 }

@@ -3467,6 +3467,47 @@ mod tests {
         }
     }
 
+    /// #262: a move that spans the end of one piece and the start of the
+    /// next is held to the part of both pieces between its ends. A 20°
+    /// chord from 40° to 60° under two `G3` pieces meeting at 50° bows
+    /// 0.15 mm off its arc, so S12 refuses the chain; with that stretch in
+    /// 2° chords too it passes. (Each end of a move is placed on each
+    /// piece; the fix for #262 must not stop measuring across the joint.)
+    #[test]
+    fn chord_across_a_piece_end_is_measured_on_both_pieces() {
+        let on_circle = |deg: f64| {
+            let a = deg.to_radians();
+            Point3::new(50.0 + 10.0 * a.cos(), 50.0 + 10.0 * a.sin(), 5.0)
+        };
+        let toolpath = |long_chord: bool| {
+            let mut moves = vec![
+                Move::rapid(Point3::new(60.0, 50.0, 11.0)),
+                Move::linear(Point3::new(60.0, 50.0, 5.0), 300.0),
+            ];
+            let mut deg = 0_u32;
+            while deg < 90 {
+                deg += if long_chord && deg == 40 { 20 } else { 2 };
+                moves.push(Move::linear(on_circle(f64::from(deg)), 1000.0));
+            }
+            moves.push(Move::rapid(Point3::new(50.0, 60.0, 11.0)));
+            Toolpath { moves }
+        };
+        let joint = on_circle(50.0);
+        let text = chord_run_text(&format!(
+            "G3 X{:.3} Y{:.3} I-10 J0 F1000\nX50 Y60 I{:.3} J{:.3}\n",
+            joint.x,
+            joint.y,
+            50.0 - joint.x,
+            50.0 - joint.y,
+        ));
+        let result = check_against_with(&text, &toolpath(true), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        check_against_with(&text, &toolpath(false), Some(0.01)).unwrap();
+    }
+
     // S11: canned cycles (`docs/specs/phase-2/design.md`, "S11 expansion").
     // No bundled definition has them yet, so these use a test-only one.
 

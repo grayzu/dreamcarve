@@ -1913,6 +1913,67 @@ mod tests {
         assert_approx_eq!(drops.iter().sum::<f64>(), depth_mm, 1e-9);
     }
 
+    /// #265 (found by the dc-gcode Profile property, `PROPTEST_RNG_SEED=108`):
+    /// a 0.05 helix of a 0.5508 mm tool is 0.0275 mm across; at 14.14°
+    /// each of its chords falls 0.00045 mm over 0.0018 mm, less than one
+    /// unit of a 3-place mm program either way, so most are written level
+    /// at the plunge-limited feed, which S3 refuses. Such a helix is not
+    /// cut: the chain falls back to the ramp, reason `too_small`. The same
+    /// tool's 0.8 helix (0.44 mm across) is a helix, every chord of it
+    /// falling at least a unit and running at least √2 units in XY, so its
+    /// ends round apart on both counts.
+    #[test]
+    fn tiny_helix_chords_are_writable() {
+        let quantum_mm = 0.001;
+        let small = EntryTool {
+            diameter_mm: 0.550_832_666_619_620_7,
+            feed_mm_min: 3_840.280_223_564_292_6,
+            plunge_mm_min: 645.988_501_885_48,
+            ..tool()
+        };
+        let domain = EntryDomain::new(
+            &[rectangle(20.0, 20.0)],
+            small.diameter_mm,
+            FLATTEN_TOLERANCE_DEFAULT_MM,
+        );
+        let target = Point::new(10.0, 10.0);
+        let (start_z, z) = (1.436_449_925_824_323_2, 0.0);
+        let d = synthesize(
+            &domain,
+            &helix(0.05, 14.137_048_663_595_39),
+            target,
+            start_z,
+            z,
+            &small,
+        );
+        assert_eq!(d.used, EntryKind::Ramp, "{:?}", d.reason);
+        assert!(d.fell_back());
+        assert_eq!(d.reason.map(FallbackReason::as_str), Some("too_small"));
+        assert_ends_at_target(&d, (10.0, 10.0), z);
+
+        let d = synthesize(
+            &domain,
+            &helix(0.8, 14.137_048_663_595_39),
+            target,
+            start_z,
+            z,
+            &small,
+        );
+        assert_eq!(d.used, EntryKind::Helix, "{:?}", d.reason);
+        let sloped: Vec<(Point3, Move)> = steps(&d, start_z)
+            .into_iter()
+            .filter(|(from, mv)| descends(*from, mv))
+            .collect();
+        assert!(!sloped.is_empty());
+        for (i, (from, mv)) in sloped.iter().enumerate() {
+            let (drop, run) = (from.z - mv.to.z, xy_len(*from, mv.to));
+            assert!(
+                drop >= quantum_mm && run >= std::f64::consts::SQRT_2 * quantum_mm,
+                "chord {i} falls {drop} mm over {run} mm"
+            );
+        }
+    }
+
     /// Entry must not score the wall the finish pass leaves, so every ramp
     /// point stays a real standoff (0.1 · D) inside the boundary.
     #[test]
