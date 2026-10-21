@@ -14,7 +14,11 @@
 //! contours are counter-clockwise, holes clockwise, a positive bulge is a
 //! counter-clockwise arc, and the direction rule is [`traversal_is_ccw`].
 
+mod entries;
+mod waste;
+
 use crate::block::CutBlock;
+use crate::entry::{self, CutSide, EntryKind, EntryTool, EntryWarnings, FallbackReason};
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::overlap::{CutPath, overlap_warnings};
 use crate::passes::pass_z_mm;
@@ -28,7 +32,8 @@ use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, nest, offset,
 };
-use dc_project::{CutDirection, InstanceId, OperationId, ProfileOp, Project, Side, Tool};
+use dc_project::{CutDirection, Entry, InstanceId, OperationId, ProfileOp, Project, Side, Tool};
+use entries::{EntrySetup, PassEntry, path_entries, plunged};
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,12 +145,28 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// cut as set), and a tab top no pass reaches,
 /// or one above the stock top, gives [`WarningCode::TabsOutsideCutRange`].
 ///
+/// With `op.entry` a ramp or helix (design spec, "Algorithms → Entry"),
+/// each pass reaches its depth at the contour start without a plunge:
+/// Inside and Outside place the zigzag or helix in the waste domain
+/// beside the wall ([`entry::plan_at_wall`]), the waste less every other
+/// region's kerf and, below the tab top, less the tabs; On line ramps back
+/// and forth along the path itself ([`entry::along_path`]). The first pass
+/// descends from safe Z, later ones from the previous pass Z at the
+/// contour start, where the previous lap ended. An entry that does not
+/// fit falls back to a ramp, then a plunge, with
+/// [`WarningCode::EntryFallback`]; so does a contour whose start is under
+/// a tab.
+///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
 /// with a [`Warning`]. Shapes in different regions whose tool paths cut
 /// into each other give [`WarningCode::ToolpathsOverlap`], in cut order. Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
-/// allowance, when targets cross, when an id does not resolve, or when the
-/// cutter would leave the stock ([`CamError::OffStock`]).
+/// allowance, when targets cross, when an id does not resolve, when the
+/// cutter would leave the stock ([`CamError::OffStock`]), when an entry's
+/// angle or helix fraction is out of range ([`CamError::InvalidEntry`]),
+/// when an On line Profile asks for a helix
+/// ([`CamError::HelixNeedsWasteSide`]), or when a descent would leave its
+/// waste domain ([`CamError::OffMaterial`], a defect).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_profile(
     project: &Project,
@@ -181,6 +202,10 @@ pub fn generate_profile(
             op: op.id.clone(),
             safe_z_mm: op.safe_z_mm,
         });
+    }
+    entry::check(&op.id, &op.entry)?;
+    if op.side == Side::OnLine && matches!(op.entry, Entry::Helix { .. }) {
+        return Err(CamError::HelixNeedsWasteSide { op: op.id.clone() });
     }
     let step_down_mm =
         op.step_down_mm
@@ -234,9 +259,10 @@ pub fn generate_profile(
     }
 
     let radius_mm = tool.diameter_mm / 2.0;
-    // Each tool-centre path with the shape it cuts, in drawing order.
-    let mut paths: Vec<(Polyline, &ShapeRef)> = Vec::new();
-    for region in &regions {
+    // Each tool-centre path with the shape it cuts, the wall it cuts and
+    // the index of its region, in drawing order.
+    let mut placed: Vec<(Polyline, &ShapeRef, Wall, usize)> = Vec::new();
+    for (region_index, region) in regions.iter().enumerate() {
         let ordered = region
             .holes()
             .iter()
@@ -263,28 +289,53 @@ pub fn generate_profile(
                 continue;
             }
             let ccw = traversal_is_ccw(wall, op.direction);
-            paths.extend(centres.into_iter().map(|c| {
+            placed.extend(centres.into_iter().map(|c| {
                 let path = if c.is_ccw() == ccw {
                     c.into_polyline()
                 } else {
                     c.reversed().into_polyline()
                 };
-                (path, shape)
+                (path, shape, wall, region_index)
             }));
         }
     }
     // Drawing order is the order the targets were resolved in; stable, so
     // the loops of one shape keep their offset order.
     let drawing_index = |shape: &ShapeRef| shapes.iter().position(|(s, _)| s == shape);
-    paths.sort_by_key(|(_, shape)| drawing_index(shape));
+    placed.sort_by_key(|(_, shape, _, _)| drawing_index(shape));
+    let walls: Vec<(Wall, usize)> = placed.iter().map(|(_, _, w, r)| (*w, *r)).collect();
+    let paths: Vec<(Polyline, &ShapeRef)> = placed.into_iter().map(|(p, s, _, _)| (p, s)).collect();
 
     // Tab layout per path, and one block per path per pass.
     let layouts: Vec<Option<(PathTabs, bool)>> = paths
         .iter()
         .map(|(path, _)| tabs.as_ref().map(|tabs| tabs.layout(path.length_mm())))
         .collect();
+    let entry_tool = |wall: Wall| EntryTool {
+        diameter_mm: tool.diameter_mm,
+        feed_mm_min: rates.feed_mm_min,
+        plunge_mm_min: rates.plunge_mm_min,
+        direction: op.direction,
+        side: match wall {
+            Wall::Inside => CutSide::Internal,
+            Wall::Outside => CutSide::External,
+        },
+    };
+    let entries = path_entries(&EntrySetup {
+        op,
+        stock: &project.stock,
+        regions: &regions,
+        paths: &paths,
+        walls: &walls,
+        layouts: &layouts,
+        tabs: tabs.as_ref(),
+        pass_z: &pass_z,
+        entry_tool: &entry_tool,
+        tolerance_mm: project.flatten_tolerance_mm,
+    });
+    let mut entry_warnings = EntryWarnings::default();
     let mut blocks = Vec::with_capacity(paths.len() * pass_z.len());
-    for ((path, shape), layout) in paths.iter().zip(&layouts) {
+    for (i, ((path, shape), layout)) in paths.iter().zip(&layouts).enumerate() {
         let path_tabs = match (&tabs, layout) {
             (Some(tabs), Some((layout, _))) => Some((tabs, layout)),
             _ => None,
@@ -292,15 +343,50 @@ pub fn generate_profile(
         let Some(start) = path.vertices().first().map(|v| v.point()) else {
             continue;
         };
+        let wall = walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
+        let mut previous: Option<(bool, EntryKind)> = None;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
             let Some(lap) = lap_cuts(path, z_mm, path_tabs, rates) else {
                 continue;
             };
-            blocks.push(contour_block(
-                shape, pass, z_mm, start, lap, &pass_z, safe_z_mm, rates,
-            ));
+            let on_tab = lap.start_z_mm > z_mm + EPS_MM;
+            let lap_start_z_mm = lap.start_z_mm;
+            let mut block = contour_block(shape, pass, z_mm, start, lap, &pass_z, safe_z_mm, rates);
+            if let Some(entry) = entries.get(i).and_then(Option::as_ref) {
+                let below_tabs = tabs.as_ref().is_some_and(|t| z_mm < t.top_z_mm() - EPS_MM);
+                let pass_entry = PassEntry {
+                    path,
+                    pass,
+                    z_mm,
+                    below_tabs,
+                    safe_z_mm,
+                    tool: entry_tool(wall),
+                    tolerance_mm: project.flatten_tolerance_mm,
+                };
+                if on_tab {
+                    // The start sits under a tab span: the lap starts on
+                    // the tab, and the block plunges onto it, as phase 1.
+                    if block.descent_from_z_mm - lap_start_z_mm > EPS_MM {
+                        entry_warnings.record(
+                            shape,
+                            &plunged(start, EntryKind::of(&op.entry), FallbackReason::NoRoom),
+                        );
+                    }
+                    previous = Some((false, EntryKind::Plunge));
+                } else {
+                    let (descent, from_z_mm) =
+                        entry.descend(&pass_entry, block.descent_from_z_mm, &mut previous);
+                    entry_warnings.record(shape, &descent);
+                    entry.check(op, shape, &pass_entry, &descent, from_z_mm)?;
+                    block.descent_from = descent.from;
+                    block.descent_from_z_mm = from_z_mm;
+                    block.descent = descent.moves;
+                }
+            }
+            blocks.push(block);
         }
     }
+    warnings.extend(entry_warnings.into_warnings(&op.id));
     let containment = containment_pairs(&regions, &shapes);
     let input = SequenceInput {
         blocks,

@@ -4,6 +4,9 @@ The quick-start coaster (`fixtures/coaster.svg`: a 90 mm circle on 100 mm
 stock, 11.8 mm thick, cut through in 4 mm passes at feed 1500, plunge 500,
 18000 RPM) exported with the bundled `linuxcnc` post-processor, version 1.
 
+- Recaptured in slice 10 (#165) when `init` began writing a 15° ramp
+  entry (#119): each pass now starts with the ramp, the laps are
+  unchanged.
 - Captured from DreamCarve itself (slice 17, #164), with
   `dreamcarve export coaster.dcv --post linuxcnc --date 2026-10-15`, after
   `linuxcnc/v1.json` was checked line by line against the LinuxCNC

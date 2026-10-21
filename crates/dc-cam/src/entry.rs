@@ -43,6 +43,14 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::{PI, TAU};
 
+mod wall;
+pub use wall::{along_path, plan_at_wall};
+
+/// The ramp angle a new project's Profile gets, degrees: `init` writes
+/// `entry: { "ramp": { "angle_deg": 15.0 } }` (functional spec, capability
+/// 16 and open question 6).
+pub const INIT_RAMP_ANGLE_DEG: f64 = 15.0;
+
 /// Upstream's default descent angle, degrees (`DEFAULT_ENTRY_RAMP_ANGLE`),
 /// which DreamCarve keeps as a new helix's angle; a new ramp's is 15°
 /// (functional spec, capability 16).
@@ -324,6 +332,21 @@ pub struct EntryPlan {
 /// callers validate them.
 #[must_use]
 pub fn plan(domain: &EntryDomain, entry: &Entry, target: Point, tool: &EntryTool) -> EntryPlan {
+    plan_with(domain, entry, target, tool, place_ramp)
+}
+
+/// How a ramp is placed: in `domain`, through `target`, for a tool of the
+/// diameter given.
+type RampPlacer = fn(&EntryDomain, Point, f64) -> Option<RampPlacement>;
+
+/// [`plan`] with the ramp placed by `place`.
+fn plan_with(
+    domain: &EntryDomain,
+    entry: &Entry,
+    target: Point,
+    tool: &EntryTool,
+    place: RampPlacer,
+) -> EntryPlan {
     let (angle_deg, fraction) = match *entry {
         Entry::Plunge => (0.0, 0.0),
         Entry::Ramp { angle_deg } => (angle_deg, 0.0),
@@ -338,7 +361,7 @@ pub fn plan(domain: &EntryDomain, entry: &Entry, target: Point, tool: &EntryTool
         .then(|| place_helix(domain, target, requested_helix_mm / 2.0, tool.diameter_mm))
         .flatten();
     let ramp = (requested != EntryKind::Plunge)
-        .then(|| place_ramp(domain, target, tool.diameter_mm))
+        .then(|| place(domain, target, tool.diameter_mm))
         .flatten();
     EntryPlan {
         target,
@@ -374,6 +397,18 @@ impl EntryPlan {
     /// depth to descend the descent is empty.
     #[must_use]
     pub fn descend(&self, start_z_mm: f64, z_mm: f64) -> Descent {
+        self.descend_with(start_z_mm, z_mm, None)
+    }
+
+    /// [`EntryPlan::descend`]; with `skip_helix` set, a requested helix
+    /// is not tried and the chain starts at the ramp, the helix's fallback
+    /// reason being the one given.
+    fn descend_with(
+        &self,
+        start_z_mm: f64,
+        z_mm: f64,
+        skip_helix: Option<FallbackReason>,
+    ) -> Descent {
         let depth_mm = start_z_mm - z_mm;
         let mut descent = Descent {
             from: self.target,
@@ -387,7 +422,9 @@ impl EntryPlan {
             return descent;
         }
         let mut reason = None;
-        if self.requested == EntryKind::Helix {
+        if self.requested == EntryKind::Helix && skip_helix.is_some() {
+            reason = skip_helix;
+        } else if self.requested == EntryKind::Helix {
             match self.helix {
                 Some(h) => match helix_move_count(depth_mm, h.radius_mm, self.angle_deg) {
                     Some(n) => {
@@ -1188,6 +1225,38 @@ pub(crate) fn without_descents(toolpath: &Toolpath) -> Toolpath {
     Toolpath { moves }
 }
 
+/// The angle in (0, 45] degrees and the helix fraction in (0, 1] that
+/// validation requires of operation `op`'s `entry`, checked again: an
+/// entry outside them would cut something other than what validation
+/// passed.
+pub(crate) fn check(op: &OperationId, entry: &Entry) -> Result<(), crate::CamError> {
+    let (angle_deg, fraction) = match *entry {
+        Entry::Plunge => return Ok(()),
+        Entry::Ramp { angle_deg } => (angle_deg, None),
+        Entry::Helix {
+            diameter_fraction,
+            angle_deg,
+        } => (angle_deg, Some(diameter_fraction)),
+    };
+    if !(angle_deg > 0.0 && angle_deg <= 45.0) {
+        return Err(crate::CamError::InvalidEntry {
+            op: op.clone(),
+            field: "angle_deg",
+            value: angle_deg,
+            range: "more than 0 and at most 45",
+        });
+    }
+    match fraction {
+        Some(f) if !(f > 0.0 && f <= 1.0) => Err(crate::CamError::InvalidEntry {
+            op: op.clone(),
+            field: "diameter_fraction",
+            value: f,
+            range: "more than 0 and at most 1",
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// The entry warnings of one operation, one per shape and outcome however
 /// many blocks of the shape fell back: `EntryFallback` per (shape, entry
 /// used), and one `HelixDiameterReduced` per shape with the smallest
@@ -1746,3 +1815,15 @@ mod tests {
         assert_eq!(a, b);
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "tests"
+)]
+mod profile_tests;

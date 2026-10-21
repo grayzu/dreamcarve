@@ -184,7 +184,7 @@ pub fn generate_pocket(
     }
     check_allowance(&op.id, op.allowance_mm)?;
     let reference = reference_of(project, op)?;
-    check_entry(op)?;
+    entry::check(&op.id, &op.entry)?;
     let step_down_mm =
         op.step_down_mm
             .or(tool.step_down_mm)
@@ -505,37 +505,6 @@ fn reference_of(project: &Project, op: &PocketOp) -> Result<Option<rest::Referen
         radius_mm: tool.diameter_mm / 2.0,
         allowance_mm: rough.allowance_mm,
     }))
-}
-
-/// The angle in (0, 45] degrees and the helix fraction in (0, 1] that
-/// validation requires, checked again: an entry outside them would cut
-/// something other than what validation passed.
-fn check_entry(op: &PocketOp) -> Result<(), CamError> {
-    let (angle_deg, fraction) = match op.entry {
-        Entry::Plunge => return Ok(()),
-        Entry::Ramp { angle_deg } => (angle_deg, None),
-        Entry::Helix {
-            diameter_fraction,
-            angle_deg,
-        } => (angle_deg, Some(diameter_fraction)),
-    };
-    if !(angle_deg > 0.0 && angle_deg <= 45.0) {
-        return Err(CamError::InvalidEntry {
-            op: op.id.clone(),
-            field: "angle_deg",
-            value: angle_deg,
-            range: "more than 0 and at most 45",
-        });
-    }
-    match fraction {
-        Some(f) if !(f > 0.0 && f <= 1.0) => Err(CamError::InvalidEntry {
-            op: op.id.clone(),
-            field: "diameter_fraction",
-            value: f,
-            range: "more than 0 and at most 1",
-        }),
-        _ => Ok(()),
-    }
 }
 
 /// The clearance regions of a ring tree's entries: the material every
