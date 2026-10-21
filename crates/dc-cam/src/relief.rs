@@ -62,7 +62,7 @@ use crate::passes::pass_z_mm;
 use crate::profile::{Wall, rates_of, shape_of, shape_warning};
 use crate::sequence::{SequenceInput, sequence};
 use crate::tabs::LapRates;
-use crate::toolpath::{Move, Toolpath};
+use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, point_segment_distance_mm,
@@ -647,15 +647,17 @@ impl Relief {
     /// blocks. A corner is cut when its own shape's path cuts its descend
     /// point at the deepest level (else [`WarningCode::ReliefCornerNotCut`]).
     /// Each level goes to the unit of the shape's first pass at or below
-    /// it, which has opened the column at the descend point by then; the
-    /// sequencer cuts a unit's freeing blocks last, so the levels of a
-    /// freeing pass come just before its lap. A shape's corners are taken
-    /// nearest-neighbour from where its first block ends, the same order at
-    /// every pass.
+    /// it, which has opened the column at the descend point by then, and
+    /// is cut after that pass's lap. The levels of a freeing pass are cut
+    /// from inside its lap instead (#193, [`Relief::splice`]), where the
+    /// lap first reaches the descend point at depth, so no notch plunges
+    /// into the skin and nothing is cut after the lap closes. A shape's
+    /// corners are taken nearest-neighbour from where its first block
+    /// ends, the same order at every pass.
     fn interleave(
         &self,
         sites: &[Site],
-        blocks: &[CutBlock],
+        blocks: &mut [CutBlock],
         warnings: &mut Vec<Warning>,
     ) -> Vec<CutBlock> {
         let mut corners = Vec::new();
@@ -691,9 +693,10 @@ impl Relief {
                 ));
             }
         }
-        let mut notches = Vec::new();
+        // Each corner's levels, grouped by the pass whose unit cuts them.
+        let mut planned: Vec<(ReliefCorner, usize, Vec<f64>)> = Vec::new();
         let mut shapes: Vec<&ShapeRef> = Vec::new();
-        for block in blocks {
+        for block in blocks.iter() {
             if !shapes.contains(&&block.shape) {
                 shapes.push(&block.shape);
             }
@@ -725,14 +728,133 @@ impl Relief {
                         _ => groups.push((pass, vec![level])),
                     }
                 }
-                notches.extend(
+                planned.extend(
                     groups
-                        .iter()
-                        .filter_map(|(pass, levels)| self.notch_block(&corner, *pass, levels)),
+                        .into_iter()
+                        .map(|(pass, levels)| (corner.clone(), pass, levels)),
                 );
             }
         }
+        let mut notches = Vec::new();
+        for (corner, pass, levels) in planned {
+            // The freeing lap of the corner's shape at this pass that
+            // reaches the descend point at depth, if any (#193).
+            let freeing = blocks.iter_mut().find(|b| {
+                b.frees
+                    && b.shape == corner.shape
+                    && b.pass == pass
+                    && block_cuts_at(b, corner.descend, deepest, guard_mm)
+            });
+            if let Some(block) = freeing
+                && self.splice(block, &corner, &levels, deepest, guard_mm)
+            {
+                continue;
+            }
+            notches.extend(self.notch_block(&corner, pass, &levels));
+        }
         notches
+    }
+
+    /// Cuts `levels` (top first) of `corner`'s notch from inside `block`,
+    /// a lap that frees its piece (#193). Where the lap first reaches the
+    /// descend point `P` at or below `deepest` (within `guard_mm`), the
+    /// tool goes to `P`, rises in the column the lap has just opened to the
+    /// first level, cuts out to the end and back at each level at the feed
+    /// rate, stepping down at `P` between levels, returns to the lap's Z
+    /// and point, and the lap carries on. A lap move that passes `P` in its
+    /// middle is split there. Every Z change is at `P`, in the open column,
+    /// at the plunge rate, so nothing plunges into the skin, and the rest
+    /// of the lap still holds the piece while the notch is cut. False, with
+    /// `block` unchanged, when the lap never reaches `P` at depth.
+    fn splice(
+        &self,
+        block: &mut CutBlock,
+        corner: &ReliefCorner,
+        levels: &[f64],
+        deepest: f64,
+        guard_mm: f64,
+    ) -> bool {
+        let z_limit = deepest + RELIEF_Z_TOLERANCE_MM;
+        let p = corner.descend;
+        let mut position = block
+            .descent
+            .last()
+            .map_or(Point3::new(block.entry.x, block.entry.y, block.z_mm), |m| {
+                m.to
+            });
+        // Where to insert, the tool's position there, and the two halves
+        // of the move it splits, if it splits one.
+        let mut found: Option<(usize, Point3, Option<[Move; 2]>)> = None;
+        for (i, mv) in block.cuts.iter().enumerate() {
+            if position.z <= z_limit && position.xy().distance_to(p) <= guard_mm {
+                found = Some((i, position, None));
+                break;
+            }
+            if mv.is_cut() && position.z <= z_limit && mv.to.z <= z_limit {
+                let path = Segment {
+                    start: position.xy(),
+                    end: mv.to.xy(),
+                    bulge: move_bulge(position.xy(), mv),
+                };
+                if point_segment_distance_mm(path, p) <= guard_mm {
+                    found = Some(if mv.to.xy().distance_to(p) <= guard_mm {
+                        (i + 1, mv.to, None)
+                    } else {
+                        let at = split_point(position, mv, p);
+                        (i, at, Some([Move { to: at, ..*mv }, *mv]))
+                    });
+                    break;
+                }
+            }
+            position = mv.to;
+        }
+        let Some((index, from, split)) = found else {
+            return false;
+        };
+        let excursion = self.excursion(corner, levels, from);
+        let tail = block.cuts.split_off(index);
+        match split {
+            Some([first, rest]) => {
+                block.cuts.push(first);
+                block.cuts.extend(excursion);
+                block.cuts.push(rest);
+                block.cuts.extend(tail.into_iter().skip(1));
+            }
+            None => {
+                block.cuts.extend(excursion);
+                block.cuts.extend(tail);
+            }
+        }
+        true
+    }
+
+    /// The notch moves of [`Relief::splice`], from and back to `from`, the
+    /// tool on the lap at (or within the guard of) the descend point.
+    fn excursion(&self, corner: &ReliefCorner, levels: &[f64], from: Point3) -> Vec<Move> {
+        let (p, e) = (corner.descend, corner.end);
+        let (feed, plunge) = (self.rates.feed_mm_min, self.rates.plunge_mm_min);
+        let at = |point: Point, z_mm: f64| Point3::new(point.x, point.y, z_mm);
+        let off_p = from.xy().distance_to(p) > EPS_MM;
+        let mut moves = Vec::with_capacity(3 * levels.len() + 3);
+        if off_p {
+            moves.push(Move::linear(at(p, from.z), feed));
+        }
+        let mut z_mm = from.z;
+        for &level in levels {
+            if (level - z_mm).abs() > EPS_MM {
+                moves.push(Move::linear(at(p, level), plunge));
+                z_mm = level;
+            }
+            moves.push(Move::linear(at(e, z_mm), feed));
+            moves.push(Move::linear(at(p, z_mm), feed));
+        }
+        if (z_mm - from.z).abs() > EPS_MM {
+            moves.push(Move::linear(at(p, from.z), plunge));
+        }
+        if off_p {
+            moves.push(Move::linear(from, feed));
+        }
+        moves
     }
 
     /// The notch block for `corner` in its shape's pass `pass`, cutting
@@ -769,6 +891,30 @@ impl Relief {
             group: 0,
         })
     }
+}
+
+/// The point of flat move `mv`, from `from`, nearest `p`: on a line its
+/// foot, on an arc the point at `p`'s angle about the centre.
+fn split_point(from: Point3, mv: &Move, p: Point) -> Point3 {
+    let point = match mv.kind {
+        MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+            let radius_mm = from.xy().distance_to(centre);
+            (p - centre)
+                .normalized()
+                .map_or(from.xy(), |u| centre + u * radius_mm)
+        }
+        _ => {
+            let (a, b) = (from.xy(), mv.to.xy());
+            let ab = b - a;
+            let length2 = ab.dot(ab);
+            if length2 <= EPS_MM * EPS_MM {
+                a
+            } else {
+                a + ab * ((p - a).dot(ab) / length2).clamp(0.0, 1.0)
+            }
+        }
+    };
+    Point3::new(point.x, point.y, mv.to.z)
 }
 
 /// S9's notch rule: the area beyond the cleared region a notch at
@@ -886,7 +1032,7 @@ pub(crate) fn profile_notches(
     op: &ProfileOp,
     tool: &Tool,
     geometry: &ProfileGeometry<'_>,
-    blocks: &[CutBlock],
+    blocks: &mut [CutBlock],
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<CutBlock>, CamError> {
     if op.corner_relief == CornerRelief::None {
@@ -2090,8 +2236,9 @@ mod tests {
 
     /// #189: on a Profile through the stock with no tabs, every notch of a
     /// shape, at every level down to the bottom, is cut before that
-    /// shape's freeing pass (the final lap at Z 0), and nothing of the
-    /// shape is cut after it: inside (two 40 mm square holes, four notches
+    /// shape's freeing lap (the final lap at Z 0) closes, the bottom level
+    /// from within it (#193), and nothing of the shape is cut after it:
+    /// inside (two 40 mm square holes, four notches
     /// each) and outside (two L parts, one notch each), under both
     /// machining orders. Shapes lie apart in X, so a move's X names its
     /// shape.
@@ -2161,10 +2308,28 @@ mod tests {
                     else {
                         panic!("{side:?} {order:?}: no freeing lap");
                     };
+                    // The levels above the bottom come before the final
+                    // lap; the bottom level is cut within it (#193),
+                    // after the pass above and before the lap's last move
+                    // (right after the plunge when the lap starts at the
+                    // corner).
+                    let pass_above = all
+                        .iter()
+                        .filter(|(i, c)| !is_relief(*i) && mine(c) && !at_bottom(c))
+                        .map(|(i, _)| *i)
+                        .max()
+                        .unwrap();
                     assert!(
-                        notches.iter().all(|&i| i < lap_first),
-                        "{side:?} {order:?}: a notch at {notches:?} follows the freeing \
-                         lap at {lap_first}"
+                        relief
+                            .iter()
+                            .filter(|(_, c)| mine(c))
+                            .all(|(i, c)| if at_bottom(c) {
+                                pass_above < *i && *i < lap_last
+                            } else {
+                                *i < lap_first
+                            }),
+                        "{side:?} {order:?}: a notch at {notches:?} is not before the \
+                         freeing lap {lap_first}..{lap_last} closes"
                     );
                     assert!(
                         all.iter()

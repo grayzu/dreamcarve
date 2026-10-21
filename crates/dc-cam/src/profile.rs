@@ -559,15 +559,22 @@ pub fn generate_profile(
     ));
 
     // Corner relief among each shape's own passes, never after the pass
-    // that frees it (`crate::relief`, #189).
+    // that frees it (`crate::relief`, #189); a freeing pass's notches are
+    // cut from inside its lap (#193).
     let geometry = relief::ProfileGeometry {
         regions: &regions,
         shapes: &shapes,
         paths: &paths,
         walls: &walls,
     };
-    let notches =
-        relief::profile_notches(project, op, tool, &geometry, &input.blocks, &mut warnings)?;
+    let notches = relief::profile_notches(
+        project,
+        op,
+        tool,
+        &geometry,
+        &mut input.blocks,
+        &mut warnings,
+    )?;
     input.blocks.extend(notches);
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
@@ -621,9 +628,8 @@ fn check_band(
         return Err(CamError::BandNarrowerThanTool {
             op: op.clone(),
             shape: shape.clone(),
-            other: other.clone(),
+            other: Box::new(other.clone()),
             band_mm: distance_mm(contour.polyline(), line.polyline()),
-            tool: tool.name.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -1566,7 +1572,6 @@ mod tests {
             other,
             band_mm,
             diameter_mm,
-            ..
         } = &err
         else {
             panic!("expected BandNarrowerThanTool, got {err:?}");
@@ -1576,14 +1581,7 @@ mod tests {
         assert_approx_eq!(*band_mm, 3.0, TOL);
         assert_approx_eq!(*diameter_mm, 6.35, TOL);
         let text = err.to_string();
-        for needle in [
-            "`o1`",
-            "profile 0",
-            "profile 1",
-            "3.000 mm",
-            "6.35 mm upcut",
-            "6.35 mm",
-        ] {
+        for needle in ["`o1`", "profile 0", "profile 1", "3.000 mm", "6.35 mm tool"] {
             assert!(text.contains(needle), "{needle:?} in {text}");
         }
     }
