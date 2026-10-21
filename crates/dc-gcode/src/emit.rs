@@ -3769,10 +3769,11 @@ mod tests {
     /// manual documents seconds; see the definitions README.
     #[test]
     fn uccnc_dwell_is_milliseconds() {
-        let project = project_with("uccnc");
+        let mut project = project_with("uccnc");
         let text = emit_text(&project);
         assert!(text.lines().any(|l| code(l) == "G4 P3000"), "{text}");
-        let (program, _) = emit(&project, &drill_ops(&project), DATE).unwrap();
+        let ops = drill_ops(&mut project);
+        let (program, _) = emit(&project, &ops, DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P500");
         let mach3 = emit_text(&project_with("mach3"));
         assert!(
