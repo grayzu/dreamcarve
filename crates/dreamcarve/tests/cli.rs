@@ -25,9 +25,10 @@ use dc_geometry::{Rect, assert_approx_eq};
 #[allow(dead_code, reason = "the test uses only the timestamp")]
 mod clock;
 use dc_gcode::MachineMove;
+use dc_project::test_support::sample_pocket;
 use dc_project::{
-    FeatureInstance, Loaded, Operation, OperationId, Project, Side, SpindleControl, TabPlacement,
-    ToolChangeMode, ToolId, load, save,
+    CornerRelief, Entry, FeatureInstance, Loaded, MachiningOrder, Operation, OperationId,
+    ProfileOp, Project, Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -88,6 +89,22 @@ fn load_file(path: &Path) -> Loaded {
     load(&std::fs::read(path).expect("dcv readable")).expect("dcv loads")
 }
 
+/// `op` as the Profile every `init` project starts with.
+fn as_profile(op: &Operation) -> &ProfileOp {
+    match op {
+        Operation::Profile(op) => op,
+        other => panic!("a Profile operation, not {other:?}"),
+    }
+}
+
+/// [`as_profile`], to edit.
+fn as_profile_mut(op: &mut Operation) -> &mut ProfileOp {
+    match op {
+        Operation::Profile(op) => op,
+        other => panic!("a Profile operation, not {other:?}"),
+    }
+}
+
 /// The quick start's measured plywood thickness, mm.
 const MEASURED_THICKNESS_MM: f64 = 11.8;
 /// The functional spec's test-part through-cut allowance, mm.
@@ -109,7 +126,7 @@ fn fill_in(path: &Path, feed_mm_min: f64, plunge_mm_min: f64, rpm: u32) {
         tool.step_down_mm = Some(STEP_DOWN_MM);
     }
     project.stock.thickness_mm = Some(MEASURED_THICKNESS_MM);
-    for dc_project::Operation::Profile(op) in &mut project.operations {
+    for op in project.operations.iter_mut().map(as_profile_mut) {
         op.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
         op.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
     }
@@ -244,7 +261,7 @@ fn init_project_has_no_thickness_or_depth() {
     assert!(text.contains("\"depth_mm\": null"), "{text}");
     let project = load_file(&dcv).project;
     assert!(project.stock.thickness_mm.is_none(), "thickness is unset");
-    for dc_project::Operation::Profile(op) in &project.operations {
+    for op in project.operations.iter().map(as_profile) {
         assert!(op.depth_mm.is_none(), "{} depth is unset", op.id);
     }
 }
@@ -697,6 +714,101 @@ fn posts_lists_grblhal_and_grbl() {
     assert_eq!(ids, ["grblhal", "grbl"], "stdout was: {stdout}");
 }
 
+// Phase 2, #117: format version 8.
+
+/// A fresh project carries every phase 2 field at the value that cuts as
+/// phase 1 did: it plunges (the ramp generator lands in a later slice),
+/// has no lead or corner relief, no tool number, canned cycles off, and
+/// arc fitting at 0.01 mm.
+#[test]
+fn init_writes_phase_2_defaults() {
+    let dir = work_dir("init_writes_phase_2_defaults");
+    let dcv = init_coaster(&dir);
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    assert!(text.contains("\"version\": 8,"), "{text}");
+    assert!(text.contains("\"arc_fit_tolerance_mm\": 0.01,"), "{text}");
+    assert!(text.contains("\"number\": null,"), "{text}");
+    assert!(text.contains("\"entry\": \"plunge\","), "{text}");
+    assert!(text.contains("\"lead\": null,"), "{text}");
+    assert!(text.contains("\"use_canned_cycles\": false"), "{text}");
+    let project = load_file(&dcv).project;
+    assert!(
+        project
+            .arc_fit_tolerance_mm
+            .is_some_and(|t| (t - 0.01).abs() < 1e-12)
+    );
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.machining_order, MachiningOrder::FullDepthFirst);
+        assert_eq!(op.entry, Entry::Plunge);
+        assert_eq!(op.lead, None);
+        assert_eq!(op.corner_relief, CornerRelief::None);
+    }
+    assert!(!project.post_processor.use_canned_cycles);
+    assert!(project.tools.iter().all(|t| t.number.is_none()));
+    // Only the values `init` has always left to the user are reported.
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    for word in ["entry", "number", "canned", "arc_fit"] {
+        assert!(!report.contains(word), "{word} in {report}");
+    }
+}
+
+/// The spec's `v6_fixture_exports_phase_1_bytes_with_fitting_off`, for
+/// the version this repository is at: a phase 1 project opened by this
+/// build exports the same program whether it is still a version 7 file or
+/// has been saved as version 8. (Arc fitting does not exist yet, so the
+/// tolerance the migration writes changes nothing.)
+#[test]
+fn v7_project_exports_the_same_program() {
+    let dir = work_dir("v7_project_exports_the_same_program");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dc-project/tests/fixtures/dcv/v7/sample.dcv");
+    let v7 = dir.join("v7.dcv");
+    std::fs::copy(&fixture, &v7).expect("fixture copied");
+    let text = std::fs::read_to_string(&v7).expect("dcv readable");
+    assert!(text.contains("\"version\": 7,"), "the fixture is a version 7 file");
+    let out = run(&dir, &["export", "v7.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v7: {}", stderr(&out));
+    let from_v7 = std::fs::read_to_string(dir.join("v7.nc")).expect("v7.nc written");
+
+    let project = load_file(&v7).project;
+    let v8 = dir.join("v8.dcv");
+    std::fs::write(&v8, save(&project).expect("project saves")).expect("dcv written");
+    let saved = std::fs::read_to_string(&v8).expect("dcv readable");
+    assert!(saved.contains("\"version\": 8,"), "{saved}");
+    let out = run(&dir, &["export", "v8.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v8: {}", stderr(&out));
+    let from_v8 = std::fs::read_to_string(dir.join("v8.nc")).expect("v8.nc written");
+    assert!(from_v7 == from_v8, "v7:\n{from_v7}\nv8:\n{from_v8}");
+    assert!(!from_v7.is_empty());
+}
+
+/// Pocket, Drill and Engrave load and validate from this slice on, but
+/// their generators land in later slices. Until then an enabled one is an
+/// export error that names it, never a silent skip.
+#[test]
+fn export_refuses_pocket_until_its_slice_lands() {
+    let dir = work_dir("export_refuses_pocket_until_its_slice_lands");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut pocket = sample_pocket();
+    pocket.targets = project.operations[0].targets().to_vec();
+    pocket.tool = project.operations[0].tool().clone();
+    project.operations.push(Operation::Pocket(pocket));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "check: {}", stderr(&check));
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_ne!(out.status.code(), Some(0), "export must fail");
+    let err = stderr(&out);
+    assert!(err.contains("`o2`"), "{err}");
+    assert!(err.contains("pocket"), "{err}");
+    assert!(err.contains("not supported"), "{err}");
+    assert!(!dir.join("coaster.nc").exists(), "nothing written");
+}
+
 /// The output extension is a setting in the `.dcv`, so a shared project
 /// chooses it. An extension that is a path (`../x`) or names the
 /// project file itself (`dcv`) must not let `export` write outside the
@@ -832,7 +944,7 @@ fn warnings_are_readable() {
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
     let thickness_mm = project.stock.thickness_mm.expect("fill_in sets it");
-    for dc_project::Operation::Profile(op) in &mut project.operations {
+    for op in project.operations.iter_mut().map(as_profile_mut) {
         if let Some(tabs) = &mut op.tabs {
             tabs.height_mm = thickness_mm + 1.0;
         }
@@ -1311,11 +1423,7 @@ fn two_tool_coaster(dir: &Path) -> PathBuf {
     finisher.diameter_mm = 3.175;
     finisher.rpm = Some(20000);
     project.tools.push(finisher);
-    let Operation::Profile(mut finish) = project
-        .operations
-        .first()
-        .expect("the coaster profile")
-        .clone();
+    let mut finish = as_profile(project.operations.first().expect("the coaster profile")).clone();
     finish.id = OperationId::new("op2");
     finish.name = "Finish".into();
     finish.tool = ToolId::new("t2");
@@ -1419,7 +1527,7 @@ fn alternating_tools_keep_cut_order() {
     let dir = work_dir("alternating_tools_keep_cut_order");
     let dcv = two_tool_coaster(&dir);
     let mut project = load_file(&dcv).project;
-    let Operation::Profile(mut again) = project.operations[0].clone();
+    let mut again = as_profile(&project.operations[0]).clone();
     again.id = OperationId::new("op3");
     again.name = "Again".into();
     project.operations.push(Operation::Profile(again));
@@ -1821,12 +1929,12 @@ fn part_and_hole_as_two_operations() {
     let star = instance_named(&project, "star").id.clone();
     let hole = instance_named(&project, "hole").id.clone();
     let centre = hole_centre(&project, "hole");
-    let Operation::Profile(mut hole_op) = project.operations[0].clone();
+    let mut hole_op = as_profile(&project.operations[0]).clone();
     hole_op.name = "Hole".into();
     hole_op.targets = vec![hole];
     hole_op.side = Side::Inside;
     hole_op.tabs = None;
-    let Operation::Profile(mut star_op) = project.operations[0].clone();
+    let mut star_op = as_profile(&project.operations[0]).clone();
     star_op.id = OperationId::new("op2");
     star_op.name = "Star".into();
     star_op.targets = vec![star];
@@ -1898,7 +2006,7 @@ fn hole_targeted_alone_with_outside_is_oversize() {
     let mut project = load_file(&dcv).project;
     let hole = instance_named(&project, "hole").id.clone();
     let centre = hole_centre(&project, "hole");
-    let Operation::Profile(op) = &mut project.operations[0];
+    let op = as_profile_mut(&mut project.operations[0]);
     op.targets = vec![hole];
     op.side = Side::Outside;
     op.tabs = None;
@@ -2026,7 +2134,7 @@ fn hole_role_is_decided_within_one_operation() {
     let star = instance_named(&project, "star").id.clone();
     let hole = instance_named(&project, "hole").id.clone();
     let centre = hole_centre(&project, "hole");
-    let Operation::Profile(mut star_op) = project.operations[0].clone();
+    let mut star_op = as_profile(&project.operations[0]).clone();
     star_op.targets = vec![star];
     star_op.tabs = None;
     let mut hole_op = star_op.clone();

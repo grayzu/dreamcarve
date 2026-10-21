@@ -427,6 +427,23 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 8 {
+            let root_map = root.as_object_mut().unwrap();
+            root_map.remove("arc_fit_tolerance_mm");
+            for tool in root_map["tools"].as_array_mut().unwrap() {
+                tool.as_object_mut().unwrap().remove("number");
+            }
+            for op in root_map["operations"].as_array_mut().unwrap() {
+                let op = op.as_object_mut().unwrap();
+                for key in ["machining_order", "entry", "lead", "corner_relief"] {
+                    op.remove(key);
+                }
+            }
+            root_map["post_processor"]
+                .as_object_mut()
+                .unwrap()
+                .remove("use_canned_cycles");
+        }
         if version < 7 {
             root["post_processor"] =
                 serde_json::from_str(include_str!("../tests/fixtures/post/grbl.json")).unwrap();
@@ -754,7 +771,7 @@ mod tests {
     #[test]
     fn v6_with_bundled_copy_migrates_to_reference() {
         let loaded = load(V6_GRBLHAL_MANUAL.as_bytes()).unwrap();
-        assert_eq!(loaded.project.version, 7);
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
         assert_eq!(
             serde_json::to_value(&loaded.project.post_processor).unwrap(),
             json!({
@@ -764,9 +781,35 @@ mod tests {
                 "spindle_control": "manual",
                 "spindle_on_dwell_s": 5.0,
                 "tool_change_mode": "separate_programs",
-                "decimal_places": { "mm": 3, "inch": 4 }
+                "decimal_places": { "mm": 3, "inch": 4 },
+                "use_canned_cycles": false
             })
         );
+    }
+
+    /// #117: a version 6 copy predates `spindle_on_dwell.units` and
+    /// `canned_cycles.reentry_gap_mm`, which every bundled definition now
+    /// has. The step gives the copy the values of the time (seconds; no
+    /// gap) before comparing, so the copy still matches version 1.
+    #[test]
+    fn v6_copy_gains_dwell_units_before_comparison() {
+        assert!(!V6_GRBLHAL_MANUAL.contains("\"units\""), "the fixture predates `units`");
+        assert!(!V6_GRBLHAL_MANUAL.contains("reentry_gap_mm"));
+        let loaded = load(V6_GRBLHAL_MANUAL.as_bytes()).unwrap();
+        assert_eq!(loaded.project.post_processor.id, "grblhal");
+        assert_eq!(loaded.project.post_processor.definition_version, 1);
+        assert!(!loaded.project.post_processor.use_canned_cycles);
+    }
+
+    /// #117: a version 6 copy that already names a dwell unit is not a
+    /// version 6 file.
+    #[test]
+    fn v6_with_dwell_units_already_present_fails() {
+        let message = v6_edited_error(
+            "\"command\": \"G4 P{seconds}\"",
+            "\"command\": \"G4 P{seconds}\", \"units\": \"seconds\"",
+        );
+        assert!(message.contains("units"), "{message}");
     }
 
     /// The migration error for `V6_GRBLHAL_MANUAL` with `from` replaced by
@@ -831,6 +874,91 @@ mod tests {
         assert!(message.contains("grbl, grblhal"), "{message}");
         assert!(message.contains("post_processor.id"), "{message}");
         assert_has_replacement_block(&message, "grblhal");
+    }
+
+    // Phase 2, #117: version 7 → 8 adds the phase 2 fields with the values
+    // that keep a phase 1 project cutting the same.
+
+    const V7_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v7/sample.dcv");
+
+    #[test]
+    fn version_7_fixture_loads() {
+        let loaded = load(V7_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// Design spec, "Migration v6 → v7" (version 7 → 8 here, #117): each
+    /// Profile plunges, cuts each shape to full depth first, has no lead
+    /// and no corner relief, exactly as phase 1 cut it; arc fitting is on
+    /// at 0.01 mm; tools have no number; canned cycles are off.
+    #[test]
+    fn v7_profile_gains_phase_2_fields_with_defaults() {
+        let root: Value = serde_json::from_slice(V7_FIXTURE).unwrap();
+        let migrated = migrate(root, 7).unwrap();
+        assert_eq!(migrated["arc_fit_tolerance_mm"], json!(0.01));
+        assert_eq!(migrated["tools"][0]["number"], Value::Null);
+        let op = &migrated["operations"][0];
+        assert_eq!(op["machining_order"], "full_depth_first");
+        assert_eq!(op["entry"], "plunge");
+        assert_eq!(op["lead"], Value::Null);
+        assert_eq!(op["corner_relief"], "none");
+        assert_eq!(migrated["post_processor"]["use_canned_cycles"], json!(false));
+        let loaded = load(V7_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// The new keys land where a version 8 file writes them, so a migrated
+    /// file saves with the same layout as a new one.
+    #[test]
+    fn v7_to_v8_writes_the_defaults() {
+        let migrated = migrate(sample_root_at(7), 7).unwrap();
+        assert_eq!(migrated, sample_root_at(8));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(8)).unwrap(),
+            "key order"
+        );
+    }
+
+    #[test]
+    fn v7_with_phase_2_field_already_present_fails() {
+        for (edit, key) in [
+            (
+                |root: &mut Value| {
+                    root["arc_fit_tolerance_mm"] = json!(0.02);
+                },
+                "arc_fit_tolerance_mm",
+            ),
+            (
+                |root: &mut Value| {
+                    root["tools"][0]["number"] = json!(1);
+                },
+                "number",
+            ),
+            (
+                |root: &mut Value| {
+                    root["operations"][0]["entry"] = json!("plunge");
+                },
+                "entry",
+            ),
+            (
+                |root: &mut Value| {
+                    root["post_processor"]["use_canned_cycles"] = json!(true);
+                },
+                "use_canned_cycles",
+            ),
+        ] {
+            let mut root = sample_root_at(7);
+            edit(&mut root);
+            let err = migrate(root, 7).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Migration { from: 7, to: 8, message }
+                    if message.contains(key)),
+                "{key}: {err:?}"
+            );
+        }
     }
 
     #[test]

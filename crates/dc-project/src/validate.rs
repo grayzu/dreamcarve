@@ -992,8 +992,13 @@ impl Validator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Operation, ToolKind};
-    use crate::test_support::sample_project;
+    use crate::model::{
+        ClearanceStrategy, CornerRelief, DrillCycle, Entry, Lead, Operation, PeckRetract,
+        ToolKind,
+    };
+    use crate::test_support::{
+        profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
+    };
     use dc_geometry::{MAX_COORDINATE_MM, Polyline, Transform, Vertex, approx_eq};
 
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
@@ -1008,7 +1013,7 @@ mod tests {
     #[test]
     fn dangling_tool_id_is_error() {
         let mut p = sample_project();
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.tool = ToolId::new("missing");
         let problems = validate(&p);
         // t1 is now used by nothing, which is a warning of its own.
@@ -1102,7 +1107,7 @@ mod tests {
     #[test]
     fn dangling_instance_id_is_error() {
         let mut p = sample_project();
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.targets.push(InstanceId::new("missing"));
         let problems = validate(&p);
         assert_eq!(
@@ -1146,7 +1151,7 @@ mod tests {
     #[test]
     fn missing_depth_is_an_error() {
         let mut p = sample_project();
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.depth_mm = None;
         let problems = validate(&p);
         assert_eq!(
@@ -1171,7 +1176,7 @@ mod tests {
         let mut p = sample_project();
         p.stock.thickness_mm = None;
         p.tools[0].feed_mm_min = None;
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.depth_mm = None;
         let problems = validate(&p);
         assert_eq!(problems.len(), 3, "{problems:?}");
@@ -1193,7 +1198,7 @@ mod tests {
         p.tools[0].feed_mm_min = None;
         p.tools[0].plunge_mm_min = None;
         p.tools[0].rpm = None;
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.depth_mm = None;
         let problems = validate(&p);
         assert!(problems.iter().all(Problem::is_unset_value), "{problems:?}");
@@ -1221,7 +1226,7 @@ mod tests {
         };
         p.instances[0].definition = DefinitionId::new("missing");
         p.post_processor.file_extension = "dcv".into();
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.safe_z_mm = 0.0;
         op.enabled = false;
         let problems = validate(&p);
@@ -1289,7 +1294,7 @@ mod tests {
         let mut p = sample_project();
         p.tools[0].feed_mm_min = None;
         p.tools[0].rpm = None;
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.enabled = false;
         let problems = validate(&p);
         assert!(errors(&problems).is_empty(), "{problems:?}");
@@ -1297,7 +1302,7 @@ mod tests {
             tool: ToolId::new("t1"),
             name: "6.35 mm upcut".into(),
         }));
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.enabled = true;
         let problems = validate(&p);
         assert_eq!(errors(&problems).len(), 2, "{problems:?}");
@@ -1361,7 +1366,7 @@ mod tests {
     #[test]
     fn non_positive_depth_is_error() {
         let mut p = sample_project();
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.depth_mm = Some(0.0);
         let problems = validate(&p);
         assert!(
@@ -1373,7 +1378,7 @@ mod tests {
     #[test]
     fn disabled_operation_is_warning() {
         let mut p = sample_project();
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.enabled = false;
         let problems = validate(&p);
         assert_eq!(
@@ -1783,7 +1788,7 @@ mod tests {
     // #67: sanity checks on dangerous but valid values.
 
     fn op_mut(p: &mut Project) -> &mut crate::model::ProfileOp {
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op
     }
 
@@ -2141,5 +2146,778 @@ mod tests {
         op.depth_mm = Some(12.0);
         op.through_cut_allowance_mm = 0.2;
         assert_eq!(validate(&p), vec![]);
+    }
+
+    // Phase 2, #117: tool numbers and the new operations' rules
+    // (`docs/specs/phase-2/design.md`, "Tool numbers", "Validation").
+
+    /// The sample project with `ops` after its Profile.
+    fn with_ops(ops: Vec<Operation>) -> Project {
+        let mut p = sample_project();
+        p.operations.extend(ops);
+        p
+    }
+
+    /// The sample tool copied as `id`, every value set.
+    fn tool(id: &str) -> Tool {
+        Tool {
+            id: ToolId::new(id),
+            name: format!("tool {id}"),
+            ..crate::test_support::tool_6_35_upcut()
+        }
+    }
+
+    /// Design spec, "Tool numbers": two tools of enabled operations that
+    /// resolve to the same `T` number would make the program change to
+    /// the wrong bit. An error at the second tool's `number`.
+    #[test]
+    fn duplicate_tool_number_is_error() {
+        let mut p = sample_project();
+        p.tools[0].number = Some(2);
+        let mut t2 = tool("t2");
+        t2.number = Some(2);
+        p.tools.push(t2);
+        let mut second = sample_pocket();
+        second.tool = ToolId::new("t2");
+        p.operations.push(Operation::Pocket(second));
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::DuplicateToolNumber {
+                tool: ToolId::new("t2"),
+                name: "tool t2".into(),
+                number: 2,
+                other: ToolId::new("t1"),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].field().as_deref(), Some("tools[t2].number"));
+        assert!(problems[0].to_string().contains("T2"), "{}", problems[0]);
+    }
+
+    /// An unset number is the tool's 1-based position, which a set number
+    /// on another tool may clash with.
+    #[test]
+    fn set_number_clashing_with_positional_is_error() {
+        let mut p = sample_project();
+        let mut t2 = tool("t2");
+        t2.number = Some(1);
+        p.tools.push(t2);
+        let mut second = sample_pocket();
+        second.tool = ToolId::new("t2");
+        p.operations.push(Operation::Pocket(second));
+        assert_eq!(
+            validate(&p),
+            vec![Problem::DuplicateToolNumber {
+                tool: ToolId::new("t2"),
+                name: "tool t2".into(),
+                number: 1,
+                other: ToolId::new("t1"),
+            }]
+        );
+        // The other way round: the positional tool is the second one.
+        let mut p = sample_project();
+        p.tools[0].number = Some(2);
+        p.tools.push(tool("t2"));
+        let mut second = sample_pocket();
+        second.tool = ToolId::new("t2");
+        p.operations.push(Operation::Pocket(second));
+        assert_eq!(
+            validate(&p),
+            vec![Problem::DuplicateToolNumber {
+                tool: ToolId::new("t2"),
+                name: "tool t2".into(),
+                number: 2,
+                other: ToolId::new("t1"),
+            }]
+        );
+    }
+
+    /// `T0` is no tool on most controllers.
+    #[test]
+    fn tool_number_zero_is_error() {
+        let mut p = sample_project();
+        p.tools[0].number = Some(0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ToolOutOfRange {
+                tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
+                field: "number",
+                value: 0.0,
+                expected: POSITIVE,
+            }]
+        );
+        assert_eq!(problems[0].field().as_deref(), Some("tools[t1].number"));
+    }
+
+    /// Only tools of enabled operations are written to a program, so only
+    /// they can clash.
+    #[test]
+    fn unused_tools_do_not_clash() {
+        let mut p = sample_project();
+        p.tools[0].number = Some(2);
+        let mut t2 = tool("t2");
+        t2.number = Some(2);
+        p.tools.push(t2);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::UnusedTool {
+                tool: ToolId::new("t2"),
+                name: "tool t2".into(),
+            }]
+        );
+    }
+
+    /// Functional spec, capability 13: rest machining clears what an
+    /// earlier Pocket of the same shapes left, so `rest_of` must name one.
+    #[test]
+    fn rest_of_must_be_an_earlier_enabled_pocket_with_the_same_targets() {
+        let rough = sample_pocket();
+        let mut rest = sample_pocket();
+        rest.id = OperationId::new("o5");
+        rest.name = "Rest".into();
+        rest.rest_of = Some(OperationId::new("o2"));
+        let p = with_ops(vec![
+            Operation::Pocket(rough.clone()),
+            Operation::Pocket(rest.clone()),
+        ]);
+        assert_eq!(validate(&p), vec![], "an earlier enabled Pocket");
+
+        let invalid = Problem::RestOfInvalid {
+            operation: OperationId::new("o5"),
+            name: "Rest".into(),
+            rest_of: OperationId::new("o2"),
+        };
+        assert_eq!(invalid.severity(), Severity::Error);
+        assert_eq!(invalid.field().as_deref(), Some("operations[o5].rest_of"));
+
+        // Later, not earlier.
+        let p = with_ops(vec![
+            Operation::Pocket(rest.clone()),
+            Operation::Pocket(rough.clone()),
+        ]);
+        assert_eq!(validate(&p), vec![invalid.clone()], "a later Pocket");
+
+        // Disabled.
+        let mut off = rough.clone();
+        off.enabled = false;
+        let p = with_ops(vec![Operation::Pocket(off), Operation::Pocket(rest.clone())]);
+        let problems = validate(&p);
+        assert!(problems.contains(&invalid), "a disabled Pocket: {problems:?}");
+
+        // A Profile, not a Pocket.
+        let mut rest_of_profile = rest.clone();
+        rest_of_profile.rest_of = Some(OperationId::new("o1"));
+        let p = with_ops(vec![Operation::Pocket(rest_of_profile)]);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::RestOfInvalid {
+                operation: OperationId::new("o5"),
+                name: "Rest".into(),
+                rest_of: OperationId::new("o1"),
+            }],
+            "a Profile"
+        );
+
+        // Other targets.
+        let mut other_targets = rough.clone();
+        other_targets.targets = vec![InstanceId::new("i2")];
+        let mut p = with_ops(vec![
+            Operation::Pocket(other_targets),
+            Operation::Pocket(rest.clone()),
+        ]);
+        p.instances.push(crate::FeatureInstance {
+            id: InstanceId::new("i2"),
+            ..p.instances[0].clone()
+        });
+        assert_eq!(validate(&p), vec![invalid.clone()], "other targets");
+
+        // Nothing of that id at all.
+        let mut dangling = rest.clone();
+        dangling.rest_of = Some(OperationId::new("nope"));
+        let p = with_ops(vec![Operation::Pocket(dangling)]);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::RestOfInvalid {
+                operation: OperationId::new("o5"),
+                name: "Rest".into(),
+                rest_of: OperationId::new("nope"),
+            }]
+        );
+    }
+
+    #[test]
+    fn step_over_fraction_outside_unit_interval_is_error() {
+        for (fraction, ok) in [(0.0, false), (1.5, false), (1.0, true), (0.4, true)] {
+            let mut pocket = sample_pocket();
+            pocket.step_over_fraction = Some(fraction);
+            let p = with_ops(vec![Operation::Pocket(pocket)]);
+            let problems = validate(&p);
+            if ok {
+                assert_eq!(problems, vec![], "{fraction}");
+            } else {
+                assert_eq!(
+                    problems,
+                    vec![Problem::OutOfRange {
+                        field: "operations[o2].step_over_fraction".into(),
+                        value: fraction,
+                        expected: FRACTION,
+                    }],
+                    "{fraction}"
+                );
+            }
+        }
+    }
+
+    /// A Pocket or Engrave has no single-pass form: with no step-down on
+    /// the operation or its tool nothing says how deep each pass is, and
+    /// nothing defaults it (#98). Reported once, at the tool, as Profile
+    /// reports it.
+    #[test]
+    fn pocket_without_step_down_is_error() {
+        for op in [
+            Operation::Pocket(sample_pocket()),
+            Operation::Engrave(sample_engrave()),
+        ] {
+            let mut p = with_ops(vec![op.clone()]);
+            p.tools[0].step_down_mm = None;
+            // The Profile falls back on the tool too; take it out of the way.
+            profile_mut(&mut p).step_down_mm = Some(2.0);
+            assert_eq!(
+                validate(&p),
+                vec![Problem::ToolValueUnset {
+                    tool: ToolId::new("t1"),
+                    name: "6.35 mm upcut".into(),
+                    field: "step_down_mm",
+                }],
+                "{op:?}"
+            );
+            // Set on the operation: fine.
+            let mut p = with_ops(vec![op.clone()]);
+            p.tools[0].step_down_mm = None;
+            profile_mut(&mut p).step_down_mm = Some(2.0);
+            match p.operations.get_mut(1) {
+                Some(Operation::Pocket(pocket)) => pocket.step_down_mm = Some(1.0),
+                Some(Operation::Engrave(engrave)) => engrave.step_down_mm = Some(1.0),
+                _ => panic!("the added operation"),
+            }
+            assert_eq!(validate(&p), vec![], "{op:?}");
+        }
+    }
+
+    /// Functional spec, capability 14: a peck's depth is the tool's
+    /// step-down by default, so one of the two must be set. A simple
+    /// cycle needs neither.
+    #[test]
+    fn peck_without_depth_or_tool_step_down_is_error() {
+        let mut drill = sample_drill();
+        drill.cycle = DrillCycle::Peck {
+            peck_depth_mm: None,
+            retract: PeckRetract::Full,
+        };
+        let mut p = with_ops(vec![Operation::Drill(drill.clone())]);
+        p.tools[0].step_down_mm = None;
+        profile_mut(&mut p).step_down_mm = Some(2.0);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::ToolValueUnset {
+                tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
+                field: "step_down_mm",
+            }]
+        );
+        drill.cycle = DrillCycle::Peck {
+            peck_depth_mm: Some(1.5),
+            retract: PeckRetract::Full,
+        };
+        let mut p = with_ops(vec![Operation::Drill(drill)]);
+        p.tools[0].step_down_mm = None;
+        profile_mut(&mut p).step_down_mm = Some(2.0);
+        assert_eq!(validate(&p), vec![], "peck depth set");
+        let mut p = with_ops(vec![Operation::Drill(sample_drill())]);
+        p.tools[0].step_down_mm = None;
+        profile_mut(&mut p).step_down_mm = Some(2.0);
+        assert_eq!(validate(&p), vec![], "simple cycle");
+    }
+
+    /// Functional spec, capability 16: a helix sits in material the
+    /// operation removes, and an On line Profile removes only its kerf.
+    #[test]
+    fn helix_on_on_line_profile_is_error() {
+        let helix = Entry::Helix {
+            diameter_fraction: 0.8,
+            angle_deg: 5.0,
+        };
+        let mut p = sample_project();
+        let op = profile_mut(&mut p);
+        op.side = Side::OnLine;
+        op.entry = helix.clone();
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::HelixNeedsWasteSide {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].field().as_deref(), Some("operations[o1].entry"));
+        let mut p = sample_project();
+        let op = profile_mut(&mut p);
+        op.side = Side::Inside;
+        op.entry = helix;
+        assert_eq!(validate(&p), vec![]);
+        // A Pocket always has waste inside.
+        let mut pocket = sample_pocket();
+        pocket.entry = Entry::Helix {
+            diameter_fraction: 0.8,
+            angle_deg: 5.0,
+        };
+        assert_eq!(validate(&with_ops(vec![Operation::Pocket(pocket)])), vec![]);
+    }
+
+    /// Functional spec, capability 17: a lead is an arc of a positive
+    /// radius sweeping at most a half circle, with a non-negative overcut.
+    #[test]
+    fn lead_radius_must_be_positive() {
+        let good = Lead {
+            radius_mm: 2.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 0.0,
+        };
+        let mut p = sample_project();
+        profile_mut(&mut p).lead = Some(good.clone());
+        assert_eq!(validate(&p), vec![]);
+        for (lead, field, value, expected) in [
+            (
+                Lead {
+                    radius_mm: 0.0,
+                    ..good.clone()
+                },
+                "radius_mm",
+                0.0,
+                POSITIVE,
+            ),
+            (
+                Lead {
+                    sweep_deg: 0.0,
+                    ..good.clone()
+                },
+                "sweep_deg",
+                0.0,
+                SWEEP,
+            ),
+            (
+                Lead {
+                    sweep_deg: 181.0,
+                    ..good.clone()
+                },
+                "sweep_deg",
+                181.0,
+                SWEEP,
+            ),
+            (
+                Lead {
+                    overcut_mm: -1.0,
+                    ..good.clone()
+                },
+                "overcut_mm",
+                -1.0,
+                NON_NEGATIVE,
+            ),
+        ] {
+            let mut p = sample_project();
+            profile_mut(&mut p).lead = Some(lead);
+            assert_eq!(
+                validate(&p),
+                vec![Problem::OutOfRange {
+                    field: format!("operations[o1].lead.{field}"),
+                    value,
+                    expected,
+                }],
+                "{field} {value}"
+            );
+        }
+    }
+
+    /// Functional spec, capability 16: a ramp steeper than 45° is a
+    /// plunge in all but name; a helix is at most the tool's diameter.
+    #[test]
+    fn ramp_angle_range() {
+        for (entry, field, value, expected) in [
+            (
+                Entry::Ramp { angle_deg: 0.0 },
+                "entry.ramp.angle_deg",
+                0.0,
+                ENTRY_ANGLE,
+            ),
+            (
+                Entry::Ramp { angle_deg: 46.0 },
+                "entry.ramp.angle_deg",
+                46.0,
+                ENTRY_ANGLE,
+            ),
+            (
+                Entry::Helix {
+                    diameter_fraction: 0.0,
+                    angle_deg: 5.0,
+                },
+                "entry.helix.diameter_fraction",
+                0.0,
+                FRACTION,
+            ),
+            (
+                Entry::Helix {
+                    diameter_fraction: 1.1,
+                    angle_deg: 5.0,
+                },
+                "entry.helix.diameter_fraction",
+                1.1,
+                FRACTION,
+            ),
+            (
+                Entry::Helix {
+                    diameter_fraction: 0.8,
+                    angle_deg: 50.0,
+                },
+                "entry.helix.angle_deg",
+                50.0,
+                ENTRY_ANGLE,
+            ),
+        ] {
+            let mut pocket = sample_pocket();
+            pocket.entry = entry.clone();
+            let p = with_ops(vec![Operation::Pocket(pocket)]);
+            assert_eq!(
+                validate(&p),
+                vec![Problem::OutOfRange {
+                    field: format!("operations[o2].{field}"),
+                    value,
+                    expected,
+                }],
+                "{entry:?}"
+            );
+        }
+        for entry in [
+            Entry::Ramp { angle_deg: 45.0 },
+            Entry::Ramp { angle_deg: 15.0 },
+            Entry::Helix {
+                diameter_fraction: 1.0,
+                angle_deg: 45.0,
+            },
+        ] {
+            let mut p = sample_project();
+            profile_mut(&mut p).entry = entry.clone();
+            assert_eq!(validate(&p), vec![], "{entry:?}");
+        }
+    }
+
+    /// Functional spec, capability 14: canned cycles are written only
+    /// where the definition has them; asking for them elsewhere would be
+    /// silently ignored, so it is an error.
+    #[test]
+    fn canned_cycles_on_definition_without_them_is_error() {
+        let mut p = sample_project();
+        p.post_processor.use_canned_cycles = true;
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::CannedCyclesUnsupported {
+                post: "grbl".into()
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("post_processor.use_canned_cycles")
+        );
+    }
+
+    /// Functional spec, capability 14: Drill plunges any cutter, but a
+    /// V-bit or ball nose makes a cone, not a hole, so it is a warning.
+    #[test]
+    fn drill_with_v_bit_warns() {
+        let mut p = with_ops(vec![Operation::Drill(sample_drill())]);
+        // The Profile needs an end mill; let the drill have its own tool.
+        let mut v_bit = tool("t2");
+        v_bit.cutter = ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        p.tools.push(v_bit);
+        if let Some(Operation::Drill(drill)) = p.operations.get_mut(1) {
+            drill.tool = ToolId::new("t2");
+        }
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::DrillCutterUnusual {
+                operation: OperationId::new("o3"),
+                name: "Drill".into(),
+                tool: ToolId::new("t2"),
+                tool_name: "tool t2".into(),
+                cutter: "a V-bit",
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(problems[0].field().as_deref(), Some("operations[o3].tool"));
+        for cutter in [ToolKind::EndMill, ToolKind::Drill] {
+            if let Some(t2) = p.tools.get_mut(1) {
+                t2.cutter = cutter;
+            }
+            assert_eq!(validate(&p), vec![]);
+        }
+    }
+
+    /// Functional spec, capability 18: the relief pass steps down at the
+    /// tool's step-down; without one it is skipped, which the user should
+    /// know. The Profile's own step-down keeps the main passes valid.
+    #[test]
+    fn relief_without_step_down_warns() {
+        let mut p = sample_project();
+        p.tools[0].step_down_mm = None;
+        let op = profile_mut(&mut p);
+        op.step_down_mm = Some(2.0);
+        op.corner_relief = CornerRelief::Dogbone;
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ReliefNeedsStepDown {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                tool: ToolId::new("t1"),
+                tool_name: "6.35 mm upcut".into(),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o1].corner_relief")
+        );
+        // A Pocket, likewise.
+        let mut pocket = sample_pocket();
+        pocket.step_down_mm = Some(2.0);
+        pocket.corner_relief = CornerRelief::TBone;
+        let mut p = with_ops(vec![Operation::Pocket(pocket)]);
+        p.tools[0].step_down_mm = None;
+        profile_mut(&mut p).step_down_mm = Some(2.0);
+        let problems = validate(&p);
+        assert!(
+            matches!(problems.as_slice(), [Problem::ReliefNeedsStepDown { operation, .. }]
+                if operation == &OperationId::new("o2")),
+            "{problems:?}"
+        );
+        // With the tool's step-down set, nothing.
+        p.tools[0].step_down_mm = Some(2.0);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// Functional spec, capability 15: a V-bit engraving deeper than its
+    /// cone is tall cuts with the shank. A 60° bit 6 mm across has a
+    /// cone 3 / tan 30° = 5.196 mm tall.
+    #[test]
+    fn engrave_deeper_than_v_bit_cone_warns() {
+        let mut p = with_ops(vec![Operation::Engrave(sample_engrave())]);
+        let mut v_bit = tool("t2");
+        v_bit.diameter_mm = 6.0;
+        v_bit.cutter = ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        p.tools.push(v_bit);
+        if let Some(Operation::Engrave(engrave)) = p.operations.get_mut(1) {
+            engrave.tool = ToolId::new("t2");
+            engrave.depth_mm = Some(6.0);
+        }
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        let Problem::EngraveDeeperThanCone {
+            operation,
+            name,
+            tool_name,
+            depth_mm,
+            cone_height_mm,
+        } = &problems[0]
+        else {
+            panic!("{problems:?}");
+        };
+        assert_eq!(operation, &OperationId::new("o4"));
+        assert_eq!(name, "Engrave");
+        assert_eq!(tool_name, "tool t2");
+        assert!(approx_eq(*depth_mm, 6.0, 1e-9));
+        assert!(approx_eq(*cone_height_mm, 5.196, 1e-3), "{cone_height_mm}");
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o4].depth_mm")
+        );
+        if let Some(Operation::Engrave(engrave)) = p.operations.get_mut(1) {
+            engrave.depth_mm = Some(5.0);
+        }
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #67 applies to Pocket as to Profile: its rings are the wall offset
+    /// by half the diameter, which only a flat end mill cuts at every
+    /// depth.
+    #[test]
+    fn pocket_with_v_bit_is_error() {
+        let mut p = with_ops(vec![Operation::Pocket(sample_pocket())]);
+        let mut v_bit = tool("t2");
+        v_bit.cutter = ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        p.tools.push(v_bit);
+        if let Some(Operation::Pocket(pocket)) = p.operations.get_mut(1) {
+            pocket.tool = ToolId::new("t2");
+        }
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::CutterNotFlat {
+                operation: OperationId::new("o2"),
+                name: "Pocket".into(),
+                tool: ToolId::new("t2"),
+                tool_name: "tool t2".into(),
+                cutter: "a V-bit",
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+    }
+
+    /// Functional spec, capability 14: the dwell and retract are
+    /// distances and times of 0 or more; a chip-break gap of 0 would
+    /// never clear the chip.
+    #[test]
+    fn drill_ranges() {
+        let mut dwell = sample_drill();
+        dwell.dwell_s = -1.0;
+        let mut retract = sample_drill();
+        retract.retract_mm = -0.5;
+        let mut gap = sample_drill();
+        gap.cycle = DrillCycle::Peck {
+            peck_depth_mm: Some(1.0),
+            retract: PeckRetract::ChipBreak { gap_mm: 0.0 },
+        };
+        let mut peck = sample_drill();
+        peck.cycle = DrillCycle::Peck {
+            peck_depth_mm: Some(0.0),
+            retract: PeckRetract::Full,
+        };
+        for (drill, field, value, expected) in [
+            (dwell, "dwell_s", -1.0, NON_NEGATIVE),
+            (retract, "retract_mm", -0.5, NON_NEGATIVE),
+            (gap, "cycle.peck.retract.chip_break.gap_mm", 0.0, POSITIVE),
+            (peck, "cycle.peck.peck_depth_mm", 0.0, POSITIVE),
+        ] {
+            let p = with_ops(vec![Operation::Drill(drill)]);
+            assert_eq!(
+                validate(&p),
+                vec![Problem::OutOfRange {
+                    field: format!("operations[o3].{field}"),
+                    value,
+                    expected,
+                }],
+                "{field}"
+            );
+        }
+        let mut allowance = sample_pocket();
+        allowance.allowance_mm = -0.1;
+        let p = with_ops(vec![Operation::Pocket(allowance)]);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::OutOfRange {
+                field: "operations[o2].allowance_mm".into(),
+                value: -0.1,
+                expected: NON_NEGATIVE,
+            }]
+        );
+    }
+
+    /// Functional spec, capability 12: the raster angle is from the X
+    /// axis, 0 to 180 exclusive.
+    #[test]
+    fn raster_angle_range() {
+        for (angle_deg, ok) in [(-1.0, false), (180.0, false), (0.0, true), (179.0, true)] {
+            let mut pocket = sample_pocket();
+            pocket.strategy = ClearanceStrategy::Raster { angle_deg };
+            let p = with_ops(vec![Operation::Pocket(pocket)]);
+            let problems = validate(&p);
+            if ok {
+                assert_eq!(problems, vec![], "{angle_deg}");
+            } else {
+                assert_eq!(
+                    problems,
+                    vec![Problem::OutOfRange {
+                        field: "operations[o2].strategy.raster.angle_deg".into(),
+                        value: angle_deg,
+                        expected: RASTER_ANGLE,
+                    }],
+                    "{angle_deg}"
+                );
+            }
+        }
+    }
+
+    /// Every new problem names a field the saved file has, so `check` can
+    /// point at a line and column.
+    #[test]
+    fn phase_2_problem_fields_locate_in_the_saved_file() {
+        let mut p = sample_project();
+        p.tools[0].step_over_fraction = Some(2.0);
+        p.post_processor.use_canned_cycles = true;
+        let op = profile_mut(&mut p);
+        op.side = Side::OnLine;
+        op.entry = Entry::Helix {
+            diameter_fraction: 1.5,
+            angle_deg: 5.0,
+        };
+        op.lead = Some(Lead {
+            radius_mm: -1.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 0.0,
+        });
+        let mut pocket = sample_pocket();
+        pocket.rest_of = Some(OperationId::new("nope"));
+        pocket.step_over_fraction = Some(2.0);
+        pocket.strategy = ClearanceStrategy::Raster { angle_deg: 180.0 };
+        pocket.corner_relief = CornerRelief::Dogbone;
+        pocket.step_down_mm = Some(1.0);
+        let mut t2 = tool("t2");
+        t2.step_down_mm = None;
+        t2.number = Some(1);
+        p.tools.push(t2);
+        pocket.tool = ToolId::new("t2");
+        let mut drill = sample_drill();
+        drill.dwell_s = -1.0;
+        let mut engrave = sample_engrave();
+        engrave.depth_mm = Some(0.0);
+        p.operations.extend([
+            Operation::Pocket(pocket),
+            Operation::Drill(drill),
+            Operation::Engrave(engrave),
+        ]);
+        let problems = validate(&p);
+        let text = crate::save(&p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        let mut kinds: Vec<String> = Vec::new();
+        for problem in &problems {
+            let field = problem.field().unwrap();
+            assert!(map.locate(&field).is_some(), "{field} in {text}");
+            kinds.push(format!("{problem:?}").split([' ', '{']).next().unwrap().to_owned());
+        }
+        for expected in [
+            "ToolOutOfRange",
+            "DuplicateToolNumber",
+            "CannedCyclesUnsupported",
+            "HelixNeedsWasteSide",
+            "RestOfInvalid",
+            "ReliefNeedsStepDown",
+            "OutOfRange",
+        ] {
+            assert!(kinds.contains(&expected.to_owned()), "{expected} in {kinds:?}");
+        }
     }
 }
