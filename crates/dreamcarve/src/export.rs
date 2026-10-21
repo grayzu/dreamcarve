@@ -247,6 +247,15 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
         ExportWarning::CannedCycleExpanded { op, reason } => {
             format!("operation `{op}`: written as plain moves, not canned cycles, because {reason}")
         }
+        ExportWarning::UnitsSetByController { post, units } => {
+            let units = match units {
+                Units::Mm => "millimetres",
+                Units::Inch => "inches",
+            };
+            format!(
+                "post-processor `{post}` has no units words (G20/G21), so the program has none; it is in {units}, so run it only on a machine set up in {units}"
+            )
+        }
         ExportWarning::ArcFitFallback { op, runs } => format!(
             "operation `{op}`: {runs} run(s) of straight moves kept as written because the controller would reject the arc fitted to them once rounded"
         ),

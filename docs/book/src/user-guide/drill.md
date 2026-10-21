@@ -149,11 +149,13 @@ along with the depth, the feeds and every other safety rule.
 
 ## Canned cycles
 
-Some controllers (LinuxCNC, Mach3, UCCNC) have drilling cycles that write
-a whole hole in one line. They are off by default. To use them, set
+Some controllers have drilling cycles that write a whole hole in one
+line. They are off by default. To use them, set
 `"use_canned_cycles": true` in the project's `post_processor` block, with
 a post-processor that has them ([Post-processors](post-processors.md#canned-cycles)).
-grblHAL and GRBL have none, so `check` reports `true` as an error there.
+DreamCarve writes `G81` and `G82` on LinuxCNC and Mach3, and no peck
+cycles anywhere. grblHAL, GRBL, UCCNC and generic have none, so `check`
+reports `true` as an error there.
 
 With canned cycles on, a Drill is written as:
 

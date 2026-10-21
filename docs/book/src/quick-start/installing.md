@@ -70,8 +70,12 @@ dreamcarve posts
 lists the controllers DreamCarve can write G-code for:
 
 ```text
-grblhal  grblHAL
-grbl     GRBL 1.1
+grblhal   grblHAL
+grbl      GRBL 1.1
+linuxcnc  LinuxCNC
+mach3     Mach3
+uccnc     UCCNC
+generic   Generic RS274/NGC
 ```
 
 Next: [Your first cut from an SVG](first-cut.md).

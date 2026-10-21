@@ -130,23 +130,39 @@ impl Block {
     }
 }
 
-/// What the parser must know of the controller to expand canned cycles
-/// (S11): the distance it backs off for a `G83` re-entry and a `G73`
-/// retract, which the program does not state
-/// ([`dc_project::CannedCycles::reentry_gap_mm`]). Without it, a `G83` or
-/// `G73` line is unparseable.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+/// What the parser must know of the controller that the program does not
+/// state: to expand canned cycles (S11), the distance it backs off for a
+/// `G83` re-entry and a `G73` retract
+/// ([`dc_project::CannedCycles::reentry_gap_mm`]), without which a `G83`
+/// or `G73` line is unparseable; and the units it reads lengths in until
+/// a `G20` or `G21`.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CycleModel {
     /// The re-entry gap, mm.
     pub reentry_gap_mm: Option<f64>,
+    /// The units lengths are in before any `G20` or `G21`: millimetres,
+    /// unless the controller has no units words (UCCNC), when the program
+    /// is in the units the controller is set up in.
+    pub units: Units,
+}
+
+impl Default for CycleModel {
+    fn default() -> Self {
+        Self {
+            reentry_gap_mm: None,
+            units: Units::Mm,
+        }
+    }
 }
 
 impl CycleModel {
-    /// The model `post`'s definition states.
+    /// The model `post`'s definition states, lengths in millimetres until
+    /// the program selects units.
     #[must_use]
     pub fn of(post: &PostProcessor) -> Self {
         Self {
             reentry_gap_mm: post.canned_cycles.as_ref().and_then(|c| c.reentry_gap_mm),
+            units: Units::Mm,
         }
     }
 }
@@ -177,7 +193,7 @@ pub fn parse_program_with(text: &str, model: &CycleModel) -> Result<Vec<Block>, 
         mode: None,
         pos: MachinePosition::default(),
         feed: None,
-        units: Units::Mm,
+        units: model.units,
         retract: None,
         initial_z: None,
         model: *model,
@@ -185,6 +201,11 @@ pub fn parse_program_with(text: &str, model: &CycleModel) -> Result<Vec<Block>, 
     let mut blocks = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = index + 1;
+        // A line holding only `%` delimits the program (RS274/NGC, NIST IR
+        // 6556, 3.1); it is not run.
+        if raw.trim() == "%" {
+            continue;
+        }
         let words = split_words(raw).map_err(|reason| ExportError::Unparseable { line, reason })?;
         if words.is_empty() {
             continue;
@@ -621,6 +642,7 @@ mod tests {
         // With the controller's gap a `G83` expands.
         let model = CycleModel {
             reentry_gap_mm: Some(0.5),
+            ..CycleModel::default()
         };
         parse_program_with("G21\nG0 Z5\nG98 G83 X10 Y0 Z-3 R1 Q1 F300\n", &model).unwrap();
     }
