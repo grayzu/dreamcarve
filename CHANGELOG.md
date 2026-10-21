@@ -149,9 +149,10 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
 - **Tabs per outline; project format version 9.** A Profile's tabs no longer go
   on its holes unless the new `tabs.on_holes` is `true`, so one operation cuts a
   part and its holes, holes first ([#109]). An outline whose tabs would cover
-  more than half of its tool path gets the most tabs that cover at most half,
-  possibly none, and `tabs_cover_most_of_contour` says how many are cut; before,
-  the tabs were cut as set. A version 8 file is upgraded with `on_holes: true`,
+  more than half of its tool path gets the most tabs that cover at most half
+  (a part keeps at least one; a hole may get none), and
+  `tabs_cover_most_of_contour` says how many are cut; before, the tabs were cut
+  as set. A version 8 file is upgraded with `on_holes: true`,
   so its holes keep their tabs.
 
 ### Fixed

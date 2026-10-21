@@ -99,11 +99,18 @@ Then the last pass barely reaches full depth, or never does, and the part
 or hole stays attached all the way round.
 
 So when the tabs on one outline would cover more than half of the bit's
-path, that outline gets the most tabs that cover at most half of it,
-possibly none:
+path, that outline gets the most tabs that cover at most half of it:
 
 - With `count`, fewer tabs, spaced evenly round the outline.
 - With `at_distances`, the first distances in your list, as many as fit.
+
+A part's outline always keeps at least one tab. Cut fully free, a small
+part can be thrown by the bit, which is worse than a part held too
+firmly. If even one tab covers more than half of the path, that one is
+cut anyway, and the warning says the part may need cutting free by hand:
+cut through what is left of the outline with a knife or saw. A hole with
+`on_holes` set has no such floor: its slug is waste, so it may get no
+tabs at all.
 
 Other outlines keep all their tabs. `check` and `export` warn for each
 outline that gets fewer. The warning names the shape, the length of the
@@ -117,7 +124,8 @@ a 20 mm square hole with `on_holes` set, cut with a 6.35 mm bit:
 warning: tabs_cover_most_of_contour: operation `op1`: tabs on `small-hole` (instance `i3`, profile 0) would cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 54.6 mm path (105.1%), so the part or hole would not cut free. Only 1 of them is cut there. To keep all 4, make them at most 0.47 mm wide.
 ```
 
-To keep every tab, make them narrower, or use a smaller bit. Exactly half
+To keep every tab, or to let a part's one tab leave room to cut free,
+make the tabs narrower, or use a smaller bit. Exactly half
 is still allowed: the rule is more than half.
 
 ## Parts with holes

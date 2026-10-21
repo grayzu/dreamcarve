@@ -1013,12 +1013,18 @@ GUI), but each tool-centre path gets its own layout, `Tabs::fit`:
    part or hole would not cut free, so the path gets the most tabs that
    cover at most half: `count` becomes the largest `n' < n` with
    `n' (w + d) ≤ L/2` (evenly spaced, so never overlapping), and
-   `at_distances` keeps its longest prefix within half. Either may reach
-   none. `TabsCoverMostOfContour` names the shape with the tabs asked
+   `at_distances` keeps its longest prefix within half. A part's outline
+   (`Role::Outer`, `Least::One`) never drops below one tab: cut fully
+   free, a small part can be thrown by the bit, which is worse than an
+   over-held part, so if even one covers more than half that one is cut
+   and the warning says the part may need cutting free by hand. A hole
+   (with `on_holes`) or an open path (`Least::Zero`) may reach none.
+   `TabsCoverMostOfContour` names the shape with the tabs asked
    (`tab_count`) and cut (`cut_count`), and the width at which all would
-   fit.
+   fit. (changed in #109 review: parts first dropped to none too, which
+   left a part that asked for tabs loose on the through cut.)
 3. `order::check` counts an outline a tabbed Profile through the stock
-   cuts with no tab (its holes, or one too short for a tab) as freed
+   cuts with no tab (its holes, or a hole too short for a tab) as freed
    (`profile::untabbed_outlines`).
 
 PureCutCNC sizes auto-tabs per feature (`autoTabs.ts`, a 15 % free-path
@@ -1413,8 +1419,8 @@ Profile with no tabs and a cutting move of its toolpath reaches Z ≤ 0
 (within `EPS_MM`), which means depth ≥ thickness. Any side counts:
 Outside and On line free the part, and Inside frees the slug of its
 hole. A tabbed Profile frees only the outlines it cuts with no tab: its
-holes unless `on_holes`, and outlines too short for one ("Tabs per
-outline"); the tabs hold the rest. (changed in #109: a tabbed Profile
+holes unless `on_holes`, and holes too short for one ("Tabs per
+outline"; a part always keeps one); the tabs hold the rest. (changed in #109: a tabbed Profile
 freed nothing, because every outline had tabs.)
 Every closed target of `j` nested in one of `i`'s freed outlines, or the
 same outline, by `dc_geometry::nest` on the true curves, yields
@@ -1923,7 +1929,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `tabs::final_pass_has_exactly_four_raised_segments_at_tab_z` extended to both orders (O9).
 
 **dc-cam — tabs per outline (#109)**
-- `tabs::holes_get_no_tabs_by_default`, `tabs::on_holes_opt_in_keeps_hole_tabs`, `tabs::too_short_outline_gets_fewer_tabs_and_warns`.
+- `tabs::holes_get_no_tabs_by_default`, `tabs::on_holes_opt_in_keeps_hole_tabs`, `tabs::too_short_outline_gets_fewer_tabs_and_warns`, `tabs::short_part_outline_keeps_at_least_one_tab`.
 - `profile::star_and_its_hole_cut_in_one_operation` (the manual `tests/manual/star_with_hole` case, redrawn).
 - `order::tabbed_profile_frees_the_outlines_it_leaves_untabbed`.
 - `migrate::version_8_fixture_loads`, `migrate::v8_tabs_keep_their_holes_tabbed`, `migrate::v8_with_on_holes_already_present_fails`.
