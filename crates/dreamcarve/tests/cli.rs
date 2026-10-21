@@ -1073,6 +1073,77 @@ mod golden {
     }
 }
 
+/// The filled-in coaster with post-processor `id` at version 1, as a
+/// project saved before #286 names it.
+fn coaster_at_v1(dir: &Path, id: &str) {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::bundled_definition(id, 1)
+        .expect("version 1 is bundled")
+        .default_ref();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+}
+
+/// #286, ADR-0004: a project that names version 1 of LinuxCNC exports the
+/// bytes it did before version 2 took `G49` out of the header
+/// (`tests/expected/coaster-linuxcnc-v1.ngc`, the golden program as it was
+/// captured with version 1).
+#[test]
+fn linuxcnc_v1_project_still_exports_byte_identically() {
+    let dir = work_dir("linuxcnc_v1_project_still_exports_byte_identically");
+    coaster_at_v1(&dir, "linuxcnc");
+    assert_exports_match(&dir, &[], &[("coaster.ngc", "coaster-linuxcnc-v1.ngc")]);
+}
+
+/// #286: the same for Mach3 and UCCNC, whose version 2 also drops `G49`.
+#[test]
+fn mach3_and_uccnc_v1_projects_still_export_byte_identically() {
+    for (id, program, expected) in [
+        ("mach3", "coaster.tap", "coaster-mach3-v1.tap"),
+        ("uccnc", "coaster.txt", "coaster-uccnc-v1.txt"),
+    ] {
+        let dir = work_dir(&format!("v1_project_still_exports_byte_identically_{id}"));
+        coaster_at_v1(&dir, id);
+        assert_exports_match(&dir, &[], &[(program, expected)]);
+    }
+}
+
+/// #286: `export --post` upgrades a version 1 LinuxCNC, Mach3 or UCCNC
+/// project to version 2, and the only line that changes is the header's
+/// modal line, which loses `G49` (Mach3 numbers every line, so its line
+/// numbers stay the same).
+#[test]
+fn slice17_v1_project_upgrades_to_v2_without_g49() {
+    for (id, program) in [
+        ("linuxcnc", "coaster.ngc"),
+        ("mach3", "coaster.tap"),
+        ("uccnc", "coaster.txt"),
+    ] {
+        let dir = work_dir(&format!("slice17_v1_project_upgrades_{id}"));
+        coaster_at_v1(&dir, id);
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let v1 = std::fs::read_to_string(dir.join(program)).expect("program written");
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v1 → v2,")),
+            "{id}: {report}"
+        );
+        let v2 = std::fs::read_to_string(dir.join(program)).expect("program rewritten");
+        assert!(!v2.contains("G49"), "{id}:\n{v2}");
+        let expected: Vec<String> = v1.lines().map(|l| l.replace(" G49", "")).collect();
+        let actual: Vec<&str> = v2.lines().collect();
+        assert_eq!(actual, expected, "{id}: only G49 leaves the program");
+        assert_ne!(v1, v2, "{id}: v1 had G49");
+    }
+}
+
 // Phase 2, #117: format version 8.
 
 /// A fresh project carries every phase 2 field at the value that cuts as

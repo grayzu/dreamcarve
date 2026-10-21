@@ -142,6 +142,12 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   name can never start a controller command such as `( MSG, ...)` ([#171]). `init`
   writes version 2. A version 1 project keeps exporting version 1 bytes until
   you run `export --post <id>`, which upgrades it and says so.
+- **LinuxCNC, Mach3 and UCCNC definitions version 2** leave the tool length
+  offset alone: the header no longer has `G49` ([#286]). The work zero you
+  set with a tool length offset active includes the offset, so cancelling it
+  at program start moved every Z by the offset, possibly deeper than the
+  drawing. `init` writes version 2. A version 1 project keeps its bytes
+  until `export --post <id>`.
 - **On line Profile of an open path starts where VCarve's does:** conventional
   at the first vertex, climb at the last ([#242]). Tabs are still placed from the
   first vertex as drawn.
@@ -281,5 +287,6 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#207]: https://github.com/grayzu/dreamcarve/issues/207
 [#242]: https://github.com/grayzu/dreamcarve/issues/242
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
+[#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
