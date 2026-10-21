@@ -507,7 +507,7 @@ finishing pass.)
 | Field | Meaning |
 | --- | --- |
 | `allowance_mm` | How much every pass but the last leaves on the wall, in mm. More than 0 and at most a third of the bit's diameter (2.117 mm for a 6.35 mm bit), as VCarve advises: the last pass cuts the full depth, so keep its skin thin. 0.2 to 0.5 mm is usual. |
-| `thickness_mm` | `null` for the usual depth passes, the last of which is the last pass. A number sets how deep the last pass cuts (VCarve's "Set Last Pass Thickness"): the other passes step down to `depth_mm` less it, then the last pass cuts the whole depth. More than 0 and at most `depth_mm`. |
+| `thickness_mm` | `null` for the usual depth passes, the last of which is the last pass. A number sets how deep the last pass cuts (VCarve's "Set Last Pass Thickness"): the other passes step down to `depth_mm` less it, then the last pass cuts the whole depth. More than 0 and at most `depth_mm` and the step-down in effect (the operation's `step_down_mm`, else the tool's): the last pass is never thicker than a pass. |
 | `reverse` | `true` cuts the last pass the other way round (VCarve's "Reverse direction"): conventional after climbing passes, or climb after conventional ones. Each has its finish; try both on scrap. |
 
 All three keys are needed. An outside Profile of a 60 × 40 mm rectangle,
@@ -519,40 +519,59 @@ deep, and only the 12 mm pass is on the part's path. Cut inside, the
 earlier passes run 0.5 mm farther into the hole instead.
 
 **How it cuts.** The last pass starts at the start of its own path, beside
-where the others started. It is reached by a rapid up to safe Z, a rapid
-down to 1 mm above the stock and a plunge at the plunge rate through the
-slot the earlier passes cut, then its own [entry](#entry) (ramp, helix or
-plunge) from their floor to the full depth.
+where the others started. It is reached by a rapid up to safe Z and a
+rapid down to 1 mm above the stock. With a ramp or a plunge
+[entry](#entry), it plunges at the plunge rate through the slot the
+earlier passes cut down to their floor, then ramps or plunges on to the
+full depth. With a helix, there is no bore of its own to rejoin, so it
+helixes all the way down from 1 mm above the stock.
 
 **With tabs**, the tabs are laid on the last pass's path, so they are
-where they would be without a last pass. Each earlier pass rises over the
-same tab a little sooner and comes down a little later, by the allowance
-at each end, so the farther-out cut never bites into it. [Leads](#leads)
+where they would be without a last pass. Each earlier pass rises over
+every point where its cutter could reach the tab the last pass leaves
+standing, so the farther-out cut never bites into it: on a straight edge
+it rises about 1.5 mm sooner and comes down that much later with a
+6.35 mm bit and 0.5 mm; round a sharp corner, where the earlier passes
+run beside the next edge's tab, sooner still. A smooth tab's earlier
+passes ramp up at least as high as the tab's slope wherever they reach
+it. [Leads](#leads)
 and [entries](#entry) are planned for each path, the earlier passes' kept
 the allowance farther from the part. [Corner relief](#corner-relief)
 notches are cut from the last pass only, the one that cuts the corner:
 an earlier pass does not reach it, so a notch after it would plunge into
 the skin.
 
-**When it does not fit.** The earlier passes need the bit plus the
-allowance on both sides wherever the last pass goes. A drawing where that
-is not so is refused, naming the shapes, and nothing is exported:
+**When it does not fit.** The last pass may take off at most the
+allowance, and √2 times it where the wall turns a square corner, plus
+0.05 mm; and the earlier passes need the bit plus the allowance on both
+sides wherever the last pass goes. A drawing where that is not so is
+refused, naming the shapes, and nothing is exported:
 
+- A notch, slot, neck or small hole that the bit fits but the bit plus
+  the allowance does not: the earlier passes skip it and the last pass
+  would cut it whole at full depth. A 7 × 3 mm notch in a part cut
+  outside with a 6.35 mm bit and 0.5 mm is refused, and so is a 10 × 4 mm
+  one with 2.1 mm.
+- A corner sharper than 90° that the bit's path turns (the points of a
+  star or a narrow V cut inside, an inward V notch cut outside): the
+  earlier passes stop short of it by more than √2 times the allowance, at
+  any allowance. A square corner is cut at any allowance.
 - Inside, an island closer to the outline than the bit plus twice the
   allowance (a 7 mm band with a 6.35 mm bit and 0.5 mm, which needs
-  7.35 mm), or a neck, slot or small hole that the bit fits but the bit
-  plus the allowance does not. The earlier passes would skip it, and the
-  last pass would have to cut a full slot to the full depth there. A
-  sharp concave corner with a large allowance is refused the same way.
-- A part so close to another that the earlier passes, the allowance
-  farther out, would come within the bit's radius of it: a part 6.6 mm
-  from the wall of a frame's hole with a 6.35 mm bit and 0.5 mm.
+  7.35 mm).
+- A part closer to another than the bit plus the allowance, so that the
+  earlier passes would come within the bit's radius of it or run inside
+  it: a part 6.6 mm from the wall of a frame's hole with a 6.35 mm bit
+  and 0.5 mm. An earlier pass that comes nearer another part than the
+  allowance but no nearer than the radius only cuts that part's skin,
+  which its own last pass takes off anyway, and is allowed.
 
 Make `allowance_mm` smaller, or set `last_pass` to `null`. An On line,
 Left or Right Profile has no wall for the allowance, so a `last_pass`
 there is an error; so is an allowance of 0 or less or above a third of
-the bit, or a `thickness_mm` of 0 or less or deeper than `depth_mm`.
-A cut of only one pass is the last pass, on the part's path.
+the bit, or a `thickness_mm` of 0 or less, deeper than `depth_mm` or
+thicker than the step-down. A cut of only one pass is the last pass, on
+the part's path, and warns `last_pass_unused`.
 
 ## Order of operations
 

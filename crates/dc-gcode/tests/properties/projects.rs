@@ -530,7 +530,13 @@ fn profile_project_of(
                         corner_relief: relief,
                         last_pass: last_pass.map(|(allowance, thickness, reverse)| LastPass {
                             allowance_mm: allowance * s.tool.diameter_mm / 3.0,
-                            thickness_mm: thickness.map(|t| t * depth_mm),
+                            // At most the depth and the step-down in
+                            // effect (#310 review).
+                            thickness_mm: thickness.map(|t| {
+                                let step_mm =
+                                    step_down_mm.or(s.tool.step_down_mm).unwrap_or(depth_mm);
+                                t * depth_mm.min(step_mm)
+                            }),
                             reverse,
                         }),
                     })

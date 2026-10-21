@@ -62,7 +62,7 @@ pub enum LoadError {
         supported: u32,
     },
     /// A migration step could not rewrite the file.
-    #[error("migration from version {from} to {to} failed: {message}")]
+    #[error("migration from version {from} to {to} failed{}: {message}", schema_where("", *at))]
     Migration {
         /// Version migrated from.
         from: u32,
@@ -70,6 +70,11 @@ pub enum LoadError {
         to: u32,
         /// What went wrong.
         message: String,
+        /// Where in the file's text the value the message names first
+        /// is (`operations[0].last_pass`, in backquotes), when [`load`]
+        /// read it from text and the file has that value. `None` from
+        /// [`crate::migrate`], which has no text.
+        at: Option<TextPosition>,
     },
     /// The JSON does not match the project schema (unknown or missing
     /// field, wrong type).
@@ -160,7 +165,7 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         message: e.to_string(),
     })?;
     let version = read_version(&root)?;
-    let root = migrate(root, version)?;
+    let root = migrate(root, version).map_err(|err| locate_migration(err, bytes))?;
     let project = deserialize_project(&root, bytes)?;
     check_post_processor(&project, bytes)?;
     let problems = validate(&project);
@@ -170,6 +175,34 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         return Err(LoadError::NonFinite { field });
     }
     Ok(Loaded { project, problems })
+}
+
+/// `err` with the position of the first field its message names, in
+/// backquotes as `operations[0].last_pass`, when it is a
+/// [`LoadError::Migration`] and `bytes` has a value there (#310 review),
+/// as [`LoadError::Schema`] gives one.
+fn locate_migration(err: LoadError, bytes: &[u8]) -> LoadError {
+    let LoadError::Migration {
+        from,
+        to,
+        message,
+        at: None,
+    } = err
+    else {
+        return err;
+    };
+    let at = message.split('`').skip(1).step_by(2).find_map(|field| {
+        std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| SourceMap::parse(text).ok())
+            .and_then(|map| map.locate(field))
+    });
+    LoadError::Migration {
+        from,
+        to,
+        message,
+        at,
+    }
 }
 
 /// The serde error that stopped a deserialization, with the path to it.

@@ -131,8 +131,14 @@ pub fn migrate(root: Value, from_version: u32) -> Result<Value, LoadError> {
             from,
             to,
             message: "no migration step is defined".into(),
+            at: None,
         })?;
-        obj = step(obj).map_err(|message| LoadError::Migration { from, to, message })?;
+        obj = step(obj).map_err(|message| LoadError::Migration {
+            from,
+            to,
+            message,
+            at: None,
+        })?;
     }
     obj.insert("version".into(), Value::from(CURRENT_VERSION));
     Ok(Value::Object(obj))

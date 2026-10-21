@@ -164,9 +164,12 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   it: the earlier passes rise over a slightly longer stretch round each tab,
   and the notches are cut from the last pass. The allowance must be more than
   0 and at most a third of the bit's diameter, on an Inside or Outside
-  Profile; a drawing the earlier passes cannot follow (a band, neck, slot or
-  hole that fits the bit but not the bit plus the allowance, or a part that
-  close to another) is refused, naming the shapes. `last_pass` is `null` in
+  Profile, and `thickness_mm` at most the step-down. The last pass takes
+  off at most the allowance (√2 times it in a square corner): a drawing the
+  earlier passes cannot follow (a band, neck, slot, notch or hole that fits
+  the bit but not the bit plus the allowance, a corner sharper than 90°, or
+  a part that close to another) is refused, naming the shapes. A one-pass
+  cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
   DreamCarve versions cannot read version 13 files.
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters

@@ -353,7 +353,7 @@ pub fn generate_profile(
     // #284: a last pass, with its own depth when it sets a thickness.
     let last_pass = op.last_pass.as_ref();
     if let Some(last_pass) = last_pass {
-        last_pass::check(op, last_pass, tool.diameter_mm, depth_mm)?;
+        last_pass::check(op, last_pass, tool.diameter_mm, depth_mm, step_down_mm)?;
     }
     let pass_z = last_pass::pass_z(op, thickness_mm, depth_mm, step_down_mm, last_pass)?;
     let last_index = pass_z.len().saturating_sub(1);
@@ -443,6 +443,8 @@ pub fn generate_profile(
     let mut reversed: Vec<bool> = vec![false; n];
     let mut twin_of: Vec<Option<usize>> = vec![None; n];
     if let Some(allowance_mm) = allowance_mm {
+        // The last pass's floor, where the tabs it leaves stand from.
+        let floor_z_mm = pass_z.last().copied().unwrap_or(0.0);
         for (i, twin) in twins.into_iter().enumerate() {
             let (Some(twin), Some((path, shape)), Some(wall), Some(layout)) =
                 (twin, paths.get(i), walls.get(i), layouts.get(i))
@@ -451,7 +453,7 @@ pub fn generate_profile(
             };
             let carried = layout.as_ref().map(|(l, overlapped)| {
                 (
-                    last_pass::carry(path, l, &twin, false, allowance_mm),
+                    last_pass::twin_tabs(path, l, &twin, radius_mm, floor_z_mm),
                     *overlapped,
                 )
             });
@@ -476,7 +478,7 @@ pub fn generate_profile(
             }
             let back = last_pass::reversed_from_start(path);
             if let Some((l, _)) = layout {
-                *l = last_pass::carry(path, l, &back, true, 0.0);
+                *l = last_pass::carry_reversed(path, l, &back);
             }
             *path = back;
             if let Some(flag) = reversed.get_mut(i) {
@@ -795,6 +797,10 @@ pub fn generate_profile(
             op: op.id.clone(),
             overhang,
         });
+    }
+    // #310 review: a one-pass cut has no pass to leave the allowance.
+    if last_pass.is_some() && pass_z.len() < 2 {
+        warnings.push(Warning::LastPassUnused { op: op.id.clone() });
     }
     Ok((toolpath, warnings))
 }
@@ -1383,6 +1389,7 @@ pub(super) fn check_band(
                 band_mm,
                 diameter_mm: tool.diameter_mm,
                 allowance_mm,
+                needed_mm: tool.diameter_mm + 2.0 * allowance_mm,
             }
         } else {
             CamError::BandNarrowerThanTool {
@@ -5371,8 +5378,9 @@ mod tests {
                             // The allowance cutter reaches the tab's
                             // corner where it meets the waste
                             // √(2ar − a²) = 1.71 mm before the stretch,
-                            // so it rises at least that soon, and not much
-                            // more than a sampling step sooner.
+                            // so it rises that soon, less the sliver of
+                            // the corner thinner than a sampling step
+                            // (0.26 mm), and not much sooner.
                             TabShape::Rect => {
                                 let reach_mm = (2.0 * ALLOWANCE_MM * R_MM
                                     - ALLOWANCE_MM * ALLOWANCE_MM)
@@ -5380,7 +5388,7 @@ mod tests {
                                 for (rise_mm, end) in [(fx1 - ax1, "before"), (ax2 - fx2, "after")]
                                 {
                                     assert!(
-                                        rise_mm >= reach_mm - 1e-6 && rise_mm <= reach_mm + 1.0,
+                                        rise_mm >= reach_mm - 0.26 && rise_mm <= reach_mm + 1.0,
                                         "{case}: raised {rise_mm} mm {end} the stretch"
                                     );
                                 }
@@ -5484,7 +5492,7 @@ mod tests {
         }
         let near = |map: &BTreeMap<(i64, i64), Vec<Point3>>, p: Point, reach: f64| {
             let (i, j) = key(p);
-            let mut found = Vec::new();
+            let mut found: Vec<Point3> = Vec::new();
             for di in -1..=1 {
                 for dj in -1..=1 {
                     if let Some(points) = map.get(&(i + di, j + dj)) {
@@ -5856,6 +5864,33 @@ mod tests {
         };
         assert_eq!((shape.profile, other.profile), (1, 2), "{err}");
         assert_approx_eq!(*band_mm, 6.6, 1e-9);
+
+        // The #310 review's property case: 0.3 mm from the hole's wall,
+        // the part's laps already cut into each other (D6 warns), and its
+        // allowance passes run wholly inside the frame, and the hole's
+        // inside the part, more than a radius past either line.
+        let p = last_pass_project_of(vec![
+            Polyline::rect(Point::new(0.0, 0.0), 80.0, 80.0),
+            Polyline::rect(Point::new(20.0, 20.0), 40.0, 40.0),
+            Polyline::rect(Point::new(20.3, 20.3), 39.4, 39.4),
+        ]);
+        let op = last_pass_op(&p, Side::Outside);
+        let (_, warnings) = generate(
+            &p,
+            &ProfileOp {
+                last_pass: None,
+                ..op.clone()
+            },
+        );
+        assert!(
+            codes(&warnings).contains(&WarningCode::ToolpathsOverlap),
+            "{warnings:?}"
+        );
+        let err = generate_profile(&p, &op).expect_err("the allowance passes would cut a part");
+        assert!(
+            matches!(err, CamError::BandNarrowerThanAllowance { .. }),
+            "{err:?}"
+        );
     }
 
     /// Acceptance 46 Inside: the first two passes run 0.5 mm farther

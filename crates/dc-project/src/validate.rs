@@ -444,6 +444,23 @@ pub enum Problem {
         /// The side it cuts.
         side: Side,
     },
+    /// An enabled Profile's last pass is thicker than its step-down in
+    /// effect, the operation's or else the tool's (#310 review): it would
+    /// cut that much in one pass, where every other pass steps down less.
+    /// An error.
+    LastPassThickerThanStepDown {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `last_pass.thickness_mm`.
+        thickness_mm: f64,
+        /// The step-down in effect, mm.
+        step_down_mm: f64,
+        /// Where that step-down is set: `operations[o1].step_down_mm` or
+        /// `tools[t1].step_down_mm`.
+        step_down_field: String,
+    },
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min (#67).
@@ -500,6 +517,7 @@ impl Problem {
             Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
             Self::LastPassAllowance { .. } => "last_pass_allowance",
             Self::LastPassNeedsSide { .. } => "last_pass_needs_side",
+            Self::LastPassThickerThanStepDown { .. } => "last_pass_thicker_than_step_down",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
             Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
@@ -527,6 +545,7 @@ impl Problem {
             | Self::CannedCyclesUnsupported { .. }
             | Self::LastPassAllowance { .. }
             | Self::LastPassNeedsSide { .. }
+            | Self::LastPassThickerThanStepDown { .. }
             | Self::ClearanceBelowSafeZ { .. }
             | Self::MachineZNotBelowHome { .. }
             | Self::MachineZNeedsG53 { .. } => Severity::Error,
@@ -642,6 +661,9 @@ impl Problem {
             }
             Self::LastPassNeedsSide { operation, .. } => {
                 Some(format!("operations[{operation}].last_pass"))
+            }
+            Self::LastPassThickerThanStepDown { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass.thickness_mm"))
             }
             Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
             Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
@@ -852,6 +874,16 @@ impl fmt::Display for Problem {
                     Side::Inside => "inside",
                     Side::Outside => "outside",
                 }
+            ),
+            Self::LastPassThickerThanStepDown {
+                operation,
+                name,
+                thickness_mm,
+                step_down_mm,
+                step_down_field,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has last_pass.thickness_mm {thickness_mm} mm, more than its {step_down_mm} mm step-down ({step_down_field}); the last pass would cut that deep in one go. Make it at most the step-down, or set it to null for the usual last pass"
             ),
             Self::HelixNeedsWasteSide { operation, name } => write!(
                 f,
@@ -1381,6 +1413,26 @@ impl Validator {
             (None, Some(step)) => Some((step, format!("tools[{}].step_down_mm", tool.id))),
             (None, None) => None,
         };
+        // #310 review: the last pass is at most one step-down thick.
+        if let Operation::Profile(profile) = op
+            && let Some(thickness_mm) = profile.last_pass.as_ref().and_then(|l| l.thickness_mm)
+            && thickness_mm.is_finite()
+            && thickness_mm > 0.0
+            && profile
+                .depth_mm
+                .is_none_or(|depth_mm| thickness_mm <= depth_mm)
+            && let Some((step_down_mm, field)) = &step
+            && step_down_mm.is_finite()
+            && thickness_mm > *step_down_mm
+        {
+            self.problems.push(Problem::LastPassThickerThanStepDown {
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
+                thickness_mm,
+                step_down_mm: *step_down_mm,
+                step_down_field: field.clone(),
+            });
+        }
         if let Some((step_down_mm, field)) = step
             && step_down_mm.is_finite()
             && tool.diameter_mm.is_finite()

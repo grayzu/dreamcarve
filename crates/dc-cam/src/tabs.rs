@@ -566,6 +566,26 @@ fn merge_closed(mut spans: Vec<Raw>, l: f64) -> (Vec<Raw>, bool) {
     (merged, overlap)
 }
 
+/// One raised stretch of a closed path for [`PathTabs::from_spans`]: from
+/// `start_mm` along it, `length_mm` long (it may run through the start),
+/// at `top_z_mm`; a smooth one rises over `ramp_in_mm` and falls over
+/// `ramp_out_mm`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RaisedSpan {
+    /// Where it starts, mm along the path.
+    pub start_mm: f64,
+    /// How long it is, mm.
+    pub length_mm: f64,
+    /// Its top, mm above the stock bottom.
+    pub top_z_mm: f64,
+    /// Rect holds the top over it all; smooth ramps.
+    pub shape: TabShape,
+    /// A smooth span's rise, mm.
+    pub ramp_in_mm: f64,
+    /// A smooth span's fall, mm.
+    pub ramp_out_mm: f64,
+}
+
 /// The merged tab spans on one tool-centre path.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PathTabs {
@@ -693,6 +713,73 @@ impl PathTabs {
         carried.full = merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM);
         carried.spans = merged.iter().map(Raw::span).collect();
         carried
+    }
+
+    /// The raised stretches `spans` on a closed path `length_mm` long, laid
+    /// for `tab_count` tabs, merged where they overlap or touch (#310
+    /// review: an allowance path's spans, found from the tabs' material).
+    pub(crate) fn from_spans(length_mm: f64, tab_count: usize, spans: &[RaisedSpan]) -> Self {
+        let l = length_mm;
+        let raw: Vec<Raw> = spans
+            .iter()
+            .map(|s| {
+                let start_mm = if l > 0.0 {
+                    s.start_mm.rem_euclid(l)
+                } else {
+                    s.start_mm
+                };
+                Raw {
+                    start_mm,
+                    end_mm: start_mm + s.length_mm.max(0.0),
+                    top_z_mm: s.top_z_mm,
+                    shape: s.shape,
+                    ramp_in_mm: s.ramp_in_mm,
+                    ramp_out_mm: s.ramp_out_mm,
+                }
+            })
+            .collect();
+        let (merged, _) = merge_closed(raw, l);
+        Self {
+            length_mm: l,
+            full: merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM),
+            spans: merged.iter().map(Raw::span).collect(),
+            closed: true,
+            tab_count,
+        }
+    }
+
+    /// The Z, mm, a pass at `base_z_mm` cuts at `distance_mm` along the
+    /// path: `base_z_mm`, or higher over a tab.
+    pub(crate) fn z_at_mm(&self, distance_mm: f64, base_z_mm: f64) -> f64 {
+        self.z_at(distance_mm, base_z_mm)
+    }
+
+    /// The top and shape of the span over `distance_mm` along the path,
+    /// or `None` where no span raises it.
+    pub(crate) fn span_at(&self, distance_mm: f64) -> Option<(f64, TabShape)> {
+        if self.full {
+            let top = self
+                .spans
+                .iter()
+                .map(|s| s.top_z_mm)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let shape = if self.spans.iter().all(|s| s.shape == TabShape::Smooth) {
+                TabShape::Smooth
+            } else {
+                TabShape::Rect
+            };
+            return Some((top, shape));
+        }
+        self.spans.iter().find_map(|span| {
+            let t = if self.closed {
+                (distance_mm - span.start_mm).rem_euclid(self.length_mm)
+            } else {
+                distance_mm - span.start_mm
+            };
+            (0.0..span.length_mm)
+                .contains(&t)
+                .then_some((span.top_z_mm, span.shape))
+        })
     }
 
     /// True when no tab stands on the path: its last pass cuts free.

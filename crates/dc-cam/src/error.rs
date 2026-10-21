@@ -422,15 +422,18 @@ pub enum CamError {
         /// The operation.
         op: OperationId,
     },
-    /// #284: an Inside Profile with a last pass allowance cuts two lines
-    /// of one region whose band fits the tool but not the tool and the
-    /// allowance on both lines (`diameter + 2 · allowance`): the passes
-    /// before the last, `allowance_mm` farther from each line, would cut
-    /// into the skin the other line's passes leave, or into the part.
-    /// `shape` is the one drawn first; `other` is boxed to keep the error
-    /// small.
+    /// #284: a Profile with a last pass allowance cuts two lines closer
+    /// than its passes before the last need, `needed_mm`. Inside, two
+    /// lines of one region need the tool and the allowance on both,
+    /// `diameter + 2 · allowance`: those passes, `allowance_mm` farther
+    /// from each line, would cut into the skin the other line's passes
+    /// leave, or into the part. Between two regions (a part and another
+    /// part, or one inside another's hole) the passes need
+    /// `diameter + allowance`, or they would come within the radius of the
+    /// other part (#310 review). `shape` is the one drawn first; `other`
+    /// is boxed to keep the error small.
     #[error(
-        "operation `{op}` cuts {shape} and {other} with a {allowance_mm} mm last pass allowance, but the band between them is {band_mm:.3} mm wide, narrower than its {diameter_mm} mm tool plus the allowance on both sides, so the passes before the last would cut into material the Profile keeps; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+        "operation `{op}` cuts {shape} and {other} with a {allowance_mm} mm last pass allowance, but the gap between them is {band_mm:.3} mm, narrower than the {needed_mm:.3} mm its {diameter_mm} mm tool and the allowance need there, so the passes before the last would cut into material the Profile keeps; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
     )]
     BandNarrowerThanAllowance {
         /// The operation.
@@ -445,15 +448,18 @@ pub enum CamError {
         diameter_mm: f64,
         /// The last pass allowance, mm.
         allowance_mm: f64,
+        /// The gap the passes before the last need, mm.
+        needed_mm: f64,
     },
-    /// #284: somewhere `shape` is wide enough for the tool but not for the
-    /// tool and the last pass allowance on both sides (a neck, a slot or a
-    /// small hole, Inside; the mouth of a narrow inlet, Outside), so the
-    /// passes before the last cannot follow the part's path there: they
-    /// would skip it or run apart from it, and the last pass would cut a
-    /// full slot to the full depth in one go.
+    /// #284, #310 review: somewhere the last pass on `shape` would take
+    /// off more than the allowance, `√2` times it as in a square corner
+    /// (plus 0.05 mm): a neck, slot, notch or small hole wider than the
+    /// tool but narrower than the tool plus the allowance on both sides,
+    /// which the passes before the last skip, or a corner sharper than
+    /// 90°, where they stop short of the last pass. The last pass would
+    /// cut that material at full depth in one go.
     #[error(
-        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere it is wider than its {diameter_mm} mm tool and narrower than the tool plus the allowance on both sides, so the passes before the last cannot follow it and the last pass would cut a full slot to the full depth there; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the last pass would take off more than the allowance at full depth, where the passes before it cannot follow it: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a corner sharper than 90°; make last_pass.allowance_mm smaller (it does not help a sharp corner) or set last_pass to null; no toolpath was produced"
     )]
     ShapeNarrowerThanAllowance {
         /// The operation.

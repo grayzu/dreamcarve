@@ -37,7 +37,7 @@ use crate::footprint::footprint_at;
 use crate::pocket::rings::inset_region;
 use crate::toolpath::{Move, Toolpath};
 use dc_geometry::{
-    Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, difference, nest, offset,
+    Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, approx_eq, difference, nest, offset,
 };
 use dc_project::{Side, Stock};
 
@@ -97,7 +97,7 @@ pub(super) fn domains(
     for p in paths {
         if !allowances
             .iter()
-            .any(|a| a.to_bits() == p.allowance_mm.to_bits())
+            .any(|a| approx_eq(*a, p.allowance_mm, EPS_MM))
         {
             allowances.push(p.allowance_mm);
         }
@@ -137,7 +137,7 @@ pub(super) fn domains(
                 Side::Inside => {
                     let slot = allowances
                         .iter()
-                        .position(|a| a.to_bits() == p.allowance_mm.to_bits())
+                        .position(|a| approx_eq(*a, p.allowance_mm, EPS_MM))
                         .map_or(usize::MAX, |k| k * regions.len() + p.region);
                     if let Some(Some(cached)) = inside_cache.get(slot) {
                         return cached.clone();
@@ -166,7 +166,7 @@ pub(super) fn domains(
                     };
                     let mut clip: Vec<Region> = grown
                         .iter()
-                        .filter(|(a, _, _)| a.to_bits() == p.allowance_mm.to_bits())
+                        .filter(|(a, _, _)| approx_eq(*a, p.allowance_mm, EPS_MM))
                         .flat_map(|(_, grown, bounds)| grown.iter().zip(bounds))
                         .filter(|(_, b)| b.is_some_and(|b| overlaps(b, frame)))
                         .flat_map(|(g, _)| g.iter().cloned())

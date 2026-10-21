@@ -869,7 +869,11 @@ built (design addendum, "Order and format versions").
     are refused as On line is. A drawing the earlier passes cannot follow,
     where it fits the bit but not the bit plus the allowance on both sides
     or an earlier pass would come within the bit's radius of another
-    part, is refused naming the shapes.)
+    part, is refused naming the shapes. Changed again in the #310 review:
+    `thickness_mm` may be no more than the step-down; the last pass may
+    take off no more than the allowance, √2 times it in a square corner,
+    so a corner sharper than 90° is refused; and a one-pass cut warns
+    `last_pass_unused`.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 
@@ -981,4 +985,9 @@ built (design addendum, "Order and format versions").
   make the S16 lift; S2 holds for that rapid. A link between parts rises
   to the clearance height; a link between passes of one part, to safe Z.
 - **S9 with a last pass.** Every pass but the last keeps `allowance_mm`
-  more than `r` from the part; the last keeps `r`, as now.
+  more than `r` from the part; the last keeps `r`, as now. (changed in
+  the #310 review: every pass but the last also keeps at least `r` from,
+  and stays out of, the operation's other parts; nearer than `r + a` it
+  cuts only their skin, which is allowed. The last pass takes off at most
+  `√2 · allowance_mm` plus 0.05 mm anywhere, and no pass before it cuts
+  into stock a tab leaves.)
