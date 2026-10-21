@@ -42,7 +42,7 @@ the program.
   the path starts. A distance longer than the path wraps around.
 
 The path starts where DreamCarve chooses, which is not shown before you
-export, so `count` is the easier choice in phase 1. The distances are
+export, so `count` is the easier choice. The distances are
 measured from that start even when the cut begins elsewhere: a
 [lead](profile.md#leads) arrives away from corners, and a ramp or helix
 that has no room beside a tab moves the start of the cut to a stretch

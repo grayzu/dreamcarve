@@ -16,17 +16,17 @@ described in the chapter of the thing they are about.
 
 The tables list every code, grouped by where it comes from.
 
-## Cut order between operations
+## Operation order
 
 Operations always run in the order the project lists them, never
-regrouped by tool or reordered ([Profile: cut order between
-operations](profile.md#cut-order-between-operations)). These warnings
+regrouped by tool or reordered ([Machining order and operation
+order](machining-order.md#operations-run-in-list-order)). These warnings
 say when that order is likely a mistake.
 
 | Code | Message says | What to do |
 | --- | --- | --- |
 | `cut_inside_freed_part` | "`<shape>` lies inside `<outline>`, which operation `<id>` cuts free of the stock first, so this cut would run in a loose part" | An earlier Profile cuts through the stock around (or inside) an outline, with no tabs, and this operation then cuts a shape inside it: the cut runs in a part or slug that is no longer held. Move this operation before the one named, or give that Profile tabs. |
-| `tool_change_avoidable` | "tool `<id>` (`<name>`) is used by operations `<a>`, `<b>`, which do not run one after another, so it is fitted more than once" | Operations using one tool are separated by an operation using another, so the tool is fitted twice. Put them next to each other if the cut order allows; DreamCarve never moves them for you. |
+| `tool_change_avoidable` | "tool `<id>` (`<name>`) is used by operations `<a>`, `<b>`, which do not run one after another, so it is fitted more than once" | Operations using one tool are separated by an operation using another, so the tool is fitted twice. Put them next to each other if the order allows; DreamCarve never moves them for you. |
 
 ## Toolpath generation
 
@@ -89,7 +89,18 @@ file](project-file.md).
 
 ## Import
 
-`init` prints what it could not import before writing the project. DXF
-warnings carry a code (see [Importing DXF](importing-dxf.md) for
-`dxf_entities_skipped` and the others); SVG warnings are plain sentences
-naming the element skipped.
+`init` prints what it could not import before writing the project, as
+`warning: <message>`. One carries a code; the others are plain sentences
+naming what was skipped.
+
+| Message says | What to do |
+| --- | --- |
+| "`dxf_entities_skipped`: … entity(ies) DreamCarve does not read were skipped: TEXT: 1, …" | A DXF holds text, dimensions, hatches, meshes or other entities DreamCarve does not read. Explode text to outlines in the CAD program if you want to cut it ([Importing DXF](importing-dxf.md#what-is-read)). |
+| "block `…` is inserted more than 12 levels deep; the deeper levels were skipped" | A DXF block inserts itself, or nests too deep. Fix the block in the CAD program. |
+| "INSERT of undefined block `…` was skipped" | The DXF places a block it does not define. Re-export the drawing. |
+| "… text element(s) skipped; convert text to paths to import it" | An SVG holds text. Convert it to paths in Inkscape (Path → Object to Path). |
+| "… image(s) skipped" | An SVG holds pictures, which have no outlines to cut. |
+| "path `…` uses a gradient or pattern; its outline was imported" | Nothing to do: paint never changes the shape. |
+| "clip path on group `…` ignored …", "mask on group `…` ignored …" | The shapes were imported whole, unclipped. Apply the clip in the drawing program if it should cut the shapes. |
+| "closed subpath … of path `…` encloses no area and was dropped", "path `…` has no usable geometry and was skipped" | A path is a point or a line folded back on itself. Delete it from the drawing. |
+| "page size is in … but there is no viewBox, so coordinates are read as CSS pixels (96 per inch)" | Check the size `init` reports; add a `viewBox` to the SVG if it is wrong. |

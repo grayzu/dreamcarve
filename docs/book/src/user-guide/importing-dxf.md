@@ -93,8 +93,8 @@ closed polyline, are left alone. Segments on different layers are never
 joined.
 
 A drawing whose ends do not quite meet, because it was traced by hand or
-snapped to a coarse grid, imports as open chains, which Profile does not
-cut; `dreamcarve check` lists them. Raise the tolerance to join them:
+snapped to a coarse grid, imports as open chains, which a Pocket and an
+Inside or Outside Profile do not cut; `dreamcarve check` lists them. Raise the tolerance to join them:
 
 ```sh
 dreamcarve init part.dxf --join-tolerance 0.5
