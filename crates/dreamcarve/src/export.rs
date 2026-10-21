@@ -206,7 +206,7 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
     findings
         .warnings
         .extend(order::check(project, &generated).iter().map(|w| {
-            let message = match w.param("op") {
+            let message = match w.op() {
                 Some(op) => format!("operation `{op}`: {w}"),
                 None => w.to_string(),
             };
