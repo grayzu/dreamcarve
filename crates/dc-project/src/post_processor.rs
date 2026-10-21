@@ -635,7 +635,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 10] = [
+const SOURCES: [Source; 13] = [
     (
         "grblhal",
         1,
@@ -679,16 +679,34 @@ const SOURCES: [Source; 10] = [
         include_str!("definitions/linuxcnc/v1.json"),
     ),
     (
+        "linuxcnc",
+        2,
+        "linuxcnc/v2.json",
+        include_str!("definitions/linuxcnc/v2.json"),
+    ),
+    (
         "mach3",
         1,
         "mach3/v1.json",
         include_str!("definitions/mach3/v1.json"),
     ),
     (
+        "mach3",
+        2,
+        "mach3/v2.json",
+        include_str!("definitions/mach3/v2.json"),
+    ),
+    (
         "uccnc",
         1,
         "uccnc/v1.json",
         include_str!("definitions/uccnc/v1.json"),
+    ),
+    (
+        "uccnc",
+        2,
+        "uccnc/v2.json",
+        include_str!("definitions/uccnc/v2.json"),
     ),
     (
         "generic",
@@ -1399,7 +1417,7 @@ mod tests {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
         // `default_settings.use_canned_cycles` reached every version (a
         // schema-wide field; see `definitions/README.md`, "Versions").
-        const PINNED: [(&str, u64); 10] = [
+        const PINNED: [(&str, u64); 13] = [
             ("grblhal/v1.json", 0xac47_0795_847b_c94d),
             // #171: the project name no longer opens a comment.
             ("grblhal/v2.json", 0x0ee4_d80e_2afc_557c),
@@ -1411,8 +1429,12 @@ mod tests {
             ("grbl/v3.json", 0x73ad_5169_aa8e_3d12),
             // Slice 17 (#164).
             ("linuxcnc/v1.json", 0x9d07_5dad_8ee8_1225),
+            // #286: no `G49` in the header.
+            ("linuxcnc/v2.json", 0x21ab_46cc_0201_105b),
             ("mach3/v1.json", 0x5217_9912_0119_4b63),
+            ("mach3/v2.json", 0x6abe_6423_dd20_d4b1),
             ("uccnc/v1.json", 0x1866_9d4e_236b_e202),
+            ("uccnc/v2.json", 0x6a6c_3a9d_311e_1148),
             ("generic/v1.json", 0xfa66_bbf8_af00_4d46),
         ];
         let bundled = bundled_definitions().unwrap();

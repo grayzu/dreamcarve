@@ -92,7 +92,11 @@ intent. The rules are in the phase 1 and phase 2 functional specs
 - [ ] **Tool changes.** `M6` only where the controller documents a stop at
       which the user can fit the bit and set Z zero; otherwise the tool
       change has no `M6`, `"m6"` mode is refused, and each tool run is its
-      own program. No `G43 H`: DreamCarve writes no tool table.
+      own program. No `G43 H`: DreamCarve writes no tool table. No `G49`
+      either, unless the controller's documentation shows that a Z zero
+      set with an offset active does not include it: the user's zero may
+      include an offset, and cancelling it moves every Z (#286; definitions
+      README, "Tool length offset at touch-off").
 - [ ] **Pauses.** A manual-spindle or tool-change pause is `M0`, with a
       message only in a syntax the controller documents; `export` lists
       every pause either way.

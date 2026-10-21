@@ -731,6 +731,52 @@ fn no_header_cancels_tool_length_offset() {
     assert!(checked >= 6, "grblHAL and GRBL, v1 to v3");
 }
 
+/// #286: the user sets Z zero with the bit in the spindle, and on
+/// LinuxCNC, Mach3 and UCCNC that zero includes a tool length offset
+/// active at the time (`definitions/README.md`, "Tool length offset at
+/// touch-off"). A `G49` at program start would cancel it and move every Z
+/// by the offset, so version 2 of `id` is version 1 with `G49` taken out
+/// of the header and nothing else changed; no line of it can set or
+/// cancel an offset (`G43`, `G44`, `G49`), so the offset the user zeroed
+/// with stays in force for the whole program.
+fn assert_v2_header_has_no_g49(id: &str) {
+    let latest = latest_definition(id).unwrap();
+    assert_eq!(latest.version, 2, "{id}");
+    let v2 = latest.post_processor();
+    for line in every_line(v2) {
+        for word in words(&line) {
+            assert!(
+                !["G43", "G44", "G49"].iter().any(|g| word.starts_with(g)),
+                "{id} v2: {line}"
+            );
+        }
+    }
+    let mut v1 = bundled_definition(id, 1).unwrap().post_processor().clone();
+    let modal = v1
+        .program
+        .header
+        .iter_mut()
+        .find(|line| words(line).iter().any(|w| w == "G49"))
+        .unwrap_or_else(|| panic!("{id} v1 has G49 in its header"));
+    *modal = modal.replace(" G49", "");
+    assert_eq!(&v1, v2, "{id}: only G49 leaves the header");
+}
+
+#[test]
+fn linuxcnc_v2_header_has_no_g49() {
+    assert_v2_header_has_no_g49("linuxcnc");
+}
+
+#[test]
+fn mach3_v2_header_has_no_g49() {
+    assert_v2_header_has_no_g49("mach3");
+}
+
+#[test]
+fn uccnc_v2_header_has_no_g49() {
+    assert_v2_header_has_no_g49("uccnc");
+}
+
 /// Design spec, "Canned cycles": a definition has a cycle's command only
 /// where the controller's documentation states the motion. LinuxCNC and
 /// Mach3 document `G81` and `G82` with `G98`. How far `G83` re-enters and
