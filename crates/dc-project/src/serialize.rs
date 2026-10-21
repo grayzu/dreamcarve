@@ -384,6 +384,23 @@ mod tests {
         assert_eq!(loaded.project, p);
     }
 
+    /// Addendum A6: a value written with its unit is read as millimetres,
+    /// and a save writes the millimetre number back, not the string.
+    #[test]
+    fn save_writes_numbers_after_unit_input() {
+        let mut root = serde_json::to_value(sample_project()).unwrap();
+        root["operations"][0]["depth_mm"] = json!("0.5 in");
+        root["tools"][0]["feed_mm_min"] = json!("60 in/min");
+        let text = serde_json::to_string_pretty(&root).unwrap();
+        let saved = save(&load(text.as_bytes()).unwrap().project).unwrap();
+        assert!(saved.contains("\"depth_mm\": 12.7,"), "{saved}");
+        assert!(saved.contains("\"feed_mm_min\": 1524.0,"), "{saved}");
+        assert!(!saved.contains(" in"), "{saved}");
+        // And the saved numbers load back to the same project.
+        let reloaded = load(saved.as_bytes()).unwrap().project;
+        assert_eq!(save(&reloaded).unwrap(), saved);
+    }
+
     /// #105: placed tabs save after the operations, every field in
     /// declaration order, and load back equal.
     #[test]
