@@ -813,5 +813,15 @@ pub(crate) fn on_line_warning(op: &OperationId) -> Warning {
     }
 }
 
+/// `lead_dropped` for a Left or Right operation `op`, which cuts open
+/// paths: VCarve gives an open profile no lead (#207).
+pub(crate) fn open_path_warning(op: &OperationId) -> Warning {
+    Warning::LeadDropped {
+        op: op.clone(),
+        shape: None,
+        reason: LeadDroppedReason::OpenPath,
+    }
+}
+
 #[cfg(test)]
 mod tests;

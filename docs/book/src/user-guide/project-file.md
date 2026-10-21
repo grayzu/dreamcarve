@@ -89,7 +89,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `9`. |
+| `version` | Format version. This build writes `10`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -222,7 +222,8 @@ millimetres and a `bulge`: 0 for a straight line to the next vertex, or the
 tangent of a quarter of the arc's sweep angle, positive for
 counter-clockwise. `closed` says whether the outline returns to its start;
 Pocket and an Inside or Outside Profile cut only closed outlines, an On
-line Profile and an Engrave cut open ones too.
+line Profile and an Engrave cut open ones too, and a Left or Right
+Profile cuts only open ones.
 
 | Instance field | Meaning |
 | --- | --- |
@@ -258,7 +259,7 @@ To move a shape on the stock, change `e` and `f`.
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
 | `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. Set it to match your machine's tool table: with `5`, programs write `T5` (`M61 Q5`, `T5 M6`, the `( Tool 5: … )` comment, `Fit T5`) and, with one program per tool run, name its programs `<stem>-<k>-T5.nc`. |
-| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside or Inside Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
+| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside, Inside, Left or Right Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
 | `diameter_mm` | Cutting diameter. Profile and Pocket offset the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used yet. |
 | `feed_mm_min` | Feed rate while cutting. **Required.** At most 20 000. |
@@ -311,7 +312,9 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
 ```
 
 Each field is explained in [Profile operation](profile.md), and `tabs` in
-[Tabs](tabs.md). `tabs.on_holes` came with format version 9: `false`
+[Tabs](tabs.md). `side` is `"outside"`, `"inside"` or `"on_line"`, or,
+from format version 10, `"left"` or `"right"`, which cut beside open paths
+(see [Left and right](profile.md#left-and-right)). `tabs.on_holes` came with format version 9: `false`
 leaves the holes among the operation's outlines without tabs, which is
 what `init` writes; a project upgraded from version 8 gets `true`, so its
 holes keep their tabs. `init` leaves `depth_mm` as `null`; export refuses until
@@ -325,8 +328,8 @@ other kinds. This build reads and checks them. A Profile cuts
 | Field | Values |
 | --- | --- |
 | `machining_order` | `"full_depth_first"` (each shape to full depth before the next) or `"pass_first"` (each pass across every shape before the next, deeper pass). |
-| `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
-| `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line. See [Leads](profile.md#leads). |
+| `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line, Left or Right Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
+| `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line, Left or Right. See [Leads](profile.md#leads). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each internal corner a round tool cannot reach. Pocket and Profile. Steps down at the tool's `step_down_mm`, so that must be set. See [Pocket: corner relief](pocket.md#corner-relief) and [Profile: corner relief](profile.md#corner-relief). |
 
 A Pocket, Drill or Engrave has `kind`, `id`, `name`, `enabled`, `targets`,
@@ -387,6 +390,7 @@ refused.
 | 7 | `post_processor` names a bundled post-processor and its version, and holds only your five settings, instead of a full copy of the definition. The upgrade keeps your settings, and works only when the rest of the copy is exactly version 1 of the bundled definition; otherwise the file is not loaded, and the message lists each difference and the block to paste instead. See [Post-processors](post-processors.md#files-from-before-version-7). |
 | 8 | Phase 2. Adds `arc_fit_tolerance_mm` (set to 0.01 on upgrade), each tool's `number` (`null`), each Profile's `machining_order` (`"full_depth_first"`), `entry` (`"plunge"`), `lead` (`null`) and `corner_relief` (`"none"`), and `post_processor.use_canned_cycles` (`false`): the values that make an upgraded project cut exactly as before. Adds the `"pocket"`, `"drill"` and `"engrave"` operation kinds. |
 | 9 | Adds `on_holes` to each Profile's `tabs`, set to `true` on upgrade (#109). A Profile now cuts its holes without tabs unless `on_holes` is `true`; before, every outline it cut had tabs, so the upgrade keeps them. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
+| 10 | Adds the `"left"` and `"right"` values of a Profile's `side` (#207), which cut beside open paths. An older file holds neither, so the upgrade changes nothing else; an older DreamCarve refuses a version 10 file rather than misread a side it does not know. See [Left and right](profile.md#left-and-right). |
 
 ## What `check` reports
 
@@ -395,7 +399,7 @@ Errors stop export. Warnings do not.
 | Errors | Warnings |
 | --- | --- |
 | Two tools, instances or operations with the same id | An operation is disabled |
-| An id that refers to nothing | An open path that no enabled Engrave or On line Profile targets |
+| An id that refers to nothing | An open path that no enabled Engrave or On line, Left or Right Profile targets |
 | A value you must set that is `null`: the stock's `thickness_mm`, an operation's `depth_mm`, and for a tool an enabled operation uses, its `feed_mm_min` and `plunge_mm_min`, and its `rpm` unless spindle control is manual | A tool no enabled operation uses (its unset values are not reported) |
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
 | A value that is not a number | Any [toolpath warning](warnings.md#toolpath-generation): a shape the tool does not fit, an entry or lead that does not fit, a duplicate shape, tabs that overlap or do nothing |
@@ -404,14 +408,15 @@ Errors stop export. Warnings do not.
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A Profile whose tool does not fit between two lines of one shape, Inside or On line, or that would remove a whole part narrower than the bit On line ([Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)) | |
+| A Left or Right Profile whose cut would cross another of its lines or reach the part side of one ([Left and right](profile.md#left-and-right)) | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
-| An Outside or Inside Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
+| An Outside, Inside, Left or Right Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
 | An enabled operation with no `targets` | A spindle speed above 60 000 RPM |
 | Two tools used by enabled operations with the same number, set or by position; a tool `number` of 0 | A tool diameter above 50 mm |
 | A Pocket's `rest_of` that is not an earlier enabled Pocket with the same `targets` | A Drill whose cutter is not `"drill"` or `"end_mill"` |
 | A `step_over_fraction`, lead, entry, raster angle, dwell, retract, peck or chip-break value outside its range (see [`operations`](#operations)) | `corner_relief` on a tool with no `step_down_mm` (the relief is skipped) |
-| A helix `entry` on an On line Profile | An Engrave with a V-bit deeper than the bit's cone |
+| A helix `entry` on an On line, Left or Right Profile | An Engrave with a V-bit deeper than the bit's cone |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at

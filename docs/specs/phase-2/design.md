@@ -76,10 +76,10 @@ header.
 
 ## Data model
 
-### dc-project (format version 9)
+### dc-project (format version 10)
 
 ```rust
-pub const CURRENT_VERSION: u32 = 9;   // #106 took 7 (slice 2, #117); #109 took 9
+pub const CURRENT_VERSION: u32 = 10;  // #106 took 7 (slice 2, #117); #109 took 9; #207 took 10
 
 pub struct Project {
     // phase 1 fields unchanged, plus:
@@ -228,6 +228,17 @@ hole's slug is waste, and holding it is extra hand work. (changed in
 hole too small for tabs took two operations, and in the wrong order the
 hole was cut in a loose part.)
 
+**Migration v9 → v10** (`migrate::v9_to_v10`, #207): `Side` gains
+`Left` and `Right` (`"left"`, `"right"`), which no version 9 file holds,
+so the step is the identity and only `version` changes. The bump is what
+ADR-0002 asks for: a version 9 reader refuses a file that uses the new
+sides with `NewerVersion` instead of a schema error on an unknown side.
+The fixture `crates/dc-project/tests/fixtures/dcv/v9/sample.dcv` loads as
+the sample project (`migrate::version_9_fixture_loads`,
+`migrate::v9_to_v10_changes_only_the_version`,
+`migrate::left_and_right_sides_round_trip`). See "Profile left and right
+of an open path".
+
 `DwellUnits` and `reentry_gap_mm` are definition fields, and every
 definition field is required, so the bundled `v1.json` files were edited
 in place and re-pinned; their emitted bytes do not change
@@ -247,8 +258,8 @@ outside (0, 1] on the tool or operation; a Pocket or Engrave with no
 step-down on operation or tool; a Drill whose `peck_depth_mm` is unset
 when the tool has no step-down; a `Lead` radius ≤ 0 or sweep outside
 (0, 180]; an `Entry::Ramp` angle outside (0, 45]; a `Helix` fraction
-outside (0, 1]; an `Entry::Helix` angle outside (0, 45]; `Entry::Helix` on a `Side::OnLine` Profile
-(`Problem::HelixNeedsWasteSide`); `use_canned_cycles: true` on a
+outside (0, 1]; an `Entry::Helix` angle outside (0, 45]; `Entry::Helix` on a `Side::OnLine`, `Side::Left` or `Side::Right`
+Profile (`Problem::HelixNeedsWasteSide`, Left and Right since #207); `use_canned_cycles: true` on a
 definition whose `canned_cycles` is `null`; `tool_change.mode: "m6"`
 without an `M6` line (phase 1). Warnings: a Drill whose tool is not
 `ToolKind::Drill` or `EndMill` (`Problem::DrillCutterUnusual`); a Pocket
@@ -410,7 +421,10 @@ see "Profile bands".) No cut runs on a line of a region whose outline,
 offset inward by `r` less the slack, is empty: the cut would remove the
 whole part. (changed in #223: a cut round a part smaller than the bit
 passed, because it stays on its line and the part has no stretches far
-apart along it; dc-cam now refuses it, see "Profile bands".) The notch rule applies Inside and Outside,
+apart along it; dc-cam now refuses it, see "Profile bands".) Left and
+Right stay on a target open path offset by `r` to their side, at least
+`r` from every open path of the targets and from every path's kept edge
+(added in #207, see "Profile left and right of an open path"). The notch rule applies Inside and Outside,
 so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
 outline on its waste side. It passes even where an outline of another
@@ -1293,6 +1307,107 @@ stretch near the meeting point is set aside. That stretch is `√2·d`, not
 a tool radius: a slot square to the edge is within `d` of it for its
 first `d`, so a reach of `r` would refuse every slot from the edge.)
 
+### Profile left and right of an open path (dc-cam::profile) (added in #207)
+
+VCarve's 2D Profile cuts an open vector "to the Left, to the Right or On"
+it ("Machining Open Vectors", V9.5 reference manual). On came in #175;
+`Side::Left` and `Side::Right` add the other two. They are new `Side`
+values rather than Inside and Outside reused, so `outside` keeps one
+meaning and the labels are VCarve's.
+
+- **Which side.** Left is to the left looking along the path from its
+  first vertex to its last, as drawn (VCarve: "Looking along the
+  vector(s) from the green node indicates the direction"). Internal
+  geometry is Y-up (ADR-0001), so for a segment direction `(dx, dy)` the
+  left normal is `(−dy, dx)`. The SVG and DXF importers keep the drawing
+  as seen, so left is the left the user sees.
+  (`profile::open_path_left_offsets_to_the_left`,
+  `profile::open_path_right_offsets_to_the_right`, both with the path
+  drawn both ways; `cli::left_profile_of_an_svg_line_exports_on_its_left`
+  pins it through the SVG importer.)
+- **Offset.** `dc_geometry::offset_open(path, left_mm)`, cavalier_contours'
+  open-polyline parallel offset (positive to the left of travel, pinned
+  by `offset::open_offset_moves_left_of_travel_and_ends_square`), by `+r`
+  for Left and `−r` for Right. An arc keeps its centre and its radius
+  grows or shrinks by `r`; a turn away from the tool's side is a round
+  join about the vertex, a turn toward it is trimmed where the offset
+  edges cross; an arc of radius `r` or less on the tool's side collapses,
+  and every stretch closer than `r` to any part of the path is dropped,
+  so the result is zero or more pieces, each run in the path's direction.
+  A path with none warns `ToolTooLarge`.
+- **Ends: square, on the end normals.** The tool centre starts and stops
+  on the normal through each end vertex, `r` from it. The cutter's edge
+  touches the end vertex and reaches `r` past it along the line on the
+  waste side only; nothing on the part side past the end is touched.
+  VCarve's documentation does not say how its open offset ends (an open
+  question, to confirm against VCarve itself). Square ends are what the
+  raw offset gives, keep the cut to the drawn length, and make a part
+  drawn as separate lines meet at its outer corners with no gouge, while
+  a round extension would cut `r` further along the line. The
+  alternatives were rejected: stopping `r` short leaves a nib at the end,
+  and wrapping round the end vertex cuts into the part side past it.
+- **Closed targets** are skipped with `Warning::SideNeedsOpenPath { shape }`
+  (`side_needs_open_path`), not mapped to Inside or Outside by winding:
+  the drawing does not show a closed path's direction
+  (`profile::left_right_on_closed_target_is_skipped_with_warning`). An
+  open target of an Inside or Outside Profile keeps `OpenPathSkipped`,
+  whose message now names Left and Right. Validation's `OpenProfile` is
+  not reported for a definition an enabled Left or Right Profile targets.
+  O8 (`order::targets_of`) reads a Left or Right Profile's open paths
+  and none of its closed outlines.
+- **Direction** as for On line open paths (#242), on each piece:
+  conventional from the end beside the first vertex, climb from the end
+  beside the last (VCarve: "Conventional starts cutting at the Start
+  point Climb cutting starts cutting at the end point";
+  `profile::left_right_direction_follows_vcarve`). VCarve's names pick
+  the starting end, not the engagement: with Left, travel from the first
+  vertex keeps the part on the tool's right, which is climb by
+  `traversal_is_ccw`'s rule; the Profile chapter says so.
+- **Entry, tabs, leads, relief** as for On line open paths: a ramp runs
+  `entry::along_path` on the offset piece; a helix is
+  `HelixNeedsWasteSide` (validation and generator), there being no waste
+  domain; tabs are `PathEnds::Open`, measured along each piece from the
+  end beside the first vertex as drawn; no lead
+  (`LeadDropped { reason: open_path }`, VCarve: "Leads cannot be added to
+  open profile toolpaths") and no relief
+  (`ReliefSkipped { reason: open_path }`, VCarve: "Sharp External Corner
+  options do not apply"); a piece frees nothing
+  (`profile::left_right_ramp_and_tabs`). An open path drawn twice the
+  same way is cut once (`DuplicateShapeDropped`); drawn the other way it
+  is the other side, so it is not a duplicate.
+- **Bands.** The side the cutter runs on is waste, the other side is the
+  part, so #192's rule applies to the kept side: each tool-centre piece
+  keeps `r` (less `EPS_MM`) from every other open path of the operation
+  (crossing it would cut what that line keeps) and from every path's
+  kept edge, the path offset by `r` to its other side (reaching it would
+  cut the strip one radius wide each line keeps beside it). A path is
+  held to its own kept edge too, so a spiral or hairpin whose cut side
+  faces the part side of another stretch is caught; its own line it keeps
+  by construction. Lines that meet are not set aside as #210's are: a
+  square end running onto the next line of a part drawn as separate
+  lines, cut on its inside, cuts into it. A violation is
+  `CamError::CutsIntoKeptSide { op, shape, other, diameter_mm }`, the
+  shapes in drawing order and possibly the same path; an error, not a
+  warning, as #192, #199 and #210 decided for cuts into kept material
+  (`profile::left_right_cut_into_the_kept_side_is_refused`). D6's
+  `ToolpathsOverlap` is not run for Left and Right: its condition, a path
+  within `r` of another shape's line, is already this error.
+- **S9** (`Material::SideProfile`): every cut's ends and middle lie within
+  the slack of one of the targets' open paths offset by `r` to the side
+  (`offset_open`, computed from the project, not taken from dc-cam), and
+  the whole cut keeps `r` less the slack from every open path and every
+  kept edge, closed targets ignored
+  (`safety::left_right_cut_off_its_path_fails_s9`; the property test
+  `random_valid_left_right_profiles_never_panic_and_pass_safety`).
+
+(changed in #207: an open path could be cut only On line, so cutting
+beside a line, as VCarve's Left and Right do, needed the line redrawn one
+bit radius over. Issue #207's design comment is the source of these
+rules; the strip rule was added in implementation, because a cut that
+only keeps `r` from other lines still passes when it lies wholly on
+another line's kept side, as a line drawn twice in opposite directions
+shows.)
+
 ### Corner relief (dc-cam::relief)
 
 Ported from `cornerRelief.ts`.
@@ -2091,6 +2206,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-cam — profile**
 - `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221), `profile::on_line_part_smaller_than_the_bit_is_refused`, `profile::on_line_part_just_larger_than_the_bit_is_cut`, `safety::on_line_part_smaller_than_the_bit_fails_s9` (#223).
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
+- `profile::open_path_left_offsets_to_the_left`, `profile::open_path_right_offsets_to_the_right`, `profile::left_right_on_closed_target_is_skipped_with_warning`, `profile::left_right_direction_follows_vcarve`, `profile::left_right_ramp_and_tabs`, `profile::left_right_cut_into_the_kept_side_is_refused`, `profile::left_right_tool_too_large_for_a_tight_arc_warns`, `offset::open_offset_moves_left_of_travel_and_ends_square`, `offset::open_offset_rounds_outer_turns_and_trims_inner_ones`, `offset::open_offset_of_a_tight_arc_toward_its_centre_vanishes`, `safety::left_right_cut_off_its_path_fails_s9`, `cli::left_profile_of_an_svg_line_exports_on_its_left` (#207).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
 **dc-cam — overlap**

@@ -76,6 +76,17 @@
 //!     of a region the cut removes whole (#223): its outline shrunk by the
 //!     radius, less the slack, is empty, as for a small circle or a strip
 //!     narrower than the bit (`CamError::PartNarrowerThanTool`).
+//!   - **Left and Right** (#207): the tool centre stays on one of the
+//!     targets' open paths offset by the tool radius to that side
+//!     ([`dc_geometry::offset_open`], looking from each path's first vertex
+//!     to its last), its ends and middle within the slack of it, and the
+//!     whole cut keeps the radius from every open path of the targets and
+//!     from every path's kept edge (the path offset by the radius to its
+//!     other side): the cutter never crosses a line nor reaches the strip
+//!     one radius wide that a line keeps, as `dc_cam` refuses
+//!     (`CamError::CutsIntoKeptSide`). Closed targets are not cut. The
+//!     ramp and the tabs run along the offset path; there is no lead or
+//!     notch.
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
 //!     it on its waste side, passes even where an outline of another
 //!     region comes nearer than the radius. That cut is the outline's
@@ -117,8 +128,8 @@ use std::ops::Range;
 
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
-    as_circle, closest_points, inset_is_empty, meeting_points, nest, point_segment_distance_mm,
-    segment_distance_mm,
+    as_circle, closest_points, inset_is_empty, meeting_points, nest, offset_open,
+    point_segment_distance_mm, segment_distance_mm,
 };
 use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side};
 
@@ -168,6 +179,15 @@ pub(crate) enum Material {
         areas: Vec<Area>,
         /// The targets' open paths.
         open: Vec<OpenPath>,
+    },
+    /// A Left or Right Profile's open paths (#207): the tool centre stays
+    /// on one path's offset, clear of every path and every kept edge.
+    SideProfile {
+        /// Every segment of every offset path, as cut.
+        centres: Vec<Edge>,
+        /// Every segment of every open path, and of every path's kept
+        /// edge: what the cut keeps the tool radius from.
+        keep_clear: Vec<Edge>,
     },
     /// An Engrave's target paths, as segments.
     OnLine {
@@ -531,6 +551,24 @@ impl Material {
                         },
                         _ => Self::Unresolved,
                     },
+                    Side::Left | Side::Right => match (
+                        placed(project, &profile.targets),
+                        project
+                            .tools
+                            .iter()
+                            .find(|t| t.id == profile.tool)
+                            .map(|t| t.diameter_mm / 2.0),
+                    ) {
+                        (Some(paths), Some(radius_mm)) => {
+                            let left_mm = if profile.side == Side::Left {
+                                radius_mm
+                            } else {
+                                -radius_mm
+                            };
+                            side_profile(&paths, left_mm)
+                        }
+                        _ => Self::Unresolved,
+                    },
                     Side::Inside => match regions_of(project, &profile.targets) {
                         Some(regions) => Self::Inside {
                             areas: areas_of(regions, true),
@@ -581,6 +619,32 @@ impl Material {
                 None => Self::Unresolved,
             },
         }
+    }
+}
+
+/// The material of a Left or Right Profile of `paths` (#207): the open
+/// ones with length, offset by `left_mm` (positive to the left) to give
+/// the tool-centre paths, and offset the other way to give their kept
+/// edges.
+fn side_profile(paths: &[Polyline], left_mm: f64) -> Material {
+    let open: Vec<&Polyline> = paths
+        .iter()
+        .filter(|p| !p.is_closed() && p.length_mm() > EPS_MM)
+        .collect();
+    let centres = open
+        .iter()
+        .flat_map(|p| offset_open(p, left_mm))
+        .flat_map(|c| edges_of(&c).collect::<Vec<_>>())
+        .collect();
+    let kept = open.iter().flat_map(|p| offset_open(p, -left_mm));
+    let keep_clear = open
+        .iter()
+        .flat_map(|p| edges_of(p))
+        .chain(kept.flat_map(|k| edges_of(&k).collect::<Vec<_>>()))
+        .collect();
+    Material::SideProfile {
+        centres,
+        keep_clear,
     }
 }
 
@@ -688,6 +752,20 @@ pub(crate) fn check(
                     });
                 on_own_line(areas, own_areas, gone, path, band)
                     || on_open_path(open, own_open, path, band)
+            }
+            Material::SideProfile {
+                centres,
+                keep_clear,
+            } => {
+                let clearance_mm = radius_mm - slack_mm;
+                let bounds = bounds_of(path);
+                points_of(path)
+                    .iter()
+                    .all(|&p| on_line(centres, p, slack_mm))
+                    && keep_clear
+                        .iter()
+                        .filter(|e| near(bounds, e.bounds, clearance_mm))
+                        .all(|e| segment_distance_mm(path, e.segment) >= clearance_mm)
             }
             Material::OnLine { edges } => {
                 points_of(path).iter().all(|&p| on_line(edges, p, slack_mm))
