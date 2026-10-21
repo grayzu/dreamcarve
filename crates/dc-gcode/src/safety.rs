@@ -3078,6 +3078,121 @@ mod tests {
         assert!(is_mismatch_at(&result, 5), "{result:?}");
     }
 
+    /// One shape's block of toolpath: a rapid at safe Z to (10, `y`), a
+    /// plunge to Z 3, a cut to (40, `y`), and a retract.
+    fn shape_block(y: f64) -> Vec<Move> {
+        vec![
+            Move::rapid(Point3::new(10.0, y, 11.0)),
+            Move::linear(Point3::new(10.0, y, 3.0), 300.0),
+            Move::linear(Point3::new(40.0, y, 3.0), 1000.0),
+            Move::rapid(Point3::new(40.0, y, 11.0)),
+        ]
+    }
+
+    /// [`shape_block`] as written, every word explicit so a block reads
+    /// the same wherever it stands. Machine Z is project Z − 6.
+    fn shape_block_text(y: f64) -> String {
+        format!("G0 X10 Y{y}\nG1 Z-3 F300\nG1 X40 F1000\nG0 Z5\n")
+    }
+
+    /// The fixture's setup lines, then `body`, then the spindle stop.
+    fn program_of(body: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\n{body}M5\n")
+    }
+
+    /// S13 O7, S6 (#254): the post-processor preserves order, so a program
+    /// whose shapes are reordered does not reproduce the toolpath. The two
+    /// shapes of one operation, cut at Y 50 then Y 70, pass as written
+    /// (and as the emitter writes them); with the two blocks swapped,
+    /// each intact with its own rapids and retract, the program fails
+    /// with `MotionMismatch` naming the operation, at the first move.
+    #[test]
+    fn reordered_shapes_fail_s6() {
+        let (project, op, tool) = fixture();
+        let toolpath = Toolpath {
+            moves: [shape_block(50.0), shape_block(70.0)].concat(),
+        };
+        emit_one(&project, &op, &tool, toolpath.clone()).unwrap();
+        let in_order = program_of(&(shape_block_text(50.0) + &shape_block_text(70.0)));
+        check_against(&in_order, &toolpath).unwrap();
+        let swapped = program_of(&(shape_block_text(70.0) + &shape_block_text(50.0)));
+        let result = check_against(&swapped, &toolpath);
+        assert!(
+            matches!(
+                &result,
+                Err(ExportError::MotionMismatch { op: id, index: 0 }) if *id == op.id
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// S13 O7, S6 (#254): two operations' sections swapped. Each section
+    /// is one shape block, so both are the same length and each
+    /// operation's lines hold the other's moves; the first operation
+    /// checked, `o1`, fails with `MotionMismatch`. In order, it passes.
+    #[test]
+    fn reordered_operations_fail_s6() {
+        let (project, first, tool) = fixture();
+        let second = dc_project::ProfileOp {
+            id: dc_project::OperationId::new("o2"),
+            ..first.clone()
+        };
+        let (first, second) = (Operation::Profile(first), Operation::Profile(second));
+        let (a, b) = (
+            Toolpath {
+                moves: shape_block(50.0),
+            },
+            Toolpath {
+                moves: shape_block(70.0),
+            },
+        );
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        // Setup is lines 1–5; each section is 4 lines.
+        let check_program = |text: &str| {
+            let spans = [
+                OpSpan {
+                    op: &first,
+                    tool: &tool,
+                    toolpath: &a,
+                    material: &Material::Unchecked,
+                    lines: 6..10,
+                },
+                OpSpan {
+                    op: &second,
+                    tool: &tool,
+                    toolpath: &b,
+                    material: &Material::Unchecked,
+                    lines: 10..text.lines().count() + 1,
+                },
+            ];
+            check(
+                text,
+                &post,
+                &transform,
+                &project.stock,
+                project.stock.thickness_mm.unwrap(),
+                Tolerances {
+                    flatten_mm: project.flatten_tolerance_mm,
+                    arc_fit_mm: project.arc_fit_tolerance_mm,
+                },
+                &spans,
+            )
+            .map(|_| ())
+        };
+        let in_order = program_of(&(shape_block_text(50.0) + &shape_block_text(70.0)));
+        check_program(&in_order).unwrap();
+        let swapped = program_of(&(shape_block_text(70.0) + &shape_block_text(50.0)));
+        let result = check_program(&swapped);
+        assert!(
+            matches!(
+                &result,
+                Err(ExportError::MotionMismatch { op, .. }) if op.as_str() == "o1"
+            ),
+            "{result:?}"
+        );
+    }
+
     /// The arc of [`line_then_arc`] as `n` straight moves, counter-clockwise
     /// (`ccw`) as in the toolpath, or the long way round clockwise.
     fn flattened(n: u32, ccw: bool) -> String {

@@ -1336,6 +1336,64 @@ mod tests {
         }
     }
 
+    /// Acceptance test 20 (#249): "the wall pass runs along the rectangle
+    /// and around the circle". The offset wall pass is two rings, the
+    /// outer wall (tool centre on the rect inset by r) and the island ring
+    /// (tool centre on a circle of radius 10 + r about (70, 45)), cut as
+    /// one pass: with `wall_pass: last` they are the last two rings of each
+    /// Z, after every clearance ring; with `first`, the first two.
+    #[test]
+    fn offset_island_ring_is_in_the_wall_pass() {
+        let p = island_project();
+        let centre = Point::new(70.0, 45.0);
+        let tool_centre = inset(wall(), RADIUS_MM);
+        let is_wall = |r: &Ring| {
+            let b = r.bounds;
+            (b.min.x - tool_centre.min.x).abs() <= RING_TOL
+                && (b.min.y - tool_centre.min.y).abs() <= RING_TOL
+                && (b.max.x - tool_centre.max.x).abs() <= RING_TOL
+                && (b.max.y - tool_centre.max.y).abs() <= RING_TOL
+        };
+        let is_island = |r: &Ring| {
+            r.points
+                .iter()
+                .all(|q| (q.distance_to(centre) - (10.0 + RADIUS_MM)).abs() <= RING_TOL)
+        };
+        for wall_pass in [WallPass::Last, WallPass::First] {
+            let mut op = pocket_op(&p, CutDirection::Climb);
+            op.wall_pass = wall_pass;
+            let (tp, warnings) = generate(&p, &op);
+            assert!(warnings.is_empty(), "{wall_pass:?}: {warnings:?}");
+            for z in PASS_Z_MM {
+                let rings = rings_at(&tp, z);
+                assert!(rings.len() > 2, "{wall_pass:?} at Z {z}: {rings:?}");
+                let walls: Vec<usize> = (0..rings.len()).filter(|&i| is_wall(&rings[i])).collect();
+                let islands: Vec<usize> =
+                    (0..rings.len()).filter(|&i| is_island(&rings[i])).collect();
+                assert_eq!(walls.len(), 1, "{wall_pass:?} at Z {z}: walls {walls:?}");
+                assert_eq!(
+                    islands.len(),
+                    1,
+                    "{wall_pass:?} at Z {z}: islands {islands:?}"
+                );
+                let mut pass = [walls[0], islands[0]];
+                pass.sort_unstable();
+                let want = match wall_pass {
+                    WallPass::Last => [rings.len() - 2, rings.len() - 1],
+                    _ => [0, 1],
+                };
+                assert_eq!(
+                    pass,
+                    want,
+                    "{wall_pass:?} at Z {z}: wall ring {} and island ring {} of {}",
+                    walls[0],
+                    islands[0],
+                    rings.len()
+                );
+            }
+        }
+    }
+
     /// Y-up re-derivation: climb on the pocket wall is counter-clockwise
     /// (phase 1's inside rule), and every interior ring follows it.
     #[test]

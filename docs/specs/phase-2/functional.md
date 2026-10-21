@@ -316,7 +316,7 @@ tool centre on the line (every cut vertex is on the drawing within
 path's second pass runs backwards and there is no retract between its
 passes; the rectangle's passes run the same way both times.
 26. **Ramp entry.** An outside Profile with `entry: ramp` at 15°: the
-    first move into each pass is a zigzag in the stock around the part
+    first move into each pass is a ramp in the stock around the part
     whose footprint never enters the part or another shape, with a slope
     of 15° within 0.1°, at the feed rate, with its Z component never
     faster than the plunge rate; no vertical plunge occurs below the
@@ -325,7 +325,11 @@ passes; the rectangle's passes run the same way both times.
     6.35 mm tool has no room, plunges, and warns `entry_fallback`.
     (changed in #175: the 100 mm line is an open path, which an On line
     Profile now cuts, as VCarve's Profile "On" does; Inside and Outside
-    still skip open paths.)
+    still skip open paths.) (changed in #257: a ramp turns back only when
+    one run, at most 3·D long, cannot reach the pass depth, as PureCutCNC's
+    `emitRamp` does; at 15° one 19.05 mm run drops 5.1 mm, more than a
+    2–3 mm pass needs, so each pass is entered by one leg. A zigzag is
+    the same ramp with more legs, not a different requirement.)
 27. **Helix entry.** A Pocket with `entry: helix` at 80 %: the descent is
 a helix of diameter 5.08 mm (for a 6.35 mm tool) whose footprint lies
 inside the region, followed by one flat revolution at the pass depth;
@@ -366,7 +370,9 @@ operations; the reverse order is quiet. Operations using T1, T2, T1
 hint `tool_change_avoidable`.
 33. **One program with tool changes.** The plaque exported with
 `--one-program` on grblHAL yields one file with `T2 M6` between the
-Drill and the Engrave; on GRBL the flag is an error naming the
+Profile and the Engrave (changed in #252: it said the Drill, but the
+plaque's operations are Pocket, Pocket, Drill, Profile, Engrave, so the
+only tool change follows the Profile); on GRBL the flag is an error naming the
 post-processor. With `--programs-per-tool` on a project whose mode is
 `"m6"`, two files are written and the project file is unchanged. A
 user config setting `tool_change_mode = "m6"` makes `init` write that

@@ -654,15 +654,15 @@ fn descent_reaching_a_pass_follows_the_previous_floor() {
     }
 }
 
-/// Acceptance test 26, outside part: a 15° ramp around a part and a
-/// neighbouring part, 6.35 mm tool, feed 1500, plunge 500. Every descent
-/// slopes at 15° within 0.1° at the feed rate with its vertical rate at
-/// most the plunge rate; its footprint stays off both parts; no vertical
-/// plunge happens below the stock top.
-#[test]
-fn acceptance_26_outside_ramp_stays_off_the_part() {
-    let part = (40.0, 40.0, 20.0);
-    let neighbour = (85.0, 85.0, 12.0);
+/// Acceptance test 26's part and neighbour: centre and radius.
+const ACCEPTANCE_26_PARTS: ((f64, f64, f64), (f64, f64, f64)) =
+    ((40.0, 40.0, 20.0), (85.0, 85.0, 12.0));
+
+/// Acceptance test 26's outside fixture: both parts, a 6.35 mm tool at
+/// feed 1500 and plunge 500, an outside climb Profile ramping at 15° in
+/// 2 mm steps through the 6 mm stock.
+fn acceptance_26_outside() -> (Project, ProfileOp) {
+    let (part, neighbour) = ACCEPTANCE_26_PARTS;
     let mut p = project_of(&[
         ("part", vec![circle(part)]),
         ("neighbour", vec![circle(neighbour)]),
@@ -670,6 +670,18 @@ fn acceptance_26_outside_ramp_stays_off_the_part() {
     p.tools = vec![tool(6.35, 1500.0, 500.0)];
     let mut o = op(&p, Side::Outside, ramp());
     o.direction = CutDirection::Climb;
+    (p, o)
+}
+
+/// Acceptance test 26, outside part: a 15° ramp around a part and a
+/// neighbouring part, 6.35 mm tool, feed 1500, plunge 500. Every descent
+/// slopes at 15° within 0.1° at the feed rate with its vertical rate at
+/// most the plunge rate; its footprint stays off both parts; no vertical
+/// plunge happens below the stock top.
+#[test]
+fn acceptance_26_outside_ramp_stays_off_the_part() {
+    let (part, neighbour) = ACCEPTANCE_26_PARTS;
+    let (p, o) = acceptance_26_outside();
     let (tp, warnings) = generate(&p, &o);
     assert!(fallbacks(&warnings).is_empty(), "{warnings:?}");
     let legs = sloped_moves(&tp);
@@ -703,6 +715,106 @@ fn acceptance_26_outside_ramp_stays_off_the_part() {
         "{:?}",
         plunges_into_stock(&tp)
     );
+}
+
+/// One descent: a run of consecutive sloped moves, each with the point it
+/// starts from, and the index of the first move after it.
+struct Descent {
+    legs: Vec<(Point3, Move)>,
+    next: usize,
+}
+
+/// Every descent of `tp`, in cut order.
+fn descents(tp: &Toolpath) -> Vec<Descent> {
+    let m = &tp.moves;
+    let mut out: Vec<Descent> = Vec::new();
+    let mut open = false;
+    for i in 1..m.len() {
+        if sloped(m[i - 1].to, &m[i]) {
+            if !open {
+                out.push(Descent {
+                    legs: Vec::new(),
+                    next: i,
+                });
+            }
+            let d = out.last_mut().expect("a descent is open");
+            d.legs.push((m[i - 1].to, m[i]));
+            d.next = i + 1;
+            open = true;
+        } else {
+            open = false;
+        }
+    }
+    out
+}
+
+/// Acceptance test 26 (#250, changed in #257): "the first move into each
+/// pass is a ramp". On the outside fixture every pass of both parts is
+/// entered by a descent of one or more legs, each at 15° within 0.1°; a
+/// second leg, when there is one, turns back on the one before (XY dot
+/// product < 0), as a zigzag does. A ramp turns back only when one run
+/// (at most 3·D) cannot reach the pass depth, so here each pass is one
+/// leg. The descent, with its level handoff if it has one, ends at the
+/// lap's start point at the pass Z (an outside lap is closed, so its
+/// start is where it ends).
+#[test]
+fn acceptance_26_outside_ramp_enters_every_pass() {
+    let (p, o) = acceptance_26_outside();
+    let (tp, warnings) = generate(&p, &o);
+    assert!(fallbacks(&warnings).is_empty(), "{warnings:?}");
+    let m = &tp.moves;
+    let all = descents(&tp);
+    let reached: Vec<f64> = all
+        .iter()
+        .map(|d| d.legs.last().expect("a descent has a leg").1.to.z)
+        .collect();
+    let want: Vec<f64> = PASS_Z_MM.iter().chain(PASS_Z_MM.iter()).copied().collect();
+    assert_eq!(
+        reached.len(),
+        want.len(),
+        "one descent per pass and part: {reached:?}"
+    );
+    for (k, (got, z)) in reached.iter().zip(&want).enumerate() {
+        assert_approx_eq!(*got, *z, EPS_MM);
+        let d = &all[k];
+        assert!(
+            !d.legs.is_empty(),
+            "descent {k} into Z {z} has no ramp leg: {:?}",
+            d.legs
+        );
+        for (j, (from, mv)) in d.legs.iter().enumerate() {
+            let run = from.xy().distance_to(mv.to.xy());
+            let slope = (from.z - mv.to.z).atan2(run).to_degrees();
+            assert!(
+                (slope - 15.0).abs() <= 0.1,
+                "descent {k} leg {j} slopes {slope}°: {from:?} -> {mv:?}"
+            );
+        }
+        for (j, w) in d.legs.windows(2).enumerate() {
+            let a = w[0].1.to.xy() - w[0].0.xy();
+            let b = w[1].1.to.xy() - w[1].0.xy();
+            assert!(
+                a.dot(b) < 0.0,
+                "descent {k} leg {} does not turn back on leg {j}: {a:?} then {b:?}",
+                j + 1
+            );
+        }
+        // The lap: the level cutting moves at the pass Z after the descent.
+        let lap: Vec<&Move> = m[d.next..]
+            .iter()
+            .take_while(|mv| !mv.is_rapid() && (mv.to.z - z).abs() <= EPS_MM)
+            .collect();
+        let lap_start = lap.last().expect("a lap follows the descent").to.xy();
+        let mut end = d.legs.last().expect("a descent has a leg").1.to.xy();
+        if end.distance_to(lap_start) > EPS_MM {
+            // A level handoff from the ramp's end to the lap's start.
+            end = lap[0].to.xy();
+        }
+        assert!(
+            end.distance_to(lap_start) <= EPS_MM,
+            "descent {k} ends at {end:?}, not the lap start {lap_start:?}"
+        );
+    }
 }
 
 /// The 100 × 50 rectangle at (10, 10) cut On line with a 6.35 mm tool.

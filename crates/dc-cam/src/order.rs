@@ -245,13 +245,14 @@ mod tests {
     use super::*;
     use crate::engrave::generate_engrave;
     use crate::error::ShapeRef;
+    use crate::pocket::generate_pocket;
     use crate::profile::generate_profile;
     use crate::warning::WarningCode;
     use dc_geometry::{Point, Polyline, Transform, Vertex};
-    use dc_project::test_support::{sample_project, tool_6_35_upcut};
+    use dc_project::test_support::{sample_pocket, sample_project, tool_6_35_upcut};
     use dc_project::{
         DefinitionId, EngraveOp, FeatureDefinition, FeatureInstance, InstanceId, MachiningOrder,
-        OperationId, ProfileOp, Side, TabPlacement, TabShape, TabSpec, ToolId,
+        OperationId, PocketOp, ProfileOp, Side, Stock, TabPlacement, TabShape, TabSpec, ToolId,
     };
 
     /// The sample project (100 × 100 × 6 mm stock, the 50 × 30 mm rectangle
@@ -317,7 +318,8 @@ mod tests {
                 let generated = match op {
                     Operation::Profile(profile) => generate_profile(project, profile),
                     Operation::Engrave(engrave) => generate_engrave(project, engrave),
-                    _ => panic!("these tests use Profile and Engrave operations"),
+                    Operation::Pocket(pocket) => generate_pocket(project, pocket),
+                    Operation::Drill(_) => panic!("these tests use no Drill operations"),
                 };
                 let (toolpath, _) =
                     generated.unwrap_or_else(|e| panic!("{} generates: {e}", op.id()));
@@ -408,6 +410,104 @@ mod tests {
         let mut project = part_and_hole();
         project.operations = vec![
             Operation::Profile(profile("o1", "i2", Side::Inside, 6.0)),
+            Operation::Profile(profile("o2", "i1", Side::Outside, 6.0)),
+        ];
+        let warnings = check_all(&project);
+        assert!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
+            "quiet: {warnings:?}"
+        );
+    }
+
+    /// Acceptance test 32's fixture: 160 × 120 × 6 mm stock, a 100 × 60 mm
+    /// rectangle `i1` ("Frame") at (30, 30) and a 30 × 20 mm rectangle `i2`
+    /// ("Recess") at (65, 50), inside it. No operations.
+    fn frame_and_recess() -> Project {
+        let mut project = sample_project();
+        project.stock = Stock {
+            width_mm: 160.0,
+            height_mm: 120.0,
+            thickness_mm: Some(6.0),
+        };
+        project.definitions.clear();
+        project.instances.clear();
+        for (n, name, (x, y), (w, h)) in [
+            (1, "Frame", (30.0, 30.0), (100.0, 60.0)),
+            (2, "Recess", (65.0, 50.0), (30.0, 20.0)),
+        ] {
+            let def = FeatureDefinition {
+                id: DefinitionId::new(format!("d{n}")),
+                name: name.into(),
+                profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, w, h)],
+            };
+            project.instances.push(FeatureInstance {
+                id: InstanceId::new(format!("i{n}")),
+                definition: def.id.clone(),
+                transform: Transform::translate(x, y),
+                name: name.into(),
+                visible: true,
+                locked: false,
+                z_top_mm: Some(6.0),
+                z_bottom_mm: Some(0.0),
+            });
+            project.definitions.insert(def.id.clone(), def);
+        }
+        project.operations.clear();
+        project
+    }
+
+    /// A 3 mm deep offset Pocket `id` of `target`, cutting with `t1`.
+    fn pocket(id: &str, target: &str) -> PocketOp {
+        PocketOp {
+            id: OperationId::new(id),
+            name: id.to_uppercase(),
+            targets: vec![InstanceId::new(target)],
+            ..sample_pocket()
+        }
+    }
+
+    /// O8, acceptance test 32 (#251): an Outside Profile through the stock
+    /// (no tabs) frees the 100 × 60 frame; a later Pocket of the recess
+    /// inside it cuts a loose part, so exactly one `cut_inside_freed_part`
+    /// names both operations.
+    #[test]
+    fn pocket_inside_freed_part_warns() {
+        let mut project = frame_and_recess();
+        project.operations = vec![
+            Operation::Profile(profile("o1", "i1", Side::Outside, 6.0)),
+            Operation::Pocket(pocket("o2", "i2")),
+        ];
+        let warnings = check_all(&project);
+        let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
+        assert_eq!(found.len(), 1, "one warning: {warnings:?}");
+        let w = found[0];
+        let (op, earlier_op, shape, freed) = freed_of(w);
+        assert_eq!((op, earlier_op), ("o2", "o1"));
+        assert_eq!(
+            (shape.instance.as_str(), shape.instance_name.as_str()),
+            ("i2", "Recess")
+        );
+        assert_eq!(
+            (freed.instance.as_str(), freed.instance_name.as_str()),
+            ("i1", "Frame")
+        );
+        // The warning belongs to the Pocket (`op`); its text names the
+        // Profile that freed the frame.
+        let text = w.to_string();
+        assert!(text.contains("`o1`"), "names the Profile: {text}");
+        assert!(
+            text.contains("`Recess`"),
+            "names the pocketed shape: {text}"
+        );
+    }
+
+    /// O8, acceptance test 32 (#251): "the reverse order is quiet". The
+    /// Pocket is cut while the frame is still held by the stock.
+    #[test]
+    fn pocket_before_freeing_profile_is_quiet() {
+        let mut project = frame_and_recess();
+        project.operations = vec![
+            Operation::Pocket(pocket("o1", "i2")),
             Operation::Profile(profile("o2", "i1", Side::Outside, 6.0)),
         ];
         let warnings = check_all(&project);
