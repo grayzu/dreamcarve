@@ -678,4 +678,30 @@ mod tests {
             }]
         );
     }
+
+    /// #71: nesting 2000 contours, a page of text's worth (1000 letters
+    /// with one counter each), takes under 500 ms. Comparing every pair
+    /// took 2.1 s for 2000 circles. Timing means nothing in a debug build,
+    /// so this runs with `cargo test --release` only.
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "timing holds in release builds only (#71)")]
+    fn nest_2000_shapes_under_500ms() {
+        // Flattened, as imported text is: dozens of vertices per contour.
+        let flat = |c: Contour| Contour::new(c.polyline().with_arcs_flattened(0.01)).unwrap();
+        let mut contours = Vec::with_capacity(2000);
+        for k in 0..1000_u32 {
+            let (x, y) = (f64::from(k % 40) * 10.0, f64::from(k / 40) * 12.0);
+            contours.push(flat(circle(x, y, 4.0)));
+            contours.push(flat(circle(x, y, 2.0)));
+        }
+        let start = std::time::Instant::now();
+        let regions = nest_ok(contours);
+        let elapsed = start.elapsed();
+        assert_eq!(regions.len(), 1000);
+        assert!(regions.iter().all(|r| r.holes().len() == 1));
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "nest took {elapsed:?}"
+        );
+    }
 }
