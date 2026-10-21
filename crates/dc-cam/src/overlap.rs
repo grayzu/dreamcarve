@@ -26,12 +26,15 @@
 //! beside it, and `generate_profile`'s band check refuses one closer than
 //! the diameter to them away from where they meet (#210). An open path held by no region (in the waste, in a hole's
 //! slug, or crossing a line) is a group of its own and is compared with
-//! every other shape. Engrave takes no part: it cuts every line as drawn,
+//! every other shape, and with itself (#224): where two of its stretches
+//! far apart along it come closer than the radius, as in a tight spiral or
+//! a hairpin, it warns as two separate paths there would. Engrave takes no part: it cuts every line as drawn,
 //! so lines that cross or meet are the design, not shapes too close.
 
 use crate::error::ShapeRef;
+use crate::profile::MEETING_REACH_DIAMETERS;
 use crate::warning::{Warning, WarningCode};
-use dc_geometry::{Contour, EPS_MM, Polyline, Rect, Region, distance_mm};
+use dc_geometry::{Contour, EPS_MM, Polyline, Rect, Region, SelfBand, distance_mm};
 use dc_project::{Side, Tool};
 
 /// One tool-centre path in cut order, with the shape it cuts.
@@ -44,6 +47,15 @@ pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 /// first is named first. `shapes` are the resolved closed targets,
 /// `regions` what `nest` made of them, and `open` the open paths cut On
 /// line, as drawn (#206).
+///
+/// An open path no region holds is also measured against itself (#224,
+/// [`SelfBand`], with the project's flatten tolerance `tolerance_mm` for
+/// where it meets itself): where two of its stretches more than
+/// [`MEETING_REACH_DIAMETERS`]` · d` apart along it come closer than the
+/// radius, it warns with itself as both shapes, before its pairs with
+/// later paths. Its sharp corners and the points where it touches or
+/// crosses itself are set aside as `generate_profile`'s band check sets
+/// them aside (#221).
 #[must_use]
 pub(crate) fn overlap_warnings(
     paths: &[CutPath<'_>],
@@ -52,6 +64,7 @@ pub(crate) fn overlap_warnings(
     regions: &[Region],
     side: Side,
     tool: &Tool,
+    tolerance_mm: f64,
 ) -> Vec<Warning> {
     let radius_mm = tool.diameter_mm / 2.0;
     // Each path that has a known shape, with that shape's line and the
@@ -79,9 +92,36 @@ pub(crate) fn overlap_warnings(
         })
         .collect();
 
+    let warning = |a: &ShapeRef, b: &ShapeRef, gap_mm: f64| {
+        Warning::new(WarningCode::ToolpathsOverlap)
+            .with("instance", &a.instance)
+            .with("instance_name", &a.instance_name)
+            .with("profile", a.profile)
+            .with("other_instance", &b.instance)
+            .with("other_instance_name", &b.instance_name)
+            .with("other_profile", b.profile)
+            .with("gap_mm", gap_mm)
+            .with("tool", &tool.name)
+            .with("diameter_mm", tool.diameter_mm)
+            .with("needed_mm", needed_gap_mm(side, tool.diameter_mm))
+    };
     let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
     let mut warnings = Vec::new();
     for (index, &(path_a, shape_a, line_a, region_a)) in placed.iter().enumerate() {
+        // #224: an open path in the waste against itself, as D6 compares
+        // two paths there: at the radius.
+        if region_a >= regions.len() && !line_a.is_closed() && !warned.contains(&(shape_a, shape_a))
+        {
+            let band = SelfBand::new(
+                line_a,
+                MEETING_REACH_DIAMETERS * tool.diameter_mm,
+                tolerance_mm.max(EPS_MM),
+            );
+            if let Some(gap_mm) = band.narrowest_mm(radius_mm - EPS_MM, |_, _| true) {
+                warned.push((shape_a, shape_a));
+                warnings.push(warning(shape_a, shape_a, gap_mm));
+            }
+        }
         for &(path_b, shape_b, line_b, region_b) in placed.iter().skip(index + 1) {
             if region_a == region_b
                 || warned
@@ -94,19 +134,7 @@ pub(crate) fn overlap_warnings(
                 continue;
             }
             warned.push((shape_a, shape_b));
-            warnings.push(
-                Warning::new(WarningCode::ToolpathsOverlap)
-                    .with("instance", &shape_a.instance)
-                    .with("instance_name", &shape_a.instance_name)
-                    .with("profile", shape_a.profile)
-                    .with("other_instance", &shape_b.instance)
-                    .with("other_instance_name", &shape_b.instance_name)
-                    .with("other_profile", shape_b.profile)
-                    .with("gap_mm", distance_mm(line_a, line_b))
-                    .with("tool", &tool.name)
-                    .with("diameter_mm", tool.diameter_mm)
-                    .with("needed_mm", needed_gap_mm(side, tool.diameter_mm)),
-            );
+            warnings.push(warning(shape_a, shape_b, distance_mm(line_a, line_b)));
         }
     }
     warnings
@@ -504,6 +532,92 @@ mod tests {
         let p = square_and_lines(&[("l", line((20.0, 30.0), (30.0, 30.0)))]);
         let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
         assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    /// An open polyline through `points`.
+    fn open(points: &[(f64, f64)]) -> Polyline {
+        Polyline::new(
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+            false,
+        )
+    }
+
+    /// #224: one open path in the waste whose stretches far apart along it
+    /// come closer than the tool radius warns `toolpaths_overlap` against
+    /// itself, as two separate paths there do: a U with legs 2 mm apart,
+    /// and a square spiral whose turns are 2 mm apart, both on bare stock
+    /// beside the part. `shape` and `other` are the same path and `gap_mm`
+    /// the narrowest gap. Only the radius counts, as for two paths: a U
+    /// with legs 4 mm apart (closer than the 6 mm bit, wider than its
+    /// radius) is quiet.
+    #[test]
+    fn self_close_open_path_in_the_waste_warns() {
+        let spiral = open(&[
+            (100.0, 100.0),
+            (130.0, 100.0),
+            (130.0, 130.0),
+            (100.0, 130.0),
+            (100.0, 102.0),
+            (128.0, 102.0),
+            (128.0, 128.0),
+            (102.0, 128.0),
+        ]);
+        let cases = [
+            (
+                "a 2 mm U",
+                open(&[(100.0, 20.0), (100.0, 60.0), (102.0, 60.0), (102.0, 20.0)]),
+            ),
+            ("a 2 mm spiral", spiral),
+        ];
+        for (case, path) in cases {
+            let p = square_and_lines(&[("l", path)]);
+            let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
+            let found = overlaps(&warnings);
+            assert_eq!(found.len(), 1, "{case}: {warnings:?}");
+            let w = found[0];
+            assert_eq!(named(w), ("l", "l"), "{case}");
+            assert_eq!(w.param("profile"), Some("0"), "{case}");
+            assert_eq!(w.param("other_profile"), Some("0"), "{case}");
+            assert_eq!(w.param("needed_mm"), Some("3"), "{case}");
+            assert!((gap_mm(w) - 2.0).abs() < TOL, "{case}: {w:?}");
+        }
+        let wide = square_and_lines(&[(
+            "l",
+            open(&[(100.0, 20.0), (100.0, 60.0), (104.0, 60.0), (104.0, 20.0)]),
+        )]);
+        let (_, warnings) = generate_profile(&wide, &profile_op(&wide, Side::OnLine)).unwrap();
+        assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    /// #224: a smooth curve, an L and a 60° V in the waste never come
+    /// within the radius of themselves away from their neighbouring
+    /// stretches and corners, so they are quiet.
+    #[test]
+    fn open_curve_in_the_waste_does_not_warn_against_itself() {
+        let arc: Vec<(f64, f64)> = (0..=90)
+            .map(|k| {
+                let a = f64::from(180 - 2 * k).to_radians();
+                (150.0 + 15.0 * a.cos(), 100.0 + 15.0 * a.sin())
+            })
+            .collect();
+        let half = 30_f64.to_radians();
+        let cases = [
+            ("a half circle", open(&arc)),
+            ("an L", open(&[(100.0, 20.0), (100.0, 60.0), (140.0, 60.0)])),
+            (
+                "a 60° V",
+                open(&[
+                    (150.0 - 30.0 * half.sin(), 150.0 - 30.0 * half.cos()),
+                    (150.0, 150.0),
+                    (150.0 + 30.0 * half.sin(), 150.0 - 30.0 * half.cos()),
+                ]),
+            ),
+        ];
+        for (case, path) in cases {
+            let p = square_and_lines(&[("l", path)]);
+            let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
+            assert!(overlaps(&warnings).is_empty(), "{case}: {warnings:?}");
+        }
     }
 
     #[test]

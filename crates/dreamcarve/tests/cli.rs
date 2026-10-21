@@ -3957,12 +3957,12 @@ fn runs_apart(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
 /// in the same order; in each, the same lines that make no move (header,
 /// operations in order, tools, spindle, dwells, footer); and in each
 /// operation the same rapids within 0.01 mm and the same runs of cutting
-/// moves, at the same feeds, each run's path within `PARITY_TOLERANCE_MM`
-/// of its counterpart's both ways. Within an operation the runs are
-/// matched as a set, not in order: the SVG's coordinates carry noise of
-/// about 1e-6 mm (usvg reads them as `f32`), which is enough to settle a
-/// tie between two equally near corner-relief notches the other way. The
-/// squiggle is flattened differently from an SVG cubic and a DXF SPLINE,
+/// moves, in the same order, at the same feeds, each run's path within
+/// `PARITY_TOLERANCE_MM` of its counterpart's both ways. The SVG's
+/// coordinates carry noise of about 1e-6 mm (usvg reads them as `f32`);
+/// nearest-first ties within `NEAREST_TIE_MM` keep drawing order (#215),
+/// so the noise no longer settles a tie between two equally near
+/// corner-relief notches the other way. The squiggle is flattened differently from an SVG cubic and a DXF SPLINE,
 /// and the DXF keeps exact arcs where the SVG's are rebuilt from Bézier
 /// curves; nothing else differs.
 #[test]
@@ -4006,39 +4006,36 @@ fn plaque_dxf_exports_same_programs_as_svg() {
         for (k, (oa, ob)) in a.operations.iter().zip(&b.operations).enumerate() {
             let at = format!("{name}, operation {k}");
             assert_eq!(oa.rapids.len(), ob.rapids.len(), "{at}: rapids");
-            let mut unmatched: Vec<&[f64; 3]> = ob.rapids.iter().collect();
-            for p in &oa.rapids {
-                let found = unmatched
-                    .iter()
-                    .position(|q| same_point(p, q))
-                    .unwrap_or_else(|| panic!("{at}: no rapid from the SVG ends at {p:?}"));
-                unmatched.swap_remove(found);
+            for (i, (p, q)) in oa.rapids.iter().zip(&ob.rapids).enumerate() {
+                assert!(
+                    same_point(p, q),
+                    "{at}: rapid {i} ends at {p:?} from the DXF, {q:?} from the SVG"
+                );
             }
             assert_eq!(oa.runs.len(), ob.runs.len(), "{at}: runs of cuts");
-            let mut unmatched: Vec<&(Vec<[f64; 3]>, Vec<f64>)> = ob.runs.iter().collect();
-            for (path, feeds) in &oa.runs {
-                let found = unmatched
-                    .iter()
-                    .position(|(other, other_feeds)| {
-                        same_point(&path[0], &other[0])
-                            && feeds.len() == other_feeds.len()
-                            && feeds
-                                .iter()
-                                .zip(other_feeds)
-                                .all(|(u, v)| (u - v).abs() <= 0.01)
-                            && runs_apart(path, other) <= PARITY_TOLERANCE_MM
-                    })
-                    .unwrap_or_else(|| {
-                        let nearest = unmatched
+            for (i, ((path, feeds), (other, other_feeds))) in
+                oa.runs.iter().zip(&ob.runs).enumerate()
+            {
+                assert!(
+                    same_point(&path[0], &other[0]),
+                    "{at}: run {i} starts at {:?} from the DXF, {:?} from the SVG",
+                    path[0],
+                    other[0]
+                );
+                assert!(
+                    feeds.len() == other_feeds.len()
+                        && feeds
                             .iter()
-                            .map(|(other, _)| runs_apart(path, other))
-                            .fold(f64::INFINITY, f64::min);
-                        panic!(
-                            "{at}: no run from the SVG matches the DXF's run from {:?} at feeds {feeds:?}; the nearest is {nearest} mm away",
-                            path[0]
-                        )
-                    });
-                unmatched.swap_remove(found);
+                            .zip(other_feeds)
+                            .all(|(u, v)| (u - v).abs() <= 0.01),
+                    "{at}: run {i} at feeds {feeds:?} from the DXF, {other_feeds:?} from the SVG"
+                );
+                let apart_mm = runs_apart(path, other);
+                assert!(
+                    apart_mm <= PARITY_TOLERANCE_MM,
+                    "{at}: run {i} from {:?} is {apart_mm} mm from the SVG's",
+                    path[0]
+                );
             }
         }
     }

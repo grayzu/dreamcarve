@@ -377,7 +377,11 @@ stretches within `√2·d` of where the line meets itself set aside, and on
 a closed line only where the part lies between them; an open path drawn
 twice is one path. (changed in #221: a cut was never measured against
 its own line, so a hand-written hairpin passed; dc-cam now refuses it,
-see "Profile bands".) The notch rule applies Inside and Outside,
+see "Profile bands".) No cut runs on a line of a region whose outline,
+offset inward by `r` less the slack, is empty: the cut would remove the
+whole part. (changed in #223: a cut round a part smaller than the bit
+passed, because it stays on its line and the part has no stretches far
+apart along it; dc-cam now refuses it, see "Profile bands".) The notch rule applies Inside and Outside,
 so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
 outline on its waste side. It passes even where an outline of another
@@ -980,8 +984,23 @@ belongs to the region whose material holds all of it (every vertex and
 every segment's middle, `Region::contains_point`, lines included) and is
 not compared with that region's lines, as a hole is not; held by no
 region (in the waste, in a hole's slug, or across a line) it is a group
-of its own, compared with every other closed shape and open path but
-never with itself. The pairs keep cut order. (changed in #206: an open
+of its own, compared with every other closed shape and open path, and
+with itself (#224). The pairs keep cut order.
+
+An open path held by no region is measured against itself with
+`dc_geometry::SelfBand` and #221's rules: stretches more than `√2·d`
+apart along it, sharp corners and points where it touches or crosses
+itself set aside. Where two such stretches come closer than `r` (less
+`EPS_MM`), it warns `ToolpathsOverlap` with `shape` and `other` the same
+path and `gap_mm` the narrowest gap, before its pairs with later paths.
+(changed in #224: a tight spiral or hairpin drawn in the waste cleared
+an area with no warning, while the same shape drawn as two lines warned.
+It is a warning, not #221's error: the cut is in the waste, as for two
+separate paths there (D6, #206). The threshold is D6's `r`, not `d`, so
+one line and two lines drawn the same get the same answer. A path that
+crosses itself is not warned there, as #221 treats a crossing as where
+the line meets itself; two separate crossing paths still warn with gap
+0.) (changed in #206: an open
 path was dropped before any pair was compared, so a line drawn beside or
 across a part, or across another line, cut into it with no warning. A
 line inside a part is a cut into that part, not a second shape beside
@@ -1052,6 +1071,31 @@ once: the later copy is dropped with `DuplicateShapeDropped` naming the
 first, before any band or overlap check, as `nest` drops a closed shape
 drawn twice. S9 drops it the same way.
 
+A part whose outline cut On line lies everywhere within `r` of the line
+(its outline offset inward by `r` is empty,
+`dc_geometry::inset_is_empty`) is removed whole by the cut, however short
+the outline. `generate_profile` refuses it with
+`CamError::PartNarrowerThanTool { op, shape, diameter_mm }`, `shape` the
+outline, checked before the self-band. Only a region's outline is
+checked: a hole's inside is waste, and a hole within `d` of its outline
+is refused by the band check first. An island in a hole is a region of
+its own, so a tiny one is refused. `inset_is_empty` offsets only an
+outline whose area is at most `L·r` (`L` its length), since the inside
+within `r` of a closed line covers at most that, so large outlines cost
+nothing. S9 refuses every cut on the lines of such a region, measured
+with `r` less the program's slack, so it never refuses what the
+generator cuts.
+
+(changed in #223: the self-band compares only stretches more than
+`√2·d` apart along the line, so an outline shorter than `2·√2·d` (about
+18 mm for a 6.35 mm bit) was never compared, and a 2.5 mm radius circle
+cut On line vanished with no finding while a 2.9 mm one was refused. A
+new variant names the harm, the whole part removed, not a band. It is an
+error, consistent with #192, #199, #210 and #221. A tiny dot marked on
+purpose is Engrave's job, which has no such rule. A part that is narrow
+everywhere and long, such as a 3 mm strip, now gets this error instead
+of `BandNarrowerThanTool`.)
+
 (changed in #221: a line was never compared with itself, so a hairpin, a
 tight spiral or a dumbbell outline cut On line cut through the part with
 no finding, and a duplicate open path in a part was refused with a band
@@ -1101,6 +1145,9 @@ Ported from `cornerRelief.ts`.
    with `ReliefSkipped`.
    - **Pocket:** after the main blocks, corners ordered nearest-neighbour
      from the last exit, one block per level; the blocks share one group.
+     Two corners whose descend points are equally near, within
+     `NEAREST_TIE_MM`, are taken in drawing order (changed in #215, see
+     the sequencer's order step).
    - **Profile:** among each shape's own passes, never after the pass that
      frees it. A corner counts as cut when its own shape's path cuts its
      descend point at the deepest level. Each level goes in the unit of
@@ -1156,9 +1203,20 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
    - `FullDepthFirst`: order shapes by a greedy walk: start from the
      first shape in drawing order; from the current shape's exit, pick the
      nearest *available* shape's entry (available = every shape it
-     encloses, per `containment`, is finished; distance by
-     `f64::total_cmp`; ties by drawing order). Emit all its passes top to
-     bottom.
+     encloses, per `containment`, is finished; ties by drawing order,
+     where distances within `NEAREST_TIE_MM` (0.001 mm) of the nearest
+     are a tie). Emit all its passes top to bottom.
+     (changed in #215: distances were compared exactly, by
+     `f64::total_cmp`, so the 1e-6 mm an `f32` SVG import moves a
+     coordinate settled a tie, and an SVG and a DXF of one drawing cut two
+     equally near shapes or relief corners in different orders. Every
+     nearest-first choice now takes the first candidate in drawing order
+     whose distance is within `NEAREST_TIE_MM` of the nearest:
+     `sequence::nearest_of`, used by the shape walk, Drill's hole order,
+     relief corner order, raster piece order, and offset ring order and
+     ring start. 0.001 mm is the finest step a post writes in mm, so two
+     candidates closer than that cannot be told apart in a program, and it
+     is above `f32` noise for coordinates within about 2 m.)
    - `PassFirst`: for pass k, walk the shapes as above but a shape is
      available at pass k only when every enclosed shape has finished pass
      k and, if this is the shape's freeing pass, has finished entirely.
@@ -1700,7 +1758,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `sequence::orders_cut_the_same_moves` (O2).
 - `sequence::links_between_shapes_retract_to_safe_z`, `sequence::stay_down_link_only_inside_cleared_area` (O3).
 - `sequence::full_depth_first_z_transitions` (port: `testPocketFeatureFirstOrder`, `[-2,-4,-2,-4]`), `sequence::pass_first_z_transitions` (port: `testPocketLevelFirstOrder`, `[-2,-4]`) (O4).
-- `sequence::equidistant_shapes_keep_drawing_order`, `sequence::nearest_neighbour_orders_a_c_b_as_a_b_c` (port: `testPocketFeatureFirstNearestBlockOrder`), `sequence::same_input_twice_is_identical` (O5).
+- `sequence::equidistant_shapes_keep_drawing_order`, `sequence::nearest_neighbour_orders_a_c_b_as_a_b_c` (port: `testPocketFeatureFirstNearestBlockOrder`), `sequence::same_input_twice_is_identical` (O5), `sequence::equidistant_shapes_within_tolerance_keep_drawing_order`, `relief::equidistant_corners_follow_drawing_order_despite_noise` (#215).
 - `sequence::single_shape_is_identical_in_both_orders` (O6).
 - `sequence::pass_first_waits_for_enclosed_shapes_freeing_pass`.
 - `sequence::nothing_is_cut_after_a_shapes_freeing_pass` (#189: freeing blocks last in their unit; O1 still holds).
@@ -1766,12 +1824,12 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `relief::bottom_level_notches_do_not_plunge` (#193: ramp entry, both orders, one and two levels in the freeing pass, with a lead: no straight plunge below what is already cut at a descend point; every bottom notch within the final lap).
 
 **dc-cam — profile**
-- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221).
+- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221), `profile::on_line_part_smaller_than_the_bit_is_refused`, `profile::on_line_part_just_larger_than_the_bit_is_cut`, `safety::on_line_part_smaller_than_the_bit_fails_s9` (#223).
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
 **dc-cam — overlap**
-- `overlap::open_on_line_path_too_close_to_a_part_warns`, `overlap::open_line_far_from_shapes_is_quiet`, `overlap::open_lines_too_close_to_each_other_warn`, `overlap::open_path_in_a_part_is_not_compared_with_its_lines`, `engrave::crossing_lines_do_not_warn_toolpaths_overlap` (#206).
+- `overlap::open_on_line_path_too_close_to_a_part_warns`, `overlap::open_line_far_from_shapes_is_quiet`, `overlap::open_lines_too_close_to_each_other_warn`, `overlap::open_path_in_a_part_is_not_compared_with_its_lines`, `engrave::crossing_lines_do_not_warn_toolpaths_overlap` (#206), `overlap::self_close_open_path_in_the_waste_warns`, `overlap::open_curve_in_the_waste_does_not_warn_against_itself` (#224).
 
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.

@@ -55,7 +55,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `drill_tool_wider_than_hole` | "the … mm tool is wider than the … mm hole …, so the hole comes out the tool's size" | Use a smaller bit, or draw the circle the bit's size ([Drill](drill.md#which-outlines-are-holes)). |
 | `drill_peck_deeper_than_hole` | "the … mm peck is at least the … mm depth of the holes, so each is drilled in one plunge" | Use a smaller `peck_depth_mm`, or the `"simple"` cycle ([Drill: peck](drill.md#peck)). |
 | `drill_retract_below_stock_top` | "retract_mm is … mm, below the stock top; the tool retracts to the stock top instead" | Set `retract_mm` to 0 or more ([Drill: retract height](drill.md#retract-height)). |
-| `toolpaths_overlap` | "the tool paths of … and … cut into each other: the shapes are … mm apart" | Two shapes in one Profile are closer than the bit needs between them, or an open path cut `on_line` comes within half a bit of another shape's line or crosses it. Move them apart or use a smaller bit ([Profile: shapes too close together](profile.md#shapes-too-close-together)). An Engrave never gives it. |
+| `toolpaths_overlap` | "the tool paths of … and … cut into each other: the shapes are … mm apart" | Two shapes in one Profile are closer than the bit needs between them, or an open path cut `on_line` comes within half a bit of another shape's line or crosses it, or an open path cut `on_line` outside any part comes within half a bit of itself far along it (a tight spiral or a hairpin; the warning names it twice). Move them apart or use a smaller bit ([Profile: shapes too close together](profile.md#shapes-too-close-together)). An Engrave never gives it. |
 
 ## Export
 

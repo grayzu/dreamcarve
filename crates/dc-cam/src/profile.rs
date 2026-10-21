@@ -35,7 +35,8 @@ use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
-    distance_away_from_mm, distance_mm, meeting_points, nest, offset, point_segment_distance_mm,
+    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset,
+    point_segment_distance_mm,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
@@ -223,6 +224,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// region's lines and its other open paths away from where they meet,
 /// #210; an On line line is also compared with its own stretches far
 /// along it, #221, so a hairpin or a narrow neck is refused),
+/// when an On line part is nowhere as wide as the tool, so the cut
+/// removes it whole ([`CamError::PartNarrowerThanTool`], #223),
 /// when an On line Profile asks for a helix
 /// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
 /// would leave its waste domain ([`CamError::OffMaterial`], a defect).
@@ -669,6 +672,7 @@ pub fn generate_profile(
         &regions,
         op.side,
         tool,
+        project.flatten_tolerance_mm,
     ));
 
     // Corner relief among each shape's own passes, never after the pass
@@ -717,7 +721,10 @@ pub fn generate_profile(
 ///   the band together with that line's cut: the part loses material it
 ///   keeps. `contour` is also measured against itself
 ///   ([`check_self_band`], #221; `tolerance_mm` is the project's flatten
-///   tolerance, where it meets itself).
+///   tolerance, where it meets itself). A region's outline whose inset by
+///   `r` is empty bounds a part the cut removes whole, however short its
+///   outline: [`CamError::PartNarrowerThanTool`] (#223). Its holes need no
+///   such check: one within `d` of the outline is refused above.
 /// - **Outside** needs no check: there the outline's path runs outside
 ///   the region and every hole's inside its hole, so each is at least `r`
 ///   from every other line of the region, and a band between them is a
@@ -773,6 +780,16 @@ fn check_band(
     let Some(shape) = shape_of(shapes, contour) else {
         return Ok(());
     };
+    // #223: a part nowhere as wide as the bit is removed whole, however
+    // short its outline (the self-band check below compares only
+    // stretches `√2·d` apart along it, and a small circle has none).
+    if contour == region.outer() && inset_is_empty(contour, tool.diameter_mm / 2.0) {
+        return Err(CamError::PartNarrowerThanTool {
+            op: op.clone(),
+            shape: shape.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
     let line = contour.polyline();
     let between = |p: Point, q: Point| material_between(region, line, p, q);
     check_self_band(op, shape, line, tool, tolerance_mm, between)
@@ -3289,5 +3306,108 @@ mod tests {
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::DuplicateShapeDropped]);
         assert_eq!(laps(&tp).len(), 2 * PASS_Z_MM.len());
+    }
+
+    // ── #223: a part the bit removes whole ──
+
+    /// A part of one closed outline, `outline`, placed at (20, 20).
+    fn part_of(outline: Polyline) -> Project {
+        project(vec![outline], &[("i1", at_20_20())])
+    }
+
+    /// #223: a part whose outline cut On line lies everywhere within the
+    /// tool radius of the line (the part inset by `r` is empty) is removed
+    /// whole by the cut: refused with `PartNarrowerThanTool` naming the
+    /// outline. That holds for a part too short round for the self-band
+    /// check to compare any two of its stretches (a 2.5 mm radius circle,
+    /// a 3 mm square, under `2·√2·d` round), and for longer ones it would
+    /// otherwise refuse as a band (a 2.9 mm radius circle, a 3 × 50 mm
+    /// strip), so the answer no longer depends on the perimeter.
+    #[test]
+    fn on_line_part_smaller_than_the_bit_is_refused() {
+        let cases = [
+            (
+                "a 2.5 mm radius circle",
+                Polyline::circle(Point::new(10.0, 10.0), 2.5),
+            ),
+            (
+                "a 2.9 mm radius circle",
+                Polyline::circle(Point::new(10.0, 10.0), 2.9),
+            ),
+            (
+                "a 3 mm square",
+                Polyline::rect(Point::new(10.0, 10.0), 3.0, 3.0),
+            ),
+            (
+                "a 3 × 50 mm strip",
+                Polyline::rect(Point::new(10.0, 10.0), 50.0, 3.0),
+            ),
+            (
+                "a 6 mm circle drawn the other way",
+                Polyline::circle(Point::new(10.0, 10.0), 3.0).reversed(),
+            ),
+        ];
+        for (case, outline) in cases {
+            let p = part_of(outline);
+            let err = generate_profile(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb))
+                .expect_err(case);
+            let CamError::PartNarrowerThanTool {
+                op,
+                shape,
+                diameter_mm,
+            } = &err
+            else {
+                panic!("{case}: expected PartNarrowerThanTool, got {err:?}");
+            };
+            assert_eq!(op.as_str(), "o1", "{case}");
+            assert_eq!(shape.instance.as_str(), "i1", "{case}");
+            assert_eq!(shape.profile, 0, "{case}");
+            assert_approx_eq!(*diameter_mm, 6.35, TOL);
+            let text = err.to_string();
+            assert!(text.contains("whole part"), "{case}: {text}");
+        }
+        // A small hole's inside is waste, and a small island in a hole is a
+        // part of its own.
+        let island = project(
+            vec![
+                rect_100x50(),
+                Polyline::circle(Point::new(50.0, 25.0), 15.0),
+                Polyline::circle(Point::new(50.0, 25.0), 2.5),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let err = generate_profile(
+            &island,
+            &profile_op(&island, Side::OnLine, CutDirection::Climb),
+        )
+        .expect_err("the island");
+        assert!(
+            matches!(&err, CamError::PartNarrowerThanTool { shape, .. } if shape.profile == 2),
+            "{err:?}"
+        );
+    }
+
+    /// #223: a part a little wider than the bit everywhere (a 3.3 mm
+    /// radius circle, a 7 mm square) keeps material inside the cut and is
+    /// cut as drawn, as is a 2.5 mm radius hole.
+    #[test]
+    fn on_line_part_just_larger_than_the_bit_is_cut() {
+        let cases = [
+            (
+                "a 3.3 mm radius circle",
+                Polyline::circle(Point::new(10.0, 10.0), 3.3),
+            ),
+            (
+                "a 7 mm square",
+                Polyline::rect(Point::new(10.0, 10.0), 7.0, 7.0),
+            ),
+        ];
+        for (case, outline) in cases {
+            every_line_cut(case, &part_of(outline));
+        }
+        every_line_cut(
+            "a 2.5 mm radius hole",
+            &part_with(vec![Polyline::circle(Point::new(50.0, 25.0), 2.5)]),
+        );
     }
 }

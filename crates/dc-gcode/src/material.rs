@@ -72,7 +72,10 @@
 //!     crosses itself) are set aside, and a loop counts only the pairs with
 //!     the region's material between them, so a cut along a hairpin, a
 //!     tight spiral or an outline's narrow neck fails and one along a
-//!     narrow notch passes, as dc-cam decides.
+//!     narrow notch passes, as dc-cam decides. No cut may run on a loop
+//!     of a region the cut removes whole (#223): its outline shrunk by the
+//!     radius, less the slack, is empty, as for a small circle or a strip
+//!     narrower than the bit (`CamError::PartNarrowerThanTool`).
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
 //!     it on its waste side, passes even where an outline of another
 //!     region comes nearer than the radius. That cut is the outline's
@@ -114,7 +117,7 @@ use std::ops::Range;
 
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
-    as_circle, closest_points, meeting_points, nest, point_segment_distance_mm,
+    as_circle, closest_points, inset_is_empty, meeting_points, nest, point_segment_distance_mm,
     segment_distance_mm,
 };
 use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side};
@@ -615,16 +618,17 @@ pub(crate) fn check(
     }
     let radius_mm = span.tool.diameter_mm / 2.0;
     // #221: each On line loop and held open path, measured against itself.
+    let departure_mm = tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM;
     let selves = match span.material {
         Material::OnLineProfile { areas, open } => Some(SelfBands::new(
             areas,
             open,
             MEETING_REACH_DIAMETERS * 2.0 * radius_mm,
             tolerances.flatten_mm,
+            radius_mm - departure_mm,
         )),
         _ => None,
     };
-    let departure_mm = tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM;
     // The region the last cut ended in, and where.
     let mut last: Option<(usize, Point)> = None;
     let moves = blocks
@@ -678,10 +682,11 @@ pub(crate) fn check(
                     reach_mm: MEETING_REACH_DIAMETERS * 2.0 * radius_mm + slack_mm,
                     slack_mm,
                 };
-                let (own_areas, own_open) = selves
-                    .as_ref()
-                    .map_or((&[][..], &[][..]), |s| (&s.areas[..], &s.open[..]));
-                on_own_line(areas, own_areas, path, band)
+                let (own_areas, own_open, gone) =
+                    selves.as_ref().map_or((&[][..], &[][..], &[][..]), |s| {
+                        (&s.areas[..], &s.open[..], &s.gone[..])
+                    });
+                on_own_line(areas, own_areas, gone, path, band)
                     || on_open_path(open, own_open, path, band)
             }
             Material::OnLine { edges } => {
@@ -799,9 +804,16 @@ fn is_lap(
 /// `path` lies on one loop of `areas`, its ends and middle within the
 /// slack of it, at least the band from every other loop of that loop's
 /// area (#199), and from the stretches of its own loop far along it
-/// (#221, [`keeps_self`]; `selves` holds each loop's [`SelfBand`]). Other
+/// (#221, [`keeps_self`]; `selves` holds each loop's [`SelfBand`]), and
+/// on no loop of an area the cut removes whole (#223, `gone`). Other
 /// areas' loops are not looked at.
-fn on_own_line(areas: &[Area], selves: &[Vec<SelfBand>], path: Segment, band: Band) -> bool {
+fn on_own_line(
+    areas: &[Area],
+    selves: &[Vec<SelfBand>],
+    gone: &[bool],
+    path: Segment,
+    band: Band,
+) -> bool {
     let Band {
         band_mm, slack_mm, ..
     } = band;
@@ -810,8 +822,9 @@ fn on_own_line(areas: &[Area], selves: &[Vec<SelfBand>], path: Segment, band: Ba
     areas
         .iter()
         .zip(selves)
-        .filter(|(a, _)| near(bounds, a.bounds, slack_mm))
-        .any(|(area, own)| {
+        .zip(gone)
+        .filter(|((a, _), gone)| !**gone && near(bounds, a.bounds, slack_mm))
+        .any(|((area, own), _)| {
             area.loops.iter().zip(own).any(|(l, own)| {
                 let edges = area.edges.get(l.edges.clone()).unwrap_or_default();
                 points.iter().all(|&p| on_line(edges, p, slack_mm))
@@ -878,19 +891,35 @@ struct Band {
 
 /// Each On line loop of each area, and each open path a region holds,
 /// as a [`SelfBand`] (#221): the loops in [`Area::loops`] order, the open
-/// paths in `open` order, `None` for a path no region holds.
+/// paths in `open` order, `None` for a path no region holds. And whether
+/// each area is a part the cut removes whole (#223).
 struct SelfBands {
     areas: Vec<Vec<SelfBand>>,
     open: Vec<Option<SelfBand>>,
+    gone: Vec<bool>,
 }
 
 impl SelfBands {
     /// The bands of `areas` and `open`, compared beyond `reach_mm` along
     /// each line and meeting where they come within `tolerance_mm` of
-    /// themselves, as `dc_cam::generate_profile` measures them.
-    fn new(areas: &[Area], open: &[OpenPath], reach_mm: f64, tolerance_mm: f64) -> Self {
+    /// themselves, as `dc_cam::generate_profile` measures them. An area
+    /// is gone when its outline shrunk by `inset_mm` (the tool radius less
+    /// the slack a program may depart by, so S9 never refuses what the
+    /// generator cuts) is empty: every point of the part lies within the
+    /// bit's reach of its line.
+    fn new(
+        areas: &[Area],
+        open: &[OpenPath],
+        reach_mm: f64,
+        tolerance_mm: f64,
+        inset_mm: f64,
+    ) -> Self {
         let tolerance_mm = tolerance_mm.max(EPS_MM);
         Self {
+            gone: areas
+                .iter()
+                .map(|a| inset_is_empty(a.region.outer(), inset_mm))
+                .collect(),
             areas: areas
                 .iter()
                 .map(|a| {
