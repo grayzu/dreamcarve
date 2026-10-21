@@ -4590,6 +4590,75 @@ mod tests {
         );
     }
 
+    /// #207: a Left or Right Profile's cuts stay on the open path offset
+    /// by the tool radius to the chosen side, and keep the radius from
+    /// every line of the operation and from the strip one radius wide each
+    /// line keeps on its other side. The sample with an open line from
+    /// (10, 60) to (70, 60) cut Left, with its tabs and a ramp: the
+    /// generated program passes, and so does a hand-written cut at Y 63.175
+    /// (the 6.35 mm bit's radius to the left of the line). Cuts on the
+    /// line, at the radius to its right, half a radius off the offset, or
+    /// past the line's end along it fail at their plunge; so does the same
+    /// cut when the line is cut Right. (The cut past the end plunges on
+    /// the path's end and fails at the move beyond it.)
+    #[test]
+    fn left_right_cut_off_its_path_fails_s9() {
+        let with_line = |side: dc_project::Side| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles.push(dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 50.0),
+                        dc_geometry::Vertex::line(60.0, 50.0),
+                    ],
+                    false,
+                ));
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = side;
+            op.entry = dc_project::Entry::Ramp { angle_deg: 15.0 };
+            let op = op.clone();
+            (project, op)
+        };
+        let (project, op) = with_line(dc_project::Side::Left);
+        let (toolpath, _) = generate_profile(&project, &op).unwrap();
+        let op = Operation::Profile(op);
+        emit(
+            &project,
+            &[(op.clone(), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
+        let cut = |from: (f64, f64), to: (f64, f64)| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX{} Y{}\nG1 Z-1 F300\nX{} Y{} F1000\nG0 Z5\n",
+                from.0, from.1, to.0, to.1
+            )
+        };
+        check_material_text(&cut((10.0, 63.175), (70.0, 63.175)), &project, &op).unwrap();
+        for (case, from, to, at_line) in [
+            ("on the line", (10.0, 60.0), (70.0, 60.0), 5),
+            ("to its right", (10.0, 56.825), (70.0, 56.825), 5),
+            ("half a radius off", (10.0, 64.8), (70.0, 64.8), 5),
+            ("past its end", (70.0, 63.175), (80.0, 63.175), 6),
+        ] {
+            let err = check_material_text(&cut(from, to), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op: at, line } if at == op.id() && *line == at_line),
+                "{case}: {err:?}"
+            );
+        }
+        let (right, op) = with_line(dc_project::Side::Right);
+        let op = Operation::Profile(op);
+        check_material_text(&cut((10.0, 56.825), (70.0, 56.825)), &right, &op).unwrap();
+        let err =
+            check_material_text(&cut((10.0, 63.175), (70.0, 63.175)), &right, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+            "the Left cut under Right: {err:?}"
+        );
+    }
+
     /// #210: S9 refuses what `generate_profile` refuses. An On line
     /// Profile of the sample rectangle (X 10 to 60, Y 10 to 40) with an
     /// open line 2 mm above its bottom edge: the generator refuses it

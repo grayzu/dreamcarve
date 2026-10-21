@@ -71,7 +71,7 @@ pub(super) fn domains(
     radius_mm: f64,
     tolerance_mm: f64,
 ) -> Vec<Vec<Region>> {
-    if side == Side::OnLine {
+    if !side.has_waste_area() {
         return paths.iter().map(|_| Vec::new()).collect();
     }
     let reach = radius_mm - WALL_SLACK_MM;
@@ -88,7 +88,7 @@ pub(super) fn domains(
             .iter()
             .map(|r| inset_region(r, -reach, tolerance_mm))
             .collect(),
-        Side::Inside | Side::OnLine => Vec::new(),
+        Side::Inside | Side::OnLine | Side::Left | Side::Right => Vec::new(),
     };
     let grown_bounds: Vec<Option<Rect>> = grown.iter().map(|g| bounds_of(g)).collect();
     // Inside domains depend only on the region.
@@ -144,7 +144,7 @@ pub(super) fn domains(
                     clip.extend(others(Some(frame)));
                     difference(&[frame_region], &clip, tolerance_mm)
                 }
-                Side::OnLine => Vec::new(),
+                Side::OnLine | Side::Left | Side::Right => Vec::new(),
             }
         })
         .collect()

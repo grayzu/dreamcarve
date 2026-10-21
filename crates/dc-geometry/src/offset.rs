@@ -33,6 +33,31 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         .collect()
 }
 
+/// Offsets the open path `path` sideways by `left_mm` (#207): positive
+/// moves it to the left of travel from its first vertex to its last, which
+/// in Y-up (ADR-0001) is the normal `(−dy, dx)` of each segment's
+/// direction `(dx, dy)`; negative moves it to the right. Each piece runs
+/// the same way as `path` and ends square, on the normals through the
+/// path's end vertices. A turn away from the offset side becomes an arc
+/// about the vertex (a round join); a turn toward it is trimmed where the
+/// two offset edges cross; an arc whose radius is `|left_mm|` or less on
+/// the side its centre lies on collapses. What is left is every stretch at
+/// least `|left_mm|` from all of `path`, so the result may be several
+/// pieces or none. For an open `path`; a closed contour is [`offset`]'s.
+#[must_use]
+pub fn offset_open(path: &Polyline, left_mm: f64) -> Vec<Polyline> {
+    let source = to_cavalier(path);
+    // As for a contour: cavalier_contours offsets to the left of travel for
+    // a positive value (pinned by
+    // `open_offset_moves_left_of_travel_and_ends_square`).
+    source
+        .parallel_offset(left_mm)
+        .iter()
+        .map(from_cavalier)
+        .filter(|p| p.vertices().len() >= 2 && p.length_mm() > crate::EPS_MM)
+        .collect()
+}
+
 /// Whether every point inside `contour` lies within `inset_mm` of it: the
 /// contour offset inward by `inset_mm` is empty (#223, a part a bit of
 /// radius `inset_mm` cut on its line removes whole).
@@ -176,6 +201,107 @@ mod tests {
         assert!(!out[0].is_ccw());
         let b = out[0].polyline().bounds().unwrap();
         assert_approx_eq!(b.width_mm(), 30.0 - 6.35, TOL);
+    }
+
+    fn open(points: &[(f64, f64)]) -> Polyline {
+        Polyline::new(
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+            false,
+        )
+    }
+
+    fn ends(p: &Polyline) -> (Point, Point) {
+        let vs = p.vertices();
+        (vs[0].point(), vs[vs.len() - 1].point())
+    }
+
+    /// #207: a positive `left_mm` moves an open path to the left of
+    /// travel from its first vertex to its last, which in Y-up is the
+    /// normal `(−dy, dx)`; a negative one to the right. The result runs
+    /// the same way as the path and ends square, on the normals through
+    /// the path's end vertices.
+    #[test]
+    fn open_offset_moves_left_of_travel_and_ends_square() {
+        let line = open(&[(0.0, 0.0), (100.0, 0.0)]);
+        for (left_mm, y) in [
+            (TOOL_RADIUS_MM, TOOL_RADIUS_MM),
+            (-TOOL_RADIUS_MM, -TOOL_RADIUS_MM),
+        ] {
+            let out = offset_open(&line, left_mm);
+            assert_eq!(out.len(), 1, "{left_mm}: {out:?}");
+            assert!(!out[0].is_closed());
+            let (start, end) = ends(&out[0]);
+            assert!(start.distance_to(Point::new(0.0, y)) <= TOL, "{start:?}");
+            assert!(end.distance_to(Point::new(100.0, y)) <= TOL, "{end:?}");
+        }
+        // Drawn the other way, left is the other side.
+        let back = offset_open(&line.reversed(), TOOL_RADIUS_MM);
+        let (start, end) = ends(&back[0]);
+        assert!(start.distance_to(Point::new(100.0, -TOOL_RADIUS_MM)) <= TOL);
+        assert!(end.distance_to(Point::new(0.0, -TOOL_RADIUS_MM)) <= TOL);
+        // Upward, left is −X.
+        let up = offset_open(&open(&[(0.0, 0.0), (0.0, 50.0)]), TOOL_RADIUS_MM);
+        let (start, _) = ends(&up[0]);
+        assert!(start.distance_to(Point::new(-TOOL_RADIUS_MM, 0.0)) <= TOL);
+    }
+
+    /// #207: on the outside of a turn the offset rounds the corner with
+    /// an arc about the vertex, as a closed offset does; on the inside the
+    /// two offset edges are trimmed where they cross. Either way every
+    /// point of the result keeps the distance from the path.
+    #[test]
+    fn open_offset_rounds_outer_turns_and_trims_inner_ones() {
+        // Turns left at (50, 0): left is the inside of the turn.
+        let l_path = open(&[(0.0, 0.0), (50.0, 0.0), (50.0, 50.0)]);
+        let inner = offset_open(&l_path, TOOL_RADIUS_MM);
+        assert_eq!(inner.len(), 1, "{inner:?}");
+        let corner = Point::new(50.0 - TOOL_RADIUS_MM, TOOL_RADIUS_MM);
+        assert!(
+            inner[0]
+                .vertices()
+                .iter()
+                .any(|v| v.point().distance_to(corner) <= TOL),
+            "trimmed at {corner:?}: {inner:?}"
+        );
+        assert!(inner[0].segments().all(|s| s.is_line()));
+        let outer = offset_open(&l_path, -TOOL_RADIUS_MM);
+        assert_eq!(outer.len(), 1, "{outer:?}");
+        assert_eq!(outer[0].segments().filter(|s| !s.is_line()).count(), 1);
+        let (start, end) = ends(&outer[0]);
+        assert!(start.distance_to(Point::new(0.0, -TOOL_RADIUS_MM)) <= TOL);
+        assert!(end.distance_to(Point::new(50.0 + TOOL_RADIUS_MM, 50.0)) <= TOL);
+        for piece in inner.iter().chain(&outer) {
+            for s in piece.segments() {
+                for k in 0..=8 {
+                    let (p, _) = s.point_at(s.length_mm() * f64::from(k) / 8.0).unwrap();
+                    let d = l_path
+                        .segments()
+                        .map(|t| crate::point_segment_distance_mm(t, p))
+                        .fold(f64::INFINITY, f64::min);
+                    assert!(d >= TOOL_RADIUS_MM - TOL, "{p:?} is {d} from the path");
+                }
+            }
+        }
+    }
+
+    /// #207: an arc whose radius is less than the offset on the side its
+    /// centre lies on collapses: nothing of the path is left to cut.
+    #[test]
+    fn open_offset_of_a_tight_arc_toward_its_centre_vanishes() {
+        // A half circle of radius 2 from (2, 0) to (−2, 0) counter-clockwise
+        // round the origin: its centre is on its left.
+        let arc = Polyline::new(
+            vec![Vertex::new(2.0, 0.0, 1.0), Vertex::line(-2.0, 0.0)],
+            false,
+        );
+        assert!(offset_open(&arc, TOOL_RADIUS_MM).is_empty());
+        let grown = offset_open(&arc, -TOOL_RADIUS_MM);
+        assert_eq!(grown.len(), 1);
+        assert_approx_eq!(
+            grown[0].length_mm(),
+            std::f64::consts::PI * (2.0 + TOOL_RADIUS_MM),
+            1e-6
+        );
     }
 
     #[test]

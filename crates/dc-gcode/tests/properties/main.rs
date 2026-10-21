@@ -59,8 +59,9 @@ fn config(cases: u32) -> ProptestConfig {
 
 /// Generator errors a valid project may still get, because they depend on
 /// how the shapes and the tool meet: the cutter would leave the stock, a
-/// band between two lines is narrower than the tool, or an On line part is
-/// nowhere as wide as the tool (#223). Any other error from a project that
+/// band between two lines is narrower than the tool, an On line part is
+/// nowhere as wide as the tool (#223), or a Left or Right cut reaches what
+/// a line keeps (#207). Any other error from a project that
 /// validates is a defect.
 fn rejects_drawing(error: &CamError) -> bool {
     matches!(
@@ -68,6 +69,7 @@ fn rejects_drawing(error: &CamError) -> bool {
         CamError::OffStock { .. }
             | CamError::BandNarrowerThanTool { .. }
             | CamError::PartNarrowerThanTool { .. }
+            | CamError::CutsIntoKeptSide { .. }
     )
 }
 
@@ -129,6 +131,16 @@ proptest! {
     /// corner relief and machining order.
     #[test]
     fn random_valid_profiles_never_panic_and_pass_safety(project in projects::profile_project()) {
+        exports_safely(&project)?;
+    }
+
+    /// Left and Right (#207): open paths with arcs offset to either side,
+    /// any direction, depth, step-down, tabs, ramp, lead and corner relief
+    /// (both warned), beside closed outlines it skips.
+    #[test]
+    fn random_valid_left_right_profiles_never_panic_and_pass_safety(
+        project in projects::open_side_profile_project()
+    ) {
         exports_safely(&project)?;
     }
 

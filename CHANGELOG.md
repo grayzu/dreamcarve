@@ -51,6 +51,16 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 - **On line Profile of open paths.** An open path can now be cut On line, with
   ramps and tabs, as VCarve's Profile "On" does ([#175]). Inside and Outside still
   skip open paths.
+- **Left and Right Profile of open paths; project format version 10.** A
+  Profile with `side` `"left"` or `"right"` cuts beside an open path, one bit
+  radius to its left or right looking from its first vertex to its last, as
+  VCarve's Profile "to the Left" and "to the Right" of an open vector do
+  ([#207]). The cut ends square at the path's ends, ramps along its own path,
+  takes tabs, and has no lead or corner relief. A closed shape in such an
+  operation is skipped with `side_needs_open_path`, and a cut that would cross
+  another of its lines or reach the part side of one stops the export. A
+  version 9 file loads unchanged; older DreamCarve versions cannot read
+  version 10 files.
 - **One program with tool changes, or one per tool.** Set your default once in
   the user config file (`config.toml`, `[export] tool_change_mode`), which
   `init` and `export --post` copy into new projects. Override it per export with
@@ -255,5 +265,6 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#227]: https://github.com/grayzu/dreamcarve/issues/227
 [#229]: https://github.com/grayzu/dreamcarve/issues/229
 [#233]: https://github.com/grayzu/dreamcarve/issues/233
+[#207]: https://github.com/grayzu/dreamcarve/issues/207
 [#242]: https://github.com/grayzu/dreamcarve/issues/242
 [#269]: https://github.com/grayzu/dreamcarve/issues/269

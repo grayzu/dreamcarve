@@ -29,7 +29,10 @@
 //! every other shape, and with itself (#224): where two of its stretches
 //! far apart along it come closer than the radius, as in a tight spiral or
 //! a hairpin, it warns as two separate paths there would. Engrave takes no part: it cuts every line as drawn,
-//! so lines that cross or meet are the design, not shapes too close.
+//! so lines that cross or meet are the design, not shapes too close. Nor
+//! does a Left or Right Profile (#207): a cut of one that comes within the
+//! radius of another line is `generate_profile`'s error, since the line's
+//! other side is the part.
 
 use crate::error::ShapeRef;
 use crate::profile::MEETING_REACH_DIAMETERS;
@@ -174,7 +177,7 @@ fn boxes_within(a: Rect, b: Rect, reach_mm: f64) -> bool {
 /// tools run between them on Outside, half of each on the line.
 fn needed_gap_mm(side: Side, diameter_mm: f64) -> f64 {
     match side {
-        Side::Outside | Side::Inside => diameter_mm,
+        Side::Outside | Side::Inside | Side::Left | Side::Right => diameter_mm,
         Side::OnLine => diameter_mm / 2.0,
     }
 }
