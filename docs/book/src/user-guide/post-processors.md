@@ -3,14 +3,21 @@
 Controllers read slightly different G-code. A **post-processor** is the
 definition of one controller's dialect: how comments are written, what goes
 at the start and end of a program, and how the spindle and tool changes are
-handled. DreamCarve bundles two:
+handled. DreamCarve bundles six:
 
 ```text
-grblhal  grblHAL
-grbl     GRBL 1.1
+grblhal   grblHAL
+grbl      GRBL 1.1
+linuxcnc  LinuxCNC
+mach3     Mach3
+uccnc     UCCNC
+generic   Generic RS274/NGC
 ```
 
-(`dreamcarve posts` prints this list.)
+(`dreamcarve posts` prints this list.) Every line each one writes was
+checked against that controller's own documentation or source code; see
+[Controllers compared](#controllers-compared). The motion is the same on
+all six: only the dialect lines differ.
 
 ## In the project
 
@@ -177,7 +184,7 @@ The choice is a machine setting, `tool_change_mode` in `post_processor`:
 | Value | Export of more than one tool |
 | --- | --- |
 | `"separate_programs"` | One program per tool run. The default, on every controller. |
-| `"m6"` | One program that stops with `T<n> M6` at each tool change. grblHAL only; see the next section. |
+| `"m6"` | One program that stops with `T<n> M6` at each tool change. grblHAL only; see the next section. On every other post-processor it is an error. |
 
 `--post <id>` resets the settings to the definition's defaults, with your
 own default on top (next paragraph). With no config file that is
@@ -192,8 +199,8 @@ tool_change_mode = "m6"
 ```
 
 `init` and `export --post` then write `"m6"` into every new
-`post_processor` block. On a post-processor without `M6` (GRBL) that cannot
-apply, and both commands stop with an error naming the config file rather
+`post_processor` block. On a post-processor without `M6` (every one but
+grblHAL) that cannot apply, and both commands stop with an error naming the config file rather
 than write a project that `check` would reject. Nothing else reads the
 config: a project exports the same wherever it is opened.
 
@@ -203,7 +210,7 @@ changing the project file:
 | Flag | Export of more than one tool |
 | --- | --- |
 | `--programs-per-tool` | One program per tool run, whatever the project says. |
-| `--one-program` | One program with `T<n> M6` tool changes, whatever the project says. On a post-processor without `M6` (GRBL) it is an error, and nothing is written. |
+| `--one-program` | One program with `T<n> M6` tool changes, whatever the project says. On a post-processor without `M6` (every one but grblHAL) it is an error, and nothing is written. |
 
 They contradict each other, so giving both is a usage error. The flags are
 not saved: to change the project, edit `tool_change_mode`.
@@ -219,7 +226,9 @@ in `post_processor`:
 ```
 
 GRBL has no `M6`, so `"m6"` with the GRBL definition is an error: `check`
-reports it at the field, and export writes nothing.
+reports it at the field, and export writes nothing. The same holds for
+LinuxCNC, Mach3, UCCNC and generic, for the reasons in [Controllers
+compared](#controllers-compared).
 
 `export` then writes one program and adds:
 
@@ -332,6 +341,76 @@ The motion is identical. Only these differ:
 | Messages | Shows `(MSG, text)` comments to the sender as `[MSG:text]` | Has no messages: comments are removed before the line is run |
 | More than one tool | One program per tool run; with `"m6"`, one program with `T<n> M6`, after `M61 Q<n>` at the start | One program per tool run; `"m6"` is an error |
 
+## Controllers compared
+
+Each definition was checked line by line against the controller's own
+documentation or source, and where a document says nothing or leaves it
+to a setting, DreamCarve takes the safe choice: plain moves rather than a
+canned cycle, and no `M6`. The sources, line by line, are in
+`crates/dc-project/src/definitions/README.md`.
+
+| | LinuxCNC | Mach3 | UCCNC | Generic |
+| --- | --- | --- | --- | --- |
+| Checked against | LinuxCNC 2.9 G-code and M-code references, and its source | *Using Mach3Mill* 1.84 and the Mach3 configuration guide | UCCNC user's manual 1.0047 | NIST RS274/NGC version 3 (NISTIR 6556) |
+| Extension | `.ngc` | `.tap` | `.txt` | `.nc` |
+| Header | `G90 G17 G40 G49 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G49 G80`, `G91.1`, units, `G54` | `G90 G17 G40 G49 G80 G94`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
+| Line numbers | No | Every line, `N10` up in tens | No | No |
+| Spin-up wait | `G4 P3.000` (seconds) | `G4 P3.000` (seconds) | `G4 P3000` (milliseconds) | `G4 P3` (seconds) |
+| Numbers | `10.500` | `10.500` | `10.500` | `10.5` |
+| End | `M5`, `M2` | `M5`, `M30` | `M5`, `M30` | `M5`, `M30` |
+| Canned cycles | `G81`, `G82` | `G81`, `G82` | None | None |
+| More than one tool | One program per tool run; `"m6"` is an error | One program per tool run; `"m6"` is an error | One program per tool run; `"m6"` is an error | One program per tool run; `"m6"` is an error |
+
+`G40`, `G49` and `G80` cancel cutter compensation, tool length offsets and
+canned cycles, in case an earlier program left one on. `G91.1` makes arc
+centres (`I`, `J`) relative to the arc's start, which is how DreamCarve
+writes them. On Mach3 this is a setting you can change, so the header sets
+it.
+
+**Why no peck cycles.** A `G83` goes back into the hole to just above the
+last depth, and a `G73` lifts a little between pecks. How far is not a
+word in the program. LinuxCNC 2.9 fixes it at 0.254 mm, but LinuxCNC 2.10
+makes it a setting with a different default. Mach3 and UCCNC make the
+`G73` lift a setting, and Mach3's `G83` says only "backed off a bit".
+DreamCarve checks the moves a cycle makes before it writes one, so where
+the distance is unknown it writes the pecks as plain moves, with the
+warning `canned_cycle_expanded`. UCCNC's manual describes its `G81` with
+no rapid down to the retract height, unlike the others, so UCCNC gets no
+canned cycles at all.
+
+**Why no `M6`.** DreamCarve's one-program tool change stops at `M6` and
+asks you to fit the bit and set Z zero. None of these controllers
+documents a stop where you can do that:
+
+- **LinuxCNC.** With a manual tool change set up, `M6` shows a dialog that
+  waits for Continue, but LinuxCNC handles a new bit's length with a tool
+  table and `G43`, which DreamCarve does not write. Without one set up,
+  `M6` does not stop at all.
+- **Mach3 and UCCNC.** What `M6` does is a setting: ignore it, stop and
+  wait for cycle start, or run a macro. With "ignore", the program would
+  cut with the old bit.
+- **Generic.** A basic controller's `M6` is unknown.
+
+Export each tool run as its own program, the default.
+
+**Before your first cut**, check these on the controller:
+
+- **Mach3.** In Config > Logic, "G04 Dwell param in ms" is unchecked, or
+  the 3 s spin-up wait is 3 ms. The IJ mode may be either; the header
+  sets it. Run the program in Mach3's simulation first: there is no
+  offline Mach3 interpreter to test against.
+- **UCCNC.** UCCNC has no `G20`/`G21`: it reads every number in the
+  units of its profile. The program has no units word, and `export` warns
+  `units_set_by_controller` with the program's units. Use a profile in
+  those units. Leave "Measure dwell in seconds instead of msec" unticked,
+  or the 3 s wait becomes 3000 s. UCCNC does not show `(MSG, ...)` text at
+  a pause; `export` lists every pause and what to do there.
+- **LinuxCNC.** If your configuration has a spindle-at-speed signal,
+  LinuxCNC waits for it, and the 3 s wait comes on top. Programs end with
+  `M2`.
+- **Generic.** Check that your controller takes `G94`, `G54` and `G4 P`
+  in seconds.
+
 ## Units
 
 `display_units` in the project chooses the program's units: `"mm"` writes
@@ -339,25 +418,31 @@ The motion is identical. Only these differ:
 minute). Choose it with `init --units inch`, or change it in the file. The
 project's own values stay in millimetres.
 
+UCCNC has no units words. Its programs carry none, and run in the units
+of the UCCNC profile, so `export` warns `units_set_by_controller` with the
+program's units.
+
 ## Settings
 
 The whole `post_processor` block, in the order DreamCarve writes it:
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Which bundled post-processor: `"grblhal"` or `"grbl"`. Change it with `export --post`, which also sets the version and resets the settings. |
+| `id` | Which bundled post-processor: `"grblhal"`, `"grbl"`, `"linuxcnc"`, `"mach3"`, `"uccnc"` or `"generic"`. Change it with `export --post`, which also sets the version and resets the settings. |
 | `definition_version` | Which version of it. See [Versions](#versions). |
-| `file_extension` | The program's extension, without the dot. 1 to 8 letters or digits, and not `dcv`. Default `nc`. |
+| `file_extension` | The program's extension, without the dot. 1 to 8 letters or digits, and not `dcv`. Default `nc`; `ngc` on LinuxCNC, `tap` on Mach3, `txt` on UCCNC. |
 | `spindle_control` | `"automatic"` (default) or `"manual"`. See below. |
 | `spindle_on_dwell_s` | Seconds to wait after the spindle starts. Default 3. Raise it if your spindle or VFD takes longer to reach speed; 0 means no wait. |
 | `tool_change_mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). The [user config file](configuration.md) can change the default new projects get. |
 | `decimal_places` | Digits after the point: `mm` at least 2, `inch` at least 3. Default 3 and 4. |
-| `use_canned_cycles` | `false` (default) or `true`: whether a Drill operation is written as the controller's drilling cycles (`G81`, `G82`, `G83`, `G73`) where the post-processor has them. See [Canned cycles](#canned-cycles). Neither grblHAL nor GRBL has them, so `true` is an error on both; the holes are drilled the same either way. |
+| `use_canned_cycles` | `false` (default) or `true`: whether a Drill operation is written as the controller's drilling cycles (`G81`, `G82`, `G83`, `G73`) where the post-processor has them. See [Canned cycles](#canned-cycles). LinuxCNC and Mach3 have `G81` and `G82`; on grblHAL, GRBL, UCCNC and generic `true` is an error. The holes are drilled the same either way. |
 
 Names that DreamCarve puts in comments (the project, tool and operation
-names) are reduced to plain ASCII without `( ) ; ! ? ~`. Both controllers
+names) are reduced to plain ASCII without `( ) ; ! ? ~`. GRBL and grblHAL
 act on `!`, `?` and `~` immediately, even inside a comment, and `)` would
-end a comment early.
+end a comment early. On LinuxCNC, Mach3, UCCNC and generic a name never
+starts a comment (`( Project: coaster )`), because LinuxCNC acts on a
+comment that starts with a word such as `MSG,` or `LOGOPEN,`.
 
 ## Canned cycles
 
@@ -365,9 +450,12 @@ A canned cycle drills a whole hole in one line: `G81` (drill), `G82`
 (drill and dwell), `G83` (peck, retracting fully), `G73` (peck, breaking
 the chip). DreamCarve writes them only when you ask, with
 `"use_canned_cycles": true`, and only where the post-processor's
-definition lists them in its `canned_cycles` block. grblHAL and GRBL have
-none, so on both a Drill is always plain `G0`/`G1` moves and `true` is an
-error at `check`. Controllers that have them are added in a later release.
+definition lists them in its `canned_cycles` block.
+
+| Post-processor | Canned cycles |
+| --- | --- |
+| LinuxCNC, Mach3 | `G81` (simple) and `G82` (simple with a dwell). Peck Drills are plain moves, with `canned_cycle_expanded` ([why](#controllers-compared)). |
+| grblHAL, GRBL, UCCNC, generic | None: a Drill is always plain `G0`/`G1` moves, and `true` is an error at `check`. |
 
 What is written, and when DreamCarve writes plain moves instead, is in
 [Drill: canned cycles](drill.md#canned-cycles). In short:
@@ -464,9 +552,11 @@ speed.
 
 ## Not yet checked on a real machine
 
-The bundled definitions were checked against the GRBL and grblHAL source and
-documentation, not yet on a running machine. Before your first cut, check
-on your controller:
+The bundled definitions were checked against each controller's source or
+documentation, not yet on a running machine. For LinuxCNC, Mach3, UCCNC
+and generic, see the checks under [Controllers
+compared](#controllers-compared). On GRBL and grblHAL, before your first
+cut, check on your controller:
 
 - Laser mode is off (`$32=0`). Laser mode is for lasers and changes how the
   controller treats spindle commands.
