@@ -76,7 +76,10 @@ jobs:
           mdbook-version: latest
       - name: Build book
         run: mdbook build docs/book
+      # Rustdoc warnings (broken links, stray HTML) fail the job (issue #162).
       - name: Build API docs
+        env:
+          RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace
       - name: Assemble site
         run: |
@@ -84,6 +87,12 @@ jobs:
           cp -r docs/book/book/. site/
           mkdir -p site/api
           cp -r target/doc/. site/api/
+      # Most of the dreamcarve binary's docs are on private items. Checked
+      # after the site is assembled so private pages are not published.
+      - name: API docs of private items have no warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --workspace --document-private-items
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         if: github.ref == 'refs/heads/main'
         with:

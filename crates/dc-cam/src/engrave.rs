@@ -12,7 +12,7 @@
 //!
 //! Upstream's direct mode retracts to safe Z after every level of every
 //! fragment. Here each path at each pass is one [`CutBlock`] and
-//! [`crate::sequence`] writes the links, so consecutive passes of a closed
+//! [`crate::sequence`](fn@crate::sequence) writes the links, so consecutive passes of a closed
 //! path, and of an open path under `alternate_direction`, plunge straight
 //! from the previous pass (functional spec, capability 15; decision D9).
 //! Depth is measured from the stock top and bounded by S1 with the

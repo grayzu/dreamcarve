@@ -147,7 +147,7 @@ impl SubArc {
 /// fitted circle. Runs are maximal sequences of consecutive straight cuts
 /// at one Z with one feed, started from a known position; rapids,
 /// plunges, Z-changing moves, and arcs deeper than the tolerance pass
-/// through unchanged and end runs. Fewer than [`MIN_RUN_POINTS`] points
+/// through unchanged and end runs. Fewer than [`MIN_RUN_CHORDS`] + 1 points
 /// stay as they are.
 #[must_use]
 pub fn fit(moves: &[Move], tolerance_mm: f64) -> Vec<Fitted> {
@@ -601,7 +601,7 @@ fn radius_disagreement(start: Point, target: Point, i: f64, j: f64) -> f64 {
 /// controller will accept them, by reproducing its arithmetic on the
 /// formatted values. The emitter writes exactly these words.
 ///
-/// With I/J, the offsets are snapped within [`SNAP_SEARCH_STEPS`] quanta to
+/// With I/J, the offsets are snapped within two output quanta to
 /// the pair that agrees best; accepted within
 /// [`ARC_RADIUS_CONSISTENCY_MM`], rejected over [`ARC_RADIUS_GROSS_MM`],
 /// else within [`ARC_RADIUS_RELATIVE`] of the radius. With R, a chord/2

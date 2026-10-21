@@ -18,7 +18,7 @@
 //! units; a dwell is kept as a [`crate::MoveKind::Dwell`] move when the cycle is
 //! written as plain moves (upstream loses it); holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
-//! origin, by [`crate::sequence`]; there is no helical bore, countersink or
+//! origin, by [`crate::sequence`](fn@crate::sequence); there is no helical bore, countersink or
 //! clamp check. Nothing here depends on Y-up or Y-down: a drill moves only
 //! in Z at each centre, and distances are symmetric under the flip.
 
@@ -109,7 +109,7 @@ pub struct DrillToolpath {
 /// - it ends with a rapid to safe Z, where the `G98` return of a canned
 ///   cycle puts it.
 ///
-/// Holes are visited by [`crate::sequence`]: nearest neighbour from the
+/// Holes are visited by [`crate::sequence`](fn@crate::sequence): nearest neighbour from the
 /// first hole in drawing order, ties by drawing order, linked at safe Z.
 /// A peck at least as deep as the hole drills it in one plunge with
 /// [`WarningCode::DrillPeckDeeperThanHole`].

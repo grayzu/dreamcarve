@@ -148,7 +148,7 @@ pub struct ExportArgs {
     /// The project's own id upgrades it to the latest version.
     #[arg(long, value_name = "ID")]
     pub post: Option<String>,
-    /// Write one program with T<n> M6 tool changes, whatever the project's
+    /// Write one program with `T<n> M6` tool changes, whatever the project's
     /// tool_change_mode says. Needs a post-processor with M6 (grblHAL).
     /// Not saved to the project.
     #[arg(long, conflicts_with = "programs_per_tool")]

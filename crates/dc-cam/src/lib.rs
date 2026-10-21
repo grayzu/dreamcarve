@@ -5,7 +5,7 @@
 //! operation to a toolpath plus warnings (`docs/specs/phase-1/design.md`,
 //! "dc-cam"). Phase 1 adds Profile, with holding tabs. Phase 2 moves every
 //! generator onto cut blocks ([`CutBlock`]) that one shared step,
-//! [`sequence`], orders and links (`docs/specs/phase-2/design.md`,
+//! [`sequence`](fn@sequence), orders and links (`docs/specs/phase-2/design.md`,
 //! "Algorithms → Sequence"), and adds [`order::check`], which warns when the
 //! order of operations cuts inside a part an earlier one freed. Phase 2
 //! also adds Drill ([`generate_drill`]).

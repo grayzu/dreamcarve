@@ -5,7 +5,7 @@
 //!
 //! Defined by `docs/specs/phase-1/design.md`, "Data model → dc-project".
 //! A [`Project`] is saved with [`save`] and read back with [`load`], which
-//! migrates older files to [`CURRENT_VERSION`] and runs [`validate`].
+//! migrates older files to [`CURRENT_VERSION`] and runs [`validate`](fn@validate).
 
 mod history;
 mod ids;

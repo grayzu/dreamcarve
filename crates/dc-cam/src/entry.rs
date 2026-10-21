@@ -1222,7 +1222,7 @@ pub(crate) fn first_descent_outside(
 }
 
 /// `toolpath` with every descent move ([`is_descent_move`]) made a rapid
-/// to the same point, so [`crate::footprint`] sweeps only the rest; the
+/// to the same point, so [`crate::footprint`](fn@crate::footprint) sweeps only the rest; the
 /// descents are checked by [`first_descent_outside`].
 pub(crate) fn without_descents(toolpath: &Toolpath) -> Toolpath {
     let mut moves = toolpath.moves.clone();
