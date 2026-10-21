@@ -231,6 +231,15 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   line, and refuses `G51` and `G68` on every definition. `init` writes
   version 3; a version 1 or 2 project keeps its bytes until
   `export --post <id>`.
+- **grblHAL definition version 4** cancels axis scaling (`G50`) in the
+  header, after `G40`, and in the setup written again after every pause and
+  tool change ([#316]). grblHAL keeps a `G51` scale past the end of a
+  program too. The safety pass accepts this `G50` under the same rule as
+  Mach3's and UCCNC's. grblHAL has no rotation, so there is no `G69`. GRBL
+  has no scaling and stays at version 3. `init` writes version 4; a version
+  1, 2 or 3 project keeps its bytes until `export --post grblhal`. grblHAL's
+  own `G50` leaves a scale whose X factor is 1 (such as `G51 Z-1`) in
+  force, so soft-reset after any `G51` and check `$G`.
 - **On line Profile of an open path starts where VCarve's does:** conventional
   at the first vertex, climb at the last ([#242]). Tabs are still placed from the
   first vertex as drawn.
@@ -415,6 +424,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#314]: https://github.com/grayzu/dreamcarve/issues/314
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#312]: https://github.com/grayzu/dreamcarve/issues/312
+[#316]: https://github.com/grayzu/dreamcarve/issues/316
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282

@@ -315,10 +315,11 @@ fn grblhal_and_grbl_differ_only_in_dialect() {
         let (program, _) = crate::emit(&project, &ops, "2026-10-15").unwrap();
         texts.push(program.text);
     }
+    // grblHAL's header also cancels scaling, which GRBL lacks (#316).
     let strip = |text: &str| -> Vec<String> {
         text.lines()
             .map(|l| words(l).join(" "))
-            .filter(|l| !l.is_empty() && l != "G54")
+            .filter(|l| !l.is_empty() && l != "G54" && l != "G50")
             .collect()
     };
     let (hal, grbl) = (strip(&texts[0]), strip(&texts[1]));
@@ -687,10 +688,9 @@ fn grbl_v2_project_comment_opens_with_fixed_text() {
 /// (`definitions/README.md`, "Header modal state").
 #[test]
 fn grbl_v3_header_cancels_modes() {
+    assert_eq!(latest_definition("grbl").unwrap().version, 3);
     for id in ["grblhal", "grbl"] {
-        let latest = latest_definition(id).unwrap();
-        assert_eq!(latest.version, 3, "{id}");
-        let v3 = latest.post_processor();
+        let v3 = bundled_definition(id, 3).unwrap().post_processor();
         let mut v2 = bundled_definition(id, 2).unwrap().post_processor().clone();
         let g94 = v2
             .program
@@ -728,7 +728,7 @@ fn no_header_cancels_tool_length_offset() {
             }
         }
     }
-    assert!(checked >= 6, "grblHAL and GRBL, v1 to v3");
+    assert!(checked >= 7, "grblHAL v1 to v4 and GRBL v1 to v3");
 }
 
 /// #286: the user sets Z zero with the bit in the spindle, and on
@@ -822,10 +822,12 @@ fn uccnc_v3_header_cancels_scaling_and_rotation() {
     assert_v3_header_cancels_scaling_and_rotation("uccnc");
 }
 
-/// #312: LinuxCNC has no `G50`, `G51`, `G68` or `G69` (rs274ngc reports
-/// "Unknown g code used"), RS274/NGC has none of them, and grblHAL and
-/// GRBL have none either, so no version of those definitions writes one.
-/// Before version 3, Mach3 and UCCNC had none.
+/// #312, #316: LinuxCNC has no `G50`, `G51`, `G68` or `G69` (rs274ngc
+/// reports "Unknown g code used"), RS274/NGC has none of them, and GRBL
+/// has none either, so no version of those definitions writes one.
+/// grblHAL has `G50` and `G51` and no rotation, so its version 4 may write
+/// `G50` and no other of the four. Mach3 and UCCNC had none before
+/// version 3, and grblHAL none before version 4.
 #[test]
 fn scaling_and_rotation_words_only_where_supported() {
     let mut checked = 0;
@@ -834,18 +836,64 @@ fn scaling_and_rotation_words_only_where_supported() {
         if supported {
             continue;
         }
+        let allowed: &[&str] = if definition.id == "grblhal" && definition.version >= 4 {
+            &["G50"]
+        } else {
+            &[]
+        };
         checked += 1;
         for line in every_line(definition.post_processor()) {
             for word in words(&line) {
                 assert!(
-                    !SCALE_ROTATE_CODES.contains(&word.as_str()),
+                    !SCALE_ROTATE_CODES.contains(&word.as_str())
+                        || allowed.contains(&word.as_str()),
                     "{}: {line}",
                     definition.path
                 );
             }
         }
     }
-    assert!(checked >= 11, "{checked}");
+    assert!(checked >= 12, "{checked}");
+    let v4 = bundled_definition("grblhal", 4).unwrap().post_processor();
+    assert!(
+        every_line(v4).iter().any(|l| words(l) == ["G50"]),
+        "grblhal v4 writes G50"
+    );
+}
+
+/// #316: grblHAL keeps a `G51` scale until `G50`, a soft reset, or a
+/// `G28`/`G30`, and `M2`/`M30` leave it (`definitions/README.md`,
+/// "Scaling on grblHAL"). So version 4 is version 3 with `G50` on a line
+/// of its own right after `G40`, and nothing else changed. `G50` comes
+/// after `G40` because on a build with cutter compensation, `G50` fails
+/// while compensation is on.
+#[test]
+fn grblhal_v4_header_cancels_scaling() {
+    let latest = latest_definition("grblhal").unwrap();
+    assert_eq!(latest.version, 4);
+    let v4 = latest.post_processor();
+    let mut v3 = bundled_definition("grblhal", 3)
+        .unwrap()
+        .post_processor()
+        .clone();
+    let g40 = v3
+        .program
+        .header
+        .iter()
+        .position(|l| l == "G40")
+        .expect("grblhal v3 has a G40 line");
+    v3.program.header.insert(g40 + 1, "G50".to_owned());
+    assert_eq!(&v3, v4, "grblhal v4 is v3 with G50 after G40");
+    // No line of v4 sets a scale, and none rotates: grblHAL has no
+    // `G68` or `G69`.
+    for line in every_line(v4) {
+        for word in words(&line) {
+            assert!(
+                !["G51", "G68", "G69"].contains(&word.as_str()),
+                "grblhal v4: {line}"
+            );
+        }
+    }
 }
 
 /// Design spec, "Canned cycles": a definition has a cycle's command only

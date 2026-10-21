@@ -102,9 +102,12 @@ intent. The rules are in the phase 1 and phase 2 functional specs
       compensation) after the program ends, the header cancels it with the
       code the documentation gives, on a line the emitter can write again
       after each stop, and the safety pass accepts that code only from
-      this definition's header (#279, #312; definitions README, "Header
-      modal state", "Scaling and rotation"). Never write a code the
-      controller does not document.
+      this definition's header (#279, #312, #316; definitions README,
+      "Header modal state", "Scaling and rotation", "Scaling on grblHAL").
+      Never write a code the controller does not document. Where the
+      source is the reference, read what the cancel code actually clears,
+      not only that it is accepted: grblHAL's `G50` misses a scale that
+      leaves X at 1.
 - [ ] **Pauses.** A manual-spindle or tool-change pause is `M0`, with a
       message only in a syntax the controller documents; `export` lists
       every pause either way.

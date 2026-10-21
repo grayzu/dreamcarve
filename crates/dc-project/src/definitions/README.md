@@ -23,6 +23,8 @@ each without `G49` in the header; see "Tool length offset at touch-off"
 below (#286).
 `mach3/v3.json` and `uccnc/v3.json` are version 2 of each with two header
 lines added, `G50` and `G69`; see "Scaling and rotation" below (#312).
+`grblhal/v4.json` is version 3 with one header line added, `G50`; see
+"Scaling on grblHAL" below (#316).
 
 grblHAL and GRBL are checked under "Verification" below. LinuxCNC, Mach3,
 UCCNC and generic (slice 17, #164) each have a section of their own, with
@@ -102,6 +104,8 @@ These files were modified from the upstream copies (Apache-2.0 §4(b)):
   (#286; "Tool length offset at touch-off").
 - Version 3 of Mach3 and UCCNC adds `G50` and `G69` to the header (#312;
   "Scaling and rotation").
+- Version 4 of grblHAL adds `G50` to the header (#316; "Scaling on
+  grblHAL").
 - The safety and correctness changes listed under "Verification" below,
   and, for the four later files, under "Changed from PureCutCNC" in each
   one's section.
@@ -257,6 +261,7 @@ and the Mach3, UCCNC and NIST documents of the slice 17 sections below
 | `grblhal/v1.json` | `G53` | grblHAL `gcode.c` 1543-1545: `G53` is a non-modal command of modal group 0. 3317-3325: it needs `G0` or `G1` in force (`Status_GcodeG53InvalidMotionMode`) and fails with cutter compensation on. 3254-3277: its axis words are machine positions, with no work, `G92` or tool length offset added (`gc_get_block_offset` is skipped). 2831: in `G20` the axis words are inches, converted to mm. |
 | `grblhal/v2.json` | `G53` | As `grblhal/v1.json`. |
 | `grblhal/v3.json` | `G53` | As `grblhal/v1.json`. Its header's `G40` also keeps cutter compensation off, which `G53` needs. |
+| `grblhal/v4.json` | `G53` | As `grblhal/v3.json`. Its header's `G50` changes no offset and moves nothing ("Scaling on grblHAL"). |
 | `grbl/v1.json` | `G53` | GRBL `grbl/gcode.c` 154-156: `G53` is a non-modal command of modal group 0. 635-640: it needs `G0` or `G1` in force (`STATUS_GCODE_G53_INVALID_MOTION_MODE`). 592-597: its axis words get no work, `G92` or tool length offset. 474-478: in `G20` the axis words are inches, converted to mm. |
 | `grbl/v2.json` | `G53` | As `grbl/v1.json`. |
 | `grbl/v3.json` | `G53` | As `grbl/v1.json`. |
@@ -796,17 +801,89 @@ Not added elsewhere:
   group 11, Mach3 style by default (`MACH3_SCALING 1`, 50-51; the scaling
   itself 2740-2800, applied to axis words 2802-2816). Program end does not
   reset it (5021-5053 list what it resets); a soft reset (`gc_init`, 822)
-  and `G28`/`G30` (4644) do. So grblHAL has the same hazard. It is out of
-  this change, which is Mach3 and UCCNC (#312), and is tracked in #316;
-  `G68` is not a grblHAL code (the G-word `default`, 1781).
+  and `G28`/`G30` (4644) do. So grblHAL has the same hazard. It was out of
+  this change, which is Mach3 and UCCNC (#312); version 4 of grblHAL
+  writes `G50` (#316, "Scaling on grblHAL" below). `G68` is not a grblHAL
+  code (the G-word `default`, 1781).
 
 `post::mach3_v3_header_cancels_scaling_and_rotation` and
 `post::uccnc_v3_header_cancels_scaling_and_rotation` check that version 3
 is version 2 with `G50`, `G69` after the modal line;
 `post::scaling_and_rotation_words_only_where_supported` checks that no
-other version has any of the four. A project that names version 2 exports
-its old bytes (`cli::mach3_v2_project_still_exports_byte_identically`,
+other version has any of the four, but for grblHAL version 4's `G50`. A
+project that names version 2 exports its old bytes
+(`cli::mach3_v2_project_still_exports_byte_identically`,
 `cli::uccnc_v2_project_still_exports_byte_identically`).
+
+## Scaling on grblHAL (`grblhal/v4.json`)
+
+grblHAL scales (`G51`) every axis word a program writes and keeps the
+scale until it is cancelled. Program end does not cancel it. A `G51 Z-1`
+typed in a sender's MDI box mirrors every Z of the next program, so a
+retract becomes a plunge. `G51 X2` doubles the part. Versions 1 to 3
+cancel nothing (#316). Version 4 is version 3 with one header line added
+right after `G40`: `G50`. It is a new version, not an edit, because it
+changes emitted bytes ("Versions" above). A project that names version 1,
+2 or 3 keeps it until the user runs `export --post grblhal`.
+
+Checked on 2026-10-21 against `grblHAL/core` at commit
+`4ec1ae44b857a70d2f9298344feac4b43ed0eb6b`, the commit "Tool changes"
+cites, which was still master that day. Line numbers are at that commit,
+and `gcode.c` is the file unless another is named. This is a reading of
+the source. No machine was run.
+
+| Question | grblHAL source | Decision |
+| --- | --- | --- |
+| Is `G50` there? | 1766-1770: `case 50: case 51:` sets `axis_command = AxisCommand_Scaling`, sets modal group 11 and sets `scaling_active = int_value == 51`. Neither the case nor the scaling step (2739-2800) is behind a build option: the `#if` blocks before the case close by 1751, and the next opens at 1772. `MACH3_SCALING` (50-51, default 1) only picks how `G51` reads its words (2749-2797). `G50` takes the same path either way: `set_scaling(&gc_block.modal, 1.0f)` (2798-2799). | Every build has it, so no opt-in version is needed. GRBL 1.1 lacks it (`grbl/gcode.c` 233, "Scaling and rotation"), so `grbl` stays at version 3. |
+| What does it change? | `set_scaling` (220-239) sets every axis factor to 1, the Mach3 origin to 0 (228-230) and `scaling_active` to false (233). It touches no work offset, `G92` offset or tool length offset. | Harmless. |
+| Does it move? | It takes the block's axis-command slot, so the line is no motion. A move runs only when `axis_command == AxisCommand_MotionMode` (4695). | Moves nothing. |
+| Does it take words? | It uses none. An axis word on its line fails in `G80` mode with `Status_GcodeAxisWordsExist` (3335-3340), and in any other mode is dropped, because an axis command is set (3983-3984). Any other value word fails with `Status_GcodeUnusedWords` (3986-3987). | Written alone on its line. The safety pass refuses it with any other word (#312's rule). |
+| Modal group, sharing a line | Group 11 (`gcode.h` 791, "[G50,G51] Scaling"). Only one per group per line (1789-1790), so it could sit on a line with `G90` or `G21`. But it sets `axis_command` without checking it (1767), while `G10`, `G28`, `G30`, `G92`, `G0`-`G3`, `G33`, `G38`, the canned cycles and `G43.1` refuse one already set (1536-1538, 1559-1616, 1682-1684). `G1 X5 G50` would drop the move, and `G50 G1 X5` would fail. | On a line of its own, not on a modal line. |
+| When does it fail? | With `CUTTER_COMP_ENABLE` (default `Off`, `config.h` 226-227) and compensation on, with `Status_CutterCompConflict` (2742-2745). | After `G40`, which turns compensation off ("Header modal state"). |
+| What resets a scale? | Program end does not: `M2`/`M30` reset motion, plane, distance, feed mode, cutter compensation, WCS, coolant, spindle and overrides (5021-5053). A soft reset does (`gc_init`, 822), and so do `G28`/`G30` (4644). | The program cancels it itself. |
+| Rotation | No `G68`/`G69`: the G-word switch has no case for them, and its `default` (1781) fails them with `Status_GcodeUnsupportedCommand`. | Not written. |
+
+**`G50` does not cancel every scale.** `set_scaling` assigns `changed`
+on each pass of its loop rather than OR-ing it (226). The loop counts
+down to the X axis, so the result says only whether X's factor changed.
+`G50` passes that result on as `scale_changed` (2799), and the parser
+copies the cleared factors into the machine's state only when
+`scale_changed` is set (4475-4482). So `G50` cancels a scale that
+includes X (`G51 X2`, `G51 X2 Y2 Z2`, `G51 X-1 Z-1`). It does nothing to
+one that leaves X at 1, such as `G51 Z-1` or `G51 Y-1`. grblHAL reports
+the scale state: `$G` ends with `G50`, or `G51:` and the scaled axes
+(`report.c` 816-821), and the real-time report has `|Sc:` and the
+scaled axes (`report.c` 1565-1568). A soft reset clears every factor,
+because `gc_init` calls `set_scaling` on the machine's state directly
+(822). So the post-processors chapter tells the user to soft-reset after
+any `G51` in MDI, and to check `$G`.
+
+Version 4 still writes `G50`. It clears every scale that touches X. It
+can do no harm: with no scale active it changes nothing, and it moves
+nothing. It also clears the rest once grblHAL fixes the loop. The
+alternatives were worse. `G51 X-1` before `G50` would force the copy,
+but it writes a scale. On a build with `MACH3_SCALING` 0, `G51 X-1`
+reads as a centre with no factor and fails (2767-2768). And if anything
+stopped between the two lines, X would be left mirrored. `G28` and `G30`
+also reset the scale, but they move the machine.
+
+The emitter writes the header's lines that only set modal state again
+after every stop that the program moves after (#55). So `G50` comes back
+after an `M6` and after a manual-spindle `M0`, after `G40` as in the
+header (`emit::setup_after_stop_repeats_g50_g69`). The safety pass accepts
+`G50` from a definition whose header writes it, here version 4. It
+accepts it only alone on its line, and only in the header or the setup
+after a stop (#312). It refuses `G69` on every grblHAL version, and `G51`
+on every definition (`safety::g50_g69_accepted`,
+`safety::grblhal_v4_g50_only_where_emit_writes_it`).
+
+`post::grblhal_v4_header_cancels_scaling` checks that version 4 is
+version 3 with `G50` after `G40`.
+`post::scaling_and_rotation_words_only_where_supported` checks that no
+other grblHAL or GRBL version has `G50`. A project that names version 3
+exports its old bytes (`cli::grblhal_v3_project_still_exports_byte_identically`,
+`tests/expected/coaster-grblhal-v3.nc`), and `export --post grblhal`
+adds only the `G50` line (`cli::grblhal_v3_project_upgrades_to_v4`).
 
 ## LinuxCNC (`linuxcnc/v1.json`, `linuxcnc/v2.json`)
 
