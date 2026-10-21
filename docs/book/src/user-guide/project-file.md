@@ -35,7 +35,7 @@ file, the line and the column of that value:
 
 ```text
 coaster.dcv:10:21: error: stock.thickness_mm is not set (mm)
-coaster.dcv:24:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:29:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
 ```
 
 Line 10, column 21 is where the value starts, here the `null` to replace.
@@ -57,14 +57,14 @@ names where it is, as keys and list positions counted from 0, and its line
 and column:
 
 ```text
-error: cannot load coaster.dcv: file does not match the project format at `operations[0].tabs.placement` (line 48, column 32): unknown field `bogus`, expected `count`
+error: cannot load coaster.dcv: file does not match the project format at `operations[0].tabs.placement` (line 53, column 32): unknown field `bogus`, expected `count`
 ```
 
 A missing field is reported at the object it belongs in, here
 `post_processor`:
 
 ```text
-error: cannot load coaster.dcv: file does not match the project format at `post_processor` (line 75, column 21): missing field `spindle_on_dwell_s`
+error: cannot load coaster.dcv: file does not match the project format at `post_processor` (line 80, column 21): missing field `spindle_on_dwell_s`
 ```
 
 ## Coordinates
@@ -89,13 +89,14 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `11`. |
+| `version` | Format version. This build writes `12`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
 | `arc_fit_tolerance_mm` | How far, at most, an arc written in place of a run of short straight moves may stray from their corners. `init` writes 0.01; `null` turns arc fitting off. See [Arc fitting](#arc-fitting). |
 | `stock` | The block of material. |
 | `origin` | Where work zero is on the stock. |
+| `heights` | The clearance, tool-change and park heights, each `null` until you set it. See [`heights`](#heights). |
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
 | `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
@@ -186,6 +187,29 @@ Work zero: the point you set as X0 Y0 Z0 on the machine.
 
 `z` is `"stock_top"` (the default) or `"stock_bottom"`. With
 `"stock_top"`, cutting moves have negative Z.
+
+## `heights`
+
+Where the program crosses between parts, changes tools and ends. `init`
+writes all three as `null`, and a project with all three `null` exports
+as it did before format version 12.
+
+```json
+"heights": {
+  "clearance_mm": 20.0,
+  "tool_change_machine_z_mm": -5.0,
+  "park": { "x_mm": 0.0, "y_mm": 0.0 }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `clearance_mm` | Millimetres above the stock top. Moves between parts and between operations, a tool change, and the end rise to it; moves between the passes of one part stay at the operation's `safe_z_mm`. At least every enabled operation's `safe_z_mm`, or `check` reports `clearance_below_safe_z`. `null`: each operation's `safe_z_mm`, as before. |
+| `tool_change_machine_z_mm` | Millimetres, machine coordinates. Before each tool-change stop and at the end of each program, the program lifts to it with `G53 G0 Z…`. Below 0 (`machine_z_not_below_home`), and only on a post-processor that documents `G53`, grblHAL and GRBL (`machine_z_needs_g53`). Needs a homed machine. |
+| `park` | `{ "x_mm": …, "y_mm": … }`, project coordinates. Where the program ends, at the clearance height (or the highest safe Z), before the lift. `null`: the program ends over the last cut. |
+
+See [Post-processors](post-processors.md#heights-clearance-tool-change-and-park)
+for what the program does with them and how to choose the machine Z.
 
 ## `definitions` and `instances`
 
@@ -433,6 +457,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 9 | Adds `on_holes` to each Profile's `tabs`, set to `true` on upgrade (#109). A Profile now cuts its holes without tabs unless `on_holes` is `true`; before, every outline it cut had tabs, so the upgrade keeps them. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
 | 10 | Adds the `"left"` and `"right"` values of a Profile's `side` (#207), which cut beside open paths. An older file holds neither, so the upgrade changes nothing else; an older DreamCarve refuses a version 10 file rather than misread a side it does not know. See [Left and right](profile.md#left-and-right). |
 | 11 | Adds `tabs`, the project's placed tabs, empty on upgrade (#105). A Profile's `tabs` setting stays as a tab request: it is cut as before, and the next `dreamcarve tabs` command that saves the project places it. See [Tabs](tabs.md). |
+| 12 | Adds `heights` after `origin`, with `clearance_mm`, `tool_change_machine_z_mm` and `park` all `null` on upgrade (#283), so the project exports as before. See [`heights`](#heights). |
 
 ## What `check` reports
 

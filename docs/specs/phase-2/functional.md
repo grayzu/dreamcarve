@@ -818,8 +818,9 @@ built (design addendum, "Order and format versions").
       documents `G53` (grblHAL and GRBL in this addendum). The machine must
       be homed, which DreamCarve cannot check, so `export` says so.
     - **`park`** `{ "x_mm": …, "y_mm": … }`, in project coordinates: at the
-      end the bit rises to the clearance height (or the last operation's
-      safe Z), rapids to this point, then makes the machine-Z lift if set.
+      end the bit rises to the clearance height (or the highest safe Z of
+      the program's operations; changed in #283: the last operation's),
+      rapids to this point, then makes the machine-Z lift if set.
       This is VCarve's Home position without its Z (the lift above is the
       Z).
     Projects from earlier versions get all three unset and export the same
@@ -946,7 +947,8 @@ built (design addendum, "Order and format versions").
 - **S2 and S6, changed.** S6's "only other motion in an operation" adds
   the rise to the clearance height before an operation's first move and
   after its last. After the last operation a program may rapid, at or
-  above the clearance height (safe Z if unset), to the park point, then
+  above the clearance height (the highest safe Z of the program if
+  unset; changed in #283: safe Z), to the park point, then
   make the S16 lift; S2 holds for that rapid. A link between parts rises
   to the clearance height; a link between passes of one part, to safe Z.
 - **S9 with a last pass.** Every pass but the last keeps `allowance_mm`

@@ -537,7 +537,7 @@ These still give a safe program. `check` and `export` print each one as
 `check` and `export` also look for values that are allowed but probably a
 mistake. They check only enabled operations and the tools those use. Each
 finding names the operation or tool and starts with where the value is in
-the file, as in `coaster.dcv:24:22:`. DreamCarve never changes the value
+the file, as in `coaster.dcv:29:22:`. DreamCarve never changes the value
 for you.
 
 | Message says | Kind | Meaning |

@@ -49,7 +49,8 @@ any upgrade.
   #117 added `feed_speed.spindle_on_dwell.units` (`"seconds"` on both),
   `canned_cycles.reentry_gap_mm` (`null`; both have `canned_cycles: null`
   anyway) and the `default_settings.use_canned_cycles` setting (`false`)
-  this way.
+  this way, and #283 `work_coordinates.machine_command` (`"G53"` on
+  grblHAL and GRBL, `null` on the others; see "Machine-coordinate moves").
 - The checks in `dc-gcode`'s `post` tests (the controller facts below) run
   over every version of every definition.
 
@@ -207,8 +208,68 @@ Checked on 2026-10-18 against `grblHAL/core` at commit
   where the user can set Z zero, and `"m6"` is refused on it; one program
   per tool run works.
 
-The tool-change height is not set: in mode 0 grblHAL waits at the
-operation's safe Z, and the user jogs up to swap the bit (#73).
+The tool-change height is the project's `heights.tool_change_machine_z_mm`
+(#283; see "Machine-coordinate moves" below). Unset, as in every project
+before format version 12, grblHAL waits in mode 0 at the clearance height,
+or the operation's safe Z, and the user jogs up to swap the bit. Set, the
+program rises to the clearance height in work coordinates, then writes
+`G53 G0 Z<v>` before the `M5` and the `T<n> M6` (or, with manual spindle
+control, before the router-off pause), and again before the footer.
+
+## Machine-coordinate moves (`work_coordinates.machine_command`)
+
+`work_coordinates.machine_command` is the non-modal command for one move
+in machine coordinates, `G53`, or `null` (#283). It is a schema-wide field,
+added in place to every released version and re-pinned ("Versions" above):
+nothing writes it unless a project sets `heights.tool_change_machine_z_mm`,
+so no version's bytes changed. A definition with `null` refuses that height
+(validation's `machine_z_needs_g53`, and `emit`); the safety pass refuses
+every `G53` except S16's lift, and refuses that too unless the definition
+documents `G53` and the project sets the height.
+
+Checked on 2026-10-21 against `grblHAL/core` at commit
+`4ec1ae44b857a70d2f9298344feac4b43ed0eb6b` (the commit "Tool changes"
+cites) and `gnea/grbl` at commit `bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e`
+(master that day, GRBL 1.1h):
+
+| Definition | `machine_command` | Source |
+| --- | --- | --- |
+| `grblhal/v1.json` | `G53` | grblHAL `gcode.c` 1543-1545: `G53` is a non-modal command of modal group 0. 3317-3325: it needs `G0` or `G1` in force (`Status_GcodeG53InvalidMotionMode`) and fails with cutter compensation on. 3254-3277: its axis words are machine positions, with no work, `G92` or tool length offset added (`gc_get_block_offset` is skipped). 2831: in `G20` the axis words are inches, converted to mm. |
+| `grblhal/v2.json` | `G53` | As `grblhal/v1.json`. |
+| `grbl/v1.json` | `G53` | GRBL `grbl/gcode.c` 154-156: `G53` is a non-modal command of modal group 0. 635-640: it needs `G0` or `G1` in force (`STATUS_GCODE_G53_INVALID_MOTION_MODE`). 592-597: its axis words get no work, `G92` or tool length offset. 474-478: in `G20` the axis words are inches, converted to mm. |
+| `grbl/v2.json` | `G53` | As `grbl/v1.json`. |
+| `linuxcnc/v1.json`, `linuxcnc/v2.json` | `null` | Not checked for `G53` in #283; a follow-up cites the section and sets it. |
+| `mach3/v1.json`, `mach3/v2.json` | `null` | As LinuxCNC. |
+| `uccnc/v1.json`, `uccnc/v2.json` | `null` | As LinuxCNC. |
+| `generic/v1.json` | `null` | As LinuxCNC. |
+
+Where machine Z is. Both controllers home Z to the top of its travel, at a
+negative machine position, when Z homes upward (the default):
+
+- grblHAL `machine_limits.c` 116-140 (`limits_set_work_envelope`): the
+  homed envelope of an axis is `[max_travel + pulloff, −pulloff]`, with
+  `pulloff` the homing pull-off when hard limits are on and 0 otherwise,
+  and `max_travel` stored negative. Only `homing.flags.force_set_origin`
+  with a downward-homing axis makes it positive.
+- GRBL `grbl/limits.c` 382: an axis that homes upward is set to
+  `−homing_pulloff` (0 with `HOMING_FORCE_SET_ORIGIN`), and
+  `grbl/system.c` 348: soft limits accept `[max_travel, 0]`.
+
+So `tool_change_machine_z_mm` must be below 0: validation refuses 0 or
+more (`machine_z_not_below_home`), and the post-processors chapter says to
+stay at least the pull-off below 0. Machine coordinates mean nothing on a
+machine that is not homed, which DreamCarve cannot check, so `export` says
+to home it whenever a program has a lift.
+
+What DreamCarve writes, the safety pass's S16: `G53 G0 Z<v>`, alone on its
+line, in the program's units, after a retract in work coordinates to at
+least safe Z and at the XY where the bit already is; only before a
+tool-change stop or before the footer. After it work Z is unknown, so the
+next move in XY needs a retract in work coordinates first, as after a
+pause (S4). Any XY move (the park point) comes before the lift, at a work
+Z the safety pass checks, never after it. The footer stays without `G53`
+(see "Verification": `G0 G53 Z0` was removed from grblHAL's footer, since
+machine Z 0 is past the limit with soft limits on).
 
 ## Manual spindle control
 

@@ -2889,6 +2889,50 @@ Tests: `migrate::v11_to_v12_adds_null_heights`,
 `cli::heights_plaque_one_program` (acceptance 45),
 `cli::export_prints_home_note`.
 
+**As built (#283).** Where the build departs from or adds to the text
+above:
+
+- The end height. With a park point and no clearance height, the program
+  rises to the highest safe Z of its operations, not the last one's:
+  motion after the last operation is in no operation's span, where S2
+  holds it to that height (changed in #283: the text said the last
+  operation's safe Z).
+- Same-tool operations. Only the first operation and a tool change write a
+  retract at their start; an operation that follows one with the same tool
+  starts where that one's rise to the clearance height left the bit. The
+  first move in XY after a retract from an unknown position runs at the
+  retract's height before it lowers, so an operation's first crossing is at
+  the clearance height (`Writer::retracted_z`).
+- The lift and the stop. When the program has lifted with `G53`, it writes
+  no retract in work coordinates before the stop (the retract to the next
+  operation's height came first), and the safety pass refuses any motion
+  between a lift and the stop or end it is for
+  (`ExportError::MachineLiftNotBeforeStop`). Two stops may follow one lift
+  with nothing moving between them (manual spindle control: the router-off
+  pause, then `T<n> M6`). It also refuses a lift from below safe Z
+  (`MachineLiftNotAtSafeZ`) and one to another machine Z than the
+  project's, or to 0 or more (`MachineLiftWrongZ`).
+- Canned cycles. A Drill whose holes are separate instances links them at
+  the clearance height, which `G98` cannot follow, so with a clearance
+  height above safe Z it is written as moves with
+  `CannedExpansion::ClearanceHeight`. Holes of one instance keep cycles.
+- Corner relief. A Pocket's notches, sequenced one corner at a time after
+  its main path, are reached at the clearance height when the corner is of
+  another instance than the one before, and the first one always (where
+  the main path ended is not known there).
+- Validation. A non-finite machine Z is `NonFinite`, as every other field;
+  the clearance height and the machine Z are also held to the ±6000 mm
+  bound (#75), and the clearance height must be positive.
+- The note. `export` writes the machine Z with its units, `Before you
+  start: home the machine; this program moves to machine Z -5.000 mm
+  (G53).`; with one program per tool run, once, as "each program moves".
+  `Program::machine_lift` carries it.
+- The v11 corpus. `crates/dreamcarve/tests/fixtures/heights-migration/`
+  holds the 16 tabs-migration projects saved at version 11 by the build
+  before #283 (`tabs place`); `cli::version_11_projects_export_byte_identical_programs`
+  exports each, as loaded and saved at version 12, against the
+  tabs-migration expected programs.
+
 ### A8. Profile last pass (format version 13)
 
 ```rust
