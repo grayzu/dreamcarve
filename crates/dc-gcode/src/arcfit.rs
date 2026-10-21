@@ -1828,6 +1828,116 @@ mod tests {
         assert!(lines < 3 * 160, "{lines} straight moves in {text}");
     }
 
+    /// The coaster's program moves split into laps: a lap starts with the
+    /// first move that cuts deeper than any before it (the plunge to its
+    /// pass) and runs to the next such move or the retract. Rapids are
+    /// left out.
+    fn laps(text: &str) -> Vec<Vec<crate::parse::MachineMove>> {
+        let mut laps: Vec<Vec<crate::parse::MachineMove>> = Vec::new();
+        let mut deepest = f64::INFINITY;
+        for m in parse_motion(text).unwrap() {
+            if m.kind == MotionKind::Rapid {
+                continue;
+            }
+            let z = m.to.z.unwrap();
+            if z < deepest - 1e-6 {
+                deepest = z;
+                laps.push(Vec::new());
+            }
+            laps.last_mut()
+                .expect("a lap starts at the first cut")
+                .push(m);
+        }
+        laps
+    }
+
+    /// Functional acceptance 37 (#253), per lap: the coaster's three laps
+    /// (12 mm in 4 mm passes) are two full untabbed laps of at most 8
+    /// `G2`/`G3` each, and the final pass, whose four tabs (3 mm high, so
+    /// their tops at Z −8.8 lie above it) split the lap into 5 runs: one
+    /// run per segment between tabs, so at least 9 arcs.
+    #[test]
+    fn coaster_arcs_counted_per_lap() {
+        let project = coaster_project();
+        let (text, warnings, _) = export_coaster(&project);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let laps = laps(&text);
+        let floors: Vec<f64> = laps.iter().map(|lap| lap[0].to.z.unwrap()).collect();
+        assert_eq!(floors.len(), 3, "three laps: {floors:?}\n{text}");
+        for (k, z) in [-4.0, -8.0, -12.0].into_iter().enumerate() {
+            assert_approx_eq!(floors[k], z, 1e-6);
+        }
+        let arcs = |lap: &[crate::parse::MachineMove]| {
+            lap.iter()
+                .filter(|m| matches!(m.kind, MotionKind::ArcCw | MotionKind::ArcCcw))
+                .count()
+        };
+        for (k, lap) in laps.iter().take(2).enumerate() {
+            let tab_moves = lap
+                .iter()
+                .filter(|m| (m.to.z.unwrap() - floors[k]).abs() > 1e-6)
+                .count();
+            assert_eq!(tab_moves, 0, "lap {k} at Z {} has no tabs", floors[k]);
+            let n = arcs(lap);
+            assert!(
+                (1..=8).contains(&n),
+                "lap {k} at Z {} has {n} arcs, want 1..=8",
+                floors[k]
+            );
+        }
+        let tabbed = &laps[2];
+        let on_tabs = tabbed
+            .iter()
+            .filter(|m| (m.to.z.unwrap() - (-8.8)).abs() <= 1e-6)
+            .count();
+        assert!(on_tabs >= 4, "the final lap rises onto 4 tabs: {on_tabs}");
+        let n = arcs(tabbed);
+        assert!(n >= 9, "the tabbed lap has {n} arcs, want at least 9");
+    }
+
+    /// Functional acceptance 37 (#253): "the same number of `G1` moves as
+    /// before on a post-processor without arc support". With
+    /// `arc_interpolation` off, `arc_fit_tolerance_mm: 0.01` writes as many
+    /// `G1` moves as `null`, and neither writes a `G2` or `G3`.
+    #[test]
+    fn no_arc_support_keeps_the_g1_count() {
+        let mut counts = Vec::new();
+        for tolerance in [Some(0.01), None] {
+            let mut project = coaster_project();
+            project.arc_fit_tolerance_mm = tolerance;
+            let mut post = project.post_processor.resolve().unwrap();
+            post.motion.arc_interpolation = false;
+            let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
+                panic!("the coaster has a profile operation");
+            };
+            let tool = project.tools[0].clone();
+            let (toolpath, _) = generate_profile(&project, &op).unwrap();
+            let (program, _) = crate::emit::emit_with(
+                &project,
+                &post,
+                &[(Operation::Profile(op), tool, toolpath).into()],
+                "2026-10-15",
+            )
+            .unwrap();
+            let moves = parse_motion(&program.text).unwrap();
+            let arcs = moves
+                .iter()
+                .filter(|m| matches!(m.kind, MotionKind::ArcCw | MotionKind::ArcCcw))
+                .count();
+            assert_eq!(arcs, 0, "{tolerance:?}: no G2/G3\n{}", program.text);
+            let lines = moves
+                .iter()
+                .filter(|m| m.kind == MotionKind::Linear)
+                .count();
+            counts.push(lines);
+        }
+        assert_eq!(
+            counts[0], counts[1],
+            "G1 moves with tolerance 0.01 vs null: {counts:?}"
+        );
+        assert!(counts[0] >= 3 * 160, "every facet is a G1: {counts:?}");
+    }
+
     /// Functional acceptance 37: `arc_fit_tolerance_mm: null` gives the
     /// phase 1 program, move for move.
     #[test]
