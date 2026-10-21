@@ -293,11 +293,19 @@ crosses (its outline is not cut by an enabled Profile, or only by a
 Pocket or a disabled Profile, or every path runs too far from it or stops
 above its top), and
 `tab_on_hole` for a tab on an outline a Profile cuts as a hole: the tab
-is cut and holds the slug. The CLI gains `dreamcarve tabs place <dcv>
+is cut and holds the slug. `tabs place` warns `tab_on_hole` once for each
+tab it places on a hole; `check` and `export` do not warn again for a
+tab placed there for that cut (`--count --on-holes` or a request with
+`on_holes`, such as a version 8 file's migrated one), only for others
+(changed in #300: every hole tab warned on every export). A crossed tab
+whose point is farther from its outline than its width plus the widest
+bit that cuts round it warns `tab_off_outline`, project-level, with the
+distance; it is cut at the outline's nearest point (#300). The CLI gains `dreamcarve tabs place <dcv>
 <op> [--count N | --at d1,d2,…] [--width] [--height] [--shape]
 [--on-holes]` (with neither `--count` nor `--at`, the operation's own
 request), `tabs list <dcv>` (each tab, its distance along the outline,
-and the enabled Profiles that cross it) and `tabs clear <dcv> [<op> |
+how far its point is off the outline (`OFF_MM`, #300), and the enabled
+Profiles that cross it) and `tabs clear <dcv> [<op> |
 --tab <id>…]`, where `<op>` must be a Profile and only the tabs it
 crosses are removed, with a note naming any part a through cut then
 frees with no tab (changed in #105 review: `<op>` removed every tab on

@@ -17,7 +17,7 @@
 //! Nothing here depends on Y-up or Y-down: nearest points and distances
 //! along a line are the same under the flip.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use dc_geometry::{EPS_MM, Point, Polyline, approx_eq, nearest_point};
 use dc_project::{Operation, OperationId, PlacedTab, ProfileOp, Project, TabId, TabShape, TabSpec};
@@ -358,36 +358,99 @@ pub fn freed_parts(project: &Project) -> Vec<(OperationId, ShapeRef)> {
     freed
 }
 
+/// The project-level tab warnings, in project order:
 /// [`Warning::TabNotCrossed`] for every placed tab of `project` that no
-/// Profile of `generated` crosses ([`crossed_by`]), in project order.
-/// `generated` holds every enabled operation whose toolpath was
-/// generated, as for [`crate::order::check`].
+/// Profile of `generated` crosses ([`crossed_by`]), and
+/// [`Warning::TabOffOutline`] for one that is crossed but whose point is
+/// more than [`off_outline_limit_mm`] from its outline
+/// ([`off_outline_mm`], #300). `generated` holds every enabled operation
+/// whose toolpath was generated, as for [`crate::order::check`].
 #[must_use]
 pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
-    let mut crossed: BTreeSet<TabId> = BTreeSet::new();
+    // The widest bit that crosses each tab, mm.
+    let mut crossed: BTreeMap<TabId, f64> = BTreeMap::new();
     for (op, _) in generated {
-        if let Operation::Profile(profile) = op
-            && let Ok(ids) = crossed_by(project, profile)
-        {
-            crossed.extend(ids);
+        let Operation::Profile(profile) = op else {
+            continue;
+        };
+        let Some(diameter_mm) = project
+            .tools
+            .iter()
+            .find(|t| t.id == profile.tool)
+            .map(|t| t.diameter_mm)
+        else {
+            continue;
+        };
+        for id in crossed_by(project, profile).unwrap_or_default() {
+            let widest = crossed.entry(id).or_insert(diameter_mm);
+            *widest = widest.max(diameter_mm);
         }
     }
-    project
-        .tabs
-        .iter()
-        .filter(|tab| !crossed.contains(&tab.id))
-        .filter_map(|tab| {
-            let instance = project.instances.iter().find(|i| i.id == tab.instance)?;
-            Some(Warning::TabNotCrossed {
+    let mut warnings = Vec::new();
+    for tab in &project.tabs {
+        let Some(instance) = project.instances.iter().find(|i| i.id == tab.instance) else {
+            continue;
+        };
+        let shape = ShapeRef {
+            instance: instance.id.clone(),
+            instance_name: instance.name.clone(),
+            profile: tab.profile,
+        };
+        let Some(&diameter_mm) = crossed.get(&tab.id) else {
+            warnings.push(Warning::TabNotCrossed {
                 tab: tab.id.clone(),
-                shape: ShapeRef {
-                    instance: instance.id.clone(),
-                    instance_name: instance.name.clone(),
-                    profile: tab.profile,
-                },
-            })
-        })
-        .collect()
+                shape,
+            });
+            continue;
+        };
+        let limit_mm = off_outline_limit_mm(tab, diameter_mm);
+        if let Some(off_mm) = off_outline_mm(project, tab)
+            && off_mm > limit_mm + EPS_MM
+        {
+            warnings.push(Warning::TabOffOutline {
+                tab: tab.id.clone(),
+                shape,
+                off_mm,
+                limit_mm,
+            });
+        }
+    }
+    warnings
+}
+
+/// How far a tab's point may be from its outline before
+/// [`Warning::TabOffOutline`], mm: its width plus `diameter_mm`, the
+/// widest bit that cuts round it (#300). A tab placed on the outline is on
+/// it, and one placed from a request or `--count` a bit radius off, so
+/// neither warns; a point farther than a whole tab and bit away is not one
+/// a placing command wrote, and is likely a hand edit or left behind
+/// after its outline changed.
+#[must_use]
+pub fn off_outline_limit_mm(tab: &PlacedTab, diameter_mm: f64) -> f64 {
+    tab.width_mm + diameter_mm
+}
+
+/// How far `tab`'s point is from its outline, mm in project space (as it
+/// is cut, after its instance's transform): the distance from
+/// [`tab_point`] to the outline's point nearest it, where the tab is cut.
+/// `None` when its instance, definition or profile is not in the project.
+#[must_use]
+pub fn off_outline_mm(project: &Project, tab: &PlacedTab) -> Option<f64> {
+    Some(tab_point(project, tab)?.distance_to(outline_foot(project, tab)?))
+}
+
+/// The placed tabs Profile `op` crosses on a tool path round a hole, with
+/// the hole, in project order: those generation warns
+/// [`Warning::TabOnHole`] for, and those placed there for this cut, which
+/// it does not (#300). `tabs place` warns for the ones it places. Fails as
+/// [`crossed_by`] does.
+pub fn on_holes(project: &Project, op: &ProfileOp) -> Result<Vec<(TabId, ShapeRef)>, CamError> {
+    Ok(op_tabs(project, op)?
+        .plan
+        .on_holes
+        .into_iter()
+        .map(|(tab, shape, _)| (tab, shape))
+        .collect())
 }
 
 /// Where `tab`'s centre is in project space: its point placed by its
@@ -904,6 +967,119 @@ mod tests {
         );
         assert!(matches!(&warnings[0], Warning::TabOnHole { tab, .. } if tab.as_str() == "tab1"));
         assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1);
+    }
+
+    /// #300: tabs placed on a hole for the Profile that cuts it, by a
+    /// request or `--count` with `on_holes` (a version 8 file's migrated
+    /// request among them), sit on that Profile's tool path round the
+    /// hole. They hold the slug because the user asked, so generation does
+    /// not warn `tab_on_hole` for them on every export; `on_holes` lists
+    /// them, for `tabs place` to warn once. The same tab moved onto the
+    /// hole's outline, where nothing places a tab for this cut unasked,
+    /// still warns. A 28 mm hole in a 36 mm frame: the frame takes four
+    /// tabs, and the hole's 21.65 mm square path the three that cover at
+    /// most half of it.
+    #[test]
+    fn hole_tabs_placed_for_the_cut_do_not_warn() {
+        let square = |side_mm: f64| {
+            Polyline::rect(
+                Point::new(25.0 - side_mm / 2.0, 15.0 - side_mm / 2.0),
+                side_mm,
+                side_mm,
+            )
+        };
+        let mut p = with_profiles(vec![square(36.0), square(28.0)]);
+        let op = OperationId::new("o1");
+        p.tabs = place(&p, &op, &four_tabs(true)).unwrap().tabs;
+        let on_hole: Vec<TabId> = p
+            .tabs
+            .iter()
+            .filter(|t| t.profile == 1)
+            .map(|t| t.id.clone())
+            .collect();
+        assert_eq!(on_hole.len(), 3, "{:?}", p.tabs);
+        let (tp, warnings) = generate(&p);
+        assert!(
+            !codes(&warnings).contains(&WarningCode::TabOnHole),
+            "{warnings:?}"
+        );
+        assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 7);
+        let profile = profile_mut(&mut p).clone();
+        let listed: Vec<TabId> = on_holes(&p, &profile)
+            .unwrap()
+            .into_iter()
+            .map(|(tab, _)| tab)
+            .collect();
+        assert_eq!(listed, on_hole);
+
+        let moved = p
+            .tabs
+            .iter()
+            .position(|t| t.profile == 1)
+            .expect("a hole tab");
+        let foot = outline_foot(&p, &p.tabs[moved]).unwrap();
+        let foot = p.instances[0].transform.inverse().unwrap().apply(foot);
+        p.tabs[moved].x_mm = foot.x;
+        p.tabs[moved].y_mm = foot.y;
+        let (_, warnings) = generate(&p);
+        let warned: Vec<&Warning> = warnings
+            .iter()
+            .filter(|w| w.code() == WarningCode::TabOnHole)
+            .collect();
+        assert_eq!(warned.len(), 1, "{warnings:?}");
+        assert!(
+            matches!(warned[0], Warning::TabOnHole { tab, .. } if *tab == p.tabs[moved].id),
+            "{warned:?}"
+        );
+    }
+
+    /// #300, the issue's first test: a tab whose point is far from its
+    /// outline is cut at the outline's nearest point, and warns
+    /// `tab_off_outline` with the distance. Far is more than the tab's
+    /// width plus the widest bit that cuts round it: a tab placed from a
+    /// request is a bit radius off, and one on the outline none. 20 mm
+    /// below the sample's bottom edge is past 6 + 6.35 mm; the sample's own
+    /// request, placed, is not.
+    #[test]
+    fn tab_far_from_its_outline_warns() {
+        let mut p = untabbed();
+        p.tabs = vec![tab("tab1", 25.0, -20.0)];
+        let op = p.operations[0].clone();
+        let (tp, _) = generate(&p);
+        assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1);
+        assert_approx_eq!(off_outline_mm(&p, &p.tabs[0]).unwrap(), 20.0, TOL);
+        let warnings = check(&p, &[(&op, &tp)]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let Warning::TabOffOutline {
+            tab,
+            off_mm,
+            limit_mm,
+            ..
+        } = &warnings[0]
+        else {
+            panic!("tab_off_outline, not {warnings:?}");
+        };
+        assert_eq!(tab.as_str(), "tab1");
+        assert_approx_eq!(*off_mm, 20.0, TOL);
+        assert_approx_eq!(*limit_mm, 6.0 + 6.35, TOL);
+        assert!(warnings[0].op().is_none());
+        assert!(
+            warnings[0]
+                .to_string()
+                .contains("is 20 mm from that outline"),
+            "{}",
+            warnings[0]
+        );
+
+        let (placed, _) = place_requests(&sample_project()).unwrap();
+        assert!(!placed.tabs.is_empty());
+        let op = placed.operations[0].clone();
+        let (tp, _) = generate(&placed);
+        for t in &placed.tabs {
+            assert_approx_eq!(off_outline_mm(&placed, t).unwrap(), 6.35 / 2.0, 1e-6);
+        }
+        let warnings = check(&placed, &[(&op, &tp)]);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     /// #105: one tab placed with `--at --on-holes` on a hole whose tool
