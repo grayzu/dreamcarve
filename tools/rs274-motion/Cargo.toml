@@ -1,0 +1,31 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "rs274-motion"
+description = "Compares the motion DreamCarve reads from its LinuxCNC, Mach3, UCCNC and generic programs with the motion LinuxCNC's rs274 interpreter makes"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "rs274_motion"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rs274-motion"
+path = "src/main.rs"
+
+[dependencies]
+dc-cam.workspace = true
+dc-geometry.workspace = true
+dc-gcode.workspace = true
+dc-project.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

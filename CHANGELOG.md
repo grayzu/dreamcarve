@@ -185,6 +185,12 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
   DreamCarve versions cannot read version 13 files.
+- **Post-processor end-to-end plan and motion check.** `docs/testing/post-processor-e2e.md`
+  says, for LinuxCNC, Mach3, UCCNC and generic, what is checked automatically,
+  what cannot be and why, and the manual and air-cut procedures for the rest.
+  `tools/rs274-motion` (dev only) runs those programs through LinuxCNC's
+  `rs274` interpreter and compares its moves, feeds, dwells, canned cycles and
+  `G53` lifts with DreamCarve's own reading, line by line ([#299]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -462,4 +468,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306
 [#308]: https://github.com/grayzu/dreamcarve/issues/308
+[#299]: https://github.com/grayzu/dreamcarve/issues/299
 [#321]: https://github.com/grayzu/dreamcarve/issues/321
