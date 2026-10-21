@@ -2983,6 +2983,64 @@ mod tests {
         );
     }
 
+    /// #153: the Drill toolpath [`dc_cam::generate_drill`] makes for a
+    /// 2 mm peck, 3 mm deep, with the retract plane 1 mm above the 6 mm
+    /// stock, at (50, 50): pecks from `R` (Z 7) to 5, then to 3.
+    fn generated_peck(retract: dc_project::PeckRetract) -> Toolpath {
+        let (mut project, _, _) = fixture();
+        let hole = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("hole"),
+            name: "Hole".into(),
+            profiles: vec![dc_geometry::Polyline::circle(Point::new(50.0, 50.0), 4.0)],
+        };
+        project.instances.push(dc_project::FeatureInstance {
+            id: dc_project::InstanceId::new("h1"),
+            definition: hole.id.clone(),
+            transform: dc_geometry::Transform::translate(0.0, 0.0),
+            name: "Hole".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        project.definitions.insert(hole.id.clone(), hole);
+        let op = dc_project::DrillOp {
+            targets: vec![dc_project::InstanceId::new("h1")],
+            cycle: dc_project::DrillCycle::Peck {
+                peck_depth_mm: Some(2.0),
+                retract,
+            },
+            depth_mm: Some(3.0),
+            retract_mm: 1.0,
+            ..dc_project::test_support::sample_drill()
+        };
+        dc_cam::generate_drill(&project, &op).unwrap().0.toolpath
+    }
+
+    /// #153, S11: with the retract plane 1 mm above the stock, the
+    /// controller's `G83`/`G73` pecks from `R1` (2 mm, then to the
+    /// bottom) are the generated Drill toolpath's, move for move, so the
+    /// written cycle passes the safety pass; a `Q` that pecks otherwise
+    /// does not.
+    #[test]
+    fn g83_expansion_matches_drill_toolpath_with_retract() {
+        let post = canned(Some(0.5));
+        for (retract, word) in [
+            (dc_project::PeckRetract::Full, "G83"),
+            (dc_project::PeckRetract::ChipBreak { gap_mm: 0.5 }, "G73"),
+        ] {
+            let toolpath = generated_peck(retract);
+            let text = |q: &str| cycle_program(&format!("{word} X50 Y50 Z-3 R1 Q{q} F300\n"));
+            check_drill_on(&text("2"), &toolpath, &post)
+                .unwrap_or_else(|e| panic!("{word} Q2: {e:?}"));
+            let result = check_drill_on(&text("3"), &toolpath, &post);
+            assert!(
+                matches!(result, Err(ExportError::MotionMismatch { .. })),
+                "{word} Q3: {result:?}"
+            );
+        }
+    }
+
     /// S1 on the expansion: a `G81` whose bottom is below the stock bottom
     /// (Z −6.5 on the 6 mm stock, no allowance) fails on its line.
     #[test]
@@ -3350,6 +3408,62 @@ mod tests {
         let err = check_material_text(outside, &project, &op).unwrap_err();
         assert!(
             matches!(err, ExportError::OffMaterial { line: 5, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The sample rectangle's Pocket with `relief`.
+    fn relief_pocket(relief: dc_project::CornerRelief) -> Operation {
+        Operation::Pocket(dc_project::PocketOp {
+            corner_relief: relief,
+            ..dc_project::test_support::sample_pocket()
+        })
+    }
+
+    /// S9's notch rule (slice 12, `crate::material`): with corner relief
+    /// on, a Pocket cut may come nearer a wall than the tool radius in a
+    /// corner's relief zone. At the sample rectangle's corner (10, 10)
+    /// with the 6.35 mm tool, the dogbone from the miter point (13.175,
+    /// 13.175) to one radius from the corner, (12.245, 12.245), and the
+    /// T-bone to (13.175, 10) pass; with relief off the same dogbone
+    /// fails at its cut.
+    #[test]
+    fn pocket_notch_inside_its_corner_zone_passes_s9() {
+        use dc_project::CornerRelief;
+        let project = sample_project();
+        let program = |cuts: &str| {
+            format!("G21 G90\nG54\nG0 Z5\nX13.175 Y13.175\nG1 Z-3 F300\n{cuts}G0 Z5\n")
+        };
+        let dogbone = program("X12.245 Y12.245 F1000\nX13.175 Y13.175\n");
+        check_material_text(&dogbone, &project, &relief_pocket(CornerRelief::Dogbone)).unwrap();
+        let t_bone = program("X13.175 Y10 F1000\nX13.175 Y13.175\n");
+        check_material_text(&t_bone, &project, &relief_pocket(CornerRelief::TBone)).unwrap();
+        let err = check_material_text(&dogbone, &project, &relief_pocket(CornerRelief::None))
+            .unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S9's notch rule holds the notch to its corner: a cut that drives
+    /// the tool centre to the corner itself fails, and so does a cut past
+    /// a wall away from every corner.
+    #[test]
+    fn pocket_notch_past_the_corner_fails_s9() {
+        use dc_project::CornerRelief;
+        let project = sample_project();
+        let op = relief_pocket(CornerRelief::Dogbone);
+        let to_corner = "G21 G90\nG54\nG0 Z5\nX13.175 Y13.175\nG1 Z-3 F300\nX10 Y10 F1000\nG0 Z5\n";
+        let err = check_material_text(to_corner, &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+        let mid_wall = "G21 G90\nG54\nG0 Z5\nX30 Y13.175\nG1 Z-3 F300\nY11 F1000\nG0 Z5\n";
+        let err = check_material_text(mid_wall, &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
             "{err:?}"
         );
     }

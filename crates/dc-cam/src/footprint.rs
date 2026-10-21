@@ -113,7 +113,7 @@ fn sweep_run(run: &[Step], radius_mm: f64, tolerance_mm: f64, out: &mut Vec<Regi
 }
 
 /// The bulge of `mv` from `from`: 0 for a line.
-fn bulge(from: Point, mv: &Move) -> f64 {
+pub(crate) fn move_bulge(from: Point, mv: &Move) -> f64 {
     let (centre, ccw) = match mv.kind {
         MoveKind::ArcCcw { centre } => (centre, true),
         MoveKind::ArcCw { centre } => (centre, false),
@@ -128,7 +128,7 @@ fn bulge(from: Point, mv: &Move) -> f64 {
 fn band(looped: &[Step], radius_mm: f64, out: &mut Vec<Region>) -> bool {
     let vertices: Vec<Vertex> = looped
         .iter()
-        .map(|(from, mv)| Vertex::new(from.x, from.y, bulge(*from, mv)))
+        .map(|(from, mv)| Vertex::new(from.x, from.y, move_bulge(*from, mv)))
         .collect();
     let Ok(contour) = Contour::new(Polyline::new(vertices, true)) else {
         return false;
@@ -153,7 +153,7 @@ fn capsules(steps: &[Step], radius_mm: f64, tolerance_mm: f64, out: &mut Vec<Reg
     for &(from, mv) in steps {
         let path = Polyline::new(
             vec![
-                Vertex::new(from.x, from.y, bulge(from, &mv)),
+                Vertex::new(from.x, from.y, move_bulge(from, &mv)),
                 Vertex::line(mv.to.x, mv.to.y),
             ],
             false,

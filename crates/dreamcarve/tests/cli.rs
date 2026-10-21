@@ -1188,6 +1188,81 @@ fn pocket_rough_then_rest_exports_and_passes_safety() {
     assert_approx_eq!(deepest, -3.0, 1e-3);
 }
 
+/// Slice 12 (#181), capability 18, acceptance 29 and S9 end to end: a 40 ×
+/// 30 mm rectangle inside the coaster pocketed with dogbones checks with
+/// no error and exports on grblHAL, so the full safety pass, S9's notch
+/// rule included, accepted the notches. Each of the four corners has a
+/// cut ending one tool radius from it along its bisector.
+#[test]
+fn pocket_dogbone_exports_and_passes_safety() {
+    let dir = work_dir("pocket_dogbone_exports_and_passes_safety");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let panel = FeatureDefinition {
+        id: DefinitionId::new("panel"),
+        name: "Panel".into(),
+        profiles: vec![Polyline::rect(Point::new(30.0, 35.0), 40.0, 30.0)],
+    };
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("panel1"),
+        definition: panel.id.clone(),
+        transform: Transform::IDENTITY,
+        name: "Panel".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: Some(MEASURED_THICKNESS_MM),
+        z_bottom_mm: Some(0.0),
+    });
+    project.definitions.insert(panel.id.clone(), panel);
+    let mut pocket = sample_pocket();
+    pocket.targets = vec![InstanceId::new("panel1")];
+    pocket.tool = project.operations[0].tool().clone();
+    pocket.step_over_fraction = Some(0.4);
+    pocket.corner_relief = CornerRelief::Dogbone;
+    project.operations.insert(0, Operation::Pocket(pocket));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(" 0 error(s)"), "{report}");
+    assert!(!report.contains("relief_"), "{report}");
+
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let r = 6.35 / 2.0 * std::f64::consts::FRAC_1_SQRT_2;
+    for (cx, cy, sx, sy) in [
+        (30.0, 35.0, 1.0, 1.0),
+        (70.0, 35.0, -1.0, 1.0),
+        (70.0, 65.0, -1.0, -1.0),
+        (30.0, 65.0, 1.0, -1.0),
+    ] {
+        let end = Point::new(cx + sx * r, cy + sy * r);
+        assert!(
+            moves.iter().any(|m| m.kind.is_cut()
+                && m.to.z.is_some_and(|z| (z + 3.0).abs() < 1e-3)
+                && m.to
+                    .x
+                    .zip(m.to.y)
+                    .is_some_and(|(x, y)| { Point::new(x, y).distance_to(end) < 1e-3 })),
+            "no notch ends at {end:?}:\n{program}"
+        );
+    }
+}
+
 /// Slice 9 (#147), capability 16 and S10 end to end: the coaster's Pocket
 /// with a helix entry at 80 % and 5°, on a tool whose plunge rate (100)
 /// is under the helix's vertical rate at full feed (1500 × sin 5° = 131),
@@ -1322,8 +1397,10 @@ fn profile_lead_exports_and_passes_safety() {
 
 /// Slice 7 (#138), acceptance test 23 on the CLI: the coaster with an
 /// 8 mm hole at its centre, drilled through in 4 mm pecks with a full
-/// retract and a 0.25 s dwell, checks clean and exports. The program dwells
-/// at the bottom of each of the three pecks, reaches the coaster's depth at
+/// retract and a 0.25 s dwell, checks clean and exports. The pecks count
+/// from the retract height 1 mm above the 11.8 mm stock (#153): to 8.8,
+/// 4.8, 0.8 and −0.2 mm. The program dwells
+/// at the bottom of each of the four pecks, reaches the coaster's depth at
 /// the hole, and moves in XY only at its highest Z (S2); the safety pass,
 /// S6 and S15 included, accepted it.
 #[test]
@@ -1371,7 +1448,7 @@ fn drill_exports_and_passes_safety() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
     let dwells = program.lines().filter(|l| l.trim() == "G4 P0.250").count();
-    assert_eq!(dwells, 3, "one dwell per peck:\n{program}");
+    assert_eq!(dwells, 4, "one dwell per peck:\n{program}");
 
     let moves = dc_gcode::parse_motion(&program).expect("program parses");
     let z = |m: &MachineMove| m.to.z.expect("Z is known");
@@ -1396,7 +1473,7 @@ fn drill_exports_and_passes_safety() {
         .filter(|m| m.kind.is_cut() && m.to.x == at_dwell.to.x && m.to.y == at_dwell.to.y)
         .map(z)
         .collect();
-    assert_eq!(hole_cuts.len(), 3, "three pecks at the hole: {hole_cuts:?}");
+    assert_eq!(hole_cuts.len(), 4, "four pecks at the hole: {hole_cuts:?}");
     assert_approx_eq!(
         hole_cuts.iter().copied().fold(f64::MAX, f64::min),
         deepest,

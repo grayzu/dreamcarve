@@ -16,7 +16,9 @@
 //! ([`dc_geometry::as_circle`]), not a `circle` feature kind; the
 //! chip-break gap is the operation's `gap_mm`, not a constant in project
 //! units; a dwell is kept as a [`crate::MoveKind::Dwell`] move when the cycle is
-//! written as plain moves (upstream loses it); holes are visited nearest
+//! written as plain moves (upstream loses it); pecks count from the
+//! retract plane, as a controller's `G83`/`G73` counts them from `R`,
+//! not from the stock top (#153); holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
 //! origin, by [`crate::sequence`]; there is no helical bore, countersink or
 //! clamp check. Nothing here depends on Y-up or Y-down: a drill moves only
@@ -100,8 +102,13 @@ pub struct DrillToolpath {
 ///   the top with [`WarningCode::DrillRetractBelowStockTop`]);
 /// - it plunges at the tool's plunge rate, in one plunge for a simple
 ///   cycle or in pecks of the peck depth (the operation's, else the tool's
-///   step-down; only the last is shorter), waiting `dwell_s` at the bottom
-///   of every plunge as a [`crate::MoveKind::Dwell`] move;
+///   step-down), waiting `dwell_s` at the bottom of every plunge as a
+///   [`crate::MoveKind::Dwell`] move. Pecks count from the retract plane,
+///   as a controller's `G83`/`G73` counts them from `R` (#153): peck `k`
+///   ends at `max(bottom, retract plane − k·peck)`, so the first removes
+///   the peck less the retract height (nothing, if the retract height is
+///   the larger), the last may be shorter, and none cuts more than a peck
+///   below the depth already drilled;
 /// - between pecks it rapids up to the retract plane and back down to
 ///   [`PECK_REENTRY_MM`] above the depth reached (full retract), or up by
 ///   the chip-break gap (capped at the retract plane), and feeds on from
@@ -111,8 +118,8 @@ pub struct DrillToolpath {
 ///
 /// Holes are visited by [`crate::sequence`]: nearest neighbour from the
 /// first hole in drawing order, ties by drawing order, linked at safe Z.
-/// A peck at least as deep as the hole drills it in one plunge with
-/// [`WarningCode::DrillPeckDeeperThanHole`].
+/// A peck that reaches the bottom from the retract plane drills the hole
+/// in one plunge, with [`WarningCode::DrillPeckDeeperThanHole`].
 ///
 /// Fails without a toolpath when the plunge rate, the stock thickness, the
 /// depth, or a peck's step-down is missing; when the depth passes the
@@ -167,16 +174,18 @@ pub fn generate_drill(
         .depth_mm
         .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
     let cycle = Cycle::of(op, tool)?;
-    // Peck levels, shallowest first; a simple cycle is one level. The pass
-    // rule is the one every generator uses: only the last is shorter.
-    let step_mm = cycle.peck_mm.unwrap_or(depth_mm);
-    let levels = pass_z_mm(
+    // The hole bottom, with the depth checked against the stock bottom
+    // plus the allowance (S1) as for every generator.
+    let bottom_z_mm = pass_z_mm(
         &op.id,
         thickness_mm,
         depth_mm,
-        step_mm,
+        depth_mm,
         op.through_cut_allowance_mm,
-    )?;
+    )?
+    .last()
+    .copied()
+    .unwrap_or(thickness_mm - depth_mm);
     let top_z_mm = thickness_mm;
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let mut warnings = Vec::new();
@@ -189,8 +198,27 @@ pub fn generate_drill(
         );
     }
     let retract_z_mm = (top_z_mm + op.retract_mm.max(0.0)).min(safe_z_mm);
+    // Plunge levels, shallowest first; a simple cycle is one level. Pecks
+    // count from the retract plane, as a controller's `G83`/`G73` counts
+    // them from `R` (#153), so a canned cycle and these moves are the
+    // same motion for any retract height. The pass rule is the one every
+    // generator uses, from `R` instead of the stock top; `R` is at or
+    // above the top, so no peck cuts deeper than a peck into material.
+    let mut levels = match cycle.peck_mm {
+        None => vec![bottom_z_mm],
+        Some(peck_mm) => pass_z_mm(
+            &op.id,
+            retract_z_mm,
+            retract_z_mm - bottom_z_mm,
+            peck_mm,
+            op.through_cut_allowance_mm,
+        )?,
+    };
+    if let Some(last) = levels.last_mut() {
+        *last = bottom_z_mm;
+    }
     if let Some(peck_mm) = cycle.peck_mm
-        && peck_mm >= depth_mm - EPS_MM
+        && levels.len() == 1
     {
         warnings.push(
             Warning::new(WarningCode::DrillPeckDeeperThanHole)
@@ -672,10 +700,14 @@ mod tests {
             &[
                 ('R', SAFE_Z_MM),
                 ('R', RETRACT_Z_MM),
-                ('L', 6.0),
-                ('D', 6.0),
+                ('L', 7.0),
+                ('D', 7.0),
                 ('R', RETRACT_Z_MM),
-                ('R', 6.0 + PECK_REENTRY_MM),
+                ('R', 7.0 + PECK_REENTRY_MM),
+                ('L', 1.0),
+                ('D', 1.0),
+                ('R', RETRACT_Z_MM),
+                ('R', 1.0 + PECK_REENTRY_MM),
                 ('L', 0.0),
                 ('D', 0.0),
                 ('R', SAFE_Z_MM),
@@ -685,9 +717,9 @@ mod tests {
 
     /// Port of `camOperationSmoke.test.ts` "drilling peck: multiple plunges
     /// with full retracts", with acceptance 23's numbers: 12 mm in 4 mm
-    /// pecks is three plunges, each but the last retracting to the retract
-    /// plane above the hole top and re-entering 0.5 mm above the depth
-    /// reached.
+    /// pecks from the retract plane 1 mm above the hole top is four
+    /// plunges (to 9, 5, 1 and 0; #153), each but the last retracting to
+    /// the retract plane and re-entering 0.5 mm above the depth reached.
     #[test]
     fn peck_full_retracts_above_hole_top() {
         let p = circles(&[(50.0, 50.0)]);
@@ -699,12 +731,15 @@ mod tests {
             &[
                 ('R', SAFE_Z_MM),
                 ('R', RETRACT_Z_MM),
-                ('L', 8.0),
+                ('L', 9.0),
                 ('R', RETRACT_Z_MM),
-                ('R', 8.5),
-                ('L', 4.0),
+                ('R', 9.5),
+                ('L', 5.0),
                 ('R', RETRACT_Z_MM),
-                ('R', 4.5),
+                ('R', 5.5),
+                ('L', 1.0),
+                ('R', RETRACT_Z_MM),
+                ('R', 1.5),
                 ('L', 0.0),
                 ('R', SAFE_Z_MM),
             ],
@@ -726,10 +761,12 @@ mod tests {
             &[
                 ('R', SAFE_Z_MM),
                 ('R', RETRACT_Z_MM),
-                ('L', 8.0),
-                ('R', 8.3),
-                ('L', 4.0),
-                ('R', 4.3),
+                ('L', 9.0),
+                ('R', 9.3),
+                ('L', 5.0),
+                ('R', 5.3),
+                ('L', 1.0),
+                ('R', 1.3),
                 ('L', 0.0),
                 ('R', SAFE_Z_MM),
             ],
@@ -745,7 +782,7 @@ mod tests {
         op.cycle = peck(None, PeckRetract::Full);
         let (drilled, _) = generate(&p, &op);
         let zs: Vec<f64> = plunges(&drilled.toolpath).iter().map(|m| m.to.z).collect();
-        assert_xs(&zs, &[8.0, 4.0, 0.0]);
+        assert_xs(&zs, &[9.0, 5.0, 1.0, 0.0]);
 
         p.tools[0].step_down_mm = None;
         let err = generate_drill(&p, &op).unwrap_err();
@@ -755,15 +792,127 @@ mod tests {
         );
     }
 
-    /// 12 mm in 5 mm pecks: 5, 5, then 2. Only the last peck is short.
+    /// 12 mm in 5 mm pecks from the stock top (retract 0): 5, 5, then 2.
+    /// With the retract plane on the top, only the last peck is short.
     #[test]
     fn last_peck_is_shallower_never_deeper() {
         let p = circles(&[(50.0, 50.0)]);
         let mut op = drill_op(&p);
+        op.retract_mm = 0.0;
         op.cycle = peck(Some(5.0), PeckRetract::ChipBreak { gap_mm: 0.5 });
         let (drilled, _) = generate(&p, &op);
         let zs: Vec<f64> = plunges(&drilled.toolpath).iter().map(|m| m.to.z).collect();
         assert_xs(&zs, &[7.0, 2.0, 0.0]);
+    }
+
+    /// #153: peck levels count from the retract plane `R`, as a
+    /// controller's `G83`/`G73` does (RS274/NGC 3.5.16; LinuxCNC `G83`):
+    /// `z_k = max(bottom, R − k·peck)`. With `R` 1 mm above the 12 mm
+    /// stock (Z 13) and 4 mm pecks the plunges end at 9, 5, 1 and 0; the
+    /// first removes 3 mm of material, the middle ones a full peck, the
+    /// last 1 mm. With `R` on the stock top the levels are the old ones.
+    #[test]
+    fn peck_increments_count_from_retract_plane() {
+        let p = circles(&[(50.0, 50.0)]);
+        let mut op = drill_op(&p);
+        op.cycle = peck(Some(4.0), PeckRetract::Full);
+        let (drilled, _) = generate(&p, &op);
+        assert_profile(
+            &profile_of(&drilled.toolpath),
+            &[
+                ('R', SAFE_Z_MM),
+                ('R', RETRACT_Z_MM),
+                ('L', 9.0),
+                ('R', RETRACT_Z_MM),
+                ('R', 9.5),
+                ('L', 5.0),
+                ('R', RETRACT_Z_MM),
+                ('R', 5.5),
+                ('L', 1.0),
+                ('R', RETRACT_Z_MM),
+                ('R', 1.5),
+                ('L', 0.0),
+                ('R', SAFE_Z_MM),
+            ],
+        );
+
+        op.cycle = peck(Some(4.0), PeckRetract::ChipBreak { gap_mm: 0.5 });
+        let (drilled, _) = generate(&p, &op);
+        assert_profile(
+            &profile_of(&drilled.toolpath),
+            &[
+                ('R', SAFE_Z_MM),
+                ('R', RETRACT_Z_MM),
+                ('L', 9.0),
+                ('R', 9.5),
+                ('L', 5.0),
+                ('R', 5.5),
+                ('L', 1.0),
+                ('R', 1.5),
+                ('L', 0.0),
+                ('R', SAFE_Z_MM),
+            ],
+        );
+
+        for (retract_mm, expected) in [
+            (0.0, vec![8.0, 4.0, 0.0]),
+            (2.5, vec![10.5, 6.5, 2.5, 0.0]),
+            // R is capped at safe Z (17).
+            (50.0, vec![13.0, 9.0, 5.0, 1.0, 0.0]),
+        ] {
+            op.retract_mm = retract_mm;
+            op.cycle = peck(Some(4.0), PeckRetract::Full);
+            let (drilled, _) = generate(&p, &op);
+            let zs: Vec<f64> = plunges(&drilled.toolpath).iter().map(|m| m.to.z).collect();
+            assert_xs(&zs, &expected);
+        }
+
+        // A 12.5 mm peck into the 12 mm hole from R at 13 is two plunges,
+        // so it is not drilled in one and does not warn.
+        op.retract_mm = 1.0;
+        op.cycle = peck(Some(12.5), PeckRetract::Full);
+        let (drilled, warnings) = generate(&p, &op);
+        let zs: Vec<f64> = plunges(&drilled.toolpath).iter().map(|m| m.to.z).collect();
+        assert_xs(&zs, &[0.5, 0.0]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// #153: measuring from `R` never makes a peck cut deeper into the
+    /// material than the peck depth. `R` is at or above the stock top, so
+    /// the first plunge ends at or above `top − peck`, and every plunge
+    /// removes at most one peck below the depth already drilled (or the
+    /// stock top). A retract larger than the peck makes the first pecks
+    /// air cuts, as the controller's do. S15 and the bottom still hold.
+    #[test]
+    fn first_peck_never_exceeds_peck_depth_below_stock_top() {
+        let p = circles(&[(50.0, 50.0)]);
+        for retract_mm in [0.0, 0.5, 1.0, 3.9, 4.0, 4.5, 50.0] {
+            for peck_mm in [0.3, 4.0, 5.0, 11.0] {
+                for retract in [PeckRetract::Full, PeckRetract::ChipBreak { gap_mm: 0.5 }] {
+                    let mut op = drill_op(&p);
+                    op.retract_mm = retract_mm;
+                    op.cycle = peck(Some(peck_mm), retract.clone());
+                    let label = format!("retract {retract_mm}, peck {peck_mm}, {retract:?}");
+                    let (drilled, _) = generate(&p, &op);
+                    let zs: Vec<f64> = plunges(&drilled.toolpath).iter().map(|m| m.to.z).collect();
+                    let first = zs[0];
+                    assert!(
+                        first >= THICKNESS_MM - peck_mm - TOL,
+                        "{label}: first peck to {first}"
+                    );
+                    let mut drilled_to = THICKNESS_MM;
+                    for &z in &zs {
+                        assert!(
+                            drilled_to - z <= peck_mm + TOL,
+                            "{label}: a peck from {drilled_to} to {z}"
+                        );
+                        drilled_to = drilled_to.min(z);
+                    }
+                    assert_approx_eq!(*zs.last().unwrap(), 0.0, TOL);
+                    assert_retract_safe(&drilled.toolpath, &label);
+                }
+            }
+        }
     }
 
     /// A peck at least as deep as the hole drills it in one plunge, with a

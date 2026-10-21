@@ -21,8 +21,9 @@ modeled on what hobbyists use in commercial tools such as VCarve.
 
 ## Building
 
-DreamCarve uses the stable Rust toolchain. Install it with
-[rustup](https://rustup.rs), then run:
+DreamCarve builds on stable Rust 1.94 or newer. Install it with
+[rustup](https://rustup.rs), which picks up the release `rust-toolchain.toml`
+pins for the build gate, then run:
 
 ```sh
 cargo build

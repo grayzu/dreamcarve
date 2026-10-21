@@ -16,6 +16,9 @@ the GUI both call, so **pure core, thin shell**.
 
 - Stable Rust, 2024 edition. `rust-version` in the workspace `Cargo.toml` is
   the only MSRV statement; bump it deliberately, in its own commit.
+- `rust-toolchain.toml` pins the release the build gate (fmt, clippy, tests)
+  runs on, locally and in CI. It is newer than the MSRV and is not one. Bump
+  it in its own pull request, which fixes the lints the new release adds.
 - One `[workspace.lints]` table, inherited by every crate with
   `lints.workspace = true`. Library crates (`dc-*`): `unsafe_code = "forbid"`,
   `clippy::unwrap_used = "deny"`, `clippy::expect_used = "deny"`,
