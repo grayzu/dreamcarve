@@ -1403,11 +1403,19 @@ fn null_arc_fit_tolerance_exports_the_unfitted_program() {
 
 /// #62: `export` and `check` print the program's extents in machine
 /// coordinates, rounded as the program is. Z is exactly the range of the Z
-/// words (Z min is the deepest cut). X and Y are the range of the X and Y
-/// words, except that an arc may bulge past both its end words, so they may
-/// reach further, by under 0.005 mm on the coaster.
+/// words (Z min is the deepest cut). X and Y reach at least as far as the
+/// X and Y words, and further where an arc bulges past its end words: with
+/// arc fitting the coaster's lap is a few arcs, so the extents are the
+/// tool-centre circle, radius 45 + 3.175 mm about (55, 55), within the
+/// rounding of the written arcs.
 #[test]
 fn export_prints_extents() {
+    /// The tool-centre circle's reach, mm.
+    const CIRCLE_MIN_MM: f64 = 55.0 - 48.175;
+    /// See [`CIRCLE_MIN_MM`].
+    const CIRCLE_MAX_MM: f64 = 55.0 + 48.175;
+    /// How far the extents read from the written arcs may differ from it.
+    const SLACK_MM: f64 = 0.01;
     let expected = include_str!("expected/coaster-grblhal.nc");
     let dir = work_dir("export_prints_extents");
     let dcv = init_coaster(&dir);
@@ -1427,11 +1435,11 @@ fn export_prints_extents() {
             let (min, max) = printed_range(&summary, axis);
             let (word_min, word_max) = word_range(expected, axis);
             assert!(
-                min <= word_min && min >= word_min - 0.005,
+                min <= word_min && (min - CIRCLE_MIN_MM).abs() <= SLACK_MM,
                 "{command}: {axis} min {min} vs words {word_min}: {summary}"
             );
             assert!(
-                max >= word_max && max <= word_max + 0.005,
+                max >= word_max && (max - CIRCLE_MAX_MM).abs() <= SLACK_MM,
                 "{command}: {axis} max {max} vs words {word_max}: {summary}"
             );
         }
