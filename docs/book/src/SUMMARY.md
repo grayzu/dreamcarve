@@ -21,6 +21,7 @@
 - [Drill operation](user-guide/drill.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)
+- [Tool library](user-guide/tool-library.md)
 - [Warnings](user-guide/warnings.md)
 - [Safety](user-guide/safety.md)
 

@@ -19,7 +19,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use dc_gcode::ProgramSplit;
 use dc_project::{PostProcessorError, PostProcessorRef};
 
-use crate::{check, clock, config, export, init};
+use crate::{check, clock, config, export, init, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -43,6 +43,54 @@ pub enum Command {
     Posts,
     /// Show the user configuration.
     Config(ConfigArgs),
+    /// Manage the tool library and copy its tools into projects.
+    Tools(ToolsArgs),
+}
+
+/// Arguments of `tools`.
+#[derive(Debug, clap::Args)]
+pub struct ToolsArgs {
+    /// What to do.
+    #[command(subcommand)]
+    pub command: ToolsCommand,
+}
+
+/// The `tools` subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ToolsCommand {
+    /// List every tool in the library.
+    List {
+        /// Print the library file's JSON instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Copy a library tool into a project, under a new project tool id.
+    Add {
+        /// The project to add the tool to.
+        dcv: PathBuf,
+        /// The library tool: its id (`lt1`) or its name, if no other tool
+        /// has that name.
+        tool: String,
+    },
+    /// Add the tools of a DreamCarve tool library file to the library.
+    Import {
+        /// The file to read.
+        file: PathBuf,
+        /// Overwrite a library tool that has the same source as an
+        /// imported one, instead of adding the imported one beside it.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Write the library to a file, as DreamCarve tool library JSON.
+    Export {
+        /// The file to write.
+        file: PathBuf,
+    },
+    /// Remove a tool from the library. Projects keep their copies.
+    Remove {
+        /// The library tool: its id (`lt1`) or its unique name.
+        tool: String,
+    },
 }
 
 /// Arguments of `config`.
@@ -206,6 +254,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Command::Check(args) => check::run(&args),
         Command::Posts => posts(),
         Command::Config(args) => config::run(&args.command),
+        Command::Tools(args) => tools::run(&args.command),
     };
     match result {
         Ok(code) => code,
