@@ -155,8 +155,9 @@ the code they test.
 | `cli.rs` | Arguments (clap), exit codes, staged file writes, the date. |
 | `output.rs` | `outln!`, `out!`, `errln!`: all printing; a closed stdout pipe stops output and keeps the exit code (#216). |
 | `init.rs` | `init`: SVG or DXF import and the default project; the DXF-only `--units`, `--join-tolerance` and `--layer`. |
-| `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`; the printed run-time estimate (`Estimates`). |
-| `check.rs` | `check`. |
+| `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`, `--preview`; the printed run-time estimate (`Estimates`). |
+| `check.rs` | `check`, and its `--preview`. |
+| `preview.rs` | The toolpath preview SVG of `--preview`: a pure function of the project and the generated toolpaths, ported from PureCutCNC `src/engine/designPrint/svg.ts`. |
 | `config.rs` | The user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's), `config.toml` (`[export]`, `[estimate]`), and `config path`. |
 | `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: reads and writes `tools.json` and, for `add`, the project. |
 | `tabs.rs` | `tabs place`, `list`, `clear`: the project's placed tabs. |

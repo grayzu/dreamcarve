@@ -10,7 +10,8 @@
 //! with `M6` tool changes; `--programs-per-tool` and `--one-program`
 //! override it for one export without saving it (functional spec,
 //! capability 19). Nothing is written unless every step succeeds:
-//! every program (and, with `--post`, the updated project) is staged in a
+//! every program (with `--preview`, the toolpath picture of addendum A5,
+//! and with `--post`, the updated project) is staged in a
 //! temporary file, and all are renamed into place at the end. If one
 //! rename fails, the files already moved are put back as they were.
 //!
@@ -39,7 +40,7 @@ use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs};
 use dc_project::{
-    Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap,
+    Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap, Tool,
     ToolChangeMode, Units, validate,
 };
 
@@ -48,6 +49,7 @@ use crate::cli::{
 };
 use crate::config::{self, EstimateConfig};
 use crate::output::{errln, outln};
+use crate::preview;
 
 /// One error or warning.
 #[derive(Debug)]
@@ -130,6 +132,10 @@ pub struct Built {
     pub programs: Vec<Program>,
     /// Errors and warnings.
     pub findings: Findings,
+    /// Every enabled operation's generated toolpath, with its tool, when
+    /// every one of them generated, even if emitting the programs then
+    /// failed; `None` when one did not. What `--preview` draws.
+    pub generated: Option<Vec<EmitOp>>,
 }
 
 /// Validates `project`, generates every enabled operation's toolpath, and
@@ -156,6 +162,7 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         return Built {
             programs: Vec::new(),
             findings,
+            generated: None,
         };
     }
 
@@ -220,9 +227,11 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         Finding::coded(w.code().as_str(), message)
     }));
     if !findings.errors.is_empty() {
+        // An operation did not generate.
         return Built {
             programs: Vec::new(),
             findings,
+            generated: None,
         };
     }
 
@@ -233,13 +242,18 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                     .iter()
                     .map(|w| Finding::coded(w.code(), describe_export_warning(w))),
             );
-            Built { programs, findings }
+            Built {
+                programs,
+                findings,
+                generated: Some(ops),
+            }
         }
         Err(e) => {
             findings.errors.push(Finding::plain(e.to_string()));
             Built {
                 programs: Vec::new(),
                 findings,
+                generated: Some(ops),
             }
         }
     }
@@ -323,7 +337,14 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
 
-    let Built { programs, findings } = build(&project, args.split(), &date);
+    if let Some(preview) = &args.preview {
+        check_preview_path(preview, &args.dcv)?;
+    }
+    let Built {
+        programs,
+        findings,
+        generated,
+    } = build(&project, args.split(), &date);
     for warning in &findings.warnings {
         errln!("{}", file.describe("warning", warning));
     }
@@ -337,12 +358,15 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         )));
     }
 
-    let outputs = output_paths(args, &programs)?;
+    let outputs = output_paths(args.output.as_deref(), &args.dcv, &programs)?;
     if outputs.iter().any(|output| same_file(output, &args.dcv)) {
         return Err(Failure::error(format!(
             "refusing to write the program over the project file {}",
             args.dcv.display()
         )));
+    }
+    if let Some(preview) = &args.preview {
+        check_preview_not_program(preview, &outputs)?;
     }
     // Stage everything before moving anything into place. A failed write
     // drops the files staged so far, which removes them.
@@ -351,6 +375,15 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         .zip(&programs)
         .map(|(output, program)| StagedFile::write(output, program.text.as_bytes()))
         .collect::<Result<Vec<_>, _>>()?;
+    // The preview goes with the programs: all or none (addendum A5).
+    // `build` generated every operation, since it emitted programs.
+    let staged_preview = match (&args.preview, &generated) {
+        (Some(path), Some(generated)) => Some(StagedFile::write(
+            path,
+            preview_svg(&project, generated).as_bytes(),
+        )?),
+        _ => None,
+    };
     let staged_project = match &args.post {
         Some(_) => {
             let text = dc_project::save(&project).map_err(Failure::error)?;
@@ -360,7 +393,13 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     };
     // All or nothing: a program in place beside a project that failed to
     // move, or the reverse, would not match what was reported.
-    commit_all(staged_programs.into_iter().chain(staged_project).collect())?;
+    commit_all(
+        staged_programs
+            .into_iter()
+            .chain(staged_preview)
+            .chain(staged_project)
+            .collect(),
+    )?;
 
     // The programs are written; the estimate only reads them.
     let estimates = Estimates::new(&project, &programs, estimate_settings);
@@ -382,7 +421,94 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
             &estimates,
         )?,
     }
+    if let Some(preview) = &args.preview {
+        outln!("Wrote preview {}.", preview.display())?;
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The preview SVG of the generated operations (addendum A5).
+pub fn preview_svg(project: &Project, generated: &[EmitOp]) -> String {
+    let ops: Vec<(&Operation, &Tool, &Toolpath)> = generated
+        .iter()
+        .map(|entry| (&entry.op, &entry.tool, &entry.toolpath))
+        .collect();
+    preview::render(project, &ops)
+}
+
+/// Refuses a `--preview` path that is not an `.svg` file, that is the
+/// project file, or that is an existing file other than an earlier
+/// preview, such as the drawing the project came from (addendum A5).
+/// Runs before anything is built.
+pub fn check_preview_path(preview: &Path, dcv: &Path) -> Result<(), Failure> {
+    let svg = preview
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
+    if !svg {
+        return Err(Failure::error(format!(
+            "--preview must name an .svg file, not {}",
+            preview.display()
+        )));
+    }
+    if same_path(preview, dcv) {
+        return Err(Failure::error(format!(
+            "--preview {} is the project file; refusing to write over it",
+            preview.display()
+        )));
+    }
+    if std::fs::symlink_metadata(preview).is_ok() && !is_preview(preview) {
+        return Err(Failure::error(format!(
+            "--preview {} exists and is not a DreamCarve preview (your drawing?); refusing to write over it",
+            preview.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Whether the file at `path` starts as [`preview::render`] writes it:
+/// its first kilobyte holds [`preview::MARKER`].
+fn is_preview(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = Vec::new();
+    if file.take(1024).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    String::from_utf8_lossy(&head).contains(preview::MARKER)
+}
+
+/// Refuses a `--preview` path that is one of the program paths `outputs`.
+pub fn check_preview_not_program(preview: &Path, outputs: &[PathBuf]) -> Result<(), Failure> {
+    match outputs.iter().find(|output| same_path(preview, output)) {
+        Some(output) => Err(Failure::error(format!(
+            "--preview {} is where the program {} goes; refusing to write over it",
+            preview.display(),
+            output.display()
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// True if `a` and `b` name one file, whether or not it exists yet: the
+/// same path, the same existing file, or the same name in the same
+/// directory.
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b || same_file(a, b) {
+        return true;
+    }
+    matches!((resolved(a), resolved(b)), (Some(a), Some(b)) if a == b)
+}
+
+/// `path` with its directory resolved, so `./x.svg` and `x.svg` compare
+/// equal before either exists; `None` when the directory does not exist.
+fn resolved(path: &Path) -> Option<PathBuf> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    Some(std::fs::canonicalize(parent).ok()?.join(path.file_name()?))
 }
 
 /// The cycle-time estimate of each program (functional spec, capability
@@ -508,17 +634,22 @@ fn distance(mm: f64) -> String {
     }
 }
 
-/// Where each program goes. One program goes to `-o`, or to the project's
-/// path with the post-processor's extension. Programs of tool runs (#95)
-/// go beside it, named `<stem>-<k>-T<n>.<ext>`: `<k>` the run's place,
-/// `<n>` its tool's number, `<stem>` and `<ext>` those of that one path.
-fn output_paths(args: &ExportArgs, programs: &[Program]) -> Result<Vec<PathBuf>, Failure> {
-    let single = match (&args.output, programs.first()) {
-        (Some(path), _) => path.clone(),
+/// Where each program of the project `dcv` goes. One program goes to
+/// `output` (`-o`), or to the project's path with the post-processor's
+/// extension. Programs of tool runs (#95) go beside it, named
+/// `<stem>-<k>-T<n>.<ext>`: `<k>` the run's place, `<n>` its tool's
+/// number, `<stem>` and `<ext>` those of that one path.
+pub fn output_paths(
+    output: Option<&Path>,
+    dcv: &Path,
+    programs: &[Program],
+) -> Result<Vec<PathBuf>, Failure> {
+    let single = match (output, programs.first()) {
+        (Some(path), _) => path.to_path_buf(),
         // `build` validated the extension of the post-processor it emitted
         // with, so it is safe to append (`is_safe_file_extension`).
-        (None, Some(program)) => args.dcv.with_extension(&program.extension),
-        (None, None) => args.dcv.clone(),
+        (None, Some(program)) => dcv.with_extension(&program.extension),
+        (None, None) => dcv.to_path_buf(),
     };
     if programs.len() < 2 {
         return Ok(vec![single]);
@@ -906,8 +1037,9 @@ mod tests {
     fn first_tool_radius_is_found_by_id_not_number() {
         for numbers in [[None, None], [Some(9), Some(4)], [Some(2), Some(1)]] {
             let project = two_tool_project(numbers);
-            let Built { programs, findings } =
-                build(&project, ProgramSplit::ProgramPerTool, "2026-01-01");
+            let Built {
+                programs, findings, ..
+            } = build(&project, ProgramSplit::ProgramPerTool, "2026-01-01");
             assert!(findings.errors.is_empty(), "{numbers:?}: {findings:?}");
             let radii: Vec<f64> = programs
                 .iter()

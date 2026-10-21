@@ -231,7 +231,12 @@ place it by name with `tabs place <dcv> <op>`. `check`, `export`,
 | `on_holes` | `false`: holes get no tabs, so each hole's slug comes loose. `true`: holes get the tabs too. `init` writes `false`. |
 
 `at_distances` measures along the bit's path, not the outline, from a
-start DreamCarve chooses and does not show before you export. On an open
+start DreamCarve chooses. To see where that start is and where the tabs
+land, draw the toolpath with `dreamcarve check part.dcv --preview
+part-preview.svg` ([Toolpath preview](overview.md#toolpath-preview)):
+each pass starts at a circle the size of the bit, its tick pointing the
+way the cut goes, and each tab shows as a heavy mark on every pass that
+rises over it. On an open
 path cut `on_line` ([Profile: open paths](profile.md#open-paths)) it
 measures from the path's first vertex as drawn, whichever end the cut
 starts at. To put tabs at known places, use `tabs place --at`, which

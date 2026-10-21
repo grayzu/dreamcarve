@@ -103,6 +103,7 @@ default ([Projects with more than one tool](post-processors.md#projects-with-mor
 | `--reset-settings` | With `--post`: take every setting from the new post-processor's defaults, with your [configured](configuration.md) ones on top, instead of keeping yours. |
 | `--programs-per-tool` | One program per tool run, whatever the project's `tool_change_mode` says. Not saved to the project. |
 | `--one-program` | One program with `T<n> M6` tool changes, whatever the project's `tool_change_mode` says; an error on a post-processor without `M6` (every one but grblHAL). Not saved to the project. Cannot be combined with `--programs-per-tool`. |
+| `--preview <SVG>` | Also write a picture of the toolpaths to this `.svg` file, with the programs ([Toolpath preview](#toolpath-preview)). |
 
 Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed
@@ -148,6 +149,43 @@ Each message about one value starts with its file, line and column, and
 every value still unset is reported in the same run. When the program
 could be built, it prints the program's extents as `export` does, for each
 program when there is one per tool run.
+
+| Option | Meaning |
+| --- | --- |
+| `--preview <SVG>` | Write a picture of the toolpaths to this `.svg` file, when every operation generates its toolpath, whatever the warnings ([Toolpath preview](#toolpath-preview)). No program is written. |
+
+### Toolpath preview
+
+`--preview part.svg`, on `check` or `export`, draws every enabled
+operation's toolpath over the stock and the shapes, seen from above with Y
+up as drawn, at 1:1 in millimetres: open it in a web browser or a vector
+editor.
+
+```sh
+dreamcarve check coaster.dcv --preview coaster-preview.svg
+```
+
+- The dashed grey rectangle is the stock; the thin black lines are the
+  shapes.
+- Each operation has its own colour, listed with its id and name in the
+  legend at the top left.
+- Cuts are solid lines; rapids, the moves above the stock, are dashed grey.
+- A stretch where the bit rises over a tab is drawn again, heavy: one mark
+  for each tab on each pass that rises over it.
+- Each pass starts at a circle the size of the bit, with a tick one bit
+  diameter long pointing the way the cut goes. This is where `at_distances`
+  tabs are measured from ([Tabs: placement](tabs.md#placement)).
+- A Drill draws a circle the size of the bit at each hole.
+
+It shows the toolpath DreamCarve generated, not the program: the arcs
+export fits to runs of short moves ([Arc fitting](project-file.md#arc-fitting))
+do not show, and neither do the moves between operations.
+
+The path must end in `.svg`. DreamCarve refuses to write it over the
+project, over a program the same command writes, or over an existing file
+that is not an earlier preview, such as the drawing the project came from.
+`export` writes the preview with the programs, all or none; `check` writes
+it only when every operation generated its toolpath.
 
 ### `dreamcarve posts`
 
