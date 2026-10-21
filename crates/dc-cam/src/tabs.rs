@@ -25,8 +25,9 @@
 //!
 //! Tabs are laid per tool-centre path ([`Tabs::fit`], #109): a hole gets
 //! none unless [`TabSpec::on_holes`], and a path whose spans would cover
-//! more than half of it gets the most that cover at most half, down to
-//! none, so a part or hole always cuts free between its tabs. PureCutCNC
+//! more than half of it gets the most that cover at most half, so it cuts
+//! free between its tabs. A part's outline keeps at least one tab even
+//! then ([`Least::One`]): a loose part can be thrown by the bit. PureCutCNC
 //! sizes tabs per feature in its auto-tab command (`autoTabs.ts`, a 15%
 //! free-path rule); that command writes placed tabs and arrives with them
 //! (#105). The half-path threshold here is the coverage warning's.
@@ -109,6 +110,17 @@ pub(crate) enum PathEnds {
     },
 }
 
+/// The fewest tabs [`Tabs::fit`] may leave on a path that asked for some.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Least {
+    /// A part's outline: cut free, a small part can be thrown by the bit,
+    /// so it keeps one tab even when that covers most of it.
+    One,
+    /// A hole (with `on_holes`) or an open path: its slug or slot may
+    /// come loose, so it may get none.
+    Zero,
+}
+
 /// The tabs one path asked for and the tabs cut on it, when it is too
 /// short for all of them ([`Tabs::fit`], #109).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,13 +200,16 @@ impl Tabs {
     /// [`Tabs::layout_open`] lays them, and whether their spans
     /// overlapped. When the spans would cover more than half the path,
     /// so the part or hole would not cut free, the path gets the most
-    /// tabs that cover at most half, down to none (#109): `count` tabs
-    /// re-spaced evenly, or the first of `at_distances` in their order,
-    /// with what was asked and what is cut in [`Reduced`].
+    /// tabs that cover at most half (#109), but never fewer than `least`
+    /// allows: `count` tabs re-spaced evenly, or the first of
+    /// `at_distances` in their order. What was asked and what is cut are
+    /// in [`Reduced`], which is given whenever the asked tabs covered more
+    /// than half, even when one kept tab is all that was asked.
     pub(crate) fn fit(
         &self,
         path_length_mm: f64,
         ends: PathEnds,
+        least: Least,
     ) -> (PathTabs, bool, Option<Reduced>) {
         let l = path_length_mm;
         let half_mm = l / 2.0 + EPS_MM;
@@ -208,20 +223,29 @@ impl Tabs {
         if layout.covered_mm() <= half_mm {
             return (layout, overlap, None);
         }
+        // `asked` is at least 1 here: no tabs cover nothing.
+        let fewest = match least {
+            Least::One => 1,
+            Least::Zero => 0,
+        };
         let (layout, overlap) = match &self.placement {
             // Evenly spaced spans that fit in half the path never overlap.
             TabPlacement::Count { count } => {
                 let fits = (0..*count)
                     .rev()
                     .find(|&n| f64::from(n) * self.span_mm <= half_mm)
-                    .unwrap_or(0);
+                    .unwrap_or(0)
+                    .max(fewest);
                 lay(tab_centres_mm(&TabPlacement::Count { count: fits }, l))
             }
-            TabPlacement::AtDistances { .. } => (0..asked)
-                .rev()
-                .map(|k| lay(centres.iter().take(k).copied().collect()))
-                .find(|(layout, _)| layout.covered_mm() <= half_mm)
-                .unwrap_or_else(|| lay(Vec::new())),
+            TabPlacement::AtDistances { .. } => {
+                let first = |k: usize| lay(centres.iter().take(k).copied().collect());
+                (usize::from(fewest)..asked)
+                    .rev()
+                    .map(first)
+                    .find(|(layout, _)| layout.covered_mm() <= half_mm)
+                    .unwrap_or_else(|| first(usize::from(fewest)))
+            }
         };
         let cut = layout.tab_count;
         (layout, overlap, Some(Reduced { asked, cut }))

@@ -29,8 +29,8 @@ use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
-    LapRates, PathEnds, PathTabs, Reduced, Tabs, coverage_warning, cut_range_warnings, lap_cuts,
-    overlap_warning,
+    LapRates, Least, PathEnds, PathTabs, Reduced, Tabs, coverage_warning, cut_range_warnings,
+    lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{OpenPathReason, Warning};
@@ -161,8 +161,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// or one above the stock top, gives [`Warning::TabsOutsideCutRange`].
 /// Tabs go on each contour separately (#109): a hole gets none unless
 /// `on_holes`, and a contour whose spans would cover more than half of it
-/// gets the most tabs that cover at most half, down to none, with
-/// [`Warning::TabsCoverMostOfContour`].
+/// gets the most tabs that cover at most half (a part's outline at least
+/// one; a hole may get none), with [`Warning::TabsCoverMostOfContour`].
 ///
 /// With `op.entry` a ramp or helix (design spec, "Algorithms → Entry"),
 /// each pass reaches its depth at the contour start without a plunge:
@@ -436,7 +436,13 @@ pub fn generate_profile(
             if hole && !tabs.on_holes() {
                 return (Some((Tabs::none(path.length_mm(), ends), false)), None);
             }
-            let (layout, overlapped, reduced) = tabs.fit(path.length_mm(), ends);
+            // #109: a part keeps a tab; a hole or an open path may not.
+            let least = if hole || !path.is_closed() {
+                Least::Zero
+            } else {
+                Least::One
+            };
+            let (layout, overlapped, reduced) = tabs.fit(path.length_mm(), ends, least);
             (Some((layout, overlapped)), reduced)
         })
         .unzip();
@@ -1267,8 +1273,8 @@ pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
 
 /// The closed target outlines that the tabbed Profile `op` cuts with no
 /// tab, in drawing order (#109): its holes unless `on_holes`, and every
-/// outline whose tool-centre paths are too short for even one tab
-/// ([`Tabs::fit`]). Cut through the stock, each of them comes loose. Empty
+/// hole whose tool-centre paths are too short for even one tab
+/// ([`Tabs::fit`]; a part's outline always keeps one). Cut through the stock, each of them comes loose. Empty
 /// when `op` has no tabs, and when its toolpath cannot be generated:
 /// [`crate::order::check`] only warns.
 pub(crate) fn untabbed_outlines(project: &Project, op: &ProfileOp) -> Vec<ShapeRef> {
@@ -1304,7 +1310,12 @@ pub(crate) fn untabbed_outlines(project: &Project, op: &ProfileOp) -> Vec<ShapeR
             let cut_free = !centres.is_empty()
                 && ((role == Role::Hole && !tabs.on_holes())
                     || centres.iter().all(|c| {
-                        let (layout, _, _) = tabs.fit(c.polyline().length_mm(), PathEnds::Closed);
+                        let least = match role {
+                            Role::Hole => Least::Zero,
+                            Role::Outer => Least::One,
+                        };
+                        let (layout, _, _) =
+                            tabs.fit(c.polyline().length_mm(), PathEnds::Closed, least);
                         layout.is_untabbed()
                     }));
             if cut_free {

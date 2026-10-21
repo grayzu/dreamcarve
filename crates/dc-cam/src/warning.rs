@@ -7,6 +7,7 @@
 
 use std::fmt;
 
+use dc_geometry::EPS_MM;
 use dc_project::{CornerRelief, OperationId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
@@ -612,15 +613,27 @@ const fn relief_name(relief: CornerRelief) -> &'static str {
 }
 
 /// What is cut instead of `tab_count` tabs that would cover most of a
-/// contour (`cut_count` of them), and the width at which all of them
-/// would fit, `max_width_mm`.
-fn coverage_advice(tab_count: usize, cut_count: usize, max_width_mm: Option<f64>) -> String {
-    let cut = match cut_count {
-        0 => "No tab is cut there".to_owned(),
-        1 => "Only 1 of them is cut there".to_owned(),
-        n => format!("Only {n} of them are cut there"),
+/// contour (`cut_count` of them; `kept_covers_most` when that is the one
+/// tab a part keeps and it still covers more than half), and the width at
+/// which all of them would fit, `max_width_mm`.
+fn coverage_advice(
+    tab_count: usize,
+    cut_count: usize,
+    kept_covers_most: bool,
+    max_width_mm: Option<f64>,
+) -> String {
+    let cut = match (cut_count, kept_covers_most) {
+        (0, _) => "No tab is cut there".to_owned(),
+        (1, true) if tab_count == 1 => "Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
+        (1, true) => "Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
+        (1, false) => "Only 1 of them is cut there".to_owned(),
+        (n, _) => format!("Only {n} of them are cut there"),
     };
     match max_width_mm {
+        Some(width_mm) if tab_count == 1 && cut_count == 1 => format!(
+            "{cut}. To let it cut free, make it at most {} mm wide.",
+            mm(width_mm)
+        ),
         Some(width_mm) if tab_count == 1 => format!(
             "{cut}. To keep it, make it at most {} mm wide.",
             mm(width_mm)
@@ -744,7 +757,12 @@ impl fmt::Display for Warning {
                     f,
                     "tabs on {} would cover more than half of its tool path: {tabs}, so the part or hole would not cut free. {}",
                     shape_or_contour(shape.as_ref(), *contour),
-                    coverage_advice(*tab_count, *cut_count, *max_width_mm)
+                    coverage_advice(
+                        *tab_count,
+                        *cut_count,
+                        *cut_count == 1 && 2.0 * tab_span_mm > *path_length_mm + EPS_MM,
+                        *max_width_mm
+                    )
                 )
             }
             Self::ToolpathsOverlap {
