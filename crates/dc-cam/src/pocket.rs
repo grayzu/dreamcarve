@@ -7,11 +7,11 @@
 //   src/engine/toolpaths/pocketPatterns.ts
 
 //! Pocket toolpaths (`docs/specs/phase-2/design.md`, "Algorithms → Pocket",
-//! steps 1–2, 4–9, 11–12): clear the inside of closed shapes with
-//! concentric rings or raster lines, leaving nested shapes as islands. The
-//! ring tree is in [`rings`], the raster lines in [`raster`], and each
-//! pass's ramp or helix in [`crate::entry`]; pocket allowance and rest
-//! machining land in later slices.
+//! steps 1–9, 11–12): clear the inside of closed shapes with concentric
+//! rings or raster lines, leaving nested shapes as islands and, with an
+//! allowance, a band of material on every wall. The ring tree is in
+//! [`rings`], the raster lines in [`raster`], rest machining's leftover in
+//! [`rest`], and each pass's ramp or helix in [`crate::entry`].
 //!
 //! Re-derived for Y-up (ADR-0001) rather than copied: PureCutCNC's "conventional
 //! is a no-op on Clipper output" holds because its positive-area outers are
@@ -21,6 +21,7 @@
 //! ([`ring_is_ccw`]).
 
 pub mod raster;
+pub mod rest;
 pub mod rings;
 
 use crate::block::CutBlock;
@@ -41,7 +42,8 @@ use dc_geometry::{
     nest,
 };
 use dc_project::{
-    ClearanceStrategy, CornerRelief, CutDirection, Entry, PocketOp, Project, Tool, WallPass,
+    ClearanceStrategy, CornerRelief, CutDirection, Entry, Operation, OperationId, PocketOp,
+    Project, Tool, WallPass,
 };
 use raster::RasterSettings;
 use rings::{Ring, RingKind, RingTree, WallRings, inset_region};
@@ -88,8 +90,10 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// Each target instance's closed profiles are placed and nested; each
 /// region is a pocket and its holes are islands, and a region inside an
 /// island is a pocket of its own, cut after the pocket around it. The
-/// tool-centre region is the pocket inset by the tool radius
-/// ([`rings::inset_region`]); where it is empty the shape is skipped with
+/// tool-centre region is the pocket inset by the tool radius plus
+/// `op.allowance_mm` ([`rings::inset_region`]), so the footprint stays the
+/// allowance off every wall and island; where it is empty the shape is
+/// skipped with
 /// [`WarningCode::PocketNoRoom`], and an island closer than the tool's
 /// diameter to the wall or another island warns
 /// [`WarningCode::PocketIslandTooClose`]. With the offset strategy each
@@ -105,8 +109,20 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// (stay-down links inside the cleared tool-centre area, else a retract to
 /// safe Z).
 ///
+/// With `op.rest_of` set the operation is rest machining: from the
+/// referenced Pocket's tool radius and allowance, read from `project` and
+/// never from its toolpath (S14), [`rest::left_by`] gives the material it
+/// left, and the tool-centre region keeps only the centres within this
+/// tool's radius of it ([`rest::rest_centre`]); rings or lines are then
+/// built on that as on any tool-centre region. When nothing is left that
+/// this tool reaches the operation warns
+/// [`WarningCode::RestOfClearsNothing`] and has no cutting move. The
+/// reference must be an enabled Pocket with the same targets listed before
+/// `op` ([`CamError::RestOfInvalid`]).
+///
 /// Fails without a toolpath when a rate, the step-down or the step-over is
-/// missing, when the depth goes below the stock bottom plus allowance, when
+/// missing, when the allowance is negative ([`CamError::InvalidAllowance`]),
+/// when the depth goes below the stock bottom plus allowance, when
 /// the raster angle is outside [0, 180) ([`CamError::InvalidRasterAngle`]),
 /// when targets cross, when an id does not resolve, when the cutter is not
 /// a flat end mill, when the cutter would leave the stock
@@ -121,9 +137,8 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// and from the previous pass Z after; where it does not fit the entry
 /// falls back to a ramp, then a plunge ([`WarningCode::EntryFallback`],
 /// [`WarningCode::HelixDiameterReduced`]). A ring or line reached by a
-/// stay-down link skips its descent. Not yet generated: an allowance and
-/// rest machining fail with [`CamError::NotSupportedYet`]; corner relief
-/// is skipped ([`WarningCode::ReliefSkipped`]).
+/// stay-down link skips its descent. Not yet generated: corner relief is
+/// skipped ([`WarningCode::ReliefSkipped`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_pocket(
     project: &Project,
@@ -167,7 +182,8 @@ pub fn generate_pocket(
             angle_deg,
         });
     }
-    refuse_later_slices(op)?;
+    check_allowance(&op.id, op.allowance_mm)?;
+    let reference = reference_of(project, op)?;
     check_entry(op)?;
     let step_down_mm =
         op.step_down_mm
@@ -248,6 +264,12 @@ pub fn generate_pocket(
     let mut root_index = 0;
     // Every tool-centre region, for the S9 check on descents.
     let mut centre_regions: Vec<Region> = Vec::new();
+    // The material the operation may cut, for S9: each region less the
+    // allowance.
+    let mut allowed: Vec<Region> = Vec::new();
+    // Whether a rest operation found anything to clear.
+    let mut rest_found = false;
+    let mut rest_had_room = false;
     for region in &regions {
         // `nest` keeps every contour or reverses it, so this always finds
         // the shape.
@@ -255,7 +277,14 @@ pub fn generate_pocket(
             continue;
         };
         warnings.extend(island_gap_warnings(op, tool, region, &shapes, shape));
-        let tool_centre = inset_region(region, radius_mm, tolerance_mm);
+        if op.allowance_mm > 0.0 {
+            allowed.extend(inset_region(region, op.allowance_mm, tolerance_mm));
+        } else {
+            allowed.push(region.clone());
+        }
+        // Design step 2: the tool centre stays `r + allowance` off every
+        // wall and island.
+        let tool_centre = inset_region(region, radius_mm + op.allowance_mm, tolerance_mm);
         if tool_centre.is_empty() {
             warnings.push(
                 shape_warning(WarningCode::PocketNoRoom, shape)
@@ -265,6 +294,21 @@ pub fn generate_pocket(
             );
             continue;
         }
+        // Design step 3: a rest operation keeps only the tool centres that
+        // touch what its reference left.
+        let tool_centre = match reference {
+            Some(reference) => {
+                rest_had_room = true;
+                let left = rest::left_by(region, op.allowance_mm, reference, tolerance_mm);
+                let centre = rest::rest_centre(&tool_centre, &left, radius_mm, tolerance_mm);
+                if centre.is_empty() {
+                    continue;
+                }
+                rest_found = true;
+                centre
+            }
+            None => tool_centre,
+        };
         centre_regions.extend(tool_centre.iter().cloned());
         for root in tool_centre {
             if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
@@ -309,6 +353,15 @@ pub fn generate_pocket(
                 rings.push((shape.clone(), ring_path(ring, op.direction), cleared, plan));
             }
         }
+    }
+
+    if let Some(rest_of) = op.rest_of.as_ref().filter(|_| rest_had_room && !rest_found) {
+        warnings.push(
+            Warning::new(WarningCode::RestOfClearsNothing)
+                .with("op", &op.id)
+                .with("rest_of", rest_of)
+                .with("tool", &tool.name),
+        );
     }
 
     let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
@@ -385,30 +438,73 @@ pub fn generate_pocket(
         radius_mm,
         tolerance_mm,
         &regions,
+        &allowed,
         &centre_regions,
         &shapes,
     )?;
     Ok((toolpath, warnings))
 }
 
-/// Typed errors for what later slices generate: an allowance and rest
-/// machining (slice 6). Each would cut something other than what was
-/// asked, so none is silently ignored.
-fn refuse_later_slices(op: &PocketOp) -> Result<(), CamError> {
-    let feature = if op.allowance_mm > 0.0 {
-        Some("a pocket allowance (allowance_mm)")
-    } else if op.rest_of.is_some() {
-        Some("rest machining (rest_of)")
+/// The allowance validation requires, 0 or more, checked again: a
+/// negative one would cut into the walls.
+fn check_allowance(op: &OperationId, allowance_mm: f64) -> Result<(), CamError> {
+    if allowance_mm.is_finite() && allowance_mm >= 0.0 {
+        Ok(())
     } else {
-        None
-    };
-    match feature {
-        Some(feature) => Err(CamError::NotSupportedYet {
-            op: op.id.clone(),
-            feature: feature.into(),
-        }),
-        None => Ok(()),
+        Err(CamError::InvalidAllowance {
+            op: op.clone(),
+            allowance_mm,
+        })
     }
+}
+
+/// The Pocket `op` rests on, read from the project (S14: its tool and
+/// allowance, never its toolpath), or `None` when `op.rest_of` is unset.
+/// As validation requires, it must be an enabled Pocket with the same
+/// targets listed before `op`; else [`CamError::RestOfInvalid`].
+fn reference_of(project: &Project, op: &PocketOp) -> Result<Option<rest::Reference>, CamError> {
+    let Some(rest_of) = &op.rest_of else {
+        return Ok(None);
+    };
+    let invalid = || CamError::RestOfInvalid {
+        op: op.id.clone(),
+        rest_of: rest_of.clone(),
+    };
+    let index = project
+        .operations
+        .iter()
+        .position(|o| o.id() == &op.id)
+        .unwrap_or(project.operations.len());
+    let earlier = project
+        .operations
+        .iter()
+        .take(index)
+        .find(|o| o.id() == rest_of);
+    let Some(Operation::Pocket(rough)) = earlier else {
+        return Err(invalid());
+    };
+    if !rough.enabled || rough.targets != op.targets {
+        return Err(invalid());
+    }
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == rough.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: rough.id.clone(),
+            tool: rough.tool.clone(),
+        })?;
+    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+        return Err(CamError::InvalidToolDiameter {
+            tool: tool.name.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
+    check_allowance(&rough.id, rough.allowance_mm)?;
+    Ok(Some(rest::Reference {
+        radius_mm: tool.diameter_mm / 2.0,
+        allowance_mm: rough.allowance_mm,
+    }))
 }
 
 /// The angle in (0, 45] degrees and the helix fraction in (0, 1] that
@@ -578,18 +674,25 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
 }
 
 /// S9: the tool's footprint along `toolpath` lies in the pockets'
-/// material, inside every region and outside every island. Flattening
+/// material, `allowed` (each of `regions` less the allowance), inside
+/// every region and outside every island; `regions` name the pocket in
+/// the error. A rest operation is held to the same area (S14). Flattening
 /// moves both outlines by up to `tolerance_mm`, so area within that band
 /// of the boundaries is allowed. Ramp and helix moves are checked on their
 /// tool centres, which must stay in `centre_regions` (the tool-centre
 /// regions, where the whole tool is in the material), and the rest of the
 /// toolpath on its swept footprint.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the check needs each of the generator's region sets"
+)]
 fn check_in_material(
     op: &PocketOp,
     toolpath: &Toolpath,
     radius_mm: f64,
     tolerance_mm: f64,
     regions: &[Region],
+    allowed: &[Region],
     centre_regions: &[Region],
     shapes: &[(ShapeRef, Contour)],
 ) -> Result<(), CamError> {
@@ -600,7 +703,7 @@ fn check_in_material(
         .sum();
     let allowed_mm2 = (tolerance_mm + EPS_MM) * boundary_mm;
     let off_material = |swept: &[Region], probe: Option<Point>| {
-        let outside = difference(swept, regions, tolerance_mm);
+        let outside = difference(swept, allowed, tolerance_mm);
         let area = area_mm2(&outside);
         if area <= allowed_mm2 {
             return Ok(());
@@ -1499,28 +1602,12 @@ mod tests {
         assert_approx_eq!(m[first_deep].feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
     }
 
-    /// What this build refuses or skips: allowance and rest are typed
-    /// errors naming the feature; corner relief generates with a warning.
-    /// A ramp entry is cut (slice 9), so it no longer warns.
+    /// What this build skips: corner relief generates the pocket asked for
+    /// with a warning (slice 12). A ramp entry is cut (slice 9), so it no
+    /// longer warns.
     #[test]
-    fn allowance_and_rest_are_not_supported_yet() {
+    fn corner_relief_is_skipped_with_a_warning() {
         let p = rect_project();
-        let mut op = pocket_op(&p, CutDirection::Climb);
-        op.allowance_mm = 0.5;
-        let err = generate_pocket(&p, &op).unwrap_err();
-        assert!(matches!(
-            &err,
-            CamError::NotSupportedYet { feature, .. } if feature.contains("allowance")
-        ));
-        assert!(err.to_string().contains("not supported by this build yet"));
-
-        let mut op = pocket_op(&p, CutDirection::Climb);
-        op.rest_of = Some(OperationId::new("o0"));
-        assert!(matches!(
-            generate_pocket(&p, &op).unwrap_err(),
-            CamError::NotSupportedYet { ref feature, .. } if feature.contains("rest")
-        ));
-
         let mut op = pocket_op(&p, CutDirection::Climb);
         op.entry = Entry::Ramp { angle_deg: 15.0 };
         op.corner_relief = CornerRelief::Dogbone;
@@ -1528,6 +1615,427 @@ mod tests {
         assert_eq!(codes(&warnings), vec![WarningCode::ReliefSkipped]);
         assert_eq!(warnings[0].param("requested"), Some("dogbone"));
         assert_eq!(rings_at(&tp, PASS_Z_MM[0]).len(), 9);
+    }
+
+    /// The bounds of `regions`, outers only.
+    fn regions_bounds(regions: &[Region]) -> Rect {
+        regions
+            .iter()
+            .filter_map(|r| r.outer().polyline().bounds())
+            .reduce(|a, b| a.including(b.min).including(b.max))
+            .expect("some region")
+    }
+
+    /// The region of `rect`, a placed rectangle.
+    fn rect_region(rect: Rect) -> Region {
+        region_of(
+            &[Polyline::rect(rect.min, rect.width_mm(), rect.height_mm())],
+            Transform::IDENTITY,
+        )
+    }
+
+    /// The area of `fp` outside `allowed`, which flattening alone keeps
+    /// within a tolerance band along `allowed`'s boundary.
+    fn area_outside(fp: &[Region], allowed: &Region) -> f64 {
+        area_mm2(&difference(fp, std::slice::from_ref(allowed), FLAT_TOL))
+    }
+
+    /// Functional capability 12, design step 2 (S9 with allowance): at
+    /// `allowance_mm` 0.5 the tool-centre region is the rect inset by
+    /// `r + 0.5`, so the wall ring runs there and the footprint stays 0.5
+    /// from every wall, with both strategies and with a helix entry. Round
+    /// an island the footprint stays 0.5 off it too.
+    #[test]
+    fn allowance_leaves_material_on_walls() {
+        const ALLOWANCE_MM: f64 = 0.5;
+        let p = rect_project();
+        let left = inset(wall(), ALLOWANCE_MM);
+        let allowed = rect_region(left);
+        for strategy in [
+            ClearanceStrategy::Offset,
+            ClearanceStrategy::Raster { angle_deg: 0.0 },
+        ] {
+            for entry in [Entry::Plunge, helix_80()] {
+                let mut op = pocket_op(&p, CutDirection::Climb);
+                op.strategy = strategy.clone();
+                op.entry = entry.clone();
+                op.allowance_mm = ALLOWANCE_MM;
+                let what = format!("{strategy:?} {entry:?}");
+                let (tp, warnings) = generate(&p, &op);
+                assert!(warnings.is_empty(), "{what}: {warnings:?}");
+                let fp = footprint(&tp, RADIUS_MM);
+                assert!(
+                    area_outside(&fp, &allowed) <= 1e-3,
+                    "{what}: {} mm² cut into the allowance",
+                    area_outside(&fp, &allowed)
+                );
+                assert_rect_eq(regions_bounds(&fp), left, RING_TOL, &what);
+                if strategy != ClearanceStrategy::Offset {
+                    continue;
+                }
+                // The wall ring is the tool-centre rect inset by the allowance.
+                let wall_ring = rings_at(&tp, PASS_Z_MM[0])
+                    .into_iter()
+                    .max_by(|a, b| a.area_mm2.abs().total_cmp(&b.area_mm2.abs()))
+                    .expect("a wall ring");
+                assert_rect_eq(
+                    wall_ring.bounds,
+                    inset(wall(), RADIUS_MM + ALLOWANCE_MM),
+                    RING_TOL,
+                    &what,
+                );
+            }
+        }
+
+        let p = island_project();
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        op.allowance_mm = ALLOWANCE_MM;
+        let (tp, _) = generate(&p, &op);
+        let centre = Point::new(70.0, 45.0);
+        let nearest = tp
+            .moves
+            .iter()
+            .filter(|m| !m.is_rapid())
+            .map(|m| m.to.xy().distance_to(centre))
+            .fold(f64::MAX, f64::min);
+        assert!(
+            nearest >= 10.0 + ALLOWANCE_MM + RADIUS_MM - FLAT_TOL,
+            "the tool centre comes {nearest} mm from the island centre"
+        );
+        assert!(nearest <= 10.0 + ALLOWANCE_MM + RADIUS_MM + RING_TOL);
+    }
+
+    /// Rough tool of the rest tests: 12.7 mm.
+    const ROUGH_MM: f64 = 12.7;
+    /// Rest tool of the rest tests: 3.175 mm.
+    const REST_MM: f64 = 3.175;
+    /// The rough pocket's allowance in the rest tests.
+    const ROUGH_ALLOWANCE_MM: f64 = 0.5;
+
+    /// Acceptance test 22's shape: the 100 × 50 rect with a 10 × 10 mm
+    /// notch out of the middle of its top wall, placed at (20, 20): the
+    /// notch spans X 65..75, Y 70..80.
+    fn notched_rect() -> Polyline {
+        let v = dc_geometry::Vertex::line;
+        Polyline::new(
+            vec![
+                v(0.0, 0.0),
+                v(100.0, 0.0),
+                v(100.0, 50.0),
+                v(55.0, 50.0),
+                v(55.0, 60.0),
+                v(45.0, 60.0),
+                v(45.0, 50.0),
+                v(0.0, 50.0),
+            ],
+            true,
+        )
+    }
+
+    /// The placed notched rect's region.
+    fn notched_region() -> Region {
+        region_of(&[notched_rect()], at_20_20())
+    }
+
+    /// A tool like the sample tool, `diameter_mm` wide, with id `id`.
+    fn tool_of(project: &Project, id: &str, diameter_mm: f64) -> Tool {
+        let mut tool = project.tools[0].clone();
+        tool.id = ToolId::new(id);
+        tool.name = format!("{diameter_mm} mm end mill");
+        tool.diameter_mm = diameter_mm;
+        tool
+    }
+
+    /// The notched rect with a rough Pocket `o1` (tool `t1`, `rough_mm`,
+    /// allowance `rough_allowance_mm`) and a rest Pocket `o2` of it (tool
+    /// `t2`, `rest_mm`), both as [`pocket_op`]. The project holds both
+    /// operations, in that order.
+    fn rough_and_rest(
+        rough_mm: f64,
+        rough_allowance_mm: f64,
+        rest_mm: f64,
+    ) -> (Project, PocketOp, PocketOp) {
+        let mut p = project(vec![notched_rect()], &[("i1", at_20_20())]);
+        p.tools = vec![tool_of(&p, "t1", rough_mm), tool_of(&p, "t2", rest_mm)];
+        let mut rough = pocket_op(&p, CutDirection::Climb);
+        rough.allowance_mm = rough_allowance_mm;
+        let mut rest = pocket_op(&p, CutDirection::Climb);
+        rest.id = OperationId::new("o2");
+        rest.name = "Rest".into();
+        rest.tool = ToolId::new("t2");
+        rest.rest_of = Some(rough.id.clone());
+        p.operations = vec![
+            dc_project::Operation::Pocket(rough.clone()),
+            dc_project::Operation::Pocket(rest.clone()),
+        ];
+        (p, rough, rest)
+    }
+
+    /// The XY length of every cutting move, arcs along the arc, mm.
+    fn cutting_length_mm(tp: &Toolpath) -> f64 {
+        let mut pos = match tp.moves.first() {
+            Some(m) => m.to.xy(),
+            None => return 0.0,
+        };
+        let mut total = 0.0;
+        for mv in &tp.moves {
+            let to = mv.to.xy();
+            total += match mv.kind {
+                MoveKind::Linear => pos.distance_to(to),
+                MoveKind::ArcCcw { centre } => {
+                    pos.distance_to(centre) * sweep_rad(pos, to, centre, true).abs()
+                }
+                MoveKind::ArcCw { centre } => {
+                    pos.distance_to(centre) * sweep_rad(pos, to, centre, false).abs()
+                }
+                _ => 0.0,
+            };
+            pos = to;
+        }
+        total
+    }
+
+    fn covers(fp: &[Region], p: Point) -> bool {
+        fp.iter().any(|r| r.contains_point(p))
+    }
+
+    /// Design step 3: after a 12.7 mm rough at allowance 0.5, the 3.175 mm
+    /// rest Pocket cuts the 0.5 mm band on every wall, the four corners and
+    /// the notch, and nothing in the middle of the pocket. The rough left
+    /// at most 2.36 mm from a wall (its corner wedges, `6.85 − 6.35/√2`)
+    /// besides the notch, so no rest footprint is more than that plus the
+    /// rest tool's diameter from a wall.
+    #[test]
+    fn rest_region_is_corners_and_wall_band() {
+        let (p, _, rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        let (tp, warnings) = generate(&p, &rest);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let fp = footprint(&tp, REST_MM / 2.0);
+        assert!(!fp.is_empty(), "the rest Pocket cuts");
+        // The band, half way into it, on all four walls.
+        for q in [
+            Point::new(20.25, 45.0),
+            Point::new(119.75, 45.0),
+            Point::new(50.0, 20.25),
+            Point::new(50.0, 69.75),
+        ] {
+            assert!(covers(&fp, q), "band at {q:?}");
+        }
+        // Each corner as close as the rest tool reaches.
+        let near = REST_MM / 2.0 * (1.0 - std::f64::consts::FRAC_1_SQRT_2) + 0.05;
+        for (x, y, dx, dy) in [
+            (20.0, 20.0, 1.0, 1.0),
+            (120.0, 20.0, -1.0, 1.0),
+            (120.0, 70.0, -1.0, -1.0),
+            (20.0, 70.0, 1.0, -1.0),
+            (65.0, 80.0, 1.0, -1.0),
+            (75.0, 80.0, -1.0, -1.0),
+        ] {
+            let q = Point::new(x + dx * near, y + dy * near);
+            assert!(covers(&fp, q), "corner at {q:?}");
+        }
+        // The notch, across.
+        for q in [Point::new(70.0, 76.0), Point::new(66.0, 78.0)] {
+            assert!(covers(&fp, q), "notch at {q:?}");
+        }
+        // Nothing in the middle: the region inset by 2.36 + 3.175 + a margin
+        // is untouched (the notch is gone from it, being 10 wide).
+        let core = inset_region(&notched_region(), 2.36 + REST_MM + 0.1, FLAT_TOL);
+        assert_eq!(core.len(), 1);
+        let inside = intersection(&fp, &core, FLAT_TOL);
+        assert!(
+            area_mm2(&inside) <= 1e-3,
+            "{} mm² of the middle recut",
+            area_mm2(&inside)
+        );
+    }
+
+    /// Acceptance test 22: the 12.7 mm rough at allowance 0.5 and the
+    /// 3.175 mm rest together cover the notched region inset by 1.5875
+    /// within 0.05 mm (as area: 0.05 × its perimeter), and the rest's
+    /// cutting length is under a quarter of a full 3.175 mm pocket's.
+    #[test]
+    fn rest_coverage_with_rough_reaches_small_tool_inset() {
+        let (p, rough, rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        let (rough_tp, rough_warnings) = generate(&p, &rough);
+        assert!(rough_warnings.is_empty(), "{rough_warnings:?}");
+        let (rest_tp, rest_warnings) = generate(&p, &rest);
+        assert!(rest_warnings.is_empty(), "{rest_warnings:?}");
+        let both = dc_geometry::union(
+            &footprint(&rough_tp, ROUGH_MM / 2.0),
+            &footprint(&rest_tp, REST_MM / 2.0),
+            FLAT_TOL,
+        );
+        let reachable = inset_region(&notched_region(), REST_MM / 2.0, FLAT_TOL);
+        assert_eq!(reachable.len(), 1);
+        let perimeter_mm = reachable[0].outer().polyline().length_mm();
+        let uncut = difference(&reachable, &both, FLAT_TOL);
+        assert!(
+            area_mm2(&uncut) <= 0.05 * perimeter_mm,
+            "{} mm² the rest tool reaches is left: {uncut:?}",
+            area_mm2(&uncut)
+        );
+        // Without the rest Pocket the band and the notch are left.
+        let rough_only = difference(&reachable, &footprint(&rough_tp, ROUGH_MM / 2.0), FLAT_TOL);
+        assert!(area_mm2(&rough_only) > 0.05 * perimeter_mm);
+
+        let mut full = rest.clone();
+        full.rest_of = None;
+        let (full_tp, _) = generate(&p, &full);
+        let (rest_mm, full_mm) = (cutting_length_mm(&rest_tp), cutting_length_mm(&full_tp));
+        assert!(
+            rest_mm < 0.25 * full_mm,
+            "rest cuts {rest_mm} mm, a full pocket {full_mm} mm"
+        );
+    }
+
+    /// Design step 3: a rest Pocket whose tool reaches nothing its
+    /// reference left (a larger tool, or the same tool at the same
+    /// allowance) warns `RestOfClearsNothing` and emits no cutting move.
+    #[test]
+    fn rest_of_that_clears_nothing_warns() {
+        for (rough_mm, rough_allowance_mm, rest_mm, rest_allowance_mm) in [
+            (REST_MM, 0.0, ROUGH_MM, 0.0),
+            (DIAMETER_MM, 0.0, DIAMETER_MM, 0.0),
+            (DIAMETER_MM, 0.5, DIAMETER_MM, 0.5),
+        ] {
+            let what = format!("rough {rough_mm} at {rough_allowance_mm}, rest {rest_mm}");
+            let (mut p, _, mut rest) = rough_and_rest(rough_mm, rough_allowance_mm, rest_mm);
+            // On the plain rect: the notch would leave room for a small tool.
+            p.definitions
+                .values_mut()
+                .for_each(|d| d.profiles = vec![rect_100x50()]);
+            rest.allowance_mm = rest_allowance_mm;
+            let (tp, warnings) = generate(&p, &rest);
+            assert_eq!(
+                codes(&warnings),
+                vec![WarningCode::RestOfClearsNothing],
+                "{what}"
+            );
+            assert_eq!(warnings[0].param("op"), Some("o2"), "{what}");
+            assert_eq!(warnings[0].param("rest_of"), Some("o1"), "{what}");
+            assert_eq!(
+                warnings[0].param("tool"),
+                Some(format!("{rest_mm} mm end mill").as_str()),
+                "{what}"
+            );
+            assert!(
+                tp.moves.iter().all(Move::is_rapid),
+                "{what}: no cutting move: {tp:?}"
+            );
+        }
+        let w = Warning::new(WarningCode::RestOfClearsNothing)
+            .with("op", "o2")
+            .with("rest_of", "o1")
+            .with("tool", "12.7 mm end mill");
+        assert_eq!(
+            w.to_string(),
+            "operation `o1`, which this one rests on, already reaches everything tool `12.7 mm end mill` can, so this operation cuts nothing; use a smaller tool, or remove it"
+        );
+    }
+
+    /// How much of a rest footprint may lie off its allowed area: the
+    /// rest tool-centre region is a boolean result, flattened, so its
+    /// footprint strays by rounding along the walls (0.01 mm² on a 320 mm
+    /// boundary is 3e-5 mm of stray width).
+    const REST_OUTSIDE_MM2: f64 = 0.01;
+
+    /// S14: the rest footprint is bounded by the operation's own region,
+    /// whatever the reference: inside the notched region always, and with a
+    /// reference whose allowance leaves it no room at all the rest Pocket
+    /// is the whole pocket, still inside. A reference that is not an
+    /// earlier enabled Pocket with the same targets is an error, as in
+    /// validation.
+    #[test]
+    fn rest_footprint_stays_inside_region() {
+        let region = notched_region();
+        let (p, _, rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        let (tp, _) = generate(&p, &rest);
+        let fp = footprint(&tp, REST_MM / 2.0);
+        assert!(
+            area_outside(&fp, &region) <= REST_OUTSIDE_MM2,
+            "{}",
+            area_outside(&fp, &region)
+        );
+
+        // A reference that reaches nothing: the rest is a full pocket.
+        let (p, _, rest) = rough_and_rest(ROUGH_MM, 30.0, REST_MM);
+        let (tp, _) = generate(&p, &rest);
+        let fp = footprint(&tp, REST_MM / 2.0);
+        assert!(
+            area_outside(&fp, &region) <= REST_OUTSIDE_MM2,
+            "{}",
+            area_outside(&fp, &region)
+        );
+        let mut full = rest.clone();
+        full.rest_of = None;
+        let (full_tp, _) = generate(&p, &full);
+        assert_approx_eq!(
+            area_mm2(&fp),
+            area_mm2(&footprint(&full_tp, REST_MM / 2.0)),
+            1.0
+        );
+
+        // With its own allowance the rest stays that far off the walls.
+        let (p, _, mut rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        rest.allowance_mm = 0.2;
+        let (tp, _) = generate(&p, &rest);
+        let fp = footprint(&tp, REST_MM / 2.0);
+        let allowed = inset_region(&region, 0.2, FLAT_TOL);
+        assert_eq!(allowed.len(), 1);
+        assert!(area_outside(&fp, &allowed[0]) <= REST_OUTSIDE_MM2);
+        assert!(!fp.is_empty());
+
+        // Invalid references.
+        let (p, rough, rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        let invalid = |p: &Project, rest: &PocketOp| {
+            assert_eq!(
+                generate_pocket(p, rest).unwrap_err(),
+                CamError::RestOfInvalid {
+                    op: rest.id.clone(),
+                    rest_of: rest.rest_of.clone().unwrap(),
+                }
+            );
+        };
+        let mut dangling = rest.clone();
+        dangling.rest_of = Some(OperationId::new("nope"));
+        invalid(&p, &dangling);
+        let mut itself = rest.clone();
+        itself.rest_of = Some(rest.id.clone());
+        invalid(&p, &itself);
+        // A later Pocket.
+        let mut later = p.clone();
+        later.operations.reverse();
+        invalid(&later, &rest);
+        // A disabled one.
+        let mut disabled = p.clone();
+        let mut off = rough.clone();
+        off.enabled = false;
+        disabled.operations[0] = dc_project::Operation::Pocket(off);
+        invalid(&disabled, &rest);
+        // One with other targets.
+        let mut other = p.clone();
+        let mut elsewhere = rough.clone();
+        elsewhere.targets = vec![InstanceId::new("i2")];
+        other.operations[0] = dc_project::Operation::Pocket(elsewhere);
+        invalid(&other, &rest);
+        // Not a Pocket.
+        let mut profile = p.clone();
+        let mut not_pocket = dc_project::test_support::sample_project().operations[0].clone();
+        if let dc_project::Operation::Profile(op) = &mut not_pocket {
+            op.id = rough.id.clone();
+            op.targets = rough.targets.clone();
+        }
+        profile.operations[0] = not_pocket;
+        invalid(&profile, &rest);
+        let err = CamError::RestOfInvalid {
+            op: OperationId::new("o2"),
+            rest_of: OperationId::new("o1"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "operation `o2` rests on `o1`, which is not an earlier enabled Pocket with the same targets; no toolpath was produced"
+        );
     }
 
     fn helix_80() -> Entry {
@@ -1879,6 +2387,7 @@ mod tests {
                 tp,
                 RADIUS_MM,
                 FLAT_TOL,
+                std::slice::from_ref(&region),
                 std::slice::from_ref(&region),
                 &centre,
                 &shapes,

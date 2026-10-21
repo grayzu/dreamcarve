@@ -204,6 +204,27 @@ pub enum CamError {
         /// The feature, as the user would name it (`a raster strategy`).
         feature: String,
     },
+    /// A Pocket's `allowance_mm` is negative or not a number. Validation
+    /// reports it too; a negative allowance would cut into the walls.
+    #[error("operation `{op}` has allowance_mm {allowance_mm}; it must be 0 or more")]
+    InvalidAllowance {
+        /// The operation.
+        op: OperationId,
+        /// The allowance given, mm.
+        allowance_mm: f64,
+    },
+    /// A rest Pocket's `rest_of` is not an earlier enabled Pocket with the
+    /// same targets. Validation reports it too; the generator refuses it
+    /// rather than guess what the reference left.
+    #[error(
+        "operation `{op}` rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; no toolpath was produced"
+    )]
+    RestOfInvalid {
+        /// The rest operation.
+        op: OperationId,
+        /// The operation it names.
+        rest_of: OperationId,
+    },
     /// A Pocket's cuts would leave its region or enter an island (S9): the
     /// tool's footprint along the toolpath covers `area_mm2` of material
     /// the operation must not touch. A defect in the generator, never in
