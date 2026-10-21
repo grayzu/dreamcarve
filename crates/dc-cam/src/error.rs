@@ -353,7 +353,8 @@ pub enum CamError {
     /// tool. Inside, the band is waste and the cutter would cut into the
     /// material the Profile keeps beyond the other line (#192); On line,
     /// the band is the part, and the two lines' cuts would cut through it
-    /// (#199). `shape` is the one drawn first; `other` is boxed to keep
+    /// (#199), as they would beside an open path drawn in the part, away
+    /// from where the two lines meet (#210). `shape` is the one drawn first; `other` is boxed to keep
     /// the error small.
     #[error(
         "operation `{op}` cuts {shape} and {other}, but the band between them is {band_mm:.3} mm wide, narrower than its {diameter_mm} mm tool, so the bit would cut into material the Profile keeps; no toolpath was produced"
@@ -367,6 +368,21 @@ pub enum CamError {
         other: Box<ShapeRef>,
         /// The narrowest distance between the two lines, mm.
         band_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
+    /// An On line Profile's part is narrower than the tool everywhere: every
+    /// point of it lies within the tool radius of its lines (the part
+    /// shrunk by the radius is empty), so the cut along them removes the
+    /// whole part (#223). `shape` is the part's outline.
+    #[error(
+        "operation `{op}` cuts {shape} On line, but the part is nowhere as wide as its {diameter_mm} mm tool, so the bit would remove the whole part; cut it Outside, or use Engrave to mark it; no toolpath was produced"
+    )]
+    PartNarrowerThanTool {
+        /// The operation.
+        op: OperationId,
+        /// The part's outline.
+        shape: ShapeRef,
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },

@@ -18,10 +18,15 @@ written. There are no safety warnings, only errors.
    So is a stock without `thickness_mm` or an operation without
    `depth_mm`: DreamCarve has no defaults for them.
 2. **Rapids only at safe Z.** Every rapid (`G0`) move is at or above safe Z.
-   The first move of the program is a rapid straight up to safe Z. The one
-   exception is inside a [Drill](drill.md): there a rapid straight down may
-   stop at the retract height above the stock, or inside the part of the
-   hole already drilled, and never in uncut material.
+   The first move of the program is a rapid straight up to safe Z. There
+   are two exceptions, both straight down and only into air. Above a ramp
+   or helix [entry](pocket.md#entry), a rapid straight down from safe Z
+   stops 1 mm above the stock top, or 1 mm above the floor the same
+   operation has already cut at that point, where the ramp or helix
+   starts; the check refuses one that stops lower, or over a floor only
+   another operation cut. Inside a [Drill](drill.md), a rapid straight
+   down may stop at the retract height above the stock, or inside the
+   part of the hole already drilled, and never in uncut material.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
    the tool: the plunge rate for straight-down moves and tab steps, the feed
    rate for everything else. The one value in between is a move that goes
@@ -119,7 +124,15 @@ written. There are no safety warnings, only errors.
       **inside**, inside the hole and off any island left in it. Cut **on
       line**, the centre of the bit stays on the line, at least a bit's
       width from the part's other lines, so a cut that would cut through
-      a ring narrower than the bit stops the export. Laps, tab rises,
+      a ring narrower than the bit stops the export. On an open path in a
+      part, the bit's centre stays on the path and a bit's width from the
+      part's lines and its other open paths, except near a point where the
+      two meet. A cut also keeps a bit's width from the stretches of its
+      own line farther along it, so a cut along a U, a tight spiral or a
+      narrow neck stops the export, and so does any cut round a part
+      narrower than the bit everywhere, which the cut would remove whole,
+      as DreamCarve's own check (see
+      [Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)). Laps, tab rises,
       entry ramps and helixes, lead arcs and corner relief notches all
       count, so a ramp or lead arc that swings into a part, its own or a
       neighbour's, stops the export. A lap that runs along one outline at
@@ -213,7 +226,8 @@ It also checks that:
 8. **Stay at the machine** with the emergency stop or feed hold in reach.
    Wear eye and hearing protection, and keep dust extraction running.
 
-Phase 1's first test part, the coaster in the
-[quick start](../quick-start/first-cut.md), has not yet been cut on a real
-machine by the project. Until it has, treat every program as untested and
-watch the air cut closely.
+Neither test part, the coaster in the
+[first quick start](../quick-start/first-cut.md) nor the plaque in the
+[second](../quick-start/plaque.md), has yet been cut on a real machine by
+the project. Until they have, treat every program as untested and watch
+the air cut closely.

@@ -38,7 +38,7 @@ Profile. A complete Engrave:
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required.** |
 | `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, `check` reports it and export refuses. |
 | `alternate_direction` | `true` cuts the passes of an open path back and forth. See [Alternating direction](#alternating-direction). Default `false`. |
-| `machining_order` | `"full_depth_first"` or `"pass_first"`, as for [Profile](profile.md#machining-order). |
+| `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](machining-order.md#machining-order). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go, as for [Profile](profile.md#cutting-through). Engraving rarely needs it; leave it at 0. |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
 

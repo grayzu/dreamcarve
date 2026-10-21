@@ -28,6 +28,8 @@ use dc_geometry::{
 };
 use std::f64::consts::TAU;
 
+use crate::sequence::nearest_of;
+
 /// `region` inset by `inset_mm`: its outer offset inward and its islands
 /// outward by `inset_mm`, the islands then cut from the outer. An island
 /// can split the result into several regions; nothing left is an empty
@@ -212,18 +214,13 @@ impl RingTree {
                 }
                 continue;
             }
-            let pick = remaining
-                .iter()
-                .enumerate()
-                .min_by(|(ia, a), (ib, b)| {
-                    let d = |n: usize| {
-                        self.nodes
-                            .get(n)
-                            .map_or(f64::INFINITY, |n| nearest(n.region.outer(), *anchor).1)
-                    };
-                    d(**a).total_cmp(&d(**b)).then(ia.cmp(ib))
-                })
-                .map(|(i, _)| i);
+            let pick = nearest_of(remaining.iter().enumerate().map(|(i, &n)| {
+                let d = self
+                    .nodes
+                    .get(n)
+                    .map_or(f64::INFINITY, |n| nearest(n.region.outer(), *anchor).1);
+                (i, d)
+            }));
             let Some(child) = pick.map(|i| remaining.remove(i)) else {
                 break;
             };
@@ -261,16 +258,13 @@ impl RingTree {
             .filter(|r| keep(r))
             .collect();
         while !rings.is_empty() {
-            let pick = rings
-                .iter()
-                .enumerate()
-                .min_by(|(ia, a), (ib, b)| {
-                    nearest(&a.contour, *anchor)
-                        .1
-                        .total_cmp(&nearest(&b.contour, *anchor).1)
-                        .then(ia.cmp(ib))
-                })
-                .map_or(0, |(i, _)| i);
+            let pick = nearest_of(
+                rings
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (i, nearest(&r.contour, *anchor).1)),
+            )
+            .unwrap_or(0);
             let mut ring = rings.remove(pick);
             ring.start = nearest(&ring.contour, *anchor).0;
             *anchor = Some(ring.start);
@@ -290,7 +284,8 @@ impl RingTree {
 /// vertices. A straight edge offers only its corners, as upstream's does
 /// (the `pocket-offset-rect` golden case links its rings corner to
 /// corner). A point within [`EPS_MM`] of an arc's end is that end, so no
-/// sliver arc is made. Ties go to the earlier segment.
+/// sliver arc is made. Ties go to the earlier segment, points within
+/// [`crate::sequence::NEAREST_TIE_MM`] of the nearest included (#215).
 #[must_use]
 pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
     let polyline = contour.polyline();
@@ -301,8 +296,7 @@ pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
     let Some(anchor) = anchor else {
         return (first, 0.0);
     };
-    let mut best = (first, first.distance_to(anchor));
-    for segment in polyline.segments() {
+    let candidates = std::iter::once(first).chain(polyline.segments().map(|segment| {
         let mut point = if segment.arc().is_some() {
             closest_on_segment(segment, anchor)
         } else {
@@ -313,12 +307,10 @@ pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
                 point = end;
             }
         }
-        let d = point.distance_to(anchor);
-        if d < best.1 {
-            best = (point, d);
-        }
-    }
-    best
+        point
+    }));
+    let best = nearest_of(candidates.map(|p| (p, p.distance_to(anchor)))).unwrap_or(first);
+    (best, best.distance_to(anchor))
 }
 
 /// The point of `segment` nearest `p`, following an arc.

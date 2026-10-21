@@ -137,7 +137,10 @@ Within one operation, whether each closed outline (with its holes) or open
 path is cut to full depth before the next (**Full Depth First**), or each pass
 is cut across all of them before the next, deeper pass (**Pass First**). It
 changes the order of the cuts, never which cuts are made.
-_Avoid_: Cut order, depth first, level first, optimisation
+_Avoid_: Cut order (for this setting; the cut order is the whole order a
+program cuts in: the operations in list order, and within each the
+Machining Order, nearest neighbour and containment rules), depth first,
+level first, optimisation
 _PureCutCNC_: `machiningOrder`; `feature_first` is Full Depth First,
 `level_first` is Pass First
 
@@ -146,6 +149,26 @@ The tool motion inside an operation between the end of one cut and the start
 of the next: a retract to Safe Z, a rapid and a plunge, or a move that stays
 down in material the operation has already cut.
 _Avoid_: Transition, traverse, keep-tool-down
+
+**Entry**:
+How a Profile or Pocket takes the tool down to each pass depth (`entry`): a
+**plunge** straight down at the plunge rate, a **ramp** zigzagging down at
+`angle_deg`, or a **helix** spiralling down at `angle_deg`, always in
+material the operation removes. A helix that does not fit falls back to a
+ramp, and a ramp to a plunge, with a warning. VCarve's "Ramps", Fusion's
+"Ramp Type".
+_Avoid_: Lead-in (that is the Lead), approach, plunge strategy, ramp-in
+_PureCutCNC_: entryStrategy
+
+**Lead**:
+An arc tangent to a Profile's path at the start of each pass (lead-in) and,
+with `lead_out`, at its end (lead-out), so the tool takes up and leaves the
+cut while moving instead of stopping against the wall (`lead`). The Entry
+descends before the lead-in starts. VCarve's "Leads", Fusion's "Lead-In"
+and "Lead-Out".
+_Avoid_: Entry (that is the descent), approach, lead line (straight leads
+are out of scope)
+_PureCutCNC_: xyLead
 
 **Tab**:
 A short bridge of material left uncut on a Profile so the part stays attached

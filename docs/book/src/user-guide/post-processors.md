@@ -41,11 +41,12 @@ block names a bundled definition and holds your settings for it:
 ```
 
 `id` and `definition_version` say which definition, and which version of
-it. Every key is required. The other five are the [settings](#settings)
+it. Every key is required. The other six are the [settings](#settings)
 you may change. The rest of the dialect (comment style, header and footer,
 the spindle and tool-change commands) is not in the file, so it cannot be
 changed by mistake: each bundled definition was checked against the
-controller's own source code, and a project always uses it as checked.
+controller's own documentation or source code, and a project always uses
+it as checked.
 
 ### Versions
 
@@ -147,7 +148,7 @@ Before you start: fit T1 Set me and set work zero with it.
 When the enabled operations use more than one tool, `export` writes one
 complete program for each **tool run**: a run of consecutive operations
 with the same tool, in operation order. Operations are never regrouped by
-tool, because that would change the cut order, for example a through-cut
+tool, because that would change the order of the cuts, for example a through-cut
 before the detail work. T1, T2, T1 is three programs.
 
 The programs are named `<stem>-<k>-T<n>.<ext>`: `<k>` is the run's place

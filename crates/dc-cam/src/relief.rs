@@ -61,7 +61,7 @@ use crate::error::{CamError, ShapeRef};
 use crate::footprint::{capsule, move_bulge};
 use crate::passes::pass_z_mm;
 use crate::profile::{Wall, rates_of, shape_of, shape_warning};
-use crate::sequence::{SequenceInput, sequence};
+use crate::sequence::{SequenceInput, nearest_of, sequence};
 use crate::tabs::LapRates;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{Warning, WarningCode};
@@ -425,20 +425,19 @@ fn moves_cut_at(
 }
 
 /// `corners` in nearest-neighbour order from `start`, by descend point,
-/// ties in the order given.
+/// ties in the order given: distances within
+/// [`crate::sequence::NEAREST_TIE_MM`] are a tie (#215).
 fn nearest_neighbour(mut corners: Vec<ReliefCorner>, start: Point) -> Vec<ReliefCorner> {
     let mut ordered = Vec::with_capacity(corners.len());
     let mut from = start;
     while !corners.is_empty() {
-        let next = corners
-            .iter()
-            .enumerate()
-            .min_by(|(ia, a), (ib, b)| {
-                from.distance_to(a.descend)
-                    .total_cmp(&from.distance_to(b.descend))
-                    .then(ia.cmp(ib))
-            })
-            .map_or(0, |(i, _)| i);
+        let next = nearest_of(
+            corners
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i, from.distance_to(c.descend))),
+        )
+        .unwrap_or(0);
         let corner = corners.remove(next);
         from = corner.descend;
         ordered.push(corner);
@@ -459,6 +458,8 @@ pub(crate) struct Relief {
     pub levels: Vec<f64>,
     /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
+    /// The stock top, mm.
+    pub stock_top_mm: f64,
     /// The tool's feed and plunge rates.
     pub rates: LapRates,
     /// The project's flatten tolerance, mm.
@@ -520,6 +521,7 @@ impl Setup<'_> {
             radius_mm: self.tool.diameter_mm / 2.0,
             levels,
             safe_z_mm: self.safe_z_mm,
+            stock_top_mm: self.thickness_mm,
             rates: self.rates,
             tolerance_mm: self.tolerance_mm,
         }))
@@ -601,6 +603,7 @@ impl Relief {
                 order: MachiningOrder::FullDepthFirst,
                 containment: &[],
                 safe_z_mm: self.safe_z_mm,
+                stock_top_mm: self.stock_top_mm,
                 tool_diameter_mm: 2.0 * self.radius_mm,
                 stepover_mm: 0.0,
                 feed_mm_min: self.rates.feed_mm_min,
@@ -1743,6 +1746,40 @@ mod tests {
         }
     }
 
+    /// #215: from the first corner of a square, the two next to it are
+    /// equally near. A later one nearer by less than
+    /// [`crate::sequence::NEAREST_TIE_MM`] (the 1e-6 mm an `f32` import
+    /// moves a coordinate) is still a tie, taken in drawing order, so the
+    /// noisy square's notches are cut in the clean square's order.
+    #[test]
+    fn equidistant_corners_follow_drawing_order_despite_noise() {
+        let (clean, _) = collect(&op_id(), Style::Dogbone, R, &square_site(), 0.01);
+        assert_eq!(clean.len(), 4);
+        let start = clean[0].descend;
+        let order = |corners: Vec<ReliefCorner>| -> Vec<Point> {
+            nearest_neighbour(corners, start)
+                .iter()
+                .map(|c| c.geometry.corner)
+                .collect()
+        };
+        let expected = order(clean.clone());
+        for noise_mm in [1e-6, 1e-4, 0.9 * crate::sequence::NEAREST_TIE_MM] {
+            // Each of the two neighbours in turn moved nearer the start.
+            for moved in [1, 3] {
+                let mut noisy = clean.clone();
+                let towards = (start - noisy[moved].descend)
+                    .normalized()
+                    .unwrap_or(Vec2::new(0.0, 0.0));
+                noisy[moved].descend = noisy[moved].descend + towards * noise_mm;
+                assert_eq!(
+                    order(noisy),
+                    expected,
+                    "corner {moved} {noise_mm} mm nearer"
+                );
+            }
+        }
+    }
+
     /// Upstream: "a cleared-outside loop relieves its concave corners
     /// only".
     #[test]
@@ -1876,6 +1913,7 @@ mod tests {
             radius_mm: R,
             levels,
             safe_z_mm: 11.0,
+            stock_top_mm: 6.0,
             rates: LapRates {
                 feed_mm_min: 800.0,
                 plunge_mm_min: 300.0,

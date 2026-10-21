@@ -3,12 +3,13 @@
 
 //! Toolpath generators for DreamCarve. Pure functions from a project and an
 //! operation to a toolpath plus warnings (`docs/specs/phase-1/design.md`,
-//! "dc-cam"). Phase 1 adds Profile, with holding tabs. Phase 2 moves every
+//! "dc-cam"). Phase 1 adds Profile, with tabs. Phase 2 moves every
 //! generator onto cut blocks ([`CutBlock`]) that one shared step,
 //! [`sequence`], orders and links (`docs/specs/phase-2/design.md`,
 //! "Algorithms → Sequence"), and adds [`order::check`], which warns when the
 //! order of operations cuts inside a part an earlier one freed. Phase 2
-//! also adds Drill ([`generate_drill`]).
+//! also adds Pocket ([`generate_pocket`]), Drill ([`generate_drill`]) and
+//! Engrave ([`generate_engrave`]), and entries, leads and corner relief.
 //!
 //! Toolpaths use the project's absolute frame: Y-up, Z-up, millimetres
 //! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.

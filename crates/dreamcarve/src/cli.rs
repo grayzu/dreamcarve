@@ -72,7 +72,8 @@ pub enum ToolsCommand {
         /// has that name.
         tool: String,
     },
-    /// Add the tools of a DreamCarve tool library file to the library.
+    /// Add the tools of a DreamCarve tool library file, or of a Fusion 360
+    /// library (`.tools` or `.json`), to the library.
     Import {
         /// The file to read.
         file: PathBuf,

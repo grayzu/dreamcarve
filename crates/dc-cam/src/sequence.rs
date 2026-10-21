@@ -20,10 +20,44 @@
 //! upstream does not have.
 
 use crate::block::CutBlock;
+use crate::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
 use crate::error::{BlockProblem, CamError, ShapeRef};
-use crate::toolpath::{Move, Toolpath};
-use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Region, union};
+use crate::toolpath::{Move, MoveKind, Toolpath};
+use dc_geometry::{
+    Arc, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Region, Segment,
+    point_segment_distance_mm, union,
+};
 use dc_project::MachiningOrder;
+
+/// Two nearest-first candidates whose distances differ by no more than
+/// this, mm, are equally near, and the one first in drawing order is
+/// taken (#215). It is the finest step a post-processor writes in mm
+/// (0.001), so candidates closer than it cannot be told apart in a
+/// program, and it is more than the noise an `f32` import adds to a
+/// distance between points within about 2 m of the origin (`2⁻²⁴`
+/// relative, twice over), so an SVG and a DXF of one drawing give one
+/// order.
+pub(crate) const NEAREST_TIE_MM: f64 = 1e-3;
+
+/// Nearest first (#215): of `candidates`, each with its distance in mm,
+/// the first in the order given whose distance is within
+/// [`NEAREST_TIE_MM`] of the nearest one's. So a candidate is taken
+/// before an earlier one only when it is nearer by more than the
+/// tolerance, and the order given (drawing order) settles every tie, not
+/// float noise. `None` when there are none; the first when no distance is
+/// a number.
+pub(crate) fn nearest_of<T>(candidates: impl IntoIterator<Item = (T, f64)>) -> Option<T> {
+    let candidates: Vec<(T, f64)> = candidates.into_iter().collect();
+    let nearest_mm = candidates
+        .iter()
+        .map(|(_, d)| *d)
+        .fold(f64::INFINITY, f64::min);
+    let pick = candidates
+        .iter()
+        .position(|(_, d)| *d <= nearest_mm + NEAREST_TIE_MM)
+        .unwrap_or(0);
+    candidates.into_iter().nth(pick).map(|(t, _)| t)
+}
 
 /// Everything [`sequence`] needs, in project space (mm, Y-up, Z-up).
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +73,9 @@ pub struct SequenceInput<'a> {
     pub containment: &'a [(ShapeRef, ShapeRef)],
     /// Absolute safe Z, mm: every rapid that moves in XY runs here.
     pub safe_z_mm: f64,
+    /// The stock top, mm: a rapid straight down to a descent may stop
+    /// [`ENTRY_CLEARANCE_MM`] above it anywhere (S2, #214).
+    pub stock_top_mm: f64,
     /// The tool's diameter, mm.
     pub tool_diameter_mm: f64,
     /// The operation's step-over, mm; 0 for a profile. A stay-down link
@@ -77,14 +114,16 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// 4–5): the order is [`plan`]'s; between consecutive blocks `a → b` the
 /// link is nothing when `b` is the next pass of `a`'s shape and its descent
 /// starts where `a` ended; a stay-down `Linear` at feed when both blocks
-/// have `cleared` areas at one Z and the straight link lies inside their
-/// union and is at most `tool_diameter_mm + stepover_mm` long, which runs to
+/// have `cleared` areas at one Z and the link is no longer than the
+/// flatten tolerance (#213), or the straight link lies inside their union
+/// and is at most `tool_diameter_mm + stepover_mm` long, which runs to
 /// `b`'s entry and skips `b`'s descent (the tool is already at `b`'s Z in
 /// cleared material); otherwise a rapid up to safe Z, a rapid in XY, and
 /// the descent. A block's empty
 /// descent is a straight plunge at the plunge rate; its own descent moves
-/// are written as given, after a plunge to `descent_from_z_mm` when that is
-/// below the height the tool arrives at. Zero-length moves are never
+/// are written as given, from `descent_from_z_mm`: below safe Z the tool
+/// gets there by a rapid straight down that stops in the air (S2 as
+/// changed in #214) and a plunge for the rest. Zero-length moves are never
 /// written. The first block is reached by a rapid at safe Z; the last is
 /// followed by a rapid up to safe Z.
 ///
@@ -218,7 +257,8 @@ impl Shapes {
     }
 
     /// The greedy walk (spec step 3): from the current exit, the nearest
-    /// available unit or stack by `f64::total_cmp`, ties by drawing order.
+    /// available unit or stack ([`nearest_of`]: distances within
+    /// [`NEAREST_TIE_MM`] are a tie), ties by drawing order.
     /// `done[s]` counts the passes of shape `s` already emitted.
     fn walk(&self, order: MachiningOrder) -> Result<Vec<usize>, CamError> {
         let total: usize = self
@@ -274,21 +314,21 @@ impl Shapes {
     /// Full depth first: the nearest unstarted shape whose enclosed shapes
     /// are all finished.
     fn nearest_stack(&self, done: &[usize], current: Point) -> Option<usize> {
-        self.shapes
-            .iter()
-            .enumerate()
-            .filter(|(s, shape)| {
-                done.get(*s).copied().unwrap_or(0) == 0
-                    && shape.enclosed.iter().all(|&e| self.finished(done, e))
-            })
-            .filter_map(|(s, shape)| shape.units.first().map(|u| (s, u.start)))
-            .min_by(|(sa, a), (sb, b)| {
-                current
-                    .distance_to(*a)
-                    .total_cmp(&current.distance_to(*b))
-                    .then(sa.cmp(sb))
-            })
-            .map(|(s, _)| s)
+        nearest_of(
+            self.shapes
+                .iter()
+                .enumerate()
+                .filter(|(s, shape)| {
+                    done.get(*s).copied().unwrap_or(0) == 0
+                        && shape.enclosed.iter().all(|&e| self.finished(done, e))
+                })
+                .filter_map(|(s, shape)| {
+                    shape
+                        .units
+                        .first()
+                        .map(|u| (s, current.distance_to(u.start)))
+                }),
+        )
     }
 
     /// Pass first: among the available next units, the shallowest pass,
@@ -296,7 +336,8 @@ impl Shapes {
     /// enclosed shape has finished pass `k` (or has no pass `k` and is
     /// finished) and, when the unit frees, has finished entirely.
     fn nearest_unit(&self, done: &[usize], current: Point) -> Option<usize> {
-        self.shapes
+        let available: Vec<(usize, usize, Point)> = self
+            .shapes
             .iter()
             .enumerate()
             .filter_map(|(s, shape)| {
@@ -312,12 +353,14 @@ impl Shapes {
                 });
                 available.then_some((s, k, unit.start))
             })
-            .min_by(|(sa, ka, a), (sb, kb, b)| {
-                ka.cmp(kb)
-                    .then(current.distance_to(*a).total_cmp(&current.distance_to(*b)))
-                    .then(sa.cmp(sb))
-            })
-            .map(|(s, _, _)| s)
+            .collect();
+        let shallowest = available.iter().map(|(_, k, _)| *k).min()?;
+        nearest_of(
+            available
+                .into_iter()
+                .filter(|(_, k, _)| *k == shallowest)
+                .map(|(s, _, start)| (s, current.distance_to(start))),
+        )
     }
 
     fn finished(&self, done: &[usize], shape: usize) -> bool {
@@ -431,8 +474,13 @@ impl<'a> Emitter<'a, '_> {
         {
             let length_mm = current.xy().distance_to(b.entry);
             let limit_mm = self.input.tool_diameter_mm + self.input.stepover_mm;
-            if length_mm <= limit_mm + EPS_MM
-                && link_inside_cleared(cleared_a, cleared_b, current.xy(), b.entry)
+            // #213: a link no longer than the flattening tolerance is a
+            // stay-down: its end lies on the cleared area as drawn, if not
+            // on its flattened chords (a raster line's end, clipped on
+            // those chords, and the wall ring's start on the arc).
+            if length_mm <= FLATTEN_TOLERANCE_DEFAULT_MM
+                || (length_mm <= limit_mm + EPS_MM
+                    && link_inside_cleared(cleared_a, cleared_b, current.xy(), b.entry))
             {
                 return Link::StayDown;
             }
@@ -442,8 +490,13 @@ impl<'a> Emitter<'a, '_> {
 
     /// The descent into `block` from wherever the tool is: a straight
     /// plunge at the plunge rate for an empty descent, else the block's
-    /// own moves after a plunge to `descent_from_z_mm` when the tool is
-    /// above it.
+    /// own moves from `descent_from_z_mm`. The tool, at safe Z above
+    /// `descent_from`, gets there by a rapid straight down as far as S2
+    /// lets it stop in the air ([`Self::rapid_floor_mm`]), then a plunge at
+    /// the plunge rate for the rest (from lower, the plunge alone); below
+    /// it (the next pass of a shape
+    /// whose descent starts above the floor just cut), by a move up at the
+    /// plunge rate.
     fn descend(&mut self, block: &CutBlock) {
         if block.descent.is_empty() {
             self.push(Move::linear(
@@ -452,22 +505,35 @@ impl<'a> Emitter<'a, '_> {
             ));
             return;
         }
-        if self
-            .current
-            .is_some_and(|c| c.z > block.descent_from_z_mm + EPS_MM)
-        {
-            self.push(Move::linear(
-                Point3::new(
-                    block.descent_from.x,
-                    block.descent_from.y,
-                    block.descent_from_z_mm,
-                ),
-                self.input.plunge_mm_min,
-            ));
+        let at = block.descent_from;
+        let start = Point3::new(at.x, at.y, block.descent_from_z_mm);
+        if let Some(current) = self.current {
+            if current.z > start.z + EPS_MM {
+                // Only a rapid from safe Z goes straight down (S2).
+                if current.z >= self.input.safe_z_mm - EPS_MM {
+                    let rapid_z = self.rapid_floor_mm(at).max(start.z);
+                    if rapid_z < current.z - EPS_MM {
+                        self.push(Move::rapid(Point3::new(at.x, at.y, rapid_z)));
+                    }
+                }
+                self.push(Move::linear(start, self.input.plunge_mm_min));
+            } else if current.z < start.z - EPS_MM {
+                self.push(Move::linear(start, self.input.plunge_mm_min));
+            }
         }
         for mv in &block.descent {
             self.push(*mv);
         }
+    }
+
+    /// The lowest Z, mm, a rapid straight down at `at` may stop at (S2 as
+    /// changed in #214): [`ENTRY_CLEARANCE_MM`] above the stock top, or
+    /// that far above the lowest Z a cut written so far passed through
+    /// `at` (within [`CLEARED_POINT_TOLERANCE_MM`]), whichever is lower.
+    fn rapid_floor_mm(&self, at: Point) -> f64 {
+        let above_stock = self.input.stock_top_mm + ENTRY_CLEARANCE_MM;
+        lowest_cut_through(&self.moves, at, CLEARED_POINT_TOLERANCE_MM)
+            .map_or(above_stock, |z| above_stock.min(z + ENTRY_CLEARANCE_MM))
     }
 
     /// Appends `mv` unless it ends where the tool already is.
@@ -494,6 +560,58 @@ impl<'a> Emitter<'a, '_> {
             )));
         }
     }
+}
+
+/// The lowest Z, mm, at which a cutting move of `moves` passed within
+/// `tolerance_mm` of `at` in XY: a straight move's Z where it comes
+/// nearest `at`, an arc's (flat, at its end Z) its Z. `None` when no cut
+/// passed there.
+pub(crate) fn lowest_cut_through(moves: &[Move], at: Point, tolerance_mm: f64) -> Option<f64> {
+    let mut lowest: Option<f64> = None;
+    let mut from: Option<Point3> = None;
+    for mv in moves {
+        if let Some(start) = from
+            && mv.is_cut()
+            && let Some(z) = cut_z_near(start, mv, at, tolerance_mm)
+        {
+            lowest = Some(lowest.map_or(z, |l| l.min(z)));
+        }
+        from = Some(mv.to);
+    }
+    lowest
+}
+
+/// The Z, mm, at which cutting move `mv` from `start` passes within
+/// `tolerance_mm` of `at` in XY, if it does.
+fn cut_z_near(start: Point3, mv: &Move, at: Point, tolerance_mm: f64) -> Option<f64> {
+    let (a, b) = (start.xy(), mv.to.xy());
+    let bulge = match mv.kind {
+        MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+            let ccw = matches!(mv.kind, MoveKind::ArcCcw { .. });
+            (Arc::from_ends(a, b, centre, ccw).sweep_rad / 4.0).tan()
+        }
+        _ => 0.0,
+    };
+    let segment = Segment {
+        start: a,
+        end: b,
+        bulge,
+    };
+    if point_segment_distance_mm(segment, at) > tolerance_mm {
+        return None;
+    }
+    if bulge != 0.0 {
+        return Some(start.z.max(mv.to.z));
+    }
+    let ab = b - a;
+    let length_sq = ab.dot(ab);
+    let t = if length_sq > EPS_MM * EPS_MM {
+        ((at - a).dot(ab) / length_sq).clamp(0.0, 1.0)
+    } else {
+        // Straight down or up: the tool reached both ends' Z here.
+        return Some(start.z.min(mv.to.z));
+    };
+    Some(start.z + (mv.to.z - start.z) * t)
 }
 
 fn distance_3d(a: Point3, b: Point3) -> f64 {
@@ -638,6 +756,7 @@ mod tests {
             order,
             containment,
             safe_z_mm: SAFE_Z_MM,
+            stock_top_mm: THICKNESS_MM,
             tool_diameter_mm: DIAMETER_MM,
             stepover_mm: 0.0,
             feed_mm_min: FEED_MM_MIN,
@@ -987,7 +1106,9 @@ mod tests {
             tp.moves
         );
 
-        // Reached by a retract, the descent is cut as given.
+        // Reached by a retract, the descent is cut as given, after a rapid
+        // straight down to 1 mm above the stock top (nothing was cut at
+        // (14, 5)) and a plunge to where it starts (#214).
         let mut retract = input(blocks, MachiningOrder::FullDepthFirst, &[]);
         retract.stepover_mm = 2.0;
         let tp = run(&retract);
@@ -1002,8 +1123,56 @@ mod tests {
         );
         assert_eq!(
             tp.moves[at - 2],
+            Move::rapid(Point3::new(14.0, 5.0, THICKNESS_MM + 1.0))
+        );
+        assert_eq!(
+            tp.moves[at - 3],
             Move::rapid(Point3::new(14.0, 5.0, SAFE_Z_MM))
         );
+    }
+
+    /// #214, S2: after a lift, the tool reaches a descent that starts below
+    /// safe Z by a rapid straight down, which stops 1 mm above the lowest
+    /// floor a cut written so far passed through that point, or 1 mm above
+    /// the stock top where none did, but never below the descent's start;
+    /// a plunge at the plunge rate covers the rest.
+    #[test]
+    fn rapid_down_to_a_descent_stops_a_clearance_above_the_cut_or_the_stock() {
+        let ramp_in = |name: &str, from: Point, entry: Point| {
+            let mut b = square(name, entry.x, entry.y, 5.0, 0, 1);
+            b.descent_from = from;
+            b.descent_from_z_mm = 4.5;
+            // 0.5 mm down over 5 mm: the feed is slow enough (S10).
+            b.descent = vec![Move::linear(
+                Point3::new(entry.x, entry.y, 4.0),
+                FEED_MM_MIN,
+            )];
+            b
+        };
+        let blocks = vec![
+            square("a", 0.0, 0.0, 20.0, 0, 1),
+            // (10, 0) is on a's first side, cut at Z 4.
+            ramp_in("b", Point::new(10.0, 0.0), Point::new(15.0, 0.0)),
+            // (60, 60) was never cut.
+            ramp_in("c", Point::new(60.0, 60.0), Point::new(65.0, 60.0)),
+        ];
+        let tp = run(&input(blocks, MachiningOrder::FullDepthFirst, &[]));
+        for (at, rapid_z) in [(Point::new(10.0, 0.0), 5.0), (Point::new(60.0, 60.0), 7.0)] {
+            let i = tp
+                .moves
+                .iter()
+                .position(|m| m.is_rapid() && m.to.xy() == at && m.to.z < SAFE_Z_MM)
+                .unwrap_or_else(|| panic!("a rapid down at {at:?}: {:?}", tp.moves));
+            assert_eq!(
+                tp.moves[i - 1],
+                Move::rapid(Point3::new(at.x, at.y, SAFE_Z_MM))
+            );
+            assert_eq!(tp.moves[i], Move::rapid(Point3::new(at.x, at.y, rapid_z)));
+            assert_eq!(
+                tp.moves[i + 1],
+                Move::linear(Point3::new(at.x, at.y, 4.5), PLUNGE_MM_MIN)
+            );
+        }
     }
 
     /// Port of `testPocketFeatureFirstOrder` (PureCutCNC
@@ -1083,6 +1252,39 @@ mod tests {
                 let tp = run(&input(blocks.clone(), order, &[]));
                 assert_eq!(names(&visits(&tp, &blocks)), expected, "{order:?}");
             }
+        }
+    }
+
+    /// #215: two shapes nearer each other than [`NEAREST_TIE_MM`] in their
+    /// distance from the current exit are a tie, kept in drawing order, so
+    /// the 1e-6 mm noise of an `f32` import does not pick the later one.
+    #[test]
+    fn equidistant_shapes_within_tolerance_keep_drawing_order() {
+        let a = squares("a", 0.0, 0.0, 10.0, 1);
+        for noise_mm in [1e-6, 1e-4, 0.9 * NEAREST_TIE_MM] {
+            let b = squares("b", 30.0, 0.0, 10.0, 1);
+            let c = squares("c", -30.0 + noise_mm, 0.0, 10.0, 1);
+            for (blocks, expected) in [
+                ([a.clone(), b.clone(), c.clone()].concat(), ["a", "b", "c"]),
+                ([a.clone(), c.clone(), b.clone()].concat(), ["a", "c", "b"]),
+            ] {
+                for order in BOTH {
+                    let tp = run(&input(blocks.clone(), order, &[]));
+                    assert_eq!(
+                        names(&visits(&tp, &blocks)),
+                        expected,
+                        "{order:?}, c {noise_mm} mm nearer"
+                    );
+                }
+            }
+        }
+        // Nearer by more than the tolerance is nearer.
+        let b = squares("b", 30.0, 0.0, 10.0, 1);
+        let c = squares("c", -30.0 + 2.0 * NEAREST_TIE_MM, 0.0, 10.0, 1);
+        let blocks = [a, b, c].concat();
+        for order in BOTH {
+            let tp = run(&input(blocks.clone(), order, &[]));
+            assert_eq!(names(&visits(&tp, &blocks)), ["a", "c", "b"], "{order:?}");
         }
     }
 

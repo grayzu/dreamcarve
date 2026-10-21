@@ -246,7 +246,7 @@ pub struct CutBlock {
     pub pass: usize,                 // 0-based pass index, top first
     pub z_mm: f64,                   // pass Z in project space
     pub descent_from: Point,         // XY where the descent begins: `entry` for a plunge, the ramp or helix start otherwise
-    pub descent_from_z_mm: f64,      // Z the descent may start at (safe Z, or the previous pass Z of this shape)
+    pub descent_from_z_mm: f64,      // Z the descent starts at (the entry clearance above the stock top or a Pocket's previous pass Z, #214; the previous pass Z of this shape; safe Z for a plunge)
     pub descent: Vec<Move>,          // ramp/helix moves from `descent_from` to entry; empty = straight plunge; a Drill's is one rapid to retract_z
     pub entry: Point,                // XY where the descent ends and cutting begins
     pub cuts: Vec<Move>,             // Linear/Arc moves at z_mm (tabs may raise within)
@@ -365,7 +365,23 @@ it stays outside every target region, `r` from every outline. On line,
 it stays on a target's line, at least `d` from every other line of that
 line's region. (changed in #199: On line was held to the line only, so a
 ring narrower than the tool passed; dc-cam now refuses it, see "Profile
-bands".) The notch rule applies Inside and Outside,
+bands".) A cut on an open path stays on that path, at least `d` from
+every line of the region whose material holds the path and from every
+other open path that region holds, the stretches within `√2·d` of a
+point where the two meet set aside. (changed in #210: a cut on an open
+path was held to the path only, so a line drawn beside its part's wall
+passed; dc-cam now refuses it, see "Profile bands".) A cut on a region's
+line, or on an open path it holds, also keeps `d` from the stretches of
+that line more than `√2·d` along it from where the cut runs, the
+stretches within `√2·d` of where the line meets itself set aside, and on
+a closed line only where the part lies between them; an open path drawn
+twice is one path. (changed in #221: a cut was never measured against
+its own line, so a hand-written hairpin passed; dc-cam now refuses it,
+see "Profile bands".) No cut runs on a line of a region whose outline,
+offset inward by `r` less the slack, is empty: the cut would remove the
+whole part. (changed in #223: a cut round a part smaller than the bit
+passed, because it stays on its line and the part has no stretches far
+apart along it; dc-cam now refuses it, see "Profile bands".) The notch rule applies Inside and Outside,
 so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
 outline on its waste side. It passes even where an outline of another
@@ -602,7 +618,11 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    that ring or line's pass cuts: the root region, or with `wall_pass:
    none` the root's children, so a descent never starts over the uncut
    band. Each pass then builds its descent (`EntryPlan::descend`), from
-   safe Z on pass 0 and from the previous pass Z after that.
+   `ENTRY_CLEARANCE_MM` above the stock top on pass 0 and that far above
+   the previous pass Z after that (PureCutCNC `levelEntryStartZ`: every
+   pass clears the whole tool-centre region, so the pass before emptied
+   it down to its Z). (changed in #214: pass 0 started at safe Z, later
+   passes at the previous pass Z.)
 10. **Corner relief** (`relief` module): after all passes, with
     `cleared = region inset by allowance` and `walls = tool-centre
     region's root rings`, collect corners and emit the notch blocks in
@@ -686,8 +706,9 @@ tolerance.
 7. S15: every `Rapid` that descends ends at or above the stock top, or
    no deeper than a cut has reached at that XY. `assert_safe` checks it
    on the toolpath; the safety pass checks it inside a Drill span and
-   fails with `ExportError::RapidIntoUncut`. S2 is unchanged for every
-   other operation.
+   fails with `ExportError::RapidIntoUncut`. Every other operation has
+   S2, which since #214 also lets a rapid straight down from safe Z stop
+   over a ramp or helix's start.
 
 ### Engrave (dc-cam::engrave)
 
@@ -723,6 +744,21 @@ cut direction and cut side.
   0.1·D)`, `MAX_RAMP_RUN = 3·D`, `MAX_DESCENT_MOVES = 20_000`, 72 angle
   samples, 4 radius halvings, 12 endpoint candidates, 20 000 clearance
   cells.
+- **Descent start Z** (#214): a ramp or helix that would start at safe
+  Z starts `ENTRY_CLEARANCE_MM` (1 mm) above the stock top instead
+  (`entry::descent_start_z_mm`, capped at safe Z): a Pocket's and a
+  Profile's first pass, and a Profile helix that restarts because the
+  pass before cut no bore. A Pocket's later pass starts the clearance
+  above the previous pass Z; a Profile's later pass still starts at the
+  previous pass Z, where the tool already is. The sequencer reaches the
+  start by a rapid straight down (Sequence, step 4). PureCutCNC's
+  clearance is the project's `operationClearanceZ`, its safe Z
+  clearance; DreamCarve's is a constant, 1 mm, a Drill's usual
+  `retract_mm`, until users ask for a setting. (changed in #214: a
+  descent started at safe Z, so a 15° helix spiralled about 3.5 turns
+  through the air at the feed rate before it reached the wood, half of
+  the plaque's first program; VCarve and Fusion rapid down to a
+  clearance above the material first, as the Drill already did.)
 - **Pitch** `π · d · tan(angle)` for path diameter `d`. **Feed scale**
   `min(1, plunge / (feed · sin(slope)))` on every descending move (S10).
 - **Helix placement:** largest clearance circle (pole of inaccessibility,
@@ -730,7 +766,12 @@ cut direction and cut side.
   circle_r − safety)`; try the tangent placement (72 angles; the helix
   touches the target point) then the reachable placement (quadtree search
   nearest the target, 12 endpoint tries over 24 angles); halve the radius
-  up to 4 times. Success below the requested diameter warns
+  up to 4 times. A target up to the flatten tolerance outside the
+  flattened domain counts as on it: the reachable placement's handoff
+  and the ramp's chord may start there (#213: a raster Pocket's wall
+  ring starts on a round corner of the tool-centre region, on the arc,
+  outside the chords the domain holds for it, and neither helix nor ramp
+  was placed). Success below the requested diameter warns
   `HelixDiameterReduced`. Descent: `ceil(depth/pitch · 48)` segments, Z
   linear, then one flat revolution, then a straight handoff to the target
   if the helix end is not on it. **Sense (Y-up):** tool inside a wall
@@ -943,13 +984,141 @@ belongs to the region whose material holds all of it (every vertex and
 every segment's middle, `Region::contains_point`, lines included) and is
 not compared with that region's lines, as a hole is not; held by no
 region (in the waste, in a hole's slug, or across a line) it is a group
-of its own, compared with every other closed shape and open path but
-never with itself. The pairs keep cut order. (changed in #206: an open
+of its own, compared with every other closed shape and open path, and
+with itself (#224). The pairs keep cut order.
+
+An open path held by no region is measured against itself with
+`dc_geometry::SelfBand` and #221's rules: stretches more than `√2·d`
+apart along it, sharp corners and points where it touches or crosses
+itself set aside. Where two such stretches come closer than `r` (less
+`EPS_MM`), it warns `ToolpathsOverlap` with `shape` and `other` the same
+path and `gap_mm` the narrowest gap, before its pairs with later paths.
+(changed in #224: a tight spiral or hairpin drawn in the waste cleared
+an area with no warning, while the same shape drawn as two lines warned.
+It is a warning, not #221's error: the cut is in the waste, as for two
+separate paths there (D6, #206). The threshold is D6's `r`, not `d`, so
+one line and two lines drawn the same get the same answer. A path that
+crosses itself is not warned there, as #221 treats a crossing as where
+the line meets itself; two separate crossing paths still warn with gap
+0.) (changed in #206: an open
 path was dropped before any pair was compared, so a line drawn beside or
 across a part, or across another line, cut into it with no warning. A
 line inside a part is a cut into that part, not a second shape beside
 it, so it follows the same-region rule; whether it needs a band check
 like #199's is #210.)
+
+An open path a region holds takes part in the On line band check
+instead. `generate_profile` compares it with every line of its region
+(the outline and the holes) and with every other open path the same
+region holds, and refuses one that comes closer than `d` (less `EPS_MM`)
+to another with the same `BandNarrowerThanTool`: the two cuts together
+cut through the wall between them, as through #199's ring. A band exactly
+`d` wide is cut. Lines that meet are told apart from lines that run
+alongside:
+
+- Two lines **meet** where they touch or cross, or come within the
+  project's flatten tolerance of each other: a kerf slot drawn from the
+  part's edge, a saw cut from edge to edge, two slots joined at a corner,
+  a slot from a hole's edge, two slot lines crossing. Their cuts open into
+  each other there, as drawn.
+- Around each meeting point, the stretch of both lines within `√2·d` of
+  it is set aside (`dc_geometry::meeting_points`,
+  `distance_away_from_mm`). Two straight lines that meet at an angle θ
+  come within `d` of each other for `d / sin θ` from the meeting point,
+  so a slot meeting the outline at 45° or more is cut, and one at a
+  shallower angle is refused.
+- Everywhere else the two lines keep `d`. A slot from the edge that
+  then turns to run beside the outline, or runs up beside another edge,
+  is refused, with `band_mm` the narrowest gap outside the set-aside
+  stretches.
+
+The shapes are named in drawing order. Open paths in different regions,
+or held by none, stay D6's. S9 holds an On line Profile's cuts on an open
+path to the same rule.
+
+A line is also measured against itself (`dc_geometry::SelfBand`): every
+closed line of a region cut On line, and every open path a region holds.
+Two stretches of one line closer than `d` cut through the part between
+them as two lines do: a hairpin, a spiral with tight turns, an outline
+with a neck narrower than the bit (a dumbbell). `generate_profile`
+refuses it with `BandNarrowerThanTool`, `shape` and `other` both the
+line, `band_mm` the narrowest gap so measured.
+
+- Only points more than `√2·d` apart along the line are compared (the
+  shorter way round a closed line), so a line is never compared with the
+  stretches next to it. A stretch that turns by at most 90° is at least
+  `1/√2` of its length long end to end, so a smooth curve and a corner of
+  90° or more never come within `d` of themselves. The line is cut into
+  stretches at most `√2·d / 8` long for this, so where along it a
+  stretch lies is known to an eighth of that reach.
+- **Corners:** a vertex where the line turns by more than 90° is where
+  two lines meet, as above: the stretch within `√2·d` of its tip is set
+  aside. A V of 45° or more is cut, as a slot meeting the edge at 45° is,
+  and a sharper one (a 10° spike, a star whose points are sharper than
+  45°) is refused, with the band `√2·d · sin θ`. Where an open path
+  touches or crosses itself, or comes within the flatten tolerance of
+  itself, it meets itself there too.
+- **Which side:** an open path a region holds has the part on both
+  sides, so every pair counts. For a closed line only a pair with the
+  part between them counts: the point midway lies in the region's
+  material, at least a quarter of their gap from the line. A notch
+  narrower than the bit cut into an outline, or a hole with a narrow
+  neck, has waste between its stretches and is cut; a pair along one edge
+  across a notch's mouth has its midpoint on the line and does not count.
+
+An open path drawn twice, the same vertices in either direction, is cut
+once: the later copy is dropped with `DuplicateShapeDropped` naming the
+first, before any band or overlap check, as `nest` drops a closed shape
+drawn twice. S9 drops it the same way.
+
+A part whose outline cut On line lies everywhere within `r` of the line
+(its outline offset inward by `r` is empty,
+`dc_geometry::inset_is_empty`) is removed whole by the cut, however short
+the outline. `generate_profile` refuses it with
+`CamError::PartNarrowerThanTool { op, shape, diameter_mm }`, `shape` the
+outline, checked before the self-band. Only a region's outline is
+checked: a hole's inside is waste, and a hole within `d` of its outline
+is refused by the band check first. An island in a hole is a region of
+its own, so a tiny one is refused. `inset_is_empty` offsets only an
+outline whose area is at most `L·r` (`L` its length), since the inside
+within `r` of a closed line covers at most that, so large outlines cost
+nothing. S9 refuses every cut on the lines of such a region, measured
+with `r` less the program's slack, so it never refuses what the
+generator cuts.
+
+(changed in #223: the self-band compares only stretches more than
+`√2·d` apart along the line, so an outline shorter than `2·√2·d` (about
+18 mm for a 6.35 mm bit) was never compared, and a 2.5 mm radius circle
+cut On line vanished with no finding while a 2.9 mm one was refused. A
+new variant names the harm, the whole part removed, not a band. It is an
+error, consistent with #192, #199, #210 and #221. A tiny dot marked on
+purpose is Engrave's job, which has no such rule. A part that is narrow
+everywhere and long, such as a 3 mm strip, now gets this error instead
+of `BandNarrowerThanTool`.)
+
+(changed in #221: a line was never compared with itself, so a hairpin, a
+tight spiral or a dumbbell outline cut On line cut through the part with
+no finding, and a duplicate open path in a part was refused with a band
+of 0 while a duplicate closed shape was dropped. The rule is #210's
+applied to one line: its corners meet as two lines do, so a V turn and
+two slots joined at the same angle get the same answer. Only the part
+counts for a closed line, because an On line cut already takes `r` from
+each side of every line, and clearing waste between two stretches costs
+the part nothing more.)
+
+(changed in #210: an open path inside a part, closer than `d` to that
+part's own lines, cut through the wall between them with no finding: D6
+does not compare a region's own lines, and S9 held the cut to its path
+only. The issue asked whether a warning fits better, since an open line
+is drawn on purpose more often than a narrow ring. It is an error,
+consistent with #192 and #199: the part loses material the user drew as
+kept, and when in doubt it is an error. A line drawn beside a wall for
+its own sake is Engrave's job, which has no such rule. The issue
+proposed setting aside every pair of lines that meet; that would pass a
+slot that meets the outline and then runs alongside it, so only the
+stretch near the meeting point is set aside. That stretch is `√2·d`, not
+a tool radius: a slot square to the edge is within `d` of it for its
+first `d`, so a reach of `r` would refuse every slot from the edge.)
 
 ### Corner relief (dc-cam::relief)
 
@@ -976,6 +1145,9 @@ Ported from `cornerRelief.ts`.
    with `ReliefSkipped`.
    - **Pocket:** after the main blocks, corners ordered nearest-neighbour
      from the last exit, one block per level; the blocks share one group.
+     Two corners whose descend points are equally near, within
+     `NEAREST_TIE_MM`, are taken in drawing order (changed in #215, see
+     the sequencer's order step).
    - **Profile:** among each shape's own passes, never after the pass that
      frees it. A corner counts as cut when its own shape's path cuts its
      descend point at the deepest level. Each level goes in the unit of
@@ -1031,9 +1203,20 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
    - `FullDepthFirst`: order shapes by a greedy walk: start from the
      first shape in drawing order; from the current shape's exit, pick the
      nearest *available* shape's entry (available = every shape it
-     encloses, per `containment`, is finished; distance by
-     `f64::total_cmp`; ties by drawing order). Emit all its passes top to
-     bottom.
+     encloses, per `containment`, is finished; ties by drawing order,
+     where distances within `NEAREST_TIE_MM` (0.001 mm) of the nearest
+     are a tie). Emit all its passes top to bottom.
+     (changed in #215: distances were compared exactly, by
+     `f64::total_cmp`, so the 1e-6 mm an `f32` SVG import moves a
+     coordinate settled a tie, and an SVG and a DXF of one drawing cut two
+     equally near shapes or relief corners in different orders. Every
+     nearest-first choice now takes the first candidate in drawing order
+     whose distance is within `NEAREST_TIE_MM` of the nearest:
+     `sequence::nearest_of`, used by the shape walk, Drill's hole order,
+     relief corner order, raster piece order, and offset ring order and
+     ring start. 0.001 mm is the finest step a post writes in mm, so two
+     candidates closer than that cannot be told apart in a program, and it
+     is above `f32` noise for coordinates within about 2 m.)
    - `PassFirst`: for pass k, walk the shapes as above but a shape is
      available at pass k only when every enclosed shape has finished pass
      k and, if this is the shape's freeing pass, has finished entirely.
@@ -1048,8 +1231,9 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
    - same shape, next pass, different start (lead-in moved the seam, or
      alternation): rapid up to safe Z, rapid to `b.descent_from`,
      descend;
-   - `b.cleared` and `a.cleared` are both `Some`, the straight link lies
-     inside `a.cleared ∪ b.cleared` at `b.z_mm == a.z_mm`, and its length
+   - `b.cleared` and `a.cleared` are both `Some` at `b.z_mm == a.z_mm`,
+     and the link is no longer than the flatten tolerance, or the
+     straight link lies inside `a.cleared ∪ b.cleared` and its length
      ≤ `tool_diameter_mm + stepover_mm`: stay down, `Linear` at feed to
      `b.entry`, and `b`'s descent is not cut (the tool is already at
      `b`'s Z in cleared material; replaying a helix would climb back
@@ -1058,18 +1242,28 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
      0.5 mm apart along the link, inside;
    - otherwise: rapid up to safe Z, rapid in XY to `b.descent_from`, then
      `b.descent` from safe Z (or a plunge at the plunge rate). When
-     `b.descent_from_z_mm` is below safe Z (the generator expected to stay
-     down), a vertical plunge to that Z comes first, then the descent.
+     `b.descent_from_z_mm` is below safe Z, the tool gets there by a rapid
+     straight down that stops `ENTRY_CLEARANCE_MM` above the stock top,
+     or that far above the lowest Z a cut already written passed through
+     `b.descent_from` (within `CLEARED_POINT_TOLERANCE_MM`, 0.01 mm),
+     whichever is lower but not below `descent_from_z_mm`, then a plunge
+     at the plunge rate for the rest; then the descent. A tool below a
+     descent's start (rule 1, a Pocket's later pass) rises to it at the
+     plunge rate. (changed in #214: the plunge ran from safe Z.)
    The first block is reached by a rapid to safe Z then XY; the last is
    followed by a rapid to safe Z. Zero-length moves are never written
    (so a tab over the lap start stays byte-identical to phase 1); dwells
    are kept. (changed in slice 1, #127, and slice 9, #147: rule 1 compares
    `descent_from`, a stay-down link skips the descent, and a retract
-   before a below-safe-Z descent plunges first.)
+   before a below-safe-Z descent plunges first. Changed in #213: a link no
+   longer than the flatten tolerance stays down; the last raster line
+   ends on the cleared area's chords, the wall ring starts on its arc, and
+   the 0.006 mm between them lifted the tool.)
 5. **Output:** one `Toolpath`. Every `Rapid` is at safe Z except a
-   Drill's descent, one Z rapid down to its `retract_z`, and the peck
-   rapids inside its cuts. The other descents are `Linear` at
-   feed/plunge, never `Rapid`.
+   Drill's descent, one Z rapid down to its `retract_z`, the peck
+   rapids inside its cuts, and the rapid straight down from safe Z to a
+   ramp or helix (step 4, S2 as changed in #214). The descents
+   themselves are `Linear` at feed/plunge, never `Rapid`.
 6. **Invariants O1–O10** are the module's tests.
 
 `generate_profile` moves onto `sequence` in the first phase 2 slice
@@ -1130,9 +1324,14 @@ the fitted centre is transformed like a point).
    start (endpoints exact); accept if every point (and every shallow-arc
    midpoint) is within `tolerance` of the circle, every angular step ≤
    90°, the largest step ≤ 4 × the median, the total sweep ≥ 0.5°, and
-   the chord ≥ 0.15·r (or a full circle). The median gate leaves out the
+   the chord ≥ 0.15·r (or a full circle), and at least two chord steps
+   are within 4× of the largest. The median gate leaves out the
    shallow-arc joints: their tiny steps are not chord steps, and counting
-   them fails every odd-length window on a faceted curve. Direction from
+   them fails every odd-length window on a faceted curve. (changed in
+   #213: a 0.006 mm stay-down link, a shallow corner arc and a 40 mm wall
+   side lie on a 154.75 mm circle, and with only two chord steps the
+   median let it through; the arc bowed 1.3 mm into the wall, which S9
+   refused.) Direction from
    the sign of the summed cross products (negative = clockwise = `G2`).
 3. Split each fitted run into arcs of ≤ 90° with intermediate endpoints on
    the circle and the last endpoint exactly the source point; `I`,`J` per
@@ -1515,7 +1714,7 @@ it and the warnings per operation, each as `<code>: <message>`.
 ## Module layout
 
 ```
-crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection on Regions), circle.rs (circle test, Kasa fit)}
+crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection on Regions), circle.rs (circle test, Kasa fit), self_band.rs (a line against itself, #221)}
 crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder), migrate.rs (v7_to_v8), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
 crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, overlap.rs, stock.rs, warning.rs}
 crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, canned.rs (controller model of G81–G83/G73), safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4, `%`), post.rs (definition checks)}
@@ -1545,6 +1744,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-geometry**
 - `boolean::difference_of_rect_and_circle_has_one_hole`, `boolean::union_of_touching_rects_is_one_region`, `boolean::intersection_of_disjoint_is_empty`.
 - `circle::sixteen_facets_are_a_circle_within_tolerance`, `circle::two_bulge_arcs_are_a_circle`, `circle::ellipse_is_not_a_circle`, `circle::kasa_fit_recovers_centre_and_radius`.
+- `self_band::hairpins_are_narrow_and_square_corners_are_not`, `self_band::a_neck_in_a_closed_outline_is_narrow`, `self_band::sharp_corners_meet_and_set_their_arms_aside`, `self_band::a_crossing_is_a_meeting`, `self_band::far_from_leaves_out_the_stretches_near_the_cut`, `distance::closest_points_follow_arcs_and_ends` (#221).
 
 **dc-project**
 - `migrate::v7_profile_gains_phase_2_fields_with_defaults` — fixture loads with `machining_order: full_depth_first`, `entry: plunge`, `lead: null`, `corner_relief: none`, `arc_fit_tolerance_mm: 0.01`, `use_canned_cycles: false`; `migrate::v7_to_v8_writes_the_defaults`, `migrate::v7_with_phase_2_field_already_present_fails`.
@@ -1558,7 +1758,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `sequence::orders_cut_the_same_moves` (O2).
 - `sequence::links_between_shapes_retract_to_safe_z`, `sequence::stay_down_link_only_inside_cleared_area` (O3).
 - `sequence::full_depth_first_z_transitions` (port: `testPocketFeatureFirstOrder`, `[-2,-4,-2,-4]`), `sequence::pass_first_z_transitions` (port: `testPocketLevelFirstOrder`, `[-2,-4]`) (O4).
-- `sequence::equidistant_shapes_keep_drawing_order`, `sequence::nearest_neighbour_orders_a_c_b_as_a_b_c` (port: `testPocketFeatureFirstNearestBlockOrder`), `sequence::same_input_twice_is_identical` (O5).
+- `sequence::equidistant_shapes_keep_drawing_order`, `sequence::nearest_neighbour_orders_a_c_b_as_a_b_c` (port: `testPocketFeatureFirstNearestBlockOrder`), `sequence::same_input_twice_is_identical` (O5), `sequence::equidistant_shapes_within_tolerance_keep_drawing_order`, `relief::equidistant_corners_follow_drawing_order_despite_noise` (#215).
 - `sequence::single_shape_is_identical_in_both_orders` (O6).
 - `sequence::pass_first_waits_for_enclosed_shapes_freeing_pass`.
 - `sequence::nothing_is_cut_after_a_shapes_freeing_pass` (#189: freeing blocks last in their unit; O1 still holds).
@@ -1624,12 +1824,12 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `relief::bottom_level_notches_do_not_plunge` (#193: ramp entry, both orders, one and two levels in the freeing pass, with a lead: no straight plunge below what is already cut at a descend point; every bottom notch within the final lap).
 
 **dc-cam — profile**
-- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199).
+- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221), `profile::on_line_part_smaller_than_the_bit_is_refused`, `profile::on_line_part_just_larger_than_the_bit_is_cut`, `safety::on_line_part_smaller_than_the_bit_fails_s9` (#223).
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
 **dc-cam — overlap**
-- `overlap::open_on_line_path_too_close_to_a_part_warns`, `overlap::open_line_far_from_shapes_is_quiet`, `overlap::open_lines_too_close_to_each_other_warn`, `overlap::open_path_in_a_part_is_not_compared_with_its_lines`, `engrave::crossing_lines_do_not_warn_toolpaths_overlap` (#206).
+- `overlap::open_on_line_path_too_close_to_a_part_warns`, `overlap::open_line_far_from_shapes_is_quiet`, `overlap::open_lines_too_close_to_each_other_warn`, `overlap::open_path_in_a_part_is_not_compared_with_its_lines`, `engrave::crossing_lines_do_not_warn_toolpaths_overlap` (#206), `overlap::self_close_open_path_in_the_waste_warns`, `overlap::open_curve_in_the_waste_does_not_warn_against_itself` (#224).
 
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.
@@ -1645,7 +1845,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::canned_cycle_expansion_matches_drill_toolpath` (S11), `safety::canned_cycle_below_floor_fails_s1`, `safety::canned_cycle_rapid_into_uncut_fails`.
 - `safety::ramp_steeper_than_plunge_fails_s10`, `safety::helix_feed_scaled_passes_s10`.
 - `safety::pocket_cut_outside_region_fails_s9` (on the toolpath via `footprint`).
-- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177), `safety::inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9` (#192), `safety::on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9` (#199).
+- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177), `safety::inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9` (#192), `safety::on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9` (#199), `safety::on_line_open_path_cutting_through_a_wall_fails_s9` (#210), `safety::on_line_hairpin_fails_s9`, `safety::s9_check_is_fast_on_an_on_line_outline_of_many_chords` (#221).
 - `post::six_definitions_validate`, `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect` (acceptance 36), `post::mach3_numbers_every_line`, `post::uccnc_writes_no_line_numbers_percent_or_units_word`, `post::generic_strips_trailing_zeros`, `post::generic_refuses_m6_mode`, `post::linuxcnc_mach3_uccnc_refuse_m6_mode`, `post::canned_cycles_only_where_documented`, `post::no_definition_has_g43`, `post::every_definition_line_is_cited_in_readme` (a test that scans the README for each non-placeholder header/footer/tool-change line).
 - `emit::one_program_flag_writes_m6_on_grblhal`, `emit::one_program_flag_on_grbl_is_error`, `emit::programs_per_tool_flag_overrides_m6_mode_without_saving`.
 

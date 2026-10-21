@@ -90,7 +90,7 @@ the drawing, yet the regions are ordered by their parts, `#1` then `#2`.
 
 ![Regions ordered by where their parts appear](figures/nesting/region-order.svg)
 
-The cut order starts from the drawing but does not follow it throughout.
+The order of the cuts starts from the drawing but does not follow it throughout.
 The first shape drawn is cut first; after that the tool goes to whichever
 uncut shape starts nearest to where it finished, so parts scattered across
 the stock are visited in a short route rather than in the order they were
@@ -104,8 +104,8 @@ depth. Cutting the hole frees the waste inside it, so a part still sitting
 in that waste must already be cut out. For a frame with a coaster inside
 its opening, the coaster is cut first, then the opening, then the frame's
 outline, whichever was drawn first. How the passes of several shapes
-interleave is the Profile's `machining_order`; see
-[Profile, Machining order](profile.md#machining-order).
+interleave is the operation's `machining_order`; see
+[Machining order and operation order](machining-order.md).
 
 ### 7. Reordering the drawing doesn't change which shapes are holes
 

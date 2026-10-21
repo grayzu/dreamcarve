@@ -13,8 +13,9 @@
 //! 1. **Safety (S1–S3)** on both programs: no Z below the stock bottom
 //!    minus the allowance, rapids that move in XY only at or above safe Z
 //!    (a Drill also rapids in Z alone down to its retract plane and inside
-//!    its hole), and every cut at a positive feed that is one of the
-//!    project's tool rates.
+//!    its hole; any operation rapids straight down from safe Z to a ramp
+//!    or helix 1 mm above the stock top, #214), and every cut at a
+//!    positive feed that is one of the project's tool rates.
 //! 2. **Levels.** The Z values of the horizontal cutting moves are equal.
 //! 3. **Moves per level**, after start-point alignment (acceptance test
 //!    38). Each run of horizontal cuts is split into *loops* (stretches that
@@ -50,6 +51,7 @@ use std::f64::consts::{PI, TAU};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
+use dc_cam::entry::ENTRY_CLEARANCE_MM;
 use dc_cam::test_support::assert_safe;
 use dc_cam::{generate_drill, generate_engrave, generate_pocket, generate_profile};
 use dc_gcode::parse::{Block, MotionKind, parse_program};
@@ -713,10 +715,21 @@ impl Limits {
             }
             if mv.kind == MotionKind::Rapid {
                 // S2. A Drill rapids down to its retract plane, and between
-                // pecks inside its hole, in Z alone.
+                // pecks inside its hole, in Z alone. Any operation rapids
+                // straight down from safe Z to the start of a ramp or helix
+                // the entry clearance above the stock top (#214); the
+                // corpus has no later pass that starts lower.
                 let low = |z: Option<f64>| z.is_none_or(|z| z < self.safe_z - SAME_MM);
                 let drill_plunge = self.drills && !mv.moves_xy;
-                if !drill_plunge && (low(mv.to_z) || (mv.moves_xy && low(mv.from_z))) {
+                let entry_approach = !mv.moves_xy
+                    && !low(mv.from_z)
+                    && mv
+                        .to_z
+                        .is_some_and(|z| z >= ENTRY_CLEARANCE_MM - Z_ROUNDING_MM);
+                if !drill_plunge
+                    && !entry_approach
+                    && (low(mv.to_z) || (mv.moves_xy && low(mv.from_z)))
+                {
                     return Err(format!(
                         "line {line}: rapid below safe Z {}: {mv:?}",
                         self.safe_z

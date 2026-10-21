@@ -12,8 +12,10 @@
     reason = "a test assertion helper reports failure by panicking"
 )]
 
+use crate::entry::CLEARED_POINT_TOLERANCE_MM;
+use crate::sequence::lowest_cut_through;
 use crate::toolpath::{Move, MoveKind, Toolpath};
-use dc_geometry::{EPS_MM, Point, approx_eq};
+use dc_geometry::{EPS_MM, approx_eq};
 use dc_project::{Operation, Project};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
@@ -26,8 +28,11 @@ use dc_project::{Operation, Project};
 /// 3. **Rapids (S2, S15).** Every rapid carries no feed. A rapid that moves
 ///    in XY starts and ends at or above safe Z. A rapid in Z alone may end
 ///    below safe Z only in air: at or above the stock top, or at or above
-///    the deepest Z a cutting move has already reached at that XY (a
-///    drill's retract and peck re-entry, S15). (The first move's start is
+///    the lowest Z a cutting move has already reached through that XY,
+///    within [`CLEARED_POINT_TOLERANCE_MM`] (a drill's retract and peck
+///    re-entry, S15; the rapid down to a ramp or helix above the floor the
+///    pass before cut, S2 as changed in #214, which the safety pass holds
+///    to the entry clearance above it). (The first move's start is
 ///    wherever the machine is; the post-processor raises Z before moving
 ///    in XY.)
 /// 4. **Feeds (S3).** Every linear and arc move carries `Some` positive
@@ -102,8 +107,6 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
         "move 0 must be a rapid at safe Z {safe_z}: {first:?}"
     );
 
-    // The deepest Z a cutting move has reached at the current XY (S15).
-    let mut cut_to: Option<(Point, f64)> = None;
     let mut previous: Option<&Move> = None;
     for (i, mv) in toolpath.moves.iter().enumerate() {
         assert!(
@@ -128,9 +131,11 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
                 } else if !at_or_above(mv.to.z, safe_z)
                     && !at_or_above(mv.to.z, limits.stock_top_mm)
                 {
-                    let cut_z = cut_to
-                        .filter(|(at, _)| at.distance_to(mv.to.xy()) <= EPS_MM)
-                        .map(|(_, z)| z);
+                    let cut_z = lowest_cut_through(
+                        toolpath.moves.get(..i).unwrap_or_default(),
+                        mv.to.xy(),
+                        CLEARED_POINT_TOLERANCE_MM,
+                    );
                     assert!(
                         cut_z.is_some_and(|z| at_or_above(mv.to.z, z)),
                         "rapid {i} descends into uncut material: ends at Z {} where the deepest cut is {cut_z:?}: {mv:?}",
@@ -166,11 +171,6 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
                         "XY cutting move {i} feeds at {f}, not feed {feed}: {mv:?}"
                     );
                 }
-                let z = match cut_to {
-                    Some((at, z)) if at.distance_to(mv.to.xy()) <= EPS_MM => z.min(mv.to.z),
-                    _ => mv.to.z,
-                };
-                cut_to = Some((mv.to.xy(), z));
             }
             MoveKind::Dwell { seconds } => {
                 assert!(mv.feed_mm_min.is_none(), "dwell {i} carries a feed: {mv:?}");

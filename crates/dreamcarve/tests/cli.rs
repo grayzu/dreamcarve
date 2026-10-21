@@ -2708,7 +2708,8 @@ fn init_writes_grblhal_v2() {
 
 /// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
 /// exports the bytes it did before version 2 existed
-/// (`tests/expected/coaster-<id>-v1.nc`, committed before #171) until the
+/// (`tests/expected/coaster-<id>-v1.nc`, committed before #171; its ramp
+/// re-captured in #214, which changed the motion, not the format) until the
 /// user runs `export --post <id>`. That upgrades it to version 2, says so,
 /// and changes only the program's first line.
 #[test]
@@ -3707,8 +3708,7 @@ fn init_dxf_layer_and_join_flags() {
 /// Acceptance test 34, the `init` half: `plaque.dxf` and `plaque.svg`
 /// (the phase 2 test part) produce projects with the same shapes, named
 /// alike, in the same order, placed alike, within 0.01 mm. The export half
-/// (`plaque_dxf_exports_same_programs_as_svg`) needs the Pocket, Drill and
-/// Engrave operations and lands with them.
+/// is `plaque_dxf_exports_same_programs_as_svg`.
 #[test]
 fn plaque_dxf_imports_same_shapes_as_svg() {
     let dir = work_dir("plaque_dxf_imports_same_shapes_as_svg");
@@ -3774,6 +3774,271 @@ fn plaque_dxf_imports_same_shapes_as_svg() {
         9,
         "all but the squiggle"
     );
+}
+
+/// How far two exports of one part may differ, mm: each drawing is within
+/// the 0.01 mm flatten tolerance of the true curve, so two flattenings of
+/// one curve (the squiggle: an SVG cubic and a DXF SPLINE) are within
+/// twice that of each other, and arc fitting stays within 0.01 mm of each.
+/// Measured: 0.0165 mm on the squiggle, under 0.01 mm everywhere else.
+const PARITY_TOLERANCE_MM: f64 = 0.03;
+
+/// The sampled tool-centre path of `m`, from its start (excluded) to its
+/// end: lines every 0.5 mm, arcs finely enough that the chords are within
+/// 0.0005 mm of the arc.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "sample counts are small positive whole numbers"
+)]
+fn sample_move(m: &MachineMove) -> Vec<[f64; 3]> {
+    let (fx, fy, fz) = (
+        m.from.x.unwrap_or(0.0),
+        m.from.y.unwrap_or(0.0),
+        m.from.z.unwrap_or(0.0),
+    );
+    let (tx, ty, tz) = (
+        m.to.x.unwrap_or(fx),
+        m.to.y.unwrap_or(fy),
+        m.to.z.unwrap_or(fz),
+    );
+    let arc = matches!(
+        m.kind,
+        dc_gcode::parse::MotionKind::ArcCw | dc_gcode::parse::MotionKind::ArcCcw
+    );
+    let (Some(i), Some(j), true) = (m.arc.i, m.arc.j, arc) else {
+        let length = (tx - fx).hypot(ty - fy).hypot(tz - fz);
+        let n = (length / 0.5).ceil().max(1.0) as usize;
+        return (1..=n)
+            .map(|k| {
+                let t = k as f64 / n as f64;
+                [fx + (tx - fx) * t, fy + (ty - fy) * t, fz + (tz - fz) * t]
+            })
+            .collect();
+    };
+    let (cx, cy) = (fx + i, fy + j);
+    let r = i.hypot(j);
+    let a0 = (fy - cy).atan2(fx - cx);
+    let a1 = (ty - cy).atan2(tx - cx);
+    let tau = std::f64::consts::TAU;
+    let ccw = m.kind == dc_gcode::parse::MotionKind::ArcCcw;
+    let mut sweep = if ccw {
+        (a1 - a0).rem_euclid(tau)
+    } else {
+        (a0 - a1).rem_euclid(tau)
+    };
+    if sweep < 1e-9 {
+        sweep = tau;
+    }
+    let step = (8.0 * r * 0.0005).sqrt().min(0.5);
+    let n = (r * sweep / step).ceil().max(1.0) as usize;
+    (1..=n)
+        .map(|k| {
+            let t = k as f64 / n as f64;
+            let a = if ccw { a0 + sweep * t } else { a0 - sweep * t };
+            [cx + r * a.cos(), cy + r * a.sin(), fz + (tz - fz) * t]
+        })
+        .collect()
+}
+
+/// The distance from `p` to the polyline through `path`, mm.
+#[allow(clippy::indexing_slicing, reason = "windows of two, and a path of one")]
+fn distance_to_path(p: [f64; 3], path: &[[f64; 3]]) -> f64 {
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let mut best = f64::INFINITY;
+    for pair in path.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let ab = sub(b, a);
+        let len2 = dot(ab, ab);
+        let t = if len2 > 0.0 {
+            (dot(sub(p, a), ab) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let q = [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t];
+        best = best.min(dot(sub(p, q), sub(p, q)).sqrt());
+    }
+    if path.len() == 1 {
+        best = dot(sub(p, path[0]), sub(p, path[0])).sqrt();
+    }
+    best
+}
+
+/// A program cut into what a reader compares: its lines that make no move
+/// (comments, spindle, dwell, tool change, modes), in order; and, per
+/// operation, where each rapid ends and each run of cutting moves between
+/// two rapids, sampled, with the feeds it uses in order.
+struct ProgramShape {
+    words: Vec<String>,
+    operations: Vec<OperationShape>,
+}
+
+#[derive(Default)]
+struct OperationShape {
+    rapids: Vec<[f64; 3]>,
+    runs: Vec<(Vec<[f64; 3]>, Vec<f64>)>,
+}
+
+fn program_shape(program: &str) -> ProgramShape {
+    let words = program
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            l.starts_with('(') || !l.split_whitespace().any(|w| w.starts_with(['X', 'Y', 'Z']))
+        })
+        .map(str::to_owned)
+        .collect();
+    // The operation each line belongs to: 0 before the first.
+    let mut operation_of_line = vec![0_usize];
+    let mut current = 0;
+    for line in program.lines() {
+        if line.starts_with("( Operation ") {
+            current += 1;
+        }
+        operation_of_line.push(current);
+    }
+    let mut operations: Vec<OperationShape> = Vec::new();
+    operations.resize_with(current + 1, OperationShape::default);
+    let mut open = false;
+    let mut last_operation = 0;
+    for m in dc_gcode::parse_motion(program).expect("program parses") {
+        let index = operation_of_line.get(m.line).copied().unwrap_or(current);
+        if index != last_operation {
+            open = false;
+            last_operation = index;
+        }
+        let operation = operations.get_mut(index).expect("an operation per line");
+        let end = [
+            m.to.x.unwrap_or(0.0),
+            m.to.y.unwrap_or(0.0),
+            m.to.z.unwrap_or(0.0),
+        ];
+        if !m.kind.is_cut() {
+            operation.rapids.push(end);
+            open = false;
+            continue;
+        }
+        if !open {
+            let start = [
+                m.from.x.unwrap_or(0.0),
+                m.from.y.unwrap_or(0.0),
+                m.from.z.unwrap_or(0.0),
+            ];
+            operation.runs.push((vec![start], Vec::new()));
+            open = true;
+        }
+        let run = operation.runs.last_mut().expect("a run is open");
+        run.0.extend(sample_move(&m));
+        let feed = m.feed.expect("a cut has a feed");
+        if run.1.last().is_none_or(|f| (f - feed).abs() > 0.01) {
+            run.1.push(feed);
+        }
+    }
+    ProgramShape { words, operations }
+}
+
+/// Whether two points are within 0.01 mm on every axis.
+fn same_point(p: &[f64; 3], q: &[f64; 3]) -> bool {
+    p.iter().zip(q).all(|(u, v)| (u - v).abs() <= 0.01)
+}
+
+/// The largest distance from a point of either run to the other run, mm.
+fn runs_apart(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
+    a.iter()
+        .map(|&p| distance_to_path(p, b))
+        .chain(b.iter().map(|&p| distance_to_path(p, a)))
+        .fold(0.0, f64::max)
+}
+
+/// #125, acceptance test 34's export half: the finished plaque project
+/// built from `plaque.dxf` (`tests/fixtures/plaque.dcv`, the quick start's
+/// result) and from `plaque.svg` (`tests/fixtures/plaque-svg.dcv`, the
+/// same steps on the SVG twin) export the same programs: the same files
+/// in the same order; in each, the same lines that make no move (header,
+/// operations in order, tools, spindle, dwells, footer); and in each
+/// operation the same rapids within 0.01 mm and the same runs of cutting
+/// moves, in the same order, at the same feeds, each run's path within
+/// `PARITY_TOLERANCE_MM` of its counterpart's both ways. The SVG's
+/// coordinates carry noise of about 1e-6 mm (usvg reads them as `f32`);
+/// nearest-first ties within `NEAREST_TIE_MM` keep drawing order (#215),
+/// so the noise no longer settles a tie between two equally near
+/// corner-relief notches the other way. The squiggle is flattened differently from an SVG cubic and a DXF SPLINE,
+/// and the DXF keeps exact arcs where the SVG's are rebuilt from Bézier
+/// curves; nothing else differs.
+#[test]
+#[allow(clippy::indexing_slicing, reason = "two exports, checked above")]
+fn plaque_dxf_exports_same_programs_as_svg() {
+    let dir = work_dir("plaque_dxf_exports_same_programs_as_svg");
+    let mut exported: Vec<Vec<(String, String)>> = Vec::new();
+    for (fixture, sub) in [("plaque.dcv", "dxf"), ("plaque-svg.dcv", "svg")] {
+        let folder = dir.join(sub);
+        std::fs::create_dir_all(&folder).expect("folder created");
+        copy_fixture(&folder, fixture, "plaque.dcv");
+        let out = run(&folder, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{sub}: {}", stderr(&out));
+        let mut programs: Vec<(String, String)> = std::fs::read_dir(&folder)
+            .expect("folder readable")
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "nc"))
+            .map(|p| {
+                let name = p
+                    .file_name()
+                    .expect("a file")
+                    .to_string_lossy()
+                    .into_owned();
+                (name, std::fs::read_to_string(&p).expect("program readable"))
+            })
+            .collect();
+        programs.sort();
+        exported.push(programs);
+    }
+    assert_eq!(exported.len(), 2);
+    let (from_dxf, from_svg) = (&exported[0], &exported[1]);
+    let names = |p: &[(String, String)]| p.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+    assert_eq!(names(from_dxf), ["plaque-1-T1.nc", "plaque-2-T2.nc"]);
+    assert_eq!(names(from_dxf), names(from_svg));
+
+    for ((name, dxf), (_, svg)) in from_dxf.iter().zip(from_svg) {
+        let (a, b) = (program_shape(dxf), program_shape(svg));
+        assert_eq!(a.words, b.words, "{name}: the lines that make no move");
+        assert_eq!(a.operations.len(), b.operations.len(), "{name}");
+        for (k, (oa, ob)) in a.operations.iter().zip(&b.operations).enumerate() {
+            let at = format!("{name}, operation {k}");
+            assert_eq!(oa.rapids.len(), ob.rapids.len(), "{at}: rapids");
+            for (i, (p, q)) in oa.rapids.iter().zip(&ob.rapids).enumerate() {
+                assert!(
+                    same_point(p, q),
+                    "{at}: rapid {i} ends at {p:?} from the DXF, {q:?} from the SVG"
+                );
+            }
+            assert_eq!(oa.runs.len(), ob.runs.len(), "{at}: runs of cuts");
+            for (i, ((path, feeds), (other, other_feeds))) in
+                oa.runs.iter().zip(&ob.runs).enumerate()
+            {
+                assert!(
+                    same_point(&path[0], &other[0]),
+                    "{at}: run {i} starts at {:?} from the DXF, {:?} from the SVG",
+                    path[0],
+                    other[0]
+                );
+                assert!(
+                    feeds.len() == other_feeds.len()
+                        && feeds
+                            .iter()
+                            .zip(other_feeds)
+                            .all(|(u, v)| (u - v).abs() <= 0.01),
+                    "{at}: run {i} at feeds {feeds:?} from the DXF, {other_feeds:?} from the SVG"
+                );
+                let apart_mm = runs_apart(path, other);
+                assert!(
+                    apart_mm <= PARITY_TOLERANCE_MM,
+                    "{at}: run {i} from {:?} is {apart_mm} mm from the SVG's",
+                    path[0]
+                );
+            }
+        }
+    }
 }
 
 /// The SVG of acceptance test 25: a closed rectangle and an open polyline.

@@ -43,7 +43,7 @@
 use super::rings::{Ring, RingNode, RingTree, WallRings, closest_point, inset_region, shorter_way};
 use super::{MAX_RINGS, ring_path};
 use crate::footprint::capsule;
-use crate::sequence::link_inside_cleared;
+use crate::sequence::{link_inside_cleared, nearest_of};
 use dc_geometry::{
     EPS_MM, Point, Polyline, Region, Vertex, area_mm2, difference, intersection, union,
 };
@@ -283,19 +283,26 @@ pub(super) fn order_nearest_first(
             .and_then(links_of)
             .and_then(|l| l.iter().copied().find(|&(j, _)| is_live(&done, j)));
         let next = stay.or_else(|| {
-            // Nearest end, dead ends first once a piece is cut: (dead?,
-            // distance, end); `false < true`, so live sorts after.
-            (0..pieces.len())
+            // Nearest end, dead ends first once a piece is cut: (live?,
+            // end, distance); `false < true`, so live ends come after.
+            // Ends within `NEAREST_TIE_MM` of the nearest are a tie, taken
+            // in scan order (#215).
+            let ends: Vec<(bool, End, f64)> = (0..pieces.len())
                 .filter(|&j| is_live(&done, j))
                 .flat_map(|j| [(j, 0), (j, 1)])
                 .filter_map(|e| {
                     let d = point(e)?.distance_to(current);
                     let live = exit.is_some()
                         && links_of(e).is_some_and(|l| l.iter().any(|&(k, _)| is_live(&done, k)));
-                    Some((live, d, e))
+                    Some((live, e, d))
                 })
-                .min_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)))
-                .map(|(_, _, e)| e)
+                .collect();
+            let dead_first = ends.iter().map(|(live, _, _)| *live).min()?;
+            nearest_of(
+                ends.into_iter()
+                    .filter(|(live, _, _)| *live == dead_first)
+                    .map(|(_, e, d)| (e, d)),
+            )
         });
         let Some(entry) = next else {
             break;

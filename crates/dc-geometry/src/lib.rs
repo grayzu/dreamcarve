@@ -16,17 +16,22 @@ mod offset;
 mod point;
 mod polyline;
 mod region;
+mod self_band;
 mod transform;
 
 pub use boolean::{BooleanOp, boolean, difference, intersection, union};
 pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;
-pub use distance::{distance_mm, point_segment_distance_mm, segment_distance_mm};
+pub use distance::{
+    closest_points, distance_away_from_mm, distance_mm, meeting_points, point_segment_distance_mm,
+    segment_distance_mm,
+};
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, flatten};
-pub use offset::offset;
+pub use offset::{inset_is_empty, offset};
 pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq};
 pub use polyline::{Arc, Polyline, Segment, Vertex};
 pub use region::{Region, area_mm2, nest};
+pub use self_band::SelfBand;
 
 /// Something the caller should know about that still gives a usable
 /// result. Indices refer to positions in the caller's input.

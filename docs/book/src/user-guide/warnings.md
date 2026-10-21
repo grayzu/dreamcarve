@@ -16,17 +16,17 @@ described in the chapter of the thing they are about.
 
 The tables list every code, grouped by where it comes from.
 
-## Cut order between operations
+## Operation order
 
 Operations always run in the order the project lists them, never
-regrouped by tool or reordered ([Profile: cut order between
-operations](profile.md#cut-order-between-operations)). These warnings
+regrouped by tool or reordered ([Machining order and operation
+order](machining-order.md#operations-run-in-list-order)). These warnings
 say when that order is likely a mistake.
 
 | Code | Message says | What to do |
 | --- | --- | --- |
 | `cut_inside_freed_part` | "`<shape>` lies inside `<outline>`, which operation `<id>` cuts free of the stock first, so this cut would run in a loose part" | An earlier Profile cuts through the stock around (or inside) an outline, with no tabs, and this operation then cuts a shape inside it: the cut runs in a part or slug that is no longer held. An open path an Engrave or an `on_line` Profile cuts counts when all of it lies inside the outline. Move this operation before the one named, or give that Profile tabs. |
-| `tool_change_avoidable` | "tool `<id>` (`<name>`) is used by operations `<a>`, `<b>`, which do not run one after another, so it is fitted more than once" | Operations using one tool are separated by an operation using another, so the tool is fitted twice. Put them next to each other if the cut order allows; DreamCarve never moves them for you. |
+| `tool_change_avoidable` | "tool `<id>` (`<name>`) is used by operations `<a>`, `<b>`, which do not run one after another, so it is fitted more than once" | Operations using one tool are separated by an operation using another, so the tool is fitted twice. Put them next to each other if the order allows; DreamCarve never moves them for you. |
 
 ## Toolpath generation
 
@@ -46,7 +46,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `relief_corner_not_cut` | "the corner of … at (…, …) mm is not relieved because the main passes did not cut to full depth where its notch starts (a tab over it, or no wall pass), …" | A notch only plunges where the operation already cut to full depth. Move the tab off the corner, or set the Pocket's `wall_pass` to `"last"` or `"first"` ([Profile: corner relief](profile.md#corner-relief), [Pocket: corner relief](pocket.md#corner-relief)). |
 | `rest_of_clears_nothing` | "operation `…`, which this one rests on, already reaches everything tool `…` can, so this operation cuts nothing" | A rest machining Pocket uses a bit no smaller than the earlier Pocket's, at no smaller an allowance, so nothing is left that it reaches. Use a smaller bit, or remove the operation ([Pocket: rest machining](pocket.md#rest-machining)). |
 | `tool_too_large` | "tool … does not fit …, so that shape is not cut" | The bit does not fit inside the shape (an Inside cut, or a hole of an Outside cut). Use a smaller bit or enlarge the shape. |
-| `duplicate_shape_dropped` | "… is the same outline in the same place as …, so it is cut only once" | Two targets are the same outline in the same place. Remove one. |
+| `duplicate_shape_dropped` | "… is the same outline in the same place as …, so it is cut only once" | Two targets are the same outline in the same place, or (On line Profile) the same open path, drawn either way. Remove one. |
 | `tabs_overlap` | "tabs on … touch or overlap on its … mm tool path, so they were joined into longer tabs" | Too many or too wide tabs for the outline. Use fewer or narrower tabs ([Tabs](tabs.md#warnings)). |
 | `tabs_outside_cut_range` | "the tab top is … mm above the stock bottom, but the deepest pass stops at … mm" or "… higher than the … mm stock top" | The tabs are above every pass (they change nothing) or above the stock top (every pass lifts over them). Lower `height_mm` ([Tabs](tabs.md#warnings)). |
 | `tabs_cover_most_of_contour` | "tabs on … cover more than half of its tool path …, so the part or hole may not cut free" | The tabs leave less than half the outline cut. The message suggests a count or width; or remove tabs from a small hole ([Tabs](tabs.md#warnings)). |
@@ -55,7 +55,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `drill_tool_wider_than_hole` | "the … mm tool is wider than the … mm hole …, so the hole comes out the tool's size" | Use a smaller bit, or draw the circle the bit's size ([Drill](drill.md#which-outlines-are-holes)). |
 | `drill_peck_deeper_than_hole` | "the … mm peck is at least the … mm depth of the holes, so each is drilled in one plunge" | Use a smaller `peck_depth_mm`, or the `"simple"` cycle ([Drill: peck](drill.md#peck)). |
 | `drill_retract_below_stock_top` | "retract_mm is … mm, below the stock top; the tool retracts to the stock top instead" | Set `retract_mm` to 0 or more ([Drill: retract height](drill.md#retract-height)). |
-| `toolpaths_overlap` | "the tool paths of … and … cut into each other: the shapes are … mm apart" | Two shapes in one Profile are closer than the bit needs between them, or an open path cut `on_line` comes within half a bit of another shape's line or crosses it. Move them apart or use a smaller bit ([Profile: shapes too close together](profile.md#shapes-too-close-together)). An Engrave never gives it. |
+| `toolpaths_overlap` | "the tool paths of … and … cut into each other: the shapes are … mm apart" | Two shapes in one Profile are closer than the bit needs between them, or an open path cut `on_line` comes within half a bit of another shape's line or crosses it, or an open path cut `on_line` outside any part comes within half a bit of itself far along it (a tight spiral or a hairpin; the warning names it twice). Move them apart or use a smaller bit ([Profile: shapes too close together](profile.md#shapes-too-close-together)). An Engrave never gives it. |
 
 ## Export
 
@@ -89,7 +89,18 @@ file](project-file.md).
 
 ## Import
 
-`init` prints what it could not import before writing the project. DXF
-warnings carry a code (see [Importing DXF](importing-dxf.md) for
-`dxf_entities_skipped` and the others); SVG warnings are plain sentences
-naming the element skipped.
+`init` prints what it could not import before writing the project, as
+`warning: <message>`. One carries a code; the others are plain sentences
+naming what was skipped.
+
+| Message says | What to do |
+| --- | --- |
+| "`dxf_entities_skipped`: … entity(ies) DreamCarve does not read were skipped: TEXT: 1, …" | A DXF holds text, dimensions, hatches, meshes or other entities DreamCarve does not read. Explode text to outlines in the CAD program if you want to cut it ([Importing DXF](importing-dxf.md#what-is-read)). |
+| "block `…` is inserted more than 12 levels deep; the deeper levels were skipped" | A DXF block inserts itself, or nests too deep. Fix the block in the CAD program. |
+| "INSERT of undefined block `…` was skipped" | The DXF places a block it does not define. Re-export the drawing. |
+| "… text element(s) skipped; convert text to paths to import it" | An SVG holds text. Convert it to paths in Inkscape (Path → Object to Path). |
+| "… image(s) skipped" | An SVG holds pictures, which have no outlines to cut. |
+| "path `…` uses a gradient or pattern; its outline was imported" | Nothing to do: paint never changes the shape. |
+| "clip path on group `…` ignored …", "mask on group `…` ignored …" | The shapes were imported whole, unclipped. Apply the clip in the drawing program if it should cut the shapes. |
+| "closed subpath … of path `…` encloses no area and was dropped", "path `…` has no usable geometry and was skipped" | A path is a point or a line folded back on itself. Delete it from the drawing. |
+| "page size is in … but there is no viewBox, so coordinates are read as CSS pixels (96 per inch)" | Check the size `init` reports; add a `viewBox` to the SVG if it is wrong. |
