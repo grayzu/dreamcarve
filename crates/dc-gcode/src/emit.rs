@@ -4255,6 +4255,44 @@ mod tests {
         );
     }
 
+    /// #153: the Drill toolpath pecks from the retract plane, as the
+    /// controller does, so a definition with peck cycles writes `G83` and
+    /// `G73` with any retract height: here `R1.000` with no warning, and
+    /// the program passes the safety pass, which expands each line (S11).
+    #[test]
+    fn g83_written_with_nonzero_retract_when_definition_has_it() {
+        for (retract, word) in [
+            (dc_project::PeckRetract::Full, "G83"),
+            (dc_project::PeckRetract::ChipBreak { gap_mm: 0.5 }, "G73"),
+        ] {
+            let peck = dc_project::DrillCycle::Peck {
+                peck_depth_mm: Some(2.0),
+                retract,
+            };
+            let (project, op) = drill_project(peck, 0.0, 1.0);
+            let ops = drill_entry(&project, &op);
+            let order = cut_order(&ops[0]);
+            let (program, warnings) =
+                emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
+            assert!(warnings.is_empty(), "{word}: {warnings:?}");
+            let lines = cycle_lines(&program.text, order[0]);
+            let expected: Vec<String> = order
+                .iter()
+                .enumerate()
+                .map(|(k, (x, y))| {
+                    let head = if k == 0 {
+                        format!("{word} ")
+                    } else {
+                        String::new()
+                    };
+                    let feed = if k == 0 { " F300.000" } else { "" };
+                    format!("{head}X{x:.3} Y{y:.3} Z-5.000 R1.000 Q2.000{feed}")
+                })
+                .collect();
+            assert_eq!(lines, expected, "{}", program.text);
+        }
+    }
+
     /// Port of `testCannedChipBreakingG73`: a chip-break peck writes `G73`
     /// with the peck as `Q`; the controller's short retract is the
     /// definition's re-entry gap, the same 0.5 mm as the toolpath's gap.
@@ -4412,16 +4450,24 @@ mod tests {
     /// Acceptance 24: the canned program's parsed motion, each cycle
     /// expanded as the controller performs it, is the plain-moves
     /// program's parsed motion, move for move: same kinds, same ends,
-    /// same feeds. Simple, and a full-retract peck from the stock top.
+    /// same feeds. Simple, a full-retract peck from the stock top, and
+    /// (#153) a full-retract and a chip-break peck with the retract plane
+    /// 1 mm above it.
     #[test]
     fn canned_program_motion_equals_plain_program() {
         let peck = dc_project::DrillCycle::Peck {
             peck_depth_mm: Some(2.0),
             retract: dc_project::PeckRetract::Full,
         };
+        let chip = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::ChipBreak { gap_mm: 0.5 },
+        };
         for (cycle, retract_mm, word) in [
             (dc_project::DrillCycle::Simple, 1.0, "G81"),
-            (peck, 0.0, "G83"),
+            (peck.clone(), 0.0, "G83"),
+            (peck, 1.0, "G83"),
+            (chip, 1.0, "G73"),
         ] {
             let (project, op) = drill_project(cycle, 0.0, retract_mm);
             let ops = drill_entry(&project, &op);
