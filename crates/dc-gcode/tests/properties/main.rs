@@ -58,13 +58,16 @@ fn config(cases: u32) -> ProptestConfig {
 }
 
 /// Generator errors a valid project may still get, because they depend on
-/// how the shapes and the tool meet: the cutter would leave the stock, or a
-/// band between two lines is narrower than the tool. Any other error from a
-/// project that validates is a defect.
+/// how the shapes and the tool meet: the cutter would leave the stock, a
+/// band between two lines is narrower than the tool, or an On line part is
+/// nowhere as wide as the tool (#223). Any other error from a project that
+/// validates is a defect.
 fn rejects_drawing(error: &CamError) -> bool {
     matches!(
         error,
-        CamError::OffStock { .. } | CamError::BandNarrowerThanTool { .. }
+        CamError::OffStock { .. }
+            | CamError::BandNarrowerThanTool { .. }
+            | CamError::PartNarrowerThanTool { .. }
     )
 }
 
