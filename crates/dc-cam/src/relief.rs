@@ -1961,7 +1961,9 @@ mod tests {
     /// from safe Z that stops 1 mm above that floor, not at safe Z: for a
     /// Pocket's relief pass, cut after the main path, and for an inside
     /// Profile's notches, cut among its passes. The last rapid down at a
-    /// descend point is the notch's; a lap may start there too.
+    /// descend point is the notch's. The Profile's lap starts and ends at
+    /// (22, 22), so that corner's notch is cut without a lift (#240,
+    /// [`notch_at_the_lap_end_does_not_lift`]) and is left out here.
     #[test]
     fn notch_rapids_to_just_above_the_cut_floor() {
         let p = one_tool(vec![rect(40.0, 40.0)]);
@@ -1973,8 +1975,11 @@ mod tests {
         let profile = generate_profile(&p, &profile_op(Side::Inside, CornerRelief::Dogbone))
             .unwrap()
             .0;
-        for (name, tp) in [("pocket", pocket), ("profile", profile)] {
-            for d in descend_points {
+        for (name, tp, lifted) in [
+            ("pocket", pocket, &descend_points[..]),
+            ("profile", profile, &descend_points[1..]),
+        ] {
+            for &d in lifted {
                 let at_d = |m: &Move| m.to.xy().distance_to(d) < 1e-6;
                 let i = tp
                     .moves

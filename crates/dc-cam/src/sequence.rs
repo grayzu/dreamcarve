@@ -409,6 +409,10 @@ fn validate_block(block: &CutBlock) -> Result<(), CamError> {
 enum Link {
     /// The next block's descent starts where the tool is.
     None,
+    /// The next block, of the same shape, opens with a straight plunge
+    /// where the tool is, in the column the previous block cut at least
+    /// that deep (#240): the plunge goes from where the tool is.
+    InColumn,
     /// A straight cut at feed through cleared material at the current Z.
     StayDown,
     /// Up to safe Z, across, and down.
@@ -430,6 +434,19 @@ impl<'a> Emitter<'a, '_> {
         match (self.previous, self.current) {
             (Some(previous), Some(current)) => match self.link(previous, block, current) {
                 Link::None => {}
+                Link::InColumn => {
+                    // Straight up or down at the descent's start, then the
+                    // rest of the descent as given.
+                    if block.descent.is_empty() {
+                        let entry = Point3::new(block.entry.x, block.entry.y, block.z_mm);
+                        self.push(Move::linear(entry, self.input.plunge_mm_min));
+                    }
+                    for mv in &block.descent {
+                        self.push(*mv);
+                    }
+                    self.cut(block);
+                    return;
+                }
                 Link::StayDown => {
                     // Already at the block's Z in cleared material: straight
                     // to its entry, and its descent is not cut.
@@ -472,6 +489,9 @@ impl<'a> Emitter<'a, '_> {
         let at_start = current.xy().distance_to(b.descent_from) <= EPS_MM;
         if a.shape == b.shape && b.pass == a.pass + 1 {
             return if at_start { Link::None } else { Link::Retract };
+        }
+        if a.shape == b.shape && at_start && cut_down_to_plunge(a, b) {
+            return Link::InColumn;
         }
         if let (Some(cleared_a), Some(cleared_b)) = (&a.cleared, &b.cleared)
             && (a.z_mm - b.z_mm).abs() <= EPS_MM
@@ -595,6 +615,36 @@ impl<'a> Emitter<'a, '_> {
             )));
         }
     }
+}
+
+/// Link rule 1 for a block of the same shape (#240): true when `b`'s
+/// descent opens with a straight plunge at `descent_from` (an empty
+/// descent, or a first move straight up or down there) and `a`'s cuts
+/// passed through `descent_from` (within [`CLEARED_POINT_TOLERANCE_MM`]) at
+/// or below the Z that plunge ends at. With the tool at `descent_from`
+/// after `a`, the plunge then runs in the column `a` has just opened, so
+/// it is cut from where the tool is (a Profile's relief notch after a lap
+/// that ends on its descend point). Only same-shape blocks: links to
+/// another shape keep O3's retract.
+fn cut_down_to_plunge(a: &CutBlock, b: &CutBlock) -> bool {
+    let plunge_to_z_mm = match b.descent.first() {
+        None => b.z_mm,
+        Some(mv)
+            if mv.kind == MoveKind::Linear && mv.to.xy().distance_to(b.descent_from) <= EPS_MM =>
+        {
+            mv.to.z
+        }
+        Some(_) => return false,
+    };
+    let start = a
+        .descent
+        .last()
+        .map_or(Point3::new(a.entry.x, a.entry.y, a.z_mm), |m| m.to);
+    let moves: Vec<Move> = std::iter::once(Move::rapid(start))
+        .chain(a.cuts.iter().copied())
+        .collect();
+    lowest_cut_through(&moves, b.descent_from, CLEARED_POINT_TOLERANCE_MM)
+        .is_some_and(|z| z <= plunge_to_z_mm + EPS_MM)
 }
 
 /// The lowest Z, mm, at which a cutting move of `moves` passed within
