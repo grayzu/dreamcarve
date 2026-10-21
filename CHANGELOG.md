@@ -337,6 +337,11 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   own status ([#216]).
 - A smooth tab's down slope no longer descends faster than the plunge rate
   ([#157]).
+- A ramp, helix or smooth tab whose feed is lowered for the plunge rate no
+  longer goes down up to 0.3% faster than the plunge rate once its numbers are
+  rounded: its feed is rounded down until the move as written is at or under
+  the plunge rate. A straight plunge whose rate the written places cannot hold
+  is rounded down too ([#325]).
 - Open paths now take part in the `toolpaths_overlap` and
   `cut_inside_freed_part` warnings ([#206]).
 
@@ -349,6 +354,8 @@ it is written:
   inside its region and off its islands; an entry, lead or corner notch never
   enters the part.
 - **S10:** a ramp or helix never descends faster than the plunge rate.
+  Every descending cut is checked from the written numbers, with nothing
+  allowed for rounding ([#325]).
 - **S11:** a canned-cycle line is expanded into the moves the controller makes,
   and that expansion must match the Drill toolpath move for move. Rapids along
   one vertical line in one direction count as one move there, since cycles
@@ -450,6 +457,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#312]: https://github.com/grayzu/dreamcarve/issues/312
 [#316]: https://github.com/grayzu/dreamcarve/issues/316
 [#320]: https://github.com/grayzu/dreamcarve/issues/320
+[#325]: https://github.com/grayzu/dreamcarve/issues/325
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
