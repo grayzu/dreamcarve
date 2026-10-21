@@ -779,7 +779,12 @@ built (design addendum, "Order and format versions").
     keeps v3 until `export --post`. At the checked commit grblHAL's `G50`
     leaves a scale whose X factor is 1, such as `G51 Z-1`, in force. The
     post-processors chapter tells the user to soft-reset after any `G51`
-    and check `$G`.)
+    and check `$G`.) (changed in #320: `export` says so too, once per
+    export, after the tool length note, for a grblHAL definition whose
+    header writes `G50`: "If you used G51 on this controller, soft-reset
+    it and check that $G shows G50 before you start: grblHAL's G50 does
+    not clear a scale that leaves X at 1, such as G51 Z-1." The note is
+    printed, not written into the program.)
 
 ### A4. Cycle-time estimate (#280)
 

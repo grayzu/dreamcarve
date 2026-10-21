@@ -1068,11 +1068,31 @@ pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
     }
 }
 
+/// The export note of a grblHAL program whose header writes `G50` (#320).
+/// grblHAL's `G50` does not clear a scale that leaves X at 1: `set_scaling`
+/// assigns its `changed` flag on each pass of the axis loop instead of
+/// OR-ing it, so only X's factor decides `scale_changed`, and the machine's
+/// state is updated only when it is set (`grblHAL/core` `4ec1ae44`,
+/// `gcode.c` 226, 2799, 4475-4482). A soft reset clears every factor
+/// (`gc_init`, 822), and `$G` ends with `G50` once none is left, or with
+/// `G51:` and the scaled axes (`report.c` 816-821). See
+/// `dc-project/src/definitions/README.md`, "Scaling on grblHAL".
+const GRBLHAL_SCALING_NOTE: &str = "If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.";
+
 /// What `export` tells the user about axis scaling before a program for
-/// `post` runs (#320). Not implemented yet.
+/// `post` runs (#320): [`GRBLHAL_SCALING_NOTE`] for a grblHAL definition
+/// whose header writes `G50` (version 4 and later), so a user who trusts
+/// that `G50` still soft-resets after a `G51`. `None` for every other
+/// definition: GRBL and LinuxCNC have no scaling, Mach3's and UCCNC's
+/// `G50` clears every factor, and an older grblHAL header cancels none.
 #[must_use]
-pub fn scaling_note(_post: &PostProcessor) -> Option<&'static str> {
-    None
+pub fn scaling_note(post: &PostProcessor) -> Option<&'static str> {
+    let writes_g50 = post
+        .program
+        .header
+        .iter()
+        .any(|line| code_words(line).iter().any(|w| w == "G50"));
+    (post.id == "grblhal" && writes_g50).then_some(GRBLHAL_SCALING_NOTE)
 }
 
 /// The longest text one placeholder puts into a line, in characters. With
