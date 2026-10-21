@@ -747,6 +747,7 @@ const ANGLE: &str = "an angle greater than 0 and less than 180 degrees";
 const SWEEP: &str = "an angle greater than 0 and at most 180 degrees";
 const ENTRY_ANGLE: &str = "an angle greater than 0 and at most 45 degrees";
 const RASTER_ANGLE: &str = "an angle of 0 or more and less than 180 degrees";
+const BELOW_Z_TOP: &str = "a value at most the instance's z_top_mm";
 // The limits below spell out `MAX_COORDINATE_MM`; a test checks they agree.
 const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
 const COORDINATE: &str = "a value from -6000 to 6000 mm";
@@ -1014,6 +1015,12 @@ impl Validator {
                 }
                 let mut ok = true;
                 for (j, vertex) in profile.vertices().iter().enumerate() {
+                    // Every load and save checks every vertex: name the
+                    // fields only for one that fails (#71).
+                    let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORDINATE_MM;
+                    if in_range(vertex.x) && in_range(vertex.y) && vertex.bulge.is_finite() {
+                        continue;
+                    }
                     let at = format!("definitions[{key}].profiles[{i}].vertices[{j}]");
                     ok &= self.coordinate(&format!("{at}.x"), vertex.x);
                     ok &= self.coordinate(&format!("{at}.y"), vertex.y);
@@ -1078,7 +1085,16 @@ impl Validator {
                 self.coordinate(&format!("{at}.z_top_mm"), z_top_mm);
             }
             if let Some(z_bottom_mm) = inst.z_bottom_mm {
-                self.coordinate(&format!("{at}.z_bottom_mm"), z_bottom_mm);
+                let field = format!("{at}.z_bottom_mm");
+                // Nothing reads them yet, but a top below the bottom is
+                // never meant (#71).
+                if self.coordinate(&field, z_bottom_mm)
+                    && inst
+                        .z_top_mm
+                        .is_some_and(|top| top.is_finite() && top < z_bottom_mm)
+                {
+                    self.out_of_range(field, z_bottom_mm, BELOW_Z_TOP);
+                }
             }
         }
 
@@ -2166,6 +2182,31 @@ mod tests {
         p.instances[0].z_top_mm = None;
         p.instances[0].z_bottom_mm = None;
         assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #71: an instance's bottom may not lie above its top; equal is a
+    /// flat feature and allowed. Nothing reads them yet, so the order is
+    /// all there is to check.
+    #[test]
+    fn instance_z_bottom_above_z_top_is_error() {
+        let mut p = sample_project();
+        p.instances[0].z_top_mm = Some(2.0);
+        p.instances[0].z_bottom_mm = Some(3.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::OutOfRange {
+                field: "instances[i1].z_bottom_mm".into(),
+                value: 3.0,
+                expected: BELOW_Z_TOP,
+            }]
+        );
+        assert!(problems[0].is_error());
+        p.instances[0].z_bottom_mm = Some(2.0);
+        assert_eq!(validate(&p), vec![], "equal is allowed");
+        p.instances[0].z_top_mm = None;
+        p.instances[0].z_bottom_mm = Some(3.0);
+        assert_eq!(validate(&p), vec![], "one unset is not compared");
     }
 
     /// #99: a set instance depth is still checked against the coordinate

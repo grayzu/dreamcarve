@@ -12,6 +12,8 @@
 //! [`History`]; undo and redo move between those snapshots. History lives in
 //! memory only: it is not serialized and is not part of a `.dcv` file.
 
+use std::collections::VecDeque;
+
 use crate::Project;
 
 /// The most undo steps a [`History`] keeps. Pushing past this drops the
@@ -26,8 +28,9 @@ pub const MAX_UNDO_STEPS: usize = 100;
 /// not persisted: it has no serde support and starts empty on every load.
 #[derive(Debug, Clone, PartialEq)]
 pub struct History {
-    /// Earlier snapshots, oldest first.
-    past: Vec<Project>,
+    /// Earlier snapshots, oldest first. A deque, so dropping the oldest
+    /// at the limit moves nothing.
+    past: VecDeque<Project>,
     /// The snapshot the user is looking at.
     current: Project,
     /// Undone snapshots, most recently undone last.
@@ -38,7 +41,7 @@ impl History {
     /// Starts a history whose only snapshot is `initial`.
     pub fn new(initial: Project) -> Self {
         Self {
-            past: Vec::new(),
+            past: VecDeque::new(),
             current: initial,
             future: Vec::new(),
         }
@@ -54,16 +57,17 @@ impl History {
     /// snapshot is dropped once more than [`MAX_UNDO_STEPS`] are kept.
     pub fn push(&mut self, next: Project) {
         let previous = std::mem::replace(&mut self.current, next);
-        self.past.push(previous);
-        let excess = self.past.len().saturating_sub(MAX_UNDO_STEPS);
-        self.past.drain(..excess);
+        self.past.push_back(previous);
+        if self.past.len() > MAX_UNDO_STEPS {
+            self.past.pop_front();
+        }
         self.future.clear();
     }
 
     /// Steps back one snapshot and returns the new current snapshot, or
     /// `None` (leaving the history unchanged) when there is nothing to undo.
     pub fn undo(&mut self) -> Option<&Project> {
-        let previous = self.past.pop()?;
+        let previous = self.past.pop_back()?;
         let undone = std::mem::replace(&mut self.current, previous);
         self.future.push(undone);
         Some(&self.current)
@@ -75,7 +79,7 @@ impl History {
     pub fn redo(&mut self) -> Option<&Project> {
         let next = self.future.pop()?;
         let redone = std::mem::replace(&mut self.current, next);
-        self.past.push(redone);
+        self.past.push_back(redone);
         Some(&self.current)
     }
 
