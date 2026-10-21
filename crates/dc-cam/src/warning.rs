@@ -11,8 +11,10 @@ use std::fmt;
 /// What a [`Warning`] is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WarningCode {
-    /// A target shape is an open path, which Profile cannot cut; it was
-    /// skipped. Params: `instance`, `instance_name`, `profile`.
+    /// A target shape is an open path, which a Pocket and an Inside or
+    /// Outside Profile cannot cut, or an open path with no length on an On
+    /// line Profile (#175); it was skipped. Params: `instance`,
+    /// `instance_name`, `profile`, and `reason: no_length` for the latter.
     OpenPathSkipped,
     /// The tool does not fit: the tool-centre offset of a shape vanished,
     /// so that shape was not cut. Params: `instance`, `instance_name`,
@@ -316,9 +318,14 @@ impl Warning {
 impl fmt::Display for Warning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.code {
+            WarningCode::OpenPathSkipped if self.param("reason") == Some("no_length") => write!(
+                f,
+                "{} is an open path with no length, so there is nothing to cut; it is skipped",
+                self.shape()
+            ),
             WarningCode::OpenPathSkipped => write!(
                 f,
-                "{} is an open path; Profile and Pocket cut only closed shapes, so it is not cut",
+                "{} is an open path, which has no inside or outside, so it is not cut; an On line Profile or an Engrave cuts along it",
                 self.shape()
             ),
             WarningCode::ToolTooLarge => write!(

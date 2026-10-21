@@ -42,7 +42,16 @@ the program.
   the path starts. A distance longer than the path wraps around.
 
 The path starts where DreamCarve chooses, which is not shown before you
-export, so `count` is the easier choice in phase 1.
+export, so `count` is the easier choice in phase 1. The distances are
+measured from that start even when the cut begins elsewhere: a
+[lead](profile.md#leads) arrives away from corners, and a ramp or helix
+that has no room beside a tab moves the start of the cut to a stretch
+between tabs ([Profile: entry](profile.md#entry)). Neither moves a tab.
+
+On an open path cut `on_line` ([Profile: open paths](profile.md#open-paths))
+the distances are measured from the path's first vertex as drawn,
+whichever end the cut starts at. A tab near an end stops at it instead
+of running on round the path.
 
 Every outline the operation cuts gets the tabs, holes included. To leave
 a hole without tabs, see [Parts with holes](#parts-with-holes).

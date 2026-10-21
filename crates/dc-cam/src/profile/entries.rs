@@ -22,6 +22,7 @@ use crate::entry::{
 };
 use crate::error::{CamError, ShapeRef};
 use crate::footprint::footprint_at;
+use crate::lead::reseam;
 use crate::pocket::rings::inset_region;
 use crate::tabs::{PathTabs, Tabs};
 use crate::toolpath::{Move, Toolpath};
@@ -40,6 +41,7 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub layouts: &'a [Option<(PathTabs, bool)>],
     pub tabs: Option<&'a Tabs>,
     pub pass_z: &'a [f64],
+    pub safe_z_mm: f64,
     pub entry_tool: &'a dyn Fn(Wall) -> EntryTool,
     pub tolerance_mm: f64,
 }
@@ -144,6 +146,111 @@ pub(super) fn path_entries(
             })
             .collect(),
     }
+}
+
+/// #176: where each closed path of `setup` should start so its ramp or
+/// helix fits clear of the tabs, as a distance along it from its start;
+/// `None` keeps the start. Only a path cut without a lead (`led` false)
+/// whose passes below the tab top would plunge at its start is moved:
+/// its start under a tab span, or so near one that the entry has no room
+/// in the waste domain less the tab keep-outs (Inside, Outside) or before
+/// the first tab (On line). The candidates are the middles of the
+/// stretches between tab spans, longest first, then nearest the start;
+/// the first where no pass below the tab top plunges wins. When none
+/// does, the start is kept and those passes plunge as before. One start
+/// serves every pass, and the tabs keep their distances from the
+/// original start ([`PathTabs::reseamed`]).
+pub(super) fn tab_seams(
+    setup: &EntrySetup<'_, '_>,
+    domains: &[PathDomain],
+    led: &[bool],
+) -> Vec<Option<f64>> {
+    let none = || setup.paths.iter().map(|_| None).collect();
+    let Some(tabs) = setup.tabs else {
+        return none();
+    };
+    let below: Vec<(f64, f64)> = setup
+        .pass_z
+        .iter()
+        .enumerate()
+        .filter(|(_, z)| **z < tabs.top_z_mm() - EPS_MM)
+        .map(|(k, z)| {
+            let from_z_mm = k
+                .checked_sub(1)
+                .and_then(|j| setup.pass_z.get(j).copied())
+                .unwrap_or(setup.safe_z_mm);
+            (from_z_mm, *z)
+        })
+        .collect();
+    if below.is_empty() || matches!(setup.op.entry, Entry::Plunge) {
+        return none();
+    }
+    let along = match (setup.op.side, &setup.op.entry) {
+        (Side::OnLine, Entry::Ramp { angle_deg }) => Some(*angle_deg),
+        (Side::OnLine, _) => return none(),
+        _ => None,
+    };
+    setup
+        .paths
+        .iter()
+        .enumerate()
+        .map(|(i, (path, _))| {
+            let layout = match setup.layouts.get(i) {
+                Some(Some((layout, _))) if path.is_closed() => layout,
+                _ => return None,
+            };
+            if led.get(i).copied().unwrap_or(false) {
+                return None;
+            }
+            let tool = tool_for(setup, i);
+            let fits = |seam_mm: f64| {
+                let moved = layout.reseamed(seam_mm);
+                if moved.clear_from_start_mm() <= EPS_MM {
+                    return false;
+                }
+                let seamed = reseam(path, seam_mm);
+                match along {
+                    Some(angle_deg) => {
+                        let clear_mm =
+                            moved.clear_from_start_mm() - boundary_safety_mm(tool.diameter_mm);
+                        below.iter().all(|&(from_z_mm, z_mm)| {
+                            let d = entry::along_path(
+                                &seamed,
+                                angle_deg,
+                                clear_mm,
+                                from_z_mm,
+                                z_mm,
+                                &tool,
+                                setup.tolerance_mm,
+                            );
+                            d.used != EntryKind::Plunge
+                        })
+                    }
+                    None => {
+                        let (Some(space), Some(at)) = (
+                            domains.get(i).map(|d| d.for_pass(true)),
+                            seamed.vertices().first().map(|v| v.point()),
+                        ) else {
+                            return false;
+                        };
+                        let plan = plan_at_wall(&space.domain, &setup.op.entry, at, &tool);
+                        below.iter().all(|&(from_z_mm, z_mm)| {
+                            plan.descend(from_z_mm, z_mm).used != EntryKind::Plunge
+                        })
+                    }
+                }
+            };
+            if fits(0.0) {
+                return None;
+            }
+            let length_mm = layout.length_mm();
+            layout
+                .gaps_mm()
+                .into_iter()
+                .map(|(start_mm, gap_mm)| (start_mm + gap_mm / 2.0).rem_euclid(length_mm))
+                .find(|&seam_mm| fits(seam_mm))
+        })
+        .collect()
 }
 
 /// The entry tool of path `i`.

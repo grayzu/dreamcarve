@@ -217,7 +217,8 @@ A definition's `profiles` are its outlines. Each vertex has `x` and `y` in
 millimetres and a `bulge`: 0 for a straight line to the next vertex, or the
 tangent of a quarter of the arc's sweep angle, positive for
 counter-clockwise. `closed` says whether the outline returns to its start;
-Profile cuts only closed outlines.
+Pocket and an Inside or Outside Profile cut only closed outlines, an On
+line Profile and an Engrave cut open ones too.
 
 | Instance field | Meaning |
 | --- | --- |

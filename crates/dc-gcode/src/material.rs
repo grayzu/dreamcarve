@@ -55,7 +55,9 @@
 //!     them, which dc-cam refuses (`CamError::BandNarrowerThanTool`,
 //!     #199). Lines of different regions are not looked at: a gouge there
 //!     is the overlap check's warning, as for a lap. The On line ramp runs
-//!     along the line; there is no lead or notch.
+//!     along the line; there is no lead or notch. A cut on one of the
+//!     targets' open paths (#175) is held to that path alone, as an
+//!     Engrave's: an open path bounds no region, so it has no band.
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
 //!     it on its waste side, passes even where an outline of another
 //!     region comes nearer than the radius. That cut is the outline's
@@ -138,11 +140,13 @@ pub(crate) enum Material {
     },
     /// An On line Profile's regions: the tool centre stays on one of
     /// their lines, at least the tool's diameter from the region's other
-    /// lines (#199).
+    /// lines (#199), or on one of its targets' open paths (#175).
     OnLineProfile {
         /// The regions, outer and holes, from the targets' closed
         /// profiles.
         areas: Vec<Area>,
+        /// Every segment of the targets' open paths.
+        open: Vec<Edge>,
     },
     /// An Engrave's target paths, as segments.
     OnLine {
@@ -400,11 +404,19 @@ impl Material {
             Operation::Profile(profile) => {
                 let relief = profile.corner_relief != CornerRelief::None;
                 match profile.side {
-                    Side::OnLine => match regions_of(project, &profile.targets) {
-                        Some(regions) => Self::OnLineProfile {
+                    Side::OnLine => match (
+                        regions_of(project, &profile.targets),
+                        placed(project, &profile.targets),
+                    ) {
+                        (Some(regions), Some(paths)) => Self::OnLineProfile {
                             areas: areas_of(regions, true),
+                            open: paths
+                                .iter()
+                                .filter(|p| !p.is_closed())
+                                .flat_map(edges_of)
+                                .collect(),
                         },
-                        None => Self::Unresolved,
+                        _ => Self::Unresolved,
                     },
                     Side::Inside => match regions_of(project, &profile.targets) {
                         Some(regions) => Self::Inside {
@@ -540,8 +552,9 @@ pub(crate) fn check(
                     .iter()
                     .any(|(centre, r)| p.distance_to(*centre) <= r + slack_mm)
             }),
-            Material::OnLineProfile { areas } => {
+            Material::OnLineProfile { areas, open } => {
                 on_own_line(areas, path, 2.0 * radius_mm - slack_mm, slack_mm)
+                    || points_of(path).iter().all(|&p| on_line(open, p, slack_mm))
             }
             Material::OnLine { edges } => {
                 points_of(path).iter().all(|&p| on_line(edges, p, slack_mm))

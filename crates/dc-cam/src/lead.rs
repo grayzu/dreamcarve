@@ -552,8 +552,8 @@ fn part_bulge(bulge: f64, fraction: f64) -> f64 {
 /// `path`, closed, re-seamed to start `distance_mm` along it (modulo its
 /// length): the same segments from a different start, the segment holding
 /// the new start split in two there (arcs as two arcs). At a vertex,
-/// nothing is split.
-#[cfg(test)]
+/// nothing is split. Profile also re-seams a path off its tabs with it
+/// (#176).
 pub(crate) fn reseam(path: &Polyline, distance_mm: f64) -> Polyline {
     let (edges, perimeter_mm) = edges_of(path);
     if perimeter_mm.is_nan() || perimeter_mm <= EPS_MM {

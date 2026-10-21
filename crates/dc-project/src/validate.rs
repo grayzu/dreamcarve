@@ -171,9 +171,10 @@ pub enum Problem {
         /// The allowed range, in words.
         expected: &'static str,
     },
-    /// A definition's profile is open. Profile cuts only closed shapes, so
-    /// it is never cut (functional spec, capability 8). Not reported for a
-    /// definition an enabled Engrave targets, since Engrave cuts it.
+    /// A definition's profile is open. Pocket and Inside and Outside
+    /// Profile cut only closed shapes, so it is never cut (functional
+    /// spec, capability 8). Not reported for a definition an enabled
+    /// Engrave or On line Profile targets, since those cut it (#175).
     OpenProfile {
         /// The definition.
         definition: DefinitionId,
@@ -614,7 +615,7 @@ impl fmt::Display for Problem {
                 profile,
             } => write!(
                 f,
-                "`{name}` (definition `{definition}`, profile {profile}) is an open path; Profile cuts only closed shapes, so it is not cut"
+                "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line Profile or an Engrave cuts an open path"
             ),
             Self::UnsafeFileExtension { extension } => write!(
                 f,
@@ -979,13 +980,17 @@ impl Validator {
         // Definitions with a coordinate out of range; their instances are
         // not checked again, so each mistake is reported once.
         let mut out_of_range = BTreeSet::new();
-        // Engrave cuts open paths, so a definition an enabled Engrave
-        // targets is not reported as having paths that are never cut.
+        // Engrave and On line Profile cut open paths (#175), so a
+        // definition an enabled one targets is not reported as having
+        // paths that are never cut.
         let engraved: BTreeSet<&DefinitionId> = p
             .operations
             .iter()
             .filter_map(|op| match op {
                 Operation::Engrave(op) if op.enabled => Some(&op.targets),
+                Operation::Profile(op) if op.enabled && op.side == Side::OnLine => {
+                    Some(&op.targets)
+                }
                 _ => None,
             })
             .flatten()
@@ -2066,6 +2071,37 @@ mod tests {
             op.enabled = false;
         }
         assert!(open(&p), "a disabled Engrave cuts nothing");
+    }
+
+    /// #175: an On line Profile cuts open paths too, so an open profile of
+    /// a definition an enabled On line Profile targets is not reported.
+    /// Inside and Outside skip open paths, so the warning stays for them,
+    /// and its message names what does cut an open path.
+    #[test]
+    fn open_profile_cut_on_line_is_not_reported() {
+        let mut p = sample_project();
+        p.definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1")
+            .profiles
+            .push(Polyline::new(
+                vec![Vertex::new(0.0, 40.0, 0.0), Vertex::new(50.0, 40.0, 0.0)],
+                false,
+            ));
+        let open = |p: &Project| {
+            validate(p)
+                .into_iter()
+                .find(|q| matches!(q, Problem::OpenProfile { .. }))
+        };
+        let message = open(&p).expect("Outside skips it").to_string();
+        assert!(
+            message.contains("On line") && message.contains("Engrave"),
+            "{message}"
+        );
+        profile_mut(&mut p).side = Side::OnLine;
+        assert!(open(&p).is_none(), "{:?}", validate(&p));
+        profile_mut(&mut p).enabled = false;
+        assert!(open(&p).is_some(), "a disabled Profile cuts nothing");
     }
 
     /// The fields of every error-class problem, in order.
