@@ -27,7 +27,7 @@ pub mod transform;
 pub use dc_project::PostProcessor;
 pub use emit::{
     CannedExpansion, EmitOp, ExportWarning, FirstTool, Pause, Program, ProgramSplit, emit,
-    emit_programs,
+    emit_programs, machine_lift_limits_note,
 };
 pub use error::ExportError;
 pub use estimate::{Estimate, estimate};

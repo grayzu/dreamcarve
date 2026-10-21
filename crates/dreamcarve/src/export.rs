@@ -38,7 +38,10 @@ use dc_cam::{
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs};
+use dc_gcode::{
+    AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs,
+    machine_lift_limits_note,
+};
 use dc_project::{
     Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap, Tool,
     ToolChangeMode, Units, validate,
@@ -714,7 +717,10 @@ fn report(
     // #283: `G53` moves to a machine position, which is right only on a
     // homed machine; the program cannot check that.
     if let Some(z) = &program.machine_lift {
-        outln!("Before you start: home the machine; this program moves to machine Z {z} (G53).")?;
+        outln!(
+            "Before you start: home the machine; this program moves to machine Z {z} (G53).{}",
+            limits_note(project)
+        )?;
     }
     report_tool_length_offset(project)?;
     report_pauses(program, "")?;
@@ -734,6 +740,14 @@ fn report(
         )?;
     }
     Ok(())
+}
+
+/// #308: the post-processor's condition for a `G53` lift outside the
+/// travel to stop before it moves, with a leading space, or nothing.
+fn limits_note(project: &Project) -> String {
+    machine_lift_limits_note(&project.post_processor.id)
+        .map(|note| format!(" {note}"))
+        .unwrap_or_default()
 }
 
 /// Prints the export summary of the programs of tool runs (#95): the files
@@ -767,7 +781,10 @@ fn report_runs(
     }
     // #283: every program of the export ends with the same lift.
     if let Some(z) = programs.iter().find_map(|p| p.machine_lift.as_ref()) {
-        outln!("Before you start: home the machine; each program moves to machine Z {z} (G53).")?;
+        outln!(
+            "Before you start: home the machine; each program moves to machine Z {z} (G53).{}",
+            limits_note(project)
+        )?;
     }
     report_tool_length_offset(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;

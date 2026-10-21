@@ -2953,7 +2953,9 @@ work Z unknown. At the end, before that lift: rapid at the clearance
 height (or the last operation's safe Z) to `park` if set. XY moves before
 the lift, at a work Z the safety pass can check, rather than after it.
 `export` prints `Before you start: home the machine; this program moves to
-machine Z <v> (G53).` when the program has a lift. The README's "Tool
+machine Z <v> (G53). Z must home upward, or soft limits must be on
+($20=1).` when the program has a lift (changed in #308: the soft-limits
+sentence added). The README's "Tool
 changes" paragraph "The tool-change height is not set" is replaced.
 
 **Safety** (`dc-gcode::safety`, `parse`): S16 as in the functional spec;
@@ -3031,7 +3033,27 @@ above:
   S6 holds them to the toolpath, whose links the sequencer writes and
   `sequence::links_between_instances_rise_to_clearance` checks. (4) A
   program with a machine Z has the header comment `( Lifts to machine Z
-  with G53: home the machine before running )`; others are unchanged.
+  with G53: home the machine before running. Needs Z to home upward, or
+  soft limits on with $20=1 )`; others are unchanged (changed in #308:
+  the soft-limits sentence added).
+- Soft limits (#308). On GRBL or grblHAL with Z homing downward
+  (`HOMING_FORCE_SET_ORIGIN`, grblHAL "force set origin"), every negative
+  machine Z is below the travel: with soft limits on the controller
+  alarms before the lift moves, with them off the lift drives Z down. The
+  export note and the header comment name both conditions. DreamCarve
+  cannot read the homing direction or `$20`, so it is a note, not a
+  refusal. Header bytes change only for a program with a machine Z, so
+  no definition version is added. The wording is per controller, since
+  `$20` is GRBL's: on LinuxCNC (#306), whose soft limits always apply once
+  homed and which runs no program unhomed unless `[TRAJ] NO_FORCE_HOMING`
+  is set, the header says `Soft limits apply only once homed: leave
+  NO_FORCE_HOMING unset` and the note `LinuxCNC applies soft limits only
+  once homed: leave [TRAJ] NO_FORCE_HOMING unset.`
+  (`dc_gcode::machine_lift_limits_note`). Tests:
+  `emit::machine_z_header_comment`,
+  `emit::machine_z_header_comment_on_linuxcnc`,
+  `cli::export_machine_z_note_names_soft_limits`,
+  `cli::export_machine_z_note_on_linuxcnc`.
 - The estimate (A4). A `G53` lift has no work-coordinate motion, so
   `dc-gcode::estimate` leaves its distance, and that of the rise after it
   from an unknown Z, out of the rapid distance.
