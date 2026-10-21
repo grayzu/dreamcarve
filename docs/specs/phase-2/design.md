@@ -64,7 +64,7 @@ slice 2, #117: #106 took version 7 first.)
 | `dc-gcode::arcfit` | `src/engine/gcode/arcFitting.ts` (`fitArcsInMachineMoves`, `splitArc`, `resolveEmittedArc`, `runSurvivesFormatting`, `applyEmittedArcFallback`), `arcReconstruction.ts` (`findArcRunsInPoints`, Kasa fit, endpoint projection, gates), `arcFitting.test.ts` | Runs in project space before the machine transform (no mirror, so handedness is preserved). Tolerance from the project. S12 gates added to the safety pass. |
 | `dc-gcode::emit` canned cycles | `src/engine/gcode/postprocessor.ts` lines 301–430 | One cycle word per Drill operation; mixed cycles expand. `G4` dwell on expansion. Safety pass expands cycles (S11). |
 | `dc-project/src/definitions/{linuxcnc,mach3,uccnc,generic}/v1.json` | `src/engine/gcode/definitions/*.json` | Data start point only. Every line re-verified against the controller's documentation or source; `G43 H` and `M6` lines removed; `G40 G49 G80` kept where the controller documents them; see "Post-processor definitions". |
-| `dc-import::dxf` | `src/import/dxf.ts` (entity set, `$INSUNITS` table, bulge-to-arc, INSERT transform and skip rules, stitching and closing, dedupe) | Parsing delegated to the `dxf` crate. No Y flip (DXF is Y-up). `ELLIPSE` added. Join tolerance 0.01 mm. Entity skips are warned with counts. |
+| `dc-import::dxf` | `src/import/dxf.ts` (entity set, `$INSUNITS` table, bulge-to-arc, INSERT transform and skip rules, stitching and closing, dedupe) | Parsed by DreamCarve's own group-code reader (ASCII and binary; #124 replaced the `dxf` crate). No Y flip (DXF is Y-up). `ELLIPSE` added. Join tolerance 0.01 mm. Entity skips are warned with counts. |
 | `dc-library::fusion` | none (PureCutCNC has no Fusion tool import; `src/toolLibrary.ts` is a bundled list) | New. Written against Autodesk's statements and vendor-published `.tools` files; see "Fusion import". |
 | `dc-library::library` | `src/toolLibrary.ts` (`parseToolLibraryFile` validation rules) | Validation rules ported (positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)). Persistence is DreamCarve's. |
 | `tests/golden/{pocket-*, drill-*, engrave-*, profile-{ramp,lead,dogbone}, order-*}` | captured via `tools/parity/` | See Test plan. Raster angle and helix sense are mirrored in the `.camj`; each case's notes say how. |
@@ -1237,7 +1237,14 @@ height, `G53` parking and `G43` stay out (#73).
 
 ### DXF import (dc-import::dxf)
 
-Parsing by the `dxf` crate (MIT). `import_dxf(bytes, options) ->
+Parsing by `dc-import`'s own group-code reader, ported from upstream's
+`parsePairs`/`extractEntities`/`extractBlocks` (#124 replaced the `dxf`
+crate, which pulled in about 50 crates): ASCII and binary DXF (R12
+one-byte and R13+ two-byte codes) to (code, value) pairs typed by the DXF
+Reference's "Group Code Value Types", then the `$INSUNITS` header
+variable, the blocks, and every entity of the ENTITIES section with a
+POLYLINE's VERTEX rows attached. A malformed pair is
+`ImportError::Dxf(DxfReadError)`. `import_dxf(bytes, options) ->
 Result<(Vec<FeatureDefinition>, Vec<ImportWarning>), ImportError>`,
 `options = { units: Option<Units>, join_tolerance_mm: f64, layers:
 Option<Vec<String>> }`.
@@ -1259,10 +1266,22 @@ Option<Vec<String>> }`.
    flattened; `INSERT` → block entities under `T(insert) · R(rotation) ·
    S(xscale, yscale) · T(−base)`, recursively (depth ≤ 12, else a
    warning), arcs under a non-uniform scale flattened (as SVG), under a
-   mirror their bulges negated; `$MODEL_SPACE`, `$PAPER_SPACE`, names
+   mirror their bulges negated; a MINSERT (INSERT with 70/71 column and
+   row counts, 44/45 spacings) once per cell, the cell offset rotated with
+   the insert and not scaled (all expansion together places at most
+   `max_vertices / 10` block entities, skipped ones included, else
+   `ImportError::TooMuchWork`, so nested arrays of blocks that yield no
+   vertices cannot run unbounded); `$MODEL_SPACE`, `$PAPER_SPACE`, names
    starting `_`, and layers `ASHADE`/`HATCH` skipped silently as upstream.
-   Everything else counts in `DxfEntitiesSkipped { counts: BTreeMap<String,
-   usize> }`.
+   **Extrusion (210/220/230):** CIRCLE, ARC, LWPOLYLINE, 2D POLYLINE and
+   INSERT coordinates are in the entity's OCS (arbitrary axis algorithm):
+   normal +Z is the world frame, −Z a mirror in X (bulges negated);
+   ELLIPSE keeps its world centre and axis and runs clockwise under −Z;
+   any other normal counts as `<TYPE> (not in the XY plane)`. A spline-fit
+   POLYLINE (flag 4) drops its frame vertices (VERTEX flag 16); a
+   curve-fit one (flag 2) keeps every vertex. Everything else, ATTRIB
+   included, counts in `DxfEntitiesSkipped { counts: BTreeMap<String,
+   usize> }`, in ASCII and binary files alike.
 3. **No Y flip.** Coordinates are already Y-up; `y' = y × scale`.
 4. **Layers:** the entity's layer, inheriting the INSERT's for layer `0`
    inside a block; `options.layers` filters by name (layer `0` shapes
@@ -1448,7 +1467,7 @@ crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection
 crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder), migrate.rs (v7_to_v8), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
 crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, overlap.rs, stock.rs, warning.rs}
 crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, canned.rs (controller model of G81–G83/G73), safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4, `%`), post.rs (definition checks)}
-crates/dc-import/src/{svg.rs, dxf.rs, dxf/{entities.rs, spline.rs, stitch.rs}}
+crates/dc-import/src/{svg.rs, dxf.rs, dxf/{groups.rs, document.rs, entities.rs, spline.rs, stitch.rs}}
 crates/dc-library/src/{lib.rs, library.rs, fusion.rs, error.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs, tools.rs, config.rs}
 tests/golden/{pocket-offset-rect, pocket-offset-island, pocket-raster-0deg, pocket-raster-45deg, pocket-rough-then-rest, drill-simple, drill-peck, engrave-open-closed, profile-ramp, profile-helix-inside, profile-lead, profile-dogbone, order-full-depth-first, order-pass-first, post-linuxcnc-coaster, post-mach3-coaster, post-uccnc-coaster, post-generic-coaster}/
@@ -1457,7 +1476,7 @@ crates/dc-project/tests/fixtures/dcv/{v7, v8}/sample.dcv
 ```
 
 New dependencies: `i_overlay` (MIT, booleans; already a settled decision),
-`dxf` (MIT), `zip` (MIT, `default-features = false`, `features =
+`zip` (MIT, `default-features = false`, `features =
 ["deflate-flate2-zlib-rs"]`: deflate decoding only, the Fusion `.tools`
 container), `toml` (MIT/Apache-2.0, the CLI only). `NOTICE` entries as
 their licenses require (`zip` and `nix` are listed). `directories` is not
@@ -1581,6 +1600,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::layer_names_become_shape_names`, `dxf::layer_filter_keeps_only_named_layers`, `dxf::block_entities_on_layer_0_inherit_insert_layer`.
 - `dxf::four_lines_stitch_into_closed_shape`, `dxf::gap_beyond_tolerance_stays_open`, `dxf::stitching_does_not_cross_layers`, `dxf::identical_shapes_are_deduped`.
 - `dxf::plaque_dxf_matches_plaque_svg_within_0_01` (acceptance 34), `dxf::coordinate_limit_applies`.
+- `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
+- `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
 
 **dc-library**
 - `library::round_trip_is_byte_identical`, `library::add_detects_already_present`, `library::find_by_id_then_unique_name`, `library::ambiguous_name_is_error`, `library::validation_rules_from_upstream` (port of `parseToolLibraryFile` rules: positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)).

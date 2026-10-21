@@ -13,7 +13,8 @@ pub mod dxf;
 pub mod svg;
 
 pub use dxf::{
-    DxfImport, DxfImportOptions, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM, MAX_INSERT_DEPTH, import_dxf,
+    DxfImport, DxfImportOptions, DxfReadError, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM,
+    MAX_INSERT_DEPTH, import_dxf,
 };
 pub use svg::{
     MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM, RootUnits, SvgImport, SvgImportOptions,
@@ -27,10 +28,10 @@ pub enum ImportError {
     /// well-formed XML, compressed SVGZ, or no valid size).
     #[error("SVG could not be read: {0}")]
     Svg(#[from] usvg::Error),
-    /// The bytes are not a DXF document the `dxf` crate can read (a group
-    /// code or value that does not parse, or a truncated file).
+    /// The bytes are not a readable DXF document (a group code or value
+    /// that does not parse, or a truncated file).
     #[error("DXF could not be read: {0}")]
-    Dxf(#[from] ::dxf::DxfError),
+    Dxf(#[from] DxfReadError),
     /// The DXF declares no units DreamCarve can scale from (`$INSUNITS`
     /// absent, 0, or a unit outside inch, foot, mile, mm, cm, m) and the
     /// caller gave no override.
@@ -69,6 +70,16 @@ pub enum ImportError {
     )]
     TooManyVertices {
         /// The vertex cap that was exceeded.
+        limit: usize,
+    },
+    /// Expanding the drawing's block inserts and arrays (INSERT, MINSERT)
+    /// would visit more than `limit` entities, almost always nested arrays
+    /// of blocks that hold little or nothing.
+    #[error(
+        "the drawing's block inserts and arrays expand to more than {limit} entities; explode or simplify them"
+    )]
+    TooMuchWork {
+        /// The entity-visit cap that was exceeded.
         limit: usize,
     },
     /// The page size is NaN, infinite, not positive, or larger than
@@ -147,8 +158,9 @@ pub enum ImportWarning {
     /// DXF entities DreamCarve does not read were skipped: how many of each
     /// type, keyed by the DXF type name (`TEXT`, `DIMENSION`, `HATCH`, ...).
     /// `POLYLINE (mesh)` counts polygon and polyface meshes; `<TYPE>
-    /// (degenerate)` counts entities with no length, too few vertices, or
-    /// an INSERT scale of 0.
+    /// (degenerate)` counts entities with no length, too few vertices, an
+    /// INSERT scale of 0, or a zero extrusion direction; `<TYPE> (not in
+    /// the XY plane)` counts entities whose extrusion direction is not ±Z.
     DxfEntitiesSkipped {
         /// Skipped entities per type name, in name order.
         counts: std::collections::BTreeMap<String, usize>,
