@@ -33,6 +33,12 @@
 //!   checked against the fitted circle like a vertex, so the fitted arc
 //!   stays within the tolerance of the original path. Upstream has no such
 //!   arcs: its offsets are polylines.
+//! - The arc must stay within the tolerance of every move it replaces
+//!   along its whole length, not only at the vertices
+//!   ([`arc_chord_deviation_mm`], #226, #229). Upstream's offsets are
+//!   densely sampled polylines, so its vertex check is enough there;
+//!   DreamCarve keeps long straight edges, and a square's four corners
+//!   lie on one circle.
 //! - A run with no known emitted start falls back to its moves instead of
 //!   being judged from its own start.
 //! - The Kasa fit is `dc_geometry::fit_circle_kasa`.
@@ -41,7 +47,9 @@ use std::cmp::Ordering;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use dc_cam::{Move, MoveKind};
-use dc_geometry::{EPS_MM, Point, Point3, Vec2, approx_eq, fit_circle_kasa};
+use dc_geometry::{
+    EPS_MM, Point, Point3, Segment, Vec2, approx_eq, fit_circle_kasa, point_segment_distance_mm,
+};
 use dc_project::ArcFormat;
 
 /// Most one fitted sub-arc sweeps, degrees. A full circle becomes four.
@@ -144,7 +152,8 @@ impl SubArc {
 /// Fits arcs to `moves`, a toolpath in project space, within
 /// `tolerance_mm`: every vertex of a replaced run, and the midpoint of
 /// every shallow corner arc in it, lies within `tolerance_mm` of the
-/// fitted circle. Runs are maximal sequences of consecutive straight cuts
+/// fitted circle, and the fitted arc lies within `tolerance_mm` of every
+/// move it replaces along its whole length. Runs are maximal sequences of consecutive straight cuts
 /// at one Z with one feed, started from a known position; rapids,
 /// plunges, Z-changing moves, and arcs deeper than the tolerance pass
 /// through unchanged and end runs. Fewer than [`MIN_RUN_POINTS`] points
@@ -320,6 +329,62 @@ pub fn shallow_arc_midpoint(
     ))
 }
 
+/// Interior points sampled along an arc by [`arc_chord_deviation_mm`], on
+/// top of its ends and the point farthest from the chord's line.
+const DEVIATION_SAMPLES: u32 = 8;
+
+/// The farthest, mm, any point of the arc of the circle about `centre`
+/// with radius `radius_mm`, from angle `from_rad` through `sweep_rad`
+/// (counter-clockwise when positive), lies from the straight move `a` to
+/// `b` it stands for (#226, #229). For a chord whose ends are on the
+/// circle this is its sagitta, `r(1 − cos(sweep/2))`; for ends off it, it
+/// also counts how far they are off. Checked at the arc's ends, at the
+/// point of the arc farthest from the chord's line on either side, and at
+/// [`DEVIATION_SAMPLES`] points between.
+#[must_use]
+pub fn arc_chord_deviation_mm(
+    centre: Point,
+    radius_mm: f64,
+    from_rad: f64,
+    sweep_rad: f64,
+    a: Point,
+    b: Point,
+) -> f64 {
+    let chord = Segment {
+        start: a,
+        end: b,
+        bulge: 0.0,
+    };
+    let at = |angle: f64| {
+        Point::new(
+            centre.x + radius_mm * angle.cos(),
+            centre.y + radius_mm * angle.sin(),
+        )
+    };
+    let sweep = sweep_rad.abs();
+    let on_arc = |angle: f64| {
+        let turn = if sweep_rad >= 0.0 {
+            angle - from_rad
+        } else {
+            from_rad - angle
+        };
+        turn.rem_euclid(TAU) <= sweep
+    };
+    // Towards the chord's middle: where the arc bows farthest from it.
+    let middle = Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+    let normal_rad = (middle.y - centre.y).atan2(middle.x - centre.x);
+    let samples = (0..=DEVIATION_SAMPLES + 1)
+        .map(|k| sweep_rad * f64::from(k) / f64::from(DEVIATION_SAMPLES + 1))
+        .map(|t| from_rad + t);
+    let farthest = [normal_rad, normal_rad + PI]
+        .into_iter()
+        .filter(|&angle| on_arc(angle));
+    samples
+        .chain(farthest)
+        .map(|angle| point_segment_distance_mm(chord, at(angle)))
+        .fold(0.0, f64::max)
+}
+
 /// One arc found in a point sequence: points `start_index..=end_index`.
 #[derive(Debug, Clone, Copy)]
 struct FoundArc {
@@ -405,7 +470,8 @@ fn constrain_to_endpoints(
 
 /// The gates of `validateArcFitPoints` for the export path: residual,
 /// step angle, step uniformity, total sweep, and chord ratio; and, not
-/// upstream's, two chord steps of one size at least (#213).
+/// upstream's, two chord steps of one size at least (#213) and every move
+/// within the tolerance of the arc along its whole length (#226, #229).
 fn gates_pass(
     points: &[Point],
     mids: &[Option<Point>],
@@ -444,6 +510,14 @@ fn gates_pass(
         }
         let step = diff.abs();
         if step > MAX_STEP_RAD {
+            return false;
+        }
+        // 1a. The arc stays within the tolerance of every move it
+        // replaces, not only of its ends (#226, #229): a square's four
+        // corners lie on one circle, which bows 1.45 mm off a 7 mm side.
+        // A shallow corner arc counts as its chord: both bow the same way,
+        // each by at most the tolerance.
+        if arc_chord_deviation_mm(centre, radius_mm, angle(a), diff, *a, *b) > tolerance_mm {
             return false;
         }
         if step > SWEEP_EPS {
@@ -907,7 +981,7 @@ mod tests {
 
     #[test]
     fn accepted_circular_run_gives_four_arcs() {
-        let moves = chords(10.0, 16, 0.0, TAU, 0.0);
+        let moves = chords(10.0, 72, 0.0, TAU, 0.0);
         let fitted = fit(&moves, TOL);
         let arcs = arcs_of(&fitted);
         assert_eq!(arcs.len(), 4, "{fitted:?}");
@@ -926,9 +1000,9 @@ mod tests {
     /// it replaces are the moves it follows.
     #[test]
     fn run_that_turns_back_is_not_one_arc() {
-        let mut moves = chords(10.0, 8, 0.0, FRAC_PI_2, 0.0);
-        moves.extend(chords(10.0, 8, FRAC_PI_2, 0.0, 0.0).into_iter().skip(1));
-        moves.extend(chords(10.0, 16, 0.0, PI, 0.0).into_iter().skip(1));
+        let mut moves = chords(10.0, 18, 0.0, FRAC_PI_2, 0.0);
+        moves.extend(chords(10.0, 18, FRAC_PI_2, 0.0, 0.0).into_iter().skip(1));
+        moves.extend(chords(10.0, 36, 0.0, PI, 0.0).into_iter().skip(1));
         let fitted = fit(&moves, TOL);
         assert!(runs_of(&fitted) > 0, "the one-way stretches still fit");
         for f in &fitted {
@@ -947,7 +1021,7 @@ mod tests {
 
     #[test]
     fn clockwise_is_g2() {
-        let moves = chords(10.0, 8, 0.0, -TAU, 0.0);
+        let moves = chords(10.0, 72, 0.0, -TAU, 0.0);
         let fitted = fit(&moves, TOL);
         let arcs = arcs_of(&fitted);
         assert!(!arcs.is_empty());
@@ -991,6 +1065,39 @@ mod tests {
         assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
     }
 
+    /// A chord between two points on the circle is bowed off by the arc's
+    /// sagitta, `r(1 − cos(sweep/2))`, either way round; ends off the
+    /// circle add how far they are off.
+    #[test]
+    fn arc_chord_deviation_is_the_sagitta() {
+        let o = Point::new(0.0, 0.0);
+        let (r, sweep) = (10.0, FRAC_PI_2);
+        let (a, b) = (Point::new(r, 0.0), Point::new(0.0, r));
+        let sagitta = r * (1.0 - (sweep / 2.0).cos());
+        assert_approx_eq!(
+            arc_chord_deviation_mm(o, r, 0.0, sweep, a, b),
+            sagitta,
+            1e-9
+        );
+        assert_approx_eq!(
+            arc_chord_deviation_mm(o, r, FRAC_PI_2, -sweep, b, a),
+            sagitta,
+            1e-9
+        );
+        let inside = Point::new(r - 0.5, 0.0);
+        assert!(arc_chord_deviation_mm(o, r, 0.0, sweep, inside, b) >= 0.5 - 1e-9);
+        // A 40 mm side under a 154.75 mm arc: 1.3 mm.
+        let r = 154.75;
+        let half = (20.0_f64 / r).asin();
+        let (a, b) = (
+            Point::new(r * half.cos(), -20.0),
+            Point::new(r * half.cos(), 20.0),
+        );
+        let bow = arc_chord_deviation_mm(o, r, -half, 2.0 * half, a, b);
+        assert_approx_eq!(bow, r * (1.0 - half.cos()), 1e-9);
+        assert!(bow > 1.29, "{bow}");
+    }
+
     /// #229: a 7 mm square's four corners lie on one circle, with even 90°
     /// steps, so every vertex gate passes; but each side is a chord that
     /// circle bows 1.45 mm off. A run's every straight move must lie within
@@ -1007,6 +1114,99 @@ mod tests {
         let fitted = fit(&moves, TOL);
         assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
         assert_eq!(lines_of(&fitted), 4);
+    }
+
+    /// #233: an 8.45 mm straight move, a 0.03 mm corner arc and a
+    /// 0.002 mm straight move (the moves of the Pocket below) all lie on
+    /// one 33 mm circle, and the step gate leaves the corner arc out of
+    /// its median. The long chord's own deviation, 0.27 mm under that
+    /// circle, refuses the run, as does #213's gate of two full chord
+    /// steps; the Pocket below needs the deviation gate for its other runs.
+    #[test]
+    fn long_chord_with_tiny_corner_is_not_fitted() {
+        let z = 5.0;
+        let moves = vec![
+            Move::rapid(pt(111.538_237_913_749_14, 79.670_914_550_191_23, z)),
+            Move::linear(pt(114.736_761_571_381_44, 71.845_191_023_101_12, z), FEED),
+            Move {
+                kind: MoveKind::ArcCcw {
+                    centre: Point::new(118.204_085_241_192_94, 73.262_352_867_390_8),
+                },
+                to: pt(114.748_638_699_674_87, 71.816_472_401_080_93, z),
+                feed_mm_min: Some(FEED),
+            },
+            Move::linear(pt(114.750_569_127_027_2, 71.817_280_159_837_1, z), FEED),
+        ];
+        let fitted = fit(&moves, TOL);
+        assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
+        assert_eq!(moves_of(&fitted).len(), 4);
+    }
+
+    /// #233's minimal case, from the Pocket property test: a raster Pocket
+    /// round a rectangular island, rotated, exports in mm and in inch with
+    /// arc fitting on. Before, a fitted arc bowed 0.27 mm off a straight
+    /// move, and the safety pass refused it (S9 in mm, S12 in inch).
+    #[test]
+    fn rotated_raster_pocket_with_island_exports_with_arc_fitting() {
+        let mut project = sample_project();
+        project.stock = Stock {
+            width_mm: 200.0,
+            height_mm: 200.0,
+            thickness_mm: Some(6.0),
+        };
+        project.arc_fit_tolerance_mm = Some(0.01);
+        let (hx, hy) = (5.557_357_878_931_814, 4.211_528_476_684_152);
+        let def = FeatureDefinition {
+            id: DefinitionId::new("d1"),
+            name: "Pocket".into(),
+            profiles: vec![
+                Polyline::rect(
+                    Point::new(-16.293_109_341_906_767, -17.302_636_203_267_785),
+                    2.0 * 16.293_109_341_906_767,
+                    2.0 * 17.302_636_203_267_785,
+                ),
+                Polyline::rect(Point::new(-hx, -hy), 2.0 * hx, 2.0 * hy),
+            ],
+        };
+        project.definitions = std::collections::BTreeMap::from([(def.id.clone(), def)]);
+        project.instances = vec![FeatureInstance {
+            transform: Transform::rotate(
+                0.925_667_480_965_779_2_f64.atan2(-0.378_338_095_732_710_93),
+            )
+            .then(Transform::translate(120.0, 80.0)),
+            definition: DefinitionId::new("d1"),
+            ..project.instances[0].clone()
+        }];
+        let tool = &mut project.tools[0];
+        tool.diameter_mm = 7.491_510_161_281_357;
+        tool.feed_mm_min = Some(3982.583);
+        tool.plunge_mm_min = Some(596.066);
+        let pocket = dc_project::PocketOp {
+            targets: vec![project.instances[0].id.clone()],
+            tool: project.tools[0].id.clone(),
+            strategy: dc_project::ClearanceStrategy::Raster {
+                angle_deg: 51.035_950_808_994_54,
+            },
+            step_over_fraction: Some(0.992_635_621_218_441_3),
+            depth_mm: Some(1.0),
+            ..dc_project::test_support::sample_pocket()
+        };
+        project.operations = vec![Operation::Pocket(pocket.clone())];
+        for units in [dc_project::Units::Mm, dc_project::Units::Inch] {
+            project.display_units = units;
+            let (toolpath, _) = dc_cam::generate_pocket(&project, &pocket).unwrap();
+            emit(
+                &project,
+                &[(
+                    Operation::Pocket(pocket.clone()),
+                    project.tools[0].clone(),
+                    toolpath,
+                )
+                    .into()],
+                "2026-10-21",
+            )
+            .unwrap_or_else(|e| panic!("{units:?}: {e:?}"));
+        }
     }
 
     /// #229: a regular octagon of 10 mm radius, its chords bowing
@@ -1032,7 +1232,7 @@ mod tests {
 
     #[test]
     fn rejects_mixed_feed_run() {
-        let mut moves = chords(10.0, 8, 0.0, TAU, 0.0);
+        let mut moves = chords(10.0, 72, 0.0, TAU, 0.0);
         for (k, m) in moves.iter_mut().skip(1).enumerate() {
             m.feed_mm_min = Some(if k % 2 == 0 { 500.0 } else { FEED });
         }
@@ -1065,8 +1265,8 @@ mod tests {
 
     #[test]
     fn splits_around_rapids() {
-        let mut moves = chords(10.0, 4, 0.0, FRAC_PI_2, 0.0);
-        moves.extend(chords(10.0, 4, PI, PI + FRAC_PI_2, 0.0));
+        let mut moves = chords(10.0, 18, 0.0, FRAC_PI_2, 0.0);
+        moves.extend(chords(10.0, 18, PI, PI + FRAC_PI_2, 0.0));
         let fitted = fit(&moves, TOL);
         assert_eq!(arcs_of(&fitted).len(), 2, "{fitted:?}");
         let rest = moves_of(&fitted);
@@ -1116,7 +1316,7 @@ mod tests {
 
     #[test]
     fn splits_large_arc_at_90_degrees() {
-        let moves = chords(10.0, 32, 0.0, 3.0 * FRAC_PI_2, 0.0);
+        let moves = chords(10.0, 64, 0.0, 3.0 * FRAC_PI_2, 0.0);
         let fitted = fit(&moves, TOL);
         let arcs = arcs_of(&fitted);
         assert_eq!(arcs.len(), 3, "{fitted:?}");
@@ -1127,7 +1327,7 @@ mod tests {
 
     #[test]
     fn split_arc_offsets_relative() {
-        let moves = chords(10.0, 16, 0.0, TAU, 0.0);
+        let moves = chords(10.0, 72, 0.0, TAU, 0.0);
         let fitted = fit(&moves, TOL);
         let arcs = arcs_of(&fitted);
         assert!(arcs.len() >= 2);
@@ -1188,13 +1388,13 @@ mod tests {
 
     #[test]
     fn accepts_ordinary_arc_after_collinear_gate() {
-        let moves = chords(5.0, 4, 0.0, PI / 6.0, 0.0);
+        let moves = chords(5.0, 6, 0.0, PI / 6.0, 0.0);
         assert_eq!(arcs_of(&fit(&moves, TOL)).len(), 1);
     }
 
     #[test]
     fn full_circle_loop_is_four_arcs() {
-        let moves = chords(10.0, 16, 0.0, TAU, 0.0);
+        let moves = chords(10.0, 72, 0.0, TAU, 0.0);
         let fitted = fit(&moves, TOL);
         let arcs = arcs_of(&fitted);
         assert_eq!(arcs.len(), 4);
@@ -1216,7 +1416,7 @@ mod tests {
             Move::linear(pt(-5.0, 0.0, 0.0), FEED),
             Move::linear(pt(r, 0.0, 0.0), FEED),
         ];
-        moves.extend(chords(r, 8, 0.0, PI, 0.0).into_iter().skip(1));
+        moves.extend(chords(r, 36, 0.0, PI, 0.0).into_iter().skip(1));
         moves.extend([
             Move::linear(pt(-13.0, 0.0, 0.0), FEED),
             Move::linear(pt(-16.0, 0.0, 0.0), FEED),
@@ -1414,7 +1614,7 @@ mod tests {
 
     #[test]
     fn fallback_leaves_valid_runs_alone() {
-        let mut moves = chords(10.0, 16, 0.0, TAU, -10.5);
+        let mut moves = chords(10.0, 72, 0.0, TAU, -10.5);
         moves.extend(issue_447_moves());
         let fitted = fit(&moves, TOL);
         let good = arcs_of(&fitted).len();
@@ -1667,7 +1867,7 @@ mod tests {
     /// flat revolution at the bottom is fitted.
     #[test]
     fn helix_descent_is_not_fitted_flat_revolution_is() {
-        let n = 16;
+        let n = 72;
         let mut moves = vec![Move::rapid(pt(10.0, 0.0, 5.0))];
         for k in 1..=n {
             let angle = TAU * f64::from(k) / f64::from(n);
