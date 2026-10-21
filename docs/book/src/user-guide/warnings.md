@@ -58,6 +58,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `arcs_flattened` | "… arc(s) written as short straight moves because the controller would reject them once rounded" | Tiny arcs whose rounded centre no longer fits were written as lines. The motion is the same; nothing to do. |
 | `arc_fit_fallback` | "… run(s) of straight moves kept as written because the controller would reject the arc fitted to them once rounded" | Arc fitting left some runs as the original straight moves. The motion is the same, the program a little longer; nothing to do (see [The project file](project-file.md), `arc_fit_tolerance_mm`). |
 | `disabled_operation_skipped` | "operation … is disabled and was left out" | As intended; set `enabled` to `true` to cut it. |
+| `canned_cycle_expanded` | "operation …: written as plain moves, not canned cycles, because …" | `use_canned_cycles` is on, but this Drill was written as `G0`/`G1` moves, all of it. The reason says why: a peck with a dwell, a cycle the post-processor lacks, or a peck cycle whose retract height is above the stock top. The holes are the same either way ([Drill: canned cycles](drill.md#canned-cycles)). |
 
 ## Project values
 

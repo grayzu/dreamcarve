@@ -149,12 +149,53 @@ along with the depth, the feeds and every other safety rule.
 
 ## Canned cycles
 
-LinuxCNC, Mach3 and UCCNC have drilling cycles (`G81`, `G82`, `G83`,
-`G73`) that write a whole hole in one line. Writing them is coming in a
-later release; this build always writes the holes as the plain moves
-above, which every controller runs. The post-processor setting
-`use_canned_cycles` is accepted but has no effect yet. Holes are drilled in
-the same order and to the same depth either way.
+Some controllers (LinuxCNC, Mach3, UCCNC) have drilling cycles that write
+a whole hole in one line. They are off by default. To use them, set
+`"use_canned_cycles": true` in the project's `post_processor` block, with
+a post-processor that has them ([Post-processors](post-processors.md#canned-cycles)).
+grblHAL and GRBL have none, so `check` reports `true` as an error there.
+
+With canned cycles on, a Drill is written as:
+
+```text
+G0 Z5.000
+X20.000 Y20.000
+G98
+G81 X20.000 Y20.000 Z-5.000 R1.000 F300.000
+X50.000 Y70.000 Z-5.000 R1.000
+X80.000 Y30.000 Z-5.000 R1.000
+G80
+```
+
+a rapid over the first hole at safe Z, `G98` (go back to the starting Z,
+safe Z, after each hole), one line per hole, then `G80` to end the cycles.
+Each line has the hole's `X Y`, its bottom `Z`, the retract height `R`,
+and the peck `Q` or the dwell `P` where the cycle has one. `F`, the plunge
+rate, is on the first. The cycle is:
+
+| Drill | Cycle |
+| --- | --- |
+| `"simple"` | `G81` |
+| `"simple"` with `dwell_s` | `G82` with `P` (seconds, or milliseconds where the controller takes them) |
+| peck, `retract: "full"` | `G83` with `Q` |
+| peck, `chip_break` | `G73` with `Q` |
+| peck with `dwell_s` | none: always plain moves |
+
+The holes, their order and their depths are the same as with plain moves.
+`export` reads each cycle line back as the moves the controller makes for
+it and checks them against the same rules as plain moves, and against the
+Drill's own moves: the depth, the fast moves, and every hole. If the cycle
+would not drill what the plain moves drill, the whole Drill is written as
+plain moves instead, with the warning `canned_cycle_expanded` saying why.
+One operation is never part cycles and part moves. This happens when:
+
+- a peck also has a dwell (no cycle does both);
+- the post-processor has no command for the cycle, or does not state how
+  far its `G83` or `G73` backs off between pecks;
+- a peck cycle has a retract height above the stock top. Controllers
+  measure each peck from `R`, DreamCarve from the stock top, so the pecks
+  would land at different depths. Set `retract_mm` to 0 to get `G83` or
+  `G73`; a simple cycle (`G81`, `G82`) works with any retract height.
 
 ## Warnings
 

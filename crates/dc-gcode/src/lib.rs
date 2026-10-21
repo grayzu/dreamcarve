@@ -10,6 +10,7 @@
 //! text (`docs/specs/phase-1/design.md`, "Emission").
 
 pub mod arcfit;
+pub mod canned;
 pub mod emit;
 mod error;
 pub mod format;
@@ -20,7 +21,10 @@ mod safety;
 pub mod transform;
 
 pub use dc_project::PostProcessor;
-pub use emit::{ExportWarning, FirstTool, Pause, Program, ProgramSplit, emit, emit_programs};
+pub use emit::{
+    CannedExpansion, EmitOp, ExportWarning, FirstTool, Pause, Program, ProgramSplit, emit,
+    emit_programs,
+};
 pub use error::ExportError;
-pub use parse::{MachineMove, parse_motion};
+pub use parse::{CycleModel, MachineMove, parse_motion, parse_motion_with};
 pub use safety::{AxisRange, Extents, MAX_LINE_CHARS};

@@ -80,6 +80,14 @@ written. There are no safety warnings, only errors.
    generation checks this first, and the read-back program is checked
    again.
 
+10. **Canned cycles mean what the plain moves mean.** When a Drill is
+    written as [canned cycles](drill.md#canned-cycles) (`G81`, `G82`,
+    `G83`, `G73`), each cycle line is read back as the moves the
+    controller makes for it, and rules 1, 2, 8 and 9 are checked on those
+    moves: they must be the Drill's own moves, hole for hole, depth for
+    depth. A cycle the check cannot read back exactly, such as one with a
+    word missing, is refused.
+
 It also checks that:
 
 - every line is plain ASCII and short enough for the controller's buffer,

@@ -449,9 +449,11 @@ pub struct CannedCycles {
     /// Cycle cancel, for example `G80`.
     pub cancel_command: String,
     /// How far above the previous depth the controller re-enters after a
-    /// full peck retract (`G83`), millimetres, as its documentation
-    /// states; `None` where it retracts fully. The safety pass compares
-    /// the cycle's expansion with the Drill toolpath to this tolerance.
+    /// full peck retract (`G83`), and how far it lifts between chip-break
+    /// pecks (`G73`), millimetres, as its documentation states; `None`
+    /// where it states none, and then neither cycle is written. The safety
+    /// pass expands each cycle with this distance and compares the
+    /// expansion with the Drill toolpath to it as the tolerance.
     #[serde(deserialize_with = "Option::deserialize")]
     pub reentry_gap_mm: Option<f64>,
 }

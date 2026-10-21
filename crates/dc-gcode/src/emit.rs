@@ -8,8 +8,11 @@
 //! G-code emission (`docs/specs/phase-1/design.md`, "Algorithms →
 //! Emission"; `docs/specs/phase-1/functional.md`, S1–S7).
 //!
-//! Ported from `runPostProcessor`, without canned cycles, coolant, or arc
-//! fitting (phase 1 has none of them). Re-derived for Y-up: toolpaths are
+//! Ported from `runPostProcessor`, without coolant. Arc fitting is
+//! DreamCarve's (`arcfit`); canned cycles are written as upstream's block
+//! does, but only when the controller's motion for them is the toolpath
+//! (`docs/specs/phase-2/design.md`, "Canned cycles"; see [`EmitOp`] and
+//! [`CannedExpansion`]). Re-derived for Y-up: toolpaths are
 //! Y-up and so is the machine, so arc direction carries over unchanged
 //! unless the definition's axis map mirrors the plane. Changes from
 //! upstream, from the controller facts in `dc-project/src/definitions/README.md`
@@ -58,18 +61,19 @@
 
 use std::f64::consts::{FRAC_PI_2, TAU};
 
-use dc_cam::{FeedField, Move, MoveKind, Toolpath};
-use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
+use dc_cam::{CannedKind, DrillHole, DrillToolpath, FeedField, Move, MoveKind, Toolpath};
+use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
 use dc_project::{
-    ArcFormat, DwellUnits, Operation, OperationId, PostProcessor, Project, SpindleControl, Tool,
-    ToolChangeMode, ToolId, Units, is_m6_line,
+    ArcFormat, CannedCycles, DwellUnits, Operation, OperationId, PostProcessor, Project,
+    RetractMode, SpindleControl, Tool, ToolChangeMode, ToolId, Units, is_m6_line,
 };
 
 use crate::ExportError;
 use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
+use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
-use crate::parse::parse_program;
-use crate::safety::{self, Extents, OpSpan, Tolerances};
+use crate::parse::{CycleModel, parse_program_with};
+use crate::safety::{self, DWELL_TOLERANCE_S, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
 
 /// An emitted G-code program.
@@ -140,6 +144,15 @@ pub enum ExportWarning {
         /// How many runs.
         runs: usize,
     },
+    /// The project asks for canned cycles, but this Drill was written as
+    /// plain moves, all of it (`canned_cycle_expanded`). The holes, their
+    /// order and their depths are the same either way.
+    CannedCycleExpanded {
+        /// The operation.
+        op: OperationId,
+        /// Why.
+        reason: CannedExpansion,
+    },
 }
 
 impl ExportWarning {
@@ -151,6 +164,80 @@ impl ExportWarning {
             Self::DisabledOperationSkipped { .. } => "disabled_operation_skipped",
             Self::ArcsFlattened { .. } => "arcs_flattened",
             Self::ArcFitFallback { .. } => "arc_fit_fallback",
+            Self::CannedCycleExpanded { .. } => "canned_cycle_expanded",
+        }
+    }
+}
+
+/// Why a Drill the project asked to write as canned cycles was written as
+/// plain moves ([`ExportWarning::CannedCycleExpanded`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CannedExpansion {
+    /// The post-processor definition has no canned cycles.
+    NoCannedCycles,
+    /// The Drill came without its hole records.
+    NoHoleRecords,
+    /// A hole's cycle has no canned equivalent: a peck with a dwell.
+    CycleNeedsMoves,
+    /// The definition has no command for this cycle, or not its standard
+    /// code, which is the only one the safety pass expands.
+    NoCommand(Cycle),
+    /// The definition writes something the safety pass cannot expand: a
+    /// retract mode other than `G98`, a cancel other than `G80`, or a peck
+    /// word other than `Q`. Names the field.
+    UnsupportedDefinition(&'static str),
+    /// A peck cycle, and the definition states no re-entry gap for it
+    /// (`canned_cycles.reentry_gap_mm`).
+    NoReentryGap,
+    /// The motion the controller makes for the cycles would not be the
+    /// toolpath. Controllers measure every peck from the retract plane
+    /// (`R`), the toolpath from the stock top, so with a retract height
+    /// above the stock the pecks differ.
+    MotionDiffers,
+}
+
+impl CannedExpansion {
+    /// The stable `snake_case` code of the reason.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::NoCannedCycles => "no_canned_cycles",
+            Self::NoHoleRecords => "no_hole_records",
+            Self::CycleNeedsMoves => "cycle_needs_moves",
+            Self::NoCommand(_) => "no_command",
+            Self::UnsupportedDefinition(_) => "unsupported_definition",
+            Self::NoReentryGap => "no_reentry_gap",
+            Self::MotionDiffers => "motion_differs",
+        }
+    }
+}
+
+impl std::fmt::Display for CannedExpansion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCannedCycles => write!(f, "the post-processor has no canned cycles"),
+            Self::NoHoleRecords => write!(f, "the Drill came without its hole records"),
+            Self::CycleNeedsMoves => write!(
+                f,
+                "a peck with a dwell has no canned cycle, so it is written as plain moves"
+            ),
+            Self::NoCommand(cycle) => write!(
+                f,
+                "the post-processor has no {} command for this cycle",
+                cycle.code()
+            ),
+            Self::UnsupportedDefinition(field) => write!(
+                f,
+                "the post-processor's canned_cycles.{field} is not one DreamCarve can check"
+            ),
+            Self::NoReentryGap => write!(
+                f,
+                "the post-processor states no re-entry gap (canned_cycles.reentry_gap_mm) for peck cycles"
+            ),
+            Self::MotionDiffers => write!(
+                f,
+                "the controller's motion for the cycle would differ from the toolpath (it measures pecks from the retract height, not the stock top)"
+            ),
         }
     }
 }
@@ -161,8 +248,47 @@ pub const MIN_DECIMAL_PLACES_MM: u8 = 2;
 /// Fewest decimal places accepted in inches: one unit is 0.0254 mm.
 pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 
-/// One operation to emit: the operation, its tool, and its toolpath.
-type OpEntry = (Operation, Tool, Toolpath);
+/// One operation to emit: the operation, its tool, its toolpath, and for a
+/// Drill the hole records [`dc_cam::generate_drill`] returned with it, from
+/// which the emitter may write canned cycles (`docs/specs/phase-2/design.md`,
+/// "Canned cycles"). The toolpath is the authority: the safety pass checks
+/// that a canned cycle's expansion is the toolpath, move for move (S11).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmitOp {
+    /// The operation.
+    pub op: Operation,
+    /// Its tool.
+    pub tool: Tool,
+    /// Its toolpath, project space, mm.
+    pub toolpath: Toolpath,
+    /// A Drill's holes in cut order; `None` writes plain moves.
+    pub holes: Option<Vec<DrillHole>>,
+}
+
+impl EmitOp {
+    /// A Drill operation with its generated toolpath and hole records.
+    #[must_use]
+    pub fn drill(op: Operation, tool: Tool, drilled: DrillToolpath) -> Self {
+        Self {
+            op,
+            tool,
+            toolpath: drilled.toolpath,
+            holes: Some(drilled.holes),
+        }
+    }
+}
+
+impl From<(Operation, Tool, Toolpath)> for EmitOp {
+    /// An operation written as plain moves.
+    fn from((op, tool, toolpath): (Operation, Tool, Toolpath)) -> Self {
+        Self {
+            op,
+            tool,
+            toolpath,
+            holes: None,
+        }
+    }
+}
 
 /// How [`emit_programs`] splits a project whose enabled operations use
 /// more than one tool: as the project's post-processor `tool_change_mode`
@@ -208,7 +334,7 @@ pub enum ProgramSplit {
 /// call, so a caller never has some of the programs.
 pub fn emit_programs(
     project: &Project,
-    ops: &[OpEntry],
+    ops: &[EmitOp],
     split: ProgramSplit,
     date: &str,
 ) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError> {
@@ -231,9 +357,11 @@ pub fn emit_programs(
     // borrowed and stays as it is, so the flag is never saved.
     post.tool_change.mode = mode;
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let runs: Vec<&[&OpEntry]> = match mode {
+    let runs: Vec<&[&EmitOp]> = match mode {
         ToolChangeMode::M6 => vec![enabled.as_slice()],
-        ToolChangeMode::SeparatePrograms => enabled.chunk_by(|a, b| a.1.id == b.1.id).collect(),
+        ToolChangeMode::SeparatePrograms => {
+            enabled.chunk_by(|a, b| a.tool.id == b.tool.id).collect()
+        }
     };
     let mut programs = Vec::with_capacity(runs.len());
     for run in runs {
@@ -267,7 +395,7 @@ pub fn emit_programs(
 /// [`ExportError`].
 pub fn emit(
     project: &Project,
-    ops: &[OpEntry],
+    ops: &[EmitOp],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     emit_with(project, &project.post_processor.resolve()?, ops, date)
@@ -278,7 +406,7 @@ pub fn emit(
 pub(crate) fn emit_with(
     project: &Project,
     post: &PostProcessor,
-    ops: &[OpEntry],
+    ops: &[EmitOp],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     let (enabled, mut warnings) = enabled_ops(ops)?;
@@ -289,15 +417,15 @@ pub(crate) fn emit_with(
 
 /// The enabled entries of `ops`, and a warning for each disabled one.
 /// Fails when none is enabled.
-fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), ExportError> {
+fn enabled_ops(ops: &[EmitOp]) -> Result<(Vec<&EmitOp>, Vec<ExportWarning>), ExportError> {
     let mut warnings = Vec::new();
     let mut enabled = Vec::with_capacity(ops.len());
     for entry in ops {
-        if entry.0.enabled() {
+        if entry.op.enabled() {
             enabled.push(entry);
         } else {
             warnings.push(ExportWarning::DisabledOperationSkipped {
-                op: entry.0.id().clone(),
+                op: entry.op.id().clone(),
             });
         }
     }
@@ -311,7 +439,7 @@ fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), E
 fn emit_enabled(
     project: &Project,
     post: &PostProcessor,
-    enabled: &[&OpEntry],
+    enabled: &[&EmitOp],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     let control = post.feed_speed.spindle_control;
@@ -321,7 +449,8 @@ fn emit_enabled(
     // Step 1: preconditions, all checked before a line is written. The
     // post-processor is the last line and trusts no caller.
     let mut planned = Vec::with_capacity(enabled.len());
-    for &(op, tool, toolpath) in enabled {
+    for &entry in enabled {
+        let (op, tool, toolpath) = (&entry.op, &entry.tool, &entry.toolpath);
         let rates = Rates::of(tool, control)?;
         let number = project
             .tools
@@ -332,7 +461,7 @@ fn emit_enabled(
                 op: op.id().clone(),
                 tool: tool.id.clone(),
             })?;
-        planned.push((op, tool, toolpath, rates, number));
+        planned.push((op, tool, toolpath, rates, number, entry.holes.as_deref()));
     }
     // #57: the program stops for every tool after the first, and only `M6`
     // stops where the user may jog to set Z zero. #95: and only when the
@@ -356,7 +485,7 @@ fn emit_enabled(
     }
     let first_tool = planned
         .first()
-        .map(|&(_, tool, _, _, number)| FirstTool {
+        .map(|&(_, tool, _, _, number, _)| FirstTool {
             number,
             name: comment_text(&tool.name),
         })
@@ -453,7 +582,7 @@ fn emit_enabled(
     // Step 5: operations.
     let mut lines = Vec::with_capacity(planned.len());
     let mut router_on = false;
-    for (index, &(op, tool, toolpath, rates, number)) in planned.iter().enumerate() {
+    for (index, &(op, tool, toolpath, rates, number, holes)) in planned.iter().enumerate() {
         let mut context = common.clone();
         context.extend([
             ("operationIndex", (index + 1).to_string()),
@@ -550,7 +679,24 @@ fn emit_enabled(
             }
         }
 
-        let written = w.toolpath(op, toolpath)?;
+        // A Drill is written as canned cycles when the project asks and
+        // the controller's motion for them is the toolpath; otherwise as
+        // its moves, with a warning when cycles were asked for. Never
+        // both for one operation.
+        let written = match canned_plan(&w, op, tool, toolpath, holes, safe_z_mm)? {
+            CannedPlan::NotAsked => w.toolpath(op, toolpath)?,
+            CannedPlan::Expand(reason) => {
+                warnings.push(ExportWarning::CannedCycleExpanded {
+                    op: op.id().clone(),
+                    reason,
+                });
+                w.toolpath(op, toolpath)?
+            }
+            CannedPlan::Cycles(lines) => {
+                w.cycles(&lines, safe_z_mm)?;
+                Written::default()
+            }
+        };
         if written.flattened > 0 {
             warnings.push(ExportWarning::ArcsFlattened {
                 op: op.id().clone(),
@@ -603,7 +749,7 @@ fn emit_enabled(
     let spans: Vec<OpSpan<'_>> = planned
         .iter()
         .zip(lines)
-        .map(|(&(op, tool, toolpath, _, _), lines)| OpSpan {
+        .map(|(&(op, tool, toolpath, ..), lines)| OpSpan {
             op,
             tool,
             toolpath,
@@ -619,7 +765,7 @@ fn emit_enabled(
         tolerances,
         &spans,
     )?;
-    let pauses = pauses(&text)?;
+    let pauses = pauses(&text, post)?;
 
     Ok((
         Program {
@@ -650,12 +796,317 @@ const DWELL_DECIMAL_PLACES: u8 = 3;
 /// whole milliseconds (Mach3; design spec, "Post-processor definitions").
 /// Used for the spindle spin-up and for a Drill's dwell alike.
 fn dwell_line(post: &PostProcessor, seconds: f64) -> Result<String, ExportError> {
-    let dwell = &post.feed_speed.spindle_on_dwell;
-    let value = match dwell.units {
-        DwellUnits::Seconds => format_fixed(seconds, DWELL_DECIMAL_PLACES, &post.number_format)?,
-        DwellUnits::Milliseconds => format_fixed(seconds * 1000.0, 0, &post.number_format)?,
+    let value = dwell_value(post, seconds)?;
+    Ok(post
+        .feed_speed
+        .spindle_on_dwell
+        .command
+        .replace("{seconds}", &value))
+}
+
+/// `seconds` as the number a dwell's `P` takes on `post`: seconds to the
+/// millisecond, or whole milliseconds. A `G82`'s `P` is the same.
+fn dwell_value(post: &PostProcessor, seconds: f64) -> Result<String, ExportError> {
+    match post.feed_speed.spindle_on_dwell.units {
+        DwellUnits::Seconds => format_fixed(seconds, DWELL_DECIMAL_PLACES, &post.number_format),
+        DwellUnits::Milliseconds => format_fixed(seconds * 1000.0, 0, &post.number_format),
+    }
+}
+
+/// How a Drill is written ([`canned_plan`]).
+#[derive(Debug)]
+enum CannedPlan {
+    /// The project does not ask for canned cycles, or this is not a Drill.
+    NotAsked,
+    /// Canned cycles were asked for, but the Drill is written as moves.
+    Expand(CannedExpansion),
+    /// As these canned-cycle lines.
+    Cycles(CycleLines),
+}
+
+/// A Drill as canned-cycle lines: rapid to the first hole at safe Z, the
+/// retract mode, one line per hole, the cancel.
+#[derive(Debug)]
+struct CycleLines {
+    /// The first hole's centre at safe Z, project space.
+    first: Point3,
+    /// The last hole's centre at safe Z, where the cycles leave the tool.
+    last: Point3,
+    /// `G98`.
+    retract_mode: &'static str,
+    /// `G80`.
+    cancel: String,
+    /// The plunge rate, as the `F` number is written.
+    feed: String,
+    /// One per hole, in cut order.
+    holes: Vec<CycleLine>,
+}
+
+/// The words of one hole's cycle line, as written.
+#[derive(Debug)]
+struct CycleLine {
+    cycle: Cycle,
+    x: Emitted,
+    y: Emitted,
+    z: String,
+    r: String,
+    /// The peck number, for `G83` and `G73`.
+    q: Option<String>,
+    /// The dwell number, for `G82`.
+    p: Option<String>,
+}
+
+/// The canned cycle a hole record names, if it has one.
+const fn cycle_of(kind: CannedKind) -> Option<Cycle> {
+    match kind {
+        CannedKind::G81 => Some(Cycle::G81),
+        CannedKind::G82 => Some(Cycle::G82),
+        CannedKind::G83 => Some(Cycle::G83),
+        CannedKind::G73 => Some(Cycle::G73),
+        CannedKind::Expanded => None,
+    }
+}
+
+/// The definition's command for `cycle`.
+fn command_of(cycles: &CannedCycles, cycle: Cycle) -> Option<&str> {
+    match cycle {
+        Cycle::G81 => cycles.drill_command.as_deref(),
+        Cycle::G82 => cycles.drill_with_dwell_command.as_deref(),
+        Cycle::G83 => cycles.peck_drill_command.as_deref(),
+        Cycle::G73 => cycles.chip_break_drill_command.as_deref(),
+    }
+}
+
+/// How `op` is written (`docs/specs/phase-2/design.md`, "Canned cycles"):
+/// as canned cycles when it is a Drill, the project's `use_canned_cycles`
+/// is on, the definition has canned cycles with a command for every hole's
+/// cycle, and the motion the controller makes for those lines
+/// ([`crate::canned`]) is the toolpath's, move for move, within the
+/// definition's re-entry gap for a peck's re-entry or chip-break retract.
+/// Anything else is written as moves, with the reason when cycles were
+/// asked for. The safety pass checks the written cycles again (S11).
+fn canned_plan(
+    w: &Writer<'_>,
+    op: &Operation,
+    tool: &Tool,
+    toolpath: &Toolpath,
+    holes: Option<&[DrillHole]>,
+    safe_z_mm: f64,
+) -> Result<CannedPlan, ExportError> {
+    use CannedExpansion as Why;
+    let post = w.post;
+    if !(post.use_canned_cycles && matches!(op, Operation::Drill(_))) {
+        return Ok(CannedPlan::NotAsked);
+    }
+    let expand = |why| Ok(CannedPlan::Expand(why));
+    let Some(cycles) = &post.canned_cycles else {
+        return expand(Why::NoCannedCycles);
     };
-    Ok(dwell.command.replace("{seconds}", &value))
+    let Some(holes) = holes.filter(|h| !h.is_empty()) else {
+        return expand(Why::NoHoleRecords);
+    };
+    if cycles.retract_mode != Some(RetractMode::G98) {
+        return expand(Why::UnsupportedDefinition("retract_mode"));
+    }
+    if !cycles.cancel_command.trim().eq_ignore_ascii_case("G80") {
+        return expand(Why::UnsupportedDefinition("cancel_command"));
+    }
+    let mut kinds = Vec::with_capacity(holes.len());
+    for hole in holes {
+        let Some(cycle) = cycle_of(hole.cycle) else {
+            return expand(Why::CycleNeedsMoves);
+        };
+        let standard = command_of(cycles, cycle).is_some_and(|c| c.trim() == cycle.code());
+        if !standard {
+            return expand(Why::NoCommand(cycle));
+        }
+        kinds.push(cycle);
+    }
+    let pecks = kinds.iter().any(|c| c.pecks());
+    if pecks && !cycles.peck_step_word.trim().eq_ignore_ascii_case("Q") {
+        return expand(Why::UnsupportedDefinition("peck_step_word"));
+    }
+    let gap_mm = cycles.reentry_gap_mm.filter(|g| g.is_finite() && *g > 0.0);
+    if pecks && gap_mm.is_none() {
+        return expand(Why::NoReentryGap);
+    }
+    // Validated by `Rates::of` before anything was written.
+    let plunge_mm_min = tool.plunge_mm_min.unwrap_or_default();
+
+    let transform = w.transform;
+    let mut lines = Vec::with_capacity(holes.len());
+    for (hole, &cycle) in holes.iter().zip(&kinds) {
+        let centre = transform.to_machine(Point3::new(hole.centre.x, hole.centre.y, 0.0));
+        let emitted = |value: f64| -> Result<Emitted, ExportError> {
+            let text = w.number(value)?;
+            let value = read_back(&text).ok_or(ExportError::NonFiniteNumber { value })?;
+            Ok(Emitted { text, value })
+        };
+        let z_of = |z_mm: f64| transform.to_machine(Point3::new(0.0, 0.0, z_mm)).z;
+        let q = match (cycle.pecks(), hole.peck_mm) {
+            (true, Some(peck_mm)) => Some(w.number(peck_mm / transform.mm_per_unit())?),
+            (true, None) => return expand(Why::MotionDiffers),
+            (false, _) => None,
+        };
+        let p = match (cycle, hole.dwell_s) {
+            (Cycle::G82, Some(seconds)) => Some(dwell_value(post, seconds)?),
+            (Cycle::G82, None) => return expand(Why::MotionDiffers),
+            _ => None,
+        };
+        lines.push(CycleLine {
+            cycle,
+            x: emitted(centre.x)?,
+            y: emitted(centre.y)?,
+            z: w.number(z_of(hole.bottom_z_mm))?,
+            r: w.number(z_of(hole.retract_z_mm))?,
+            q,
+            p,
+        });
+    }
+    let at_safe = |hole: &DrillHole| Point3::new(hole.centre.x, hole.centre.y, safe_z_mm);
+    let (Some(first), Some(last)) = (holes.first(), holes.last()) else {
+        return expand(Why::NoHoleRecords);
+    };
+    let plan = CycleLines {
+        first: at_safe(first),
+        last: at_safe(last),
+        retract_mode: "G98",
+        cancel: cycles.cancel_command.trim().to_owned(),
+        feed: w.number(plunge_mm_min / transform.mm_per_unit())?,
+        holes: lines,
+    };
+    if expansion_is_toolpath(w, &plan, toolpath, plunge_mm_min, gap_mm)? {
+        Ok(CannedPlan::Cycles(plan))
+    } else {
+        expand(Why::MotionDiffers)
+    }
+}
+
+/// One thing the tool does at a hole, project Z, mm.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum HoleStep {
+    Rapid(f64),
+    Feed(f64),
+    /// Seconds.
+    Dwell(f64),
+}
+
+/// Whether the motion the controller makes for `plan`'s lines, from the
+/// numbers as written, is `toolpath`: each hole's arrival over its centre
+/// at safe Z, then its moves in Z and dwells, in the same order, each Z
+/// within one unit in the last place, a rapid inside a hole already cut
+/// within the re-entry gap `gap_mm`, every cut at the plunge rate.
+fn expansion_is_toolpath(
+    w: &Writer<'_>,
+    plan: &CycleLines,
+    toolpath: &Toolpath,
+    plunge_mm_min: f64,
+    gap_mm: Option<f64>,
+) -> Result<bool, ExportError> {
+    let transform = w.transform;
+    let units = transform.output_units();
+    let tolerance_mm = w.quantum() * transform.mm_per_unit() + EPS_MM;
+    let initial_mm = plan.first.z;
+    let read = |text: &str| read_back(text).ok_or(ExportError::NonFiniteNumber { value: f64::NAN });
+    let initial = read(&w.number(transform.to_machine(plan.first).z)?)?;
+    let gap = gap_mm.map(|g| g / transform.mm_per_unit());
+    let dwell_s = |p: f64| match w.post.feed_speed.spindle_on_dwell.units {
+        DwellUnits::Seconds => p,
+        DwellUnits::Milliseconds => p / 1000.0,
+    };
+
+    // The toolpath, one group per hole: the rapid that arrives over it,
+    // then what the tool does there.
+    let mut groups: Vec<(Point3, Vec<HoleStep>)> = Vec::new();
+    let mut at: Option<Point> = None;
+    for mv in &toolpath.moves {
+        let arrives = at.is_none_or(|p| p.distance_to(mv.to.xy()) > tolerance_mm);
+        at = Some(mv.to.xy());
+        if arrives {
+            if !mv.is_rapid() {
+                return Ok(false);
+            }
+            groups.push((mv.to, Vec::new()));
+            continue;
+        }
+        let Some((_, steps)) = groups.last_mut() else {
+            return Ok(false);
+        };
+        steps.push(match mv.kind {
+            MoveKind::Rapid => HoleStep::Rapid(mv.to.z),
+            MoveKind::Linear
+                if mv
+                    .feed_mm_min
+                    .is_some_and(|f| (f - plunge_mm_min).abs() <= EPS_MM) =>
+            {
+                HoleStep::Feed(mv.to.z)
+            }
+            MoveKind::Dwell { seconds } => HoleStep::Dwell(seconds),
+            _ => return Ok(false),
+        });
+    }
+    if groups.len() != plan.holes.len() {
+        return Ok(false);
+    }
+
+    for ((arrival, actual), line) in groups.iter().zip(&plan.holes) {
+        let centre = transform.to_project(Point3::new(line.x.value, line.y.value, 0.0), units);
+        if centre.xy().distance_to(arrival.xy()) > tolerance_mm
+            || (arrival.z - initial_mm).abs() > tolerance_mm
+        {
+            return Ok(false);
+        }
+        let words = CycleWords {
+            cycle: line.cycle,
+            z: read(&line.z)?,
+            r: read(&line.r)?,
+            q: line.q.as_deref().map(read).transpose()?,
+            p: line.p.as_deref().map(read).transpose()?,
+        };
+        let Ok(steps) = steps_at_hole(&words, gap, initial.max(words.r)) else {
+            return Ok(false);
+        };
+        // The controller's moves at the hole, without those to where it
+        // already is: down to R (it arrives at the initial Z), the cycle.
+        let mut expected = Vec::with_capacity(steps.len() + 1);
+        let mut z = initial;
+        for step in [Step::Rapid(words.r)].into_iter().chain(steps) {
+            match step {
+                Step::Rapid(to) | Step::Feed(to) if (to - z).abs() <= f64::EPSILON => {}
+                Step::Rapid(to) => {
+                    expected.push(HoleStep::Rapid(transform.project_z(to, units)));
+                    z = to;
+                }
+                Step::Feed(to) => {
+                    expected.push(HoleStep::Feed(transform.project_z(to, units)));
+                    z = to;
+                }
+                Step::Dwell(p) => expected.push(HoleStep::Dwell(dwell_s(p))),
+            }
+        }
+        if expected.len() != actual.len() {
+            return Ok(false);
+        }
+        let mut cut = false;
+        for (e, a) in expected.iter().zip(actual) {
+            let same = match (*e, *a) {
+                (HoleStep::Rapid(e), HoleStep::Rapid(a)) => {
+                    let slack = if cut { gap_mm.unwrap_or(0.0) } else { 0.0 };
+                    (e - a).abs() <= tolerance_mm + slack
+                }
+                (HoleStep::Feed(e), HoleStep::Feed(a)) => {
+                    cut = true;
+                    (e - a).abs() <= tolerance_mm
+                }
+                (HoleStep::Dwell(e), HoleStep::Dwell(a)) => (e - a).abs() <= DWELL_TOLERANCE_S,
+                _ => false,
+            };
+            if !same {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -843,8 +1294,8 @@ fn comment_of(line: &str) -> String {
 }
 
 /// Every `M0` and `M6` line of `text`, with its message.
-fn pauses(text: &str) -> Result<Vec<Pause>, ExportError> {
-    let blocks = parse_program(text)?;
+fn pauses(text: &str, post: &PostProcessor) -> Result<Vec<Pause>, ExportError> {
+    let blocks = parse_program_with(text, &CycleModel::of(post))?;
     let mut raw = text.lines().enumerate();
     let mut out = Vec::new();
     for block in blocks.iter().filter(|b| b.has('M', 0.0) || b.has('M', 6.0)) {
@@ -1243,6 +1694,61 @@ impl<'a> Writer<'a> {
             }
         }
         Ok(written)
+    }
+
+    /// Writes a Drill as canned cycles (`docs/specs/phase-2/design.md`,
+    /// "Canned cycles", ported from `runPostProcessor`): a rapid to the
+    /// first hole at safe Z, Z first, so `G98`'s initial Z is safe Z; the
+    /// retract mode once; one line per hole with the command word (when it
+    /// changes, or always unless motion is modal), `X Y`, `Z` (bottom), `R`
+    /// (retract plane), `Q` (peck) or `P` (dwell), and `F` (plunge) on the
+    /// first; then the cancel, which leaves no motion mode. Unlike upstream
+    /// every line carries its `Z`, `R`, `Q` and `P`: controllers differ in
+    /// which of them they keep, and the safety pass expands each line from
+    /// its own words.
+    fn cycles(&mut self, plan: &CycleLines, safe_z_mm: f64) -> Result<(), ExportError> {
+        self.rapid(plan.first)?;
+        self.line(plan.retract_mode);
+        let fs = &self.post.feed_speed;
+        let feed_word = format!("{}{}", fs.feed_command, plan.feed);
+        let inline = fs.inline_with_motion;
+        let modal = self.post.motion.modal_motion;
+        if !inline {
+            self.line(&feed_word);
+        }
+        let mut command: Option<Cycle> = None;
+        for (k, hole) in plan.holes.iter().enumerate() {
+            let mut words = Vec::with_capacity(8);
+            if !modal || command != Some(hole.cycle) {
+                words.push(hole.cycle.code().to_owned());
+                command = Some(hole.cycle);
+            }
+            words.push(format!("X{}", hole.x.text));
+            words.push(format!("Y{}", hole.y.text));
+            words.push(format!("Z{}", hole.z));
+            words.push(format!("R{}", hole.r));
+            if let Some(q) = &hole.q {
+                words.push(format!("Q{q}"));
+            }
+            if let Some(p) = &hole.p {
+                words.push(format!("P{p}"));
+            }
+            if k == 0 && inline {
+                words.push(feed_word.clone());
+            }
+            self.line(&words.join(" "));
+        }
+        self.line(&plan.cancel);
+        // `G80` leaves no motion mode. The tool is over the last hole at
+        // the initial Z, safe Z, which the rapid above wrote.
+        self.motion = None;
+        self.feed = Some(plan.feed.clone());
+        if let Some(last) = plan.holes.last() {
+            self.axes[0] = Some(last.x.clone());
+            self.axes[1] = Some(last.y.clone());
+        }
+        self.position = Some(Point3::new(plan.last.x, plan.last.y, safe_z_mm));
+        Ok(())
     }
 
     /// Writes toolpath move `index` as it is; returns how many arcs had to
@@ -1661,7 +2167,7 @@ mod tests {
     }
 
     /// The sample project's operation, tool, and generated toolpath.
-    fn ops_for(project: &Project) -> Vec<(Operation, Tool, Toolpath)> {
+    fn ops_for(project: &Project) -> Vec<EmitOp> {
         let op = profile_op(project);
         let tool = project
             .tools
@@ -1671,7 +2177,7 @@ mod tests {
             .clone();
         let (toolpath, _) = generate_profile(project, &op).unwrap();
         dc_cam::test_support::assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
-        vec![(Operation::Profile(op), tool, toolpath)]
+        vec![(Operation::Profile(op), tool, toolpath).into()]
     }
 
     fn emit_text(project: &Project) -> String {
@@ -1721,7 +2227,7 @@ mod tests {
         let mut project = sample_project();
         let mut ops = ops_for(&project);
         project.tools[0].feed_mm_min = None;
-        ops[0].1.feed_mm_min = None;
+        ops[0].tool.feed_mm_min = None;
         let err = emit(&project, &ops, DATE).unwrap_err();
         assert!(
             matches!(&err, ExportError::MissingFeed { tool, field: FeedField::Feed } if tool == "6.35 mm upcut"),
@@ -1734,8 +2240,8 @@ mod tests {
         );
 
         // A placeholder 0 is as missing as `None`.
-        ops[0].1.feed_mm_min = Some(1000.0);
-        ops[0].1.plunge_mm_min = Some(0.0);
+        ops[0].tool.feed_mm_min = Some(1000.0);
+        ops[0].tool.plunge_mm_min = Some(0.0);
         let err = emit(&project, &ops, DATE).unwrap_err();
         assert!(
             matches!(
@@ -1773,7 +2279,7 @@ mod tests {
         let project = sample_project();
         let mut ops = ops_for(&project);
         for rpm in [None, Some(0)] {
-            ops[0].1.rpm = rpm;
+            ops[0].tool.rpm = rpm;
             let err = emit(&project, &ops, DATE).unwrap_err();
             assert!(
                 matches!(&err, ExportError::MissingRpm { tool } if tool == "6.35 mm upcut"),
@@ -1786,7 +2292,7 @@ mod tests {
     fn no_enabled_operation_is_an_error() {
         let project = sample_project();
         let mut ops = ops_for(&project);
-        profile_of(&mut ops[0].0).enabled = false;
+        profile_of(&mut ops[0].op).enabled = false;
         assert!(matches!(
             emit(&project, &ops, DATE),
             Err(ExportError::NoEnabledOperations)
@@ -1958,7 +2464,7 @@ mod tests {
         let moves = parse_motion(&text).unwrap();
         let max_x = moves.iter().filter_map(|m| m.to.x).fold(f64::MIN, f64::max);
         let max_x_mm = ops[0]
-            .2
+            .toolpath
             .moves
             .iter()
             .map(|m| m.to.x)
@@ -1981,8 +2487,8 @@ mod tests {
             project.name = nasty.into();
             project.tools[0].name = nasty.into();
             let mut ops = ops_for(&project);
-            profile_of(&mut ops[0].0).name = nasty.into();
-            ops[0].1.name = nasty.into();
+            profile_of(&mut ops[0].op).name = nasty.into();
+            ops[0].tool.name = nasty.into();
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             for line in text.lines() {
                 assert!(
@@ -2026,8 +2532,8 @@ mod tests {
             let mut project = project_with(post);
             project.name = "P".repeat(1000);
             let mut ops = ops_for(&project);
-            profile_of(&mut ops[0].0).name = "O".repeat(1000);
-            ops[0].1.name = "T".repeat(1000);
+            profile_of(&mut ops[0].op).name = "O".repeat(1000);
+            ops[0].tool.name = "T".repeat(1000);
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             for line in text.lines() {
                 assert!(line.len() <= MAX_LINE_CHARS, "{post}: {} chars", line.len());
@@ -2057,8 +2563,8 @@ mod tests {
         // A tiny coordinate and a huge-but-safe one, on stock wide enough
         // for it, cut by a point so the cut at X ≈ 0 stays on it (S7).
         project.stock.width_mm = 20_000_000.0;
-        ops[0].1.diameter_mm = 0.0;
-        ops[0].2 = Toolpath {
+        ops[0].tool.diameter_mm = 0.0;
+        ops[0].toolpath = Toolpath {
             moves: vec![
                 Move::rapid(Point3::new(1e-9, 1e-12, 11.0)),
                 Move::linear(Point3::new(1e-9, 1e-12, 5.0), 300.0),
@@ -2084,7 +2590,7 @@ mod tests {
         let start = Point3::new(10.0004, 20.0, 5.0);
         let centre = Point::new(15.0008, 20.0);
         let r = centre.x - start.x;
-        ops[0].2 = Toolpath {
+        ops[0].toolpath = Toolpath {
             moves: vec![
                 Move::rapid(Point3::new(start.x, start.y, 11.0)),
                 Move::linear(start, 300.0),
@@ -2134,7 +2640,7 @@ mod tests {
     /// The sample operation, then the same with a second tool. The
     /// project's tool-change mode becomes `"m6"`, the one program with a
     /// tool change that [`emit`] writes (#95).
-    fn two_tool_ops(project: &mut Project) -> Vec<(Operation, Tool, Toolpath)> {
+    fn two_tool_ops(project: &mut Project) -> Vec<EmitOp> {
         project.post_processor.tool_change_mode = ToolChangeMode::M6;
         project.tools.push(second_tool());
         let mut second = profile_op(project);
@@ -2144,7 +2650,7 @@ mod tests {
         project.operations.push(Operation::Profile(second.clone()));
         let mut ops = ops_for(project);
         let (toolpath, _) = generate_profile(project, &second).unwrap();
-        ops.push((Operation::Profile(second), second_tool(), toolpath));
+        ops.push((Operation::Profile(second), second_tool(), toolpath).into());
         ops
     }
 
@@ -2263,7 +2769,7 @@ mod tests {
             let mut project = manual_project(post);
             let mut ops = ops_for(&project);
             project.tools[0].rpm = None;
-            ops[0].1.rpm = None;
+            ops[0].tool.rpm = None;
             if let Err(err) = emit(&project, &ops, DATE) {
                 panic!("{post}: manual export without RPM failed: {err:?}");
             }
@@ -2276,7 +2782,7 @@ mod tests {
             );
 
             project.post_processor.spindle_control = SpindleControl::Manual;
-            ops[0].1.plunge_mm_min = None;
+            ops[0].tool.plunge_mm_min = None;
             let err = emit(&project, &ops, DATE).unwrap_err();
             assert!(
                 matches!(
@@ -2331,7 +2837,7 @@ mod tests {
     fn manual_spindle_message_includes_rpm_hint() {
         let project = manual_project("grblhal");
         let mut ops = ops_for(&project);
-        let on_line = |ops: &[(Operation, Tool, Toolpath)]| -> String {
+        let on_line = |ops: &[EmitOp]| -> String {
             let text = emit(&project, ops, DATE).unwrap().0.text;
             text.lines()
                 .find(|l| l.contains("Turn the router ON"))
@@ -2343,7 +2849,7 @@ mod tests {
             with_rpm,
             "M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)"
         );
-        ops[0].1.rpm = None;
+        ops[0].tool.rpm = None;
         let without = on_line(&ops);
         assert_eq!(
             without,
@@ -2499,7 +3005,7 @@ mod tests {
             definition.program.line_numbers = true;
             definition.program.line_number_increment = 1_000_000_000;
             let mut ops = ops_for(&project);
-            ops[0].1.rpm = Some(u32::MAX);
+            ops[0].tool.rpm = Some(u32::MAX);
             let program = emit_with(&project, &definition, &ops, DATE).unwrap().0;
             assert!(!program.pauses.is_empty(), "{post}");
             for pause in &program.pauses {
@@ -2634,7 +3140,7 @@ mod tests {
             let mut project = project_with("grblhal");
             project.post_processor.spindle_control = control;
             let mut ops = two_tool_ops(&mut project);
-            ops[1].1.name = "a very long tool name ".repeat(6);
+            ops[1].tool.name = "a very long tool name ".repeat(6);
             let program = emit(&project, &ops, DATE).unwrap().0;
             let fit = &program
                 .pauses
@@ -2936,8 +3442,8 @@ mod tests {
                 "{message}"
             );
 
-            ops[1].1 = ops[0].1.clone();
-            profile_of(&mut ops[1].0).tool = ops[0].1.id.clone();
+            ops[1].tool = ops[0].tool.clone();
+            profile_of(&mut ops[1].op).tool = ops[0].tool.id.clone();
             emit(&project, &ops, DATE).unwrap();
         }
     }
@@ -2965,7 +3471,7 @@ mod tests {
                     );
                 }
                 let starts: Vec<&str> = text.lines().filter(|l| has_word(l, "M3")).collect();
-                let rpm = ops[k].1.rpm.unwrap();
+                let rpm = ops[k].tool.rpm.unwrap();
                 assert_eq!(starts, [format!("M3 S{rpm}")], "{post} program {k}");
                 assert_eq!(program.first_tool.number, k + 1, "{post} program {k}");
                 let (alone, _) = emit(&project, &ops[k..=k], DATE).unwrap();
@@ -3094,7 +3600,7 @@ mod tests {
     /// at safe Z (11), down to the retract plane 1 mm above the 6 mm stock,
     /// plunge, dwell 0.5 s, back to safe Z. Hand-written so the emitter is
     /// tested apart from the generator.
-    fn drill_ops(project: &Project) -> Vec<(Operation, Tool, Toolpath)> {
+    fn drill_ops(project: &Project) -> Vec<EmitOp> {
         let op = dc_project::test_support::sample_drill();
         let tool = project.tools[0].clone();
         let toolpath = Toolpath {
@@ -3106,7 +3612,7 @@ mod tests {
                 Move::rapid(Point3::new(50.0, 50.0, 11.0)),
             ],
         };
-        vec![(Operation::Drill(op), tool, toolpath)]
+        vec![(Operation::Drill(op), tool, toolpath).into()]
     }
 
     /// The line after the plunge to the hole bottom (Z −3 on a stock-top
@@ -3142,5 +3648,429 @@ mod tests {
         post.feed_speed.spindle_on_dwell.units = dc_project::DwellUnits::Milliseconds;
         let (program, _) = emit_with(&project, &post, &drill_ops(&project), DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P500");
+    }
+
+    // Canned cycles (`docs/specs/phase-2/design.md`, "Canned cycles";
+    // ported from PureCutCNC `postprocessor.test.ts`). No bundled
+    // definition has canned cycles yet, so these use a test-only one.
+
+    /// The holes the canned tests drill: 8 mm circles at these centres, in
+    /// drawing order.
+    const HOLES: [(f64, f64); 3] = [(20.0, 20.0), (80.0, 30.0), (50.0, 70.0)];
+
+    /// The sample project on grblHAL with the 8 mm circles of [`HOLES`] and
+    /// one Drill of them, 5 mm deep into the 6 mm stock: `cycle`,
+    /// `dwell_s`, `retract_mm`.
+    fn drill_project(
+        cycle: dc_project::DrillCycle,
+        dwell_s: f64,
+        retract_mm: f64,
+    ) -> (Project, dc_project::DrillOp) {
+        let mut project = project_with("grblhal");
+        let hole = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d2"),
+            name: "Hole".into(),
+            profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0)],
+        };
+        project.definitions.insert(hole.id.clone(), hole);
+        let mut targets = Vec::new();
+        for (k, (x, y)) in HOLES.into_iter().enumerate() {
+            let id = dc_project::InstanceId::new(format!("h{}", k + 1));
+            project.instances.push(dc_project::FeatureInstance {
+                id: id.clone(),
+                definition: dc_project::DefinitionId::new("d2"),
+                transform: dc_geometry::Transform::translate(x, y),
+                name: format!("Hole {}", k + 1),
+                visible: true,
+                locked: false,
+                z_top_mm: Some(6.0),
+                z_bottom_mm: Some(0.0),
+            });
+            targets.push(id);
+        }
+        let op = dc_project::DrillOp {
+            targets,
+            cycle,
+            dwell_s,
+            depth_mm: Some(5.0),
+            retract_mm,
+            ..dc_project::test_support::sample_drill()
+        };
+        project.operations = vec![Operation::Drill(op.clone())];
+        (project, op)
+    }
+
+    /// The generated Drill of `op`, with its hole records.
+    fn drill_entry(project: &Project, op: &dc_project::DrillOp) -> Vec<EmitOp> {
+        let (drilled, _) = dc_cam::generate_drill(project, op).unwrap();
+        dc_cam::test_support::assert_safe(
+            &drilled.toolpath,
+            project,
+            &Operation::Drill(op.clone()),
+        );
+        vec![EmitOp::drill(
+            Operation::Drill(op.clone()),
+            project.tools[0].clone(),
+            drilled,
+        )]
+    }
+
+    /// `project`'s post-processor with canned cycles `G81`, `G82`, `G83`,
+    /// `G73`, `G98`, `G80`, a 0.5 mm re-entry gap, and `use_canned_cycles`
+    /// on.
+    fn canned_post(project: &Project) -> PostProcessor {
+        let mut post = post_of(project);
+        post.canned_cycles = Some(CannedCycles {
+            drill_command: Some("G81".into()),
+            drill_with_dwell_command: Some("G82".into()),
+            peck_drill_command: Some("G83".into()),
+            chip_break_drill_command: Some("G73".into()),
+            peck_step_word: "Q".into(),
+            retract_mode: Some(RetractMode::G98),
+            cancel_command: "G80".into(),
+            reentry_gap_mm: Some(0.5),
+        });
+        post.use_canned_cycles = true;
+        post
+    }
+
+    /// The code of every line of `text`.
+    fn codes(text: &str) -> Vec<String> {
+        text.lines().map(code).collect()
+    }
+
+    /// Whether `text` has any canned-cycle word.
+    fn has_cycle_word(text: &str) -> bool {
+        ["G73", "G80", "G81", "G82", "G83", "G98", "G99"]
+            .iter()
+            .any(|w| text.lines().any(|l| has_word(l, w)))
+    }
+
+    /// The lines between the one `G98` and the one `G80` of `text`; also
+    /// asserts the line before `G98` is the rapid over the first hole.
+    fn cycle_lines(text: &str, first: (f64, f64)) -> Vec<String> {
+        let codes = codes(text);
+        let at = |word: &str| -> usize {
+            let found: Vec<usize> = (0..codes.len())
+                .filter(|&i| codes[i].split_whitespace().any(|w| w == word))
+                .collect();
+            assert_eq!(found.len(), 1, "one {word} in\n{text}");
+            found[0]
+        };
+        let (g98, g80) = (at("G98"), at("G80"));
+        assert_eq!(codes[g98], "G98", "{text}");
+        assert_eq!(codes[g80], "G80", "{text}");
+        assert_eq!(
+            codes[g98 - 1],
+            format!("X{:.3} Y{:.3}", first.0, first.1),
+            "the rapid over the first hole at safe Z comes before G98\n{text}"
+        );
+        let last_z = (0..g98)
+            .rev()
+            .find(|&i| codes[i].split_whitespace().any(|w| w.starts_with('Z')))
+            .unwrap();
+        assert_eq!(codes[last_z], "G0 Z5.000", "at safe Z\n{text}");
+        codes[g98 + 1..g80].to_vec()
+    }
+
+    /// The holes' centres in cut order: nearest neighbour from the first.
+    fn cut_order(entry: &EmitOp) -> Vec<(f64, f64)> {
+        entry
+            .holes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|h| (h.centre.x, h.centre.y))
+            .collect()
+    }
+
+    /// Port of `testCannedSimpleG81`: with canned cycles on, a simple Drill
+    /// is a rapid over the first hole at safe Z, `G98` once, one `G81` line
+    /// per hole with its `X Y Z R` (`Z` the bottom 5 mm below the stock-top
+    /// origin, `R` the retract plane 1 mm above it), `F` once, then `G80`,
+    /// and nothing else: no `G1`. The program passes the safety pass, which
+    /// expands each line (S11).
+    #[test]
+    fn drill_simple_writes_g81_per_hole_after_g98_and_ends_g80() {
+        let (project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        let ops = drill_entry(&project, &op);
+        let order = cut_order(&ops[0]);
+        let (program, warnings) = emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lines = cycle_lines(&program.text, order[0]);
+        let expected: Vec<String> = order
+            .iter()
+            .enumerate()
+            .map(|(k, (x, y))| {
+                let head = if k == 0 { "G81 " } else { "" };
+                let feed = if k == 0 { " F300.000" } else { "" };
+                format!("{head}X{x:.3} Y{y:.3} Z-5.000 R1.000{feed}")
+            })
+            .collect();
+        assert_eq!(lines, expected, "{}", program.text);
+        assert!(
+            !program.text.lines().any(|l| has_word(l, "G1")),
+            "no plain cuts\n{}",
+            program.text
+        );
+    }
+
+    /// Port of `testCannedDwellG82`: a simple cycle with a dwell writes
+    /// `G82` with the dwell as `P`, in the definition's dwell units:
+    /// seconds on grblHAL, milliseconds where the definition says so.
+    #[test]
+    fn dwell_writes_g82_with_p() {
+        let (project, op) = drill_project(dc_project::DrillCycle::Simple, 0.5, 1.0);
+        let ops = drill_entry(&project, &op);
+        let order = cut_order(&ops[0]);
+        let post = canned_post(&project);
+        let (program, warnings) = emit_with(&project, &post, &ops, DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lines = cycle_lines(&program.text, order[0]);
+        let (x, y) = order[0];
+        assert_eq!(
+            lines[0],
+            format!("G82 X{x:.3} Y{y:.3} Z-5.000 R1.000 P0.500 F300.000")
+        );
+        assert!(
+            lines[1..].iter().all(|l| l.ends_with("P0.500")),
+            "{lines:?}"
+        );
+        assert!(
+            !program
+                .text
+                .lines()
+                .any(|l| has_word(l, "G4") && has_word(l, "P0.500"))
+        );
+
+        let mut ms = post;
+        ms.feed_speed.spindle_on_dwell.units = DwellUnits::Milliseconds;
+        let (program, _) = emit_with(&project, &ms, &ops, DATE).unwrap();
+        let lines = cycle_lines(&program.text, order[0]);
+        assert!(lines.iter().all(|l| l.contains(" P500")), "{lines:?}");
+    }
+
+    /// Port of `testCannedPeckG83`: a peck with a full retract writes `G83`
+    /// with the peck as `Q`. The controller pecks from `R`, so the program
+    /// is written as cycles only when `R` is the stock top (retract 0);
+    /// with the retract plane above it, the pecks would differ from the
+    /// toolpath's, and the Drill is written as moves, with the reason.
+    #[test]
+    fn peck_writes_g83_with_q() {
+        let peck = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::Full,
+        };
+        let (project, op) = drill_project(peck.clone(), 0.0, 0.0);
+        let ops = drill_entry(&project, &op);
+        let order = cut_order(&ops[0]);
+        let (program, warnings) = emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lines = cycle_lines(&program.text, order[0]);
+        let (x, y) = order[0];
+        assert_eq!(
+            lines[0],
+            format!("G83 X{x:.3} Y{y:.3} Z-5.000 R0.000 Q2.000 F300.000")
+        );
+        assert_eq!(lines.len(), HOLES.len());
+
+        let (project, op) = drill_project(peck, 0.0, 1.0);
+        let ops = drill_entry(&project, &op);
+        let (program, warnings) = emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
+        assert!(!has_cycle_word(&program.text), "{}", program.text);
+        assert_eq!(
+            warnings,
+            [ExportWarning::CannedCycleExpanded {
+                op: op.id.clone(),
+                reason: CannedExpansion::MotionDiffers,
+            }]
+        );
+    }
+
+    /// Port of `testCannedChipBreakingG73`: a chip-break peck writes `G73`
+    /// with the peck as `Q`; the controller's short retract is the
+    /// definition's re-entry gap, the same 0.5 mm as the toolpath's gap.
+    #[test]
+    fn chip_break_writes_g73_with_q() {
+        let chip = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::ChipBreak { gap_mm: 0.5 },
+        };
+        let (project, op) = drill_project(chip, 0.0, 0.0);
+        let ops = drill_entry(&project, &op);
+        let order = cut_order(&ops[0]);
+        let (program, warnings) = emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lines = cycle_lines(&program.text, order[0]);
+        let (x, y) = order[0];
+        assert_eq!(
+            lines[0],
+            format!("G73 X{x:.3} Y{y:.3} Z-5.000 R0.000 Q2.000 F300.000")
+        );
+    }
+
+    /// Port of `testRegressionGrblNoCannedCycles`: GRBL and grblHAL have no
+    /// canned cycles, so a Drill is always `G0`/`G1` moves ending with
+    /// `M30`, with `use_canned_cycles` off (the default) or, in a project
+    /// built in code that validation would refuse, on; then with the
+    /// warning saying why.
+    #[test]
+    fn grbl_never_writes_canned_cycles() {
+        for id in ["grbl", "grblhal"] {
+            let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+            project.post_processor = PostProcessorRef::latest(id).unwrap();
+            let ops = drill_entry(&project, &op);
+            for on in [false, true] {
+                project.post_processor.use_canned_cycles = on;
+                let (program, warnings) = emit(&project, &ops, DATE).unwrap();
+                let text = &program.text;
+                assert!(!has_cycle_word(text), "{id} {on}\n{text}");
+                assert!(text.lines().any(|l| has_word(l, "G0")), "{id}");
+                assert!(text.lines().any(|l| has_word(l, "G1")), "{id}");
+                assert_eq!(text.lines().last(), Some("M30"), "{id}");
+                let expected = if on {
+                    vec![ExportWarning::CannedCycleExpanded {
+                        op: op.id.clone(),
+                        reason: CannedExpansion::NoCannedCycles,
+                    }]
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(warnings, expected, "{id} {on}");
+            }
+        }
+    }
+
+    /// Functional decision 2: canned cycles are off by default. With a
+    /// definition that has them and `use_canned_cycles` off, the program
+    /// is the plain one, with no warning; a new project reference has it
+    /// off.
+    #[test]
+    fn canned_cycles_off_by_default() {
+        let (project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        assert!(!project.post_processor.use_canned_cycles);
+        assert!(
+            !PostProcessorRef::latest("grblhal")
+                .unwrap()
+                .use_canned_cycles
+        );
+        let ops = drill_entry(&project, &op);
+        let mut off = canned_post(&project);
+        off.use_canned_cycles = false;
+        let (program, warnings) = emit_with(&project, &off, &ops, DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!has_cycle_word(&program.text), "{}", program.text);
+        let (plain, _) = emit(&project, &ops, DATE).unwrap();
+        assert_eq!(program.text, plain.text);
+    }
+
+    /// A Drill is written as cycles only if every hole can be: one hole
+    /// whose cycle the definition has no command for, or that has no
+    /// canned equivalent, writes the whole operation as moves, with one
+    /// warning naming the operation and the reason.
+    #[test]
+    fn mixed_cycles_expand_whole_operation_with_warning() {
+        let (project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        let plain = emit(&project, &drill_entry(&project, &op), DATE)
+            .unwrap()
+            .0
+            .text;
+        let mut post = canned_post(&project);
+        if let Some(cycles) = &mut post.canned_cycles {
+            cycles.chip_break_drill_command = None;
+        }
+        for (kind, reason) in [
+            (CannedKind::G73, CannedExpansion::NoCommand(Cycle::G73)),
+            (CannedKind::Expanded, CannedExpansion::CycleNeedsMoves),
+        ] {
+            let mut ops = drill_entry(&project, &op);
+            if let Some(holes) = &mut ops[0].holes {
+                holes[1].cycle = kind;
+            }
+            let (program, warnings) = emit_with(&project, &post, &ops, DATE).unwrap();
+            assert!(!has_cycle_word(&program.text), "{kind:?}\n{}", program.text);
+            assert_eq!(program.text, plain, "{kind:?}: the plain program");
+            assert_eq!(
+                warnings,
+                [ExportWarning::CannedCycleExpanded {
+                    op: op.id.clone(),
+                    reason,
+                }],
+                "{kind:?}"
+            );
+            assert_eq!(warnings[0].code(), "canned_cycle_expanded");
+        }
+    }
+
+    /// A peck with a dwell has no canned cycle (`CannedKind::Expanded`): even
+    /// with canned cycles on it is written as moves, with `G4 P0.500` at the
+    /// bottom of every peck.
+    #[test]
+    fn expanded_dwell_writes_g4() {
+        let peck = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::Full,
+        };
+        let (project, op) = drill_project(peck, 0.5, 0.0);
+        let ops = drill_entry(&project, &op);
+        let (program, warnings) = emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
+        assert!(!has_cycle_word(&program.text), "{}", program.text);
+        assert_eq!(
+            warnings,
+            [ExportWarning::CannedCycleExpanded {
+                op: op.id.clone(),
+                reason: CannedExpansion::CycleNeedsMoves,
+            }]
+        );
+        // Three pecks (2, 2, 1 mm) per hole, each followed by its dwell.
+        let moves = parse_motion(&program.text).unwrap();
+        let blocks = parse_program(&program.text).unwrap();
+        let dwells: Vec<usize> = blocks
+            .iter()
+            .filter(|b| code(program.text.lines().nth(b.line - 1).unwrap()) == "G4 P0.500")
+            .map(|b| b.line)
+            .collect();
+        assert_eq!(dwells.len(), 3 * HOLES.len(), "{}", program.text);
+        for line in dwells {
+            let plunge = moves.iter().rev().find(|m| m.line < line).unwrap();
+            assert_eq!(plunge.kind, MotionKind::Linear, "line {line}");
+            assert!(
+                plunge.to.z.unwrap() < plunge.from.z.unwrap(),
+                "line {line}: a dwell follows a plunge"
+            );
+        }
+    }
+
+    /// Acceptance 24: the canned program's parsed motion, each cycle
+    /// expanded as the controller performs it, is the plain-moves
+    /// program's parsed motion, move for move: same kinds, same ends,
+    /// same feeds. Simple, and a full-retract peck from the stock top.
+    #[test]
+    fn canned_program_motion_equals_plain_program() {
+        let peck = dc_project::DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: dc_project::PeckRetract::Full,
+        };
+        for (cycle, retract_mm, word) in [
+            (dc_project::DrillCycle::Simple, 1.0, "G81"),
+            (peck, 0.0, "G83"),
+        ] {
+            let (project, op) = drill_project(cycle, 0.0, retract_mm);
+            let ops = drill_entry(&project, &op);
+            let post = canned_post(&project);
+            let canned = emit_with(&project, &post, &ops, DATE).unwrap().0.text;
+            assert!(canned.lines().any(|l| has_word(l, word)), "{canned}");
+            let plain = emit(&project, &ops, DATE).unwrap().0.text;
+            let model = CycleModel::of(&post);
+            let expanded = crate::parse::parse_motion_with(&canned, &model).unwrap();
+            let moves = parse_motion(&plain).unwrap();
+            let shape = |m: &crate::MachineMove| {
+                let feed = m.kind.is_cut().then_some(m.feed).flatten();
+                (m.kind, m.to.x, m.to.y, m.to.z, feed)
+            };
+            let expanded: Vec<_> = expanded.iter().map(shape).collect();
+            let moves: Vec<_> = moves.iter().map(shape).collect();
+            assert_eq!(expanded, moves, "{word}\n{canned}\n{plain}");
+        }
     }
 }
