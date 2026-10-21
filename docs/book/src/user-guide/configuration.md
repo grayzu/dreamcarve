@@ -59,8 +59,8 @@ tool_change_mode = "separate_programs"   # or "m6"
 
 Only `init` and `export --post` read the file, when they create a new
 `post_processor` block. A plain `export` or `check` works from the project
-alone. A default the chosen post-processor cannot honour (`"m6"` with GRBL,
-which has no `M6`) stops the command with an error naming the config file,
+alone. A default the chosen post-processor cannot honour (`"m6"` with any
+post-processor but grblHAL, the only one with `M6`) stops the command with an error naming the config file,
 so a project that `check` would reject is never written.
 
 ## Mistakes in the file

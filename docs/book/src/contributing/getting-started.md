@@ -63,9 +63,13 @@ mdbook build docs/book
 ```
 
 CI runs the same commands, on the same pinned toolchain, on Windows, macOS,
-and Linux for every pull request. `cargo test` includes `quick_start_runs_as_written`, which runs the
-[quick start](../quick-start/first-cut.md) as written; if you change a
-command's behaviour or output file, update that chapter in the same pull
+and Linux for every pull request, and also builds the API docs
+(`cargo doc --no-deps --workspace`). `cargo test` includes
+`crates/dreamcarve/tests/quick_start.rs`, which runs the quick start
+chapters ([Your first cut from an SVG](../quick-start/first-cut.md) and
+[A pocketed plaque from DXF](../quick-start/plaque.md)) as written, and
+checks every program excerpt they show; if you change a command's
+behaviour or output file, update those chapters in the same pull
 request.
 
 ## Picking up work

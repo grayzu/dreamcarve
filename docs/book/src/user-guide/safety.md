@@ -219,7 +219,8 @@ It also checks that:
 8. **Stay at the machine** with the emergency stop or feed hold in reach.
    Wear eye and hearing protection, and keep dust extraction running.
 
-Phase 1's first test part, the coaster in the
-[quick start](../quick-start/first-cut.md), has not yet been cut on a real
-machine by the project. Until it has, treat every program as untested and
-watch the air cut closely.
+Neither test part, the coaster in the
+[first quick start](../quick-start/first-cut.md) nor the plaque in the
+[second](../quick-start/plaque.md), has yet been cut on a real machine by
+the project. Until they have, treat every program as untested and watch
+the air cut closely.
