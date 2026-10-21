@@ -77,6 +77,21 @@ pub enum WarningCode {
     /// `instance_name`, `profile`, `requested_mm`, `used_mm` (the smallest
     /// helix diameter cut in that shape).
     HelixDiameterReduced,
+    /// A lead-in or lead-out arc fits a shape only smaller than asked, so
+    /// it is cut at the largest radius and widest sweep that fit
+    /// (`docs/specs/phase-2/design.md`, "Algorithms → Lead-in and
+    /// lead-out"). Params: `op`, `instance`, `instance_name`, `profile`,
+    /// `requested_mm`, `used_mm` (the smallest radius cut on that shape),
+    /// `requested_sweep_deg`, `used_sweep_deg` (the smallest sweep cut).
+    LeadShrunk,
+    /// A lead asked for is not cut. Params: `op`, `reason`; for `no_room`
+    /// and `exit` also `instance`, `instance_name`, `profile`. `no_room`:
+    /// no lead-in fits the shape even at a quarter of the radius, so its
+    /// passes start on the outline (below the tab top only, when only the
+    /// tabs are in the way); `exit`: no lead-out fits where the cut ends,
+    /// so it stops on the outline; `on_line`: an On line Profile has no
+    /// waste side for a lead, so the operation cuts without one.
+    LeadDropped,
     /// The operation's corner relief was not cut. Params: `op`,
     /// `requested` (`dogbone` or `t_bone`), `reason` (`not_supported_yet`
     /// until the relief slice lands).
@@ -137,6 +152,8 @@ impl WarningCode {
             Self::PocketIslandTooClose => "pocket_island_too_close",
             Self::EntryFallback => "entry_fallback",
             Self::HelixDiameterReduced => "helix_diameter_reduced",
+            Self::LeadShrunk => "lead_shrunk",
+            Self::LeadDropped => "lead_dropped",
             Self::ReliefSkipped => "relief_skipped",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
@@ -380,6 +397,32 @@ impl fmt::Display for Warning {
                 self.number("used_mm", DIAMETER_DECIMALS),
                 self.number("requested_mm", DIAMETER_DECIMALS)
             ),
+            WarningCode::LeadShrunk => write!(
+                f,
+                "the lead arc on {} is {} mm in radius over {}°, smaller than the {} mm over {}° asked for, because a larger one does not fit there",
+                self.shape(),
+                self.mm("used_mm"),
+                self.number("used_sweep_deg", 0),
+                self.mm("requested_mm"),
+                self.number("requested_sweep_deg", 0)
+            ),
+            WarningCode::LeadDropped => match self.param("reason") {
+                Some("on_line") => write!(
+                    f,
+                    "operation `{}` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside",
+                    self.text("op")
+                ),
+                Some("exit") => write!(
+                    f,
+                    "there is no room for a lead-out arc where the cut on {} ends, so it stops on the outline",
+                    self.shape()
+                ),
+                _ => write!(
+                    f,
+                    "there is no room for a lead-in arc on {}, even at a quarter of the radius, so its passes start on the outline without one",
+                    self.shape()
+                ),
+            },
             WarningCode::ReliefSkipped => write!(
                 f,
                 "corner relief `{}` is not supported by this build yet, so no corners were relieved",
@@ -535,6 +578,42 @@ mod tests {
         assert_eq!(
             reduced.to_string(),
             "the helix entry in `Slot` (instance `i1`, profile 0) is 2.54 mm across, smaller than the 5.08 mm asked for, because a larger one does not fit there"
+        );
+    }
+
+    #[test]
+    fn lead_warnings_name_the_shape_and_both_sizes() {
+        let shape = |w: Warning| {
+            w.with("op", "o1")
+                .with("instance", "i1")
+                .with("instance_name", "Hole")
+                .with("profile", 0)
+        };
+        let shrunk = shape(Warning::new(WarningCode::LeadShrunk))
+            .with("requested_mm", 30.0)
+            .with("used_mm", 22.5)
+            .with("requested_sweep_deg", 90.0)
+            .with("used_sweep_deg", 45.0);
+        assert_eq!(
+            shrunk.to_string(),
+            "the lead arc on `Hole` (instance `i1`, profile 0) is 22.5 mm in radius over 45°, smaller than the 30 mm over 90° asked for, because a larger one does not fit there"
+        );
+        let no_room = shape(Warning::new(WarningCode::LeadDropped)).with("reason", "no_room");
+        assert_eq!(
+            no_room.to_string(),
+            "there is no room for a lead-in arc on `Hole` (instance `i1`, profile 0), even at a quarter of the radius, so its passes start on the outline without one"
+        );
+        let exit = shape(Warning::new(WarningCode::LeadDropped)).with("reason", "exit");
+        assert_eq!(
+            exit.to_string(),
+            "there is no room for a lead-out arc where the cut on `Hole` (instance `i1`, profile 0) ends, so it stops on the outline"
+        );
+        let on_line = Warning::new(WarningCode::LeadDropped)
+            .with("op", "o1")
+            .with("reason", "on_line");
+        assert_eq!(
+            on_line.to_string(),
+            "operation `o1` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside"
         );
     }
 
