@@ -5192,18 +5192,42 @@ mod tests {
         }
         assert_approx_eq!(laps[3].x_extent_mm(), 66.35, TOL);
 
-        // A last pass as thick as the cut is deep is the only pass.
+        // As thick as a step-down: the usual depths.
         let op = ProfileOp {
             last_pass: Some(LastPass {
-                thickness_mm: Some(LAST_STOCK_MM),
+                thickness_mm: Some(4.0),
                 ..allowance(ALLOWANCE_MM)
             }),
             ..last_pass_op(&p, Side::Outside)
         };
-        let only = super::tests::laps(&generate(&p, &op).0);
-        assert_eq!(only.len(), 1);
-        assert_approx_eq!(only[0].z_mm, 0.0, TOL);
-        assert_approx_eq!(only[0].x_extent_mm(), 66.35, TOL);
+        let usual: Vec<f64> = super::tests::laps(&generate(&p, &op).0)
+            .iter()
+            .map(|l| l.z_mm)
+            .collect();
+        assert_eq!(usual.len(), 3, "{usual:?}");
+        for (z, expected) in usual.iter().zip(LAST_PASS_Z_MM) {
+            assert_approx_eq!(*z, expected, TOL);
+        }
+
+        // The coordinator's rule (#310 review): the last pass is never
+        // thicker than the step-down, so 10 mm, or all 12 mm, of a cut in
+        // 4 mm steps is refused, not cut in one go.
+        for thickness_mm in [10.0, LAST_STOCK_MM] {
+            let op = ProfileOp {
+                last_pass: Some(LastPass {
+                    thickness_mm: Some(thickness_mm),
+                    ..allowance(ALLOWANCE_MM)
+                }),
+                ..last_pass_op(&p, Side::Outside)
+            };
+            let err = generate_profile(&p, &op).expect_err("thicker than the step-down");
+            assert!(
+                matches!(&err, CamError::InvalidLastPass { field: "thickness_mm", value, .. }
+                    if (*value - thickness_mm).abs() <= TOL),
+                "{err:?}"
+            );
+            assert!(err.to_string().contains("4 mm step-down"), "{err}");
+        }
     }
 
     /// Acceptance 46: with `reverse` the last pass runs the other way
@@ -5265,10 +5289,12 @@ mod tests {
     /// below the tab top keeps off the tab the last pass leaves. Placed
     /// tabs and a request, rect and smooth, with and without
     /// `thickness_mm`: on the bottom edge each allowance pass below the
-    /// 5 mm tab top holds the tab top from `a` before the last pass's
-    /// held stretch to `a` after it (smooth: over at least the same
-    /// stretch, rising `a` sooner), and the last pass rises over the tab
-    /// too.
+    /// 5 mm tab top holds the tab top over the last pass's held stretch
+    /// and as far beyond it as its cutter could reach the tab (smooth:
+    /// over at least the same stretch), and the last pass rises over the
+    /// tab too. (changed in the #310 review: the stretch is found from the
+    /// tab's material, not widened by `a`;
+    /// [`last_pass_tabs_keep_off_the_tab_material`] checks it anywhere.)
     #[test]
     fn last_pass_tabs_cover_same_stretch() {
         const TOP_MM: f64 = 5.0;
@@ -5342,9 +5368,22 @@ mod tests {
                     assert_eq!(rough.len(), below, "{case}: {rough:?}");
                     for (ax1, ax2) in rough {
                         match shape {
+                            // The allowance cutter reaches the tab's
+                            // corner where it meets the waste
+                            // √(2ar − a²) = 1.71 mm before the stretch,
+                            // so it rises at least that soon, and not much
+                            // more than a sampling step sooner.
                             TabShape::Rect => {
-                                assert_approx_eq!(ax1, fx1 - ALLOWANCE_MM, 1e-6);
-                                assert_approx_eq!(ax2, fx2 + ALLOWANCE_MM, 1e-6);
+                                let reach_mm = (2.0 * ALLOWANCE_MM * R_MM
+                                    - ALLOWANCE_MM * ALLOWANCE_MM)
+                                    .sqrt();
+                                for (rise_mm, end) in [(fx1 - ax1, "before"), (ax2 - fx2, "after")]
+                                {
+                                    assert!(
+                                        rise_mm >= reach_mm - 1e-6 && rise_mm <= reach_mm + 1.0,
+                                        "{case}: raised {rise_mm} mm {end} the stretch"
+                                    );
+                                }
                             }
                             TabShape::Smooth => {
                                 assert!(ax1 <= fx1 + 1e-6 && ax2 >= fx2 - 1e-6, "{case}");
@@ -5354,6 +5393,308 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A 5-point star of `outer_mm` and `inner_mm` radii centred at
+    /// (40, 40), counter-clockwise from a tip on +X.
+    fn star(outer_mm: f64, inner_mm: f64) -> Polyline {
+        let points: Vec<Vertex> = (0..10)
+            .map(|k| {
+                let radius = if k % 2 == 0 { outer_mm } else { inner_mm };
+                let angle = f64::from(k) * PI / 5.0;
+                Vertex::line(40.0 + radius * angle.cos(), 40.0 + radius * angle.sin())
+            })
+            .collect();
+        Polyline::new(points, true)
+    }
+
+    /// Points along every cutting move of `moves`, from `from`, at most
+    /// `step_mm` apart, arcs along the arc, Z interpolated.
+    fn cut_points(from: Point3, moves: &[Move], step_mm: f64) -> Vec<Point3> {
+        let mut out = Vec::new();
+        let mut at = from;
+        for mv in moves {
+            if !mv.is_rapid() {
+                let arc = match mv.kind {
+                    MoveKind::ArcCcw { centre } => Some((centre, true)),
+                    MoveKind::ArcCw { centre } => Some((centre, false)),
+                    _ => None,
+                };
+                let (length_mm, point_at): (f64, Box<dyn Fn(f64) -> Point>) = match arc {
+                    Some((centre, ccw)) => {
+                        let sweep = sweep_rad(at.xy(), mv.to.xy(), centre, ccw);
+                        let radius = at.xy().distance_to(centre);
+                        let start = (at.y - centre.y).atan2(at.x - centre.x);
+                        (
+                            radius * sweep.abs(),
+                            Box::new(move |f: f64| {
+                                let angle = start + sweep * f;
+                                Point::new(
+                                    centre.x + radius * angle.cos(),
+                                    centre.y + radius * angle.sin(),
+                                )
+                            }),
+                        )
+                    }
+                    None => {
+                        let (a, b) = (at.xy(), mv.to.xy());
+                        (a.distance_to(b), Box::new(move |f: f64| a + (b - a) * f))
+                    }
+                };
+                let steps = (length_mm / step_mm).ceil().max(1.0);
+                let mut k = 0.0;
+                while k <= steps {
+                    let f = k / steps;
+                    let p = point_at(f);
+                    out.push(Point3::new(p.x, p.y, at.z + (mv.to.z - at.z) * f));
+                    k += 1.0;
+                }
+            }
+            at = mv.to;
+        }
+        out
+    }
+
+    /// The independent tab check the #310 review asked for, on the
+    /// emitted moves: over every point of the stock the last pass leaves
+    /// standing above its floor (a tab's material: within the radius of
+    /// its cuts, none of which within the radius is that low), no cut of
+    /// an earlier pass comes within the radius below that height. Points
+    /// are on a 0.15 mm lattice; the radius is held 0.03 mm short and the
+    /// height 0.01 mm, for the lattice and the moves' sampling. Returns
+    /// the worst cut below a standing height, mm, and how many lattice
+    /// points stand.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "lattice indices of coordinates within the stock"
+    )]
+    fn earlier_cuts_into_tabs(tp: &Toolpath, split: usize, floor_mm: f64) -> (f64, usize) {
+        const LATTICE_MM: f64 = 0.15;
+        let last = cut_points(tp.moves[split].to, &tp.moves[split + 1..], 0.05);
+        let earlier = cut_points(tp.moves[0].to, &tp.moves[..split], 0.05);
+        let cell = R_MM;
+        let key = |p: Point| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+        let mut buckets: BTreeMap<(i64, i64), Vec<Point3>> = BTreeMap::new();
+        for p in &last {
+            buckets.entry(key(p.xy())).or_default().push(*p);
+        }
+        let mut earlier_buckets: BTreeMap<(i64, i64), Vec<Point3>> = BTreeMap::new();
+        for p in &earlier {
+            earlier_buckets.entry(key(p.xy())).or_default().push(*p);
+        }
+        let near = |map: &BTreeMap<(i64, i64), Vec<Point3>>, p: Point, reach: f64| {
+            let (i, j) = key(p);
+            let mut found = Vec::new();
+            for di in -1..=1 {
+                for dj in -1..=1 {
+                    if let Some(points) = map.get(&(i + di, j + dj)) {
+                        found.extend(points.iter().filter(|q| q.xy().distance_to(p) < reach));
+                    }
+                }
+            }
+            found
+        };
+        // Lattice points round every raised cut of the last pass.
+        let mut lattice: std::collections::BTreeSet<(i64, i64)> = Default::default();
+        let steps = (R_MM / LATTICE_MM).ceil() as i64;
+        for p in last.iter().filter(|p| p.z > floor_mm + 1e-6) {
+            let (ci, cj) = (
+                (p.x / LATTICE_MM).round() as i64,
+                (p.y / LATTICE_MM).round() as i64,
+            );
+            for di in -steps..=steps {
+                for dj in -steps..=steps {
+                    lattice.insert((ci + di, cj + dj));
+                }
+            }
+        }
+        let mut worst: f64 = 0.0;
+        let mut standing = 0;
+        for (i, j) in lattice {
+            let p = Point::new(i as f64 * LATTICE_MM, j as f64 * LATTICE_MM);
+            let cuts = near(&buckets, p, R_MM);
+            let Some(height) = cuts.iter().map(|q| q.z).reduce(f64::min) else {
+                continue;
+            };
+            if height <= floor_mm + 1e-6 {
+                continue;
+            }
+            standing += 1;
+            for q in near(&earlier_buckets, p, R_MM - 0.03) {
+                worst = worst.max(height - 0.01 - q.z);
+            }
+        }
+        (worst, standing)
+    }
+
+    /// The #310 review's repro: four 8 × 6 mm tabs, 12 mm deep in 2 mm
+    /// steps with a 0.5 mm allowance, on a star, so the passes at Z 4 and
+    /// 2 are earlier passes below the tab top. Outside the star of radii
+    /// 35 and 15; Inside one of 35 and 26, whose tips are 93°, as the
+    /// sharper star is refused Inside
+    /// ([`last_pass_refuses_a_last_pass_thicker_than_the_allowance`]).
+    /// Rect and smooth, requested and placed: no earlier pass cuts below
+    /// what the last pass leaves standing, anywhere over a tab.
+    #[test]
+    fn last_pass_tabs_keep_off_the_tab_material() {
+        for (side, outline) in [
+            (Side::Outside, star(35.0, 15.0)),
+            (Side::Inside, star(35.0, 26.0)),
+        ] {
+            let mut p = last_pass_project_of(vec![outline]);
+            p.stock.width_mm = 300.0;
+            for shape in [TabShape::Rect, TabShape::Smooth] {
+                let op = ProfileOp {
+                    step_down_mm: Some(2.0),
+                    tabs: Some(TabSpec {
+                        placement: TabPlacement::Count { count: 4 },
+                        width_mm: 8.0,
+                        height_mm: 6.0,
+                        shape,
+                        on_holes: false,
+                    }),
+                    ..last_pass_op(&p, side)
+                };
+                let placed = crate::placed_tabs::place_requests(&{
+                    let mut q = p.clone();
+                    q.operations = vec![Operation::Profile(op.clone())];
+                    q
+                })
+                .unwrap()
+                .0;
+                let placed_op = match &placed.operations[0] {
+                    Operation::Profile(op) => op.clone(),
+                    _ => unreachable!("a Profile"),
+                };
+                for (case, project, op) in [("requested", &p, &op), ("placed", &placed, &placed_op)]
+                {
+                    let case = format!("{side:?} {shape:?} {case}");
+                    let (tp, _) = generate(project, op);
+                    let split = last_pass_start(&tp, 2.0, LAST_SAFE_Z_MM);
+                    let (worst_mm, standing) = earlier_cuts_into_tabs(&tp, split, 0.0);
+                    assert!(
+                        standing > 100,
+                        "{case}: the last pass leaves tabs: {standing}"
+                    );
+                    assert!(
+                        worst_mm <= 0.0,
+                        "{case}: an earlier pass cuts {worst_mm} mm into a tab"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The #310 review: the last pass may take off no more than the
+    /// allowance, √2 times it in a 90° corner, plus 0.05 mm. A notch or
+    /// tip the earlier passes skip, which the last pass would cut whole
+    /// at full depth, is refused: Outside, a 7 × 3 mm notch with 0.5 mm and
+    /// a 10 × 4 mm notch with 2.1 mm; Inside, a tip of 10° half-angle and
+    /// the review's star of radii 35 and 15, whose 42° tips the last pass
+    /// would cut 1.4 mm thick. Square corners are cut at any allowance up
+    /// to a third of the bit: a rectangle Inside and Outside and an L
+    /// Outside at 2.1 mm.
+    #[test]
+    fn last_pass_refuses_a_last_pass_thicker_than_the_allowance() {
+        let points = |pts: &[(f64, f64)]| {
+            Polyline::new(pts.iter().map(|&(x, y)| Vertex::line(x, y)).collect(), true)
+        };
+        let notched = |width: f64, depth: f64| {
+            let (l, r) = (30.0 - width / 2.0, 30.0 + width / 2.0);
+            points(&[
+                (0.0, 0.0),
+                (60.0, 0.0),
+                (60.0, 40.0),
+                (r, 40.0),
+                (r, 40.0 - depth),
+                (l, 40.0 - depth),
+                (l, 40.0),
+                (0.0, 40.0),
+            ])
+        };
+        let half = 10.0_f64.to_radians().tan() * 30.0;
+        let tipped = points(&[
+            (0.0, 20.0),
+            (30.0, 20.0 - half),
+            (30.0, 0.0),
+            (70.0, 0.0),
+            (70.0, 40.0),
+            (30.0, 40.0),
+            (30.0, 20.0 + half),
+        ]);
+        let refused = [
+            ("7 × 3 notch", Side::Outside, notched(7.0, 3.0), 0.5),
+            ("10 × 4 notch", Side::Outside, notched(10.0, 4.0), 2.1),
+            ("10° tip", Side::Inside, tipped, 0.5),
+            ("42° star tips", Side::Inside, star(35.0, 15.0), 0.5),
+        ];
+        for (case, side, outline, allowance_mm) in refused {
+            let p = last_pass_project_of(vec![outline]);
+            let op = ProfileOp {
+                last_pass: Some(allowance(allowance_mm)),
+                ..last_pass_op(&p, side)
+            };
+            let err = generate_profile(&p, &op).expect_err(case);
+            assert!(
+                matches!(err, CamError::ShapeNarrowerThanAllowance { .. }),
+                "{case}: {err:?}"
+            );
+            generate(
+                &p,
+                &ProfileOp {
+                    last_pass: None,
+                    ..op
+                },
+            );
+        }
+        let ell = points(&[
+            (0.0, 0.0),
+            (60.0, 0.0),
+            (60.0, 20.0),
+            (30.0, 20.0),
+            (30.0, 40.0),
+            (0.0, 40.0),
+        ]);
+        for (case, side, outline) in [
+            ("rectangle", Side::Inside, rect_60x40()),
+            ("rectangle", Side::Outside, rect_60x40()),
+            ("L", Side::Outside, ell),
+        ] {
+            let p = last_pass_project_of(vec![outline]);
+            let op = ProfileOp {
+                last_pass: Some(allowance(2.1)),
+                ..last_pass_op(&p, side)
+            };
+            generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case} {side:?}: {e}"));
+        }
+    }
+
+    /// #310 review: a cut of one pass has no pass before the last to
+    /// leave the allowance, so it cuts as without a last pass and warns
+    /// `last_pass_unused`.
+    #[test]
+    fn last_pass_on_a_one_pass_cut_warns_unused() {
+        let p = rect_project();
+        let op = ProfileOp {
+            depth_mm: Some(2.0),
+            ..profile_op(&p, Side::Outside, CutDirection::Climb)
+        };
+        let (plain, plain_warnings) = generate(&p, &op);
+        assert!(plain_warnings.is_empty(), "{plain_warnings:?}");
+        let (with, warnings) = generate(
+            &p,
+            &ProfileOp {
+                last_pass: Some(allowance(ALLOWANCE_MM)),
+                ..op
+            },
+        );
+        assert_eq!(with, plain);
+        assert_eq!(codes(&warnings), vec![WarningCode::LastPassUnused]);
+        assert!(
+            warnings[0].to_string().contains("one pass"),
+            "{}",
+            warnings[0]
+        );
     }
 
     /// #284: Inside, an island 7 mm from the outline leaves room for the
@@ -5379,6 +5720,7 @@ mod tests {
             band_mm,
             diameter_mm,
             allowance_mm,
+            needed_mm,
         } = &err
         else {
             panic!("expected BandNarrowerThanAllowance, got {err:?}");
@@ -5388,8 +5730,16 @@ mod tests {
         assert_approx_eq!(*band_mm, 7.0, TOL);
         assert_approx_eq!(*diameter_mm, 6.35, TOL);
         assert_approx_eq!(*allowance_mm, ALLOWANCE_MM, TOL);
+        assert_approx_eq!(*needed_mm, 7.35, TOL);
         let text = err.to_string();
-        for needle in ["`o1`", "7.000 mm", "6.35 mm", "0.5 mm", "allowance"] {
+        for needle in [
+            "`o1`",
+            "7.000 mm",
+            "7.350 mm",
+            "6.35 mm",
+            "0.5 mm",
+            "allowance",
+        ] {
             assert!(text.contains(needle), "{needle:?} in {text}");
         }
     }

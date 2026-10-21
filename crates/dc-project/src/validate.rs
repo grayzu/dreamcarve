@@ -3701,7 +3701,7 @@ mod tests {
     #[test]
     fn last_pass_thickness_range() {
         let mut p = sample_project();
-        for thickness_mm in [0.5, 2.0, 6.0] {
+        for thickness_mm in [0.5, 2.0] {
             profile_mut(&mut p).last_pass = Some(LastPass {
                 thickness_mm: Some(thickness_mm),
                 ..last_pass(0.5)
@@ -3737,6 +3737,54 @@ mod tests {
             "{:?}",
             validate(&p)
         );
+    }
+
+    /// #310 review: the last pass is at most one step-down thick, the
+    /// operation's when it sets one, else the tool's: the sample's 2 mm
+    /// tool step-down allows 2 mm and refuses 2.5 and 6, at the thickness;
+    /// with the operation's 4 mm, 3 is fine.
+    #[test]
+    fn last_pass_thickness_at_most_step_down() {
+        let mut p = sample_project();
+        for (thickness_mm, step_down_mm) in [(2.5, None), (6.0, None), (4.5, Some(4.0))] {
+            let op = profile_mut(&mut p);
+            op.step_down_mm = step_down_mm;
+            op.last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            let problems = validate(&p);
+            let (field, step) = match step_down_mm {
+                Some(step) => ("operations[o1].step_down_mm", step),
+                None => ("tools[t1].step_down_mm", 2.0),
+            };
+            let expected = Problem::LastPassThickerThanStepDown {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                thickness_mm,
+                step_down_mm: step,
+                step_down_field: field.into(),
+            };
+            assert_eq!(problems, vec![expected.clone()], "{thickness_mm}");
+            assert!(expected.is_error());
+            assert_eq!(expected.code(), "last_pass_thicker_than_step_down");
+            assert_eq!(
+                expected.field().as_deref(),
+                Some("operations[o1].last_pass.thickness_mm")
+            );
+            let message = expected.to_string();
+            assert!(
+                message.contains(field) && message.contains("step-down"),
+                "{message}"
+            );
+        }
+        let op = profile_mut(&mut p);
+        op.step_down_mm = Some(4.0);
+        op.last_pass = Some(LastPass {
+            thickness_mm: Some(3.0),
+            ..last_pass(0.5)
+        });
+        assert_eq!(validate(&p), vec![]);
     }
 
     /// Functional spec, capability 16: a ramp steeper than 45° is a

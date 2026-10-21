@@ -927,7 +927,7 @@ mod tests {
             root["instances"][0][key] = Value::Null;
             let err = migrate(root, 5).unwrap_err();
             assert!(
-                matches!(&err, LoadError::Migration { from: 5, to: 6, message }
+                matches!(&err, LoadError::Migration { from: 5, to: 6, message, .. }
                     if message.contains(&format!("instances[0].{key}"))),
                 "{err:?}"
             );
@@ -1083,7 +1083,7 @@ mod tests {
         root.as_object_mut().unwrap().remove("post_processor");
         let err = migrate(root, 6).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 6, to: 7, message }
+            matches!(&err, LoadError::Migration { from: 6, to: 7, message, .. }
                 if message.contains("post_processor")),
             "{err:?}"
         );
@@ -1152,6 +1152,7 @@ mod tests {
                 from: 6,
                 to: 7,
                 message,
+                ..
             }) => message,
             other => panic!("a migration error from 6 to 7: {other:?}"),
         }
@@ -1285,7 +1286,7 @@ mod tests {
             edit(&mut root);
             let err = migrate(root, 7).unwrap_err();
             assert!(
-                matches!(&err, LoadError::Migration { from: 7, to: 8, message }
+                matches!(&err, LoadError::Migration { from: 7, to: 8, message, .. }
                     if message.contains(key)),
                 "{key}: {err:?}"
             );
@@ -1335,7 +1336,7 @@ mod tests {
         root["operations"][0]["tabs"]["on_holes"] = json!(false);
         let err = migrate(root, 8).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 8, to: 9, message }
+            matches!(&err, LoadError::Migration { from: 8, to: 9, message, .. }
                 if message.contains("on_holes")),
             "{err:?}"
         );
@@ -1388,7 +1389,7 @@ mod tests {
         root["tabs"] = json!([]);
         let err = migrate(root, 10).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 10, to: 11, message }
+            matches!(&err, LoadError::Migration { from: 10, to: 11, message, .. }
                 if message.contains("tabs")),
             "{err:?}"
         );
@@ -1469,7 +1470,7 @@ mod tests {
         already["heights"] = json!({});
         let err = migrate(already, 11).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 11, to: 12, message }
+            matches!(&err, LoadError::Migration { from: 11, to: 12, message, .. }
                 if message.contains("heights")),
             "{err:?}"
         );
@@ -1537,9 +1538,37 @@ mod tests {
         root["operations"][0]["last_pass"] = Value::Null;
         let err = migrate(root, 12).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 12, to: 13, message }
+            matches!(&err, LoadError::Migration { from: 12, to: 13, message, .. }
                 if message.contains("last_pass")),
             "{err:?}"
+        );
+    }
+
+    /// #310 review: loaded from a file, a migration that fails on a key
+    /// the file should not have says where that key is, as a schema error
+    /// does.
+    #[test]
+    fn v12_with_last_pass_says_where() {
+        let text = String::from_utf8(V12_FIXTURE.to_vec()).unwrap().replacen(
+            "\"corner_relief\": \"none\"",
+            "\"corner_relief\": \"none\",\n      \"last_pass\": null",
+            1,
+        );
+        let line = text
+            .lines()
+            .position(|l| l.contains("\"last_pass\""))
+            .unwrap()
+            + 1;
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 12, to: 13, at: Some(at), .. }
+                if at.line == line && at.column == 20),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("(line {line}, column 20)")),
+            "{err}"
         );
     }
 
