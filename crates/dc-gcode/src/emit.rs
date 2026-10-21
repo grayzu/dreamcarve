@@ -72,6 +72,7 @@ use crate::ExportError;
 use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
+use crate::material::Material;
 use crate::parse::{CycleModel, parse_program_with};
 use crate::safety::{self, DWELL_TOLERANCE_S, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
@@ -745,14 +746,21 @@ fn emit_enabled(
     };
     let text = w.finish();
 
-    // Step 7: the safety pass, on the text.
+    // Step 7: the safety pass, on the text. The material each operation
+    // may cut (S9) comes from the project, not from the generator.
+    let materials: Vec<Material> = planned
+        .iter()
+        .map(|&(op, ..)| Material::of(project, op))
+        .collect();
     let spans: Vec<OpSpan<'_>> = planned
         .iter()
         .zip(lines)
-        .map(|(&(op, tool, toolpath, ..), lines)| OpSpan {
+        .zip(&materials)
+        .map(|((&(op, tool, toolpath, ..), lines), material)| OpSpan {
             op,
             tool,
             toolpath,
+            material,
             lines,
         })
         .collect();

@@ -1225,11 +1225,13 @@ mod tests {
     fn generator_descent_is_used_and_zero_length_moves_are_dropped() {
         let mut blocks = squares("s", 5.0, 0.0, 20.0, 2);
         // Pass 0 ramps in from (0, 0): plunge to the stock top, ramp to
-        // the entry at Z 4.
+        // the entry at Z 4, 2 mm down over 5 mm at the feed scaled so it
+        // falls at the plunge rate (S10).
+        let ramp_mm_min = PLUNGE_MM_MIN * 29f64.sqrt() / 2.0;
         blocks[0].descent_from = Point::new(0.0, 0.0);
         blocks[0].descent = vec![
             Move::linear(Point3::new(0.0, 0.0, THICKNESS_MM), PLUNGE_MM_MIN),
-            Move::linear(Point3::new(5.0, 0.0, 4.0), FEED_MM_MIN),
+            Move::linear(Point3::new(5.0, 0.0, 4.0), ramp_mm_min),
         ];
         // Pass 1's descent starts with a move to where pass 0 ended.
         blocks[1].descent = vec![
@@ -1243,7 +1245,7 @@ mod tests {
             m[1],
             Move::linear(Point3::new(0.0, 0.0, THICKNESS_MM), PLUNGE_MM_MIN)
         );
-        assert_eq!(m[2], Move::linear(Point3::new(5.0, 0.0, 4.0), FEED_MM_MIN));
+        assert_eq!(m[2], Move::linear(Point3::new(5.0, 0.0, 4.0), ramp_mm_min));
         assert_eq!(m[6].to, Point3::new(5.0, 0.0, 4.0), "last cut of pass 0");
         assert_eq!(
             m[7],
