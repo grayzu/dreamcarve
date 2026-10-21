@@ -3744,6 +3744,44 @@ mod tests {
         check_material_text(left_edge, &narrow, &op).unwrap();
     }
 
+    /// #175: an On line Profile cuts its targets' open paths, so S9 holds
+    /// it to them as an Engrave: the generated program of an open line
+    /// (with the sample's tabs and a ramp along the line) passes, and a
+    /// hand-written cut beside the line fails.
+    #[test]
+    fn on_line_profile_of_an_open_path_passes_s9() {
+        let mut project = sample_project();
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles.push(dc_geometry::Polyline::new(
+                vec![
+                    dc_geometry::Vertex::line(0.0, 50.0),
+                    dc_geometry::Vertex::line(60.0, 50.0),
+                ],
+                false,
+            ));
+        }
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.side = dc_project::Side::OnLine;
+        op.entry = dc_project::Entry::Ramp { angle_deg: 15.0 };
+        let op = op.clone();
+        let (toolpath, _) = generate_profile(&project, &op).unwrap();
+        let op = Operation::Profile(op);
+        emit(
+            &project,
+            &[(op.clone(), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
+        let along = "G21 G90\nG54\nG0 Z5\nX10 Y60\nG1 Z-1 F300\nX70 F1000\nG0 Z5\n";
+        check_material_text(along, &project, &op).unwrap();
+        let beside = "G21 G90\nG54\nG0 Z5\nX10 Y62\nG1 Z-1 F300\nX70 F1000\nG0 Z5\n";
+        let err = check_material_text(beside, &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+            "{err:?}"
+        );
+    }
+
     /// The generated sample Profile with `edit` applied, emitted: tabs and
     /// whatever entry, lead and relief `edit` sets.
     fn emit_profile(edit: impl FnOnce(&mut dc_project::ProfileOp)) -> Result<String, ExportError> {

@@ -2068,6 +2068,37 @@ mod tests {
         assert!(open(&p), "a disabled Engrave cuts nothing");
     }
 
+    /// #175: an On line Profile cuts open paths too, so an open profile of
+    /// a definition an enabled On line Profile targets is not reported.
+    /// Inside and Outside skip open paths, so the warning stays for them,
+    /// and its message names what does cut an open path.
+    #[test]
+    fn open_profile_cut_on_line_is_not_reported() {
+        let mut p = sample_project();
+        p.definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1")
+            .profiles
+            .push(Polyline::new(
+                vec![Vertex::new(0.0, 40.0, 0.0), Vertex::new(50.0, 40.0, 0.0)],
+                false,
+            ));
+        let open = |p: &Project| {
+            validate(p)
+                .into_iter()
+                .find(|q| matches!(q, Problem::OpenProfile { .. }))
+        };
+        let message = open(&p).expect("Outside skips it").to_string();
+        assert!(
+            message.contains("On line") && message.contains("Engrave"),
+            "{message}"
+        );
+        profile_mut(&mut p).side = Side::OnLine;
+        assert!(open(&p).is_none(), "{:?}", validate(&p));
+        profile_mut(&mut p).enabled = false;
+        assert!(open(&p).is_some(), "a disabled Profile cuts nothing");
+    }
+
     /// The fields of every error-class problem, in order.
     fn error_fields(problems: &[Problem]) -> Vec<String> {
         problems

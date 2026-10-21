@@ -1547,6 +1547,12 @@ mod tests {
         assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
         assert_eq!(warnings[0].param("instance"), Some("i1"));
         assert_eq!(warnings[0].param("profile"), Some("1"));
+        // #175: the message says what does cut it.
+        let message = warnings[0].to_string();
+        assert!(
+            message.contains("On line") && message.contains("Engrave"),
+            "{message}"
+        );
         let laps = laps(&tp);
         assert_eq!(laps.len(), PASS_Z_MM.len(), "only the rect is cut");
         for lap in &laps {
@@ -2172,5 +2178,318 @@ mod tests {
                 (Some("2"), Some("i2")),
             ]
         );
+    }
+
+    // ── #176: the start moves off a tab ──
+
+    fn ramp_15() -> Entry {
+        Entry::Ramp { angle_deg: 15.0 }
+    }
+
+    /// One `shape` tab 8 mm wide and 3 mm tall (so the passes at Z 2 and 0
+    /// rise over it), centred `at_mm` along the path.
+    fn tab_at(at_mm: f64, shape: TabShape) -> TabSpec {
+        TabSpec {
+            placement: TabPlacement::AtDistances {
+                distances_mm: vec![at_mm],
+            },
+            width_mm: 8.0,
+            height_mm: TAB_TOP_MM,
+            shape,
+        }
+    }
+
+    const TAB_TOP_MM: f64 = 3.0;
+    /// Length of path one 8 mm tab raises with the 6.35 mm tool.
+    const TAB_SPAN_MM: f64 = 8.0 + 6.35;
+
+    /// Every straight-down feed move that ends below the stock top, with
+    /// the point it starts from.
+    fn plunges_below_top(tp: &Toolpath) -> Vec<(Point3, Move)> {
+        tp.moves
+            .windows(2)
+            .filter(|w| {
+                let (from, mv) = (w[0].to, w[1]);
+                !mv.is_rapid()
+                    && mv.to.z < from.z - EPS_MM
+                    && from.xy().distance_to(mv.to.xy()) <= EPS_MM
+                    && mv.to.z < THICKNESS_MM - EPS_MM
+            })
+            .map(|w| (w[0].to, w[1]))
+            .collect()
+    }
+
+    /// Where the first move that falls while it moves in XY (the first
+    /// ramp leg) starts.
+    fn first_ramp_start(tp: &Toolpath) -> Point {
+        tp.moves
+            .windows(2)
+            .find(|w| {
+                let (from, mv) = (w[0].to, w[1]);
+                !mv.is_rapid()
+                    && mv.to.z < from.z - EPS_MM
+                    && from.xy().distance_to(mv.to.xy()) > EPS_MM
+            })
+            .map(|w| w[0].to.xy())
+            .expect("the toolpath ramps")
+    }
+
+    /// The level cutting moves at the tab top, as `(from, to)` in XY.
+    fn held_at_tab_top(tp: &Toolpath) -> Vec<(Point, Point)> {
+        tp.moves
+            .windows(2)
+            .filter(|w| {
+                let (from, mv) = (w[0].to, w[1]);
+                !mv.is_rapid()
+                    && (from.z - TAB_TOP_MM).abs() <= EPS_MM
+                    && (mv.to.z - TAB_TOP_MM).abs() <= EPS_MM
+                    && from.xy().distance_to(mv.to.xy()) > EPS_MM
+            })
+            .map(|w| (w[0].to.xy(), w[1].to.xy()))
+            .collect()
+    }
+
+    /// #176: with a tab centred on the path's start, a ramp below the tab
+    /// top would run through the tab, so slice 10 plunged onto it with
+    /// `entry_fallback`. The start moves to where the ramp fits clear of
+    /// the tab: no entry falls back and no straight plunge goes below the
+    /// stock top, on every side. A start the ramp already fits at stays.
+    #[test]
+    fn start_under_a_tab_moves_so_the_ramp_fits() {
+        let p = rect_project();
+        for side in [Side::Inside, Side::Outside, Side::OnLine] {
+            let mut op = profile_op(&p, side, CutDirection::Climb);
+            op.entry = ramp_15();
+            let (untabbed, _) = generate(&p, &op);
+            let start = first_ramp_start(&untabbed);
+
+            op.tabs = Some(tab_at(0.0, TabShape::Smooth));
+            let (tp, warnings) = generate(&p, &op);
+            assert!(
+                !codes(&warnings).contains(&WarningCode::EntryFallback),
+                "{side:?}: {warnings:?}"
+            );
+            assert!(
+                plunges_below_top(&tp).is_empty(),
+                "{side:?}: {:?}",
+                plunges_below_top(&tp)
+            );
+            assert!(
+                first_ramp_start(&tp).distance_to(start) > TAB_SPAN_MM / 2.0,
+                "{side:?}: the start left the tab"
+            );
+
+            // Two tabs, a quarter and three quarters round: the ramp fits
+            // at the start, which is kept.
+            op.tabs = Some(TabSpec {
+                placement: TabPlacement::Count { count: 2 },
+                ..tab_at(0.0, TabShape::Smooth)
+            });
+            let (kept, warnings) = generate(&p, &op);
+            assert!(
+                !codes(&warnings).contains(&WarningCode::EntryFallback),
+                "{side:?}: {warnings:?}"
+            );
+            assert!(
+                first_ramp_start(&kept).distance_to(start) <= EPS_MM,
+                "{side:?}: the start is kept"
+            );
+        }
+    }
+
+    /// #176: moving the start does not move the tabs. A tab is placed by
+    /// its distance from the path's own start, where the plunge entry
+    /// (which keeps the start) cuts it; with a ramp the start moves and
+    /// the tab top is held over exactly the same stretch.
+    #[test]
+    fn tab_positions_do_not_move_when_the_seam_moves() {
+        let p = rect_project();
+        for side in [Side::Inside, Side::Outside, Side::OnLine] {
+            let mut op = profile_op(&p, side, CutDirection::Climb);
+            op.tabs = Some(tab_at(0.0, TabShape::Rect));
+            let (plunged, _) = generate(&p, &op);
+            // The plunge entry starts at the path start, the tab's centre.
+            let centre = plunged.moves[0].to.xy();
+            op.entry = ramp_15();
+            let (ramped, warnings) = generate(&p, &op);
+            assert!(
+                !codes(&warnings).contains(&WarningCode::EntryFallback),
+                "{side:?}: {warnings:?}"
+            );
+            assert!(
+                ramped.moves[0].to.xy().distance_to(centre) > TAB_SPAN_MM / 2.0,
+                "{side:?}: the seam moved off the tab"
+            );
+            let length = |held: &[(Point, Point)]| -> f64 {
+                held.iter().map(|(a, b)| a.distance_to(*b)).sum()
+            };
+            let (before, after) = (held_at_tab_top(&plunged), held_at_tab_top(&ramped));
+            // Two passes (Z 2 and 0) below the tab top, one span each.
+            assert_approx_eq!(length(&before), 2.0 * TAB_SPAN_MM, 1e-6);
+            assert_approx_eq!(length(&after), length(&before), 1e-6);
+            for (a, b) in after {
+                for q in [a, b] {
+                    assert!(
+                        q.distance_to(centre) <= TAB_SPAN_MM / 2.0 + 1e-6,
+                        "{side:?}: {q:?} is held off the tab at {centre:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // ── #175: On line Profile of an open path ──
+
+    /// A 100 mm open line from (20, 20) to (120, 20).
+    fn line_project() -> Project {
+        project(
+            vec![Polyline::new(
+                vec![Vertex::line(0.0, 0.0), Vertex::line(100.0, 0.0)],
+                false,
+            )],
+            &[("i1", at_20_20())],
+        )
+    }
+
+    /// Every move that cuts in XY, with the point it starts from.
+    fn xy_cuts(tp: &Toolpath) -> Vec<(Point3, Move)> {
+        tp.moves
+            .windows(2)
+            .filter(|w| !w[1].is_rapid() && w[0].to.xy().distance_to(w[1].to.xy()) > EPS_MM)
+            .map(|w| (w[0].to, w[1]))
+            .collect()
+    }
+
+    /// #175: an On line Profile cuts an open path, as VCarve's Profile
+    /// "On" cuts an open vector. Each pass runs the line from its first
+    /// vertex to its last at the pass Z, then the tool retracts and comes
+    /// back to the first vertex for the next.
+    #[test]
+    fn on_line_cuts_an_open_path() {
+        let p = line_project();
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let laps = laps(&tp);
+        assert_eq!(laps.len(), PASS_Z_MM.len(), "{laps:?}");
+        for (lap, z) in laps.iter().zip(PASS_Z_MM) {
+            assert_approx_eq!(lap.z_mm, z, TOL);
+            assert_approx_eq!(lap.x_extent_mm(), 100.0, TOL);
+            assert!(lap.points.iter().all(|q| (q.y - 20.0).abs() <= TOL));
+            assert!(lap.points[0].distance_to(Point::new(20.0, 20.0)) <= TOL);
+            let end = lap.points[lap.points.len() - 1];
+            assert!(end.distance_to(Point::new(120.0, 20.0)) <= TOL);
+        }
+        for (from, mv) in xy_cuts(&tp) {
+            assert!(mv.to.x > from.x, "every cut runs first to last: {mv:?}");
+        }
+        // Inside and Outside still skip it: an open path has no side.
+        for side in [Side::Inside, Side::Outside] {
+            let (tp, warnings) = generate(&p, &profile_op(&p, side, CutDirection::Climb));
+            assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
+            assert!(tp.moves.is_empty(), "{side:?}: nothing is cut");
+        }
+    }
+
+    /// #175: the direction picks the end an open path's cut starts at, as
+    /// VCarve's does: climb from its first vertex, conventional from its
+    /// last.
+    #[test]
+    fn open_path_direction_picks_the_end_it_starts_at() {
+        let p = line_project();
+        for (direction, start, end) in [
+            (CutDirection::Climb, 20.0, 120.0),
+            (CutDirection::Conventional, 120.0, 20.0),
+        ] {
+            let (tp, _) = generate(&p, &profile_op(&p, Side::OnLine, direction));
+            let laps = laps(&tp);
+            assert_eq!(laps.len(), PASS_Z_MM.len(), "{direction:?}");
+            for lap in laps {
+                assert_approx_eq!(lap.points[0].x, start, TOL);
+                assert_approx_eq!(lap.points[lap.points.len() - 1].x, end, TOL);
+            }
+        }
+    }
+
+    /// Acceptance 26 (#175): an On line Profile of a 100 mm line ramps
+    /// back and forth along the line itself, at most three diameters from
+    /// its first vertex, then cuts the whole line at the pass Z. A pass
+    /// after the first comes down the slot the pass above cut, to that
+    /// pass's Z, before it ramps.
+    #[test]
+    fn on_line_open_path_ramps_back_and_forth_along_the_line() {
+        let p = line_project();
+        let mut op = profile_op(&p, Side::OnLine, CutDirection::Climb);
+        op.entry = ramp_15();
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let ramp: Vec<(Point3, Move)> = tp
+            .moves
+            .windows(2)
+            .filter(|w| {
+                !w[1].is_rapid()
+                    && w[1].to.z < w[0].to.z - EPS_MM
+                    && w[0].to.xy().distance_to(w[1].to.xy()) > EPS_MM
+            })
+            .map(|w| (w[0].to, w[1]))
+            .collect();
+        assert!(!ramp.is_empty());
+        let mut turned = false;
+        for pair in ramp.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            turned |= (a.1.to.x - a.0.x) * (b.1.to.x - b.0.x) < 0.0;
+        }
+        assert!(turned, "back and forth: {ramp:?}");
+        for (from, mv) in &ramp {
+            assert_approx_eq!(mv.to.y, 20.0, TOL);
+            assert!(mv.to.x >= 20.0 - TOL && mv.to.x <= 20.0 + 3.0 * 6.35 + TOL);
+            let slope = (from.z - mv.to.z)
+                .atan2(from.xy().distance_to(mv.to.xy()))
+                .to_degrees();
+            assert!((slope - 15.0).abs() <= 0.1, "slope {slope}");
+        }
+        for z in PASS_Z_MM {
+            assert!(
+                ramp.iter().any(|(_, mv)| (mv.to.z - z).abs() <= EPS_MM),
+                "pass {z} is ramped into"
+            );
+            let full = laps_at(&tp, z)
+                .iter()
+                .any(|lap| (lap.points[lap.points.len() - 1].x - 120.0).abs() <= TOL);
+            assert!(full, "pass {z} cuts to the line's end");
+        }
+        // Straight down only into the slot already cut: to the Z of the
+        // pass above, at the first vertex.
+        for (from, mv) in plunges_below_top(&tp) {
+            assert!(from.xy().distance_to(Point::new(20.0, 20.0)) <= TOL);
+            assert!(
+                PASS_Z_MM.iter().any(|z| (mv.to.z - z).abs() <= EPS_MM)
+                    && mv.to.z > PASS_Z_MM[PASS_Z_MM.len() - 1] + EPS_MM,
+                "{mv:?}"
+            );
+        }
+    }
+
+    /// #175: tabs on an open path are placed by distance from its first
+    /// vertex as drawn, whichever end the cut starts at.
+    #[test]
+    fn open_path_tabs_are_measured_from_its_first_vertex() {
+        let p = line_project();
+        for direction in [CutDirection::Climb, CutDirection::Conventional] {
+            let mut op = profile_op(&p, Side::OnLine, direction);
+            op.tabs = Some(tab_at(30.0, TabShape::Rect));
+            let (tp, warnings) = generate(&p, &op);
+            assert!(warnings.is_empty(), "{direction:?}: {warnings:?}");
+            let held = held_at_tab_top(&tp);
+            let length: f64 = held.iter().map(|(a, b)| a.distance_to(*b)).sum();
+            assert_approx_eq!(length, 2.0 * TAB_SPAN_MM, 1e-6);
+            for (a, b) in held {
+                for q in [a, b] {
+                    assert!(
+                        (q.x - 50.0).abs() <= TAB_SPAN_MM / 2.0 + TOL,
+                        "{direction:?}: {q:?}"
+                    );
+                }
+            }
+        }
     }
 }
