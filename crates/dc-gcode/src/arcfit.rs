@@ -404,7 +404,8 @@ fn constrain_to_endpoints(
 }
 
 /// The gates of `validateArcFitPoints` for the export path: residual,
-/// step angle, step uniformity, total sweep, and chord ratio.
+/// step angle, step uniformity, total sweep, and chord ratio; and, not
+/// upstream's, two chord steps of one size at least (#213).
 fn gates_pass(
     points: &[Point],
     mids: &[Option<Point>],
@@ -461,6 +462,18 @@ fn gates_pass(
     };
     let largest = steps.iter().copied().fold(0.0, f64::max);
     if median <= SWEEP_EPS || largest > median * MAX_STEP_RATIO {
+        return false;
+    }
+    // 3a. At least two chord steps of the largest's size class (#213):
+    // one long straight move, a short fragment and a shallow corner arc
+    // put four points on any circle through the move's ends, and the
+    // median of two steps tolerates the fragment, so a 40 mm wall side
+    // became an arc bowing 1.3 mm into the wall.
+    let full = steps
+        .iter()
+        .filter(|&&s| s * MAX_STEP_RATIO >= largest)
+        .count();
+    if full < 2 {
         return false;
     }
     // 4. Enough total sweep to be an arc at all.
@@ -954,6 +967,28 @@ mod tests {
         assert_eq!(runs_of(&fitted), 0);
         assert_eq!(lines_of(&fitted), 4);
         assert_eq!(moves_of(&fitted).len(), 5);
+    }
+
+    /// #213: the plaque's stay-down link into its wall ring, 0.006 mm, the
+    /// ring's shallow corner arc (1.825 mm radius, 2.7°) and its 40 mm
+    /// side all lie on a 154.75 mm circle, which bows 1.3 mm off the side
+    /// into the wall. One full chord step is not a run.
+    #[test]
+    fn long_side_after_a_fragment_is_not_an_arc() {
+        let moves = vec![
+            Move::rapid(pt(131.817, 56.915, 0.0)),
+            Move::linear(pt(131.823, 56.915, 0.0), FEED),
+            Move {
+                kind: MoveKind::ArcCcw {
+                    centre: Point::new(130.0, 57.0),
+                },
+                to: pt(131.825, 57.0, 0.0),
+                feed_mm_min: Some(FEED),
+            },
+            Move::linear(pt(131.825, 97.0, 0.0), FEED),
+        ];
+        let fitted = fit(&moves, TOL);
+        assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
     }
 
     #[test]

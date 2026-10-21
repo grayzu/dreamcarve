@@ -41,7 +41,9 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub layouts: &'a [Option<(PathTabs, bool)>],
     pub tabs: Option<&'a Tabs>,
     pub pass_z: &'a [f64],
-    pub safe_z_mm: f64,
+    /// The Z a descent starts at where no pass before cut: the entry
+    /// clearance above the stock top (#214).
+    pub start_z_mm: f64,
     pub entry_tool: &'a dyn Fn(Wall) -> EntryTool,
     pub tolerance_mm: f64,
 }
@@ -99,7 +101,9 @@ pub(super) struct PassEntry<'a> {
     pub z_mm: f64,
     /// The pass is below the tab top, so the tabs stand.
     pub below_tabs: bool,
-    pub safe_z_mm: f64,
+    /// The Z a descent starts at where no pass before cut: the entry
+    /// clearance above the stock top (#214).
+    pub start_z_mm: f64,
     pub tool: EntryTool,
     pub tolerance_mm: f64,
 }
@@ -178,7 +182,7 @@ pub(super) fn tab_seams(
             let from_z_mm = k
                 .checked_sub(1)
                 .and_then(|j| setup.pass_z.get(j).copied())
-                .unwrap_or(setup.safe_z_mm);
+                .unwrap_or(setup.start_z_mm);
             (from_z_mm, *z)
         })
         .collect();
@@ -320,12 +324,13 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
 }
 
 impl PathEntry {
-    /// The descent of one pass that starts at `from_z_mm` (safe Z on the
-    /// first pass, the previous pass Z after), and the Z it starts at.
-    /// `previous` is which plan (tabbed or not) and entry the path's
-    /// previous pass cut, updated here: a helix after the first pass
-    /// rejoins the bore its previous pass cut, or starts again from safe Z
-    /// when that pass cut none.
+    /// The descent of one pass that starts at `from_z_mm` (the entry
+    /// clearance above the stock top on the first pass, #214; the previous
+    /// pass Z after), and the Z it starts at. `previous` is which plan
+    /// (tabbed or not) and entry the path's previous pass cut, updated
+    /// here: a helix after the first pass rejoins the bore its previous
+    /// pass cut, or starts again from just above the stock when that pass
+    /// cut none.
     pub(super) fn descend(
         &self,
         pass: &PassEntry<'_>,
@@ -366,12 +371,13 @@ impl PathEntry {
                         d = plan.rejoin(d, from_z);
                     } else {
                         // The previous pass cut no bore here: helix from
-                        // safe Z (the sequencer retracts, since the helix
-                        // does not start where the lap ended), or ramp
-                        // from where the tool is.
-                        let restart = plan.descend(pass.safe_z_mm, pass.z_mm);
+                        // just above the stock (the sequencer retracts,
+                        // since the helix does not start where the lap
+                        // ended, and rapids down to it), or ramp from
+                        // where the tool is.
+                        let restart = plan.descend(pass.start_z_mm, pass.z_mm);
                         if restart.used == EntryKind::Helix {
-                            from_z = pass.safe_z_mm;
+                            from_z = pass.start_z_mm;
                             d = restart;
                         } else {
                             d = plan.descend_without_helix(

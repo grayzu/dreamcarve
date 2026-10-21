@@ -459,6 +459,8 @@ pub(crate) struct Relief {
     pub levels: Vec<f64>,
     /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
+    /// The stock top, mm.
+    pub stock_top_mm: f64,
     /// The tool's feed and plunge rates.
     pub rates: LapRates,
     /// The project's flatten tolerance, mm.
@@ -520,6 +522,7 @@ impl Setup<'_> {
             radius_mm: self.tool.diameter_mm / 2.0,
             levels,
             safe_z_mm: self.safe_z_mm,
+            stock_top_mm: self.thickness_mm,
             rates: self.rates,
             tolerance_mm: self.tolerance_mm,
         }))
@@ -601,6 +604,7 @@ impl Relief {
                 order: MachiningOrder::FullDepthFirst,
                 containment: &[],
                 safe_z_mm: self.safe_z_mm,
+                stock_top_mm: self.stock_top_mm,
                 tool_diameter_mm: 2.0 * self.radius_mm,
                 stepover_mm: 0.0,
                 feed_mm_min: self.rates.feed_mm_min,
@@ -1876,6 +1880,7 @@ mod tests {
             radius_mm: R,
             levels,
             safe_z_mm: 11.0,
+            stock_top_mm: 6.0,
             rates: LapRates {
                 feed_mm_min: 800.0,
                 plunge_mm_min: 300.0,

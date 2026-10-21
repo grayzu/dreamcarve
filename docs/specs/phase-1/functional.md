@@ -140,7 +140,19 @@ Clamps. Text. Stock from a shape (stock is rectangular).
 - **S1** No emitted Z is below the stock bottom minus the operation's
   explicit through-cut allowance (default 0). Checked on every program in
   tests by parsing the emitted G-code, not by trusting the generator.
-- **S2** Rapid moves occur only at or above safe Z.
+- **S2** Rapid moves occur only at or above safe Z, except a rapid
+  straight down from safe Z, in Z alone, that stops in the air over the
+  start of a ramp or helix: at or above the stock top plus the entry
+  clearance (1 mm, `dc_cam::entry::ENTRY_CLEARANCE_MM`), or at or above
+  the entry clearance over the lowest Z a cut of the same operation has
+  already reached through that XY (within 0.01 mm plus the program's
+  rounding and arc tolerances). Checked on the parsed program. Phase 2's
+  S15 adds a Drill's retract-height rapids. (changed in #214: every ramp
+  and helix started at safe Z, so a 15° helix spiralled about 3.5 turns
+  through the air at the feed rate before it touched the wood, half of
+  the plaque's first program; VCarve and Fusion rapid down to a
+  clearance above the material first, as DreamCarve's Drill already
+  did with `retract_mm`.)
 - **S3** Every cutting and plunging move has an explicit, user-supplied feed.
   Export fails if any tool an enabled operation uses lacks feed, plunge, or
   RPM. With manual spindle control (`spindle_control: manual`)

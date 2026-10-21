@@ -37,10 +37,13 @@ pub struct CutBlock {
     /// XY, mm, where the descent begins: `entry` for a straight plunge,
     /// the ramp or helix start otherwise. The rapid in at safe Z ends here.
     pub descent_from: Point,
-    /// The Z, mm, the generator built `descent` to start from: safe Z, or
-    /// the previous pass Z of the same shape when the generator expects to
-    /// stay down between passes or (a Pocket's ramp or helix) the floor
-    /// that pass cleared.
+    /// The Z, mm, the generator built `descent` to start from: for a ramp
+    /// or helix the entry clearance above the stock top on the first pass
+    /// (#214), and after it the previous pass Z of the same shape when the
+    /// generator expects to stay down between passes, or (a Pocket's) the
+    /// entry clearance above the floor that pass cleared; safe Z for a
+    /// plunge. Below safe Z, the sequencer reaches it after a lift by a
+    /// rapid straight down as far as S2 allows, then a plunge.
     pub descent_from_z_mm: f64,
     /// Ramp, helix or plunge moves from `descent_from` to `entry` at `z_mm`,
     /// every one `Linear` or an arc at the plunge or feed rate (a ramp or
