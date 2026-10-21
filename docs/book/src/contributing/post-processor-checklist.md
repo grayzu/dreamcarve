@@ -130,6 +130,37 @@ intent. The rules are in the phase 1 and phase 2 functional specs
 - [ ] A project still exports the bytes it did before: the phase 1
       expected programs in `crates/dreamcarve/tests/expected/` and every
       golden case are unchanged unless the change is a new version.
+- [ ] For an RS274/NGC-style controller, the definition's programs run
+      through LinuxCNC's `rs274` with the same motion DreamCarve reads:
+      `DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion`
+      (see "End-to-end testing" below). A word the controller has and
+      LinuxCNC does not goes into the bridge in
+      `tools/rs274-motion/src/bridge.rs`, with the reason, and into the
+      manual procedure.
+
+## End-to-end testing
+
+Unit tests show DreamCarve writes what the definition says; they cannot
+show a controller reads it that way. The
+[post-processor end-to-end plan](https://github.com/grayzu/dreamcarve/blob/main/docs/testing/post-processor-e2e.md)
+sets out, for each controller, what is checked automatically, what
+cannot be and why, and the manual procedure for the rest:
+
+- **Automatic.** LinuxCNC's interpreter, `rs274`, must accept the
+  program (PR #264). Its motion must also match `dc-gcode`'s reading,
+  line by line (`tools/rs274-motion`). Mach3 and UCCNC programs go
+  through a small, listed bridge.
+- **Manual.** Mach3 in Simulation mode and UCCNC in demo mode on
+  Windows, and LinuxCNC's own AXIS simulator.
+- **A real machine.** The trustworthy layer is an air cut, then foam or
+  scrap, on a real machine: today the maintainer's grblHAL and GRBL.
+
+To run the automatic check without LinuxCNC installed:
+
+```sh
+podman build -t dreamcarve-rs274 tools/rs274-motion   # or docker build
+DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion -- --nocapture
+```
 
 ## Docs
 

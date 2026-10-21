@@ -176,6 +176,10 @@ read from the chapters themselves.
   figure is stale.
 - `tools/third-party-licenses`: gathers the license texts shipped with
   release binaries.
+- `tools/rs274-motion`: runs the LinuxCNC, Mach3, UCCNC and generic
+  programs through LinuxCNC's `rs274` interpreter, and compares its
+  motion with `dc-gcode`'s reading. Needs `rs274` or a container; see
+  [Verifying a post-processor](post-processor-checklist.md).
 - `tools/parity/`: a Node script, not a Cargo crate, that drives a local
   PureCutCNC checkout to capture golden outputs. Not needed to build or
   test DreamCarve. See [Golden corpus](golden-corpus.md).

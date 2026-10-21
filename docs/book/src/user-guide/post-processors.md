@@ -842,3 +842,10 @@ cut, check on your controller:
 
 The sources are listed in the repository, in
 `crates/dc-project/src/definitions/README.md`.
+
+Before your first real cut on any controller, do an air cut. Set work Z
+zero well above the stock, more than your deepest cut, then run the
+program at reduced feed override with a hand on feed hold. Check that
+the rapids, plunges and arcs follow the preview. Then cut foam or scrap.
+The full procedure for each controller is in the repository, in
+`docs/testing/post-processor-e2e.md`.
