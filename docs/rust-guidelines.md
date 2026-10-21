@@ -160,7 +160,10 @@ nothing else.
   return owned results. No `&mut` to a caller's data in the engine; callers
   decide what to replace.
 - No `Rc<RefCell<_>>`, no `static mut`, no global state in `dc-*`. State
-  travels as parameters.
+  travels as parameters. The one exception is a `OnceLock` cache of data
+  compiled into the binary, set once and read-only after, which no caller
+  can change: `dc-project`'s parsed bundled post-processor definitions
+  (#71).
 - No `async` and no runtime in `dc-*`. The GUI runs the synchronous engine on
   a worker thread and passes results back over a channel.
 
