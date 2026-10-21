@@ -347,6 +347,29 @@ pub enum CamError {
         /// The later shape in target order.
         second: ShapeRef,
     },
+    /// An Inside Profile's tool-centre path along one line of a region
+    /// comes closer than the tool radius to another line of the same
+    /// region: the band between them (an outline and an island in it, or
+    /// two islands) is narrower than the tool, so the cutter would cut
+    /// into the material the Profile keeps beyond the other line (#192).
+    /// `shape` is the one drawn first.
+    #[error(
+        "operation `{op}` cuts inside {shape} and {other}, but the band between them is {band_mm:.3} mm wide, narrower than tool `{tool}` ({diameter_mm} mm), so the bit would cut into the material beyond them; no toolpath was produced"
+    )]
+    BandNarrowerThanTool {
+        /// The operation.
+        op: OperationId,
+        /// One line of the band, the one drawn first.
+        shape: ShapeRef,
+        /// The other line.
+        other: ShapeRef,
+        /// The narrowest distance between the two lines, mm.
+        band_mm: f64,
+        /// The tool's name.
+        tool: String,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
     #[error("shape {shape} cannot be cut: {source}")]

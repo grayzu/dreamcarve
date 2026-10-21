@@ -23,7 +23,7 @@ use crate::entry::{
 };
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
-use crate::overlap::{CutPath, overlap_warnings};
+use crate::overlap::{CutPath, overlap_warnings, within};
 use crate::passes::pass_z_mm;
 use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
@@ -34,7 +34,8 @@ use crate::tabs::{
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
-    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, nest, offset,
+    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, distance_mm,
+    nest, offset,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
@@ -193,6 +194,10 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// cutter would leave the stock ([`CamError::OffStock`]), when an entry's
 /// angle or helix fraction is out of range ([`CamError::InvalidEntry`]),
 /// when a lead's radius, sweep or overcut is ([`CamError::InvalidLead`]),
+/// when an Inside path would come closer than the tool radius to another
+/// line of its region, a band narrower than the tool
+/// ([`CamError::BandNarrowerThanTool`], #192; a contour with no path at
+/// all is [`WarningCode::ToolTooLarge`] and skipped),
 /// when an On line Profile asks for a helix
 /// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
 /// would leave its waste domain ([`CamError::OffMaterial`], a defect).
@@ -316,6 +321,9 @@ pub fn generate_profile(
                         .with("diameter_mm", tool.diameter_mm),
                 );
                 continue;
+            }
+            if op.side == Side::Inside {
+                check_band(&op.id, tool, region, contour, &centres, &shapes)?;
             }
             let ccw = traversal_is_ccw(wall, op.direction);
             placed.extend(centres.into_iter().map(|c| {
@@ -572,6 +580,54 @@ pub fn generate_profile(
         });
     }
     Ok((toolpath, warnings))
+}
+
+/// #192: an Inside Profile cuts a band of waste between the lines of one
+/// region, its outline and its islands, and keeps the material beyond
+/// every one of them. Each tool-centre path of `contour` (`centres`) lies
+/// `r` from `contour` by construction; one that comes closer than `r` to
+/// another line of `region` would cut into the material kept beyond that
+/// line, as an island's lap does in a band narrower than the tool.
+/// [`CamError::BandNarrowerThanTool`] names the two shapes, the one drawn
+/// first first.
+///
+/// Outside needs no check: there the outline's path runs outside the
+/// region and every hole's inside its hole, so each is at least `r` from
+/// every other line of the region. Paths in different regions are D6's
+/// [`WarningCode::ToolpathsOverlap`], under Inside never closer than `r`
+/// once this check passes.
+fn check_band(
+    op: &OperationId,
+    tool: &Tool,
+    region: &Region,
+    contour: &Contour,
+    centres: &[Contour],
+    shapes: &[(ShapeRef, Contour)],
+) -> Result<(), CamError> {
+    let radius_mm = tool.diameter_mm / 2.0;
+    let lines = std::iter::once(region.outer()).chain(region.holes());
+    for line in lines.filter(|l| *l != contour) {
+        if !centres
+            .iter()
+            .any(|c| within(c.polyline(), line.polyline(), radius_mm))
+        {
+            continue;
+        }
+        let (Some(a), Some(b)) = (shape_of(shapes, contour), shape_of(shapes, line)) else {
+            continue;
+        };
+        let drawn = |s: &ShapeRef| shapes.iter().position(|(x, _)| x == s);
+        let (shape, other) = if drawn(a) <= drawn(b) { (a, b) } else { (b, a) };
+        return Err(CamError::BandNarrowerThanTool {
+            op: op.clone(),
+            shape: shape.clone(),
+            other: other.clone(),
+            band_mm: distance_mm(contour.polyline(), line.polyline()),
+            tool: tool.name.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
+    Ok(())
 }
 
 /// The block that cuts one lap of a tool-centre contour at pass `pass`:
@@ -1504,6 +1560,21 @@ mod tests {
         let p = ring_project(22.0);
         let err = generate_profile(&p, &profile_op(&p, Side::Inside, CutDirection::Climb))
             .expect_err("a band narrower than the bit is refused");
+        let CamError::BandNarrowerThanTool {
+            op,
+            shape,
+            other,
+            band_mm,
+            diameter_mm,
+            ..
+        } = &err
+        else {
+            panic!("expected BandNarrowerThanTool, got {err:?}");
+        };
+        assert_eq!(op.as_str(), "o1");
+        assert_eq!((shape.profile, other.profile), (0, 1), "outline first");
+        assert_approx_eq!(*band_mm, 3.0, TOL);
+        assert_approx_eq!(*diameter_mm, 6.35, TOL);
         let text = err.to_string();
         for needle in [
             "`o1`",
