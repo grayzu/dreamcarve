@@ -55,10 +55,14 @@ pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Re
     all.extend(grown.iter().cloned());
     if let Ok((regions, warnings)) = nest(all) {
         let holes: usize = regions.iter().map(|r| r.holes().len()).sum();
+        // A grown island that encloses the shrunk outer nests as the outer
+        // of an inverted annulus; only the offset outers may be outers.
         let clean = warnings.is_empty()
             && regions.len() == outers.len()
             && holes == grown.len()
-            && regions.iter().all(|r| r.depth() == 0);
+            && regions
+                .iter()
+                .all(|r| r.depth() == 0 && outers.contains(r.outer()));
         if clean {
             return regions;
         }
@@ -315,6 +319,22 @@ mod tests {
         ]);
         let out = inset_region(&r, 3.0, FLATTEN_TOLERANCE_DEFAULT_MM);
         assert_eq!(out.len(), 2, "{out:?}");
+    }
+
+    /// A band thinner than twice the inset (what a rough Pocket's
+    /// allowance leaves for rest machining) insets to nothing. The grown
+    /// island then encloses the shrunk outer, and must not be read back
+    /// as the outer of an inverted annulus, which grows on every inset.
+    #[test]
+    fn inset_of_a_thin_band_is_empty() {
+        let r = region(vec![
+            Polyline::rect(Point::new(0.0, 0.0), 40.0, 40.0),
+            Polyline::rect(Point::new(1.0, 1.0), 38.0, 38.0),
+        ]);
+        let out = inset_region(&r, 1.2, FLATTEN_TOLERANCE_DEFAULT_MM);
+        assert!(out.is_empty(), "{out:?}");
+        let tree = RingTree::build(r, 1.2, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        assert_eq!(tree.nodes.len(), 1);
     }
 
     #[test]

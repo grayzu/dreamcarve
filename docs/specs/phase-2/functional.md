@@ -108,7 +108,9 @@ a warning. Cycles (VCarve "Drilling Toolpath"; Fusion "Drill",
 cycle types):
     - **simple**: one plunge at the plunge rate, then a retract;
     - **peck**: plunges of `peck_depth_mm` (the tool's step-down by
-     default, as VCarve uses the tool's pass depth), retracting between
+     default, as VCarve uses the tool's pass depth, counted from the
+     retract height as a controller's `G83`/`G73` counts them from `R`),
+     retracting between
      pecks either fully to the retract height above the hole top
      (`retract: full`, VCarve "Retract above cutting start", Fusion
      "Deep drilling") or by a small gap (`retract: chip_break` with
@@ -126,7 +128,8 @@ cycle types):
       controller without them, writes the same motion as plain moves. The
       holes are drilled in the same order and to the same depth either way.
       `G83` and `G73` need a controller that documents a fixed re-entry
-      distance and a retract height of 0; no bundled definition has them,
+      distance (changed in #153: they no longer need a retract height of
+      0); no bundled definition has them,
       so peck and chip-break Drills are plain moves on all six (changed in
       slice 17, #172).
 15. **Engrave** follows each target path, open or closed, with the tool
@@ -287,8 +290,9 @@ operation's cutting length is under a quarter of a full 3.175 mm
 pocket's.
 23. **Drill cycles.** Four 5 mm circles, 12 mm deep: `simple` gives one
 plunge per hole at the plunge rate and one retract to safe Z; `peck`
-with 4 mm pecks and `retract: full` gives three plunges per hole, each
-retracting above the hole top; `chip_break` with a 0.5 mm gap retracts
+with 4 mm pecks and `retract: full` gives three plunges per hole at
+`retract_mm: 0` and four at `retract_mm: 1` (pecks count from the
+retract height; changed in #153), each retracting to the retract height; `chip_break` with a 0.5 mm gap retracts
 0.5 mm between pecks; `dwell_s: 0.5` writes a 0.5 s `G4` (`G4 P0.500` on grblHAL) at the bottom of
 each plunge. Holes are visited nearest-first from the first in drawing
 order. The two 5 mm circles and a 5×8 mm slot targeted together drill

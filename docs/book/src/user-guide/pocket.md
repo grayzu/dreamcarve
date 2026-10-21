@@ -57,7 +57,7 @@ is free, the pocket would be cut in a loose part (`check` warns
 | `allowance_mm` | Material to leave on the walls and round the islands, mm, 0 or more. See [Allowance](#allowance). |
 | `rest_of` | `null`, or the id of an earlier Pocket of the same targets whose leftovers this one clears. See [Rest machining](#rest-machining). |
 | `entry` | How the bit gets down to each pass: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`. See [Entry](#entry). |
-| `corner_relief` | `"none"`. Dogbone or T-bone is skipped, with a warning. |
+| `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`, as for [Profile](profile.md#machining-order). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. A pocket deeper than the stock needs it, as a through cut does. |
 | `safe_z_mm` | The height above the stock top for moves between cuts. |
@@ -294,10 +294,54 @@ bit at 0.5 mm allowance, then rest-machined with a 3.175 mm bit: the rest
 Pocket cuts a band about 2 mm wide along the walls, the four corners and
 the notch, about a sixth of the length a full 3.175 mm Pocket would cut.
 
-## Not yet in this build
+## Corner relief
 
-`corner_relief` `dogbone` or `t_bone` loads and validates, but is skipped
-(`relief_skipped`). The pocket is still the one asked for.
+A round bit leaves a radius in every inside corner of a pocket, so a
+square part, a hinge leaf or the tenon of a box joint does not sit flat in
+it. `corner_relief` cuts a short notch into each such corner after the
+pocket is cleared, so the square part fits. The names are VCarve's ("Create
+Fillets": Dog-Bone and T-Bone):
+
+- `"dogbone"`: the notch runs along the corner's bisector, the line that
+  splits the corner in half, until the bit just touches the corner. It
+  takes the same small bite out of both walls (0.29 × the bit's radius in a
+  square corner). Use it where both walls show equally, or where neither
+  matters: the usual choice for joints and inlays.
+- `"t_bone"`: the notch runs along one wall, the corner's **longer** edge
+  (as VCarve places it; on equal edges the one nearer the X axis), until
+  the bit reaches the corner. It cuts a slot a bit's radius deep into that
+  wall and leaves the other wall straight (exactly so in a square corner).
+  Use it to keep a visible face clean, or where a slot along the long side
+  looks or holds better than two bites.
+
+Corners relieved: every corner of the pocket's outline where the outline
+turns by more than 15°, and the inward-pointing corners of islands (the
+inside corner of an L-shaped island traps the bit just like a pocket
+corner). An island's outward corners are not relieved: the bit already
+cuts round them. Arcs and fillets have no corners, so a circle or a
+rounded rectangle gets no notches. Each edge beside a corner must be at
+least the bit's diameter long, or the notch would not fit; such a corner
+is skipped with `relief_corner_too_tight`.
+
+**How it is cut.** After all the pocket's passes, the bit visits the
+corners, nearest first from where it finished. At each it plunges where
+the wall pass turned the corner (material the pocket already cut to full
+depth), cuts out to the corner and back, and steps down by the **tool's**
+`step_down_mm` until it reaches the pocket's depth; then it lifts to safe Z
+and moves to the next corner. The operation's own `step_down_mm` is not
+used. A tool with no `step_down_mm` skips the relief with `relief_skipped`
+(`check` warns `relief_needs_step_down` first).
+
+A corner whose wall the pocket did not cut to full depth is skipped with
+`relief_corner_not_cut`, rather than plunged into: with `wall_pass:
+"none"` every corner is. With an allowance the notches are sized to the
+wall the pocket leaves, the allowance in from the drawn one; a [rest
+machining](#rest-machining) Pocket with corner relief is the usual way to
+finish a roughed pocket with square corners.
+
+A 40 × 30 mm pocket with a 6.35 mm bit and `"dogbone"` gets four notches,
+each ending 3.175 mm from its corner along the bisector, so a 40 × 30 mm
+block fits; with `"t_bone"` each notch runs along a 40 mm edge instead.
 
 ## Safety
 
@@ -307,7 +351,10 @@ stays inside the pocket, the allowance off its walls, and out of every
 island (safety rule S9), and that
 it stays on the stock. Ramp and helix moves are checked on the bit's
 centre, which must stay in the tool-centre area: the same rule, measured
-the cheap way. If not, export fails and nothing is written.
+the cheap way. A corner relief notch cuts past the walls on purpose, so
+each may also cut within its own corner's notch: the bit at most touches
+the corner, and bites at most its radius past one of the corner's two
+walls, nowhere else. If not, export fails and nothing is written.
 
 ## Warnings
 
@@ -317,7 +364,9 @@ the cheap way. If not, export fails and nothing is written.
 | `pocket_island_too_close` | An island is nearer the wall or another island than the bit is wide; the material between them stays. |
 | `entry_fallback` | The helix or ramp asked for does not fit a shape; it uses a ramp or a plunge instead. |
 | `helix_diameter_reduced` | The helix fits a shape only smaller than asked; it is cut at the size that fits. |
-| `relief_skipped` | The corner relief asked for is not in this build. |
+| `relief_skipped` | The tool has no `step_down_mm`, so no corner is relieved. |
+| `relief_corner_too_tight` | A corner's edge is shorter than the bit is wide, or the bit cannot reach it; it keeps the bit's radius. |
+| `relief_corner_not_cut` | The pocket did not cut to full depth where a corner's notch would start; that corner is skipped. |
 | `rest_of_clears_nothing` | A rest machining Pocket's bit reaches nothing the earlier Pocket left; it cuts nothing. |
 
 All codes are listed under [Warnings](warnings.md).
