@@ -129,19 +129,32 @@ leaves a cleaner edge on a hobby router. **Conventional** milling is the
 reverse; it pulls the bit less hard into the material on a machine with
 backlash.
 
+Climb keeps the material you keep on the bit's right as it moves;
+conventional keeps it on the bit's left.
+
 | The bit runs | Climb | Conventional |
 | --- | --- | --- |
 | Outside the outline it cuts | Clockwise | Counter-clockwise |
 | Inside the outline it cuts | Counter-clockwise | Clockwise |
+| `"left"` of an open path | From its first vertex | From its last vertex |
+| `"right"` of an open path | From its last vertex | From its first vertex |
+| `on_line` along an open path | From its last vertex | From its first vertex |
 
 Directions are seen from above, with Y pointing away from you. An outside
 Profile runs outside a part's outline and inside its holes. An `on_line`
-cut counts as outside on a part's outline and inside on a hole. An open
-path has no inside or outside, so the direction picks the end its cut
-starts at: conventional from its first vertex, climb from its last (as
-VCarve does: "Conventional starts cutting at the Start point" and "Climb
-cutting starts cutting at the end point"). The same holds `"left"` and
-`"right"` of an open path: the cut starts beside that vertex.
+cut counts as outside on a part's outline and inside on a hole.
+
+Beside an open path, `"left"` or `"right"`, the part is on the far side
+of the line from the bit, so climb and conventional mean what they mean
+on an outline. With `"left"` the part is on the bit's right as it runs
+from the first vertex to the last, so that is climb; `"right"` is the
+mirror.
+
+An open path cut `on_line` is a slot: both sides of the bit cut, so
+there is no climb or conventional. There the direction only picks the
+end the cut starts at, as VCarve does:
+"Conventional starts cutting at the Start point" and "Climb cutting
+starts cutting at the end point".
 
 ## Machining order
 
@@ -298,9 +311,10 @@ outline, such as a cut across the stock that trims it, or one edge of a
 part.
 
 A 100 mm line drawn from (20, 20) to (120, 20) and cut `"left"` with a
-6.35 mm bit: the bit's centre runs at Y 23.175 from X 20 to X 120, and
-the material below the line is kept. Cut `"right"`, it runs at Y 16.825
-and the material above is kept.
+6.35 mm bit: the bit's centre runs at Y 23.175, from X 20 to X 120 under
+climb, and the material below the line is kept. Cut `"right"`, it runs
+at Y 16.825, from X 120 to X 20 under climb, and the material above is
+kept.
 
 - **Turns.** On the outside of a turn the bit rounds the corner, as an
   outside cut does; on the inside it stops where its two passes meet, so
@@ -312,12 +326,15 @@ and the material above is kept.
   vertex and reaches one radius past it on the cut side only, so the
   part side is never touched past the end. VCarve's manual does not say
   how its open cut ends; this keeps the part as drawn.
-- **Direction, ramps and tabs** are as for `on_line` above, along the
-  path the bit's centre follows: conventional starts beside the first
-  vertex, climb beside the last; a ramp runs back and forth from the
-  start; tabs are measured from the end beside the first vertex, whichever
-  end the cut starts at. A `helix` entry is an error: the cut removes only
-  its own width. There is no lead (`lead_dropped`) and no corner relief
+- **Direction** is climb or conventional milling, as on an outline (see
+  [Direction](#direction)): `"left"` climb and `"right"` conventional
+  start beside the first vertex, `"left"` conventional and `"right"`
+  climb beside the last.
+- **Ramps and tabs** are as for `on_line` above, along the path the
+  bit's centre follows: a ramp runs back and forth from the start; tabs
+  are measured from the end beside the first vertex, whichever end the
+  cut starts at. A `helix` entry is an error: the cut removes only its
+  own width. There is no lead (`lead_dropped`) and no corner relief
   (`relief_skipped`), as VCarve gives an open profile none.
 - **Closed shapes** are not cut: an outline has no first vertex you can
   see, so its left is not shown in the drawing. Each warns
@@ -342,10 +359,6 @@ and the material above is kept.
   itself, such as a spiral whose cut side faces the part side of the turn
   beside it.
 
-With `"left"`, the part is on the bit's right as it runs from the first
-vertex, which is climb milling by the table in [Direction](#direction);
-VCarve's names pick the end the cut starts at, not how the teeth meet the
-part, so pick the direction by its start.
 
 ## Leads
 
