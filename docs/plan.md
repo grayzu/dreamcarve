@@ -46,7 +46,7 @@ reference implementation except where this plan says otherwise.
 | Feature model             | Definition/instance split from day one; snapshot undo history in the model                                                                                                                                                       | phase 1 design spec        |
 | Tools and post-processors | Projects embed copies. App-level library in user config dir from phase 2                                                                                                                                                         | phase 1 and 2 design specs |
 | Controllers               | grblHAL primary and validated on hardware. GRBL alongside in phase 1. LinuxCNC, Mach3, UCCNC, generic in phase 2                                                                                                                 | phase 1 functional spec    |
-| Operation names           | Profile, Pocket, Drill, V-Carve, Engrave; Surface Rough and Surface Finish from phase 7                                                                                                                                          | `CONTEXT.md`               |
+| Operation names           | Profile, Pocket, Drill, V-Carve, Engrave; Inlay and Photo V-Carve from phase 3; Surface Rough and Surface Finish from phase 7 | `CONTEXT.md` |
 | Multi-tool export         | One program with tool changes, or one program per tool. The user sets a default once; each export can override it                                                                                                                | phase 2 functional spec    |
 | Toolpath coverage         | Every carving toolpath common in hobby CAM is planned or explicitly excluded; see "Toolpath coverage" below                                                                                                                      | this file                  |
 | Tool import               | Fusion `.tools`/`.json` only, following Autodesk's published schema. Other vendor formats post-1.0                                                                                                                               | phase 2 functional spec    |
@@ -63,7 +63,8 @@ The carving toolpaths common in hobby CAM, compared against VCarve Pro's
 published toolpath list at the level of what each is for (laser toolpaths
 excluded). Each one is either planned or deliberately left out. A toolpath
 PureCutCNC lacks has nothing to port, so it would be designed from scratch;
-those wait until after 1.0.
+those wait until after 1.0, except Inlay and Photo V-Carve, which phase 3
+designs from the documented references the table names.
 
 
 | Toolpath                      | Where       | Note                                                                                                                                                                                                                                                 |
@@ -74,8 +75,8 @@ those wait until after 1.0.
 | Engrave                       | Phase 2     | Fixed-depth cut along the line. V-bit engraving whose width follows the shape is V-Carve                                                                                                                                                             |
 | V-Carve                       | Phase 3     | With flat-bottom clearing                                                                                                                                                                                                                            |
 | Surface Rough, Surface Finish | Phase 7     | From a mesh or a grayscale heightmap                                                                                                                                                                                                                 |
-| Inlay                         | Phase 3     | Builds on V-Carve. Reference this fusion 360 plug-in documentation: [https://www.corbinsworkshop.com/vcarve-inlay-plugin-for-autodesk-fusion-documentation/](https://www.corbinsworkshop.com/vcarve-inlay-plugin-for-autodesk-fusion-documentation/) |
-| Photo VCarve                  | Phase 3     | Functionality similar to Vectric's PhotoVCarve. Reference my stand-alone implementation: /Users/markg/git/rastercarve                                                                                                                                |
+| Inlay                         | Phase 3     | Builds on V-Carve. No PureCutCNC reference; designed from Corbin's Workshop's documentation of its Fusion inlay add-in: <https://www.corbinsworkshop.com/vcarve-inlay-plugin-for-autodesk-fusion-documentation/> |
+| Photo V-Carve                 | Phase 3     | Like Vectric's PhotoVCarve: parallel V-bit lines whose depth follows pixel brightness. No PureCutCNC reference; behaviour and test reference is RasterCarve (`../rastercarve`, GPLv2+: behaviour and tests only, no code) |
 | Fluting                       | Post-1.0    | No PureCutCNC reference                                                                                                                                                                                                                              |
 | Texture                       | Post-1.0    | No PureCutCNC reference                                                                                                                                                                                                                              |
 | Prism carving                 | Post-1.0    | No PureCutCNC reference                                                                                                                                                                                                                              |
@@ -174,23 +175,41 @@ ported behaviours; phase 2 test part cut; `v0.2.0`.
 `src/machine/`, `planning/REGION_FEATURE_SEMANTICS.md`,
 `planning/BAND_RESOLVER_SEMANTICS.md`.
 
-### Phase 3: V-Carve
+### Phase 3: V-Carve, Inlay, and Photo V-Carve
 
-**Goal:** the headline operation, from the command line.
+**Goal:** the headline operation, and the two V-bit techniques built on it,
+from the command line.
 
 **In:** medial-axis V-carving of closed shapes with a V-bit, flat-depth
 limiting with a clearing tool, offset-stepping V-carve mode, V-bit
 countersinking on Drill. Carve-quality tests against the golden corpus.
+**Inlay**: the paired female (pocket) and male (plug) V-carve toolpaths,
+with the start depth, glue gap and plug depth the technique needs, following
+the method in Corbin's Workshop's documentation for its Fusion inlay add-in.
+**Photo V-Carve**: a grayscale image carved as parallel V-bit lines whose
+depth follows pixel brightness, as Vectric's PhotoVCarve does, with
+RasterCarve as the behaviour and test reference.
 
 **Out:** GUI.
 
-**Exit:** parity with PureCutCNC's V-carve tests; phase 3 test part cut (a
-lettered sign imported as SVG outlines); `v0.3.0`.
+**Exit:** parity with PureCutCNC's V-carve tests; the phase 3 test parts
+cut: a lettered sign imported as SVG outlines, an inlay pair (female and
+male, cut and fitted, following Corbin's Fusion tutorial), and a photo
+V-carve whose toolpath matches RasterCarve's test cases within the
+tolerance the spec states; `v0.3.0`.
 
-**Real cut:** yes.
+**Real cut:** yes, all three parts.
 
 **Read first:** `src/engine/toolpaths/vcarve.ts`, the `v_carve_medial`
-operation kind in `src/types/project.ts`, related tests.
+operation kind in `src/types/project.ts`, related tests. Inlay has no
+PureCutCNC reference: read Corbin's Workshop's add-in documentation
+(<https://www.corbinsworkshop.com/vcarve-inlay-plugin-for-autodesk-fusion-documentation/>)
+for the method and the parameters, and VCarve's inlay tutorials for the
+vocabulary. Photo V-Carve has no PureCutCNC reference either: read
+RasterCarve (`../rastercarve`, its Python engine, Rust engine and tests) for
+behaviour and test cases. RasterCarve is GPLv2+, so its code is not ported;
+the phase 3 spec designs the operation from its documented behaviour and
+re-derives the tests, as the ordering research did with FreeCAD.
 
 ### Phase 4: GUI, CAM only
 
@@ -326,7 +345,7 @@ full user manual.
 Not rejected, just after 1.0: STEP import, Vectric/Carveco/MillMage/Carbide
 Create tool-library import, rotary and 4th-axis, parametrics, cloud sync,
 system font enumeration, an agent-facing API. The toolpaths and toolpath
-management features marked post-1.0 in "Toolpath coverage": Inlay, Fluting,
+management features marked post-1.0 in "Toolpath coverage": Fluting,
 Texture, Prism carving, Moulding, toolpath templates, merge, array copy, and
 tiling.
 
