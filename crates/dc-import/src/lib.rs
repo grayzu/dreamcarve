@@ -148,8 +148,9 @@ pub enum ImportWarning {
     /// DXF entities DreamCarve does not read were skipped: how many of each
     /// type, keyed by the DXF type name (`TEXT`, `DIMENSION`, `HATCH`, ...).
     /// `POLYLINE (mesh)` counts polygon and polyface meshes; `<TYPE>
-    /// (degenerate)` counts entities with no length, too few vertices, or
-    /// an INSERT scale of 0.
+    /// (degenerate)` counts entities with no length, too few vertices, an
+    /// INSERT scale of 0, or a zero extrusion direction; `<TYPE> (not in
+    /// the XY plane)` counts entities whose extrusion direction is not ±Z.
     DxfEntitiesSkipped {
         /// Skipped entities per type name, in name order.
         counts: std::collections::BTreeMap<String, usize>,
