@@ -26,7 +26,12 @@ written. There are no safety warnings, only errors.
    1 mm above the floor the same operation has already cut at that point;
    the ramp, helix or plunge at the plunge rate starts there, not at safe
    Z. The check refuses a rapid that stops lower, or over a floor only
-   another operation cut. Inside a [Drill](drill.md), a rapid straight
+   another operation cut. With a [clearance height](post-processors.md#heights-clearance-tool-change-and-park)
+   set, moves between parts and between operations rise to it, which is
+   higher still: the check holds each operation's first move across the
+   work, every move across outside the operations (such as the move to
+   the park point) and every stop to it. Without one, moves after the last
+   operation are held to the highest safe Z of the program. Inside a [Drill](drill.md), a rapid straight
    down may stop at the retract height above the stock, or inside the
    part of the hole already drilled, and never in uncut material.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
@@ -75,8 +80,8 @@ written. There are no safety warnings, only errors.
    ends where the toolpath's does, every arc turns the same way about the
    same centre, and there are no moves in between except a rapid split
    into its up-or-down and sideways parts, an arc written as short
-   straight moves along it, and a lift to safe Z before or after the
-   operation. An arc written in place of a run of straight moves
+   straight moves along it, and a lift to safe Z, or to the clearance
+   height, before or after the operation. An arc written in place of a run of straight moves
    ([Arc fitting](project-file.md#arc-fitting)) is accepted only if it
    starts and ends on the toolpath's corners, every corner between lies
    on it within `arc_fit_tolerance_mm`, it stays that close to every
@@ -154,6 +159,18 @@ written. There are no safety warnings, only errors.
     line and the operation, for example ``emitted line 57 takes operation
     `op2`'s tool outside the material it may cut``.
 
+13. **Machine coordinates only for the tool-change lift.** A program
+    writes `G53` only as `G53 G0 Z<v>`, alone on its line, where `<v>` is
+    the project's `tool_change_machine_z_mm` (below 0), on a
+    post-processor that documents `G53` (grblHAL, GRBL), and only right
+    before a tool-change stop or the end of the program, from at or above
+    safe Z, at the spot the bit is already over, or again right after a
+    stop that followed a lift (the router-off pause, then the tool change)
+    with nothing moved between. Any other `G53` is refused. After the lift the check treats Z as unknown, as after a
+    stop (rule 5), so a move across the work needs a lift to safe Z in
+    work coordinates first; a program that moves before the stop or the
+    end it lifted for is refused.
+
 It also checks that:
 
 - every line is plain ASCII and short enough for the controller's buffer,
@@ -190,7 +207,12 @@ It also checks that:
 - **Safe Z height.** It keeps rapids at safe Z, but cannot tell whether safe
   Z clears your clamps.
 - **Machine limits.** It does not know your machine's travel. Use homing and
-  soft limits on the controller. The 6000 mm limit on project coordinates
+  soft limits on the controller.
+- **Homing, with a tool-change machine Z.** A `G53` lift goes to a machine
+  position, which is right only if the machine was homed since it was
+  switched on. `export` reminds you, but cannot tell. Nor can it tell
+  whether the machine Z you chose is above the clearance height on your
+  machine, so that the lift only goes up. The 6000 mm limit on project coordinates
   only catches typing mistakes; it is not your machine's size.
 - **The router, in manual mode.** It cannot tell whether you switched it on.
 - **Pause messages.** Your sender may not show why the program paused. Use

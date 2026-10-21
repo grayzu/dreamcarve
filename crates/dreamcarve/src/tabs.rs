@@ -7,7 +7,10 @@
 //! - `tabs place <dcv> <op> [--count N | --at d1,d2…]` places tabs on the
 //!   outlines a Profile cuts with `dc_cam::placed_tabs`: `--count` with
 //!   the phase 2 layout rules, `--at` at distances along each outline;
-//!   with neither, the operation's own tab request.
+//!   with neither, the operation's own tab request. It adds to the tabs
+//!   already there, and notes an outline that had some; `--replace` first
+//!   removes the tabs the operation cuts round, as `tabs clear <dcv> <op>`
+//!   does (#293).
 //! - `tabs list <dcv>` prints every tab and the enabled Profiles that cut
 //!   round it.
 //! - `tabs clear <dcv> [<op> | --tab <id>…]` removes tabs.
@@ -20,11 +23,14 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use dc_cam::Warning;
 use dc_cam::placed_tabs::{
-    TabSize, along_outline_mm, crossed_by, freed_parts, place, place_on_outlines, place_requests,
+    Placement, TabSize, along_outline_mm, crossed_by, freed_parts, off_outline_mm, on_holes, place,
+    place_on_outlines, place_requests, replace,
 };
-use dc_project::{Operation, OperationId, PlacedTab, Project, TabPlacement, TabShape, TabSpec};
+use dc_cam::{CamError, ShapeRef, Warning};
+use dc_project::{
+    Operation, OperationId, PlacedTab, Project, TabId, TabPlacement, TabShape, TabSpec,
+};
 
 use crate::cli::{Failure, StagedFile, TabsCommand, TabsPlaceArgs};
 use crate::export::load_project;
@@ -47,13 +53,15 @@ pub fn run(command: &TabsCommand) -> Result<ExitCode, Failure> {
 }
 
 /// The project at `dcv` with every enabled Profile's tab request placed,
-/// printing what placing found.
-fn load_placed(dcv: &Path) -> Result<(Project, usize), Failure> {
+/// printing what placing found, with how many requests it placed and the
+/// ids of the tabs the file already had.
+fn load_placed(dcv: &Path) -> Result<(Project, usize, Vec<TabId>), Failure> {
     let (project, _) = load_project(dcv)?;
     let requests = requests_of(&project);
+    let had = project.tabs.iter().map(|t| t.id.clone()).collect();
     let (placed, warnings) = place_requests(&project).map_err(Failure::error)?;
     print_warnings(&warnings);
-    Ok((placed, requests))
+    Ok((placed, requests, had))
 }
 
 /// How many enabled Profiles hold a tab request.
@@ -101,45 +109,57 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
             )));
         }
     };
-    let (mut project, warnings) = place_requests(&raw).map_err(Failure::error)?;
-    print_warnings(&warnings);
     // Size, shape and holes belong to the tabs --count or --at places; a
     // request brings its own.
-    if args.count.is_none()
-        && args.at.is_none()
+    let generated = args.count.is_some() || args.at.is_some();
+    if !generated
         && (args.width.is_some() || args.height.is_some() || args.shape.is_some() || args.on_holes)
     {
         return Err(Failure::usage(
             "--width, --height, --shape and --on-holes need --count or --at",
         ));
     }
-    let width_mm = args.width.unwrap_or(DEFAULT_WIDTH_MM);
-    let height_mm = args.height.unwrap_or(DEFAULT_HEIGHT_MM);
-    let shape = args.shape.map_or(TabShape::Rect, Into::into);
-    let placement = match (&args.at, args.count) {
-        (Some(at_mm), _) => Some(place_on_outlines(
-            &project,
-            &op,
-            at_mm,
-            TabSize {
-                width_mm,
-                height_mm,
-                shape,
-            },
-            args.on_holes,
-        )),
-        (None, Some(count)) => Some(place(
-            &project,
-            &op,
-            &TabSpec {
-                placement: TabPlacement::Count { count },
-                width_mm,
-                height_mm,
-                shape,
-                on_holes: args.on_holes,
-            },
-        )),
-        (None, None) => {
+    // An enabled Profile's request is placed with every other request,
+    // before anything could be removed, so there is nothing to replace
+    // it with.
+    if !generated && args.replace {
+        return Err(Failure::usage("--replace needs --count or --at"));
+    }
+    let (mut project, warnings) = place_requests(&raw).map_err(Failure::error)?;
+    print_warnings(&warnings);
+    let size = TabSize {
+        width_mm: args.width.unwrap_or(DEFAULT_WIDTH_MM),
+        height_mm: args.height.unwrap_or(DEFAULT_HEIGHT_MM),
+        shape: args.shape.map_or(TabShape::Rect, Into::into),
+    };
+    // The tabs --count or --at asks for, on `project`.
+    let place_new = |project: &Project| -> Result<Placement, CamError> {
+        match (&args.at, args.count) {
+            (Some(at_mm), _) => place_on_outlines(project, &op, at_mm, size, args.on_holes),
+            (None, None) => Ok(Placement::default()),
+            (None, Some(count)) => place(
+                project,
+                &op,
+                &TabSpec {
+                    placement: TabPlacement::Count { count },
+                    width_mm: size.width_mm,
+                    height_mm: size.height_mm,
+                    shape: size.shape,
+                    on_holes: args.on_holes,
+                },
+            ),
+        }
+    };
+    let before = project.clone();
+    let freed_before = freed_parts(&project);
+    let (removed, placement) = if args.replace {
+        let replaced = replace(&project, &op, place_new).map_err(Failure::error)?;
+        project = replaced.project;
+        (replaced.removed, Some(replaced.placement))
+    } else {
+        let placement = if generated {
+            Some(place_new(&project))
+        } else {
             let Some(spec) = request else {
                 return Err(Failure::usage(format!(
                     "operation `{op}` has no tab request to place; give --count or --at"
@@ -155,12 +175,18 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
                 placed = Some(spec);
             }
             placed.map(|spec| place(&project, &op, &spec))
+        };
+        let placement = placement.transpose().map_err(Failure::error)?;
+        if let Some(placement) = &placement {
+            project.tabs.extend(placement.tabs.iter().cloned());
         }
+        (Vec::new(), placement)
     };
-    if let Some(placement) = placement {
-        let placement = placement.map_err(Failure::error)?;
+    if let Some(placement) = &placement {
         print_warnings(&placement.warnings);
-        project.tabs.extend(placement.tabs);
+    }
+    for tab in &removed {
+        outln!("Removed {}", describe(&before, tab))?;
     }
     let new: Vec<&PlacedTab> = project
         .tabs
@@ -170,14 +196,112 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
     for tab in &new {
         outln!("Placed {}", describe(&project, tab))?;
     }
+    warn_on_holes(&project, &new);
     save(&args.dcv, &project)?;
-    outln!(
-        "{} tab(s) placed; {} saved with {} tab(s).",
-        new.len(),
-        args.dcv.display(),
-        project.tabs.len()
-    )?;
+    if args.replace {
+        outln!(
+            "{} tab(s) removed and {} placed; {} saved with {} tab(s).",
+            removed.len(),
+            new.len(),
+            args.dcv.display(),
+            project.tabs.len()
+        )?;
+        note_freed(&freed_before, &project)?;
+    } else {
+        outln!(
+            "{} tab(s) placed; {} saved with {} tab(s).",
+            new.len(),
+            args.dcv.display(),
+            project.tabs.len()
+        )?;
+        if let Some(placement) = &placement {
+            note_added(&before, &placement.tabs)?;
+        }
+    }
     Ok(())
+}
+
+/// Warns `tab_on_hole` once for each of `new` that an enabled Profile of
+/// `project` cuts as a hole (#300). Generation does not warn again for a
+/// tab placed on the hole for that cut, so this is where the user hears
+/// that it holds the slug.
+fn warn_on_holes(project: &Project, new: &[&PlacedTab]) {
+    let mut warnings = Vec::new();
+    for op in &project.operations {
+        let Operation::Profile(profile) = op else {
+            continue;
+        };
+        if !profile.enabled {
+            continue;
+        }
+        for (tab, shape) in on_holes(project, profile).unwrap_or_default() {
+            if new.iter().any(|t| t.id == tab) {
+                warnings.push(Warning::TabOnHole {
+                    op: profile.id.clone(),
+                    tab,
+                    shape,
+                });
+            }
+        }
+    }
+    print_warnings(&warnings);
+}
+
+/// Notes each outline that had tabs in `before` and gets more of `added`
+/// (#293): `tabs place` adds to them, and `--replace` swaps them instead.
+fn note_added(before: &Project, added: &[PlacedTab]) -> Result<(), Failure> {
+    let mut outlines: Vec<(&PlacedTab, usize)> = Vec::new();
+    for tab in added {
+        match outlines
+            .iter_mut()
+            .find(|(t, _)| t.instance == tab.instance && t.profile == tab.profile)
+        {
+            Some((_, n)) => *n += 1,
+            None => outlines.push((tab, 1)),
+        }
+    }
+    for (tab, more) in outlines {
+        let had = before
+            .tabs
+            .iter()
+            .filter(|t| t.instance == tab.instance && t.profile == tab.profile)
+            .count();
+        if had > 0 {
+            outln!(
+                "Note: {} already had {had} tab(s); this adds {more} more. To swap them instead, give --replace.",
+                outline_name(before, tab)
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Notes each part an enabled Profile of `project` cuts through the stock
+/// with no tab, and did not in `before` ([`freed_parts`]).
+fn note_freed(before: &[(OperationId, ShapeRef)], project: &Project) -> Result<(), Failure> {
+    for (op, shape) in freed_parts(project) {
+        if !before.contains(&(op.clone(), shape.clone())) {
+            outln!(
+                "Note: operation `{op}` now cuts {shape} through the stock with no tab, so the part comes loose on its last pass."
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The outline `tab` is on, as warnings name it.
+fn outline_name(project: &Project, tab: &PlacedTab) -> String {
+    let name = project
+        .instances
+        .iter()
+        .find(|i| i.id == tab.instance)
+        .map_or("?", |i| i.name.as_str());
+    ShapeRef {
+        instance: tab.instance.clone(),
+        instance_name: name.to_owned(),
+        profile: tab.profile,
+    }
+    .to_string()
 }
 
 /// One tab as `place` and `list` show it.
@@ -217,7 +341,7 @@ const fn shape_name(shape: TabShape) -> &'static str {
 /// `tabs list`: a table of every tab, with the enabled Profiles that cut
 /// round it.
 fn list(dcv: &Path) -> Result<(), Failure> {
-    let (project, requests) = load_placed(dcv)?;
+    let (project, requests, _) = load_placed(dcv)?;
     if project.tabs.is_empty() {
         outln!("{} has no tabs.", dcv.display())?;
         return Ok(());
@@ -237,6 +361,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
         "INSTANCE",
         "PROFILE",
         "AT_MM",
+        "OFF_MM",
         "X_MM",
         "Y_MM",
         "WIDTH_MM",
@@ -245,7 +370,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
         "CUT_BY",
     ]
     .map(str::to_owned);
-    let rows: Vec<[String; 10]> = project
+    let rows: Vec<[String; 11]> = project
         .tabs
         .iter()
         .map(|tab| {
@@ -259,6 +384,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
                 tab.instance.to_string(),
                 tab.profile.to_string(),
                 along_outline_mm(&project, tab).map_or_else(|| "-".to_owned(), |(at, _)| mm(at)),
+                off_outline_mm(&project, tab).map_or_else(|| "-".to_owned(), mm),
                 mm(tab.x_mm),
                 mm(tab.y_mm),
                 mm(tab.width_mm),
@@ -299,7 +425,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
 /// named in `ids`. Says which parts an enabled Profile then cuts through
 /// the stock with no tab that one held before.
 fn clear(dcv: &Path, op: Option<&str>, ids: &[String]) -> Result<(), Failure> {
-    let (mut project, _) = load_placed(dcv)?;
+    let (mut project, _, had) = load_placed(dcv)?;
     let before = project.tabs.len();
     let freed_before = freed_parts(&project);
     if let Some(op) = op {
@@ -338,18 +464,17 @@ fn clear(dcv: &Path, op: Option<&str>, ids: &[String]) -> Result<(), Failure> {
         project.tabs.clear();
     }
     let removed = before - project.tabs.len();
+    let new: Vec<&PlacedTab> = project
+        .tabs
+        .iter()
+        .filter(|t| !had.contains(&t.id))
+        .collect();
+    warn_on_holes(&project, &new);
     save(dcv, &project)?;
     outln!(
         "Removed {removed} tab(s); {} saved with {} tab(s).",
         dcv.display(),
         project.tabs.len()
     )?;
-    for (op, shape) in freed_parts(&project) {
-        if !freed_before.contains(&(op.clone(), shape.clone())) {
-            outln!(
-                "Note: operation `{op}` now cuts {shape} through the stock with no tab, so the part comes loose on its last pass."
-            )?;
-        }
-    }
-    Ok(())
+    note_freed(&freed_before, &project)
 }

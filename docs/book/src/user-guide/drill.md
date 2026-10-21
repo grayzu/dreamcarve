@@ -214,6 +214,10 @@ One operation is never part cycles and part moves. This happens when:
 - a peck also has a dwell (no cycle does both);
 - the post-processor has no command for the cycle, or does not state how
   far its `G83` or `G73` backs off between pecks.
+- the project sets a [clearance height](post-processors.md#heights-clearance-tool-change-and-park)
+  and the holes are separate parts: the Drill crosses between them at the
+  clearance height, while `G98` goes back only to the height of the first
+  hole (#283). Holes of one part are still crossed at safe Z.
 
 A post-processor that has `G83` and `G73` writes them with any retract
 height: DreamCarve counts the pecks from the retract height `R`, as the

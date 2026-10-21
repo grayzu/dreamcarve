@@ -27,9 +27,9 @@ pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
     ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
-    FeatureDefinition, FeatureInstance, LastPass, Lead, MachineOrigin, MachiningOrder, Operation,
-    OriginXy, OriginZ, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, Stock,
-    TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
+    FeatureDefinition, FeatureInstance, Heights, LastPass, Lead, MachineOrigin, MachiningOrder,
+    Operation, OriginXy, OriginZ, ParkXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project,
+    Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,

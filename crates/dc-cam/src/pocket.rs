@@ -34,7 +34,7 @@ use crate::profile::{
     contour_contains, crossing_error, hole_shapes, outer_shape, rates_of, resolve_targets,
 };
 use crate::relief::{self, Site};
-use crate::sequence::{SequenceInput, sequence};
+use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::lap_cuts;
 use crate::toolpath::{Move, Toolpath};
@@ -249,6 +249,7 @@ pub fn generate_pocket(
         depth_mm,
         through_cut_allowance_mm: op.through_cut_allowance_mm,
         safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
         rates,
         tolerance_mm,
     }
@@ -466,6 +467,7 @@ pub fn generate_pocket(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
         stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm,

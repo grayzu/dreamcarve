@@ -63,9 +63,9 @@
 //!   `dc-cam` builds, so generation places it before it cuts, and each
 //!   `dreamcarve tabs` command that saves the project writes it as placed
 //!   tabs.
-//! - **12**: separate heights (#283). STAND-IN until #283 merges: an
-//!   identity step, so this branch's version 13 has a version 12 to
-//!   migrate from. #283's own step replaces it.
+//! - **12**: adds the project's `heights` after `origin` (#283):
+//!   `clearance_mm`, `tool_change_machine_z_mm` and `park`, all `null`,
+//!   which exports what an earlier file did.
 //! - **13**: adds each Profile's last pass allowance, `last_pass: null`
 //!   after `corner_relief` (#284): every pass cuts on the part's path, as
 //!   before.
@@ -337,7 +337,8 @@ fn v6_to_v7(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
 /// gained since, with the values of its time, so it compares equal to the
 /// bundled version 1 it was made from (#117): the dwell word was always
 /// seconds on GRBL and grblHAL, and no controller then documented a
-/// chip-break re-entry gap. These are definition facts, so they never
+/// chip-break re-entry gap; both document `G53` (#283). These are
+/// definition facts, so they never
 /// appear in a version 7 or later project; the comparison is the only
 /// place a version 6 copy meets them.
 fn upgrade_embedded_copy(copy: &mut Value) -> Result<(), String> {
@@ -353,6 +354,27 @@ fn upgrade_embedded_copy(copy: &mut Value) -> Result<(), String> {
         );
     }
     dwell.insert("units".into(), Value::from("seconds"));
+    // #283: the machine-coordinate command is a fact of the controller,
+    // not of the copy, so it is the bundled version 1's (`"G53"` on
+    // grblHAL and GRBL, the only definitions a version 6 file held), and
+    // nothing writes it unless a project sets the height.
+    let machine_command = copy
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| bundled_definition(id, V6_DEFINITION_VERSION).ok())
+        .and_then(|d| d.post_processor().work_coordinates.machine_command.clone())
+        .map_or(Value::Null, Value::from);
+    let work_coordinates = copy
+        .get_mut("work_coordinates")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "`post_processor.work_coordinates` is missing".to_owned())?;
+    if work_coordinates.contains_key("machine_command") {
+        return Err(
+            "a version 6 file has no `post_processor.work_coordinates.machine_command`, but this one does"
+                .into(),
+        );
+    }
+    work_coordinates.insert("machine_command".into(), machine_command);
     if let Some(cycles) = copy.get_mut("canned_cycles").and_then(Value::as_object_mut) {
         if cycles.contains_key("reentry_gap_mm") {
             return Err(
@@ -484,10 +506,31 @@ fn v10_to_v11(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(out)
 }
 
-/// Version 11 → 12 (#283, separate heights). STAND-IN until #283 merges:
-/// changes only the version. #283's step replaces it.
+/// Version 11 → 12 (#283): `heights` after `origin`, with the clearance
+/// height, the tool-change machine Z and the park point all `null`, so the
+/// project exports what it did. Fails if the project already has
+/// `heights`: that is not a version 11 file.
 fn v11_to_v12(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
-    Ok(root)
+    if root.contains_key("heights") {
+        return Err("a version 11 file has no `heights`, but this one does".into());
+    }
+    let mut heights = Map::with_capacity(3);
+    for key in ["clearance_mm", "tool_change_machine_z_mm", "park"] {
+        heights.insert(key.into(), Value::Null);
+    }
+    let mut out = Map::with_capacity(root.len() + 1);
+    let mut heights = Some(Value::Object(heights));
+    for (key, value) in root {
+        let after_this = key == "origin";
+        out.insert(key, value);
+        if after_this && let Some(heights) = heights.take() {
+            out.insert("heights".into(), heights);
+        }
+    }
+    if let Some(heights) = heights {
+        out.insert("heights".into(), heights);
+    }
+    Ok(out)
 }
 
 /// Version 12 → 13 (#284): `last_pass: null` right after each Profile's
@@ -692,6 +735,9 @@ mod tests {
             for op in root["operations"].as_array_mut().unwrap() {
                 op.as_object_mut().unwrap().shift_remove("last_pass");
             }
+        }
+        if version < 12 {
+            root.as_object_mut().unwrap().shift_remove("heights");
         }
         if version < 11 {
             root.as_object_mut().unwrap().shift_remove("tabs");
@@ -1381,18 +1427,57 @@ mod tests {
         }
     }
 
-    // Version 12 → 13 (#284): the Profile last pass allowance.
+    // Version 11 → 12 (#283): the clearance, tool-change and park heights.
 
     const V11_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v11/sample.dcv");
-    const V12_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v12/sample.dcv");
 
+    /// #283, design addendum A7: a version 11 project gains `heights`
+    /// right after `origin`, with its three fields `null`, which exports
+    /// what the file did; everything else is unchanged.
     #[test]
-    fn version_11_fixture_loads() {
-        let loaded = load(V11_FIXTURE).unwrap();
-        assert_eq!(loaded.project.version, CURRENT_VERSION);
-        assert_eq!(loaded.project, sample_project());
-        assert_eq!(loaded.problems, vec![]);
+    fn v11_to_v12_adds_null_heights() {
+        let root: Value = serde_json::from_slice(V11_FIXTURE).unwrap();
+        let Value::Object(map) = root.clone() else {
+            panic!("the fixture is an object");
+        };
+        // The one step: `migrate` would go on to the current version.
+        let mut migrated = Value::Object(v11_to_v12(map).unwrap());
+        migrated["version"] = Value::from(12);
+        assert_eq!(
+            migrated["heights"],
+            json!({ "clearance_mm": null, "tool_change_machine_z_mm": null, "park": null })
+        );
+        let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
+        let heights_keys: Vec<&String> = migrated["heights"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            heights_keys,
+            ["clearance_mm", "tool_change_machine_z_mm", "park"],
+            "{heights_keys:?}"
+        );
+        let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+        assert_eq!(at("heights"), at("origin") + 1, "{keys:?}");
+        let mut without = migrated.clone();
+        without.as_object_mut().unwrap().shift_remove("heights");
+        without["version"] = Value::from(11);
+        assert_eq!(without, root, "nothing else changes");
+        assert_eq!(
+            migrate(sample_root_at(11), 11).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+
+        let mut already = sample_root_at(11);
+        already["heights"] = json!({});
+        let err = migrate(already, 11).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 11, to: 12, message }
+                if message.contains("heights")),
+            "{err:?}"
+        );
     }
+
+    // Version 12 → 13 (#284): the Profile last pass allowance.
+
+    const V12_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v12/sample.dcv");
 
     #[test]
     fn version_12_fixture_loads() {
@@ -1475,6 +1560,17 @@ mod tests {
             "{text}"
         );
         assert_eq!(load(text.as_bytes()).unwrap().project, p);
+    }
+
+    /// #283: the version 11 fixture loads as the sample project, whose
+    /// heights are unset, so it exports what it did before version 12.
+    #[test]
+    fn version_11_fixture_loads() {
+        let loaded = load(V11_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project.heights, crate::Heights::unset());
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
     }
 
     #[test]

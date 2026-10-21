@@ -159,8 +159,9 @@ _PureCutCNC_: `machiningOrder`; `feature_first` is Full Depth First,
 
 **Link**:
 The tool motion inside an operation between the end of one cut and the start
-of the next: a retract to Safe Z, a rapid and a plunge, or a move that stays
-down in material the operation has already cut.
+of the next: a retract to Safe Z (to the Clearance Height between parts),
+a rapid and a plunge, or a move that stays down in material the operation
+has already cut.
 _Avoid_: Transition, traverse, keep-tool-down
 
 **Entry**:
@@ -235,8 +236,29 @@ a part can be freed into a spoilboard. Zero unless the user sets it.
 _Avoid_: Overcut, extra depth, cut-through
 
 **Safe Z**:
-The height above the stock at which rapid moves between cuts travel.
-_Avoid_: Clearance height; not the Retract Height, a Drill's lower plane (retract alone is the per-move lift)
+An operation's height above the stock (`safe_z_mm`) at which rapid moves
+between the cuts of one part travel. Without a Clearance Height, moves
+between parts and operations travel at it too. Fusion calls it the
+retract height.
+_Avoid_: not the Clearance Height; not the Retract Height, a Drill's lower plane (retract alone is the per-move lift)
+
+**Clearance Height**:
+The project's height above the stock (`heights.clearance_mm`) for moves
+between parts, between operations, at a tool change and at the end; at
+least every enabled operation's Safe Z (#283). VCarve's Clearance gap (Z1).
+_Avoid_: Safe height, rapid height
+
+**Tool-change Machine Z**:
+A height in machine coordinates (`heights.tool_change_machine_z_mm`), below
+0, that the program lifts to with `G53 G0 Z` before each tool-change stop
+and at the end, on grblHAL and GRBL (#283). Needs a homed machine.
+_Avoid_: Home Z, tool-change height (that is a sender's setting)
+
+**Park Point**:
+Where the program ends in XY (`heights.park`), reached at the Clearance
+Height before the Tool-change Machine Z lift (#283). VCarve's Home
+position without its Z.
+_Avoid_: Home position (VCarve's has a Z), end point
 
 **Retract Height**:
 In a Drill, the height `retract_mm` above the stock top, capped at Safe Z,

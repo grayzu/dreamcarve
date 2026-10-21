@@ -687,11 +687,11 @@ fn export_refuses_feed_above_limit_with_location() {
     assert_eq!(out.status.code(), Some(1), "an error exits 1");
     let stderr = stderr(&out);
     assert!(
-        stderr.contains("coaster.dcv:24:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
+        stderr.contains("coaster.dcv:29:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("coaster.dcv:26:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        stderr.contains("coaster.dcv:31:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
         "{stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
@@ -6135,6 +6135,220 @@ fn check_warns_tab_not_crossed() {
     );
 }
 
+/// #300, the issue's second test: `tabs list` shows how far each tab's
+/// point is from its outline, as cut, in `OFF_MM`. The coaster's request
+/// places its four tabs on the tool path, a bit radius (3.175 mm) off the
+/// circle. A tab put by hand 20 mm out from the circle's first vertex, its
+/// rightmost point, lists 20, and `check` warns `tab_off_outline` for it
+/// alone.
+#[test]
+fn tabs_list_shows_how_far_each_tab_is_off_its_outline() {
+    let dir = work_dir("tabs_list_shows_how_far_each_tab_is_off_its_outline");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mut project = load_file(&dcv).project;
+    let instance = &project.instances[0];
+    let first = project.definitions[&instance.definition].profiles[0].vertices()[0];
+    let mut far = project.tabs[0].clone();
+    far.id = dc_project::TabId::new("far");
+    far.x_mm = first.x + 20.0;
+    far.y_mm = first.y;
+    project.tabs.push(far);
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["tabs", "list", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let listed = stdout(&out);
+    let rows: Vec<Vec<&str>> = listed
+        .lines()
+        .map(|l| l.split_whitespace().collect())
+        .collect();
+    let column = rows[0]
+        .iter()
+        .position(|h| *h == "OFF_MM")
+        .unwrap_or_else(|| panic!("an OFF_MM column: {listed}"));
+    assert_eq!(rows[0][column - 1], "AT_MM", "{listed}");
+    let off: Vec<(&str, &str)> = rows[1..].iter().map(|r| (r[0], r[column])).collect();
+    assert_eq!(
+        off,
+        [
+            ("tab1", "3.175"),
+            ("tab2", "3.175"),
+            ("tab3", "3.175"),
+            ("tab4", "3.175"),
+            ("far", "20"),
+        ],
+        "{listed}"
+    );
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_off_outline:").count(),
+        1,
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "tab `far` on `coaster` (instance `i1`, profile 0) is 20 mm from that outline"
+        ),
+        "{report}"
+    );
+}
+
+/// #300, the issue's third test: a version 8 file whose part has a hole
+/// migrates with `"on_holes": true` (#109), so `tabs place` puts tabs on
+/// the hole as the file asked. It warns `tab_on_hole` once for each, as it
+/// places them; `export` then warns none, so a user who keeps the tabs is
+/// not told on every export. A tab put on the hole's outline by hand, which
+/// no placing asked for, still warns. The fixture is the tabs-migration
+/// corpus's square with a hole, written back as version 8.
+#[test]
+fn placed_v8_hole_tabs_export_without_tab_on_hole() {
+    let dir = work_dir("placed_v8_hole_tabs_export_without_tab_on_hole");
+    let v9 = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tabs-migration/square-with-hole-on-holes.dcv"),
+    )
+    .expect("fixture readable");
+    let v8 = v9
+        .replacen("\"version\": 9,", "\"version\": 8,", 1)
+        .replacen(",\n        \"on_holes\": true", "", 1);
+    assert!(
+        !v8.contains("on_holes") && v8.contains("\"version\": 8,"),
+        "{v8}"
+    );
+    std::fs::write(dir.join("square.dcv"), v8).expect("v8 written");
+
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dir.join("square.dcv")).project;
+    let hole_tabs = project.tabs.iter().filter(|t| t.profile == 1).count();
+    assert!(hole_tabs > 0, "{:?}", project.tabs);
+    assert_eq!(
+        stderr(&out).matches("warning: tab_on_hole:").count(),
+        hole_tabs,
+        "{}",
+        stderr(&out)
+    );
+
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_on_hole"), "{report}");
+
+    // By hand, on the middle of the hole's bottom edge.
+    let mut project = load_file(&dir.join("square.dcv")).project;
+    let mut by_hand = project.tabs[0].clone();
+    by_hand.id = dc_project::TabId::new("by-hand");
+    by_hand.profile = 1;
+    by_hand.x_mm = 0.0;
+    by_hand.y_mm = -15.0;
+    project.tabs.push(by_hand);
+    std::fs::write(
+        dir.join("square.dcv"),
+        save(&project).expect("project saves"),
+    )
+    .expect("dcv written");
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_on_hole:").count(),
+        1,
+        "{report}"
+    );
+    assert!(report.contains("tab `by-hand` is on"), "{report}");
+}
+
+/// #293 with #300: `tabs place --replace --on-holes` warns `tab_on_hole`
+/// once for each new tab it puts on the square's hole, and none for the
+/// tabs it removed; `export` then warns none. Both parts keep tabs, so
+/// there is no note that a part comes loose. Replacing again without
+/// `--on-holes` leaves the hole with no tabs: nothing warns, and the hole's
+/// slug coming free is no part coming loose, so there is no note either.
+#[test]
+fn tabs_place_replace_onto_a_hole_warns_once() {
+    let dir = work_dir("tabs_place_replace_onto_a_hole_warns_once");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tabs-migration/square-with-hole-on-holes.dcv"),
+        dir.join("square.dcv"),
+    )
+    .expect("fixture copied");
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = load_file(&dir.join("square.dcv")).project.tabs;
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--width",
+            "4",
+            "--on-holes",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    let project = load_file(&dir.join("square.dcv")).project;
+    let hole_tabs: Vec<&dc_project::PlacedTab> =
+        project.tabs.iter().filter(|t| t.profile == 1).collect();
+    assert_eq!(hole_tabs.len(), 2, "{:?}", project.tabs);
+    assert!(
+        printed.contains(&format!("{} tab(s) removed and 4 placed", first.len())),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let warned = stderr(&out);
+    assert_eq!(
+        warned.matches("warning: tab_on_hole:").count(),
+        2,
+        "{warned}"
+    );
+    for tab in &hole_tabs {
+        assert_eq!(
+            warned.matches(&format!("tab `{}` is on", tab.id)).count(),
+            1,
+            "{warned}"
+        );
+    }
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_on_hole"), "{report}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("tab_on_hole"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("Note:"), "{}", stdout(&out));
+    let project = load_file(&dir.join("square.dcv")).project;
+    assert!(
+        project.tabs.iter().all(|t| t.profile == 0),
+        "{:?}",
+        project.tabs
+    );
+}
+
 /// #207: an SVG line from (20, 30) to (80, 30), drawn left to right, cut
 /// Left: the cut runs on the side the drawing shows as the line's left
 /// (up the page), which after the importer's flip to Y-up (ADR-0001) is
@@ -6252,6 +6466,110 @@ fn tabs_clear_op_removes_only_the_tabs_it_cuts_round() {
     assert!(
         printed.contains("`coaster` (instance `i1`, profile 0)") && printed.contains("no tab"),
         "names the part op1 now cuts free: {printed}"
+    );
+}
+
+/// The tab points of the project at `dcv`, by id.
+fn tab_points(dcv: &Path) -> Vec<(String, Point)> {
+    load_file(dcv)
+        .project
+        .tabs
+        .iter()
+        .map(|t| (t.id.to_string(), Point::new(t.x_mm, t.y_mm)))
+        .collect()
+}
+
+/// #293, the issue's first test: `tabs place --replace` swaps the tabs
+/// the operation cuts round (the set `tabs clear <dcv> <op>` removes) for
+/// the new ones in one save, and prints both. Four tabs on the coaster,
+/// then six with `--replace`: the file holds the six, at none of the first
+/// four's points and with fresh ids, so an id read off an earlier `tabs
+/// list` names no new tab. The part keeps tabs, so there is no note that
+/// it comes loose. `--replace` with nothing to place is a usage error.
+#[test]
+fn tabs_place_replace_swaps_the_operations_tabs() {
+    let dir = work_dir("tabs_place_replace_swaps_the_operations_tabs");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = tab_points(&dcv);
+    assert_eq!(first.len(), 4, "{first:?}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "6",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert_eq!(printed.matches("Removed `tab").count(), 4, "{printed}");
+    assert_eq!(printed.matches("Placed `tab").count(), 6, "{printed}");
+    assert!(
+        printed.contains("4 tab(s) removed and 6 placed; coaster.dcv saved with 6 tab(s)."),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let second = tab_points(&dcv);
+    assert_eq!(second.len(), 6, "{second:?}");
+    for (id, point) in &second {
+        assert!(
+            first.iter().all(|(old, _)| old != id),
+            "new tab reuses id {id}: {second:?}"
+        );
+        assert!(
+            first.iter().all(|(_, old)| old.distance_to(*point) > 1e-6),
+            "new tab {id} at an old tab's point: {second:?}"
+        );
+    }
+
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1", "--replace"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("--replace needs --count or --at"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+}
+
+/// #293, the issue's second test: without `--replace`, `tabs place` keeps
+/// adding: four tabs then six leave ten on the coaster (none of the six
+/// lands on one of the four), and it notes that the outline already had
+/// tabs and how to swap them instead.
+#[test]
+fn tabs_place_without_replace_notes_existing_tabs() {
+    let dir = work_dir("tabs_place_without_replace_notes_existing_tabs");
+    init_coaster(&dir);
+    let dcv = dir.join("coaster.dcv");
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "6"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(load_file(&dcv).project.tabs.len(), 10);
+    let printed = stdout(&out);
+    assert!(
+        printed.contains(
+            "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s); this adds 6 more. To swap them instead, give --replace."
+        ),
+        "{printed}"
     );
 }
 
@@ -6812,4 +7130,333 @@ fn inch_project_summary_in_inches() {
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
     let summary = stdout(&out);
     assert!(summary.contains(", 12.000 mm deep"), "{summary}");
+}
+
+// ── #283: clearance, tool-change and park heights ──
+
+/// The plaque (`tests/fixtures/plaque.dcv`) copied into `dir`, saved with
+/// `heights` set, as `plaque.dcv`.
+fn plaque_with_heights(dir: &Path, heights: dc_project::Heights) -> PathBuf {
+    let dcv = copy_fixture(dir, "plaque.dcv", "plaque.dcv");
+    let mut project = load_file(&dcv).project;
+    project.heights = heights;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// Acceptance 45's heights: clearance 20 mm, machine Z −5 mm, park (0, 0).
+fn acceptance_45_heights() -> dc_project::Heights {
+    dc_project::Heights {
+        clearance_mm: Some(20.0),
+        tool_change_machine_z_mm: Some(-5.0),
+        park: Some(dc_project::ParkXy {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        }),
+    }
+}
+
+/// Each line of `program` with code, comments removed, with its 1-based
+/// line number and the operation whose header comment it follows.
+fn code_by_operation(program: &str) -> Vec<(usize, Option<usize>, String)> {
+    let mut op = None;
+    let mut out = Vec::new();
+    for (i, line) in program.lines().enumerate() {
+        if let Some(rest) = line.strip_prefix("( Operation ") {
+            op = rest.split(':').next().and_then(|n| n.parse().ok());
+            continue;
+        }
+        let code = match line.find('(') {
+            Some(at) => line[..at].trim(),
+            None => line.trim(),
+        };
+        if !code.is_empty() {
+            out.push((i + 1, op, code.to_owned()));
+        }
+    }
+    out
+}
+
+/// Acceptance 45 (#283, functional capability 33): the two-tool plaque on
+/// grblHAL in one program, with `clearance_mm: 20`,
+/// `tool_change_machine_z_mm: -5` and `park: (0, 0)`. Every move in XY
+/// between parts and between operations is at Z 20 (work zero at the
+/// stock top), and between passes of one part at its safe Z of 15: the
+/// four drilled holes, each its own part, are crossed at 20; the Cut out
+/// Profile's passes at 15. The tool change is the rise to 20, `G53 G0
+/// Z-5.000`, `M5`, `T2 M6`; the program ends with a rapid to the park
+/// point at Z 20, then the lift, then the footer. Nothing goes below the
+/// material bottom less the through-cut allowance (S1), and the export
+/// says to home the machine.
+#[test]
+fn heights_plaque_one_program() {
+    let dir = work_dir("heights_plaque_one_program");
+    plaque_with_heights(&dir, acceptance_45_heights());
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plaque.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("plaque.nc")).expect("program written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let op_of: Vec<(usize, Option<usize>, String)> = code_by_operation(&program);
+    let op_at = |line: usize| {
+        op_of
+            .iter()
+            .find(|(l, ..)| *l == line)
+            .and_then(|(_, op, _)| *op)
+    };
+
+    // S1: the plaque is 11.8 mm thick, cut through with 0.2 mm allowance.
+    for mv in &moves {
+        if let Some(z) = mv.to.z {
+            assert!(
+                z >= -12.0 - 1e-9,
+                "line {} below the floor: {mv:?}",
+                mv.line
+            );
+        }
+    }
+    // Every rapid in XY, by operation, at the clearance or safe Z.
+    let xy_rapids: Vec<(usize, Option<usize>, f64)> = moves
+        .iter()
+        .filter(|m| m.kind == dc_gcode::parse::MotionKind::Rapid)
+        .filter(|m| m.to.x.is_some() && (m.from.x != m.to.x || m.from.y != m.to.y))
+        .map(|m| (m.line, op_at(m.line), m.to.z.expect("Z known")))
+        .collect();
+    for &(line, _, z) in &xy_rapids {
+        assert!(
+            (z - 20.0).abs() < 1e-9 || (z - 15.0).abs() < 1e-9,
+            "line {line}: XY rapid at Z {z}"
+        );
+    }
+    // Into each operation at the clearance height.
+    for op in 1..=5 {
+        let first = xy_rapids
+            .iter()
+            .find(|(_, o, _)| *o == Some(op))
+            .unwrap_or_else(|| panic!("operation {op} has an XY rapid"));
+        assert!(
+            (first.2 - 20.0).abs() < 1e-9,
+            "into operation {op}: {first:?}"
+        );
+    }
+    // Drill: four holes, four parts, each reached at 20.
+    let drill: Vec<f64> = xy_rapids
+        .iter()
+        .filter(|(_, o, _)| *o == Some(3))
+        .map(|r| r.2)
+        .collect();
+    assert!(
+        drill.len() == 4 && drill.iter().all(|z| (z - 20.0).abs() < 1e-9),
+        "{xy_rapids:?}"
+    );
+    // Cut out: one part, its passes linked at 15.
+    let cut_out: Vec<f64> = xy_rapids
+        .iter()
+        .filter(|(_, o, _)| *o == Some(4))
+        .map(|r| r.2)
+        .skip(1)
+        .collect();
+    assert!(
+        !cut_out.is_empty() && cut_out.iter().all(|&z| (z - 15.0).abs() < 1e-9),
+        "{cut_out:?}"
+    );
+
+    let code: Vec<&str> = op_of.iter().map(|(_, _, c)| c.as_str()).collect();
+    let change = code
+        .iter()
+        .position(|c| c.starts_with("T2 M6"))
+        .expect("a tool change");
+    assert!(
+        ["Z20.000", "G0 Z20.000"].contains(&code[change - 3]),
+        "{:?}",
+        &code[change - 3..=change]
+    );
+    assert_eq!(code[change - 2..=change], ["G53 G0 Z-5.000", "M5", "T2 M6"]);
+    let n = code.len();
+    assert_eq!(
+        code[n - 5..],
+        ["Z20.000", "X0.000 Y0.000", "G53 G0 Z-5.000", "M5", "M30"],
+        "{program}"
+    );
+    assert!(
+        stdout(&out).contains(
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53)."
+        ),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Acceptance 45, the errors: on LinuxCNC, whose documents were not
+/// checked for `G53`, the machine Z is an error naming the setting at its
+/// place in the file; a clearance below an enabled operation's safe Z (15
+/// on the plaque) is an error naming the operation. With all three unset
+/// the version 11 plaque exports the programs it did before #283.
+#[test]
+fn heights_errors_and_unset_heights() {
+    let dir = work_dir("heights_errors_and_unset_heights");
+    let dcv = plaque_with_heights(&dir, acceptance_45_heights());
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        text.contains(
+            "error: heights.tool_change_machine_z_mm is set, but post-processor `linuxcnc`"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("plaque.dcv:"), "located: {text}");
+
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            clearance_mm: Some(10.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains(
+            "heights.clearance_mm is 10 mm, below the 15 mm safe_z_mm of operation `Panel`"
+        ),
+        "{}",
+        stderr(&out)
+    );
+
+    // The plaque as the build before #283 saved it (version 11, grblHAL
+    // v2), against the expected programs of that build.
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/heights-migration/plaque.dcv"),
+        &dcv,
+    )
+    .expect("corpus plaque copied");
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_corpus_programs(&dir, "plaque", "heights unset");
+    assert!(
+        !stdout(&out).contains("home the machine"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Design addendum A7: `export` says to home the machine when its
+/// programs lift with `G53`, since a machine position means nothing on an
+/// unhomed machine and DreamCarve cannot check; with one program per tool
+/// run, once for all of them. Without the setting it says nothing.
+#[test]
+fn export_prints_home_note() {
+    let dir = work_dir("export_prints_home_note");
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert_eq!(
+        text.matches(
+            "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53)."
+        )
+        .count(),
+        1,
+        "{text}"
+    );
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plaque.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains(
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53)."
+        ),
+        "{}",
+        stdout(&out)
+    );
+    plaque_with_heights(&dir, dc_project::Heights::unset());
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        !stdout(&out).contains("home the machine"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// #283: the repository's corpus of version 11 projects, saved with
+/// placed tabs by the build before #283 (`tabs place` on each project of
+/// the tabs-migration corpus), with the programs they export.
+fn heights_migration_corpus() -> Vec<(String, PathBuf)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/heights-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// #283, design addendum A7: every version 11 project of the corpus
+/// migrates to version 12 with its heights unset and exports byte for
+/// byte the programs the build before #283 exported (the tabs-migration
+/// expected programs, which that build reproduced), as loaded and after
+/// it is saved at version 12.
+#[test]
+fn version_11_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_11_projects_export_byte_identical_programs");
+    let corpus = heights_migration_corpus();
+    assert_eq!(corpus.len(), 16, "{corpus:?}");
+    for (name, path) in corpus {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(text.contains("\"version\": 11,"), "{name} is version 11");
+        assert!(!text.contains("\"heights\""), "{name} has no heights");
+
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "version 11");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        assert_eq!(project.heights, dc_project::Heights::unset(), "{name}");
+        std::fs::write(dir.join(&file), save(&project).expect("saves")).expect("dcv written");
+        for entry in std::fs::read_dir(&dir).expect("dir readable") {
+            let path = entry.expect("entry").path();
+            if path.extension().is_some_and(|x| x == "nc") {
+                std::fs::remove_file(path).expect("program removed");
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "version 12");
+    }
 }

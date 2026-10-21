@@ -831,3 +831,66 @@ fn dialect_facts_per_controller() {
     assert!(latest("uccnc").units.mm_command.is_none());
     assert!(latest("uccnc").units.inch_command.is_none());
 }
+
+/// The README section on `work_coordinates.machine_command`, up to the
+/// next `## ` heading.
+fn machine_command_section() -> &'static str {
+    let start = README
+        .find("\n## Machine-coordinate moves (`work_coordinates.machine_command`)")
+        .expect("the README has a machine-coordinate moves section")
+        + 1;
+    let rest = &README[start..];
+    let end = rest[3..].find("\n## ").map_or(rest.len(), |i| i + 4);
+    &rest[..end]
+}
+
+/// #283, AGENTS.md ("Reference implementation"): a controller-facing
+/// command is verified against the controller's source and cited. Every
+/// version with a `machine_command` has a row in the README's
+/// machine-coordinate section naming its file and the command, with a
+/// `gcode.c` citation (or "As" the version it repeats); a version without
+/// one has a `null` row. Every such definition maps Z to Z, since the lift
+/// writes machine Z as it is, and only grblHAL and GRBL have one.
+#[test]
+fn machine_command_cited() {
+    let section = machine_command_section();
+    let rows: Vec<&str> = section.lines().filter(|l| l.starts_with("| `")).collect();
+    for definition in bundled_definitions().unwrap() {
+        let post = definition.post_processor();
+        let path = format!("`{}`", definition.path);
+        let row = rows
+            .iter()
+            .find(|r| {
+                r.split(" | ")
+                    .next()
+                    .is_some_and(|cell| cell.contains(&path))
+            })
+            .unwrap_or_else(|| panic!("{path} has no row in the machine-coordinate section"));
+        match &post.work_coordinates.machine_command {
+            Some(command) => {
+                assert_eq!(command, "G53", "{path}");
+                assert!(row.contains(&format!("| `{command}` |")), "{path}: {row}");
+                assert!(
+                    row.contains("gcode.c") || row.contains("| As `"),
+                    "{path} cites no source: {row}"
+                );
+                assert!(["grblhal", "grbl"].contains(&definition.id), "{path}");
+                assert_eq!(post.coordinate_system.z_axis, dc_project::Axis::Z, "{path}");
+            }
+            None => assert!(row.contains("| `null` |"), "{path}: {row}"),
+        }
+    }
+    for source in [
+        "machine_limits.c",
+        "limits.c",
+        "system.c",
+        // #304 review: the downward-homing case and the soft-limit check
+        // that makes it fail safe.
+        "HOMING_FORCE_SET_ORIGIN",
+        "motion_control.c",
+        "4ec1ae44b857a70d2f9298344feac4b43ed0eb6b",
+        "bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e",
+    ] {
+        assert!(section.contains(source), "the section cites {source}");
+    }
+}

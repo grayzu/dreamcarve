@@ -711,6 +711,11 @@ fn report(
         program.first_tool.number,
         name_suffix(&program.first_tool.name)
     )?;
+    // #283: `G53` moves to a machine position, which is right only on a
+    // homed machine; the program cannot check that.
+    if let Some(z) = &program.machine_lift {
+        outln!("Before you start: home the machine; this program moves to machine Z {z} (G53).")?;
+    }
     report_tool_length_offset(project)?;
     report_pauses(program, "")?;
     // #95: the user chose one program with M6, in the project or with
@@ -759,6 +764,10 @@ fn report_runs(
             k + 1,
             output.display()
         )?;
+    }
+    // #283: every program of the export ends with the same lift.
+    if let Some(z) = programs.iter().find_map(|p| p.machine_lift.as_ref()) {
+        outln!("Before you start: home the machine; each program moves to machine Z {z} (G53).")?;
     }
     report_tool_length_offset(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;

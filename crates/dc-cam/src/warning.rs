@@ -50,6 +50,11 @@ pub enum WarningCode {
     /// every path that does runs too far from it, so it holds nothing
     /// (#105).
     TabNotCrossed,
+    /// A placed tab's point is farther from its outline than its width
+    /// plus the widest bit that cuts round it, so it is cut at the
+    /// outline's nearest point, which may not be where the user meant
+    /// (#300).
+    TabOffOutline,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
     ToolpathsOverlap,
@@ -140,6 +145,7 @@ impl WarningCode {
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
             Self::TabOnHole => "tab_on_hole",
             Self::TabNotCrossed => "tab_not_crossed",
+            Self::TabOffOutline => "tab_off_outline",
             Self::ToolpathsOverlap => "toolpaths_overlap",
             Self::PocketNoRoom => "pocket_no_room",
             Self::PocketIslandTooClose => "pocket_island_too_close",
@@ -342,6 +348,19 @@ pub enum Warning {
         tab: TabId,
         /// The outline it is placed on.
         shape: ShapeRef,
+    },
+    /// [`WarningCode::TabOffOutline`].
+    TabOffOutline {
+        /// The tab.
+        tab: TabId,
+        /// The outline it is placed on.
+        shape: ShapeRef,
+        /// How far the tab's point is from the outline, mm in project
+        /// space.
+        off_mm: f64,
+        /// The distance past which it warns, mm: the tab's width plus the
+        /// widest bit of the Profiles that cross it.
+        limit_mm: f64,
     },
     /// [`WarningCode::ToolpathsOverlap`].
     ToolpathsOverlap {
@@ -581,6 +600,7 @@ impl Warning {
             Self::TabsCoverMostOfContour { .. } => WarningCode::TabsCoverMostOfContour,
             Self::TabOnHole { .. } => WarningCode::TabOnHole,
             Self::TabNotCrossed { .. } => WarningCode::TabNotCrossed,
+            Self::TabOffOutline { .. } => WarningCode::TabOffOutline,
             Self::ToolpathsOverlap { .. } => WarningCode::ToolpathsOverlap,
             Self::PocketNoRoom { .. } => WarningCode::PocketNoRoom,
             Self::PocketIslandTooClose { .. } => WarningCode::PocketIslandTooClose,
@@ -633,6 +653,7 @@ impl Warning {
             | Self::ToolTooLarge { .. }
             | Self::DuplicateShapeDropped { .. }
             | Self::TabNotCrossed { .. }
+            | Self::TabOffOutline { .. }
             | Self::ToolpathsOverlap { .. }
             | Self::ToolChangeAvoidable { .. } => None,
         }
@@ -867,6 +888,17 @@ impl fmt::Display for Warning {
             Self::TabNotCrossed { tab, shape } => write!(
                 f,
                 "tab `{tab}` on {shape} is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab {tab}`)"
+            ),
+            Self::TabOffOutline {
+                tab,
+                shape,
+                off_mm,
+                limit_mm,
+            } => write!(
+                f,
+                "tab `{tab}` on {shape} is {} mm from that outline, more than its width plus the widest bit that cuts round it ({} mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`",
+                mm(*off_mm),
+                mm(*limit_mm)
             ),
             Self::ToolpathsOverlap {
                 shape,
@@ -1158,6 +1190,15 @@ mod tests {
                     shape: shape(),
                 },
                 "tab `tab3` on `Shape` (instance `i1`, profile 2) is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`)",
+            ),
+            (
+                Warning::TabOffOutline {
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                    off_mm: 20.000_000_000_4,
+                    limit_mm: 12.350_000_000_1,
+                },
+                "tab `tab3` on `Shape` (instance `i1`, profile 2) is 20 mm from that outline, more than its width plus the widest bit that cuts round it (12.35 mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1650,7 +1691,8 @@ mod tests {
             C::TabsOutsideCutRange => C::TabsCoverMostOfContour,
             C::TabsCoverMostOfContour => C::TabOnHole,
             C::TabOnHole => C::TabNotCrossed,
-            C::TabNotCrossed => C::ToolpathsOverlap,
+            C::TabNotCrossed => C::TabOffOutline,
+            C::TabOffOutline => C::ToolpathsOverlap,
             C::ToolpathsOverlap => C::PocketNoRoom,
             C::PocketNoRoom => C::PocketIslandTooClose,
             C::PocketIslandTooClose => C::EntryFallback,
@@ -1692,6 +1734,7 @@ mod tests {
                     | WarningCode::ToolTooLarge
                     | WarningCode::DuplicateShapeDropped
                     | WarningCode::TabNotCrossed
+                    | WarningCode::TabOffOutline
                     | WarningCode::ToolpathsOverlap
                     | WarningCode::ToolChangeAvoidable
             );
@@ -1705,7 +1748,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 28);
+        assert_eq!(count, 29);
     }
 
     #[test]

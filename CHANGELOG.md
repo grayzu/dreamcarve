@@ -107,6 +107,16 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   round a tab only when its cut goes below the tab's top. `check` warns
   `tab_not_crossed` for a tab no enabled Profile cuts round, and `tab_on_hole`
   for a tab that holds a hole's slug.
+- **`tabs place --replace`.** Swaps the tabs an operation cuts round for the
+  new ones in one step, printing each tab removed and placed ([#293]). Without
+  it `tabs place` still adds, and now notes an outline that already had tabs.
+- **Tabs far off their outline; `tab_on_hole` once.** `check` and `export`
+  warn `tab_off_outline` for a tab whose point is farther from its outline
+  than its width plus the widest bit that cuts round it, and `tabs list`
+  shows each tab's distance in a new `OFF_MM` column ([#300]). `tabs place`
+  warns `tab_on_hole` once for each tab it puts on a hole. `check` and
+  `export` no longer repeat it for tabs placed there for that cut, such as
+  those a version 8 file's `on_holes: true` request asks for.
 - **Estimated run time.** `export` and `check` print how long each program,
   and all of them together, should take: feed moves at their feed rates
   (arcs by their length), dwells, and rapids at the rate you set in the new
@@ -114,6 +124,19 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   Without a rapid rate the rapids' distance is printed instead of a guessed
   time. Acceleration and the time at pauses and tool changes are left out,
   and the line says so ([#280]). The estimate never changes a program.
+- **Clearance, tool-change and park heights; project format version 12.**
+  The project's `heights` sets a clearance height above the stock, for moves
+  between parts, between operations, at a tool change and at the end (each
+  operation's `safe_z_mm` stays the height between passes of one part, like
+  Fusion's retract height); a tool-change height in machine coordinates,
+  written as `G53 G0 Z…` before every tool-change stop and at the end of
+  every program, on grblHAL and GRBL; and a park point the program ends
+  over, like VCarve's Home position ([#283]). All three are `null` on
+  upgrade and from `init`, which exports as before. `export` says to home
+  the machine when a program lifts with `G53`. The definitions gain
+  `work_coordinates.machine_command` (`"G53"` on every grblHAL and GRBL
+  version, `null` on the others), added in place: no program's bytes change.
+  Older DreamCarve versions cannot read version 12 files.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
@@ -302,6 +325,13 @@ it is written:
 - **S2, changed:** a rapid straight down from safe Z may stop 1 mm above the
   stock top, or 1 mm above the floor its own operation has already cut there,
   before a ramp, helix or plunge ([#214], [#227]).
+- **S16:** a program writes `G53` only as `G53 G0 Z<v>` alone on its line, to
+  the project's tool-change machine Z (below 0), on a definition that
+  documents `G53`, from at or above safe Z, and only right before a
+  tool-change stop or the end; work Z is unknown after it, so the next move
+  across the work needs a retract first. Every other `G53` is refused
+  ([#283]). S2 and S6 accept the rises to the clearance height and the move
+  to the park point, which is held to the highest safe Z of the program.
 - Profiles that would cut through material you keep are refused (see Changed),
   and S9 holds hand-written programs to the same rules.
 - Two enabled tools with the same `number`, or a number of 0, stop export.
@@ -370,8 +400,11 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#277]: https://github.com/grayzu/dreamcarve/issues/277
 [#280]: https://github.com/grayzu/dreamcarve/issues/280
 [#279]: https://github.com/grayzu/dreamcarve/issues/279
+[#283]: https://github.com/grayzu/dreamcarve/issues/283
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#284]: https://github.com/grayzu/dreamcarve/issues/284
+[#293]: https://github.com/grayzu/dreamcarve/issues/293
+[#300]: https://github.com/grayzu/dreamcarve/issues/300

@@ -26,7 +26,7 @@ use crate::error::{CamError, FeedField, ShapeRef};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
 use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
 use crate::relief;
-use crate::sequence::{SequenceInput, plan, sequence};
+use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
     LapRates, Least, PathEnds, PathTabs, Reduced, Request, TabCut, Tabs, check_size,
@@ -182,7 +182,9 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// ADR-0005) is cut round: every pass below the tab's top rises over its
 /// span (`width + diameter` along the tool-centre contour, centred on the
 /// contour's point nearest the tab), and a placed tab on a hole warns
-/// [`Warning::TabOnHole`]. A tab request (`op.tabs`) is placed first, as
+/// [`Warning::TabOnHole`], unless it sits on this Profile's contour round
+/// the hole, where only placing tabs asked for on holes puts one (#300).
+/// A tab request (`op.tabs`) is placed first, as
 /// `dreamcarve tabs place` places it (#109): per contour, none on a hole
 /// unless `on_holes`, and on a contour whose spans would cover more than
 /// half of it the most that cover at most half (a part's outline at
@@ -420,7 +422,9 @@ pub fn generate_profile(
         let range = cut_range_warnings(&op.id, &tops_z_mm, &pass_z, thickness_mm);
         warnings.splice(range_at..range_at, range);
     }
-    for (tab, shape) in on_holes {
+    // A tab placed on the hole for this cut holds the slug because the
+    // user asked: `tabs place` warned when it placed it (#300).
+    for (tab, shape, _) in on_holes.into_iter().filter(|(_, _, asked)| !asked) {
         warnings.push(Warning::TabOnHole {
             op: op.id.clone(),
             tab,
@@ -691,6 +695,7 @@ pub fn generate_profile(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
         stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,
@@ -1035,8 +1040,10 @@ pub(crate) struct TabPlan {
     /// The top of every tab cut, and the request's, for the cut range
     /// warnings.
     pub tops_z_mm: Vec<f64>,
-    /// The placed tabs cut on a path round a hole, with the hole.
-    pub on_holes: Vec<(TabId, ShapeRef)>,
+    /// The placed tabs cut on a path round a hole, with the hole, and
+    /// whether the tab sits on that path: where placing a request or
+    /// `--count` that asked for tabs on holes puts it (#300).
+    pub on_holes: Vec<(TabId, ShapeRef, bool)>,
     /// Every placed tab the operation crosses, in project order.
     pub crossed: Vec<TabId>,
     /// Per path, the tabs the request puts on it.
@@ -1163,7 +1170,9 @@ fn plan_tabs(
         }
         crossed.push(tab.id.clone());
         if holes.get(j).copied().unwrap_or(false) {
-            on_holes.push((tab.id.clone(), shape.clone()));
+            // Only `place` with `on_holes` puts a tab on this path round
+            // a hole, so a tab still on it was asked for (#300).
+            on_holes.push((tab.id.clone(), shape.clone(), near.gap_mm <= EPS_MM));
         }
     }
 

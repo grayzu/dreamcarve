@@ -378,8 +378,17 @@ pub mod placed_tabs {   // #105, "Placed tabs"
     pub fn place_on_outlines(project: &Project, op: &OperationId, at_mm: &[f64], size: TabSize, on_holes: bool) -> Result<Placement, CamError>;
     /// Every enabled Profile's request placed and cleared, as `dreamcarve` saves.
     pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamError>;
+    /// The tabs `op` crosses replaced by what `place` places without them (#293).
+    pub struct Replacement { pub project: Project, pub removed: Vec<PlacedTab>, pub placement: Placement }
+    pub fn replace<F: FnOnce(&Project) -> Result<Placement, CamError>>(project: &Project, op: &OperationId, place: F) -> Result<Replacement, CamError>;
     pub fn crossed_by(project: &Project, op: &ProfileOp) -> Result<Vec<TabId>, CamError>;
-    pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning>;  // tab_not_crossed
+    pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning>;  // tab_not_crossed, tab_off_outline
+    /// The tab's width plus `diameter_mm` (#300).
+    pub fn off_outline_limit_mm(tab: &PlacedTab, diameter_mm: f64) -> f64;
+    /// How far the tab's point is from its outline, project space (#300).
+    pub fn off_outline_mm(project: &Project, tab: &PlacedTab) -> Option<f64>;
+    /// The placed tabs `op` crosses on a path round a hole, with the hole (#300).
+    pub fn on_holes(project: &Project, op: &ProfileOp) -> Result<Vec<(TabId, ShapeRef)>, CamError>;
     pub fn tab_point(project: &Project, tab: &PlacedTab) -> Option<Point>;   // project space
 }
 // CamError::UnknownOperation { op }, CamError::TabsNeedProfile { op, kind },
@@ -419,7 +428,8 @@ instance, profile)`, `CutInsideFreedPart (op, earlier_op, instance)`,
 `ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of,
 tool)`, `TabOnHole (op, tab, instance, instance_name, profile)` and
 `TabNotCrossed (tab, instance, instance_name, profile)` (#105; the second
-names no operation). All phase 1 codes stay. (changed in slices 4, 7 and 9, #137,
+names no operation), and `TabOffOutline (tab, instance, instance_name,
+profile, off_mm, limit_mm)` (#300; names no operation). All phase 1 codes stay. (changed in slices 4, 7 and 9, #137,
 #138, #147: params as built.)
 
 ### dc-gcode
@@ -1242,7 +1252,19 @@ path cover more than half of it, `TabsCoverMostOfContour` warns with the
 request is reduced (#109's rules). A placed tab on an outline the
 Profile cuts as a hole (`Role::Hole`) is cut too, because the user
 placed it, and warns `TabOnHole (op, tab, shape)`: the slug is usually
-waste and holding it is work by hand.
+waste and holding it is work by hand. Generation does not warn for a tab
+whose point lies on this Profile's tool path round the hole (within
+`EPS_MM`). Only `place` with `on_holes`, from a request or `--count
+--on-holes`, puts a tab there, so such a tab was asked for: a version 8
+file's migrated `on_holes: true` request among them. `placed_tabs::on_holes`
+lists every hole tab a Profile crosses, and `tabs place` and `tabs clear`
+warn `TabOnHole` once for each tab they place on a hole. A tab on the
+hole's outline (`--at --on-holes`, or a hand edit) or left off the path by
+a change of bit or side still warns on every export. (changed in #300: every
+hole tab warned on every `check` and `export`, and a user who kept the
+tabs a migrated request asked for could not silence it. Marking a tab as
+meant to hold its slug needs a field, so a format version; #283 holds
+the next one; #302 adds it after.)
 
 **Not crossed.** `placed_tabs::check(project, generated)` gives one
 `TabNotCrossed (tab, shape)` for each tab no enabled, generated Profile
@@ -1250,6 +1272,16 @@ crosses: its outline is cut by no enabled Profile (only by a Pocket, by
 a disabled Profile, or not at all), or every path runs too far from it.
 It is project-level, so it names no operation. `check` and `export` run
 it after `order::check` and print its warnings with the others.
+
+**Off its outline** (#300). The same `check` gives `TabOffOutline (tab,
+shape, off_mm, limit_mm)` for a crossed tab whose point is more than
+`off_outline_limit_mm` from its foot: the tab's width plus the widest
+tool diameter among the generated Profiles that cross it. `off_mm`
+(`off_outline_mm`) is measured in project space, as cut. A tab placed on
+the outline is 0 off and one placed from a request or `--count` `r`, so
+neither warns; a point a whole tab and bit away was not written by a
+placing command. The tab is still cut at its foot. A tab no Profile
+crosses warns `TabNotCrossed` only.
 
 **Placing from a request** (`place`). The request is laid on the
 Profile's tool paths exactly as #109 lays it ("Tabs per outline",
@@ -1277,6 +1309,14 @@ largest `tab<n>` in the project, so a removed id is not reused. A tab
 equal to one the project already has, or to one placed in the same
 call (same instance, profile and shape, point, width and height within
 `EPS_MM`), is not added, so placing the same tabs twice adds none.
+
+**Replacing** (`replace`, `tabs place --replace`, #293). The tabs a
+Profile crosses (`crossed_by`, the set `tabs clear <dcv> <op>` removes)
+are removed, then `place` or `place_on_outlines` runs on the project
+without them, so a new tab at a removed tab's point is placed again
+rather than taken for a copy. The new tabs are renumbered from one more
+than the largest `tab<n>` the project had before the removal, so no
+removed id names a new tab. (changed in #293: placing only added.)
 
 **Requests.** Generation places any request still present before it
 cuts (`profile::plan_tabs`), so a file with requests, of any version,
@@ -2306,9 +2346,23 @@ following the chapters, which each carry a complete JSON block to paste.
   (instance `i1`, profile 0) 35.343 mm along it: 8 mm wide, top 3 mm
   above the stock bottom, rect` per new tab, then `N tab(s) placed;
   coaster.dcv saved with M tab(s).`, and the placing warnings on stderr.
-- `tabs list <dcv>`: a table `ID INSTANCE PROFILE AT_MM X_MM Y_MM
+  An outline that had tabs and gets more is noted after the total:
+  "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s);
+  this adds 6 more. To swap them instead, give --replace."
+  `--replace` (#293; needs `--count` or `--at`, exit 2 without):
+  `placed_tabs::replace`; prints `Removed …` per tab removed (as
+  `Placed …`), the `Placed …` lines, `R tab(s) removed and N placed;
+  coaster.dcv saved with M tab(s).`, and the `tabs clear` note for each
+  part it leaves cut through with no tab. (changed in #293: adding was
+  the only way, so changing the count took `tabs clear` first.)
+  With or without `--replace`, each new tab an enabled Profile cuts as a
+  hole warns `tab_on_hole` once, on stderr (#300); a tab `--replace`
+  removes and places again takes a new id, so it is new and warns again.
+- `tabs list <dcv>`: a table `ID INSTANCE PROFILE AT_MM OFF_MM X_MM Y_MM
   WIDTH_MM HEIGHT_MM SHAPE CUT_BY`, `AT_MM` the distance of the tab's
-  foot along its outline from the first vertex as drawn, `CUT_BY` the
+  foot along its outline from the first vertex as drawn, `OFF_MM` how far
+  its point is from the foot in project space (`off_outline_mm`; changed
+  in #300: the distance was not shown), `CUT_BY` the
   enabled Profiles that cross it (`-` for none). Requests are shown as
   the tabs they place, with a note line; nothing is saved.
 - `tabs clear <dcv>` removes every tab, `tabs clear <dcv> <op>` the
@@ -2403,6 +2457,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `profile::star_with_tabs_placed_only_on_the_star_lifts_only_on_the_star` (acceptance 38a).
 - `safety::placed_tab_programs_pass_s1_to_s9`; the golden harness checks that every golden case with tabs cuts the same once its tabs are placed.
 - `cli::version_9_tab_settings_export_byte_identical_programs` (the tabs-migration corpus, as loaded and after `tabs place`), `cli::init_asks_for_four_tabs_that_tabs_place_writes`, `cli::tabs_place_list_and_clear`, `cli::tabs_place_at_puts_tabs_along_the_outline`, `cli::tabs_place_refuses_what_it_cannot_place`, `cli::check_warns_tab_not_crossed`.
+- `placed_tabs::replace_swaps_only_the_tabs_the_profile_crosses`, `cli::tabs_place_replace_swaps_the_operations_tabs`, `cli::tabs_place_without_replace_notes_existing_tabs` (#293).
+- `placed_tabs::tab_far_from_its_outline_warns`, `placed_tabs::hole_tabs_placed_for_the_cut_do_not_warn`, `cli::tabs_list_shows_how_far_each_tab_is_off_its_outline`, `cli::placed_v8_hole_tabs_export_without_tab_on_hole`, `cli::tabs_place_replace_onto_a_hole_warns_once` (#300).
 
 **dc-cam — pocket**
 - `pocket::offset_rings_are_concentric_and_spaced_by_stepover` — 100×50, 6.35 mm, 40 %: ring gaps 2.54 ± 0.01.
@@ -2909,6 +2965,70 @@ Tests: `migrate::v11_to_v12_adds_null_heights`,
 `safety::g53_refused_without_height`, `post::machine_command_cited`,
 `cli::heights_plaque_one_program` (acceptance 45),
 `cli::export_prints_home_note`.
+
+**As built (#283).** Where the build departs from or adds to the text
+above:
+
+- The end height. With a park point and no clearance height, the program
+  rises to the highest safe Z of its operations, not the last one's:
+  motion after the last operation is in no operation's span, where S2
+  holds it to that height (changed in #283: the text said the last
+  operation's safe Z).
+- Same-tool operations. Only the first operation and a tool change write a
+  retract at their start; an operation that follows one with the same tool
+  starts where that one's rise to the clearance height left the bit. The
+  first move in XY after a retract from an unknown position runs at the
+  retract's height before it lowers, so an operation's first crossing is at
+  the clearance height (`Writer::retracted_z`).
+- The lift and the stop. When the program has lifted with `G53`, it writes
+  no retract in work coordinates before the stop (the retract to the next
+  operation's height came first), and the safety pass refuses any motion
+  between a lift and the stop or end it is for
+  (`ExportError::MachineLiftNotBeforeStop`). Two stops may follow one lift
+  with nothing moving between them (manual spindle control: the router-off
+  pause, then `T<n> M6`). It also refuses a lift from below safe Z
+  (`MachineLiftNotAtSafeZ`) and one to another machine Z than the
+  project's, or to 0 or more (`MachineLiftWrongZ`).
+- Canned cycles. A Drill whose holes are separate instances links them at
+  the clearance height, which `G98` cannot follow, so with a clearance
+  height above safe Z it is written as moves with
+  `CannedExpansion::ClearanceHeight`. Holes of one instance keep cycles.
+- Corner relief. A Pocket's notches, sequenced one corner at a time after
+  its main path, are reached at the clearance height when the corner is of
+  another instance than the one before, and the first one always (where
+  the main path ended is not known there).
+- Validation. A non-finite machine Z is `NonFinite`, as every other field;
+  the clearance height and the machine Z are also held to the ±6000 mm
+  bound (#75), and the clearance height must be positive.
+- The note. `export` writes the machine Z with its units, `Before you
+  start: home the machine; this program moves to machine Z -5.000 mm
+  (G53).`; with one program per tool run, once, as "each program moves".
+  `Program::machine_lift` carries it.
+- Review of #304. (1) With manual spindle control the router-off pause
+  follows the lift and the user may jog there, so the program lifts again
+  right before `T<n> M6`; S16 accepts a lift right after a stop that
+  followed a lift with nothing moved since, once the units are set again
+  (S5). (2) Validation and the emitter refuse a machine Z that rounds to
+  0 in the program's decimal places. (3) The safety pass takes the
+  clearance height (`safety::ProgramHeights`): with it set, each
+  operation's first XY rapid, every XY rapid outside the operations (the
+  park move) and every stop are at or above it
+  (`ExportError::RapidBelowClearance`, `PauseNotAtSafeZ`). Links between
+  parts inside an operation are not told apart from links between passes
+  in the program text, which does not say which part a move is over (a
+  pocket's island is a part of its own, and its raster ends lie on it);
+  S6 holds them to the toolpath, whose links the sequencer writes and
+  `sequence::links_between_instances_rise_to_clearance` checks. (4) A
+  program with a machine Z has the header comment `( Lifts to machine Z
+  with G53: home the machine before running )`; others are unchanged.
+- The estimate (A4). A `G53` lift has no work-coordinate motion, so
+  `dc-gcode::estimate` leaves its distance, and that of the rise after it
+  from an unknown Z, out of the rapid distance.
+- The v11 corpus. `crates/dreamcarve/tests/fixtures/heights-migration/`
+  holds the 16 tabs-migration projects saved at version 11 by the build
+  before #283 (`tabs place`); `cli::version_11_projects_export_byte_identical_programs`
+  exports each, as loaded and saved at version 12, against the
+  tabs-migration expected programs.
 
 ### A8. Profile last pass (format version 13)
 

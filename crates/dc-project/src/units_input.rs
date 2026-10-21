@@ -319,6 +319,24 @@ mod tests {
         assert_approx_eq!(load_depth(json!(" 0.5  in ")).unwrap(), 12.7, 0.0);
     }
 
+    /// #283: the heights read lengths with their unit too, as every
+    /// `*_mm` field does (capability 32).
+    #[test]
+    fn heights_take_inches() {
+        let mut root = sample_json();
+        root["heights"] = json!({
+            "clearance_mm": "3/4 in",
+            "tool_change_machine_z_mm": "-0.25 in",
+            "park": { "x_mm": "1 in", "y_mm": 2.0 }
+        });
+        let heights = load_json(&root).unwrap().heights;
+        assert_approx_eq!(heights.clearance_mm.unwrap(), 19.05, 1e-12);
+        assert_approx_eq!(heights.tool_change_machine_z_mm.unwrap(), -6.35, 1e-12);
+        let park = heights.park.unwrap();
+        assert_approx_eq!(park.x_mm, 25.4, 0.0);
+        assert_approx_eq!(park.y_mm, 2.0, 0.0);
+    }
+
     #[test]
     fn fraction_and_mixed_number() {
         assert_approx_eq!(load_depth(json!("1/4 in")).unwrap(), 0.25 * 25.4, 0.0);

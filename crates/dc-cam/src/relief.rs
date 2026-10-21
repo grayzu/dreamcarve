@@ -61,7 +61,7 @@ use crate::error::{CamError, ShapeRef};
 use crate::footprint::{capsule, move_bulge};
 use crate::passes::pass_z_mm;
 use crate::profile::{Wall, rates_of, shape_of};
-use crate::sequence::{SequenceInput, nearest_of, sequence};
+use crate::sequence::{SequenceInput, clearance_z_mm, nearest_of, sequence};
 use crate::tabs::LapRates;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{ReliefCornerReason, ReliefSkippedReason, Warning};
@@ -69,7 +69,9 @@ use dc_geometry::{
     Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, point_segment_distance_mm,
     union,
 };
-use dc_project::{CornerRelief, MachiningOrder, OperationId, ProfileOp, Project, Side, Tool};
+use dc_project::{
+    CornerRelief, InstanceId, MachiningOrder, OperationId, ProfileOp, Project, Side, Tool,
+};
 use std::f64::consts::PI;
 
 /// The smallest turn toward the cleared side at one vertex that counts as
@@ -449,6 +451,9 @@ pub(crate) struct Relief {
     pub levels: Vec<f64>,
     /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
+    /// Absolute clearance Z, mm (#283): a notch of another instance than
+    /// the one before is reached at it.
+    pub clearance_z_mm: f64,
     /// The stock top, mm.
     pub stock_top_mm: f64,
     /// The tool's feed and plunge rates.
@@ -474,6 +479,8 @@ pub(crate) struct Setup<'a> {
     pub through_cut_allowance_mm: f64,
     /// Absolute safe Z, mm.
     pub safe_z_mm: f64,
+    /// Absolute clearance Z, mm (#283).
+    pub clearance_z_mm: f64,
     /// The tool's rates.
     pub rates: LapRates,
     /// The flatten tolerance, mm.
@@ -516,6 +523,7 @@ impl Setup<'_> {
             radius_mm: self.tool.diameter_mm / 2.0,
             levels,
             safe_z_mm: self.safe_z_mm,
+            clearance_z_mm: self.clearance_z_mm,
             stock_top_mm: self.thickness_mm,
             rates: self.rates,
             tolerance_mm: self.tolerance_mm,
@@ -587,12 +595,29 @@ impl Relief {
             return Ok(cut);
         };
         let ordered = nearest_neighbour(cut, start);
+        // #283: a notch of another instance is reached at the clearance
+        // Z, as the sequencer links blocks of different instances. Where
+        // the main path ended is not known here, so the first notch is
+        // reached at it too.
+        let mut previous: Option<&InstanceId> = None;
         for corner in &ordered {
+            if previous != Some(&corner.shape.instance)
+                && self.clearance_z_mm > self.safe_z_mm + EPS_MM
+                && let Some(at) = toolpath.moves.last().map(|m| m.to)
+                && at.z < self.clearance_z_mm - EPS_MM
+            {
+                toolpath
+                    .moves
+                    .push(Move::rapid(Point3::new(at.x, at.y, self.clearance_z_mm)));
+            }
+            previous = Some(&corner.shape.instance);
             let input = SequenceInput {
                 blocks: self.blocks(corner),
                 order: MachiningOrder::FullDepthFirst,
                 containment: &[],
                 safe_z_mm: self.safe_z_mm,
+                // One corner is one instance's: its levels link at safe Z.
+                clearance_z_mm: self.safe_z_mm,
                 stock_top_mm: self.stock_top_mm,
                 tool_diameter_mm: 2.0 * self.radius_mm,
                 stepover_mm: 0.0,
@@ -1062,6 +1087,7 @@ pub(crate) fn profile_notches(
         depth_mm,
         through_cut_allowance_mm: op.through_cut_allowance_mm,
         safe_z_mm: thickness_mm + op.safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, thickness_mm + op.safe_z_mm),
         rates: rates_of(tool)?,
         tolerance_mm: project.flatten_tolerance_mm,
     };
@@ -1936,6 +1962,7 @@ mod tests {
             radius_mm: R,
             levels,
             safe_z_mm: 11.0,
+            clearance_z_mm: 11.0,
             stock_top_mm: 6.0,
             rates: LapRates {
                 feed_mm_min: 800.0,
