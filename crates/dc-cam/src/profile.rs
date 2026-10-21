@@ -34,8 +34,8 @@ use crate::tabs::{
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
-    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region,
-    distance_away_from_mm, distance_mm, meeting_points, nest, offset,
+    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
+    distance_away_from_mm, distance_mm, meeting_points, nest, offset, point_segment_distance_mm,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
@@ -204,7 +204,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// have no side.
 ///
 /// Open paths Inside and Outside, shapes the tool cannot fit, and
-/// duplicate shapes are skipped with a [`Warning`]. Shapes in different
+/// duplicate shapes (closed, or open paths drawn twice either way, #221)
+/// are skipped with a [`Warning`]. Shapes in different
 /// regions whose tool paths cut into each other give
 /// [`WarningCode::ToolpathsOverlap`], in cut order; an open path cut On
 /// line is a shape of its own unless it lies in a region's material
@@ -220,7 +221,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// #199; a contour with no path at all is [`WarningCode::ToolTooLarge`]
 /// and skipped; an open path a region holds is compared with that
 /// region's lines and its other open paths away from where they meet,
-/// #210),
+/// #210; an On line line is also compared with its own stretches far
+/// along it, #221, so a hairpin or a narrow neck is refused),
 /// when an On line Profile asks for a helix
 /// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
 /// would leave its waste domain ([`CamError::OffMaterial`], a defect).
@@ -317,6 +319,8 @@ pub fn generate_profile(
             );
         }
     }
+    // #221: an open path drawn twice is cut once, as a closed shape is.
+    let open_paths = drop_duplicate_paths(open_paths, &mut warnings);
 
     let radius_mm = tool.diameter_mm / 2.0;
     // Each tool-centre path with the shape it cuts, the wall it cuts and
@@ -348,7 +352,16 @@ pub fn generate_profile(
                 );
                 continue;
             }
-            check_band(&op.id, op.side, tool, region, contour, &centres, &shapes)?;
+            check_band(
+                &op.id,
+                op.side,
+                tool,
+                region,
+                contour,
+                &centres,
+                &shapes,
+                project.flatten_tolerance_mm,
+            )?;
             let ccw = traversal_is_ccw(wall, op.direction);
             placed.extend(centres.into_iter().map(|c| {
                 let path = if c.is_ccw() == ccw {
@@ -694,7 +707,9 @@ pub fn generate_profile(
 ///   the bit cuts `r` of the band beside every line, so one that comes
 ///   closer than the diameter to another line of `region` cuts through
 ///   the band together with that line's cut: the part loses material it
-///   keeps.
+///   keeps. `contour` is also measured against itself
+///   ([`check_self_band`], #221; `tolerance_mm` is the project's flatten
+///   tolerance, where it meets itself).
 /// - **Outside** needs no check: there the outline's path runs outside
 ///   the region and every hole's inside its hole, so each is at least `r`
 ///   from every other line of the region, and a band between them is a
@@ -704,6 +719,10 @@ pub fn generate_profile(
 /// first first. Paths in different regions are D6's
 /// [`WarningCode::ToolpathsOverlap`]; under Inside never closer than `r`
 /// once this check passes.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every argument is one fact about the band; a struct would only rename them"
+)]
 fn check_band(
     op: &OperationId,
     side: Side,
@@ -712,6 +731,7 @@ fn check_band(
     contour: &Contour,
     centres: &[Contour],
     shapes: &[(ShapeRef, Contour)],
+    tolerance_mm: f64,
 ) -> Result<(), CamError> {
     let reach_mm = match side {
         Side::Inside => tool.diameter_mm / 2.0,
@@ -739,7 +759,93 @@ fn check_band(
             diameter_mm: tool.diameter_mm,
         });
     }
-    Ok(())
+    if side != Side::OnLine {
+        return Ok(());
+    }
+    let Some(shape) = shape_of(shapes, contour) else {
+        return Ok(());
+    };
+    let line = contour.polyline();
+    let between = |p: Point, q: Point| material_between(region, line, p, q);
+    check_self_band(op, shape, line, tool, tolerance_mm, between)
+}
+
+/// Whether the part lies between points `p` and `q` of `line`, a line of
+/// `region` (#221): the point midway lies in the region's material, a
+/// quarter of their gap or more from `line`. Across a notch or a hole's
+/// neck it lies in the waste; between two points along one edge, as
+/// either side of a notch's mouth, it lies on the line.
+fn material_between(region: &Region, line: &Polyline, p: Point, q: Point) -> bool {
+    let middle = p + (q - p) * 0.5;
+    let depth_mm = p.distance_to(q) / 4.0;
+    region.contains_point(middle)
+        && line
+            .segments()
+            .all(|s| point_segment_distance_mm(s, middle) >= depth_mm)
+}
+
+/// #221: #199's and #210's On line band check for one line against
+/// itself. Two points of `line` more than [`MEETING_REACH_DIAMETERS`]`·d`
+/// apart along it whose cuts come closer than the tool's diameter `d`
+/// (less [`EPS_MM`]) cut through the part between them, as a hairpin, a
+/// spiral with tight turns, or an outline with a narrow neck does:
+/// [`CamError::BandNarrowerThanTool`] naming `shape` twice. Neighbouring
+/// stretches are not compared, so a smooth curve and a corner of 90° or
+/// more pass. A corner sharper than 90° is where two lines meet (#210):
+/// its arms are set aside within `√2·d` of its tip, so a V of 45° or more
+/// passes and a sharper one is refused. So are stretches near where the
+/// line touches or crosses itself. `counts` takes the closest points of a
+/// pair and says whether the part lies between them: always for an open
+/// path a region holds, and for a closed line as [`material_between`]
+/// says, so a notch or a hole's neck, waste between two stretches, is
+/// cut.
+fn check_self_band(
+    op: &OperationId,
+    shape: &ShapeRef,
+    line: &Polyline,
+    tool: &Tool,
+    tolerance_mm: f64,
+    counts: impl Fn(Point, Point) -> bool,
+) -> Result<(), CamError> {
+    let diameter_mm = tool.diameter_mm;
+    let band = SelfBand::new(
+        line,
+        MEETING_REACH_DIAMETERS * diameter_mm,
+        tolerance_mm.max(EPS_MM),
+    );
+    match band.narrowest_mm(diameter_mm - EPS_MM, counts) {
+        Some(band_mm) => Err(CamError::BandNarrowerThanTool {
+            op: op.clone(),
+            shape: shape.clone(),
+            other: Box::new(shape.clone()),
+            band_mm,
+            diameter_mm,
+        }),
+        None => Ok(()),
+    }
+}
+
+/// #221: `open` without the paths that repeat an earlier one exactly,
+/// the same vertices in the same or the reverse direction, each dropped
+/// with [`WarningCode::DuplicateShapeDropped`] naming the one kept, as
+/// `nest` drops a closed shape drawn twice.
+fn drop_duplicate_paths(
+    open: Vec<(ShapeRef, Polyline)>,
+    warnings: &mut Vec<Warning>,
+) -> Vec<(ShapeRef, Polyline)> {
+    let mut kept: Vec<(ShapeRef, Polyline)> = Vec::with_capacity(open.len());
+    for (shape, path) in open {
+        let reversed = path.reversed();
+        match kept.iter().find(|(_, k)| *k == path || *k == reversed) {
+            Some((original, _)) => warnings.push(
+                shape_warning(WarningCode::DuplicateShapeDropped, &shape)
+                    .with("duplicate_of_instance", &original.instance)
+                    .with("duplicate_of_profile", original.profile),
+            ),
+            None => kept.push((shape, path)),
+        }
+    }
+    kept
 }
 
 /// How far from a point where two lines of one region meet their On line
@@ -816,6 +922,9 @@ fn check_open_bands(
                 diameter_mm,
             });
         }
+        // #221: and with itself. The region holds all of it, so the part
+        // lies on both sides of every stretch.
+        check_self_band(&op.id, shape, path, tool, tolerance_mm, |_, _| true)?;
     }
     Ok(())
 }
@@ -2913,5 +3022,261 @@ mod tests {
         for (case, extra) in cases {
             every_line_cut(case, &part_with(extra));
         }
+    }
+
+    // ── #221: a line closer than the bit to itself ──
+
+    /// Generates an On line Profile of `p`, expects `BandNarrowerThanTool`
+    /// naming profile `profile` of `i1` as both shapes, and returns the
+    /// band.
+    fn refused_self_band(case: &str, p: &Project, profile: usize) -> f64 {
+        let err =
+            generate_profile(p, &profile_op(p, Side::OnLine, CutDirection::Climb)).expect_err(case);
+        let CamError::BandNarrowerThanTool {
+            shape,
+            other,
+            band_mm,
+            diameter_mm,
+            ..
+        } = &err
+        else {
+            panic!("{case}: expected BandNarrowerThanTool, got {err:?}");
+        };
+        assert_eq!(shape, &**other, "{case}: the shape is named twice");
+        assert_eq!(shape.profile, profile, "{case}");
+        assert_approx_eq!(*diameter_mm, 6.35, TOL);
+        *band_mm
+    }
+
+    /// The point `length_mm` from `from` at `angle_deg` from +X.
+    fn towards(from: (f64, f64), angle_deg: f64, length_mm: f64) -> (f64, f64) {
+        let a = angle_deg.to_radians();
+        (from.0 + length_mm * a.cos(), from.1 + length_mm * a.sin())
+    }
+
+    /// An open V with its tip at `tip`, pointing up, its two 30 mm arms
+    /// `angle_deg` apart.
+    fn v_turn(tip: (f64, f64), angle_deg: f64) -> Polyline {
+        let half = angle_deg / 2.0;
+        open(&[
+            towards(tip, -90.0 - half, 30.0),
+            tip,
+            towards(tip, -90.0 + half, 30.0),
+        ])
+    }
+
+    /// #221: two stretches of one line, more than `√2·d` apart along it,
+    /// that come closer than the 6.35 mm bit cut through the part between
+    /// them, as two lines do (#199, #210): refused with
+    /// `BandNarrowerThanTool` naming the shape twice. A U with square
+    /// corners and legs 2 mm apart, one with a round end and legs 3 mm
+    /// apart, and a closed outline with a 3 mm neck (a dumbbell). A sharp
+    /// corner is where two lines meet (#210): its arms are set aside
+    /// within `√2·d` of the tip, so a 10° spike is refused with the band
+    /// `√2·d·sin 10°`, as a slot meeting the edge at 10° is.
+    #[test]
+    fn on_line_hairpin_narrower_than_tool_is_refused() {
+        let reach_mm = std::f64::consts::SQRT_2 * 6.35;
+        let round_end = Polyline::new(
+            vec![
+                Vertex::line(50.0, 10.0),
+                Vertex::new(50.0, 38.0, -1.0),
+                Vertex::line(53.0, 38.0),
+                Vertex::line(53.0, 10.0),
+            ],
+            false,
+        );
+        let cases: Vec<(&str, Polyline, f64)> = vec![
+            (
+                "a U with legs 2 mm apart",
+                open(&[(30.0, 10.0), (30.0, 40.0), (32.0, 40.0), (32.0, 10.0)]),
+                2.0,
+            ),
+            ("a U with a round end, legs 3 mm apart", round_end, 3.0),
+            (
+                "a 10° spike",
+                v_turn((80.0, 40.0), 10.0),
+                reach_mm * 10_f64.to_radians().sin(),
+            ),
+        ];
+        for (case, line, band_mm) in cases {
+            let band = refused_self_band(case, &part_with(vec![line]), 1);
+            assert!((band - band_mm).abs() <= TOL, "{case}: band {band}");
+        }
+        let dumbbell = Polyline::new(
+            [
+                (0.0, 0.0),
+                (30.0, 0.0),
+                (30.0, 13.5),
+                (50.0, 13.5),
+                (50.0, 0.0),
+                (80.0, 0.0),
+                (80.0, 30.0),
+                (50.0, 30.0),
+                (50.0, 16.5),
+                (30.0, 16.5),
+                (30.0, 30.0),
+                (0.0, 30.0),
+            ]
+            .into_iter()
+            .map(|(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        );
+        let p = project(vec![dumbbell], &[("i1", at_20_20())]);
+        let band = refused_self_band("a dumbbell", &p, 0);
+        assert_approx_eq!(band, 3.0, TOL);
+    }
+
+    /// #221: an open spiral in a part whose turns are 4 mm apart, closer
+    /// than the 6.35 mm bit, cuts through the part between its turns:
+    /// refused naming the spiral twice, drawn as fine chords or as half
+    /// circles about two centres.
+    #[test]
+    fn on_line_spiral_with_tight_turns_is_refused() {
+        // r = 4 + 4·θ/2π about (50, 25), three turns in 5° chords.
+        let chords: Vec<(f64, f64)> = (0..=216)
+            .map(|k| {
+                let theta = f64::from(k) * 5_f64.to_radians();
+                let r = 4.0 + 4.0 * theta / TAU;
+                (50.0 + r * theta.cos(), 25.0 + r * theta.sin())
+            })
+            .collect();
+        let band = refused_self_band("fine chords", &part_with(vec![open(&chords)]), 1);
+        assert!(band > 3.5 && band < 4.0, "fine chords: band {band}");
+        // Half turns about (50, 25) above the axis and (52, 25) below it,
+        // each 2 mm wider: turns 4 mm apart.
+        let halves = Polyline::new(
+            [52.0, 48.0, 56.0, 44.0, 60.0, 40.0, 64.0, 36.0]
+                .into_iter()
+                .map(|x| Vertex::new(x, 25.0, 1.0))
+                .collect(),
+            false,
+        );
+        let band = refused_self_band("half circles", &part_with(vec![halves]), 1);
+        assert_approx_eq!(band, 4.0, TOL);
+    }
+
+    /// #221: neighbouring stretches of one line are not compared with each
+    /// other, only stretches more than `√2·d` apart along it, so a smooth
+    /// curve, a corner of 90° or more, and a round hole are cut as drawn.
+    /// A sharp corner sets its arms aside within `√2·d` of the tip, as
+    /// where two lines meet (#210), so a V of 60°, or of exactly 45°, is
+    /// cut too.
+    #[test]
+    fn on_line_smooth_curve_is_not_compared_with_itself() {
+        let wave: Vec<(f64, f64)> = (10..=90)
+            .map(|x| {
+                let x = f64::from(x);
+                (x, 25.0 + 8.0 * (x / 10.0).sin())
+            })
+            .collect();
+        let half_circle: Vec<(f64, f64)> = (0..=90)
+            .map(|k| {
+                let a = f64::from(180 - 2 * k).to_radians();
+                (50.0 + 15.0 * a.cos(), 20.0 + 15.0 * a.sin())
+            })
+            .collect();
+        let cases: Vec<(&str, Vec<Polyline>)> = vec![
+            ("a wave of fine chords", vec![open(&wave)]),
+            ("a half circle of fine chords", vec![open(&half_circle)]),
+            (
+                "an L",
+                vec![open(&[(30.0, 10.0), (30.0, 40.0), (60.0, 40.0)])],
+            ),
+            (
+                "a square corner turned back",
+                vec![open(&[
+                    (30.0, 10.0),
+                    (30.0, 40.0),
+                    (60.0, 40.0),
+                    (60.0, 10.0),
+                ])],
+            ),
+            (
+                "a round hole",
+                vec![Polyline::circle(Point::new(50.0, 25.0), 10.0)],
+            ),
+            ("a V of 60°", vec![v_turn((50.0, 40.0), 60.0)]),
+            ("a V of 45°", vec![v_turn((50.0, 40.0), 45.0)]),
+        ];
+        for (case, extra) in cases {
+            every_line_cut(case, &part_with(extra));
+        }
+    }
+
+    /// #221: only the part between two stretches of one line is kept. A
+    /// 3 mm notch cut into an outline, and a hole with a 3 mm neck, have
+    /// waste between their stretches, which the cut may clear: both are
+    /// cut as drawn.
+    #[test]
+    fn on_line_narrow_notch_in_an_outline_is_cut() {
+        let closed = |points: &[(f64, f64)]| {
+            Polyline::new(
+                points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+                true,
+            )
+        };
+        let notched = closed(&[
+            (0.0, 0.0),
+            (100.0, 0.0),
+            (100.0, 50.0),
+            (51.5, 50.0),
+            (51.5, 25.0),
+            (48.5, 25.0),
+            (48.5, 50.0),
+            (0.0, 50.0),
+        ]);
+        every_line_cut("a notch", &project(vec![notched], &[("i1", at_20_20())]));
+        let necked_hole = closed(&[
+            (20.0, 15.0),
+            (40.0, 15.0),
+            (40.0, 23.5),
+            (60.0, 23.5),
+            (60.0, 15.0),
+            (80.0, 15.0),
+            (80.0, 35.0),
+            (60.0, 35.0),
+            (60.0, 26.5),
+            (40.0, 26.5),
+            (40.0, 35.0),
+            (20.0, 35.0),
+        ]);
+        every_line_cut("a necked hole", &part_with(vec![necked_hole]));
+    }
+
+    /// #221: an open path drawn twice, the same vertices in either
+    /// direction, is cut once and the copies are dropped with
+    /// `duplicate_shape_dropped`, as a closed shape's are, before the band
+    /// check (which would see a band of 0 between them).
+    #[test]
+    fn duplicate_open_paths_are_dropped_with_a_warning() {
+        let line = open(&[(30.0, 10.0), (30.0, 40.0), (60.0, 40.0)]);
+        let p = part_with(vec![line.clone(), line.clone(), line.reversed()]);
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
+        assert_eq!(
+            codes(&warnings),
+            vec![
+                WarningCode::DuplicateShapeDropped,
+                WarningCode::DuplicateShapeDropped
+            ]
+        );
+        for (warning, profile) in warnings.iter().zip(["2", "3"]) {
+            assert_eq!(warning.param("profile"), Some(profile));
+            assert_eq!(warning.param("duplicate_of_instance"), Some("i1"));
+            assert_eq!(warning.param("duplicate_of_profile"), Some("1"));
+        }
+        assert_eq!(
+            laps(&tp).len(),
+            2 * PASS_Z_MM.len(),
+            "the outline and one copy of the line"
+        );
+        // Outside a part too: two copies in the waste are cut once, with
+        // no `toolpaths_overlap` between them.
+        let waste = open(&[(150.0, 10.0), (150.0, 40.0)]);
+        let p = part_with(vec![waste.clone(), waste]);
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
+        assert_eq!(codes(&warnings), vec![WarningCode::DuplicateShapeDropped]);
+        assert_eq!(laps(&tp).len(), 2 * PASS_Z_MM.len());
     }
 }

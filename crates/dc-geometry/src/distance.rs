@@ -54,6 +54,48 @@ pub fn point_segment_distance_mm(seg: Segment, p: Point) -> f64 {
     distance_to_segment(seg, p)
 }
 
+/// The closest pair of points of segments `s` and `t`, the first on `s`,
+/// following arcs; where they touch or cross, a point where they meet,
+/// twice. The candidates are those of [`segment_distance_mm`].
+#[must_use]
+pub fn closest_points(s: Segment, t: Segment) -> (Point, Point) {
+    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
+    let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
+    if !degenerate(s) && !degenerate(t) {
+        let crossing = match pline_seg_intr(
+            vertex(s.start, s.bulge),
+            vertex(s.end, 0.0),
+            vertex(t.start, t.bulge),
+            vertex(t.end, 0.0),
+            EPS_MM,
+        ) {
+            PlineSegIntr::NoIntersect => None,
+            PlineSegIntr::TangentIntersect { point } | PlineSegIntr::OneIntersect { point } => {
+                Some(point)
+            }
+            PlineSegIntr::TwoIntersects { point1, .. }
+            | PlineSegIntr::OverlappingLines { point1, .. }
+            | PlineSegIntr::OverlappingArcs { point1, .. } => Some(point1),
+        };
+        if let Some(point) = crossing {
+            let p = Point::new(point.x, point.y);
+            return (p, p);
+        }
+    }
+    let from_s = [s.start, s.end]
+        .into_iter()
+        .chain(normal_candidates(s, t))
+        .map(|p| (p, closest_on_segment(t, p)));
+    let from_t = [t.start, t.end]
+        .into_iter()
+        .chain(normal_candidates(t, s))
+        .map(|q| (closest_on_segment(s, q), q));
+    from_s
+        .chain(from_t)
+        .min_by(|(a, b), (c, d)| a.distance_to(*b).total_cmp(&c.distance_to(*d)))
+        .unwrap_or((s.start, t.start))
+}
+
 /// The points where `a` and `b` meet, mm: where they cross or touch, and
 /// where one comes within `tolerance_mm` of the other (an end that stops
 /// that short of the other line, or a near tangent). Where two segments
@@ -61,41 +103,45 @@ pub fn point_segment_distance_mm(seg: Segment, p: Point) -> f64 {
 /// `b`; a meeting may be listed more than once.
 #[must_use]
 pub fn meeting_points(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> Vec<Point> {
-    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
-    let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
     let mut points = Vec::new();
     for s in a.segments() {
         for t in b.segments() {
-            if !degenerate(s) && !degenerate(t) {
-                match pline_seg_intr(
-                    vertex(s.start, s.bulge),
-                    vertex(s.end, 0.0),
-                    vertex(t.start, t.bulge),
-                    vertex(t.end, 0.0),
-                    EPS_MM,
-                ) {
-                    PlineSegIntr::NoIntersect => {}
-                    PlineSegIntr::TangentIntersect { point }
-                    | PlineSegIntr::OneIntersect { point } => {
-                        points.push(Point::new(point.x, point.y));
-                    }
-                    PlineSegIntr::TwoIntersects { point1, point2 }
-                    | PlineSegIntr::OverlappingLines { point1, point2 }
-                    | PlineSegIntr::OverlappingArcs { point1, point2 } => {
-                        points.push(Point::new(point1.x, point1.y));
-                        points.push(Point::new(point2.x, point2.y));
-                    }
-                }
-            }
-            // Within the tolerance without touching: the closest pair has
-            // an end of one segment, or a normal point of an arc.
-            let near_t = [s.start, s.end].into_iter().chain(normal_candidates(s, t));
-            let near_s = [t.start, t.end].into_iter().chain(normal_candidates(t, s));
-            points.extend(near_t.filter(|&p| distance_to_segment(t, p) <= tolerance_mm));
-            points.extend(near_s.filter(|&p| distance_to_segment(s, p) <= tolerance_mm));
+            segment_meetings(s, t, tolerance_mm, &mut points);
         }
     }
     points
+}
+
+/// [`meeting_points`] for one segment of each line, added to `points`.
+pub(crate) fn segment_meetings(s: Segment, t: Segment, tolerance_mm: f64, points: &mut Vec<Point>) {
+    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
+    let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
+    if !degenerate(s) && !degenerate(t) {
+        match pline_seg_intr(
+            vertex(s.start, s.bulge),
+            vertex(s.end, 0.0),
+            vertex(t.start, t.bulge),
+            vertex(t.end, 0.0),
+            EPS_MM,
+        ) {
+            PlineSegIntr::NoIntersect => {}
+            PlineSegIntr::TangentIntersect { point } | PlineSegIntr::OneIntersect { point } => {
+                points.push(Point::new(point.x, point.y));
+            }
+            PlineSegIntr::TwoIntersects { point1, point2 }
+            | PlineSegIntr::OverlappingLines { point1, point2 }
+            | PlineSegIntr::OverlappingArcs { point1, point2 } => {
+                points.push(Point::new(point1.x, point1.y));
+                points.push(Point::new(point2.x, point2.y));
+            }
+        }
+    }
+    // Within the tolerance without touching: the closest pair has an end
+    // of one segment, or a normal point of an arc.
+    let near_t = [s.start, s.end].into_iter().chain(normal_candidates(s, t));
+    let near_s = [t.start, t.end].into_iter().chain(normal_candidates(t, s));
+    points.extend(near_t.filter(|&p| distance_to_segment(t, p) <= tolerance_mm));
+    points.extend(near_s.filter(|&p| distance_to_segment(s, p) <= tolerance_mm));
 }
 
 /// Shortest distance between `a` and `b`, mm, as [`distance_mm`], over
@@ -198,6 +244,35 @@ pub(crate) fn distance_to_segment(seg: Segment, p: Point) -> f64 {
             }
             let t = ((p - seg.start).dot(d) / len2).clamp(0.0, 1.0);
             p.distance_to(seg.start + d * t)
+        }
+    }
+}
+
+/// The point of `seg` closest to `p`, following arcs.
+fn closest_on_segment(seg: Segment, p: Point) -> Point {
+    let nearer_end = || {
+        if p.distance_to(seg.start) <= p.distance_to(seg.end) {
+            seg.start
+        } else {
+            seg.end
+        }
+    };
+    match seg.arc() {
+        Some(arc) => {
+            let v = p - arc.centre;
+            match v.normalized() {
+                Some(d) if sweep_contains(arc, v.y.atan2(v.x)) => arc.centre + d * arc.radius_mm,
+                _ => nearer_end(),
+            }
+        }
+        None => {
+            let d = seg.end - seg.start;
+            let len2 = d.dot(d);
+            if len2 <= EPS_MM * EPS_MM {
+                return nearer_end();
+            }
+            let t = ((p - seg.start).dot(d) / len2).clamp(0.0, 1.0);
+            seg.start + d * t
         }
     }
 }
@@ -384,6 +459,50 @@ mod tests {
     /// the edge, is 3 mm from it at the disc; a slot 1 mm beside another
     /// edge is still 1 mm from it beyond the disc; with nothing set aside,
     /// the plain distance.
+    /// The closest points agree with `segment_distance_mm`: a line 2 mm
+    /// above a half circle's top meets it above the centre; a line's end
+    /// 3 mm beside another line is closest to its foot; crossing lines
+    /// give the crossing twice.
+    #[test]
+    fn closest_points_follow_arcs_and_ends() {
+        let half = Segment {
+            start: Point::new(5.0, 0.0),
+            end: Point::new(-5.0, 0.0),
+            bulge: 1.0,
+        };
+        let line = Segment {
+            start: Point::new(-20.0, 7.0),
+            end: Point::new(20.0, 7.0),
+            bulge: 0.0,
+        };
+        let (p, q) = closest_points(half, line);
+        assert!(p.distance_to(Point::new(0.0, 5.0)) <= TOL, "{p:?}");
+        assert!(q.distance_to(Point::new(0.0, 7.0)) <= TOL, "{q:?}");
+        let stub = Segment {
+            start: Point::new(3.0, 10.0),
+            end: Point::new(3.0, 20.0),
+            bulge: 0.0,
+        };
+        let wall = Segment {
+            start: Point::new(0.0, 0.0),
+            end: Point::new(0.0, 30.0),
+            bulge: 0.0,
+        };
+        let (p, q) = closest_points(stub, wall);
+        assert_approx_eq!(p.distance_to(q), 3.0, TOL);
+        assert_approx_eq!(segment_distance_mm(stub, wall), 3.0, TOL);
+        let across = Segment {
+            start: Point::new(-5.0, 15.0),
+            end: Point::new(5.0, 15.0),
+            bulge: 0.0,
+        };
+        let (p, q) = closest_points(across, wall);
+        assert!(
+            p.distance_to(Point::new(0.0, 15.0)) <= 1e-6 && p == q,
+            "{p:?} {q:?}"
+        );
+    }
+
     #[test]
     fn distance_away_from_meetings_sets_the_stretch_near_them_aside() {
         let square = square(0.0, 0.0, 20.0);
