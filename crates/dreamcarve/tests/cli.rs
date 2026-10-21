@@ -5481,16 +5481,16 @@ fn export_preview_coaster() {
         "export",
         "coaster.dcv",
         "--preview",
-        "coaster.svg",
+        "preview.svg",
         "--date",
         FIXED_DATE,
     ];
     let out = run(&dir, &args);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
-    assert!(stdout(&out).contains("coaster.svg"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("preview.svg"), "{}", stdout(&out));
     let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
     assert!(program == include_str!("expected/coaster-grblhal.nc"));
-    let svg = std::fs::read_to_string(dir.join("coaster.svg")).expect("preview written");
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
 
     let project = load_file(&dcv).project;
     let (width, height) = (project.stock.width_mm, project.stock.height_mm);
@@ -5533,7 +5533,7 @@ fn export_preview_coaster() {
 
     let out = run(&dir, &args);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
-    let again = std::fs::read_to_string(dir.join("coaster.svg")).expect("preview written");
+    let again = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
     assert!(again == svg, "the preview changed between exports");
 }
 
@@ -5544,10 +5544,10 @@ fn check_preview_writes_file() {
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let before = std::fs::read(&dcv).expect("dcv readable");
-    let out = run(&dir, &["check", "coaster.dcv", "--preview", "coaster.svg"]);
+    let out = run(&dir, &["check", "coaster.dcv", "--preview", "preview.svg"]);
     assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
-    assert!(stdout(&out).contains("coaster.svg"), "{}", stdout(&out));
-    let svg = std::fs::read_to_string(dir.join("coaster.svg")).expect("preview written");
+    assert!(stdout(&out).contains("preview.svg"), "{}", stdout(&out));
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
     assert!(svg.starts_with("<?xml"), "{svg}");
     assert_eq!(svg_elements(&svg, "tab").len(), 4, "{svg}");
     assert!(!dir.join("coaster.nc").exists(), "check wrote a program");
@@ -5558,11 +5558,11 @@ fn check_preview_writes_file() {
     init_coaster(&fresh);
     let out = run(
         &fresh,
-        &["check", "coaster.dcv", "--preview", "coaster.svg"],
+        &["check", "coaster.dcv", "--preview", "preview.svg"],
     );
     assert_eq!(out.status.code(), Some(1), "check: {}", stdout(&out));
     assert!(
-        !fresh.join("coaster.svg").exists(),
+        !fresh.join("preview.svg").exists(),
         "preview of a project with errors"
     );
 }
@@ -5589,12 +5589,20 @@ fn export_preview_refuses_dcv_path() {
         ("export", "other.dcv"),
         ("check", "coaster.dcv"),
         ("check", "coaster.nc"),
+        // The drawing the project came from: an SVG, but not a preview.
+        ("export", "coaster.svg"),
+        ("check", "coaster.svg"),
     ] {
         let out = run(&dir, &[command, "coaster.dcv", "--preview", preview]);
         assert_eq!(out.status.code(), Some(1), "{command} --preview {preview}");
         let err = stderr(&out);
         assert!(err.contains("--preview"), "{command} {preview}: {err}");
         assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+        assert_eq!(
+            std::fs::read(dir.join("coaster.svg")).expect("drawing readable"),
+            std::fs::read(repo_fixture("coaster.svg")).expect("fixture readable"),
+            "{command} --preview {preview} changed the drawing"
+        );
         let mut names: Vec<_> = std::fs::read_dir(&dir)
             .expect("dir readable")
             .map(|e| e.expect("entry").file_name())

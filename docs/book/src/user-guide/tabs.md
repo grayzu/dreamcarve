@@ -44,8 +44,13 @@ the program.
   centred at each distance, in millimetres, along the bit's path from where
   the path starts. A distance longer than the path wraps around.
 
-The path starts where DreamCarve chooses, which is not shown before you
-export, so `count` is the easier choice. The distances are
+The path starts where DreamCarve chooses, so `count` is the easier
+choice. To see where it starts, and where the tabs land, draw the
+toolpath with `dreamcarve check part.dcv --preview part-preview.svg`
+([Toolpath preview](overview.md#toolpath-preview)): each pass starts at a
+circle the size of the bit, its tick pointing the way the cut goes, and
+each tab shows as a heavy mark on every pass that rises over it. The
+distances are
 measured from that start even when the cut begins elsewhere: a
 [lead](profile.md#leads) arrives away from corners, and a ramp or helix
 that has no room beside a tab moves the start of the cut to a stretch

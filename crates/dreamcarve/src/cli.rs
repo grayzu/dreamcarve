@@ -159,6 +159,10 @@ pub struct ExportArgs {
     /// tool_change_mode says. Not saved to the project.
     #[arg(long)]
     pub programs_per_tool: bool,
+    /// Also write a picture of every operation's toolpath over the stock
+    /// and the shapes to this .svg file, with the programs.
+    #[arg(long, value_name = "SVG")]
+    pub preview: Option<PathBuf>,
     /// The date written in the program header instead of today's (UTC).
     /// For reproducible output in tests.
     #[arg(long, hide = true, value_name = "YYYY-MM-DD")]
@@ -183,6 +187,10 @@ impl ExportArgs {
 pub struct CheckArgs {
     /// The project to check.
     pub dcv: PathBuf,
+    /// Write a picture of every operation's toolpath over the stock and
+    /// the shapes to this .svg file, when every operation generates.
+    #[arg(long, value_name = "SVG")]
+    pub preview: Option<PathBuf>,
 }
 
 /// `--units` values.
