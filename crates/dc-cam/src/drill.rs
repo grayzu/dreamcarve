@@ -16,7 +16,9 @@
 //! ([`dc_geometry::as_circle`]), not a `circle` feature kind; the
 //! chip-break gap is the operation's `gap_mm`, not a constant in project
 //! units; a dwell is kept as a [`crate::MoveKind::Dwell`] move when the cycle is
-//! written as plain moves (upstream loses it); holes are visited nearest
+//! written as plain moves (upstream loses it); pecks count from the
+//! retract plane, as a controller's `G83`/`G73` counts them from `R`,
+//! not from the stock top (#153); holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
 //! origin, by [`crate::sequence`]; there is no helical bore, countersink or
 //! clamp check. Nothing here depends on Y-up or Y-down: a drill moves only
@@ -100,8 +102,13 @@ pub struct DrillToolpath {
 ///   the top with [`WarningCode::DrillRetractBelowStockTop`]);
 /// - it plunges at the tool's plunge rate, in one plunge for a simple
 ///   cycle or in pecks of the peck depth (the operation's, else the tool's
-///   step-down; only the last is shorter), waiting `dwell_s` at the bottom
-///   of every plunge as a [`crate::MoveKind::Dwell`] move;
+///   step-down), waiting `dwell_s` at the bottom of every plunge as a
+///   [`crate::MoveKind::Dwell`] move. Pecks count from the retract plane,
+///   as a controller's `G83`/`G73` counts them from `R` (#153): peck `k`
+///   ends at `max(bottom, retract plane − k·peck)`, so the first removes
+///   the peck less the retract height (nothing, if the retract height is
+///   the larger), the last may be shorter, and none cuts more than a peck
+///   below the depth already drilled;
 /// - between pecks it rapids up to the retract plane and back down to
 ///   [`PECK_REENTRY_MM`] above the depth reached (full retract), or up by
 ///   the chip-break gap (capped at the retract plane), and feeds on from
@@ -111,8 +118,8 @@ pub struct DrillToolpath {
 ///
 /// Holes are visited by [`crate::sequence`]: nearest neighbour from the
 /// first hole in drawing order, ties by drawing order, linked at safe Z.
-/// A peck at least as deep as the hole drills it in one plunge with
-/// [`WarningCode::DrillPeckDeeperThanHole`].
+/// A peck that reaches the bottom from the retract plane drills the hole
+/// in one plunge, with [`WarningCode::DrillPeckDeeperThanHole`].
 ///
 /// Fails without a toolpath when the plunge rate, the stock thickness, the
 /// depth, or a peck's step-down is missing; when the depth passes the
@@ -167,16 +174,18 @@ pub fn generate_drill(
         .depth_mm
         .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
     let cycle = Cycle::of(op, tool)?;
-    // Peck levels, shallowest first; a simple cycle is one level. The pass
-    // rule is the one every generator uses: only the last is shorter.
-    let step_mm = cycle.peck_mm.unwrap_or(depth_mm);
-    let levels = pass_z_mm(
+    // The hole bottom, with the depth checked against the stock bottom
+    // plus the allowance (S1) as for every generator.
+    let bottom_z_mm = pass_z_mm(
         &op.id,
         thickness_mm,
         depth_mm,
-        step_mm,
+        depth_mm,
         op.through_cut_allowance_mm,
-    )?;
+    )?
+    .last()
+    .copied()
+    .unwrap_or(thickness_mm - depth_mm);
     let top_z_mm = thickness_mm;
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let mut warnings = Vec::new();
@@ -189,8 +198,27 @@ pub fn generate_drill(
         );
     }
     let retract_z_mm = (top_z_mm + op.retract_mm.max(0.0)).min(safe_z_mm);
+    // Plunge levels, shallowest first; a simple cycle is one level. Pecks
+    // count from the retract plane, as a controller's `G83`/`G73` counts
+    // them from `R` (#153), so a canned cycle and these moves are the
+    // same motion for any retract height. The pass rule is the one every
+    // generator uses, from `R` instead of the stock top; `R` is at or
+    // above the top, so no peck cuts deeper than a peck into material.
+    let mut levels = match cycle.peck_mm {
+        None => vec![bottom_z_mm],
+        Some(peck_mm) => pass_z_mm(
+            &op.id,
+            retract_z_mm,
+            retract_z_mm - bottom_z_mm,
+            peck_mm,
+            op.through_cut_allowance_mm,
+        )?,
+    };
+    if let Some(last) = levels.last_mut() {
+        *last = bottom_z_mm;
+    }
     if let Some(peck_mm) = cycle.peck_mm
-        && peck_mm >= depth_mm - EPS_MM
+        && levels.len() == 1
     {
         warnings.push(
             Warning::new(WarningCode::DrillPeckDeeperThanHole)

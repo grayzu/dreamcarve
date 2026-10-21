@@ -207,10 +207,11 @@ pub enum CannedExpansion {
     /// A peck cycle, and the definition states no re-entry gap for it
     /// (`canned_cycles.reentry_gap_mm`).
     NoReentryGap,
-    /// The motion the controller makes for the cycles would not be the
-    /// toolpath. Controllers measure every peck from the retract plane
-    /// (`R`), the toolpath from the stock top, so with a retract height
-    /// above the stock the pecks differ.
+    /// The motion the controller makes for the cycles, from the numbers as
+    /// written, would not be the toolpath. A Drill from
+    /// [`dc_cam::generate_drill`] pecks from the retract plane as the
+    /// controller does (#153), so this means a toolpath or hole records
+    /// from elsewhere, or numbers rounded too far apart.
     MotionDiffers,
 }
 
@@ -254,7 +255,7 @@ impl std::fmt::Display for CannedExpansion {
             ),
             Self::MotionDiffers => write!(
                 f,
-                "the controller's motion for the cycle would differ from the toolpath (it measures pecks from the retract height, not the stock top)"
+                "the controller's motion for the cycle would differ from the toolpath"
             ),
         }
     }
