@@ -21,13 +21,37 @@ pub fn distance_mm(a: &Polyline, b: &Polyline) -> f64 {
     let mut best_mm = f64::INFINITY;
     for (s, (s1, s2)) in a.segments().zip(cav_a.iter_segments()) {
         for (t, (t1, t2)) in b.segments().zip(cav_b.iter_segments()) {
-            best_mm = best_mm.min(segment_distance_mm(s, t, [s1, s2, t1, t2]));
+            best_mm = best_mm.min(segments_apart_mm(s, t, [s1, s2, t1, t2]));
             if best_mm <= 0.0 {
                 return 0.0;
             }
         }
     }
     best_mm
+}
+
+/// Shortest distance between segments `s` and `t`, mm, following arcs; 0
+/// when they touch or cross (within [`EPS_MM`]). A zero-length segment is
+/// its point.
+#[must_use]
+pub fn segment_distance_mm(s: Segment, t: Segment) -> f64 {
+    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
+    segments_apart_mm(
+        s,
+        t,
+        [
+            vertex(s.start, s.bulge),
+            vertex(s.end, 0.0),
+            vertex(t.start, t.bulge),
+            vertex(t.end, 0.0),
+        ],
+    )
+}
+
+/// Shortest distance from `p` to `seg`, mm, following arcs.
+#[must_use]
+pub fn point_segment_distance_mm(seg: Segment, p: Point) -> f64 {
+    distance_to_segment(seg, p)
 }
 
 /// Shortest distance between segments `s` and `t`, mm; `cav` is the same
@@ -38,7 +62,7 @@ pub fn distance_mm(a: &Polyline, b: &Polyline) -> f64 {
 /// normal to both: then a point on an arc lies along the other line's
 /// normal, or on the line through both arcs' centres. Those candidates
 /// cover every case.
-fn segment_distance_mm(s: Segment, t: Segment, cav: [PlineVertex<f64>; 4]) -> f64 {
+fn segments_apart_mm(s: Segment, t: Segment, cav: [PlineVertex<f64>; 4]) -> f64 {
     let [s1, s2, t1, t2] = cav;
     let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
     if !degenerate(s)
@@ -211,5 +235,37 @@ mod tests {
     fn empty_polyline_is_infinitely_far() {
         let empty = Polyline::new(Vec::new(), true);
         assert!(distance_mm(&empty, &square(0.0, 0.0, 1.0)).is_infinite());
+    }
+
+    /// The single-segment forms agree with `distance_mm`: a half circle of
+    /// radius 5 about the origin bulging up to y = 5, a line at y = 7, a
+    /// point at (0, 8), and a zero-length segment (a point) at (0, 9).
+    #[test]
+    fn single_segments_follow_arcs() {
+        let half = Segment {
+            start: Point::new(5.0, 0.0),
+            end: Point::new(-5.0, 0.0),
+            bulge: 1.0,
+        };
+        let line = Segment {
+            start: Point::new(-20.0, 7.0),
+            end: Point::new(20.0, 7.0),
+            bulge: 0.0,
+        };
+        let dot = Segment {
+            start: Point::new(0.0, 9.0),
+            end: Point::new(0.0, 9.0),
+            bulge: 0.0,
+        };
+        assert_approx_eq!(segment_distance_mm(half, line), 2.0, TOL);
+        assert_approx_eq!(segment_distance_mm(line, half), 2.0, TOL);
+        assert_approx_eq!(segment_distance_mm(dot, half), 4.0, TOL);
+        assert_approx_eq!(segment_distance_mm(half, dot), 4.0, TOL);
+        assert_approx_eq!(
+            point_segment_distance_mm(half, Point::new(0.0, 8.0)),
+            3.0,
+            TOL
+        );
+        assert_approx_eq!(segment_distance_mm(line, line), 0.0, TOL);
     }
 }

@@ -62,7 +62,12 @@ rises over one tab is the tab width plus the bit diameter: 8 + 6.35 =
   for one bit diameter, and ramps back down over the other half. For the
   coaster's 8 mm tabs and 6.35 mm bit, that is 4 mm up, 6.35 mm level,
   and 4 mm down. The bit never stops moving along the path, which leaves
-  fewer marks. Every move is at the feed rate.
+  fewer marks. Every move is at the feed rate, except a ramp down that
+  would go down faster than the plunge rate: its feed rate is lowered just
+  enough that it does not ([Safety](safety.md), rule 11). With the
+  quick start's 1500 mm/min feed, the coaster's 3 mm ramp down over 4 mm
+  would go down at 900 mm/min; with its 500 mm/min plunge rate the ramp
+  runs at 833 mm/min.
 
   A smooth tab has half the cross-section of a rect tab of the same width
   and height, so it holds less. Make it wider or taller if the part is

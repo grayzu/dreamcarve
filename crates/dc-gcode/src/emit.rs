@@ -383,7 +383,9 @@ pub fn emit_programs(
 /// multi-tool project as the post-processor's tool-change mode says.
 ///
 /// The emitted text is parsed back and checked against safety rules S1–S7
-/// before it is returned.
+/// and phase 2's S9–S12 before it is returned. For S9 the material each
+/// operation may cut is worked out from `project`, not taken from the
+/// toolpath.
 ///
 /// # Errors
 ///
@@ -3604,12 +3606,26 @@ mod tests {
         assert_eq!(programs.len(), 2, "separate_programs: one per tool run");
     }
 
-    /// A one-hole Drill of the sample project at (50, 50), 3 mm deep: in
-    /// at safe Z (11), down to the retract plane 1 mm above the 6 mm stock,
-    /// plunge, dwell 0.5 s, back to safe Z. Hand-written so the emitter is
-    /// tested apart from the generator.
-    fn drill_ops(project: &Project) -> Vec<EmitOp> {
-        let op = dc_project::test_support::sample_drill();
+    /// A one-hole Drill at (50, 50), 3 mm deep, of an 8 mm circle added to
+    /// `project`: in at safe Z (11), down to the retract plane 1 mm above
+    /// the 6 mm stock, plunge, dwell 0.5 s, back to safe Z. Hand-written so
+    /// the emitter is tested apart from the generator.
+    fn drill_ops(project: &mut Project) -> Vec<EmitOp> {
+        let hole = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d2"),
+            name: "Hole".into(),
+            profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0)],
+        };
+        project.definitions.insert(hole.id.clone(), hole);
+        let mut instance = project.instances[0].clone();
+        instance.id = dc_project::InstanceId::new("h1");
+        instance.definition = dc_project::DefinitionId::new("d2");
+        instance.transform = dc_geometry::Transform::translate(50.0, 50.0);
+        project.instances.push(instance);
+        let op = dc_project::DrillOp {
+            targets: vec![dc_project::InstanceId::new("h1")],
+            ..dc_project::test_support::sample_drill()
+        };
         let tool = project.tools[0].clone();
         let toolpath = Toolpath {
             moves: vec![
@@ -3641,8 +3657,9 @@ mod tests {
     /// rapid down to the retract plane).
     #[test]
     fn dwell_writes_g4() {
-        let project = project_with("grblhal");
-        let (program, _) = emit(&project, &drill_ops(&project), DATE).unwrap();
+        let mut project = project_with("grblhal");
+        let ops = drill_ops(&mut project);
+        let (program, _) = emit(&project, &ops, DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P0.500");
     }
 
@@ -3651,10 +3668,11 @@ mod tests {
     /// gets the same dwell as `P500`.
     #[test]
     fn dwell_in_milliseconds_when_the_post_says_so() {
-        let project = project_with("grblhal");
+        let mut project = project_with("grblhal");
         let mut post = post_of(&project);
         post.feed_speed.spindle_on_dwell.units = dc_project::DwellUnits::Milliseconds;
-        let (program, _) = emit_with(&project, &post, &drill_ops(&project), DATE).unwrap();
+        let ops = drill_ops(&mut project);
+        let (program, _) = emit_with(&project, &post, &ops, DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P500");
     }
 

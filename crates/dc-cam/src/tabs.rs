@@ -23,6 +23,7 @@
 //! the tab top at a single point, which leaves only about 60% of the height
 //! under a 6.35 mm bit; it is not ported.
 
+use crate::entry::plunge_limited_feed_mm_min;
 use crate::error::{CamError, ShapeRef};
 use crate::toolpath::{Move, MoveKind};
 use crate::warning::{Warning, WarningCode};
@@ -417,8 +418,9 @@ pub(crate) struct LapCuts {
 /// rect tabs with a vertical lift, a traverse at the tab top, and a
 /// vertical descent; smooth tabs along straight ramps either side of a hold
 /// at the tab top. Every vertical move is at the plunge rate; every move
-/// along the path, smooth ramps down included, is at the feed rate. `None`
-/// for a path with no vertices.
+/// along the path is at the feed rate, except a smooth ramp down, whose
+/// feed is scaled so it descends no faster than the plunge rate (S10,
+/// #157). `None` for a path with no vertices.
 pub(crate) fn lap_cuts(
     path: &Polyline,
     z_mm: f64,
@@ -436,10 +438,21 @@ pub(crate) fn lap_cuts(
             current = Point3::new(current.x, current.y, piece.from_z_mm);
             moves.push(Move::linear(current, rates.plunge_mm_min));
         }
+        // A ramp is straight (an arc is split into chords while Z
+        // changes), so the straight-move scale covers every descent.
+        let feed_mm_min = match piece.kind {
+            MoveKind::Linear => plunge_limited_feed_mm_min(
+                rates.feed_mm_min,
+                rates.plunge_mm_min,
+                current,
+                piece.to,
+            ),
+            _ => rates.feed_mm_min,
+        };
         moves.push(Move {
             kind: piece.kind,
             to: piece.to,
-            feed_mm_min: Some(rates.feed_mm_min),
+            feed_mm_min: Some(feed_mm_min),
         });
         current = piece.to;
     }

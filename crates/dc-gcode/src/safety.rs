@@ -18,6 +18,12 @@
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
 //! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
 //! the motion the machine makes.
+//!
+//! S10 (`docs/specs/phase-2/functional.md`): every descending cut falls no
+//! faster than its tool's plunge rate, its slope recomputed from the
+//! written numbers ([`check_descent_rate`]). S9: every cut stays in its
+//! operation's own material, worked out from the project
+//! ([`crate::material`]).
 
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
@@ -70,7 +76,8 @@ pub(crate) struct Tolerances {
 }
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S7 and S12, and returns the program's extents.
+/// in `spans`, against S1–S7, S9, S10 and S12, and returns the program's
+/// extents.
 ///
 /// # Errors
 ///
@@ -195,7 +202,7 @@ fn arc_extremes(mv: &MachineMove) -> Vec<Point> {
 /// (`sx`, `sy`) to (`ex`, `ey`) (`gcode.c`, radius format): on the right
 /// of the chord for G2 and the left for G3, the other side for a negative
 /// R.
-fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: bool) -> Point {
+pub(crate) fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: bool) -> Point {
     let (dx, dy) = (ex - sx, ey - sy);
     let chord = dx.hypot(dy);
     if chord <= 0.0 {
@@ -254,7 +261,7 @@ fn check_on_stock(
     Ok(())
 }
 
-/// Checks `text` against S1–S5 and returns its blocks.
+/// Checks `text` against S1–S5 and S10 and returns its blocks.
 fn check_rules(
     text: &str,
     post: &PostProcessor,
@@ -404,6 +411,7 @@ fn check_rules(
                 }
             }
             check_feed(mv, &limits, 2.0 * tolerance_mm)?;
+            check_descent_rate(mv, &limits, transform, tolerance_mm)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
             if let (Some(x), Some(y), Some((z_mm, _))) = (mv.to.x, mv.to.y, z_after) {
@@ -605,7 +613,7 @@ fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(),
 }
 
 /// One output unit in the last written decimal place, in mm.
-fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
+pub(crate) fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
     let places = decimal_places(&post.number_format, units);
     10f64.powi(-i32::from(places)) * mm_per_unit(units)
 }
@@ -768,7 +776,8 @@ fn differs(a: Option<f64>, b: Option<f64>) -> bool {
 /// may also run anywhere between the tool's plunge rate and its feed: its
 /// feed is the cutting feed scaled so its vertical rate stays under the
 /// plunge rate (S10's feed scale, `dc_cam::entry`), which lands between
-/// the two. Whether that vertical rate is right is S10's check (slice 16).
+/// the two. Whether that vertical rate is right is S10's check
+/// ([`check_descent_rate`]).
 fn check_feed(
     mv: &MachineMove,
     limits: &Limits<'_>,
@@ -810,6 +819,64 @@ fn is_descent(mv: &MachineMove) -> bool {
         return false;
     };
     mv.kind == MotionKind::Linear && tz < fz && (tx - fx).hypot(ty - fy) > 0.0
+}
+
+/// S10: a cutting move that descends falls no faster than its tool's
+/// plunge rate: feed × sin(slope) ≤ plunge, with the slope recomputed from
+/// the written numbers (`docs/specs/phase-2/functional.md`, S10). Every
+/// descending cut is held to it, whatever made it: an entry ramp or helix,
+/// a smooth tab's down slope (#157), a straight plunge (slope 90°, so its
+/// feed must be at most the plunge rate) or an arc that descends. The
+/// written move may differ from the toolpath's by the rounding of its
+/// numbers, `quantum_mm` (one unit in the last written place, the same
+/// for lengths and feeds): a feed scaled to the plunge rate exactly must
+/// pass, so the check takes the slowest vertical rate those numbers allow,
+/// the feed one unit lower, the drop one unit shorter and the length two
+/// longer. A move whose start is not known is skipped; S2 and S4 keep a
+/// program from cutting from an unknown position.
+fn check_descent_rate(
+    mv: &MachineMove,
+    limits: &Limits<'_>,
+    transform: &MachineTransform,
+    quantum_mm: f64,
+) -> Result<(), ExportError> {
+    let (Some(op), Some(tool)) = (limits.op, limits.tool) else {
+        return Ok(());
+    };
+    let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+        (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
+    else {
+        return Ok(());
+    };
+    let drop_mm = transform.project_z(fz, mv.units) - transform.project_z(tz, mv.units);
+    if drop_mm <= 0.0 {
+        return Ok(());
+    }
+    let scale = mm_per_unit(mv.units);
+    let run_mm = match mv.kind {
+        MotionKind::Rapid => return Ok(()),
+        MotionKind::Linear => (tx - fx).hypot(ty - fy) * scale,
+        MotionKind::ArcCw | MotionKind::ArcCcw => {
+            let machine_cw = mv.kind == MotionKind::ArcCw;
+            let centre = match mv.arc.r {
+                Some(r) => r_centre(fx, fy, tx, ty, r, machine_cw),
+                None => Point::new(fx + mv.arc.i.unwrap_or(0.0), fy + mv.arc.j.unwrap_or(0.0)),
+            };
+            let arc = Arc::from_ends(Point::new(fx, fy), Point::new(tx, ty), centre, !machine_cw);
+            arc.radius_mm * arc.sweep_rad.abs() * scale
+        }
+    };
+    let feed_mm_min = mv.feed.unwrap_or(0.0) * scale;
+    let slowest_mm_min = (feed_mm_min - quantum_mm).max(0.0) * (drop_mm - quantum_mm).max(0.0)
+        / (run_mm.hypot(drop_mm) + 2.0 * quantum_mm);
+    let plunge_mm_min = tool.plunge_mm_min.unwrap_or(0.0);
+    if slowest_mm_min > plunge_mm_min + EPS_MM {
+        return Err(ExportError::EntryTooSteep {
+            op: op.id().clone(),
+            line: mv.line,
+        });
+    }
+    Ok(())
 }
 
 /// An arc move whose end is its start within half a unit in the last
