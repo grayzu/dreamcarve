@@ -51,6 +51,14 @@ i_overlay = { version = "9.1", default-features = false }
 # features are off: they add text shaping, system font loading (file I/O),
 # svgz, and the writer, none of which an importer needs.
 usvg = { version = "0.48", default-features = false }
+# The user's config directory per platform (phase 2 design, "User config
+# (CLI only)"): XDG on Linux, the Known Folder API on Windows, Application
+# Support on macOS. CLI only. It pulls in `option-ext` (MPL-2.0), allowed
+# per crate in `deny.toml`.
+directories = "6.0"
+# `config.toml` parsing. Default features are off: `display` (the writer)
+# is not needed; `parse` and `serde` deserialize the file into a struct.
+toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic

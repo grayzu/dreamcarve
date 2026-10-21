@@ -14,6 +14,8 @@
 
 use std::process::ExitCode;
 
+use dc_gcode::ProgramSplit;
+
 use crate::cli::{CheckArgs, Failure};
 use crate::export;
 
@@ -23,7 +25,9 @@ const CHECK_DATE: &str = "check";
 /// Runs `check`.
 pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     let (project, file) = export::load_project(&args.dcv)?;
-    let export::Built { programs, findings } = export::build(&project, CHECK_DATE);
+    // `check` has no split flags: it reports what a plain `export` would.
+    let export::Built { programs, findings } =
+        export::build(&project, ProgramSplit::ProjectDefault, CHECK_DATE);
 
     for error in &findings.errors {
         println!("{}", file.describe("error", error));

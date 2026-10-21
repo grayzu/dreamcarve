@@ -33,8 +33,9 @@
 //!   zero with it before starting the program (#57). By default a program
 //!   has one tool: [`emit_programs`] writes one program per tool run, which
 //!   every sender and controller stops between (#95). Only with the
-//!   post-processor's `tool_change.mode` `"m6"` and a definition whose tool
-//!   change has `M6` (grblHAL) does one program change tools; otherwise
+//!   post-processor's `tool_change.mode` `"m6"` (or `export --one-program`,
+//!   [`ProgramSplit::OneProgram`]) and a definition whose tool change has
+//!   `M6` (grblHAL) does one program change tools; otherwise
 //!   [`emit`] refuses a second tool. The change retracts to safe Z and
 //!   stops the spindle, then
 //!   writes DreamCarve's own `T<n> M6 (MSG, Fit T<n> <name>. Set Z zero,
@@ -139,34 +140,74 @@ pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 /// One operation to emit: the operation, its tool, and its toolpath.
 type OpEntry = (ProfileOp, Tool, Toolpath);
 
+/// How [`emit_programs`] splits a project whose enabled operations use
+/// more than one tool: as the project's post-processor `tool_change_mode`
+/// says, or as an `export` flag overrides it for this one export
+/// (`docs/specs/phase-2/functional.md`, capability 19). The project is
+/// never changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProgramSplit {
+    /// As the project's `tool_change_mode` says (#95).
+    #[default]
+    ProjectDefault,
+    /// One program with `T<n> M6` tool changes (`--one-program`), whatever
+    /// the project's mode. Needs a definition whose tool change has `M6`;
+    /// otherwise [`ExportError::OneProgramNeedsM6`].
+    OneProgram,
+    /// One program per tool run (`--programs-per-tool`), whatever the
+    /// project's mode.
+    ProgramPerTool,
+}
+
 /// Emits the programs `export` writes for the enabled operations in `ops`,
-/// as [`emit`] does, split as the post-processor's `tool_change_mode` says
-/// (#95):
+/// as [`emit`] does, split as `split` says: by default as the
+/// post-processor's `tool_change_mode` (#95):
 ///
-/// - `"separate_programs"`: one program per tool run, a run being
+/// - `"separate_programs"` (or [`ProgramSplit::ProgramPerTool`]): one
+///   program per tool run, a run being
 ///   consecutive operations with the same tool, in operation order.
 ///   Operations are never regrouped by tool, which would change the cut
 ///   order. Each program is exactly what [`emit`] writes for its run alone:
 ///   a one-tool program with no `M6` and no `M61`, checked by the safety
 ///   pass on its own, with its own extents. A one-tool project is one
 ///   program, the same as [`emit`]'s.
-/// - `"m6"`: the one program [`emit`] writes, with `T<n> M6` at each tool
-///   change.
+/// - `"m6"` (or [`ProgramSplit::OneProgram`]): the one program [`emit`]
+///   writes, with `T<n> M6` at each tool change.
 ///
 /// Warnings are those of every program, disabled operations once.
 ///
 /// # Errors
 ///
-/// As for [`emit`]; the first program that fails fails the whole call, so
-/// a caller never has some of the programs.
+/// [`ExportError::OneProgramNeedsM6`] for [`ProgramSplit::OneProgram`] on
+/// a definition whose tool change has no `M6`, before anything is emitted.
+/// Otherwise as for [`emit`]; the first program that fails fails the whole
+/// call, so a caller never has some of the programs.
 pub fn emit_programs(
     project: &Project,
     ops: &[OpEntry],
+    split: ProgramSplit,
     date: &str,
 ) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError> {
-    let post = project.post_processor.resolve()?;
+    let mut post = project.post_processor.resolve()?;
+    let mode = match split {
+        ProgramSplit::ProjectDefault => post.tool_change.mode,
+        ProgramSplit::OneProgram => {
+            // GRBL 1.1 has no `M6`, so no program of its own can stop for a
+            // new bit (#57); the flag asks for exactly that.
+            if !post.tool_change.has_m6() {
+                return Err(ExportError::OneProgramNeedsM6 {
+                    post: post.id.clone(),
+                });
+            }
+            ToolChangeMode::M6
+        }
+        ProgramSplit::ProgramPerTool => ToolChangeMode::SeparatePrograms,
+    };
+    // The effective post-processor for this export only; `project` is
+    // borrowed and stays as it is, so the flag is never saved.
+    post.tool_change.mode = mode;
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let runs: Vec<&[&OpEntry]> = match post.tool_change.mode {
+    let runs: Vec<&[&OpEntry]> = match mode {
         ToolChangeMode::M6 => vec![enabled.as_slice()],
         ToolChangeMode::SeparatePrograms => enabled.chunk_by(|a, b| a.1.id == b.1.id).collect(),
     };

@@ -16,9 +16,10 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use dc_gcode::ProgramSplit;
 use dc_project::{PostProcessorError, PostProcessorRef};
 
-use crate::{check, clock, export, init};
+use crate::{check, clock, config, export, init};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -40,6 +41,24 @@ pub enum Command {
     Check(CheckArgs),
     /// List the available post-processors.
     Posts,
+    /// Show the user configuration.
+    Config(ConfigArgs),
+}
+
+/// Arguments of `config`.
+#[derive(Debug, clap::Args)]
+pub struct ConfigArgs {
+    /// What to do.
+    #[command(subcommand)]
+    pub command: ConfigCommand,
+}
+
+/// The `config` subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Print where the config file and the tool library live, and whether
+    /// each exists.
+    Path,
 }
 
 /// Arguments of `init`.
@@ -72,10 +91,32 @@ pub struct ExportArgs {
     /// The project's own id upgrades it to the latest version.
     #[arg(long, value_name = "ID")]
     pub post: Option<String>,
+    /// Write one program with T<n> M6 tool changes, whatever the project's
+    /// tool_change_mode says. Needs a post-processor with M6 (grblHAL).
+    /// Not saved to the project.
+    #[arg(long, conflicts_with = "programs_per_tool")]
+    pub one_program: bool,
+    /// Write one program per tool run, whatever the project's
+    /// tool_change_mode says. Not saved to the project.
+    #[arg(long)]
+    pub programs_per_tool: bool,
     /// The date written in the program header instead of today's (UTC).
     /// For reproducible output in tests.
     #[arg(long, hide = true, value_name = "YYYY-MM-DD")]
     pub date: Option<String>,
+}
+
+impl ExportArgs {
+    /// How the programs are split, as the flags say; clap refuses both.
+    pub fn split(&self) -> ProgramSplit {
+        if self.one_program {
+            ProgramSplit::OneProgram
+        } else if self.programs_per_tool {
+            ProgramSplit::ProgramPerTool
+        } else {
+            ProgramSplit::ProjectDefault
+        }
+    }
 }
 
 /// Arguments of `check`.
@@ -146,6 +187,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Command::Export(args) => export::run(&args),
         Command::Check(args) => check::run(&args),
         Command::Posts => posts(),
+        Command::Config(args) => config::run(&args.command),
     };
     match result {
         Ok(code) => code,

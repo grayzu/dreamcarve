@@ -3,6 +3,188 @@
 
 //! The user config file and directory (`docs/specs/phase-2/design.md`,
 //! "User config (CLI only)") and `dreamcarve config path`.
+//!
+//! `<config dir>/config.toml` holds the defaults a user sets once. Today
+//! that is `[export] tool_change_mode`, which `init` and `export --post`
+//! write into a new post-processor reference (functional spec, capability
+//! 19). Nothing else reads the file: a plain `export` works from the
+//! project alone, so a project exports the same on every machine.
+//! `<config dir>/tools.json` is the tool library (slice 20). `<config dir>`
+//! is the platform's config directory for `dreamcarve` (`directories`), or
+//! `DREAMCARVE_CONFIG_DIR` when that is set.
+//!
+//! A missing file is the defaults. A file that does not parse, or has a
+//! key DreamCarve does not know, is an error naming the file, line and
+//! column, as `config.toml:2:19: …` (#76): a typo must never fall back to
+//! a default silently.
+
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use dc_project::{PostProcessorRef, ToolChangeMode};
+use directories::ProjectDirs;
+use serde::Deserialize;
+
+use crate::cli::{ConfigCommand, Failure};
+
+/// The environment variable that overrides the config directory.
+pub const CONFIG_DIR_VAR: &str = "DREAMCARVE_CONFIG_DIR";
+/// The config file's name in the config directory.
+pub const CONFIG_FILE_NAME: &str = "config.toml";
+/// The tool library's name in the config directory.
+pub const LIBRARY_FILE_NAME: &str = "tools.json";
+
+/// The user config file. Every table and key is optional and defaults to
+/// what the bundled definitions default to; unknown ones are errors.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Config {
+    /// Defaults for new post-processor settings.
+    pub export: ExportConfig,
+}
+
+/// The `[export]` table.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ExportConfig {
+    /// The `tool_change_mode` `init` and `export --post` write into a new
+    /// post-processor reference. `"separate_programs"` unless set.
+    pub tool_change_mode: ToolChangeMode,
+}
+
+/// Where the config directory and its files are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Paths {
+    /// The config directory.
+    pub dir: PathBuf,
+    /// `config.toml` in it.
+    pub config_file: PathBuf,
+    /// `tools.json` in it.
+    pub library_file: PathBuf,
+}
+
+impl Paths {
+    /// The paths under config directory `dir`.
+    pub fn in_dir(dir: PathBuf) -> Self {
+        let config_file = dir.join(CONFIG_FILE_NAME);
+        let library_file = dir.join(LIBRARY_FILE_NAME);
+        Self {
+            dir,
+            config_file,
+            library_file,
+        }
+    }
+
+    /// The paths for this run: under `override_dir` (the value of
+    /// `DREAMCARVE_CONFIG_DIR`) when it is set and not empty, else under
+    /// the platform's config directory for `dreamcarve`.
+    pub fn resolve(override_dir: Option<&OsStr>) -> Result<Self, Failure> {
+        match override_dir {
+            Some(dir) if !dir.is_empty() => Ok(Self::in_dir(PathBuf::from(dir))),
+            _ => ProjectDirs::from("", "", "dreamcarve")
+                .map(|dirs| Self::in_dir(dirs.config_dir().to_path_buf()))
+                .ok_or_else(|| {
+                    Failure::error(format!(
+                        "cannot find the user config directory (no home directory); set \
+                         {CONFIG_DIR_VAR} to the directory to use"
+                    ))
+                }),
+        }
+    }
+
+    /// [`Paths::resolve`] from the process environment.
+    pub fn from_env() -> Result<Self, Failure> {
+        Self::resolve(std::env::var_os(CONFIG_DIR_VAR).as_deref())
+    }
+}
+
+/// Reads the config file of `paths`; a missing file is the defaults.
+pub fn load_from(paths: &Paths) -> Result<Config, Failure> {
+    let path = &paths.config_file;
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse(&text, path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+        Err(e) => Err(Failure::error(format!(
+            "cannot read {}: {e}",
+            path.display()
+        ))),
+    }
+}
+
+/// Parses `text`, the contents of the config file at `path`, which the
+/// error names with the line and column of the problem.
+pub fn parse(text: &str, path: &Path) -> Result<Config, Failure> {
+    toml::from_str(text).map_err(|e: toml::de::Error| {
+        let message = match e.span() {
+            Some(span) => {
+                let (line, column) = line_column(text, span.start);
+                format!("{}:{line}:{column}: {}", path.display(), e.message())
+            }
+            None => format!("{}: {}", path.display(), e.message()),
+        };
+        Failure::error(message)
+    })
+}
+
+/// 1-based line and column (in characters) of byte `offset` in `text`.
+fn line_column(text: &str, offset: usize) -> (usize, usize) {
+    let before = text.get(..offset).unwrap_or(text);
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    (line, column)
+}
+
+/// Puts the user's configured defaults on top of `post`, a reference with
+/// the definition's default settings, as `init` and `export --post` write
+/// it. A configured `"m6"` cannot apply to a definition whose tool change
+/// has no `M6` (GRBL): that is an error naming the config file, so a bad
+/// default never lands in a project.
+pub fn apply(config: &Config, paths: &Paths, post: &mut PostProcessorRef) -> Result<(), Failure> {
+    let mode = config.export.tool_change_mode;
+    if mode == ToolChangeMode::M6 {
+        let definition = post.resolve().map_err(Failure::error)?;
+        if !definition.tool_change.has_m6() {
+            return Err(Failure::error(format!(
+                "{} sets tool_change_mode = \"m6\", but post-processor `{}` has no M6 tool \
+                 change; set \"separate_programs\" there or choose another post-processor",
+                paths.config_file.display(),
+                post.id
+            )));
+        }
+    }
+    post.tool_change_mode = mode;
+    Ok(())
+}
+
+/// Loads the user config and applies it to `post` ([`apply`]).
+pub fn seed_post(post: &mut PostProcessorRef) -> Result<(), Failure> {
+    let paths = Paths::from_env()?;
+    let config = load_from(&paths)?;
+    apply(&config, &paths, post)
+}
+
+/// Runs `config <command>`.
+pub fn run(command: &ConfigCommand) -> Result<ExitCode, Failure> {
+    match command {
+        ConfigCommand::Path => path(),
+    }
+}
+
+/// `config path`: the directory and both files, each with whether it
+/// exists, so a user can find or create them.
+fn path() -> Result<ExitCode, Failure> {
+    let paths = Paths::from_env()?;
+    for (label, path) in [
+        ("Config directory:", &paths.dir),
+        ("Config file:", &paths.config_file),
+        ("Tool library:", &paths.library_file),
+    ] {
+        let state = if path.exists() { "exists" } else { "not found" };
+        println!("{label:<17} {} ({state})", path.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
 
 #[cfg(test)]
 mod tests {
