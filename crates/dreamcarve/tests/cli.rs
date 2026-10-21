@@ -17,7 +17,7 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use dc_geometry::{Point, Polyline, Rect, Transform, assert_approx_eq};
 
@@ -784,6 +784,103 @@ fn posts_lists_six() {
     ] {
         assert!(stdout.contains(name), "{name} in {stdout}");
     }
+}
+
+/// Runs `dreamcarve` with `args` in `dir` with its stdout a pipe whose
+/// read end is closed before the binary starts, so its first write fails
+/// with a broken pipe (`EPIPE`; `ERROR_NO_DATA` on Windows), as when the
+/// reader of `dreamcarve … | head` has quit.
+fn run_into_closed_pipe(dir: &Path, args: &[&str]) -> Output {
+    let (reader, writer) = std::io::pipe().expect("pipe created");
+    drop(reader);
+    command(dir)
+        .args(args)
+        .stdout(writer)
+        .output()
+        .expect("binary runs")
+}
+
+/// Runs `dreamcarve` with `args` in `dir`, reads one line of its stdout
+/// and closes the pipe, as `dreamcarve … | head -1` does. Whether the
+/// binary has written the rest by then depends on timing.
+fn run_closed_after_one_line(dir: &Path, args: &[&str]) -> Output {
+    use std::io::BufRead as _;
+    let mut child = command(dir)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("binary runs");
+    let stdout = child.stdout.take().expect("stdout piped");
+    let mut line = String::new();
+    std::io::BufReader::new(stdout)
+        .read_line(&mut line)
+        .expect("one line read");
+    assert!(!line.is_empty(), "the command printed a line");
+    child.wait_with_output().expect("binary exits")
+}
+
+/// Asserts that a run whose stdout closed early did not panic and exited
+/// with `code`, the command's own exit code.
+fn assert_quiet_exit(out: &Output, code: i32, what: &str) {
+    let stderr = stderr(out);
+    assert!(!stderr.contains("panicked"), "{what}: {stderr}");
+    assert!(!stderr.contains("Broken pipe"), "{what}: {stderr}");
+    assert_eq!(out.status.code(), Some(code), "{what}: {stderr}");
+}
+
+/// #216: when the reader of stdout goes away (`dreamcarve … | head`), the
+/// binary stops printing, finishes the command, and exits with the
+/// command's own code: 0 for `posts`, 1 for `check` on a project with
+/// values to set, 0 once they are set. It neither panics (exit 101) nor
+/// prints anything about the pipe.
+#[test]
+fn broken_pipe_does_not_panic() {
+    let dir = work_dir("broken_pipe_does_not_panic");
+    let out = run_into_closed_pipe(&dir, &["posts"]);
+    assert_quiet_exit(&out, 0, "posts");
+    let out = run_closed_after_one_line(&dir, &["posts"]);
+    assert_quiet_exit(&out, 0, "posts | head -1");
+
+    let dcv = init_coaster(&dir);
+    let out = run_into_closed_pipe(&dir, &["check", "coaster.dcv"]);
+    assert_quiet_exit(&out, 1, "check with values to set");
+    let out = run_closed_after_one_line(&dir, &["check", "coaster.dcv"]);
+    assert_quiet_exit(&out, 1, "check with values to set | head -1");
+
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run_into_closed_pipe(&dir, &["check", "coaster.dcv"]);
+    assert_quiet_exit(&out, 0, "check of a complete project");
+
+    // Work done before or after the output is not cut short: the program
+    // is written although its summary cannot be printed.
+    let out = run_into_closed_pipe(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_quiet_exit(&out, 0, "export");
+    assert!(dir.join("coaster.nc").exists(), "program written");
+}
+
+/// #216: any other error writing stdout (here a full disk, `/dev/full`)
+/// fails the command with exit 1 and says so on stderr.
+#[cfg(target_os = "linux")]
+#[test]
+fn stdout_write_error_fails_with_message() {
+    let dir = work_dir("stdout_write_error_fails_with_message");
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full opens");
+    let out = command(&dir)
+        .arg("posts")
+        .stdout(full)
+        .output()
+        .expect("binary runs");
+    let stderr = stderr(&out);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.starts_with("error: cannot write to standard output: "),
+        "{stderr}"
+    );
 }
 
 /// The coaster with four 8 mm holes inside it, drilled through with the
