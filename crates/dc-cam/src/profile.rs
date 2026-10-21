@@ -1276,13 +1276,25 @@ pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
         .is_some_and(|region| region.contains_point(p))
 }
 
-/// The closed target outlines that the tabbed Profile `op` cuts with no
-/// tab, in drawing order (#109): its holes unless `on_holes`, and every
-/// hole whose tool-centre paths are too short for even one tab
-/// ([`Tabs::fit`]; a part's outline always keeps one). Cut through the stock, each of them comes loose. Empty
-/// when `op` has no tabs, and when its toolpath cannot be generated:
+/// How the tabs of a tabbed Profile leave one outline it cuts
+/// ([`cut_outlines`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Hold {
+    /// Cut with no tab, so cut through the stock it comes loose (#109).
+    Free,
+    /// Cut with tabs, so cut through the stock only they hold it (#269).
+    Tabs,
+}
+
+/// Every closed target outline that the tabbed Profile `op` cuts, in
+/// drawing order, with how its tabs leave it: [`Hold::Free`] for those it
+/// cuts with no tab (#109), its holes unless `on_holes` and every hole
+/// whose tool-centre paths are too short for even one tab ([`Tabs::fit`];
+/// a part's outline always keeps one), and [`Hold::Tabs`] for the rest. A
+/// shape the tool does not fit is not cut, so it is left out. Empty when
+/// `op` has no tabs, and when its toolpath cannot be generated:
 /// [`crate::order::check`] only warns.
-pub(crate) fn untabbed_outlines(project: &Project, op: &ProfileOp) -> Vec<ShapeRef> {
+pub(crate) fn cut_outlines(project: &Project, op: &ProfileOp) -> Vec<(ShapeRef, Hold)> {
     let Some(spec) = &op.tabs else {
         return Vec::new();
     };
@@ -1300,7 +1312,7 @@ pub(crate) fn untabbed_outlines(project: &Project, op: &ProfileOp) -> Vec<ShapeR
         return Vec::new();
     };
     let radius_mm = tool.diameter_mm / 2.0;
-    let mut untabbed = Vec::new();
+    let mut cut = Vec::new();
     for region in &regions {
         let ordered = hole_shapes(region, &shapes)
             .map(|(h, shape)| (h, shape, Role::Hole))
@@ -1311,30 +1323,30 @@ pub(crate) fn untabbed_outlines(project: &Project, op: &ProfileOp) -> Vec<ShapeR
                 Offset::Shrink => offset(contour, -radius_mm),
                 Offset::None => vec![contour.clone()],
             };
-            // A shape the tool does not fit is not cut, so not freed.
-            let cut_free = !centres.is_empty()
-                && ((role == Role::Hole && !tabs.on_holes())
-                    || centres.iter().all(|c| {
-                        let least = match role {
-                            Role::Hole => Least::Zero,
-                            Role::Outer => Least::One,
-                        };
-                        let (layout, _, _) =
-                            tabs.fit(c.polyline().length_mm(), PathEnds::Closed, least);
-                        layout.is_untabbed()
-                    }));
-            if cut_free {
-                untabbed.push(shape.clone());
+            if centres.is_empty() {
+                continue;
             }
+            let untabbed = (role == Role::Hole && !tabs.on_holes())
+                || centres.iter().all(|c| {
+                    let least = match role {
+                        Role::Hole => Least::Zero,
+                        Role::Outer => Least::One,
+                    };
+                    let (layout, _, _) =
+                        tabs.fit(c.polyline().length_mm(), PathEnds::Closed, least);
+                    layout.is_untabbed()
+                });
+            let hold = if untabbed { Hold::Free } else { Hold::Tabs };
+            cut.push((shape.clone(), hold));
         }
     }
-    untabbed.sort_by_key(|shape| {
+    cut.sort_by_key(|(shape, _)| {
         (
             op.targets.iter().position(|t| *t == shape.instance),
             shape.profile,
         )
     });
-    untabbed
+    cut
 }
 
 /// The shape `region`'s outer came from, `region` being one that `nest`

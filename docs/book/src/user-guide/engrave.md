@@ -114,6 +114,9 @@ so lines that cross or meet, as in lettering, a hatch or a border, are the
 design, not two shapes drawn too close. An Engrave inside a part that an
 earlier Profile cut free warns `cut_inside_freed_part`, for an open path
 as for a closed one, when all of the path lies inside the freed outline.
+Inside a part that the Profile cut through round with tabs, an Engrave
+deeper than half the stock warns `cut_inside_tab_held_part`: the part is
+held only by them. A shallow one there is quiet.
 
 The errors are those of every operation: a missing feed, plunge rate or
 step-down, a depth below the stock bottom plus the allowance, and a cut

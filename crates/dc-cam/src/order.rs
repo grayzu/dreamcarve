@@ -5,15 +5,16 @@
 //! Operation-order warnings (dc-cam::order)"; `docs/research/toolpath-ordering.md`
 //! §5.5, invariant O8, decision D7). Operations always run in the order the
 //! project lists them; this module never reorders, it only says when that
-//! order cuts inside a part an earlier operation has already freed, and when
-//! a tool is fitted more than once because its operations are not adjacent.
+//! order cuts inside a part an earlier operation has already freed or left
+//! held only by tabs (#269), and when a tool is fitted more than once
+//! because its operations are not adjacent.
 //!
 //! Nothing here depends on Y-up or Y-down: containment is symmetric under
 //! the flip.
 
 use crate::error::ShapeRef;
 use crate::overlap::region_holds_path;
-use crate::profile::{same_contour, untabbed_outlines};
+use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
@@ -31,6 +32,11 @@ use dc_project::{Operation, OperationId, Project, Side, ToolId};
 ///   the stock, by operation order, then target order, then the freeing
 ///   operation's order. Targets are closed outlines, and the open paths
 ///   an Engrave or an On line Profile cuts (#206);
+/// - in the same order, [`Warning::CutInsideTabHeldPart`] for every such
+///   target that lies inside an outline an earlier Profile cut through the
+///   stock round with tabs, naming the innermost such outline, when the
+///   later operation cuts deeper than half the stock ([`cuts_deep`]) and
+///   the same earlier operation freed no outline round it (#269);
 /// - [`Warning::ToolChangeAvoidable`] once per tool that the enabled
 ///   operations, in order, use again after a different tool, by the
 ///   tool's first use.
@@ -43,6 +49,10 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
     let freeing: Vec<Freed> = generated
         .iter()
         .map(|(op, toolpath)| freed_by(project, op, toolpath))
+        .collect();
+    let deep: Vec<bool> = generated
+        .iter()
+        .map(|(op, _)| cuts_deep(project, op))
         .collect();
 
     let mut warnings = Vec::new();
@@ -68,6 +78,35 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
                         shape: shape.clone(),
                         freed: freed_shape.clone(),
                     });
+                    // A loose piece is the worse news; the tabs round it
+                    // do not hold it.
+                    continue;
+                }
+                if !deep.get(j).copied().unwrap_or(false) {
+                    continue;
+                }
+                let held = targets.get(i).and_then(|outlines| {
+                    outlines
+                        .iter()
+                        .filter_map(|(s, o)| match o {
+                            Target::Outline(outline)
+                                if frees.holds_by_tabs(s) && target.lies_inside(outline) =>
+                            {
+                                Some((s, outline.signed_area_mm2().abs()))
+                            }
+                            _ => None,
+                        })
+                        // Nested outlines round one target: the smallest is
+                        // the innermost, the piece the cut is on.
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                });
+                if let Some((held_shape, _)) = held {
+                    warnings.push(Warning::CutInsideTabHeldPart {
+                        op: later.id().clone(),
+                        earlier_op: earlier.id().clone(),
+                        shape: shape.clone(),
+                        held: held_shape.clone(),
+                    });
                 }
             }
         }
@@ -76,16 +115,16 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
     warnings
 }
 
-/// The target outlines an operation leaves loose, with whatever is inside
-/// them.
+/// The target outlines an operation leaves loose, or held only by tabs,
+/// with whatever is inside them.
 enum Freed {
     /// None: not a Profile, or one that stops above the stock bottom.
     Nothing,
     /// Every outline: a Profile through the stock with no tabs.
     All,
-    /// These outlines of a tabbed Profile through the stock: the ones its
-    /// tabs leave untabbed (#109).
-    Only(Vec<ShapeRef>),
+    /// The outlines a tabbed Profile through the stock cuts, each loose
+    /// when its tabs leave it untabbed (#109), else held by them (#269).
+    Tabbed(Vec<(ShapeRef, Hold)>),
 }
 
 impl Freed {
@@ -94,7 +133,19 @@ impl Freed {
         match self {
             Self::Nothing => false,
             Self::All => true,
-            Self::Only(shapes) => shapes.contains(shape),
+            Self::Tabbed(outlines) => outlines
+                .iter()
+                .any(|(s, hold)| s == shape && *hold == Hold::Free),
+        }
+    }
+
+    /// True when outline `shape` is held only by its tabs.
+    fn holds_by_tabs(&self, shape: &ShapeRef) -> bool {
+        match self {
+            Self::Nothing | Self::All => false,
+            Self::Tabbed(outlines) => outlines
+                .iter()
+                .any(|(s, hold)| s == shape && *hold == Hold::Tabs),
         }
     }
 }
@@ -106,6 +157,7 @@ impl Freed {
 /// Inside frees the hole's slug. Tabs hold an outline through the final
 /// pass, so a tabbed Profile frees only the outlines it cuts with no tab:
 /// its holes unless `on_holes`, and outlines too short for one (#109).
+/// The outlines it cuts with tabs are held only by them (#269).
 fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
     let Operation::Profile(profile) = op else {
         return Freed::Nothing;
@@ -117,7 +169,21 @@ fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
     match (through, &profile.tabs) {
         (false, _) => Freed::Nothing,
         (true, None) => Freed::All,
-        (true, Some(_)) => Freed::Only(untabbed_outlines(project, profile)),
+        (true, Some(_)) => Freed::Tabbed(cut_outlines(project, profile)),
+    }
+}
+
+/// True when `op` cuts deeper than half the stock, which takes in every
+/// cut that reaches the stock bottom, through-cut allowance and all: a
+/// cut heavy enough to flex a part held only by tabs, or break one
+/// (#269). A light cut, such as a shallow engraving after a tabbed
+/// cut-out, is normal practice. Reads the operation's `depth_mm` against
+/// the stock thickness; false when either is unset, which validation
+/// reports.
+fn cuts_deep(project: &Project, op: &Operation) -> bool {
+    match (op.depth_mm(), project.stock.thickness_mm) {
+        (Some(depth_mm), Some(thickness_mm)) => depth_mm > thickness_mm / 2.0 + EPS_MM,
+        _ => false,
     }
 }
 
@@ -575,7 +641,8 @@ mod tests {
     }
 
     /// Tabs hold the part after the final pass, so a Profile with tabs
-    /// frees nothing: the later operation cuts a held part.
+    /// frees nothing: the later operation cuts a held part (which
+    /// `cut_inside_tab_held_part_warns` covers, #269).
     #[test]
     fn tabs_hold_the_part_so_nothing_is_freed() {
         let mut project = part_and_hole();
@@ -589,6 +656,219 @@ mod tests {
         assert!(
             with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
             "quiet: {warnings:?}"
+        );
+    }
+
+    /// The operation, earlier operation, shape and held outline of a
+    /// `cut_inside_tab_held_part` warning.
+    fn held_of(w: &Warning) -> (&str, &str, &ShapeRef, &ShapeRef) {
+        let Warning::CutInsideTabHeldPart {
+            op,
+            earlier_op,
+            shape,
+            held,
+        } = w
+        else {
+            panic!("{w:?}");
+        };
+        (op.as_str(), earlier_op.as_str(), shape, held)
+    }
+
+    /// The `(op, earlier_op, shape instance, held instance)` of every
+    /// `cut_inside_tab_held_part` warning in `warnings`, in order.
+    fn held_cuts(warnings: &[Warning]) -> Vec<(&str, &str, &str, &str)> {
+        with_code(warnings, WarningCode::CutInsideTabHeldPart)
+            .into_iter()
+            .map(held_of)
+            .map(|(op, earlier, shape, held)| {
+                (op, earlier, shape.instance.as_str(), held.instance.as_str())
+            })
+            .collect()
+    }
+
+    /// #269: the two-operation star of `tests/manual/star_with_hole`
+    /// redrawn. An Outside Profile through the stock with tabs on the
+    /// rectangle holds it by its tabs only; a later Inside Profile of the
+    /// circle inside it cuts that tab-held part, so exactly one
+    /// `cut_inside_tab_held_part` names both operations and both shapes.
+    /// The rectangle is held, not freed, so `cut_inside_freed_part` stays
+    /// quiet. The message says what to do: move the operation earlier, or
+    /// cut the hole with its part in one operation (#109).
+    #[test]
+    fn cut_inside_tab_held_part_warns() {
+        let mut project = part_and_hole();
+        let mut outline = profile("o1", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        project.operations = vec![
+            Operation::Profile(outline),
+            Operation::Profile(profile("o2", "i2", Side::Inside, 6.0)),
+        ];
+        let warnings = check_all(&project);
+        assert!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
+            "the tabs hold the part: {warnings:?}"
+        );
+        let found = with_code(&warnings, WarningCode::CutInsideTabHeldPart);
+        assert_eq!(found.len(), 1, "one warning: {warnings:?}");
+        let w = found[0];
+        let (op, earlier_op, shape, held) = held_of(w);
+        assert_eq!((op, earlier_op), ("o2", "o1"));
+        assert_eq!(
+            (
+                shape.instance.as_str(),
+                shape.instance_name.as_str(),
+                shape.profile
+            ),
+            ("i2", "Hole", 0)
+        );
+        assert_eq!(
+            (
+                held.instance.as_str(),
+                held.instance_name.as_str(),
+                held.profile
+            ),
+            ("i1", "Rectangle 1", 0)
+        );
+        assert_eq!(w.op().map(OperationId::as_str), Some("o2"));
+        let text = w.to_string();
+        assert!(text.contains("`o1`"), "names the earlier operation: {text}");
+        assert!(text.contains("`Hole`"), "names the shape: {text}");
+        assert!(
+            text.contains("`Rectangle 1`"),
+            "names the held outline: {text}"
+        );
+        assert!(text.contains("tabs"), "says the tabs hold it: {text}");
+        assert!(
+            text.contains("move this operation before `o1`"),
+            "suggests cutting inside first: {text}"
+        );
+        assert!(
+            text.contains("same operation"),
+            "suggests one operation for the part and its hole: {text}"
+        );
+    }
+
+    /// #269: a Pocket through the stock and a 4 mm Engrave of an open line
+    /// inside the tab-held rectangle warn too, as for a freed part (#206):
+    /// each cuts deeper than half the 6 mm stock. A Profile with tabs that
+    /// stops above the stock bottom leaves the part in the stock, so it
+    /// holds nothing by its tabs alone.
+    #[test]
+    fn deep_cut_inside_tab_held_part_warns() {
+        let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
+        let mut outline = profile("o1", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        let mut through = pocket("o2", "i2");
+        through.depth_mm = Some(6.0);
+        project.operations = vec![
+            Operation::Profile(outline.clone()),
+            Operation::Pocket(through),
+            Operation::Engrave(engrave("o3", "i3", 4.0)),
+        ];
+        let warnings = check_all(&project);
+        assert_eq!(
+            held_cuts(&warnings),
+            vec![("o2", "o1", "i2", "i1"), ("o3", "o1", "i3", "i1")],
+            "{warnings:?}"
+        );
+
+        outline.depth_mm = Some(3.0);
+        project.operations[0] = Operation::Profile(outline);
+        let warnings = check_all(&project);
+        assert!(held_cuts(&warnings).is_empty(), "not through: {warnings:?}");
+    }
+
+    /// #269: a light cut on a tab-held part is normal practice, as the
+    /// plaque's 1 mm Engrave after its tabbed cut-out: only a cut deeper
+    /// than half the stock, or through it, risks flexing the part or
+    /// breaking a tab. A 1 mm Engrave and a Pocket exactly half the 6 mm
+    /// stock deep are quiet.
+    #[test]
+    fn shallow_engrave_inside_tab_held_part_is_quiet() {
+        let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
+        let mut outline = profile("o1", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        let mut half = pocket("o3", "i2");
+        half.depth_mm = Some(3.0);
+        project.operations = vec![
+            Operation::Profile(outline),
+            Operation::Engrave(engrave("o2", "i3", 1.0)),
+            Operation::Pocket(half),
+        ];
+        let warnings = check_all(&project);
+        assert!(held_cuts(&warnings).is_empty(), "light cuts: {warnings:?}");
+    }
+
+    /// #269: the hole first, then the tabbed outline. The outline is not
+    /// inside the hole, so nothing is cut in a tab-held part, and nothing
+    /// in a freed one.
+    #[test]
+    fn inside_first_is_quiet() {
+        let mut project = part_and_hole();
+        let mut outline = profile("o2", "i1", Side::Outside, 6.0);
+        outline.tabs = Some(four_tabs());
+        project.operations = vec![
+            Operation::Profile(profile("o1", "i2", Side::Inside, 6.0)),
+            Operation::Profile(outline),
+        ];
+        let warnings = check_all(&project);
+        for code in [
+            WarningCode::CutInsideTabHeldPart,
+            WarningCode::CutInsideFreedPart,
+        ] {
+            assert!(
+                with_code(&warnings, code).is_empty(),
+                "{code}: {warnings:?}"
+            );
+        }
+    }
+
+    /// #269, #109: one tabbed Profile of the rectangle and its hole cuts
+    /// the hole first, inside its own operation, so neither order warning
+    /// fires.
+    #[test]
+    fn one_operation_part_and_hole_is_quiet() {
+        let mut project = part_and_hole();
+        let mut both = profile("o1", "i1", Side::Outside, 6.0);
+        both.targets.push(InstanceId::new("i2"));
+        both.tabs = Some(four_tabs());
+        project.operations = vec![Operation::Profile(both)];
+        let warnings = check_all(&project);
+        for code in [
+            WarningCode::CutInsideTabHeldPart,
+            WarningCode::CutInsideFreedPart,
+        ] {
+            assert!(
+                with_code(&warnings, code).is_empty(),
+                "{code}: {warnings:?}"
+            );
+        }
+    }
+
+    /// #269: a 4 mm cut on a hole's slug that the hole's own tabs hold
+    /// (two of four fit the 24 mm hole's path, `on_holes`) names the hole, the
+    /// innermost tab-held outline round it, not the part. A slug the
+    /// tabbed Profile cuts free warns `cut_inside_freed_part` alone: the
+    /// slug is loose, whatever holds the part round it.
+    #[test]
+    fn tab_held_warning_names_the_innermost_outline() {
+        let mut project = slug_cut_after(true, 12.0);
+        // Deeper than half the stock, so heavy enough to warn.
+        if let Some(Operation::Engrave(dot)) = project.operations.get_mut(1) {
+            dot.depth_mm = Some(4.0);
+        }
+        let warnings = check_all(&project);
+        assert_eq!(
+            held_cuts(&warnings),
+            vec![("o2", "o1", "i3", "i2")],
+            "{warnings:?}"
+        );
+        let warnings = check_all(&slug_cut_after(false, 5.0));
+        assert!(held_cuts(&warnings).is_empty(), "freed slug: {warnings:?}");
+        assert_eq!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).len(),
+            1,
+            "{warnings:?}"
         );
     }
 
