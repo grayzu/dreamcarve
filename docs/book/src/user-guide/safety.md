@@ -117,7 +117,9 @@ written. There are no safety warnings, only errors.
     - a [Profile](profile.md): the whole width of the bit stays in the
       waste. Cut **outside**, that means outside every part, and cut
       **inside**, inside the hole and off any island left in it. Cut **on
-      line**, the centre of the bit stays on the line. Laps, tab rises,
+      line**, the centre of the bit stays on the line, at least a bit's
+      width from the part's other lines, so a cut that would cut through
+      a ring narrower than the bit stops the export. Laps, tab rises,
       entry ramps and helixes, lead arcs and corner relief notches all
       count, so a ramp or lead arc that swings into a part, its own or a
       neighbour's, stops the export. A lap that runs along one outline at

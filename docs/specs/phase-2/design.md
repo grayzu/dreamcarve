@@ -360,7 +360,10 @@ Pocket's corner-relief notches may cut into their corners' relief zones.
 A Profile is held to its waste (#177). Inside, the tool centre stays in a
 target region, `r` from its walls, as a Pocket with no allowance. Outside,
 it stays outside every target region, `r` from every outline. On line,
-it stays on a target's line. The notch rule applies Inside and Outside,
+it stays on a target's line, at least `d` from every other line of that
+line's region. (changed in #199: On line was held to the line only, so a
+ring narrower than the tool passed; dc-cam now refuses it, see "Profile
+bands".) The notch rule applies Inside and Outside,
 so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
 outline on its waste side. It passes even where an outline of another
@@ -813,6 +816,29 @@ with no warning, because the overlap check never compares one region's
 lines and S9's lap rule passed the lap. A cut that gouges kept material
 is an error, not a warning: D6 warns only where two separate shapes were
 drawn too close, which the user can see and accept.)
+
+On line, the band between two lines of one region is the part itself: a
+ring between an outline and its hole, or a web between two holes. The
+tool centre follows each line and the bit cuts `r` of the band beside
+it, so the two cuts together cut through a band narrower than the tool,
+even where neither reaches the other line. `generate_profile` refuses an
+On line path that comes closer than `d` (less `EPS_MM`) to another line
+of its own region with the same `BandNarrowerThanTool`. A band exactly
+`d` wide is cut. On line always has a path, so `ToolTooLarge` never
+applies. Lines of different regions stay D6's `ToolpathsOverlap` at `r`:
+the gap between two parts is waste. S9 holds an On line Profile's moves
+to the same rule, so a hand-written program that cuts both lines of a
+narrow ring fails `OffMaterial`.
+
+(changed in #199: an On line ring closer than `r` to its hole was cut
+through with no warning, because the overlap check never compares one
+region's lines and S9 checked only that the tool stays on a line. The
+issue proposed D6's warning. It is an error instead, consistent with
+#192: the part loses material it keeps, which is the harm #192 refused
+for Inside. No Profile use needs it: a double line drawn for its own sake
+is Engrave's job, and Engrave has no such rule. The threshold is the
+diameter, not the issue's radius, because a ring between `r` and `d` wide
+is cut through too, by the two cuts together.)
 
 ### Corner relief (dc-cam::relief)
 
@@ -1454,7 +1480,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `relief::bottom_level_notches_do_not_plunge` (#193: ramp entry, both orders, one and two levels in the freeing pass, with a lead: no straight plunge below what is already cut at a descend point; every bottom notch within the final lap).
 
 **dc-cam — profile**
-- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192).
+- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199).
 
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.
@@ -1469,7 +1495,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::canned_cycle_expansion_matches_drill_toolpath` (S11), `safety::canned_cycle_below_floor_fails_s1`, `safety::canned_cycle_rapid_into_uncut_fails`.
 - `safety::ramp_steeper_than_plunge_fails_s10`, `safety::helix_feed_scaled_passes_s10`.
 - `safety::pocket_cut_outside_region_fails_s9` (on the toolpath via `footprint`).
-- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177), `safety::inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9` (#192).
+- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177), `safety::inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9` (#192), `safety::on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9` (#199).
 - `post::six_definitions_validate`, `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect` (acceptance 36), `post::mach3_numbers_every_line`, `post::uccnc_writes_no_line_numbers_percent_or_units_word`, `post::generic_strips_trailing_zeros`, `post::generic_refuses_m6_mode`, `post::linuxcnc_mach3_uccnc_refuse_m6_mode`, `post::canned_cycles_only_where_documented`, `post::no_definition_has_g43`, `post::every_definition_line_is_cited_in_readme` (a test that scans the README for each non-placeholder header/footer/tool-change line).
 - `emit::one_program_flag_writes_m6_on_grblhal`, `emit::one_program_flag_on_grbl_is_error`, `emit::programs_per_tool_flag_overrides_m6_mode_without_saving`.
 
