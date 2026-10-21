@@ -2911,21 +2911,23 @@ fn motion(program: &str) -> Vec<String> {
 }
 
 /// #106, acceptance test 13: `export --post grbl` rewrites the reference
-/// to GRBL's latest version with the default settings, as switching always
-/// did, and the program has the same motion as grblHAL's.
+/// to GRBL's latest version, and the program has the same motion as
+/// grblHAL's. The settings the user changed (an extension, manual spindle
+/// control) are kept (#277, acceptance 39); the others take GRBL's
+/// defaults.
 #[test]
 fn export_post_switch_writes_reference() {
     let dir = work_dir("export_post_switch_writes_reference");
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
-    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
-    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
-    let grblhal = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
-
     let mut project = load_file(&dcv).project;
     project.post_processor.file_extension = "tap".into();
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     set_spindle_control(&dcv, SpindleControl::Manual);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let grblhal = std::fs::read_to_string(dir.join("coaster.tap")).expect("coaster.tap written");
+
     let out = run(
         &dir,
         &[
@@ -2948,15 +2950,15 @@ fn export_post_switch_writes_reference() {
         serde_json::json!({
             "id": "grbl",
             "definition_version": latest.version,
-            "file_extension": "nc",
-            "spindle_control": "automatic",
+            "file_extension": "tap",
+            "spindle_control": "manual",
             "spindle_on_dwell_s": 3.0,
             "tool_change_mode": "separate_programs",
             "decimal_places": { "mm": 3, "inch": 4 },
             "use_canned_cycles": false
         })
     );
-    let grbl = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+    let grbl = std::fs::read_to_string(dir.join("coaster.tap")).expect("coaster.tap rewritten");
     assert_ne!(grbl, grblhal, "the dialects differ");
     assert_eq!(motion(&grbl), motion(&grblhal));
 }
@@ -3338,10 +3340,12 @@ fn written_tool_change_mode(dcv: &Path) -> String {
 }
 
 /// Acceptance 33: the user config's `tool_change_mode` is what `init` and
-/// `export --post` write into a new post-processor reference; nothing else
-/// reads it, so a plain `export` leaves the project's mode alone. A `"m6"`
-/// default on GRBL, which has no `M6`, is refused naming the config file
-/// and the post-processor, so a bad default never lands in a project.
+/// `export --post --reset-settings` write into a new post-processor
+/// reference; nothing else reads it, so a plain `export` leaves the
+/// project's mode alone (a plain `--post` applies it only to a setting it
+/// resets, #277). A `"m6"` default on GRBL, which has no `M6`, is refused
+/// naming the config file and the post-processor, so a bad default never
+/// lands in a project.
 #[test]
 fn config_tool_change_mode_seeds_init() {
     let dir = work_dir("config_tool_change_mode_seeds_init");
@@ -3354,7 +3358,8 @@ fn config_tool_change_mode_seeds_init() {
     assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
     assert_eq!(written_tool_change_mode(&dir.join("m6.dcv")), "m6");
 
-    // `export --post` writes the configured mode with the new settings.
+    // `export --post --reset-settings` writes the configured mode with the
+    // new settings.
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(
         &dir,
@@ -3363,6 +3368,7 @@ fn config_tool_change_mode_seeds_init() {
             "coaster.dcv",
             "--post",
             "grblhal",
+            "--reset-settings",
             "--date",
             FIXED_DATE,
         ],
@@ -3400,7 +3406,16 @@ fn config_tool_change_mode_seeds_init() {
     );
     assert!(!dir.join("grbl.dcv").exists(), "nothing written");
     let before = std::fs::read_to_string(&dcv).expect("dcv readable");
-    let out = run(&dir, &["export", "coaster.dcv", "--post", "grbl"]);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grbl",
+            "--reset-settings",
+        ],
+    );
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -3416,6 +3431,184 @@ fn config_tool_change_mode_seeds_init() {
         std::fs::read_to_string(&dcv).expect("dcv readable"),
         before,
         "the project is untouched"
+    );
+}
+
+/// The filled-in coaster with its post-processor set to `post`, saved.
+fn coaster_with_post(dir: &Path, post: dc_project::PostProcessorRef) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = post;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// The bundled reference `id` v`version` with its default settings.
+fn default_post(id: &str, version: u32) -> dc_project::PostProcessorRef {
+    dc_project::bundled_definition(id, version)
+        .expect("definition is bundled")
+        .default_ref()
+}
+
+/// The latest reference of `id` with its default settings, as JSON.
+fn latest_default_block(id: &str) -> serde_json::Value {
+    let latest = dc_project::latest_definition(id).expect("definition is bundled");
+    serde_json::to_value(latest.default_ref()).expect("reference serializes")
+}
+
+/// Acceptance 39 (#277): a grblHAL v1 project with a raised spin-up dwell,
+/// exported with `--post grblhal`, is saved at the latest grblHAL version
+/// with the dwell kept and every other setting unchanged, its program
+/// dwells for it, and the summary says the settings were kept.
+#[test]
+fn export_post_keeps_dwell() {
+    let dir = work_dir("export_post_keeps_dwell");
+    let mut post = default_post("grblhal", 1);
+    post.spindle_on_dwell_s = 6.0;
+    let dcv = coaster_with_post(&dir, post);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut expected = latest_default_block("grblhal");
+    expected["spindle_on_dwell_s"] = serde_json::json!(6.0);
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        expected
+    );
+    let latest = dc_project::latest_definition("grblhal").expect("grblHAL is bundled");
+    let report = stdout(&out);
+    assert!(
+        report.contains(&format!(
+            "Updated coaster.dcv: post-processor grblhal v1 → v{}, keeping your settings.",
+            latest.version
+        )),
+        "{report}"
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(
+        program.lines().any(|l| l.trim() == "G4 P6.000"),
+        "{program}"
+    );
+}
+
+/// #277: a setting the new post-processor cannot use is reset to its
+/// default, never kept to fail, and the summary names it, both values and
+/// why: GRBL has no `M6` tool change (#57).
+#[test]
+fn export_post_reports_reset_setting() {
+    let dir = work_dir("export_post_reports_reset_setting");
+    let mut post = dc_project::latest_definition("grblhal")
+        .expect("grblHAL is bundled")
+        .default_ref();
+    post.tool_change_mode = ToolChangeMode::M6;
+    let dcv = coaster_with_post(&dir, post);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grbl",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+    let report = stdout(&out);
+    let line = report
+        .lines()
+        .find(|l| l.contains("tool_change_mode"))
+        .unwrap_or_else(|| panic!("a line names the reset setting: {report}"));
+    assert!(
+        line.contains("\"m6\" → \"separate_programs\""),
+        "both values: {line}"
+    );
+    assert!(
+        line.contains("grbl") && line.contains("no M6"),
+        "why: {line}"
+    );
+}
+
+/// #277: `--reset-settings` keeps the old way: every setting from the new
+/// definition's defaults, with the user config's `tool_change_mode` on
+/// top. It needs `--post`.
+#[test]
+fn export_post_reset_settings_restores_defaults() {
+    let dir = work_dir("export_post_reset_settings_restores_defaults");
+    let mut post = default_post("grblhal", 1);
+    post.spindle_on_dwell_s = 6.0;
+    post.file_extension = "gcode".into();
+    post.spindle_control = SpindleControl::Manual;
+    let dcv = coaster_with_post(&dir, post);
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--reset-settings",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut expected = latest_default_block("grblhal");
+    expected["tool_change_mode"] = serde_json::json!("m6");
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        expected
+    );
+    let report = stdout(&out);
+    assert!(report.contains("with its default settings."), "{report}");
+
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--reset-settings"]);
+    assert_eq!(out.status.code(), Some(2), "usage error: {}", stdout(&out));
+    assert!(stderr(&out).contains("--post"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        before,
+        "the project is untouched"
+    );
+}
+
+/// #277, functional capability 27: the user config's `tool_change_mode`
+/// applies only to a setting `--post` resets, so a configured `"m6"` does
+/// not override a project's kept `"separate_programs"`.
+#[test]
+fn export_post_config_applies_only_to_reset_settings() {
+    let dir = work_dir("export_post_config_applies_only_to_reset_settings");
+    let dcv = coaster_with_post(&dir, default_post("grbl", 1));
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        latest_default_block("grblhal")
     );
 }
 
