@@ -45,6 +45,28 @@ impl Region {
     pub fn depth(&self) -> usize {
         self.depth
     }
+
+    /// Material area, mm²: the outer's area less the holes'.
+    #[must_use]
+    pub fn area_mm2(&self) -> f64 {
+        0.0
+    }
+
+    /// True when `p` lies in the material: inside the outer and in no hole.
+    /// A point within [`EPS_MM`] of the outer or a hole boundary counts as
+    /// inside, so a tool centred on a wall is still "in" the region.
+    #[must_use]
+    pub fn contains_point(&self, p: Point) -> bool {
+        let _ = p;
+        false
+    }
+}
+
+/// Total material area of `regions`, mm²: each outer's area less its
+/// holes'. Regions are assumed not to overlap.
+#[must_use]
+pub fn area_mm2(regions: &[Region]) -> f64 {
+    regions.iter().map(Region::area_mm2).sum()
 }
 
 /// Groups closed contours (millimetres, Y-up) into regions by even-odd

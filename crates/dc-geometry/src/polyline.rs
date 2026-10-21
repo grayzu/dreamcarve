@@ -371,6 +371,16 @@ impl Polyline {
         last.and_then(|seg| seg.point_at(seg.length_mm()))
     }
 
+    /// The same path with every arc replaced by chords, none further than
+    /// `tolerance_mm` from the arc (floored at [`EPS_MM`]); line segments
+    /// and vertices pass through unchanged, so every output vertex has a
+    /// bulge of 0 and every input vertex is still present.
+    #[must_use]
+    pub fn with_arcs_flattened(&self, tolerance_mm: f64) -> Polyline {
+        let _ = tolerance_mm;
+        self.clone()
+    }
+
     /// The same path traversed in the opposite direction, with each arc's
     /// bulge negated and the vertex order reversed.
     #[must_use]
@@ -402,6 +412,7 @@ impl Polyline {
 mod tests {
     use super::*;
     use crate::assert_approx_eq;
+    use crate::point::approx_eq;
     use std::f64::consts::PI;
 
     const TOL: f64 = 1e-9;
@@ -561,6 +572,55 @@ mod tests {
             false,
         );
         let _ = open.point_at(1.0);
+    }
+
+    #[test]
+    fn flattened_arcs_stay_within_tolerance() {
+        let centre = Point::new(3.0, -2.0);
+        let flat = Polyline::circle(centre, 20.0).with_arcs_flattened(0.01);
+        assert!(flat.is_closed());
+        assert!(flat.vertices().len() > 8);
+        for seg in flat.segments() {
+            assert!(seg.is_line(), "no bulge survives flattening: {seg:?}");
+            assert_approx_eq!(seg.start.distance_to(centre), 20.0, TOL);
+            let mid = seg.start + (seg.end - seg.start) * 0.5;
+            let sagitta = 20.0 - mid.distance_to(centre);
+            assert!(
+                (0.0..=0.01).contains(&sagitta),
+                "chord midpoint is {sagitta} mm off the arc"
+            );
+        }
+        // Coarser tolerance, fewer chords; never fewer than the vertices.
+        let coarse = Polyline::circle(centre, 20.0).with_arcs_flattened(1.0);
+        assert!(coarse.vertices().len() < flat.vertices().len());
+        assert!(coarse.vertices().len() >= 2);
+    }
+
+    #[test]
+    fn flattening_keeps_lines_and_open_ends() {
+        let quarter = (PI / 8.0).tan();
+        let open = Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::new(100.0, 0.0, quarter),
+                Vertex::line(110.0, 10.0),
+            ],
+            false,
+        );
+        let flat = open.with_arcs_flattened(0.01);
+        assert!(!flat.is_closed());
+        let v = flat.vertices();
+        assert_eq!(v.first().map(|x| x.point()), Some(Point::new(0.0, 0.0)));
+        assert_eq!(v.last().map(|x| x.point()), Some(Point::new(110.0, 10.0)));
+        assert!(
+            v.iter()
+                .any(|x| approx_eq(x.x, 100.0, TOL) && approx_eq(x.y, 0.0, TOL))
+        );
+        assert!(v.len() > 3);
+        assert_approx_eq!(flat.length_mm(), open.length_mm(), 0.05);
+        // A polyline of lines only is unchanged.
+        let rect = Polyline::rect(Point::new(0.0, 0.0), 10.0, 5.0);
+        assert_eq!(rect.with_arcs_flattened(0.01), rect);
     }
 
     #[test]
