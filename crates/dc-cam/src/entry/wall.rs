@@ -684,4 +684,72 @@ mod tests {
         assert_eq!(d.reason, Some(FallbackReason::TooSmall));
         assert!(d.moves.is_empty());
     }
+
+    /// #321 (the Profile property, `PROPTEST_RNG_SEED=72`): the first pass
+    /// of an On line ramp at 43.4° by a 3.455 mm bit round a 12.42 mm
+    /// circle, clockwise from (10.802, 6.135), 1.845 mm deep in a 3-place
+    /// mm program. Its one leg ends 0.00015 mm past a chord vertex; the
+    /// descent merges that piece (#273), but the way back went to the
+    /// vertex first, a level move of 0.00015 mm the program writes as
+    /// nothing, which arc fitting counted as one of a fitted arc's three
+    /// chords and S12 did not. Every move of the ramp, down and back, runs
+    /// at least √2 units in XY; each stays within the flatten tolerance
+    /// and a unit of the circle, none goes below the pass Z, the level
+    /// moves run at the tool's feed and the descending ones at no more,
+    /// and the ramp ends at its start.
+    #[test]
+    fn along_path_returns_with_no_move_too_short_for_the_program() {
+        let quantum_mm = 0.001;
+        let t = EntryTool {
+            diameter_mm: 3.454_973_032_185_739_3,
+            feed_mm_min: 2_327.326_110_062_505,
+            plunge_mm_min: 2_862.833_030_368_147,
+            quantum_mm,
+            ..tool()
+        };
+        let (sx, sy): (f64, f64) = (10.802_141_070_690_34, 6.135_438_106_759_34);
+        let r_mm = sx.hypot(sy);
+        let circle = Polyline::new(
+            vec![Vertex::new(sx, sy, -1.0), Vertex::new(-sx, -sy, -1.0)],
+            true,
+        );
+        let (start_z_mm, z_mm) = (10.999_327_355_218_911, 9.154_636_095_983_91);
+        let d = along_path(
+            &circle,
+            43.395_007_100_651_696,
+            f64::INFINITY,
+            start_z_mm,
+            z_mm,
+            &t,
+            0.01,
+        );
+        assert_eq!(d.used, EntryKind::Ramp);
+        let mut from = Point3::new(d.from.x, d.from.y, start_z_mm);
+        for (i, mv) in d.moves.iter().enumerate() {
+            let (run, drop) = (from.xy().distance_to(mv.to.xy()), from.z - mv.to.z);
+            assert!(
+                run >= std::f64::consts::SQRT_2 * quantum_mm,
+                "move {i} runs {run} mm: {:?}",
+                d.moves
+            );
+            let middle = from.xy() + (mv.to.xy() - from.xy()) * 0.5;
+            for p in [middle, mv.to.xy()] {
+                let off = (p.distance_to(Point::new(0.0, 0.0)) - r_mm).abs();
+                assert!(
+                    off <= 0.01 + quantum_mm,
+                    "move {i} is {off} mm off the circle"
+                );
+            }
+            assert!(mv.to.z >= z_mm - EPS_MM, "move {i} goes below the pass");
+            let feed = mv.feed_mm_min.unwrap();
+            if drop > EPS_MM {
+                assert!(feed <= t.feed_mm_min + EPS_MM, "move {i}");
+            } else {
+                assert_approx_eq!(feed, t.feed_mm_min, EPS_MM);
+            }
+            from = mv.to;
+        }
+        assert!(from.xy().distance_to(d.from) <= EPS_MM);
+        assert_approx_eq!(from.z, z_mm, EPS_MM);
+    }
 }
