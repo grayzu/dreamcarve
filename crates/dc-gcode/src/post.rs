@@ -1039,3 +1039,30 @@ fn machine_command_cited() {
         assert!(section.contains(source), "the section cites {source}");
     }
 }
+
+/// #320: `export`'s scaling note is for grblHAL definitions whose header
+/// writes `G50`, version 4 and later, and for no other definition or
+/// version. It names the soft reset and `$G`, the two checks the
+/// definitions README gives ("Scaling on grblHAL").
+#[test]
+fn scaling_note_only_for_grblhal_with_g50() {
+    let mut noted = 0;
+    for definition in bundled_definitions().unwrap() {
+        let note = crate::scaling_note(definition.post_processor());
+        let expected = definition.id == "grblhal" && definition.version >= 4;
+        assert_eq!(
+            note.is_some(),
+            expected,
+            "{} v{}",
+            definition.id,
+            definition.version
+        );
+        if let Some(note) = note {
+            noted += 1;
+            for word in ["soft-reset", "$G", "G50", "G51", "X at 1"] {
+                assert!(note.contains(word), "{note}: {word}");
+            }
+        }
+    }
+    assert!(noted >= 1, "grblhal v4 has the note");
+}

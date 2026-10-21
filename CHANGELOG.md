@@ -240,6 +240,12 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   1, 2 or 3 project keeps its bytes until `export --post grblhal`. grblHAL's
   own `G50` leaves a scale whose X factor is 1 (such as `G51 Z-1`) in
   force, so soft-reset after any `G51` and check `$G`.
+- **`export` warns grblHAL users about `G51`** ([#320]). Every export with
+  a grblHAL definition whose header writes `G50` (version 4 and later)
+  prints, once, after the tool length offset note: soft-reset after any
+  `G51` and check that `$G` shows `G50`, because grblHAL's `G50` does not
+  clear a scale that leaves X at 1. The note is printed only; no program
+  changes.
 - **On line Profile of an open path starts where VCarve's does:** conventional
   at the first vertex, climb at the last ([#242]). Tabs are still placed from the
   first vertex as drawn.
@@ -429,6 +435,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#312]: https://github.com/grayzu/dreamcarve/issues/312
 [#316]: https://github.com/grayzu/dreamcarve/issues/316
+[#320]: https://github.com/grayzu/dreamcarve/issues/320
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282

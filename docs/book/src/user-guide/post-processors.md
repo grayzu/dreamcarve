@@ -181,7 +181,11 @@ program. `export` names the bit:
 ```text
 Before you start: fit T1 Set me and set work zero with it.
 This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
+If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.
 ```
+
+The last line is for grblHAL only; see
+[Scaling on grblHAL](#scaling-on-grblhal).
 
 ### Modes the header cancels
 
@@ -236,6 +240,11 @@ those stay on. A soft reset clears every scale. If you or a macro used
 2. Send `$G`. The modal list must end with `G50`. If it shows `G51:`
    and axis letters, a scale is still on.
 
+`export` reminds you of this once for every grblHAL export whose header
+writes `G50` (version 4 and later), after the tool length offset note.
+The reminder is printed, not written into the program, so the program's
+bytes are the same.
+
 While a scale is on, grblHAL's status report also has `Sc:` and the
 scaled axes. A `G28` or `G30` also clears the scale, but they move the
 machine.
@@ -274,7 +283,7 @@ Then, for each program, its extents and its
 total for all of them:
 
 ```text
-coaster-2-T2.nc (69 lines):
+coaster-2-T2.nc (72 lines):
   Extents (machine coordinates, mm, tool centre): X 8.412..102.418, Y 8.412..101.587, Z -12.000..5.000
     The cutter's edge reaches X 6.824..104.006, Y 6.824..103.175; keep clamps outside that.
   Estimated time: 56 s (cutting 53 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.

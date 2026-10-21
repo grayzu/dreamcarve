@@ -3319,6 +3319,90 @@ fn export_grblhal_prints_tool_length_note() {
     assert_eq!(report.matches(TOOL_LENGTH_NOTE).count(), 1, "{report}");
 }
 
+/// The note `export` prints for a grblHAL program whose definition writes
+/// `G50` (#320): grblHAL's `G50` does not clear a scale that leaves X at 1
+/// (`definitions/README.md`, "Scaling on grblHAL").
+const SCALING_NOTE: &str = "If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.";
+
+/// #320: a grblHAL v4 export prints the scaling note once, for one program
+/// and for one program per tool run, after the tool length note. The note
+/// is printed, not written: the programs are the committed ones.
+#[test]
+fn export_grblhal_v4_prints_scaling_note() {
+    let dir = work_dir("export_grblhal_v4_prints_scaling_note");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(4)));
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(report.matches(SCALING_NOTE).count(), 1, "{report}");
+    assert!(
+        report.contains(&format!("{TOOL_LENGTH_NOTE}\n{SCALING_NOTE}\n")),
+        "the scaling note follows the tool length note:\n{report}"
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(
+        program == include_str!("expected/coaster-grblhal.nc"),
+        "program bytes changed:\n{program}"
+    );
+
+    let dir = work_dir("export_grblhal_v4_prints_scaling_note_runs");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains("Wrote 2 programs"), "{report}");
+    assert_eq!(report.matches(SCALING_NOTE).count(), 1, "{report}");
+    assert!(
+        report.contains(&format!("{TOOL_LENGTH_NOTE}\n{SCALING_NOTE}\n")),
+        "the scaling note follows the tool length note:\n{report}"
+    );
+    assert_exports_match(
+        &dir,
+        &[],
+        &[
+            ("coaster-1-T1.nc", "coaster-two-tool-grblhal-1-T1.nc"),
+            ("coaster-2-T2.nc", "coaster-two-tool-grblhal-2-T2.nc"),
+        ],
+    );
+}
+
+/// #320: the scaling note is only for a grblHAL definition that writes
+/// `G50`. GRBL and LinuxCNC have no scaling, Mach3's and UCCNC's `G50`
+/// clears every factor, and grblHAL v3 writes no `G50`.
+#[test]
+fn export_without_g50_prints_no_scaling_note() {
+    for post in ["grbl", "linuxcnc", "mach3", "uccnc"] {
+        let dir = work_dir(&format!("export_without_g50_prints_no_scaling_note_{post}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "coaster.dcv",
+                "--post",
+                post,
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{post}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(!report.contains("G51"), "{post}: {report}");
+    }
+    let dir = work_dir("export_without_g50_prints_no_scaling_note_grblhal_v3");
+    coaster_at_version(&dir, "grblhal", 3);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "grblhal v3: {}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains(TOOL_LENGTH_NOTE), "grblhal v3: {report}");
+    assert!(!report.contains("G51"), "grblhal v3: {report}");
+}
+
 /// The motion of `program`: every move, as where it goes, at what feed,
 /// and its arc centre.
 fn motion(program: &str) -> Vec<String> {
