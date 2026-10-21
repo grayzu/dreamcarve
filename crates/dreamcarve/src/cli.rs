@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use dc_gcode::ProgramSplit;
-use dc_project::{PostProcessorError, PostProcessorRef};
+use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
 
 use crate::output::{self, errln, outln};
 use crate::{check, clock, config, export, init, tools};
@@ -146,10 +146,15 @@ pub struct ExportArgs {
     #[arg(short, long, value_name = "NC")]
     pub output: Option<PathBuf>,
     /// Switch the project to the latest version of this post-processor,
-    /// with its default settings, and save the project, before exporting.
-    /// The project's own id upgrades it to the latest version.
+    /// keeping the settings you changed that it can use, and save the
+    /// project, before exporting. The project's own id upgrades it to the
+    /// latest version.
     #[arg(long, value_name = "ID")]
     pub post: Option<String>,
+    /// With --post: take every setting from the new post-processor's
+    /// defaults (and your configured ones) instead of keeping yours.
+    #[arg(long, requires = "post")]
+    pub reset_settings: bool,
     /// Write one program with T<n> M6 tool changes, whatever the project's
     /// tool_change_mode says. Needs a post-processor with M6 (grblHAL).
     /// Not saved to the project.
@@ -290,6 +295,21 @@ fn posts() -> Result<ExitCode, Failure> {
 pub fn lookup_post(id: &str) -> Result<PostProcessorRef, Failure> {
     match PostProcessorRef::latest(id) {
         Ok(reference) => Ok(reference),
+        Err(err @ PostProcessorError::UnknownId { .. }) => Err(Failure::usage(err.to_string())),
+        Err(err) => Err(Failure::error(err)),
+    }
+}
+
+/// [`PostProcessorRef`] `old` switched to the latest version of `id`,
+/// keeping the user's settings (#277, [`dc_project::switch_post`]), with
+/// the settings it reset; an unknown id is a usage error, as for
+/// [`lookup_post`].
+pub fn switch_post(
+    old: &PostProcessorRef,
+    id: &str,
+) -> Result<(PostProcessorRef, Vec<SettingReset>), Failure> {
+    match dc_project::switch_post(old, id) {
+        Ok(switched) => Ok(switched),
         Err(err @ PostProcessorError::UnknownId { .. }) => Err(Failure::usage(err.to_string())),
         Err(err) => Err(Failure::error(err)),
     }
