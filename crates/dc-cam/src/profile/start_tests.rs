@@ -156,6 +156,22 @@ fn plunge_points(tp: &Toolpath) -> Vec<Point> {
         .collect()
 }
 
+/// Where every straight-down feed move that ends below the stock top
+/// ends.
+fn plunge_ends(tp: &Toolpath) -> Vec<Point3> {
+    tp.moves
+        .windows(2)
+        .filter(|w| {
+            let (from, mv) = (w[0].to, w[1]);
+            !mv.is_rapid()
+                && mv.to.z < from.z - EPS_MM
+                && from.xy().distance_to(mv.to.xy()) <= EPS_MM
+                && mv.to.z < THICKNESS_MM - EPS_MM
+        })
+        .map(|w| w[1].to)
+        .collect()
+}
+
 /// `points` with each point within [`TOL`] of an earlier one dropped.
 fn distinct(points: Vec<Point>) -> Vec<Point> {
     let mut out: Vec<Point> = Vec::new();
@@ -389,9 +405,10 @@ fn at_distances_count_from_explicit_start() {
 
 /// #285: an explicit start wins over the entry. A smooth tab centred on
 /// it puts the start under the tab, so a ramp below the tab top has no
-/// room there; the start stays (it moves with `auto`, #176), those passes
-/// come straight down onto the tab top there, with `entry_fallback`, and
-/// nothing plunges anywhere else.
+/// room there; the start stays (it moves with `auto`, #176), and the
+/// first pass below the tab top comes straight down to the tab top there,
+/// with `entry_fallback`, never lower (#337): nothing plunges anywhere
+/// else, and no plunge ends inside the tab.
 #[test]
 fn explicit_start_entry_falls_back_not_moves() {
     let p = rect_project();
@@ -406,6 +423,9 @@ fn explicit_start_entry_falls_back_not_moves() {
     );
     let plunges = distinct(plunge_points(&tp));
     assert_same_points(&plunges, &[start], "plunges only at the start");
+    for end in plunge_ends(&tp) {
+        assert!(end.z >= TAB_TOP_MM - TOL, "a plunge into the tab: {end:?}");
+    }
     // The first pass, above the tab, ramps down to the start and cuts a
     // whole lap from it.
     let lap = pass_moves(&tp, PASS_Z_MM[0], THICKNESS_MM);
@@ -578,5 +598,186 @@ fn explicit_start_with_last_pass_starts_every_pass_there() {
             ],
             &format!("reverse {reverse}"),
         );
+    }
+}
+
+/// The lowest Z, mm, the flat end of a cutter of radius `radius_mm`
+/// reaches over each of `points` in the whole of `tp`: every non-rapid
+/// move walked in steps of at most 0.05 mm (an arc along its sweep).
+/// The stock top where nothing cuts.
+fn material_heights(tp: &Toolpath, radius_mm: f64, points: &[Point]) -> Vec<f64> {
+    let mut low = vec![THICKNESS_MM; points.len()];
+    let Some(first) = tp.moves.first() else {
+        return low;
+    };
+    let mut from = first.to;
+    for mv in &tp.moves {
+        let to = mv.to;
+        if !mv.is_rapid() {
+            let arc = match mv.kind {
+                MoveKind::ArcCw { centre } => Some((centre, false)),
+                MoveKind::ArcCcw { centre } => Some((centre, true)),
+                _ => None,
+            };
+            let sweep = arc.map(|(c, ccw)| {
+                let (u, v) = (from.xy() - c, to.xy() - c);
+                let raw = u.cross(v).atan2(u.dot(v));
+                if ccw && raw <= 0.0 {
+                    raw + std::f64::consts::TAU
+                } else if !ccw && raw >= 0.0 {
+                    raw - std::f64::consts::TAU
+                } else {
+                    raw
+                }
+            });
+            let at = |t: f64| -> Point3 {
+                let z = from.z + (to.z - from.z) * t;
+                let xy = match (arc, sweep) {
+                    (Some((c, _)), Some(sweep)) => {
+                        let u = from.xy() - c;
+                        let (sn, cs) = (sweep * t).sin_cos();
+                        c + dc_geometry::Vec2::new(u.x * cs - u.y * sn, u.x * sn + u.y * cs)
+                    }
+                    _ => from.xy() + (to.xy() - from.xy()) * t,
+                };
+                Point3::new(xy.x, xy.y, z)
+            };
+            let run_mm = match (arc, sweep) {
+                (Some((c, _)), Some(sweep)) => from.xy().distance_to(c) * sweep.abs(),
+                _ => from.xy().distance_to(to.xy()),
+            };
+            let steps = (run_mm.max((from.z - to.z).abs()) / 0.05).ceil().max(1.0);
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a small positive whole number"
+            )]
+            let n = steps as u32;
+            for k in 0..=n {
+                let q = at(f64::from(k) / f64::from(n));
+                for (h, p) in low.iter_mut().zip(points) {
+                    if q.xy().distance_to(*p) < radius_mm - 1e-6 {
+                        *h = h.min(q.z);
+                    }
+                }
+            }
+        }
+        from = to;
+    }
+    low
+}
+
+/// #337: a cut whose start is under a tab never plunges into it. The
+/// issue's repro, a 60 × 40 mm rectangle at (20, 30) cut outside, climb,
+/// 6 mm deep in 2 mm passes, with 6 mm wide tabs 3 mm tall at 0 and 100
+/// mm along the path, starts on the first tab: from a `near` start in the
+/// middle of the bottom edge with every entry (plunge, ramp, helix, lead),
+/// and from the `auto` start with a plunge (which #176 leaves where it
+/// is); rect and smooth; with and without a last pass (allowance 0.5,
+/// thickness 1); in both orders. The stock the program leaves over the
+/// tab's middle 4 mm (0.4 mm where the `auto` start's tab wraps a corner),
+/// across the whole kerf, stands at the tab top: no pass came down into
+/// it.
+#[test]
+fn start_under_a_tab_never_plunges_into_it() {
+    let p = project(
+        vec![Polyline::rect(Point::new(0.0, 0.0), 60.0, 40.0)],
+        &[("i1", Transform::translate(20.0, 30.0))],
+    );
+    let near = StartAt::Near {
+        x_mm: 50.0,
+        y_mm: 0.0,
+    };
+    let ramp = Entry::Ramp { angle_deg: 15.0 };
+    let cases: Vec<(&str, Entry, Option<Lead>, StartAt)> = vec![
+        ("auto plunge", Entry::Plunge, None, StartAt::Auto),
+        ("near plunge", Entry::Plunge, None, near),
+        ("near ramp", ramp.clone(), None, near),
+        (
+            "near helix",
+            Entry::Helix {
+                diameter_fraction: 0.8,
+                angle_deg: 5.0,
+            },
+            None,
+            near,
+        ),
+        (
+            "near lead",
+            ramp,
+            Some(Lead {
+                radius_mm: 3.0,
+                sweep_deg: 90.0,
+                lead_out: true,
+                overcut_mm: 1.0,
+            }),
+            near,
+        ),
+    ];
+    for (name, entry, lead, start) in cases {
+        for shape in [TabShape::Rect, TabShape::Smooth] {
+            for last_pass in [
+                None,
+                Some(LastPass {
+                    allowance_mm: 0.5,
+                    thickness_mm: Some(1.0),
+                    reverse: false,
+                }),
+            ] {
+                for order in [MachiningOrder::FullDepthFirst, MachiningOrder::PassFirst] {
+                    let case = format!("{name}, {shape:?}, {last_pass:?}, {order:?}");
+                    let mut op = profile_op(&p, Side::Outside, start);
+                    op.entry = entry.clone();
+                    op.lead = lead.clone();
+                    op.last_pass = last_pass.clone();
+                    op.machining_order = order;
+                    op.tabs = Some(TabSpec {
+                        width_mm: 6.0,
+                        ..tab_at(vec![0.0, 100.0], shape)
+                    });
+                    let (tp, _) = generate(&p, &op);
+                    // The tab's centre on the part's path: the `near`
+                    // start, or where the `auto` plunge first comes down.
+                    let centre = match start {
+                        StartAt::Auto => plunge_points(&tp)[0],
+                        _ => Point::new(50.0, 30.0 - RADIUS_MM),
+                    };
+                    // The path's direction there, and across it.
+                    let along = if (centre.y - (30.0 - RADIUS_MM)).abs() <= TOL
+                        || (centre.y - (70.0 + RADIUS_MM)).abs() <= TOL
+                    {
+                        dc_geometry::Vec2::new(1.0, 0.0)
+                    } else {
+                        dc_geometry::Vec2::new(0.0, 1.0)
+                    };
+                    let across = dc_geometry::Vec2::new(-along.y, along.x);
+                    // The `auto` start is where the left edge leaves the
+                    // corner arc, so its tab wraps the corner: only the
+                    // stretch across its centre is straight.
+                    let half = if matches!(start, StartAt::Auto) {
+                        2
+                    } else {
+                        20
+                    };
+                    let mut points = Vec::new();
+                    for i in -half..=half {
+                        for j in -15..=15 {
+                            points.push(
+                                centre
+                                    + along * (f64::from(i) * 0.1)
+                                    + across * (f64::from(j) * 0.2),
+                            );
+                        }
+                    }
+                    let heights = material_heights(&tp, RADIUS_MM, &points);
+                    for (q, h) in points.iter().zip(&heights) {
+                        assert!(
+                            *h >= TAB_TOP_MM - 1e-3,
+                            "{case}: the tab is cut down to {h} at {q:?} (centre {centre:?})"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

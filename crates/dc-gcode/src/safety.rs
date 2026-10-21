@@ -5058,6 +5058,63 @@ mod tests {
         sample_project().operations[0].clone()
     }
 
+    /// #337: S9 refuses a straight plunge into a tab below its top. The
+    /// sample rectangle (X 10 to 60, Y 10 to 40) cut outside with a placed
+    /// 6 mm tab in the middle of its bottom edge, its top 2 mm above the
+    /// stock bottom (program Z -4). Plunging to Z -5 on the bit's path
+    /// (Y 6.825) at the tab's centre, or 2 mm along from it, is refused at
+    /// the plunge; the same plunge to Z -3.5, above the tab, passes, and so
+    /// does one past the tab's stretch, where a rect tab steps down, and
+    /// one far from it. A plunge at the centre of a tab a request places
+    /// is refused too.
+    #[test]
+    fn s9_refuses_a_descent_into_a_tab() {
+        let mut project = sample_project();
+        dc_project::test_support::profile_mut(&mut project).tabs = None;
+        project.tabs = vec![dc_project::PlacedTab {
+            height_mm: 2.0,
+            ..dc_project::test_support::sample_tab("tab1", 25.0, 0.0)
+        }];
+        let op = sample_profile_op_of(&project);
+        let program = |x: f64, y: f64, z: f64| {
+            format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG1 Z{z} F300\nG0 Z5\n")
+        };
+        for (x, z) in [(50.0, -5.0), (35.0, -3.5), (41.175, -5.0)] {
+            check_material_text(&program(x, 6.825, z), &project, &op)
+                .unwrap_or_else(|e| panic!("X{x} Z{z}: {e:?}"));
+        }
+        for x in [35.0, 37.0] {
+            let err = check_material_text(&program(x, 6.825, -5.0), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+                "X{x}: {err:?}"
+            );
+        }
+
+        // The sample's own request, four 6 × 2 mm tabs: plunge at one.
+        let mut project = sample_project();
+        let op = sample_profile_op_of(&project);
+        let spec = dc_project::test_support::profile_mut(&mut project)
+            .tabs
+            .clone()
+            .unwrap();
+        let placed = dc_cam::placed_tabs::place(&project, op.id(), &spec).unwrap();
+        let tab = &placed.tabs[0];
+        let at = project.instances[0]
+            .transform
+            .apply(Point::new(tab.x_mm, tab.y_mm));
+        let err = check_material_text(&program(at.x, at.y, -5.5), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The Profile of `project`.
+    fn sample_profile_op_of(project: &Project) -> Operation {
+        project.operations[0].clone()
+    }
+
     /// S9 for Profile (#177): the sample's outside Profile of the
     /// rectangle X 10 to 60, Y 10 to 40 with the 6.35 mm tool. A ramp
     /// that zigzags out into the waste and back to the tool-centre path
