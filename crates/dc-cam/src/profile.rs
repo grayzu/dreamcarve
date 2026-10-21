@@ -32,7 +32,7 @@ use crate::tabs::{
     LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::{OpenPathReason, Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
     distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset,
@@ -320,11 +320,10 @@ pub fn generate_profile(
         } = warning;
         if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
         {
-            warnings.push(
-                shape_warning(WarningCode::DuplicateShapeDropped, dropped)
-                    .with("duplicate_of_instance", &kept.instance)
-                    .with("duplicate_of_profile", kept.profile),
-            );
+            warnings.push(Warning::DuplicateShapeDropped {
+                shape: dropped.clone(),
+                duplicate_of: kept.clone(),
+            });
         }
     }
     // #221: an open path drawn twice is cut once, as a closed shape is.
@@ -346,11 +345,12 @@ pub fn generate_profile(
                 Offset::None => vec![contour.clone()],
             };
             if centres.is_empty() {
-                warnings.push(
-                    shape_warning(WarningCode::ToolTooLarge, shape)
-                        .with("tool", &tool.name)
-                        .with("diameter_mm", tool.diameter_mm),
-                );
+                warnings.push(Warning::ToolTooLarge {
+                    shape: shape.clone(),
+                    tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
+                    diameter_mm: tool.diameter_mm,
+                });
                 continue;
             }
             check_band(
@@ -855,11 +855,10 @@ fn drop_duplicate_paths(
     for (shape, path) in open {
         let reversed = path.reversed();
         match kept.iter().find(|(_, k)| *k == path || *k == reversed) {
-            Some((original, _)) => warnings.push(
-                shape_warning(WarningCode::DuplicateShapeDropped, &shape)
-                    .with("duplicate_of_instance", &original.instance)
-                    .with("duplicate_of_profile", original.profile),
-            ),
+            Some((original, _)) => warnings.push(Warning::DuplicateShapeDropped {
+                shape,
+                duplicate_of: original.clone(),
+            }),
             None => kept.push((shape, path)),
         }
     }
@@ -1305,7 +1304,7 @@ pub(crate) fn resolve_targets(
 /// [`resolve_targets`], with the open paths placed into `open` instead
 /// when it is given (#175: an On line Profile cuts them). An open path
 /// with no length has nothing to cut and is skipped with
-/// [`WarningCode::OpenPathSkipped`] (`reason: no_length`).
+/// [`Warning::OpenPathSkipped`] ([`OpenPathReason::NoLength`]).
 fn resolve_shapes(
     project: &Project,
     op: &OperationId,
@@ -1338,7 +1337,10 @@ fn resolve_shapes(
             };
             if !polyline.is_closed() {
                 let Some(open) = open.as_deref_mut() else {
-                    warnings.push(shape_warning(WarningCode::OpenPathSkipped, &shape));
+                    warnings.push(Warning::OpenPathSkipped {
+                        shape,
+                        reason: OpenPathReason::NoSide,
+                    });
                     continue;
                 };
                 let placed = instance
@@ -1349,10 +1351,10 @@ fn resolve_shapes(
                         source,
                     })?;
                 if placed.length_mm() <= EPS_MM {
-                    warnings.push(
-                        shape_warning(WarningCode::OpenPathSkipped, &shape)
-                            .with("reason", "no_length"),
-                    );
+                    warnings.push(Warning::OpenPathSkipped {
+                        shape,
+                        reason: OpenPathReason::NoLength,
+                    });
                     continue;
                 }
                 open.push((shape, placed));
@@ -1932,8 +1934,11 @@ mod tests {
         let p = project(vec![rect_100x50(), open], &[("i1", at_20_20())]);
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
-        assert_eq!(warnings[0].param("instance"), Some("i1"));
-        assert_eq!(warnings[0].param("profile"), Some("1"));
+        let Warning::OpenPathSkipped { shape, reason } = &warnings[0] else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!((shape.instance.as_str(), shape.profile), ("i1", 1));
+        assert_eq!(*reason, OpenPathReason::NoSide);
         // #175: the message says what does cut it.
         let message = warnings[0].to_string();
         assert!(
@@ -1952,9 +1957,11 @@ mod tests {
         let p = ring_project(2.0);
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::ToolTooLarge]);
-        assert_eq!(warnings[0].param("instance"), Some("i1"));
-        assert_eq!(warnings[0].param("profile"), Some("1"));
-        assert_eq!(warnings[0].param("tool"), Some("6.35 mm upcut"));
+        let Warning::ToolTooLarge { shape, tool, .. } = &warnings[0] else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!((shape.instance.as_str(), shape.profile), ("i1", 1));
+        assert_eq!(tool, "6.35 mm upcut");
         for z in PASS_Z_MM {
             let laps = laps_at(&tp, z);
             assert_eq!(laps.len(), 1, "only the outer at Z {z}");
@@ -2222,8 +2229,15 @@ mod tests {
         );
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::DuplicateShapeDropped]);
-        assert_eq!(warnings[0].param("instance"), Some("i2"));
-        assert_eq!(warnings[0].param("duplicate_of_instance"), Some("i1"));
+        let Warning::DuplicateShapeDropped {
+            shape,
+            duplicate_of,
+        } = &warnings[0]
+        else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!(shape.instance.as_str(), "i2");
+        assert_eq!(duplicate_of.instance.as_str(), "i1");
         for z in PASS_Z_MM {
             assert_eq!(laps_at(&tp, z).len(), 1, "one contour at Z {z}");
         }
@@ -2854,8 +2868,11 @@ mod tests {
         let p = project(vec![rect_100x50(), dot], &[("i1", at_20_20())]);
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
-        assert_eq!(warnings[0].param("reason"), Some("no_length"));
-        assert_eq!(warnings[0].param("profile"), Some("1"));
+        let Warning::OpenPathSkipped { shape, reason } = &warnings[0] else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!(*reason, OpenPathReason::NoLength);
+        assert_eq!(shape.profile, 1);
         assert!(warnings[0].to_string().contains("no length"));
         assert_eq!(laps(&tp).len(), PASS_Z_MM.len(), "only the rect is cut");
     }
@@ -3447,10 +3464,19 @@ mod tests {
                 WarningCode::DuplicateShapeDropped
             ]
         );
-        for (warning, profile) in warnings.iter().zip(["2", "3"]) {
-            assert_eq!(warning.param("profile"), Some(profile));
-            assert_eq!(warning.param("duplicate_of_instance"), Some("i1"));
-            assert_eq!(warning.param("duplicate_of_profile"), Some("1"));
+        for (warning, profile) in warnings.iter().zip([2, 3]) {
+            let Warning::DuplicateShapeDropped {
+                shape,
+                duplicate_of,
+            } = warning
+            else {
+                panic!("{warning:?}");
+            };
+            assert_eq!(shape.profile, profile);
+            assert_eq!(
+                (duplicate_of.instance.as_str(), duplicate_of.profile),
+                ("i1", 1)
+            );
         }
         assert_eq!(
             laps(&tp).len(),
