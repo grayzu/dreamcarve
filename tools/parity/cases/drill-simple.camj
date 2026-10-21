@@ -1,0 +1,373 @@
+{
+  "version": "3.2",
+  "meta": {
+    "name": "drill-simple",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z",
+    "units": "mm",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 50,
+    "operationClearanceZ": 5,
+    "clampClearanceXY": 2,
+    "clampClearanceZ": 5,
+    "machineDefinitions": [],
+    "selectedMachineId": null
+  },
+  "grid": {
+    "extent": 200,
+    "majorSpacing": 10,
+    "minorSpacing": 2,
+    "snapEnabled": true,
+    "snapIncrement": 1,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 150,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 150,
+            "y": 100
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 100
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 12,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 100,
+    "z": 12,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "h1": {
+      "id": "h1",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 23,
+          "y": 50
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 20,
+              "y": 50
+            },
+            "to": {
+              "x": 23,
+              "y": 50
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "h2": {
+      "id": "h2",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 98,
+          "y": 35
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 95,
+              "y": 35
+            },
+            "to": {
+              "x": 98,
+              "y": 35
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "h3": {
+      "id": "h3",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 133,
+          "y": 55
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 130,
+              "y": 55
+            },
+            "to": {
+              "x": 133,
+              "y": 55
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    },
+    "h4": {
+      "id": "h4",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 58,
+          "y": 70
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 55,
+              "y": 70
+            },
+            "to": {
+              "x": 58,
+              "y": 70
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    }
+  },
+  "features": [
+    {
+      "id": "h1",
+      "name": "h1",
+      "definitionId": "h1",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 12,
+      "z_bottom": 4,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "h2",
+      "name": "h2",
+      "definitionId": "h2",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 12,
+      "z_bottom": 4,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "h3",
+      "name": "h3",
+      "definitionId": "h3",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 12,
+      "z_bottom": 4,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    },
+    {
+      "id": "h4",
+      "name": "h4",
+      "definitionId": "h4",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 12,
+      "z_bottom": 4,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "h1"
+    },
+    {
+      "type": "feature",
+      "featureId": "h2"
+    },
+    {
+      "type": "feature",
+      "featureId": "h3"
+    },
+    {
+      "type": "feature",
+      "featureId": "h4"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t1",
+      "name": "5 mm drill",
+      "units": "mm",
+      "type": "drill",
+      "diameter": 5,
+      "vBitAngle": null,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 12000,
+      "defaultFeed": 1500,
+      "defaultPlungeFeed": 300,
+      "defaultStepdown": 4,
+      "defaultStepover": 0.4,
+      "maxCutDepth": 0
+    }
+  ],
+  "operations": [
+    {
+      "id": "op1",
+      "name": "Drill",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "kind": "drilling",
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "h1",
+          "h2",
+          "h3",
+          "h4"
+        ]
+      },
+      "toolRef": "t1",
+      "stepdown": 4,
+      "stepover": 0.4,
+      "feed": 1500,
+      "plungeFeed": 300,
+      "rpm": 12000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 2,
+      "maxCarveDepth": 2,
+      "cutDirection": "climb",
+      "machiningOrder": "level_first",
+      "entryStrategy": "plunge",
+      "cornerRelief": "none",
+      "roundOutsideCorners": true,
+      "roundLinkCorners": false,
+      "cleanWallCorners": false,
+      "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
+      "drillType": "simple",
+      "peckDepth": 0,
+      "dwellTime": 0,
+      "retractHeight": 1,
+      "arcFittingEnabled": true
+    }
+  ],
+  "tabs": [],
+  "clamps": [],
+  "ai_history": []
+}
