@@ -589,6 +589,283 @@ impl fmt::Display for Warning {
 mod tests {
     use super::*;
 
+    /// `w` about `Shape` (instance `i1`, profile 2) of operation `o1`.
+    fn on_shape(w: Warning) -> Warning {
+        w.with("op", "o1")
+            .with("instance", "i1")
+            .with("instance_name", "Shape")
+            .with("profile", 2)
+    }
+
+    /// One warning for every message form, each with the message it printed
+    /// before warnings were typed (#248). The values carry float noise so
+    /// the rounding is checked too.
+    fn message_fixtures() -> Vec<(Warning, &'static str)> {
+        vec![
+            (
+                on_shape(Warning::new(WarningCode::OpenPathSkipped)),
+                "`Shape` (instance `i1`, profile 2) is an open path, which has no inside or outside, so it is not cut; an On line Profile or an Engrave cuts along it",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::OpenPathSkipped)).with("reason", "no_length"),
+                "`Shape` (instance `i1`, profile 2) is an open path with no length, so there is nothing to cut; it is skipped",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::ToolTooLarge))
+                    .with("tool", "1/4\" upcut")
+                    .with("diameter_mm", 6.35),
+                "tool `1/4\" upcut` (6.35 mm) does not fit `Shape` (instance `i1`, profile 2), so that shape is not cut",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::DuplicateShapeDropped))
+                    .with("duplicate_of_instance", "i0")
+                    .with("duplicate_of_profile", 1),
+                "`Shape` (instance `i1`, profile 2) is the same outline in the same place as instance `i0` profile 1, so it is cut only once",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::TabsOverlap))
+                    .with("contour", 3)
+                    .with("path_length_mm", 99.996_000_1),
+                "tabs on `Shape` (instance `i1`, profile 2) touch or overlap on its 100 mm tool path, so they were joined into longer tabs; use fewer or narrower tabs",
+            ),
+            (
+                Warning::new(WarningCode::TabsOverlap)
+                    .with("op", "o1")
+                    .with("contour", 3)
+                    .with("path_length_mm", 12.345),
+                "tabs on contour 4 in cut order touch or overlap on its 12.35 mm tool path, so they were joined into longer tabs; use fewer or narrower tabs",
+            ),
+            (
+                Warning::new(WarningCode::TabsOutsideCutRange)
+                    .with("op", "o1")
+                    .with("reason", "above_stock_top")
+                    .with("tab_top_mm", 20.000_000_01)
+                    .with("deepest_pass_z_mm", 0.0)
+                    .with("stock_top_mm", 18.0),
+                "the tab top is 20 mm above the stock bottom, higher than the 18 mm stock top; over each tab every pass lifts clear of the stock",
+            ),
+            (
+                Warning::new(WarningCode::TabsOutsideCutRange)
+                    .with("op", "o1")
+                    .with("reason", "cut_stops_above_tab")
+                    .with("tab_top_mm", 3.0)
+                    .with("deepest_pass_z_mm", 4.499_999)
+                    .with("stock_top_mm", 18.0),
+                "the tab top is 3 mm above the stock bottom, but the deepest pass stops at 4.5 mm, so the tabs change nothing; lower the tabs or cut deeper",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::TabsCoverMostOfContour))
+                    .with("contour", 0)
+                    .with("path_length_mm", 100.0)
+                    .with("tab_count", 4)
+                    .with("tab_width_mm", 10.0)
+                    .with("diameter_mm", 6.35)
+                    .with("tab_span_mm", 16.35)
+                    .with("tab_total_mm", 65.4)
+                    .with("max_count", 3.0)
+                    .with("max_width_mm", 6.15),
+                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole may not cut free. To let it cut free, use at most 3 tab(s) this wide, or make the 4 tab(s) at most 6.15 mm wide. The tabs are cut as set.",
+            ),
+            (
+                Warning::new(WarningCode::TabsCoverMostOfContour)
+                    .with("op", "o1")
+                    .with("contour", 1)
+                    .with("path_length_mm", 30.0)
+                    .with("tab_count", 2)
+                    .with("tab_width_mm", 5.0)
+                    .with("diameter_mm", 8.0)
+                    .with("tab_span_mm", 13.0)
+                    .with("tab_total_mm", 26.0)
+                    .with("max_count", 1.0),
+                "tabs on contour 2 in cut order cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide. The tabs are cut as set.",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::TabsCoverMostOfContour))
+                    .with("contour", 0)
+                    .with("path_length_mm", 10.0)
+                    .with("tab_count", 1)
+                    .with("tab_width_mm", 3.0)
+                    .with("diameter_mm", 3.175)
+                    .with("tab_span_mm", 6.175)
+                    .with("tab_total_mm", 6.175)
+                    .with("max_count", 0.0),
+                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole may not cut free. To let it cut free, even one tab this wide covers more than half: this outline is too short for tabs with this bit, so consider removing them. The tabs are cut as set.",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::ToolpathsOverlap))
+                    .with("other_instance", "i9")
+                    .with("other_instance_name", "Other")
+                    .with("other_profile", 0)
+                    .with("gap_mm", 1.004_999)
+                    .with("tool", "3 mm")
+                    .with("diameter_mm", 3.0)
+                    .with("needed_mm", 1.5),
+                "the tool paths of `Shape` (instance `i1`, profile 2) and `Other` (instance `i9`, profile 0) cut into each other: the shapes are 1 mm apart, closer than the 1.5 mm tool `3 mm` (3 mm) needs between them, so cutting one gouges the other. Move them at least 1.5 mm apart or use a smaller bit.",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::PocketNoRoom))
+                    .with("tool", "1/8\"")
+                    .with("diameter_mm", 3.175),
+                "tool `1/8\"` (3.175 mm) is wider than the pocket of `Shape` (instance `i1`, profile 2) somewhere it must pass, so that shape is not cut; use a smaller bit",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::PocketIslandTooClose))
+                    .with("island", 3)
+                    .with("other", "wall")
+                    .with("gap_mm", 4.999_9)
+                    .with("needed_mm", 6.35)
+                    .with("allowance_mm", 0.0)
+                    .with("tool", "t")
+                    .with("diameter_mm", 6.35),
+                "in the pocket of `Shape` (instance `i1`, profile 2), island profile 3 is 5 mm from the pocket wall, closer than the 6.35 mm tool `t` is wide, so the material between them is left uncut",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::PocketIslandTooClose))
+                    .with("island", 3)
+                    .with("other", 4)
+                    .with("gap_mm", 7.0)
+                    .with("needed_mm", 7.350_000_1)
+                    .with("allowance_mm", 0.5)
+                    .with("tool", "t")
+                    .with("diameter_mm", 6.35),
+                "in the pocket of `Shape` (instance `i1`, profile 2), island profile 3 is 7 mm from island profile 4, closer than tool `t` needs with a 0.5 mm allowance (7.35 mm), so the material between them is left uncut",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::EntryFallback))
+                    .with("requested", "helix")
+                    .with("used", "ramp")
+                    .with("reason", "no_room"),
+                "there is no room for a `helix` entry in `Shape` (instance `i1`, profile 2), so its passes start with a zigzag ramp instead",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::EntryFallback))
+                    .with("requested", "ramp")
+                    .with("used", "plunge")
+                    .with("reason", "too_many_moves"),
+                "a `ramp` entry at this angle would take too many moves to reach depth in `Shape` (instance `i1`, profile 2), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::HelixDiameterReduced))
+                    .with("requested_mm", 5.08)
+                    .with("used_mm", 2.539_999_9),
+                "the helix entry in `Shape` (instance `i1`, profile 2) is 2.54 mm across, smaller than the 5.08 mm asked for, because a larger one does not fit there",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::LeadShrunk))
+                    .with("requested_mm", 30.0)
+                    .with("used_mm", 22.499_999)
+                    .with("requested_sweep_deg", 90.0)
+                    .with("used_sweep_deg", 44.6),
+                "the lead arc on `Shape` (instance `i1`, profile 2) is 22.5 mm in radius over 45°, smaller than the 30 mm over 90° asked for, because a larger one does not fit there",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::LeadDropped)).with("reason", "no_room"),
+                "there is no room for a lead-in arc on `Shape` (instance `i1`, profile 2), even at a quarter of the radius, so its passes start on the outline without one",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::LeadDropped)).with("reason", "exit"),
+                "there is no room for a lead-out arc where the cut on `Shape` (instance `i1`, profile 2) ends, so it stops on the outline",
+            ),
+            (
+                Warning::new(WarningCode::LeadDropped)
+                    .with("op", "o1")
+                    .with("reason", "on_line"),
+                "operation `o1` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside",
+            ),
+            (
+                Warning::new(WarningCode::ReliefSkipped)
+                    .with("op", "o1")
+                    .with("requested", "dogbone")
+                    .with("reason", "no_step_down"),
+                "corner relief `dogbone` is skipped because the tool has no step_down_mm, which the relief pass steps down at, so no corners were relieved; set the tool's step-down",
+            ),
+            (
+                Warning::new(WarningCode::ReliefSkipped)
+                    .with("op", "o1")
+                    .with("requested", "t_bone")
+                    .with("reason", "on_line"),
+                "corner relief `t_bone` is skipped: an On line Profile has no waste side to cut a notch into, so no corners were relieved",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::ReliefCornerTooTight))
+                    .with("x_mm", 10.004)
+                    .with("y_mm", -0.001)
+                    .with("reason", "short_edge"),
+                "the corner of `Shape` (instance `i1`, profile 2) at (10, 0) mm is not relieved: an edge beside it is shorter than the bit is wide, so it keeps the bit's radius",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::ReliefCornerTooTight))
+                    .with("x_mm", 1.5)
+                    .with("y_mm", 2.25)
+                    .with("reason", "no_wall_path"),
+                "the corner of `Shape` (instance `i1`, profile 2) at (1.5, 2.25) mm is not relieved: the tool path does not turn it within reach, so it keeps the bit's radius",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::ReliefCornerNotCut))
+                    .with("x_mm", -3.0)
+                    .with("y_mm", 40.125),
+                "the corner of `Shape` (instance `i1`, profile 2) at (-3, 40.12) mm is not relieved because the main passes did not cut to full depth where its notch starts (a tab over it, or no wall pass), and a notch must not plunge into uncut material; it keeps the bit's radius",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::EngravePathDegenerate)),
+                "`Shape` (instance `i1`, profile 2) has fewer than two distinct points, so there is nothing to engrave; it is skipped",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::CutInsideFreedPart))
+                    .with("earlier_op", "o0")
+                    .with("freed_instance", "i0")
+                    .with("freed_instance_name", "Outline")
+                    .with("freed_profile", 0),
+                "`Shape` (instance `i1`, profile 2) lies inside `Outline` (instance `i0`, profile 0), which operation `o0` cuts free of the stock first, so this cut would run in a loose part; move this operation before `o0`, or hold that part with tabs",
+            ),
+            (
+                Warning::new(WarningCode::ToolChangeAvoidable)
+                    .with("tool", "t1")
+                    .with("tool_name", "6.35 mm upcut")
+                    .with("ops", "`o1`, `o3`"),
+                "tool `t1` (`6.35 mm upcut`) is used by operations `o1`, `o3`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::DrillTargetNotCircle)),
+                "`Shape` (instance `i1`, profile 2) is not a circle; Drill plunges only at the centre of circles, so it is not drilled",
+            ),
+            (
+                on_shape(Warning::new(WarningCode::DrillToolWiderThanHole))
+                    .with("hole_mm", 4.999_999_9)
+                    .with("tool_mm", 6.35),
+                "the 6.35 mm tool is wider than the 5 mm hole `Shape` (instance `i1`, profile 2), so the hole comes out the tool's size",
+            ),
+            (
+                Warning::new(WarningCode::DrillPeckDeeperThanHole)
+                    .with("op", "o1")
+                    .with("peck_mm", 20.0)
+                    .with("depth_mm", 12.000_000_1),
+                "the 20 mm peck is at least the 12 mm depth of the holes, so each is drilled in one plunge",
+            ),
+            (
+                Warning::new(WarningCode::DrillRetractBelowStockTop)
+                    .with("op", "o1")
+                    .with("requested_mm", -2.5)
+                    .with("used_mm", 0.0),
+                "retract_mm is -2.5 mm, below the stock top; the tool retracts to the stock top instead, because it must never rapid into material",
+            ),
+            (
+                Warning::new(WarningCode::RestOfClearsNothing)
+                    .with("op", "o2")
+                    .with("rest_of", "o1")
+                    .with("tool", "12.7 mm end mill"),
+                "operation `o1`, which this one rests on, already reaches everything tool `12.7 mm end mill` can, so this operation cuts nothing; use a smaller tool, or remove it",
+            ),
+        ]
+    }
+
+    #[test]
+    fn warning_messages_are_unchanged() {
+        for (warning, message) in message_fixtures() {
+            assert_eq!(warning.to_string(), message, "{warning:?}");
+        }
+    }
+
     #[test]
     fn rounded_drops_noise_and_trailing_zeros() {
         assert_eq!(rounded(54.600_002_225_240_075, 2), "54.6");
