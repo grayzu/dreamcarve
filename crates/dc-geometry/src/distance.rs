@@ -54,6 +54,74 @@ pub fn point_segment_distance_mm(seg: Segment, p: Point) -> f64 {
     distance_to_segment(seg, p)
 }
 
+/// The points where `a` and `b` meet, mm: where they cross or touch, and
+/// where one comes within `tolerance_mm` of the other (an end that stops
+/// that short of the other line, or a near tangent). Where two segments
+/// overlap, the ends of the overlap. In segment order of `a`, then of
+/// `b`; a meeting may be listed more than once.
+#[must_use]
+pub fn meeting_points(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> Vec<Point> {
+    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
+    let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
+    let mut points = Vec::new();
+    for s in a.segments() {
+        for t in b.segments() {
+            if !degenerate(s) && !degenerate(t) {
+                match pline_seg_intr(
+                    vertex(s.start, s.bulge),
+                    vertex(s.end, 0.0),
+                    vertex(t.start, t.bulge),
+                    vertex(t.end, 0.0),
+                    EPS_MM,
+                ) {
+                    PlineSegIntr::NoIntersect => {}
+                    PlineSegIntr::TangentIntersect { point }
+                    | PlineSegIntr::OneIntersect { point } => {
+                        points.push(Point::new(point.x, point.y));
+                    }
+                    PlineSegIntr::TwoIntersects { point1, point2 }
+                    | PlineSegIntr::OverlappingLines { point1, point2 }
+                    | PlineSegIntr::OverlappingArcs { point1, point2 } => {
+                        points.push(Point::new(point1.x, point1.y));
+                        points.push(Point::new(point2.x, point2.y));
+                    }
+                }
+            }
+            // Within the tolerance without touching: the closest pair has
+            // an end of one segment, or a normal point of an arc.
+            let near_t = [s.start, s.end].into_iter().chain(normal_candidates(s, t));
+            let near_s = [t.start, t.end].into_iter().chain(normal_candidates(t, s));
+            points.extend(near_t.filter(|&p| distance_to_segment(t, p) <= tolerance_mm));
+            points.extend(near_s.filter(|&p| distance_to_segment(s, p) <= tolerance_mm));
+        }
+    }
+    points
+}
+
+/// Shortest distance between `a` and `b`, mm, as [`distance_mm`], over
+/// the pairs of points of which at least one lies outside every disc of
+/// `radius_mm` about `around`: what is left once the stretches of both
+/// near those points are set aside. With nothing `around`, the plain
+/// distance. `f64::INFINITY` when every pair is set aside.
+#[must_use]
+pub fn distance_away_from_mm(a: &Polyline, b: &Polyline, around: &[Point], radius_mm: f64) -> f64 {
+    let pieces = |p: &Polyline| -> Vec<Segment> {
+        p.segments()
+            .flat_map(|s| s.outside_discs(around, radius_mm))
+            .collect()
+    };
+    let (far_a, far_b) = (pieces(a), pieces(b));
+    let mut best_mm = f64::INFINITY;
+    for (far, whole) in [(&far_a, b), (&far_b, a)] {
+        for &s in far {
+            for t in whole.segments() {
+                best_mm = best_mm.min(segment_distance_mm(s, t));
+            }
+        }
+    }
+    best_mm
+}
+
 /// Shortest distance between segments `s` and `t`, mm; `cav` is the same
 /// two segments as cavalier_contours vertices, for the crossing test.
 ///
@@ -267,5 +335,73 @@ mod tests {
             TOL
         );
         assert_approx_eq!(segment_distance_mm(line, line), 0.0, TOL);
+    }
+
+    fn open_line(from: (f64, f64), to: (f64, f64)) -> Polyline {
+        Polyline::new(
+            vec![Vertex::line(from.0, from.1), Vertex::line(to.0, to.1)],
+            false,
+        )
+    }
+
+    fn all_near(points: &[Point], at: Point) -> bool {
+        !points.is_empty() && points.iter().all(|p| p.distance_to(at) <= 1e-6)
+    }
+
+    /// A slot from a square's edge meets it at its end; two crossing lines
+    /// at the crossing; an end that stops within the tolerance of the
+    /// other line meets it there; lines farther apart do not meet.
+    #[test]
+    fn meeting_points_are_where_lines_touch_cross_or_nearly_touch() {
+        let square = square(0.0, 0.0, 20.0);
+        let slot = open_line((10.0, 0.0), (10.0, 8.0));
+        assert!(all_near(
+            &meeting_points(&slot, &square, 0.01),
+            Point::new(10.0, 0.0)
+        ));
+        let across = open_line((0.0, 5.0), (8.0, 5.0));
+        let up = open_line((4.0, 1.0), (4.0, 9.0));
+        assert!(all_near(
+            &meeting_points(&across, &up, 0.01),
+            Point::new(4.0, 5.0)
+        ));
+        let short = open_line((10.0, 0.005), (10.0, 8.0));
+        assert!(all_near(
+            &meeting_points(&short, &square, 0.01),
+            Point::new(10.0, 0.005)
+        ));
+        let apart = open_line((10.0, 1.0), (10.0, 8.0));
+        assert!(meeting_points(&apart, &square, 0.01).is_empty());
+        // A circle a hair from the square's top edge meets it at its top.
+        let circle = Polyline::circle(Point::new(10.0, 15.0), 4.995);
+        assert!(all_near(
+            &meeting_points(&circle, &square, 0.01),
+            Point::new(10.0, 19.995)
+        ));
+    }
+
+    /// A slot square to an edge, set aside within 3 mm of where it meets
+    /// the edge, is 3 mm from it at the disc; a slot 1 mm beside another
+    /// edge is still 1 mm from it beyond the disc; with nothing set aside,
+    /// the plain distance.
+    #[test]
+    fn distance_away_from_meetings_sets_the_stretch_near_them_aside() {
+        let square = square(0.0, 0.0, 20.0);
+        let slot = open_line((10.0, 0.0), (10.0, 8.0));
+        let at = [Point::new(10.0, 0.0)];
+        assert_approx_eq!(distance_away_from_mm(&slot, &square, &at, 3.0), 3.0, TOL);
+        assert_approx_eq!(distance_away_from_mm(&slot, &square, &[], 3.0), 0.0, TOL);
+        let beside = open_line((1.0, 0.0), (1.0, 8.0));
+        let at = [Point::new(1.0, 0.0)];
+        assert_approx_eq!(distance_away_from_mm(&beside, &square, &at, 3.0), 1.0, TOL);
+        // Wholly inside the disc: nothing is left to measure.
+        let stub = open_line((10.0, 0.0), (10.0, 2.0));
+        let near = distance_away_from_mm(
+            &stub,
+            &open_line((9.0, 0.0), (11.0, 0.0)),
+            &[Point::new(10.0, 0.0)],
+            3.0,
+        );
+        assert!(near.is_infinite(), "{near}");
     }
 }

@@ -23,7 +23,8 @@
 //! tool-centre path, compared by the same On line rule (#206). It belongs
 //! to the region whose material holds all of it, as a hole does, and is
 //! not compared with that region's lines: there it cuts into the part, not
-//! beside it. An open path held by no region (in the waste, in a hole's
+//! beside it, and `generate_profile`'s band check refuses one closer than
+//! the diameter to them away from where they meet (#210). An open path held by no region (in the waste, in a hole's
 //! slug, or crossing a line) is a group of its own and is compared with
 //! every other shape. Engrave takes no part: it cuts every line as drawn,
 //! so lines that cross or meet are the design, not shapes too close.

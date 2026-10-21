@@ -56,8 +56,14 @@
 //!     #199). Lines of different regions are not looked at: a gouge there
 //!     is the overlap check's warning, as for a lap. The On line ramp runs
 //!     along the line; there is no lead or notch. A cut on one of the
-//!     targets' open paths (#175) is held to that path alone, as an
-//!     Engrave's: an open path bounds no region, so it has no band.
+//!     targets' open paths (#175) stays on that path, as an Engrave's.
+//!     When a region's material holds the path (every vertex and segment
+//!     middle, lines included), the cut also keeps the diameter from
+//!     every line of that region and from every other open path it holds,
+//!     the stretches of both within `√2·d` of a point where the two meet
+//!     (touch, cross, or come within the flatten tolerance) set aside: so
+//!     a slot drawn from the edge passes and one beside a wall fails, as
+//!     dc-cam refuses it (`BandNarrowerThanTool`, #210).
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
 //!     it on its waste side, passes even where an outline of another
 //!     region comes nearer than the radius. That cut is the outline's
@@ -98,8 +104,8 @@
 use std::ops::Range;
 
 use dc_geometry::{
-    Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, Vec2, as_circle, nest,
-    point_segment_distance_mm, segment_distance_mm,
+    Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, Vec2, as_circle,
+    meeting_points, nest, point_segment_distance_mm, segment_distance_mm,
 };
 use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side};
 
@@ -140,13 +146,14 @@ pub(crate) enum Material {
     },
     /// An On line Profile's regions: the tool centre stays on one of
     /// their lines, at least the tool's diameter from the region's other
-    /// lines (#199), or on one of its targets' open paths (#175).
+    /// lines (#199), or on one of its targets' open paths (#175), as far
+    /// from the lines beside that path away from where they meet (#210).
     OnLineProfile {
         /// The regions, outer and holes, from the targets' closed
         /// profiles.
         areas: Vec<Area>,
-        /// Every segment of the targets' open paths.
-        open: Vec<Edge>,
+        /// The targets' open paths.
+        open: Vec<OpenPath>,
     },
     /// An Engrave's target paths, as segments.
     OnLine {
@@ -315,6 +322,88 @@ impl Edge {
     }
 }
 
+/// One open path an On line Profile cuts, and the lines it must keep the
+/// tool's diameter from (#210).
+#[derive(Debug, Clone)]
+pub(crate) struct OpenPath {
+    /// The path's segments.
+    edges: Vec<Edge>,
+    /// When a region's material holds the path: each line of that region
+    /// and each other open path it holds.
+    beside: Vec<Beside>,
+}
+
+/// A line beside an [`OpenPath`] and the points where the two meet.
+#[derive(Debug, Clone)]
+struct Beside {
+    edges: Vec<Edge>,
+    meetings: Vec<Point>,
+}
+
+/// How far from a point where two lines of one region meet their On line
+/// cuts may come closer than the tool's diameter, as a multiple of the
+/// diameter: √2, so straight lines meeting at 45° or more pass. The same
+/// as `dc_cam::generate_profile`'s rule (#210), re-stated here because S9
+/// trusts no generator.
+const MEETING_REACH_DIAMETERS: f64 = std::f64::consts::SQRT_2;
+
+/// The open paths of `paths` with length, each with the lines beside it:
+/// the lines of the first of `regions` whose material holds all of it
+/// (every vertex and segment middle, lines included) and the other open
+/// paths that region holds, with the points where each meets it within
+/// `tolerance_mm`. A path no region holds has nothing beside it.
+fn open_paths_of(paths: &[Polyline], regions: &[Region], tolerance_mm: f64) -> Vec<OpenPath> {
+    let open: Vec<&Polyline> = paths
+        .iter()
+        .filter(|p| !p.is_closed() && p.length_mm() > EPS_MM)
+        .collect();
+    let holds = |region: &Region, path: &Polyline| {
+        let middles = path
+            .segments()
+            .filter_map(|s| s.point_at(s.length_mm() / 2.0).map(|(p, _)| p));
+        path.vertices()
+            .iter()
+            .map(|v| v.point())
+            .chain(middles)
+            .all(|p| region.contains_point(p))
+    };
+    let held: Vec<Option<usize>> = open
+        .iter()
+        .map(|path| regions.iter().position(|r| holds(r, path)))
+        .collect();
+    let tolerance_mm = tolerance_mm.max(EPS_MM);
+    open.iter()
+        .zip(&held)
+        .enumerate()
+        .map(|(index, (path, region_index))| {
+            let lines: Vec<&Polyline> = match region_index.and_then(|i| regions.get(i)) {
+                Some(region) => std::iter::once(region.outer())
+                    .chain(region.holes())
+                    .map(Contour::polyline)
+                    .chain(
+                        open.iter()
+                            .zip(&held)
+                            .enumerate()
+                            .filter(|(j, (_, h))| *j != index && *h == region_index)
+                            .map(|(_, (p, _))| *p),
+                    )
+                    .collect(),
+                None => Vec::new(),
+            };
+            OpenPath {
+                edges: edges_of(path).collect(),
+                beside: lines
+                    .into_iter()
+                    .map(|line| Beside {
+                        edges: edges_of(line).collect(),
+                        meetings: meeting_points(path, line, tolerance_mm),
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
 /// The segments of `polyline`, with bounds.
 fn edges_of(polyline: &Polyline) -> impl Iterator<Item = Edge> + '_ {
     polyline.segments().map(Edge::new)
@@ -409,12 +498,8 @@ impl Material {
                         placed(project, &profile.targets),
                     ) {
                         (Some(regions), Some(paths)) => Self::OnLineProfile {
+                            open: open_paths_of(&paths, &regions, project.flatten_tolerance_mm),
                             areas: areas_of(regions, true),
-                            open: paths
-                                .iter()
-                                .filter(|p| !p.is_closed())
-                                .flat_map(edges_of)
-                                .collect(),
                         },
                         _ => Self::Unresolved,
                     },
@@ -553,8 +638,10 @@ pub(crate) fn check(
                     .any(|(centre, r)| p.distance_to(*centre) <= r + slack_mm)
             }),
             Material::OnLineProfile { areas, open } => {
-                on_own_line(areas, path, 2.0 * radius_mm - slack_mm, slack_mm)
-                    || points_of(path).iter().all(|&p| on_line(open, p, slack_mm))
+                let band_mm = 2.0 * radius_mm - slack_mm;
+                let reach_mm = MEETING_REACH_DIAMETERS * 2.0 * radius_mm + slack_mm;
+                on_own_line(areas, path, band_mm, slack_mm)
+                    || on_open_path(open, path, band_mm, reach_mm, slack_mm)
             }
             Material::OnLine { edges } => {
                 points_of(path).iter().all(|&p| on_line(edges, p, slack_mm))
@@ -689,6 +776,40 @@ fn on_own_line(areas: &[Area], path: Segment, band_mm: f64, slack_mm: f64) -> bo
                         .all(|(_, e)| segment_distance_mm(path, e.segment) >= band_mm)
             })
         })
+}
+
+/// The On line rule for open paths (module docs, #210): whether tool-centre
+/// path `path` lies on one of `open`, its ends and middle within
+/// `slack_mm` of it, and keeps `band_mm` from every line beside that path
+/// once the stretches of both within `reach_mm` of a point where they meet
+/// are set aside.
+fn on_open_path(
+    open: &[OpenPath],
+    path: Segment,
+    band_mm: f64,
+    reach_mm: f64,
+    slack_mm: f64,
+) -> bool {
+    let bounds = bounds_of(path);
+    let points = points_of(path);
+    open.iter().any(|o| {
+        points.iter().all(|&p| on_line(&o.edges, p, slack_mm))
+            && o.beside.iter().all(|b| {
+                let pieces = path.outside_discs(&b.meetings, reach_mm);
+                b.edges
+                    .iter()
+                    .filter(|e| near(bounds, e.bounds, band_mm))
+                    .all(|e| {
+                        pieces
+                            .iter()
+                            .all(|&p| segment_distance_mm(p, e.segment) >= band_mm)
+                            && e.segment
+                                .outside_discs(&b.meetings, reach_mm)
+                                .into_iter()
+                                .all(|q| segment_distance_mm(path, q) >= band_mm)
+                    })
+            })
+    })
 }
 
 /// Whether `p` lies within `slack_mm` of one of `edges`.

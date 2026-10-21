@@ -119,7 +119,11 @@ written. There are no safety warnings, only errors.
       **inside**, inside the hole and off any island left in it. Cut **on
       line**, the centre of the bit stays on the line, at least a bit's
       width from the part's other lines, so a cut that would cut through
-      a ring narrower than the bit stops the export. Laps, tab rises,
+      a ring narrower than the bit stops the export. On an open path in a
+      part, the bit's centre stays on the path and a bit's width from the
+      part's lines and its other open paths, except near a point where the
+      two meet, as DreamCarve's own check (see
+      [Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)). Laps, tab rises,
       entry ramps and helixes, lead arcs and corner relief notches all
       count, so a ramp or lead arc that swings into a part, its own or a
       neighbour's, stops the export. A lap that runs along one outline at

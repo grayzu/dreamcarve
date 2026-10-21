@@ -23,7 +23,7 @@ use crate::entry::{
 };
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
-use crate::overlap::{CutPath, overlap_warnings, within};
+use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
 use crate::passes::pass_z_mm;
 use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
@@ -34,8 +34,8 @@ use crate::tabs::{
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
-    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, distance_mm,
-    nest, offset,
+    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region,
+    distance_away_from_mm, distance_mm, meeting_points, nest, offset,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
@@ -218,7 +218,9 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// line path closer than its diameter, to another line of its region, a
 /// band narrower than the tool ([`CamError::BandNarrowerThanTool`], #192,
 /// #199; a contour with no path at all is [`WarningCode::ToolTooLarge`]
-/// and skipped),
+/// and skipped; an open path a region holds is compared with that
+/// region's lines and its other open paths away from where they meet,
+/// #210),
 /// when an On line Profile asks for a helix
 /// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
 /// would leave its waste domain ([`CamError::OffMaterial`], a defect).
@@ -358,10 +360,18 @@ pub fn generate_profile(
             }));
         }
     }
+    check_open_bands(
+        op,
+        tool,
+        &regions,
+        &shapes,
+        &open_paths,
+        project.flatten_tolerance_mm,
+    )?;
     // #175: an open path is cut On line as drawn, from its first vertex
     // under climb and from its last under conventional (VCarve's rule:
-    // the direction picks the end). It has no region, so no band check,
-    // no containment, and no waste domain; its wall is never asked.
+    // the direction picks the end). It bounds no region, so no
+    // containment and no waste domain; its wall is never asked.
     let reversed_open = op.direction == CutDirection::Conventional;
     for (shape, path) in &open_paths {
         let path = if reversed_open {
@@ -728,6 +738,84 @@ fn check_band(
             band_mm: distance_mm(contour.polyline(), line.polyline()),
             diameter_mm: tool.diameter_mm,
         });
+    }
+    Ok(())
+}
+
+/// How far from a point where two lines of one region meet their On line
+/// cuts may come closer than the tool's diameter, as a multiple of the
+/// diameter (#210): √2, so two straight lines that meet at 45° or more
+/// pass, and a line that meets another and then runs alongside it does
+/// not. S9 (`dc-gcode`'s material check) holds programs to the same rule.
+pub(crate) const MEETING_REACH_DIAMETERS: f64 = std::f64::consts::SQRT_2;
+
+/// #210: #199's On line band check for the open paths an On line Profile
+/// cuts. An open path that a region's material holds
+/// ([`region_holds_path`], #206) is compared with every line of that
+/// region, its outline and its holes, and with every later open path the
+/// same region holds. Where it comes closer than the tool's diameter `d`
+/// (less [`EPS_MM`]) to one, the two cuts together cut through the part
+/// between them, as in a ring narrower than the bit:
+/// [`CamError::BandNarrowerThanTool`].
+///
+/// Lines that meet (touch or cross within `tolerance_mm`: a slot drawn
+/// from the edge, a saw cut across the part, two slots joined at a corner
+/// or crossing) are cut together on purpose, so the stretch of both within
+/// [`MEETING_REACH_DIAMETERS`]` · d` of a meeting point is set aside
+/// ([`distance_away_from_mm`]); the rest is held to `d`. `band_mm` is the
+/// narrowest gap so measured. Open paths no region holds are D6's
+/// ([`crate::overlap`]).
+fn check_open_bands(
+    op: &ProfileOp,
+    tool: &Tool,
+    regions: &[Region],
+    shapes: &[(ShapeRef, Contour)],
+    open: &[(ShapeRef, Polyline)],
+    tolerance_mm: f64,
+) -> Result<(), CamError> {
+    let diameter_mm = tool.diameter_mm;
+    let reach_mm = MEETING_REACH_DIAMETERS * diameter_mm;
+    let tolerance_mm = tolerance_mm.max(EPS_MM);
+    let held: Vec<Option<usize>> = open
+        .iter()
+        .map(|(_, path)| regions.iter().position(|r| region_holds_path(r, path)))
+        .collect();
+    let drawn = |s: &ShapeRef| (op.targets.iter().position(|t| *t == s.instance), s.profile);
+    for (index, ((shape, path), region_index)) in open.iter().zip(&held).enumerate() {
+        let Some(region) = region_index.and_then(|i| regions.get(i)) else {
+            continue;
+        };
+        let lines = std::iter::once(region.outer())
+            .chain(region.holes())
+            .filter_map(|c| Some((shape_of(shapes, c)?, c.polyline())));
+        let later = open
+            .iter()
+            .zip(&held)
+            .skip(index + 1)
+            .filter(|(_, h)| **h == *region_index)
+            .map(|((s, p), _)| (s, p));
+        for (other, line) in lines.chain(later) {
+            if !within(path, line, diameter_mm) {
+                continue;
+            }
+            let meetings = meeting_points(path, line, tolerance_mm);
+            let band_mm = distance_away_from_mm(path, line, &meetings, reach_mm);
+            if band_mm >= diameter_mm - EPS_MM {
+                continue;
+            }
+            let (first, second) = if drawn(shape) <= drawn(other) {
+                (shape, other)
+            } else {
+                (other, shape)
+            };
+            return Err(CamError::BandNarrowerThanTool {
+                op: op.id.clone(),
+                shape: first.clone(),
+                other: Box::new(second.clone()),
+                band_mm,
+                diameter_mm,
+            });
+        }
     }
     Ok(())
 }
@@ -2681,7 +2769,10 @@ mod tests {
     fn open_path_alongside_its_part_wall_is_refused() {
         let shallow_rad = 10_f64.to_radians();
         let reach_mm = std::f64::consts::SQRT_2 * 6.35;
-        let cases: Vec<(&str, Vec<Polyline>, (usize, usize), f64)> = vec![
+        // The case, the profiles drawn in the part, the two profiles named
+        // and the band.
+        type Case = (&'static str, Vec<Polyline>, (usize, usize), f64);
+        let cases: Vec<Case> = vec![
             (
                 "1 mm inside the left edge",
                 vec![open(&[(1.0, 10.0), (1.0, 40.0)])],

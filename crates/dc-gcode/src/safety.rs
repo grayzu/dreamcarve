@@ -3793,16 +3793,19 @@ mod tests {
     /// program included: there the cut opens into the outline's.
     #[test]
     fn on_line_open_path_cutting_through_a_wall_fails_s9() {
-        let with_line = |from: (f64, f64), to: (f64, f64)| {
+        type Line = ((f64, f64), (f64, f64));
+        let with_lines = |lines: &[Line]| {
             let mut project = sample_project();
             if let Some(def) = project.definitions.values_mut().next() {
-                def.profiles.push(dc_geometry::Polyline::new(
-                    vec![
-                        dc_geometry::Vertex::line(from.0, from.1),
-                        dc_geometry::Vertex::line(to.0, to.1),
-                    ],
-                    false,
-                ));
+                def.profiles.extend(lines.iter().map(|&(from, to)| {
+                    dc_geometry::Polyline::new(
+                        vec![
+                            dc_geometry::Vertex::line(from.0, from.1),
+                            dc_geometry::Vertex::line(to.0, to.1),
+                        ],
+                        false,
+                    )
+                }));
             }
             let op = dc_project::test_support::profile_mut(&mut project);
             op.side = dc_project::Side::OnLine;
@@ -3821,7 +3824,7 @@ mod tests {
             )
         };
 
-        let (near, op) = with_line((10.0, 2.0), (40.0, 2.0));
+        let (near, op) = with_lines(&[((10.0, 2.0), (40.0, 2.0))]);
         let refused = generate_profile(&near, &op);
         assert!(
             matches!(refused, Err(dc_cam::CamError::BandNarrowerThanTool { .. })),
@@ -3834,20 +3837,44 @@ mod tests {
             "the plunge 2 mm from the edge: {err:?}"
         );
 
-        let (clear, op) = with_line((10.0, 6.35), (40.0, 6.35));
+        let (clear, op) = with_lines(&[((10.0, 6.35), (40.0, 6.35))]);
         let op = Operation::Profile(op);
         check_material_text(&cut((10.0, 6.35), (40.0, 6.35)), &clear, &op).unwrap();
 
-        let (slot, op) = with_line((25.0, 0.0), (25.0, 15.0));
-        let (toolpath, _) = generate_profile(&slot, &op).unwrap();
-        let op = Operation::Profile(op);
-        emit(
+        let (slot, op) = with_lines(&[((25.0, 0.0), (25.0, 15.0))]);
+        check_material_text(
+            &cut((25.0, 0.0), (25.0, 15.0)),
             &slot,
-            &[(op.clone(), slot.tools[0].clone(), toolpath).into()],
-            "2026-10-21",
+            &Operation::Profile(op),
         )
         .unwrap();
-        check_material_text(&cut((25.0, 0.0), (25.0, 15.0)), &slot, &op).unwrap();
+
+        // What the generator cuts, S9 passes: a slot square to the edge, a
+        // saw cut, a slot at 60°, two slots joined at a corner, and two
+        // lines crossing, with a ramp along each line.
+        let steep = (
+            25.0 + 15.0 * 60_f64.to_radians().cos(),
+            15.0 * 60_f64.to_radians().sin(),
+        );
+        let drawings: [&[Line]; 5] = [
+            &[((25.0, 0.0), (25.0, 15.0))],
+            &[((25.0, 0.0), (25.0, 30.0))],
+            &[((25.0, 0.0), steep)],
+            &[((25.0, 0.0), (25.0, 15.0)), ((25.0, 15.0), (40.0, 15.0))],
+            &[((10.0, 15.0), (40.0, 15.0)), ((25.0, 8.0), (25.0, 22.0))],
+        ];
+        for lines in drawings {
+            let (project, mut op) = with_lines(lines);
+            op.entry = dc_project::Entry::Ramp { angle_deg: 15.0 };
+            let (toolpath, _) = generate_profile(&project, &op).unwrap();
+            let op = Operation::Profile(op);
+            emit(
+                &project,
+                &[(op, project.tools[0].clone(), toolpath).into()],
+                "2026-10-21",
+            )
+            .unwrap_or_else(|e| panic!("{lines:?}: {e}"));
+        }
     }
 
     /// The generated sample Profile with `edit` applied, emitted: tabs and
