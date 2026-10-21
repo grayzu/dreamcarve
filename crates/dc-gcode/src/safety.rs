@@ -3327,6 +3327,62 @@ mod tests {
         );
     }
 
+    /// The sample rectangle's Pocket with `relief`.
+    fn relief_pocket(relief: dc_project::CornerRelief) -> Operation {
+        Operation::Pocket(dc_project::PocketOp {
+            corner_relief: relief,
+            ..dc_project::test_support::sample_pocket()
+        })
+    }
+
+    /// S9's notch rule (slice 12, `crate::material`): with corner relief
+    /// on, a Pocket cut may come nearer a wall than the tool radius in a
+    /// corner's relief zone. At the sample rectangle's corner (10, 10)
+    /// with the 6.35 mm tool, the dogbone from the miter point (13.175,
+    /// 13.175) to one radius from the corner, (12.245, 12.245), and the
+    /// T-bone to (13.175, 10) pass; with relief off the same dogbone
+    /// fails at its cut.
+    #[test]
+    fn pocket_notch_inside_its_corner_zone_passes_s9() {
+        use dc_project::CornerRelief;
+        let project = sample_project();
+        let program = |cuts: &str| {
+            format!("G21 G90\nG54\nG0 Z5\nX13.175 Y13.175\nG1 Z-3 F300\n{cuts}G0 Z5\n")
+        };
+        let dogbone = program("X12.245 Y12.245 F1000\nX13.175 Y13.175\n");
+        check_material_text(&dogbone, &project, &relief_pocket(CornerRelief::Dogbone)).unwrap();
+        let t_bone = program("X13.175 Y10 F1000\nX13.175 Y13.175\n");
+        check_material_text(&t_bone, &project, &relief_pocket(CornerRelief::TBone)).unwrap();
+        let err = check_material_text(&dogbone, &project, &relief_pocket(CornerRelief::None))
+            .unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S9's notch rule holds the notch to its corner: a cut that drives
+    /// the tool centre to the corner itself fails, and so does a cut past
+    /// a wall away from every corner.
+    #[test]
+    fn pocket_notch_past_the_corner_fails_s9() {
+        use dc_project::CornerRelief;
+        let project = sample_project();
+        let op = relief_pocket(CornerRelief::Dogbone);
+        let to_corner = "G21 G90\nG54\nG0 Z5\nX13.175 Y13.175\nG1 Z-3 F300\nX10 Y10 F1000\nG0 Z5\n";
+        let err = check_material_text(to_corner, &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+        let mid_wall = "G21 G90\nG54\nG0 Z5\nX30 Y13.175\nG1 Z-3 F300\nY11 F1000\nG0 Z5\n";
+        let err = check_material_text(mid_wall, &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+    }
+
     /// #158: S9 on the helix Pocket checks each of its more than a
     /// thousand descent chords as a segment against the region's outlines,
     /// not as the union of swept capsules (6.7 s in a debug build in slice

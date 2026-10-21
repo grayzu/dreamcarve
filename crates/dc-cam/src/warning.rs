@@ -77,10 +77,26 @@ pub enum WarningCode {
     /// `instance_name`, `profile`, `requested_mm`, `used_mm` (the smallest
     /// helix diameter cut in that shape).
     HelixDiameterReduced,
-    /// The operation's corner relief was not cut. Params: `op`,
-    /// `requested` (`dogbone` or `t_bone`), `reason` (`not_supported_yet`
-    /// until the relief slice lands).
+    /// The operation's corner relief was not cut at all
+    /// (`docs/specs/phase-2/design.md`, "Algorithms → Corner relief").
+    /// Params: `op`, `requested` (`dogbone` or `t_bone`), `reason`
+    /// (`no_step_down`: the tool has no step-down, which the relief pass
+    /// steps down at; `on_line`: an On line Profile has no waste side to
+    /// put a notch in).
     ReliefSkipped,
+    /// A corner of the cleared area is not relieved because the notch
+    /// does not fit it: an edge beside it is shorter than the tool is
+    /// wide (`reason` `short_edge`), or the tool-centre path does not
+    /// turn it within reach (`reason` `no_wall_path`). Params: `op`,
+    /// `instance`, `instance_name`, `profile`, `x_mm`, `y_mm` (the
+    /// corner), `reason`.
+    ReliefCornerTooTight,
+    /// A corner of the cleared area is not relieved because the main
+    /// passes did not cut to full depth where the notch would start (a
+    /// tab over it, or no wall pass), so the notch would plunge into
+    /// uncut material. Params: `op`, `instance`, `instance_name`,
+    /// `profile`, `x_mm`, `y_mm` (the corner).
+    ReliefCornerNotCut,
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped. Params: `op`, `instance`,
     /// `instance_name`, `profile`.
@@ -138,6 +154,8 @@ impl WarningCode {
             Self::EntryFallback => "entry_fallback",
             Self::HelixDiameterReduced => "helix_diameter_reduced",
             Self::ReliefSkipped => "relief_skipped",
+            Self::ReliefCornerTooTight => "relief_corner_too_tight",
+            Self::ReliefCornerNotCut => "relief_corner_not_cut",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
@@ -380,10 +398,37 @@ impl fmt::Display for Warning {
                 self.number("used_mm", DIAMETER_DECIMALS),
                 self.number("requested_mm", DIAMETER_DECIMALS)
             ),
-            WarningCode::ReliefSkipped => write!(
+            WarningCode::ReliefSkipped => match self.param("reason") {
+                Some("on_line") => write!(
+                    f,
+                    "corner relief `{}` is skipped: an On line Profile has no waste side to cut a notch into, so no corners were relieved",
+                    self.text("requested")
+                ),
+                _ => write!(
+                    f,
+                    "corner relief `{}` is skipped because the tool has no step_down_mm, which the relief pass steps down at, so no corners were relieved; set the tool's step-down",
+                    self.text("requested")
+                ),
+            },
+            WarningCode::ReliefCornerTooTight => {
+                let why = match self.param("reason") {
+                    Some("no_wall_path") => "the tool path does not turn it within reach",
+                    _ => "an edge beside it is shorter than the bit is wide",
+                };
+                write!(
+                    f,
+                    "the corner of {} at ({}, {}) mm is not relieved: {why}, so it keeps the bit's radius",
+                    self.shape(),
+                    self.mm("x_mm"),
+                    self.mm("y_mm")
+                )
+            }
+            WarningCode::ReliefCornerNotCut => write!(
                 f,
-                "corner relief `{}` is not supported by this build yet, so no corners were relieved",
-                self.text("requested")
+                "the corner of {} at ({}, {}) mm is not relieved because the main passes did not cut to full depth where its notch starts (a tab over it, or no wall pass), and a notch must not plunge into uncut material; it keeps the bit's radius",
+                self.shape(),
+                self.mm("x_mm"),
+                self.mm("y_mm")
             ),
             WarningCode::EngravePathDegenerate => write!(
                 f,

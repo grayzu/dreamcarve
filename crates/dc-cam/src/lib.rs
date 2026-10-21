@@ -24,6 +24,7 @@ mod overlap;
 pub mod passes;
 pub mod pocket;
 mod profile;
+mod relief;
 mod sequence;
 mod stock;
 mod tabs;
