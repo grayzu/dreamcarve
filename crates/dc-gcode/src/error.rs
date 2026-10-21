@@ -64,6 +64,18 @@ pub enum ExportError {
         /// The tools' names, in the order the program would use them.
         tools: Vec<String>,
     },
+    /// One program with tool changes was asked for (`export --one-program`,
+    /// `ProgramSplit::OneProgram`), but the post-processor's tool change has
+    /// no `M6` line, so no program of its own can stop for the user to
+    /// change the bit (#57). GRBL 1.1 has no `M6`. Checked before anything
+    /// is emitted, whatever the operations' tools.
+    #[error(
+        "post-processor `{post}` has no M6 tool change, so it cannot write one program with tool changes; export one program per tool run instead"
+    )]
+    OneProgramNeedsM6 {
+        /// The post-processor's id.
+        post: String,
+    },
     /// The post-processor lacks a command the safety rules need (S5): the
     /// units command for the output units, or the work-coordinate select.
     #[error("post-processor `{post}` has no `{field}`, which every program must start with")]

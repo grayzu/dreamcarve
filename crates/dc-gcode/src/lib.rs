@@ -20,7 +20,7 @@ mod safety;
 pub mod transform;
 
 pub use dc_project::PostProcessor;
-pub use emit::{ExportWarning, FirstTool, Pause, Program, emit, emit_programs};
+pub use emit::{ExportWarning, FirstTool, Pause, Program, ProgramSplit, emit, emit_programs};
 pub use error::ExportError;
 pub use parse::{MachineMove, parse_motion};
 pub use safety::{AxisRange, Extents, MAX_LINE_CHARS};

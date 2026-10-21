@@ -36,6 +36,7 @@ use dc_project::{
 };
 
 use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
+use crate::config;
 
 /// Margin between the drawing's bounds and each stock edge, mm.
 const STOCK_MARGIN_MM: f64 = 10.0;
@@ -73,7 +74,10 @@ struct Imported {
 
 /// Runs `init`.
 pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
-    let post = lookup_post(&args.post)?;
+    let mut post = lookup_post(&args.post)?;
+    // The user's configured defaults (`tool_change_mode`) go on top of the
+    // definition's, before anything is written (capability 19).
+    config::seed_post(&mut post)?;
     let is_dxf = args
         .drawing
         .extension()

@@ -17,6 +17,7 @@
 - [Profile operation](user-guide/profile.md)
 - [Tabs](user-guide/tabs.md)
 - [Post-processors](user-guide/post-processors.md)
+- [Configuration](user-guide/configuration.md)
 - [Safety](user-guide/safety.md)
 
 # Contributing
