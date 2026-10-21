@@ -11,12 +11,22 @@
 //! capability 18, acceptance 29). VCarve calls these "Create Fillets":
 //! Dog-Bone and T-Bone.
 //!
-//! As upstream, relief is a pass of its own after the operation's main
-//! passes, stepping down at the tool's step-down, never a change to the
-//! cleared region (a radius-`r` lobe eroded by a radius-`r` cutter
-//! vanishes) nor a detour in the wall ring. Per corner and level: plunge
-//! at the descend point, where the main path already cut to full depth, cut
-//! out to the end point, and cut back.
+//! As upstream, relief is a pass of its own, stepping down at the tool's
+//! step-down, never a change to the cleared region (a radius-`r` lobe
+//! eroded by a radius-`r` cutter vanishes) nor a detour in the wall ring.
+//! Per corner and level: plunge at the descend point, where the main path
+//! cuts to full depth, cut out to the end point, and cut back.
+//!
+//! **When.** A Pocket's notches follow all its main passes, as upstream: a
+//! Pocket never frees material. A Profile's are cut among its shape's own
+//! passes instead (#189), because a Profile through the stock frees its
+//! part or slug with its final lap, and a notch cut after that cuts beside
+//! a loose piece. Each notch level is cut in the unit of the shape's
+//! first pass at or below it, so that pass has already opened the column
+//! at the descend point; the sequencer cuts a unit's freeing lap last, so
+//! the levels of the freeing pass come just before the final lap, plunging
+//! through the skin it is about to cut while the skin still holds the
+//! piece. Nothing of a shape is cut after its freeing pass.
 //!
 //! **The touch-the-corner rule.** For corner `C` of the cleared region,
 //! with unit edge directions `u`, `v` from `C`, bisector `b`, cleared-side
@@ -368,9 +378,32 @@ pub(crate) fn main_path_cuts_at(
     max_z_mm: f64,
     tolerance_mm: f64,
 ) -> bool {
+    moves_cut_at(None, &toolpath.moves, point, max_z_mm, tolerance_mm)
+}
+
+/// [`main_path_cuts_at`] for one block's cuts, from where its descent
+/// leaves the tool (its entry at its pass Z, or the tab a lap starts on).
+fn block_cuts_at(block: &CutBlock, point: Point, max_z_mm: f64, tolerance_mm: f64) -> bool {
+    let start = block
+        .descent
+        .last()
+        .map_or(Point3::new(block.entry.x, block.entry.y, block.z_mm), |m| {
+            m.to
+        });
+    moves_cut_at(Some(start), &block.cuts, point, max_z_mm, tolerance_mm)
+}
+
+/// The guard on `moves`, the tool at `start` before the first.
+fn moves_cut_at(
+    start: Option<Point3>,
+    moves: &[Move],
+    point: Point,
+    max_z_mm: f64,
+    tolerance_mm: f64,
+) -> bool {
     let z_limit = max_z_mm + RELIEF_Z_TOLERANCE_MM;
-    let mut position: Option<Point3> = None;
-    for mv in &toolpath.moves {
+    let mut position = start;
+    for mv in moves {
         if let Some(from) = position
             && mv.is_cut()
             && from.z <= z_limit
@@ -608,6 +641,134 @@ impl Relief {
             })
             .collect()
     }
+
+    /// A Profile's relief pass, cut among its shapes' own passes (#189):
+    /// the notch blocks to hand to [`sequence`] with `blocks`, the main
+    /// blocks. A corner is cut when its own shape's path cuts its descend
+    /// point at the deepest level (else [`WarningCode::ReliefCornerNotCut`]).
+    /// Each level goes to the unit of the shape's first pass at or below
+    /// it, which has opened the column at the descend point by then; the
+    /// sequencer cuts a unit's freeing blocks last, so the levels of a
+    /// freeing pass come just before its lap. A shape's corners are taken
+    /// nearest-neighbour from where its first block ends, the same order at
+    /// every pass.
+    fn interleave(
+        &self,
+        sites: &[Site],
+        blocks: &[CutBlock],
+        warnings: &mut Vec<Warning>,
+    ) -> Vec<CutBlock> {
+        let mut corners = Vec::new();
+        for site in sites {
+            let (found, rejected) = collect(
+                &self.op,
+                self.style,
+                self.radius_mm,
+                site,
+                self.tolerance_mm,
+            );
+            corners.extend(found);
+            warnings.extend(rejected);
+        }
+        let Some(deepest) = self.levels.iter().copied().reduce(f64::min) else {
+            return Vec::new();
+        };
+        let guard_mm = RELIEF_POSITION_TOLERANCE_MM + self.tolerance_mm;
+        let mut cut = Vec::with_capacity(corners.len());
+        for corner in corners {
+            let own_path_cuts = blocks
+                .iter()
+                .filter(|b| b.shape == corner.shape)
+                .any(|b| block_cuts_at(b, corner.descend, deepest, guard_mm));
+            if own_path_cuts {
+                cut.push(corner);
+            } else {
+                warnings.push(corner_warning(
+                    WarningCode::ReliefCornerNotCut,
+                    &self.op,
+                    &corner.shape,
+                    &corner.geometry,
+                ));
+            }
+        }
+        let mut notches = Vec::new();
+        let mut shapes: Vec<&ShapeRef> = Vec::new();
+        for block in blocks {
+            if !shapes.contains(&&block.shape) {
+                shapes.push(&block.shape);
+            }
+        }
+        for shape in shapes {
+            let own: Vec<&CutBlock> = blocks.iter().filter(|b| &b.shape == shape).collect();
+            let mine: Vec<ReliefCorner> =
+                cut.iter().filter(|c| &c.shape == shape).cloned().collect();
+            let Some(first) = own.first() else {
+                continue;
+            };
+            // The shape's passes, top first, with their Zs.
+            let mut passes: Vec<(usize, f64)> = own.iter().map(|b| (b.pass, b.z_mm)).collect();
+            passes.sort_by_key(|(pass, _)| *pass);
+            passes.dedup_by_key(|(pass, _)| *pass);
+            for corner in nearest_neighbour(mine, first.exit) {
+                let mut groups: Vec<(usize, Vec<f64>)> = Vec::new();
+                for &level in &self.levels {
+                    let Some(pass) = passes
+                        .iter()
+                        .find(|(_, z)| *z <= level + RELIEF_Z_TOLERANCE_MM)
+                        .or(passes.last())
+                        .map(|(pass, _)| *pass)
+                    else {
+                        continue;
+                    };
+                    match groups.last_mut() {
+                        Some((at, levels)) if *at == pass => levels.push(level),
+                        _ => groups.push((pass, vec![level])),
+                    }
+                }
+                notches.extend(
+                    groups
+                        .iter()
+                        .filter_map(|(pass, levels)| self.notch_block(&corner, *pass, levels)),
+                );
+            }
+        }
+        notches
+    }
+
+    /// The notch block for `corner` in its shape's pass `pass`, cutting
+    /// `levels` (top first): from safe Z a plunge at the descend point to
+    /// the first level, out to the end and back at the feed rate, then the
+    /// same at each further level, plunging straight from the one above.
+    /// Its pass Z is the deepest level; its descent ends at the first.
+    fn notch_block(&self, corner: &ReliefCorner, pass: usize, levels: &[f64]) -> Option<CutBlock> {
+        let (p, e) = (corner.descend, corner.end);
+        let (feed, plunge) = (self.rates.feed_mm_min, self.rates.plunge_mm_min);
+        let at = |point: Point, z_mm: f64| Point3::new(point.x, point.y, z_mm);
+        let (&first, rest) = levels.split_first()?;
+        let mut cuts = vec![
+            Move::linear(at(e, first), feed),
+            Move::linear(at(p, first), feed),
+        ];
+        for &z_mm in rest {
+            cuts.push(Move::linear(at(p, z_mm), plunge));
+            cuts.push(Move::linear(at(e, z_mm), feed));
+            cuts.push(Move::linear(at(p, z_mm), feed));
+        }
+        Some(CutBlock {
+            shape: corner.shape.clone(),
+            pass,
+            z_mm: levels.iter().copied().fold(first, f64::min),
+            descent_from: p,
+            descent_from_z_mm: self.safe_z_mm,
+            descent: vec![Move::linear(at(p, first), plunge)],
+            entry: p,
+            cuts,
+            exit: p,
+            frees: false,
+            cleared: None,
+            group: 0,
+        })
+    }
 }
 
 /// S9's notch rule: the area beyond the cleared region a notch at
@@ -711,30 +872,32 @@ fn profile_sites(side: Side, geometry: &ProfileGeometry<'_>) -> Vec<Site> {
         .collect()
 }
 
-/// Appends a Profile's relief pass to `toolpath`, its main path (Inside:
-/// the hole's corners; Outside: the part's concave corners). On line has
-/// no waste side for a notch: [`WarningCode::ReliefSkipped`].
+/// A Profile's relief notches (Inside: the hole's corners; Outside: the
+/// part's concave corners), as blocks to sequence with `blocks`, the
+/// Profile's main blocks, among the shapes' own passes (#189; see
+/// [`Relief::interleave`]). On line has no waste side for a notch:
+/// [`WarningCode::ReliefSkipped`].
 ///
 /// # Errors
 ///
-/// As [`Setup::plan`] and [`Relief::append`].
-pub(crate) fn profile(
+/// As [`Setup::plan`].
+pub(crate) fn profile_notches(
     project: &Project,
     op: &ProfileOp,
     tool: &Tool,
     geometry: &ProfileGeometry<'_>,
-    toolpath: &mut Toolpath,
+    blocks: &[CutBlock],
     warnings: &mut Vec<Warning>,
-) -> Result<(), CamError> {
+) -> Result<Vec<CutBlock>, CamError> {
     if op.corner_relief == CornerRelief::None {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if op.side == Side::OnLine {
         warnings.push(skipped(&op.id, op.corner_relief, "on_line"));
-        return Ok(());
+        return Ok(Vec::new());
     }
     let (Some(thickness_mm), Some(depth_mm)) = (project.stock.thickness_mm, op.depth_mm) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let setup = Setup {
         op: &op.id,
@@ -747,10 +910,10 @@ pub(crate) fn profile(
         rates: rates_of(tool)?,
         tolerance_mm: project.flatten_tolerance_mm,
     };
-    if let Some(relief) = setup.plan(warnings)? {
-        relief.append(&profile_sites(op.side, geometry), toolpath, warnings)?;
-    }
-    Ok(())
+    Ok(match setup.plan(warnings)? {
+        Some(relief) => relief.interleave(&profile_sites(op.side, geometry), blocks, warnings),
+        None => Vec::new(),
+    })
 }
 
 /// A [`WarningCode::ReliefSkipped`] for `op`, which asked for `relief`.

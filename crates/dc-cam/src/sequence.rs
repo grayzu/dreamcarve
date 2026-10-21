@@ -58,7 +58,9 @@ const LINK_SAMPLE_STEP_MM: f64 = 0.5;
 
 /// The order the blocks of `input` are cut in, as indices into
 /// `input.blocks` (spec steps 1–3): every unit (one shape at one pass) is
-/// a run of consecutive indices in generator order; units are walked by
+/// a run of consecutive indices in generator order, except that the
+/// blocks that free material come last in it, so nothing of a shape is cut
+/// after its freeing pass (#189); units are walked by
 /// `input.order` with containment precedence and nearest neighbour, ties by
 /// drawing order. [`sequence`] emits exactly this order.
 ///
@@ -107,7 +109,8 @@ pub fn sequence(input: &SequenceInput<'_>) -> Result<Toolpath, CamError> {
     })
 }
 
-/// One shape's blocks at one pass, in generator order.
+/// One shape's blocks at one pass, in generator order with the freeing
+/// blocks last.
 #[derive(Debug)]
 struct Unit {
     /// Indices into `SequenceInput::blocks`.
@@ -179,20 +182,23 @@ impl Shapes {
                     problem: BlockProblem::PassesNotConsecutive { passes },
                 });
             }
+            let frees = |i: usize| input.blocks.get(i).is_some_and(|b| b.frees);
             for pass in passes {
-                let blocks: Vec<usize> = member
+                let mut blocks: Vec<usize> = member
                     .iter()
                     .copied()
                     .filter(|&i| input.blocks.get(i).is_some_and(|b| b.pass == pass))
                     .collect();
+                // #189: nothing of a shape is cut after its freeing pass,
+                // so the unit's freeing blocks go last (stable: generator
+                // order otherwise), after a Profile's relief notches.
+                blocks.sort_by_key(|&i| frees(i));
                 let first = blocks.first().and_then(|&i| input.blocks.get(i));
                 let last = blocks.last().and_then(|&i| input.blocks.get(i));
                 shape.units.push(Unit {
                     start: first.map_or(Point::new(0.0, 0.0), |b| b.descent_from),
                     exit: last.map_or(Point::new(0.0, 0.0), |b| b.exit),
-                    frees: blocks
-                        .iter()
-                        .any(|&i| input.blocks.get(i).is_some_and(|b| b.frees)),
+                    frees: blocks.iter().any(|&i| frees(i)),
                     blocks,
                 });
             }
