@@ -3341,7 +3341,20 @@ open path it never passes an end. None: it stays, with `Warning::TabOnCorner
 over the path's corner intervals, not sampled: the allowed set is the
 path minus each corner window grown by the half-stretch, and the move is
 to its nearest end. A circle of radius `R` turns `D/R` radians per window,
-under 30° for `R > 1.91 D`, so the coaster's tabs never move.
+under 30° for `R > 1.91 D`, so the coaster's tabs never move. (changed in
+#285: in `dc-cam::tabs::corners`. The half gap is to the neighbours'
+positions before any tab moved; the no-overlap rule uses positions as
+placed. A moved tab sits 1e-5 mm past the edge it stops at, so its span
+does not touch the corner or a neighbour's span. On a closed path whose
+length is at most `D`, every position is a corner. It runs inside
+`Request::fit` before the #109 rule, on the kept tabs again when that
+rule re-spaces or drops some, and so in `op_tabs`, which `tabs place`
+uses: a request placed there writes the moved points. `tabs place
+--count` sets `avoid_corners` unless `--allow-corners`. A tab moved on an
+open path keeps its whole stretch within the path's ends. `tab_on_corner`
+carries why the tab stays: `everywhere` when the path is a corner wherever
+a tab could go, `no_room` when the neighbours, another tab or an end are
+in the way.)
 
 **Start** (`dc-cam::profile`, the seam step that #176 and leads use).
 `FirstVertex` and `Near` set each closed outline's seam to the distance
@@ -3352,7 +3365,22 @@ count from it and `count` spaces from it; #176's move is skipped (an
 entry that does not fit falls back ramp → plunge, warned); a lead is
 planned at that one arrival (its radius and sweep ladders still apply)
 or dropped with `LeadDropped (no_room)`. `Auto` is the code path of
-today. Open paths ignore it.
+today. Open paths ignore it. (changed in #285: in
+`dc-cam::profile::start`, after `centre_paths` in both `generate_profile`
+and `op_tabs`. The nearest point is `nearest_point`'s: first along the
+path on a tie, except the middle of an arc centred on the target. The
+allowance twin (#284) is re-seamed nearest the same target before
+`twin_tabs` carries the tabs onto it, and a reversed last pass keeps its
+start. The lead is `lead::plan_lead_in_at_start`. Changed again in #337:
+`contour_block` starts a pass's descent at the previous pass Z or the
+lap's start Z, whichever is higher, so a lap that starts on a tab never
+descends below the tab there, and comes down to its depth past the tab's
+end as it leaves any tab; this held for `auto` with a plunge entry too.
+The safety pass's S9 refuses a straight plunge below a tab's top within
+its span along the bit's path (the outline offset by the radius, and by
+the radius plus a last pass's allowance; over a smooth tab's slope, below
+the slope the last pass cuts), from the placed tabs and the request's
+placement, not the toolpath.)
 
 Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 `tabs::rotated_square_tabs_leave_corners` (acceptance 47),
@@ -3364,7 +3392,10 @@ Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 `profile::at_distances_count_from_explicit_start`,
 `profile::explicit_start_entry_falls_back_not_moves`,
 `profile::explicit_start_lead_dropped_when_no_room`,
-`profile::open_path_ignores_start`, `cli::corners_and_start_rotated_square`.
+`profile::open_path_ignores_start`, `cli::corners_and_start_rotated_square`;
+for #337, `profile::start_under_a_tab_never_plunges_into_it`,
+`safety::s9_refuses_a_descent_into_a_tab` and
+`safety::start_under_a_tab_passes_s9`.
 
 ### Documentation (every item)
 

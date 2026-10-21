@@ -273,6 +273,7 @@ mod tests {
             lead: None,
             corner_relief: CornerRelief::None,
             last_pass: None,
+            start: dc_project::StartAt::Auto,
         }
     }
 

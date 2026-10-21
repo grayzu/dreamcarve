@@ -16,6 +16,9 @@
 
 mod entries;
 mod last_pass;
+mod start;
+#[cfg(test)]
+mod start_tests;
 mod waste;
 
 use crate::block::CutBlock;
@@ -33,7 +36,7 @@ use crate::tabs::{
     coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{OpenPathReason, Warning};
+use crate::warning::{OpenPathReason, TabOnCornerReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
     distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point, nest,
@@ -391,6 +394,9 @@ pub fn generate_profile(
         allowance_mm,
         &mut warnings,
     )?;
+    // #285: an explicit start re-seams each closed path, and its allowance
+    // twin, nearest the start point, before the tabs are laid on it.
+    let (placed, fixed) = start::seat(project, op, placed);
     let walls: Vec<(Wall, usize)> = placed.iter().map(|c| (c.wall, c.region)).collect();
     let holes: Vec<bool> = placed.iter().map(|c| c.hole).collect();
     let mut twins: Vec<Option<Polyline>> = Vec::with_capacity(placed.len());
@@ -408,6 +414,7 @@ pub fn generate_profile(
         reductions,
         tops_z_mm,
         on_holes,
+        on_corners_mm,
         ..
     } = plan_tabs(
         project,
@@ -431,6 +438,18 @@ pub fn generate_profile(
             shape,
         });
     }
+    // #285: a requested tab with nowhere off its corner is cut there.
+    for ((_, shape), on) in paths.iter().zip(&on_corners_mm) {
+        warnings.extend(
+            on.iter()
+                .map(|&(distance_mm, reason)| Warning::TabOnCorner {
+                    op: op.id.clone(),
+                    shape: (*shape).clone(),
+                    distance_mm,
+                    reason,
+                }),
+        );
+    }
     // #284: the part's `n` paths, then each one's allowance twin, which
     // the passes before the last cut; `twin_of` finds it. A twin's tabs
     // are its part path's, carried onto it and widened by the allowance;
@@ -442,6 +461,7 @@ pub fn generate_profile(
     let mut allowances: Vec<f64> = vec![0.0; n];
     let mut reversed: Vec<bool> = vec![false; n];
     let mut twin_of: Vec<Option<usize>> = vec![None; n];
+    let mut fixed = fixed;
     if let Some(allowance_mm) = allowance_mm {
         // The last pass's floor, where the tabs it leaves stand from.
         let floor_z_mm = pass_z.last().copied().unwrap_or(0.0);
@@ -466,6 +486,8 @@ pub fn generate_profile(
             layouts.push(carried);
             allowances.push(allowance_mm);
             reversed.push(false);
+            let own = fixed.get(i).copied().unwrap_or(false);
+            fixed.push(own);
         }
     }
     if reverse_last {
@@ -544,6 +566,7 @@ pub fn generate_profile(
                 tolerance_mm: project.flatten_tolerance_mm,
                 any_above_tabs: pass_z.iter().any(|z| !below_tabs(*z)),
                 any_below_tabs: pass_z.iter().any(|z| below_tabs(*z)),
+                fixed: &fixed,
             },
             &mut lead_warnings,
         )?,
@@ -551,9 +574,14 @@ pub fn generate_profile(
     };
     // #176: a path whose entry has no room at its start for the tabs
     // starts where it has, on every pass; its tabs stay put. A path with a
-    // lead keeps the lead's seam. The domains are the same either way.
-    let led: Vec<bool> = leads.iter().map(Option::is_some).collect();
-    let seams = tab_seams(&setup, &domains, &led);
+    // lead keeps the lead's seam, and one with an explicit start its start
+    // (#285). The domains are the same either way.
+    let kept: Vec<bool> = leads
+        .iter()
+        .zip(&fixed)
+        .map(|(lead, fixed)| lead.is_some() || *fixed)
+        .collect();
+    let seams = tab_seams(&setup, &domains, &kept);
     let (paths, layouts): (Vec<(Polyline, &ShapeRef)>, Vec<PathLayout>) = paths
         .iter()
         .zip(&layouts)
@@ -659,7 +687,9 @@ pub fn generate_profile(
                 };
                 if on_tab {
                     // The start sits under a tab span: the lap starts on
-                    // the tab, and the block plunges onto it, as phase 1.
+                    // the tab, and the block comes down onto it, never
+                    // into it (#337); only the first pass that reaches the
+                    // tab top there plunges, warned.
                     if block.descent_from_z_mm - lap_start_z_mm > EPS_MM {
                         entry_warnings.record(
                             shape,
@@ -1056,6 +1086,9 @@ pub(crate) struct TabPlan {
     pub requested: Vec<Vec<TabCut>>,
     /// Per path, what the request asked and cut when it cut some down.
     pub request_reductions: Vec<Option<(Reduced, Vec<f64>)>>,
+    /// Per path, where each tab the request leaves on a corner is
+    /// centred, mm along it as tabs are measured on it, and why (#285).
+    pub on_corners_mm: Vec<Vec<(f64, TabOnCornerReason)>>,
 }
 
 /// Plans the tabs of `op` on `paths` (each with the shape it cuts; `holes`
@@ -1098,10 +1131,12 @@ fn plan_tabs(
     );
     let mut requested = Vec::with_capacity(paths.len());
     let mut reductions = Vec::with_capacity(paths.len());
+    let mut on_corners = Vec::with_capacity(paths.len());
     for ((path, _), &hole) in paths.iter().zip(holes) {
         let Some(request) = request.filter(|r| !hole || r.on_holes()) else {
             requested.push(Vec::new());
             reductions.push(None);
+            on_corners.push(Vec::new());
             continue;
         };
         // #109: a part keeps a tab; a hole or an open path may not.
@@ -1110,9 +1145,10 @@ fn plan_tabs(
         } else {
             Least::One
         };
-        let (cuts, reduced) = request.fit(&fitter, path.length_mm(), ends_of(path), least);
-        requested.push(cuts);
-        reductions.push(reduced.map(|r| (r, vec![request.width_mm(); r.asked])));
+        let fit = request.fit(&fitter, path, ends_of(path), least);
+        requested.push(fit.cuts);
+        reductions.push(fit.reduced.map(|r| (r, vec![request.width_mm(); r.asked])));
+        on_corners.push(fit.on_corners_mm);
     }
     let request_reductions = reductions.clone();
 
@@ -1230,6 +1266,7 @@ fn plan_tabs(
         crossed,
         requested,
         request_reductions,
+        on_corners_mm: on_corners,
     })
 }
 
@@ -1293,6 +1330,8 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
         None,
         &mut ignored,
     )?;
+    // #285: tabs a request lays count from the start point.
+    let (centres, _) = start::seat(project, op, centres);
     let holes: Vec<bool> = centres.iter().map(|c| c.hole).collect();
     let paths: Vec<(Polyline, &ShapeRef)> =
         centres.into_iter().map(|c| (c.path, c.shape)).collect();
@@ -1636,7 +1675,9 @@ fn check_open_bands(
 /// The block that cuts one lap of a tool-centre contour at pass `pass`:
 /// a straight plunge to `start` (into the lap's start Z, which a tab span
 /// over the path start raises above `z_mm`), then the lap. The descent
-/// starts at safe Z on the first pass and at the previous pass Z after.
+/// starts at safe Z on the first pass and after it at the previous pass Z
+/// or the lap's start Z, whichever is higher (#337: on a tab, never below
+/// its height).
 /// It frees material on the final pass when that reaches the stock bottom.
 #[allow(
     clippy::too_many_arguments,
@@ -1661,10 +1702,15 @@ fn contour_block(
         Vec::new()
     };
     let exit = lap.moves.last().map_or(start, |m| m.to.xy());
+    // #337: a lap that starts on a tab starts at the tab's height. The
+    // pass before left the tab there, and a lap that also started on it
+    // ended there, so the descent never goes below that height at the
+    // start: it would plunge into the tab. The lap comes down off the tab
+    // at the tab's end, as every lap does.
     let descent_from_z_mm = pass
         .checked_sub(1)
         .and_then(|k| pass_z.get(k).copied())
-        .unwrap_or(safe_z_mm);
+        .map_or(safe_z_mm, |above| above.max(lap.start_z_mm));
     CutBlock {
         shape: shape.clone(),
         pass,
@@ -1703,9 +1749,14 @@ struct LeadSetup<'a, 'b> {
     tolerance_mm: f64,
     any_above_tabs: bool,
     any_below_tabs: bool,
+    /// The paths whose start is set (#285): a lead arrives there or not
+    /// at all.
+    fixed: &'a [bool],
 }
 
 /// Each path's lead, in order, or `None` where none fits (or On line).
+/// A path with an explicit start (#285) is led in only at its start,
+/// with the radius and sweep ladders as elsewhere.
 /// A lead that fits the domain less the tabs fits the whole domain, since
 /// one holds the other, so it is planned there first and then serves
 /// every pass; failing that, a lead in the whole domain serves the passes
@@ -1725,9 +1776,15 @@ fn plan_leads(
             continue;
         };
         let d = setup.diameter_mm;
+        let at_start = setup.fixed.get(i).copied().unwrap_or(false);
         let plan_in = |space: &Space| {
             let leads = DomainSpace::new(&space.domain, d, setup.tolerance_mm);
-            lead::plan_lead_in(path, setup.lead, d, &leads, from).map(|lead_in| {
+            let lead_in = if at_start {
+                lead::plan_lead_in_at_start(path, setup.lead, d, &leads)
+            } else {
+                lead::plan_lead_in(path, setup.lead, d, &leads, from)
+            };
+            lead_in.map(|lead_in| {
                 let lead_out = lead::plan_lead_out(&lead_in.seam, setup.lead, d, &leads);
                 (lead_in, lead_out)
             })
@@ -2220,6 +2277,7 @@ mod tests {
             lead: None,
             corner_relief: CornerRelief::None,
             last_pass: None,
+            start: dc_project::StartAt::Auto,
         }
     }
 
@@ -3334,6 +3392,7 @@ mod tests {
             height_mm: 3.0,
             shape: TabShape::Rect,
             on_holes: false,
+            avoid_corners: false,
         });
         let (_, warnings) = generate(&p, &op);
         let covered: Vec<(usize, &str)> = warnings
@@ -3429,6 +3488,7 @@ mod tests {
                 height_mm: 3.0,
                 shape: TabShape::Smooth,
                 on_holes: false,
+                avoid_corners: false,
             }),
             ..profile_op(&p, Side::Outside, CutDirection::Climb)
         };
@@ -3608,6 +3668,7 @@ mod tests {
             height_mm: TAB_TOP_MM,
             shape,
             on_holes: false,
+            avoid_corners: false,
         }
     }
 
@@ -5332,6 +5393,7 @@ mod tests {
                         height_mm: TOP_MM,
                         shape,
                         on_holes: false,
+                        avoid_corners: false,
                     }),
                     last_pass: Some(LastPass {
                         thickness_mm,
@@ -5596,6 +5658,7 @@ mod tests {
                         height_mm: 6.0,
                         shape,
                         on_holes: false,
+                        avoid_corners: false,
                     }),
                     ..last_pass_op(&p, side)
                 };

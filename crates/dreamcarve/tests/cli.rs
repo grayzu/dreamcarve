@@ -29,8 +29,8 @@ use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
     CornerRelief, DefinitionId, DrillCycle, EngraveOp, Entry, FeatureDefinition, FeatureInstance,
     InstanceId, Lead, Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp,
-    Project, Side, SpindleControl, TabPlacement, TabShape, TabSpec, ToolChangeMode, ToolId,
-    ToolKind, load, save,
+    Project, Side, SpindleControl, StartAt, TabPlacement, TabShape, TabSpec, ToolChangeMode,
+    ToolId, ToolKind, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -142,6 +142,8 @@ fn init_tab_request() -> TabSpec {
         height_mm: 3.0,
         shape: TabShape::Rect,
         on_holes: false,
+        // #285: off corners.
+        avoid_corners: true,
     }
 }
 
@@ -7877,4 +7879,227 @@ fn version_11_projects_export_byte_identical_programs() {
         assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
         assert_corpus_programs(&dir, &name, "version 12");
     }
+}
+
+// ── #285: tabs off corners, and the start point ──
+
+/// #285 (`migrate::v13_to_v14_adds_corner_and_start_defaults`): every
+/// project of the #284 corpus saved at format 13 (the 22 projects of
+/// `tests/fixtures/last-pass-migration/` with `last_pass: null` added)
+/// migrates to format 14 with `avoid_corners: false` on every tab request
+/// and `start: "auto"` on every Profile, and exports byte for byte the
+/// programs the build before #285 wrote. Those are the #284 corpus's
+/// programs, committed under `tests/expected/last-pass-migration/`: the
+/// build before #285 exported the format 13 files to the same bytes.
+#[test]
+fn version_13_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_13_projects_export_byte_identical_programs");
+    let corpus =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corners-start-migration");
+    let expected_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/last-pass-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&corpus)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 22, "{names:?}");
+    let mut requests = 0;
+    for (name, path) in names {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 13"),
+            "{name} is a version 13 file"
+        );
+        assert!(!text.contains("avoid_corners"), "{name}");
+        assert!(!text.contains("\"start\""), "{name}");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        for op in &project.operations {
+            if let Operation::Profile(p) = op {
+                assert_eq!(p.start, StartAt::Auto, "{name}: {}", p.id);
+                if let Some(tabs) = &p.tabs {
+                    assert!(!tabs.avoid_corners, "{name}: {}", p.id);
+                    requests += 1;
+                }
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let programs = exported_programs(&dir, &name);
+        assert!(!programs.is_empty(), "{name} exported nothing");
+        for (program, text) in programs {
+            let expected = std::fs::read_to_string(expected_dir.join(&program))
+                .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{name}: {program} differs from the program before #285:\n{text}"
+            );
+        }
+    }
+    assert!(requests > 10, "the corpus holds tab requests: {requests}");
+}
+
+/// The cutting moves of `program` held at `z_mm` while they move in XY.
+fn held_at(program: &str, z_mm: f64) -> Vec<MachineMove> {
+    dc_gcode::parse_motion(program)
+        .expect("program parses")
+        .into_iter()
+        .filter(|m| {
+            m.kind.is_cut()
+                && m.from.z.is_some_and(|z| (z - z_mm).abs() <= 1e-3)
+                && m.to.z.is_some_and(|z| (z - z_mm).abs() <= 1e-3)
+                && (m.from.x != m.to.x || m.from.y != m.to.y)
+        })
+        .collect()
+}
+
+/// Whether `m` is an arc, `G2` or `G3`.
+fn is_arc(m: &MachineMove) -> bool {
+    !matches!(
+        m.kind,
+        dc_gcode::parse::MotionKind::Linear | dc_gcode::parse::MotionKind::Rapid
+    )
+}
+
+/// #285, acceptance 47 from the CLI: `init` writes `avoid_corners: true`
+/// and `start: "auto"`, and the coaster's program is byte-identical with
+/// `avoid_corners` on and off. The coaster redrawn as a 50 mm square
+/// rotated 45°, cut outside with init's four tabs and `start: {near:
+/// {x_mm: 0, y_mm: 0}}`, checks with no error and exports, so the full
+/// safety pass (S1–S16) accepted it: every move held at the tab top is
+/// straight, on a side, where without `avoid_corners` the tabs sit on the
+/// arcs round the corners; and the first pass reaches its depth at the
+/// path's point nearest the origin. `tabs place --count` places tabs off
+/// the corners too, and `--allow-corners` places them as before.
+#[test]
+fn corners_and_start_rotated_square() {
+    let dir = work_dir("corners_and_start_rotated_square");
+    let dcv = init_coaster(&dir);
+    let project = load_file(&dcv).project;
+    let op = as_profile(&project.operations[0]);
+    assert_eq!(op.start, StartAt::Auto);
+    assert!(op.tabs.as_ref().expect("init's request").avoid_corners);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+
+    let export = |name: &str| {
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        std::fs::read_to_string(dir.join("coaster.nc")).expect("program")
+    };
+    let edit = |f: &dyn Fn(&mut Project)| {
+        let mut project = load_file(&dcv).project;
+        f(&mut project);
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    };
+    let set_avoid = |avoid: bool| {
+        edit(&|p: &mut Project| {
+            for op in p.operations.iter_mut().map(as_profile_mut) {
+                if let Some(tabs) = &mut op.tabs {
+                    tabs.avoid_corners = avoid;
+                }
+            }
+        });
+    };
+    let on = export("coaster on");
+    set_avoid(false);
+    let off = export("coaster off");
+    assert!(on == off, "the coaster's tabs never move");
+
+    edit(&|p: &mut Project| {
+        for def in p.definitions.values_mut() {
+            def.profiles = vec![Polyline::rect(Point::new(-25.0, -25.0), 50.0, 50.0)];
+        }
+        for instance in &mut p.instances {
+            instance.transform = Transform::rotate(std::f64::consts::FRAC_PI_4)
+                .then(Transform::translate(50.0, 50.0));
+        }
+        for op in p.operations.iter_mut().map(as_profile_mut) {
+            op.start = StartAt::Near {
+                x_mm: 0.0,
+                y_mm: 0.0,
+            };
+        }
+    });
+    let tab_z_mm = 3.0 - MEASURED_THICKNESS_MM;
+    let off = export("square off");
+    assert!(
+        held_at(&off, tab_z_mm).iter().any(is_arc),
+        "without avoid_corners the tabs sit on the corners:\n{off}"
+    );
+    set_avoid(true);
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(" 0 error(s)"), "{report}");
+    assert!(!report.contains("tab_on_corner"), "{report}");
+    let on = export("square on");
+    let held = held_at(&on, tab_z_mm);
+    assert!(!held.is_empty(), "{on}");
+    for m in &held {
+        assert!(!is_arc(m), "line {}: a tab on a corner:\n{on}", m.line);
+    }
+    // The cut starts at the middle of the side nearest the origin, a
+    // tool radius out: the first pass's ramp ends there.
+    let off_side =
+        25.0 * std::f64::consts::SQRT_2 / 2.0 + 6.35 / 2.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let start = Point::new(50.0 - off_side, 50.0 - off_side);
+    let moves = dc_gcode::parse_motion(&on).expect("program parses");
+    let first_depth = -STEP_DOWN_MM;
+    let xy = |m: &MachineMove| Point::new(m.to.x.expect("X"), m.to.y.expect("Y"));
+    let at_depth = |m: &MachineMove| m.to.z.is_some_and(|z| (z - first_depth).abs() <= 1e-3);
+    let reached = moves
+        .iter()
+        .position(|m| m.kind.is_cut() && at_depth(m))
+        .expect("the first pass is cut");
+    let arrived = moves
+        .iter()
+        .skip(reached)
+        .position(|m| m.kind.is_cut() && at_depth(m) && xy(m).distance_to(start) <= 2e-3)
+        .expect("the first pass's ramp ends at the start");
+    // Between the two, the ramp stays beside the start.
+    for m in moves.iter().skip(reached).take(arrived + 1) {
+        assert!(xy(m).distance_to(start) <= 3.0 * 6.35, "line {}", m.line);
+    }
+
+    // `tabs place --count` keeps the tabs off the corners; with
+    // `--allow-corners` it places them as before.
+    edit(&|p: &mut Project| {
+        for op in p.operations.iter_mut().map(as_profile_mut) {
+            op.tabs = None;
+        }
+    });
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let placed = export("placed");
+    assert!(!held_at(&placed, tab_z_mm).is_empty());
+    assert!(!held_at(&placed, tab_z_mm).iter().any(is_arc), "{placed}");
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "4",
+            "--replace",
+            "--allow-corners",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let allowed = export("allowed");
+    assert!(held_at(&allowed, tab_z_mm).iter().any(is_arc), "{allowed}");
+    assert!(allowed == off, "placed as the request laid them");
 }

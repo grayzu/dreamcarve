@@ -48,7 +48,7 @@ use dc_project::{
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
 use crate::emit::{changes_tools_in_program, code_words, controller_sets_units};
-use crate::material::{self, Material};
+use crate::material::{self, Material, TabSpine};
 use crate::parse::{
     Block, CycleModel, MachineMove, MachinePosition, MotionKind, Word, is_code, parse_program_with,
 };
@@ -69,6 +69,9 @@ pub(crate) struct OpSpan<'a> {
     pub toolpath: &'a Toolpath,
     /// The material it may cut, from the project (S9).
     pub material: &'a Material,
+    /// The middles of the tabs it must leave standing, from the project
+    /// (S9, #337).
+    pub tabs: &'a [TabSpine],
     /// 1-based program lines, end exclusive, from the operation's first
     /// motion line to its last.
     pub lines: Range<usize>,
@@ -2316,6 +2319,7 @@ mod tests {
             tool: &tool,
             toolpath: &toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: 1..lines,
         }];
         check_rules(
@@ -2473,6 +2477,7 @@ mod tests {
                 tool: &tool,
                 toolpath: &toolpath,
                 material: &Material::Unchecked,
+                tabs: &[],
                 lines: 1..10,
             },
             OpSpan {
@@ -2480,6 +2485,7 @@ mod tests {
                 tool: &tool,
                 toolpath: &toolpath,
                 material: &Material::Unchecked,
+                tabs: &[],
                 lines: 10..text.lines().count() + 1,
             },
         ];
@@ -3439,6 +3445,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -3469,6 +3476,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -3735,6 +3743,7 @@ mod tests {
                     tool: &tool,
                     toolpath: &a,
                     material: &Material::Unchecked,
+                    tabs: &[],
                     lines: 6..10,
                 },
                 OpSpan {
@@ -3742,6 +3751,7 @@ mod tests {
                     tool: &tool,
                     toolpath: &b,
                     material: &Material::Unchecked,
+                    tabs: &[],
                     lines: 10..text.lines().count() + 1,
                 },
             ];
@@ -4103,6 +4113,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -4287,6 +4298,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -4949,12 +4961,14 @@ mod tests {
         let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
         let tool = project.tools[0].clone();
         let material = Material::of(project, op);
+        let tabs = material::tab_spines(project, op);
         let toolpath = Toolpath::default();
         let span = OpSpan {
             op,
             tool: &tool,
             toolpath: &toolpath,
             material: &material,
+            tabs: &tabs,
             lines: 1..text.lines().count() + 1,
         };
         let tolerances = Tolerances {
@@ -5056,6 +5070,63 @@ mod tests {
     /// The sample project's outside Profile (#177).
     fn sample_profile_op() -> Operation {
         sample_project().operations[0].clone()
+    }
+
+    /// #337: S9 refuses a straight plunge into a tab below its top. The
+    /// sample rectangle (X 10 to 60, Y 10 to 40) cut outside with a placed
+    /// 6 mm tab in the middle of its bottom edge, its top 2 mm above the
+    /// stock bottom (program Z -4). Plunging to Z -5 on the bit's path
+    /// (Y 6.825) at the tab's centre, or 2 mm along from it, is refused at
+    /// the plunge; the same plunge to Z -3.5, above the tab, passes, and so
+    /// does one past the tab's stretch, where a rect tab steps down, and
+    /// one far from it. A plunge at the centre of a tab a request places
+    /// is refused too.
+    #[test]
+    fn s9_refuses_a_descent_into_a_tab() {
+        let mut project = sample_project();
+        dc_project::test_support::profile_mut(&mut project).tabs = None;
+        project.tabs = vec![dc_project::PlacedTab {
+            height_mm: 2.0,
+            ..dc_project::test_support::sample_tab("tab1", 25.0, 0.0)
+        }];
+        let op = sample_profile_op_of(&project);
+        let program = |x: f64, y: f64, z: f64| {
+            format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG1 Z{z} F300\nG0 Z5\n")
+        };
+        for (x, z) in [(50.0, -5.0), (35.0, -3.5), (41.175, -5.0)] {
+            check_material_text(&program(x, 6.825, z), &project, &op)
+                .unwrap_or_else(|e| panic!("X{x} Z{z}: {e:?}"));
+        }
+        for x in [35.0, 37.0] {
+            let err = check_material_text(&program(x, 6.825, -5.0), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+                "X{x}: {err:?}"
+            );
+        }
+
+        // The sample's own request, four 6 × 2 mm tabs: plunge at one.
+        let mut project = sample_project();
+        let op = sample_profile_op_of(&project);
+        let spec = dc_project::test_support::profile_mut(&mut project)
+            .tabs
+            .clone()
+            .unwrap();
+        let placed = dc_cam::placed_tabs::place(&project, op.id(), &spec).unwrap();
+        let tab = &placed.tabs[0];
+        let at = project.instances[0]
+            .transform
+            .apply(Point::new(tab.x_mm, tab.y_mm));
+        let err = check_material_text(&program(at.x, at.y, -5.5), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The Profile of `project`.
+    fn sample_profile_op_of(project: &Project) -> Operation {
+        project.operations[0].clone()
     }
 
     /// S9 for Profile (#177): the sample's outside Profile of the
@@ -5763,6 +5834,41 @@ mod tests {
             "2026-10-21",
         )
         .map(|(p, _)| p.text)
+    }
+
+    /// #337: the sample's Profile starting under a 3 mm tall tab (its cut
+    /// starts nearest (35, 0), mid-way along the bottom edge, where a tab
+    /// at 0 mm sits) exports with every entry and both tab shapes: the
+    /// passes below the tab top come down onto it, not into it, which
+    /// S9's tab rule would refuse.
+    #[test]
+    fn start_under_a_tab_passes_s9() {
+        for entry in [
+            dc_project::Entry::Plunge,
+            dc_project::Entry::Ramp { angle_deg: 15.0 },
+            dc_project::Entry::Helix {
+                diameter_fraction: 0.8,
+                angle_deg: 5.0,
+            },
+        ] {
+            for shape in [dc_project::TabShape::Rect, dc_project::TabShape::Smooth] {
+                emit_profile(|op| {
+                    op.entry = entry.clone();
+                    op.start = dc_project::StartAt::Near {
+                        x_mm: 35.0,
+                        y_mm: 0.0,
+                    };
+                    if let Some(tabs) = &mut op.tabs {
+                        tabs.placement = dc_project::TabPlacement::AtDistances {
+                            distances_mm: vec![0.0],
+                        };
+                        tabs.height_mm = 3.0;
+                        tabs.shape = shape;
+                    }
+                })
+                .unwrap_or_else(|e| panic!("{entry:?} {shape:?}: {e}"));
+            }
+        }
     }
 
     /// S9 for Profile (#177) on generated programs: the sample's tabbed
@@ -6541,6 +6647,7 @@ mod tests {
             tool: &tool,
             toolpath: &toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: op_lines,
         }];
         check_rules(

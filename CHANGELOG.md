@@ -189,6 +189,22 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
   DreamCarve versions cannot read version 13 files.
+- **Tabs off corners and the Profile start point; project format version
+  14.** A tab request's `avoid_corners` slides each tab that sits where the
+  bit's path turns 30° or more within one bit diameter to the nearest place
+  off it, at most half way to the next tab and never onto it; one with
+  nowhere to go stays and warns `tab_on_corner`, so no tab is lost
+  ([#285]). `tabs place --count` does the same unless `--allow-corners`.
+  A circle more than about 1.91 bit diameters in radius has no corner, so
+  the coaster cuts as before. A Profile's `start` (`"auto"`,
+  `"first_vertex"`, or `{ "near": { "x_mm", "y_mm" } }`, VCarve's "Use
+  vector start point" and "Start At") starts each closed outline's cut at
+  its bit path's point nearest the drawn first vertex or that point: a
+  request's tabs count from there, a lead arrives there or is dropped, and
+  an entry with no room there falls back instead of moving. `init` writes
+  `avoid_corners: true` and `start: "auto"`; upgraded projects get
+  `false` and `"auto"`, and cut exactly as before. Older DreamCarve
+  versions cannot read version 14 files.
 - **Post-processor end-to-end plan and motion check.** `docs/testing/post-processor-e2e.md`
   says, for LinuxCNC, Mach3, UCCNC and generic, what is checked automatically,
   what cannot be and why, and the manual and air-cut procedures for the rest.
@@ -342,6 +358,13 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
 
 ### Fixed
 
+- A Profile whose cut starts under a tab no longer plunges into the tab on
+  later passes. The move between passes came down to the previous pass's
+  depth at the start, inside the tab, leaving it up to one step-down
+  thinner, or more with a last pass. It happened with `start: auto` and a
+  plunge entry, and with an explicit start with every entry. Each pass now starts on the tab at its height and gets
+  down past the tab's end, and the safety pass's S9 refuses a plunge into a
+  tab ([#337]).
 - The CLI no longer panics when its output pipe closes, as in
   `dreamcarve check part.dcv | head`; it finishes its work and exits with its
   own status ([#216]).
@@ -481,7 +504,9 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#284]: https://github.com/grayzu/dreamcarve/issues/284
+[#285]: https://github.com/grayzu/dreamcarve/issues/285
 [#324]: https://github.com/grayzu/dreamcarve/issues/324
+[#337]: https://github.com/grayzu/dreamcarve/issues/337
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306

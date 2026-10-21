@@ -69,6 +69,10 @@
 //! - **13**: adds each Profile's last pass allowance, `last_pass: null`
 //!   after `corner_relief` (#284): every pass cuts on the part's path, as
 //!   before.
+//! - **14**: adds `avoid_corners: false` at the end of each Profile's
+//!   non-null `tabs` request and `start: "auto"` after its `last_pass`
+//!   (#285): tabs stay where they were laid and each cut starts where it
+//!   did, so the file exports what it did.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -79,7 +83,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 13;
+pub const CURRENT_VERSION: u32 = 14;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -101,6 +105,7 @@ fn step(from: u32) -> Option<Step> {
         10 => Some(v10_to_v11),
         11 => Some(v11_to_v12),
         12 => Some(v12_to_v13),
+        13 => Some(v13_to_v14),
         _ => None,
     }
 }
@@ -577,6 +582,55 @@ fn v12_to_v13(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
     Ok(root)
 }
 
+/// Version 13 → 14 (#285): `avoid_corners: false` at the end of each
+/// Profile's non-null `tabs` request, so its tabs are laid where they
+/// were, and `start: "auto"` right after its `last_pass`, so each cut
+/// starts where it did. Other operations are unchanged. Fails if a Profile
+/// already has either key: that is not a version 13 file.
+fn v13_to_v14(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("start") {
+            return Err(format!(
+                "a version 13 file has no `operations[{i}].start`, but this one does"
+            ));
+        }
+        let mut out = Map::with_capacity(fields.len() + 1);
+        let mut inserted = false;
+        for (key, mut value) in fields {
+            if key == "tabs"
+                && let Value::Object(tabs) = &mut value
+            {
+                if tabs.contains_key("avoid_corners") {
+                    return Err(format!(
+                        "a version 13 file has no `operations[{i}].tabs.avoid_corners`, but this one does"
+                    ));
+                }
+                tabs.insert("avoid_corners".into(), Value::Bool(false));
+            }
+            let after_this = key == "last_pass";
+            out.insert(key, value);
+            if after_this {
+                out.insert("start".into(), Value::from("auto"));
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("start".into(), Value::from("auto"));
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
 /// `map` with `key: value` inserted right after `after`, or at the end
 /// when `after` is absent. Fails if `key` is already there, naming it
 /// under `at` (a path prefix such as `tools[0].`).
@@ -737,6 +791,14 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 14 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                op.as_object_mut().unwrap().shift_remove("start");
+                if let Some(tabs) = op["tabs"].as_object_mut() {
+                    tabs.shift_remove("avoid_corners");
+                }
+            }
+        }
         if version < 13 {
             for op in root["operations"].as_array_mut().unwrap() {
                 op.as_object_mut().unwrap().shift_remove("last_pass");
@@ -1376,9 +1438,11 @@ mod tests {
     #[test]
     fn v10_project_gains_an_empty_tab_list() {
         let root: Value = serde_json::from_slice(V10_FIXTURE).unwrap();
-        let tabs_before = root["operations"][0]["tabs"].clone();
+        let mut tabs_before = root["operations"][0]["tabs"].clone();
         let migrated = migrate(root, 10).unwrap();
         assert_eq!(migrated["tabs"], json!([]));
+        // Version 14 (#285) adds `avoid_corners: false` to the request.
+        tabs_before["avoid_corners"] = json!(false);
         assert_eq!(migrated["operations"][0]["tabs"], tabs_before);
         let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
         let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
@@ -1519,7 +1583,8 @@ mod tests {
             let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
             let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
             assert_eq!(at("last_pass"), at("corner_relief") + 1, "{keys:?}");
-            assert_eq!(keys.len(), at("last_pass") + 1, "{keys:?}");
+            // Version 14 (#285) adds `start` after it.
+            assert_eq!(keys.len(), at("last_pass") + 2, "{keys:?}");
         }
         assert_eq!(operations[2], pocket, "a Pocket has no last pass");
 
@@ -1595,6 +1660,136 @@ mod tests {
             "{text}"
         );
         assert_eq!(load(text.as_bytes()).unwrap().project, p);
+    }
+
+    // Version 13 → 14 (#285): tabs off corners, and the start point.
+
+    const V13_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v13/sample.dcv");
+
+    #[test]
+    fn version_13_fixture_loads() {
+        let loaded = load(V13_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #285: every Profile of a version 13 file gains `start: "auto"`
+    /// right after `last_pass`, and its tab request, when it has one,
+    /// `avoid_corners: false` at its end, so its tabs are laid and its
+    /// cuts start where they were; a Profile without a request and other
+    /// operations are otherwise unchanged. The fixture then loads as the
+    /// sample, whose program `dreamcarve`'s migration corpus test holds
+    /// byte for byte.
+    #[test]
+    fn v13_to_v14_adds_corner_and_start_defaults() {
+        let mut root: Value = serde_json::from_slice(V13_FIXTURE).unwrap();
+        let profile = root["operations"][0].clone();
+        let mut untabbed = profile.clone();
+        untabbed["id"] = json!("o2");
+        untabbed["tabs"] = Value::Null;
+        let pocket = serde_json::to_value(crate::Operation::Pocket(
+            crate::test_support::sample_pocket(),
+        ))
+        .unwrap();
+        let operations = root["operations"].as_array_mut().unwrap();
+        operations.push(untabbed);
+        operations.push(pocket.clone());
+        let migrated = migrate(root, 13).unwrap();
+        let operations = migrated["operations"].as_array().unwrap();
+        for op in operations.iter().take(2) {
+            assert_eq!(op["start"], json!("auto"), "{op}");
+            let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
+            let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+            assert_eq!(at("start"), at("last_pass") + 1, "{keys:?}");
+            assert_eq!(keys.len(), at("start") + 1, "{keys:?}");
+        }
+        let tabs = operations[0]["tabs"].as_object().unwrap();
+        assert_eq!(tabs["avoid_corners"], json!(false));
+        assert_eq!(
+            tabs.keys().next_back().map(String::as_str),
+            Some("avoid_corners")
+        );
+        assert_eq!(operations[1]["tabs"], Value::Null, "no request, no key");
+        assert_eq!(operations[2], pocket, "a Pocket has neither");
+
+        let migrated = migrate(sample_root_at(13), 13).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
+            "key order"
+        );
+        let mut loaded = load(V13_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        let op = crate::test_support::profile_mut(&mut loaded.project);
+        assert_eq!(op.start, crate::StartAt::Auto);
+        assert!(!op.tabs.as_ref().unwrap().avoid_corners);
+    }
+
+    #[test]
+    fn v13_with_start_already_present_fails() {
+        let mut root = sample_root_at(13);
+        root["operations"][0]["start"] = json!("auto");
+        let err = migrate(root, 13).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 13, to: 14, message, .. }
+                if message.contains("start")),
+            "{err:?}"
+        );
+        let mut root = sample_root_at(13);
+        root["operations"][0]["tabs"]["avoid_corners"] = json!(true);
+        let err = migrate(root, 13).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 13, to: 14, message, .. }
+                if message.contains("tabs.avoid_corners")),
+            "{err:?}"
+        );
+    }
+
+    /// #285: each start saves as the spec writes it and loads back; a
+    /// `near` point takes inch input as every length does.
+    #[test]
+    fn start_round_trips() {
+        for (start, text) in [
+            (crate::StartAt::Auto, "\"start\": \"auto\""),
+            (crate::StartAt::FirstVertex, "\"start\": \"first_vertex\""),
+            (
+                crate::StartAt::Near {
+                    x_mm: 0.0,
+                    y_mm: 12.5,
+                },
+                "\"start\": {\n        \"near\": {\n          \"x_mm\": 0.0,\n          \"y_mm\": 12.5\n        }\n      }",
+            ),
+        ] {
+            let mut p = sample_project();
+            let op = crate::test_support::profile_mut(&mut p);
+            op.start = start;
+            op.tabs.as_mut().unwrap().avoid_corners = true;
+            let saved = save(&p).unwrap();
+            assert!(saved.contains(text), "{saved}");
+            assert!(saved.contains("\"avoid_corners\": true"), "{saved}");
+            assert_eq!(load(saved.as_bytes()).unwrap().project, p);
+        }
+        let inches = String::from_utf8(V13_FIXTURE.to_vec())
+            .unwrap()
+            .replace("\"version\": 13", "\"version\": 14")
+            .replace(
+                "\"last_pass\": null",
+                "\"last_pass\": null,\n      \"start\": { \"near\": { \"x_mm\": \"1 in\", \"y_mm\": 2 } }",
+            )
+            .replace(
+                "\"on_holes\": true",
+                "\"on_holes\": true,\n        \"avoid_corners\": true",
+            );
+        let mut loaded = load(inches.as_bytes()).unwrap();
+        assert_eq!(
+            crate::test_support::profile_mut(&mut loaded.project).start,
+            crate::StartAt::Near {
+                x_mm: 25.4,
+                y_mm: 2.0
+            }
+        );
     }
 
     /// #283: the version 11 fixture loads as the sample project, whose
