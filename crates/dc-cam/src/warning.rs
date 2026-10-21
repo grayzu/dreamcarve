@@ -52,6 +52,19 @@ pub enum WarningCode {
     /// `needed_mm` (the gap this side needs: the diameter for Outside, the
     /// radius for On line). The shapes are cut as drawn.
     ToolpathsOverlap,
+    /// A closed target of this operation lies inside an outline an earlier
+    /// operation cuts free of the stock, so the cut would run in a loose
+    /// part (`docs/specs/phase-2/design.md`, "Operation-order warnings";
+    /// research O8). Params: `op`, `earlier_op`, `instance`,
+    /// `instance_name`, `profile` (the shape this operation cuts),
+    /// `freed_instance`, `freed_instance_name`, `freed_profile` (the
+    /// outline the earlier operation frees).
+    CutInsideFreedPart,
+    /// A tool is used by operations that do not run one after another, so
+    /// it is fitted more than once. Operations are never reordered (D7);
+    /// this is a hint. Params: `tool`, `tool_name`, `ops` (the ids of
+    /// every enabled operation using the tool, comma separated, in order).
+    ToolChangeAvoidable,
 }
 
 impl WarningCode {
@@ -66,6 +79,8 @@ impl WarningCode {
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
             Self::ToolpathsOverlap => "toolpaths_overlap",
+            Self::CutInsideFreedPart => "cut_inside_freed_part",
+            Self::ToolChangeAvoidable => "tool_change_avoidable",
         }
     }
 }
@@ -248,6 +263,23 @@ impl fmt::Display for Warning {
                 self.text("tool"),
                 self.mm("diameter_mm"),
                 self.mm("needed_mm")
+            ),
+            WarningCode::CutInsideFreedPart => write!(
+                f,
+                "{} lies inside `{}` (instance `{}`, profile {}), which operation `{}` cuts free of the stock first, so this cut would run in a loose part; move this operation before `{}`, or hold that part with tabs",
+                self.shape(),
+                self.text("freed_instance_name"),
+                self.text("freed_instance"),
+                self.text("freed_profile"),
+                self.text("earlier_op"),
+                self.text("earlier_op")
+            ),
+            WarningCode::ToolChangeAvoidable => write!(
+                f,
+                "tool `{}` (`{}`) is used by operations {}, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)",
+                self.text("tool"),
+                self.text("tool_name"),
+                self.text("ops")
             ),
             WarningCode::TabsCoverMostOfContour => {
                 let path_mm = self
