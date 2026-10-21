@@ -77,6 +77,7 @@ instead, add `--reset-settings`
 | Version | What changed |
 | --- | --- |
 | grblHAL v2, GRBL v2 | The first line is `( Project: coaster )` (GRBL: `; Project: coaster`) instead of `( coaster )` (`; coaster`). Some controllers act on a comment that starts with a keyword, such as `(MSG, …)` or `(ABORT, …)` on grblHAL, so the project name never starts one. Nothing else in the program changes. |
+| LinuxCNC v2, Mach3 v2, UCCNC v2 | The header no longer has `G49` (`G90 G17 G40 G80 G94`; Mach3 `G90 G94 G17 G40 G80`). If a tool length offset was active when you set Z zero, version 1's `G49` cancelled it and moved every Z by its length, which could cut deeper than the drawing. Nothing else in the program changes. Upgrade a version 1 project with `export --post <id>`. |
 
 A file that names a post-processor or a version this DreamCarve does not
 have is refused when it is loaded, with the line and column of the value
@@ -396,7 +397,7 @@ canned cycle, and no `M6`. The sources, line by line, are in
 | --- | --- | --- | --- | --- |
 | Checked against | LinuxCNC 2.9 G-code and M-code references, and its source | *Using Mach3Mill* 1.84 and the Mach3 configuration guide | UCCNC user's manual 1.0047 | NIST RS274/NGC version 3 (NISTIR 6556) |
 | Extension | `.ngc` | `.tap` | `.txt` | `.nc` |
-| Header | `G90 G17 G40 G49 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G49 G80`, `G91.1`, units, `G54` | `G90 G17 G40 G49 G80 G94`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
+| Header | `G90 G17 G40 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G80`, `G91.1`, units, `G54` | `G90 G17 G40 G80 G94`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
 | Line numbers | No | Every line, `N10` up in tens | No | No |
 | Spin-up wait | `G4 P3.000` (seconds) | `G4 P3.000` (seconds) | `G4 P3000` (milliseconds) | `G4 P3` (seconds) |
 | Numbers | `10.500` | `10.500` | `10.500` | `10.5` |
@@ -404,8 +405,15 @@ canned cycle, and no `M6`. The sources, line by line, are in
 | Canned cycles | `G81`, `G82` | `G81`, `G82` | None | None |
 | More than one tool | One program per tool run; `"m6"` is an error | One program per tool run; `"m6"` is an error | One program per tool run; `"m6"` is an error | One program per tool run; `"m6"` is an error |
 
-`G40`, `G49` and `G80` cancel cutter compensation, tool length offsets and
-canned cycles, in case an earlier program left one on. `G91.1` makes arc
+`G40` and `G80` cancel cutter compensation and canned cycles, in case an
+earlier program left one on. The header does not touch the tool length
+offset (no `G43` or `G49`). If one is active when you set Z zero, for
+example after a tool-setter routine, the zero includes it, and cancelling
+it would move every Z by its length, possibly into the spoilboard. So the
+program leaves it as you set it. If your setup applies an offset, set it
+before you set Z zero, and do not change it until the program ends. Version
+1 of these three post-processors did write `G49`; see
+[Versions](#versions). `G91.1` makes arc
 centres (`I`, `J`) relative to the arc's start, which is how DreamCarve
 writes them. On Mach3 this is a setting you can change, so the header sets
 it.
