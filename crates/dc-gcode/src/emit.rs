@@ -154,6 +154,15 @@ pub enum ExportWarning {
         /// Why.
         reason: CannedExpansion,
     },
+    /// The controller has no units words (UCCNC), so the program has none:
+    /// it is in `units`, and the controller must be set up in them
+    /// (`units_set_by_controller`). One per program.
+    UnitsSetByController {
+        /// The post-processor's id.
+        post: String,
+        /// The program's units.
+        units: Units,
+    },
 }
 
 impl ExportWarning {
@@ -166,6 +175,7 @@ impl ExportWarning {
             Self::ArcsFlattened { .. } => "arcs_flattened",
             Self::ArcFitFallback { .. } => "arc_fit_fallback",
             Self::CannedCycleExpanded { .. } => "canned_cycle_expanded",
+            Self::UnitsSetByController { .. } => "units_set_by_controller",
         }
     }
 }
@@ -367,7 +377,13 @@ pub fn emit_programs(
     let mut programs = Vec::with_capacity(runs.len());
     for run in runs {
         let (program, run_warnings) = emit_enabled(project, &post, run, date)?;
-        warnings.extend(run_warnings);
+        // Every program of the export has the same units: say so once.
+        for warning in run_warnings {
+            let about_units = matches!(warning, ExportWarning::UnitsSetByController { .. });
+            if !(about_units && warnings.contains(&warning)) {
+                warnings.push(warning);
+            }
+        }
         programs.push(program);
     }
     Ok((programs, warnings))
@@ -505,7 +521,19 @@ fn emit_enabled(
         Units::Mm => (post.units.mm_command.as_deref(), "units.mm_command"),
         Units::Inch => (post.units.inch_command.as_deref(), "units.inch_command"),
     };
-    let units_command = required(units_command, &post.id, units_field)?;
+    // A controller with no units words (UCCNC) reads every length in the
+    // units it is set up in, which the program cannot check; the export
+    // says which units the program is in. A definition with one units
+    // command but not the other is incomplete.
+    let units_command = if controller_sets_units(post) {
+        warnings.push(ExportWarning::UnitsSetByController {
+            post: post.id.clone(),
+            units: transform.output_units(),
+        });
+        None
+    } else {
+        Some(required(units_command, &post.id, units_field)?)
+    };
     let wcs_command = required(
         post.work_coordinates.select_command.as_deref(),
         &post.id,
@@ -539,7 +567,7 @@ fn emit_enabled(
     let common = vec![
         ("programName", comment_text(&project.name)),
         ("date", comment_text(date)),
-        ("unitsCommand", units_command.to_owned()),
+        ("unitsCommand", units_command.unwrap_or_default().to_owned()),
         ("wcsCommand", wcs_command.to_owned()),
     ];
     for line in &post.program.header {
@@ -566,7 +594,9 @@ fn emit_enabled(
         setup.push(ABSOLUTE_COMMAND.to_owned());
     }
     let header_has = |token: &str| post.program.header.iter().any(|l| l.contains(token));
-    if !header_has("{unitsCommand}") {
+    if let Some(units_command) = units_command
+        && !header_has("{unitsCommand}")
+    {
         w.line(units_command);
         setup.push(units_command.to_owned());
     }
@@ -1203,6 +1233,14 @@ pub(crate) fn changes_tools_in_program(post: &PostProcessor) -> bool {
     post.tool_change.mode == ToolChangeMode::M6 && post.tool_change.has_m6()
 }
 
+/// Whether `post`'s controller has no units words, so it reads every
+/// length in the units it is set up in: the definition has neither
+/// `units.mm_command` nor `units.inch_command`. UCCNC has no `G20`/`G21`;
+/// its units are the profile's (`dc-project/src/definitions/README.md`).
+pub(crate) fn controller_sets_units(post: &PostProcessor) -> bool {
+    post.units.mm_command.is_none() && post.units.inch_command.is_none()
+}
+
 /// The message of the pause before a tool's last cut is followed by a
 /// tool change or the end of the program.
 const ROUTER_OFF_MESSAGE: &str = "Turn the router OFF.";
@@ -1234,14 +1272,25 @@ fn tool_change_message(number: usize, name: &str) -> String {
     }
 }
 
+/// A line that delimits a program, on its own (RS274/NGC, NIST IR 6556,
+/// 3.1). It is not run.
+pub(crate) const PROGRAM_DELIMITER: &str = "%";
+
+/// The highest line number, `N99999`: five digits (NIST IR 6556, 3.3.1).
+const MAX_LINE_NUMBER: u32 = 99_999;
+
 /// Absolute distance mode. S5 requires it before the first move and after
 /// every pause.
 const ABSOLUTE_COMMAND: &str = "G90";
 
 /// The codes a header line may hold and still be written again after a
-/// pause: they set modal state and nothing else (S5).
-const MODAL_SETUP_CODES: [&str; 11] = [
-    "G17", "G20", "G21", "G54", "G55", "G56", "G57", "G58", "G59", "G90", "G94",
+/// pause: they set modal state and nothing else (S5). `G40`, `G49` and
+/// `G80` cancel cutter compensation, tool length offset and canned-cycle
+/// motion, and `G91.1` selects incremental arc centres, each the state
+/// DreamCarve assumes (#154; LinuxCNC and Mach3 headers).
+const MODAL_SETUP_CODES: [&str; 15] = [
+    "G17", "G20", "G21", "G40", "G49", "G54", "G55", "G56", "G57", "G58", "G59", "G80", "G90",
+    "G91.1", "G94",
 ];
 
 /// Whether `line` sets modal state and does nothing else: it has code
@@ -1535,12 +1584,23 @@ impl<'a> Writer<'a> {
         self.lines.len() + 1
     }
 
+    /// Writes `content` as a line, with the next line number if the
+    /// definition numbers lines. A `%` line is a program delimiter, which
+    /// a controller recognises only at the start of the line (RS274/NGC,
+    /// NIST IR 6556, 3.1; Using Mach3Mill 1.84, 10.5.5), so it gets none.
+    /// Line numbers have at most five digits (NIST IR 6556, 3.3.1; Using
+    /// Mach3Mill 10.5.1, where they "may be repeated or used out of
+    /// order"), so after `N99999` they start again from the increment.
     fn line(&mut self, content: &str) {
-        if self.post.program.line_numbers {
+        if self.post.program.line_numbers && content.trim() != PROGRAM_DELIMITER {
             self.lines.push(format!("N{} {content}", self.line_number));
-            self.line_number = self
-                .line_number
-                .saturating_add(self.post.program.line_number_increment);
+            let increment = self.post.program.line_number_increment;
+            let next = self.line_number.saturating_add(increment);
+            self.line_number = if next > MAX_LINE_NUMBER {
+                increment
+            } else {
+                next
+            };
         } else {
             self.lines.push(content.to_owned());
         }
@@ -2487,6 +2547,32 @@ mod tests {
         assert!(text.contains(&format!("F{:.4}", 300.0 / 25.4)), "{text}");
         // Internal geometry is untouched: the toolpath is still mm.
         assert_approx_eq!(max_x_mm, 60.0 + 3.175, 1e-6);
+    }
+
+    /// UCCNC has no `G20`/`G21` (#164): an inch project's program has no
+    /// units word, is in inches, warns which, and passes the safety pass,
+    /// which reads it in inches. Read as millimetres, its safe Z of
+    /// 0.1969 in would be 0.2 mm, and the safety pass would reject it.
+    #[test]
+    fn uccnc_inch_program_has_no_units_word_and_is_read_in_inches() {
+        let mut project = project_with("uccnc");
+        project.display_units = Units::Inch;
+        let (program, warnings) = emit(&project, &ops_for(&project), DATE).unwrap();
+        let text = program.text;
+        assert!(
+            !text
+                .lines()
+                .any(|l| has_word(l, "G20") || has_word(l, "G21")),
+            "{text}"
+        );
+        assert!(
+            warnings.contains(&ExportWarning::UnitsSetByController {
+                post: "uccnc".into(),
+                units: Units::Inch,
+            }),
+            "{warnings:?}"
+        );
+        assert!(text.contains(&format!("Z{:.4}", -6.0 / 25.4)), "{text}");
     }
 
     #[test]
@@ -3663,9 +3749,9 @@ mod tests {
         assert_eq!(line_after_plunge(&program.text), "G4 P0.500");
     }
 
-    /// Mach3 takes `G4 P` in milliseconds (design spec, "Post-processor
-    /// definitions"); a definition whose dwell `units` are milliseconds
-    /// gets the same dwell as `P500`.
+    /// Some controllers take `G4 P` in milliseconds (UCCNC; design spec,
+    /// "Post-processor definitions"); a definition whose dwell `units` are
+    /// milliseconds gets the same dwell as `P500`.
     #[test]
     fn dwell_in_milliseconds_when_the_post_says_so() {
         let mut project = project_with("grblhal");
@@ -3674,6 +3760,55 @@ mod tests {
         let ops = drill_ops(&mut project);
         let (program, _) = emit_with(&project, &post, &ops, DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P500");
+    }
+
+    /// UCCNC's `G4 P` is milliseconds by default (UCCNC user's manual,
+    /// "Dwell : G4", and General settings, "Measure dwell in seconds
+    /// instead of msec"), so the 3 s spin-up is `G4 P3000` and a Drill's
+    /// 0.5 s dwell `G4 P500`. The design spec expected this of Mach3, whose
+    /// manual documents seconds; see the definitions README.
+    #[test]
+    fn uccnc_dwell_is_milliseconds() {
+        let project = project_with("uccnc");
+        let text = emit_text(&project);
+        assert!(text.lines().any(|l| code(l) == "G4 P3000"), "{text}");
+        let (program, _) = emit(&project, &drill_ops(&project), DATE).unwrap();
+        assert_eq!(line_after_plunge(&program.text), "G4 P500");
+        let mach3 = emit_text(&project_with("mach3"));
+        assert!(
+            mach3.lines().any(|l| code(l).ends_with("G4 P3.000")),
+            "{mach3}"
+        );
+    }
+
+    /// Mach3 skips a line that starts with `%` (Using Mach3Mill 1.84,
+    /// 10.5.5), so the opening `%` gets no line number; the next line is
+    /// `N10`.
+    #[test]
+    fn percent_line_has_no_line_number() {
+        let text = emit_text(&project_with("mach3"));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "%", "{text}");
+        assert!(lines[1].starts_with("N10 "), "{text}");
+    }
+
+    /// RS274/NGC (NIST IR 6556, 3.3.1) and Mach3 (Using Mach3Mill 1.84,
+    /// 10.5.1) take line numbers of at most five digits, and Mach3 says
+    /// they "may be repeated or used out of order": after `N99999` the
+    /// numbers start again from the increment.
+    #[test]
+    fn line_numbers_wrap_after_five_digits() {
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.program.line_numbers = true;
+        post.program.line_number_increment = 40_000;
+        let text = emit_text_with(&project, &post);
+        let numbers: Vec<&str> = text
+            .lines()
+            .take(4)
+            .filter_map(|l| l.split_whitespace().next())
+            .collect();
+        assert_eq!(numbers, ["N40000", "N80000", "N40000", "N80000"], "{text}");
     }
 
     // Canned cycles (`docs/specs/phase-2/design.md`, "Canned cycles";
