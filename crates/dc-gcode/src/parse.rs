@@ -710,6 +710,31 @@ mod tests {
         parse_program_with("G21\nG0 Z5\nG98 G83 X10 Y0 Z-3 R1 Q1 F300\n", &model).unwrap();
     }
 
+    /// #314, S11: a series of cycles ends with `G80`. A motion word or a
+    /// `G53` lift while a cycle is the motion mode ends it too on LinuxCNC
+    /// ([G] `#gcode:g80`), but Mach3Mill (10.7.23, 10.7.29) does not say
+    /// that resets the `G98` level, so the parser refuses it rather than
+    /// model it. After `G80` a new series starts from the Z the tool is at:
+    /// here Z 8, so its hole returns to Z 8.
+    #[test]
+    fn a_series_of_cycles_ends_with_g80() {
+        let start = "G21\nG0 Z5\nX0 Y0\nG98 G81 X10 Y0 Z-3 R1 F300\n";
+        for (next, line) in [("G0 Z8\n", 5), ("G1 X20 Z-1\n", 5), ("G53 G0 Z-5\n", 5)] {
+            let result = parse_program(&format!("{start}{next}"));
+            assert!(
+                matches!(&result, Err(ExportError::Unparseable { line: l, .. }) if *l == line),
+                "{next}: {result:?}"
+            );
+        }
+        let text = format!("{start}G80\nG0 Z8\nG81 X20 Y0 Z-3 R1\nG80\n");
+        let moves = parse_motion(&text).unwrap();
+        let last = moves.last().unwrap();
+        assert_eq!(
+            (last.kind, last.to.x, last.to.z),
+            (MotionKind::Rapid, Some(20.0), Some(8.0))
+        );
+    }
+
     #[test]
     fn round_trips_emitted_program() {
         let project = sample_project();
