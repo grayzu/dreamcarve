@@ -1,0 +1,128 @@
+{
+  "version": 8,
+  "name": "profile-lead",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 150,
+    "height_mm": 100,
+    "thickness_mm": 12
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm 2-flute upcut",
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1500,
+      "plunge_mm_min": 500,
+      "rpm": 18000,
+      "step_down_mm": 4,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "enabled": true,
+      "through_cut_allowance_mm": 0,
+      "safe_z_mm": 5,
+      "kind": "profile",
+      "direction": "climb",
+      "tabs": null,
+      "machining_order": "full_depth_first",
+      "entry": {
+        "ramp": {
+          "angle_deg": 15
+        }
+      },
+      "lead": {
+        "radius_mm": 6.35,
+        "sweep_deg": 90,
+        "lead_out": true,
+        "overcut_mm": 0
+      },
+      "corner_relief": "none",
+      "id": "o1",
+      "name": "Outside",
+      "targets": [
+        "part1"
+      ],
+      "tool": "t1",
+      "side": "outside",
+      "depth_mm": 4,
+      "step_down_mm": 4
+    }
+  ],
+  "instances": [
+    {
+      "id": "part1",
+      "definition": "d-part1",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        25,
+        25
+      ],
+      "name": "part1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 1,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3,
+    "tool_change_mode": "m6",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d-part1": {
+      "id": "d-part1",
+      "name": "part1",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 100,
+              "y": 50,
+              "bulge": 0
+            },
+            {
+              "x": 0,
+              "y": 50,
+              "bulge": 0
+            },
+            {
+              "x": 0,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 100,
+              "y": 0,
+              "bulge": 0
+            }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

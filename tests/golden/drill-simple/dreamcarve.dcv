@@ -1,0 +1,221 @@
+{
+  "version": 8,
+  "name": "drill-simple",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 150,
+    "height_mm": 100,
+    "thickness_mm": 12
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "5 mm drill",
+      "number": null,
+      "cutter": "drill",
+      "diameter_mm": 5,
+      "flutes": 2,
+      "feed_mm_min": 1500,
+      "plunge_mm_min": 300,
+      "rpm": 12000,
+      "step_down_mm": 4,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "enabled": true,
+      "through_cut_allowance_mm": 0,
+      "safe_z_mm": 5,
+      "kind": "drill",
+      "tool": "t1",
+      "dwell_s": 0,
+      "retract_mm": 1,
+      "id": "o1",
+      "name": "Drill",
+      "targets": [
+        "h1",
+        "h2",
+        "h3",
+        "h4"
+      ],
+      "cycle": "simple",
+      "depth_mm": 8
+    }
+  ],
+  "instances": [
+    {
+      "id": "h1",
+      "definition": "d-h1",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        20,
+        50
+      ],
+      "name": "h1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "h2",
+      "definition": "d-h2",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        95,
+        65
+      ],
+      "name": "h2",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "h3",
+      "definition": "d-h3",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        130,
+        45
+      ],
+      "name": "h3",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "h4",
+      "definition": "d-h4",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        55,
+        30
+      ],
+      "name": "h4",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 1,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3,
+    "tool_change_mode": "m6",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d-h1": {
+      "id": "d-h1",
+      "name": "h1",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 3,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -3,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-h2": {
+      "id": "d-h2",
+      "name": "h2",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 3,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -3,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-h3": {
+      "id": "d-h3",
+      "name": "h3",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 3,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -3,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-h4": {
+      "id": "d-h4",
+      "name": "h4",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 3,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -3,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,209 @@
+{
+  "version": "3.2",
+  "meta": {
+    "name": "profile-helix-inside",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z",
+    "units": "mm",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 50,
+    "operationClearanceZ": 5,
+    "clampClearanceXY": 2,
+    "clampClearanceZ": 5,
+    "machineDefinitions": [],
+    "selectedMachineId": null
+  },
+  "grid": {
+    "extent": 200,
+    "majorSpacing": 10,
+    "minorSpacing": 2,
+    "snapEnabled": true,
+    "snapIncrement": 1,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 150,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 150,
+            "y": 100
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 100
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 12,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 100,
+    "z": 12,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "hole1": {
+      "id": "hole1",
+      "kind": "circle",
+      "profile": {
+        "start": {
+          "x": 95,
+          "y": 50
+        },
+        "segments": [
+          {
+            "type": "circle",
+            "center": {
+              "x": 75,
+              "y": 50
+            },
+            "to": {
+              "x": 95,
+              "y": 50
+            },
+            "clockwise": true
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    }
+  },
+  "features": [
+    {
+      "id": "hole1",
+      "name": "hole1",
+      "definitionId": "hole1",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 12,
+      "z_bottom": 0,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "hole1"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm 2-flute upcut",
+      "units": "mm",
+      "type": "flat_endmill",
+      "diameter": 6.35,
+      "vBitAngle": null,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 18000,
+      "defaultFeed": 1500,
+      "defaultPlungeFeed": 500,
+      "defaultStepdown": 4,
+      "defaultStepover": 0.4,
+      "maxCutDepth": 0
+    }
+  ],
+  "operations": [
+    {
+      "id": "op1",
+      "name": "Inside",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "kind": "edge_route_inside",
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "hole1"
+        ]
+      },
+      "toolRef": "t1",
+      "stepdown": 4,
+      "stepover": 0.4,
+      "feed": 1500,
+      "plungeFeed": 500,
+      "rpm": 18000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 2,
+      "maxCarveDepth": 2,
+      "cutDirection": "climb",
+      "machiningOrder": "level_first",
+      "entryStrategy": "helix",
+      "entryRampAngle": 10,
+      "entryHelixDiameterPercent": 50,
+      "cornerRelief": "none",
+      "roundOutsideCorners": true,
+      "roundLinkCorners": false,
+      "cleanWallCorners": false,
+      "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
+      "arcFittingEnabled": true
+    }
+  ],
+  "tabs": [],
+  "clamps": [],
+  "ai_history": []
+}
