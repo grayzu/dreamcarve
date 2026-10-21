@@ -894,6 +894,8 @@ mod tests {
         /// Signed area enclosed, arcs included; negative is clockwise.
         area_mm2: f64,
         bounds: Rect,
+        /// The ring's cutting moves, from its start.
+        moves: Vec<Move>,
     }
 
     impl Ring {
@@ -999,12 +1001,14 @@ mod tests {
                         points: vec![from],
                         area_mm2: 0.0,
                         bounds: Rect::from_point(from),
+                        moves: Vec::new(),
                     })
                 }
             };
             let (area, extremes) = move_area_and_extremes(from, &mv);
             ring.area_mm2 += area;
             ring.points.push(mv.to.xy());
+            ring.moves.push(mv);
             ring.bounds = ring.bounds.including(mv.to.xy());
             for p in extremes {
                 ring.bounds = ring.bounds.including(p);
@@ -1433,6 +1437,56 @@ mod tests {
             }
             pos = mv.to;
         }
+    }
+
+    /// #168: with an allowance the tool needs `diameter + 2 × allowance`
+    /// between an island and the wall. A 10 × 30 island 7 mm from the left
+    /// wall leaves the 6.35 mm tool room at allowance 0, and none at 0.5
+    /// (7.35 needed): the gap warns then, with `needed_mm` and
+    /// `allowance_mm`.
+    #[test]
+    fn island_gap_warning_accounts_for_allowance() {
+        let island = Polyline::rect(Point::new(7.0, 10.0), 10.0, 30.0);
+        let p = project(vec![rect_100x50(), island], &[("i1", at_20_20())]);
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        let (_, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        op.allowance_mm = 0.5;
+        let (_, warnings) = generate(&p, &op);
+        assert_eq!(
+            codes(&warnings),
+            vec![WarningCode::PocketIslandTooClose],
+            "{warnings:?}"
+        );
+        let w = &warnings[0];
+        assert_eq!(w.param("island"), Some("1"));
+        assert_eq!(w.param("other"), Some("wall"));
+        let number = |key: &str| w.param(key).unwrap().parse::<f64>().unwrap();
+        assert_approx_eq!(number("gap_mm"), 7.0, RING_TOL);
+        assert_approx_eq!(number("needed_mm"), DIAMETER_MM + 1.0, TOL);
+        assert_approx_eq!(number("allowance_mm"), 0.5, TOL);
+        assert_approx_eq!(number("diameter_mm"), DIAMETER_MM, TOL);
+        assert_eq!(
+            w.to_string(),
+            "in the pocket of `Shape i1` (instance `i1`, profile 0), island profile 1 is 7 mm from the pocket wall, closer than the 7.35 mm tool `6.35 mm end mill` needs at a 0.5 mm allowance, so the material between them is left uncut"
+        );
+        // At allowance 0 the message is as before.
+        let w = Warning::new(WarningCode::PocketIslandTooClose)
+            .with("instance", "i1")
+            .with("instance_name", "Shape i1")
+            .with("profile", 0)
+            .with("island", 1)
+            .with("other", "wall")
+            .with("gap_mm", 5.0)
+            .with("needed_mm", 6.35)
+            .with("allowance_mm", 0.0)
+            .with("tool", "t")
+            .with("diameter_mm", 6.35);
+        assert_eq!(
+            w.to_string(),
+            "in the pocket of `Shape i1` (instance `i1`, profile 0), island profile 1 is 5 mm from the pocket wall, closer than the 6.35 mm tool `t` is wide, so the material between them is left uncut"
+        );
     }
 
     /// A 10 mm square inside a 30 mm circular island inside the rect is a
@@ -1882,6 +1936,64 @@ mod tests {
         assert!(
             rest_mm < 0.25 * full_mm,
             "rest cuts {rest_mm} mm, a full pocket {full_mm} mm"
+        );
+    }
+
+    /// The area `ring` sweeps with a tool of radius `radius_mm`.
+    fn ring_footprint(ring: &Ring, radius_mm: f64) -> Vec<Region> {
+        let start = ring.start();
+        let mut moves = vec![Move::rapid(Point3::new(start.x, start.y, ring.z_mm))];
+        moves.extend(ring.moves.iter().copied());
+        footprint(&Toolpath { moves }, radius_mm)
+    }
+
+    /// The XY length of `ring`'s moves, mm.
+    fn ring_length_mm(ring: &Ring) -> f64 {
+        let start = ring.start();
+        let mut moves = vec![Move::rapid(Point3::new(start.x, start.y, ring.z_mm))];
+        moves.extend(ring.moves.iter().copied());
+        cutting_length_mm(&Toolpath { moves })
+    }
+
+    /// The rest Pocket's cutting length on acceptance 22 before #167, mm:
+    /// both passes, the ring along the band's inner edge included.
+    const REST_BEFORE_167_MM: f64 = 1237.0;
+
+    /// #167: with the offset strategy no rest ring runs wholly in the area
+    /// the rough cleared. Each ring's footprint takes off more of what the
+    /// rough left than a noise strip along it (`FLAT_TOL` × its length),
+    /// so the ring along the wall band's inner edge, 276 mm a pass in air,
+    /// is gone and the rest cuts at least 270 mm less on each of its two
+    /// passes. Coverage is unchanged:
+    /// `rest_coverage_with_rough_reaches_small_tool_inset`.
+    #[test]
+    fn rest_offset_cuts_no_ring_entirely_in_air() {
+        let (p, _, rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        let (tp, warnings) = generate(&p, &rest);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let reference = rest::Reference {
+            radius_mm: ROUGH_MM / 2.0,
+            allowance_mm: ROUGH_ALLOWANCE_MM,
+        };
+        let left = rest::left_by(&notched_region(), 0.0, reference, FLAT_TOL);
+        for z in PASS_Z_MM {
+            let rings = rings_at(&tp, z);
+            assert!(!rings.is_empty(), "rings at Z {z}");
+            for ring in &rings {
+                let length_mm = ring_length_mm(ring);
+                let cut = intersection(&ring_footprint(ring, REST_MM / 2.0), &left, FLAT_TOL);
+                assert!(
+                    area_mm2(&cut) > FLAT_TOL * length_mm,
+                    "a {length_mm} mm ring at Z {z} cuts {} mm² of what the rough left: {:?}",
+                    area_mm2(&cut),
+                    ring.bounds
+                );
+            }
+        }
+        let rest_mm = cutting_length_mm(&tp);
+        assert!(
+            rest_mm <= REST_BEFORE_167_MM - 2.0 * 270.0,
+            "the rest cuts {rest_mm} mm"
         );
     }
 
