@@ -493,6 +493,31 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
+    /// #311: a Left or Right Profile's passes before the last, `allowance_mm`
+    /// farther from each open path than its last pass, come within the
+    /// tool radius plus the allowance of another line of the operation,
+    /// or of the strip one radius wide that a line keeps on its part side:
+    /// they would take that line's skin, which its own last pass is to cut,
+    /// or cut into the part. This is [`CamError::CutsIntoKeptSide`]'s rule
+    /// with the radius grown by the allowance, as Inside's band rule needs
+    /// `diameter + 2 · allowance` ([`CamError::BandNarrowerThanAllowance`]).
+    /// `shape` and `other` are in drawing order and may be the same path;
+    /// `other` is boxed to keep the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape} and {other} with a {allowance_mm} mm last pass allowance, but a pass before the last comes within the {diameter_mm} mm tool's radius plus the allowance of one of them or of the material it keeps, so it would cut the skin that line's last pass takes off, or the part; move the lines apart, make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    AllowanceCutsIntoKeptSide {
+        /// The operation.
+        op: OperationId,
+        /// One of the two paths, the one drawn first.
+        shape: ShapeRef,
+        /// The other path.
+        other: Box<ShapeRef>,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+    },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
     #[error("shape {shape} cannot be cut: {source}")]

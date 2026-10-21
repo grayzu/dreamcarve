@@ -3715,30 +3715,33 @@ mod tests {
         );
     }
 
-    /// #284: On line has no wall to leave material on, and Left and Right
-    /// are open-path cuts the last pass does not cover: Inside and Outside
-    /// only.
+    /// #284: On line has no wall to leave material on: it cuts with both
+    /// flanks. (changed in #311: Left and Right, which cut one flank
+    /// against the part, take a last pass too.)
     #[test]
     fn last_pass_on_line_is_error() {
-        for side in [Side::OnLine, Side::Left, Side::Right] {
-            let mut p = sample_project();
-            let op = profile_mut(&mut p);
-            op.side = side;
-            op.last_pass = Some(last_pass(0.5));
-            let problems = validate(&p);
-            let expected = Problem::LastPassNeedsSide {
-                operation: OperationId::new("o1"),
-                name: "Cut out".into(),
-                side,
-            };
-            assert!(problems.contains(&expected), "{side:?}: {problems:?}");
-            assert!(expected.is_error());
-            assert_eq!(expected.code(), "last_pass_needs_side");
-            assert_eq!(
-                expected.field().as_deref(),
-                Some("operations[o1].last_pass")
-            );
-        }
+        let mut p = sample_project();
+        let op = profile_mut(&mut p);
+        op.side = Side::OnLine;
+        op.last_pass = Some(last_pass(0.5));
+        let problems = validate(&p);
+        let expected = Problem::LastPassNeedsSide {
+            operation: OperationId::new("o1"),
+            name: "Cut out".into(),
+            side: Side::OnLine,
+        };
+        assert!(problems.contains(&expected), "{problems:?}");
+        assert!(expected.is_error());
+        assert_eq!(expected.code(), "last_pass_needs_side");
+        assert_eq!(
+            expected.field().as_deref(),
+            Some("operations[o1].last_pass")
+        );
+        let message = expected.to_string();
+        assert!(
+            message.contains("Inside, Outside, Left or Right"),
+            "{message}"
+        );
         for side in [Side::Inside, Side::Outside] {
             let mut p = sample_project();
             let op = profile_mut(&mut p);
@@ -3746,6 +3749,46 @@ mod tests {
             op.last_pass = Some(last_pass(0.5));
             assert_eq!(validate(&p), vec![], "{side:?}");
         }
+    }
+
+    /// #311: a Left or Right Profile cuts one flank of the bit against the
+    /// part, as Inside and Outside do, so it takes a last pass: no
+    /// `LastPassNeedsSide`, and the allowance and thickness are checked
+    /// as on Inside and Outside. On line still errors.
+    #[test]
+    fn last_pass_left_right_is_valid() {
+        for side in [Side::Left, Side::Right] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.tabs = None;
+            op.last_pass = Some(last_pass(0.5));
+            assert_eq!(validate(&p), vec![], "{side:?}");
+
+            profile_mut(&mut p).last_pass = Some(last_pass(2.2));
+            let problems = validate(&p);
+            assert!(
+                problems
+                    .iter()
+                    .any(|q| matches!(q, Problem::LastPassAllowance { .. })),
+                "{side:?}: {problems:?}"
+            );
+            assert!(
+                !problems
+                    .iter()
+                    .any(|q| matches!(q, Problem::LastPassNeedsSide { .. })),
+                "{side:?}: {problems:?}"
+            );
+        }
+        let mut p = sample_project();
+        let op = profile_mut(&mut p);
+        op.side = Side::OnLine;
+        op.last_pass = Some(last_pass(0.5));
+        assert!(
+            validate(&p)
+                .iter()
+                .any(|q| matches!(q, Problem::LastPassNeedsSide { .. }))
+        );
     }
 
     /// #284: `thickness_mm`, the last pass's depth, is more than 0 and at

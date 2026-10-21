@@ -6184,7 +6184,7 @@ fn last_pass_exports_and_refuses_what_cannot_work() {
 
     for (side, allowance_mm, needle) in [
         (Side::Outside, 2.2, "a third of the bit"),
-        (Side::OnLine, 0.5, "Inside or Outside"),
+        (Side::OnLine, 0.5, "Inside, Outside, Left or Right"),
     ] {
         set_last_pass(side, allowance_mm);
         if dir.join("coaster.nc").exists() {
@@ -6201,6 +6201,59 @@ fn last_pass_exports_and_refuses_what_cannot_work() {
             assert!(report.contains("last_pass"), "{args:?}: {report}");
         }
         assert!(!dir.join("coaster.nc").exists(), "export wrote nothing");
+    }
+}
+
+/// #311: two Left and Right Profiles of open paths saved at format 12,
+/// with no last pass (the line and arc of `open-path-on-line-climb` cut
+/// Left, climb, with a ramp and smooth tabs; a square of four separate
+/// lines cut Right, conventional, pass first, with a rect tab) export
+/// byte for byte the programs the build before #311 wrote, committed
+/// under `tests/expected/side-last-pass/`. With a 0.5 mm last pass each
+/// passes `check` and exports a different program; with `reverse` and
+/// `thickness_mm: 1` too.
+#[test]
+fn left_right_last_pass_exports_and_without_is_byte_identical() {
+    let dir = work_dir("left_right_last_pass_exports_and_without_is_byte_identical");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let corpus = root.join("tests/fixtures/side-last-pass");
+    let expected_dir = root.join("tests/expected/side-last-pass");
+    for name in ["left-climb-ramp-tabs", "right-square-of-lines-conventional"] {
+        let file = format!("{name}.dcv");
+        std::fs::copy(corpus.join(&file), dir.join(&file)).expect("fixture copied");
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let program = format!("{name}.nc");
+        let plain = std::fs::read_to_string(dir.join(&program)).expect("program written");
+        let expected = std::fs::read_to_string(expected_dir.join(&program))
+            .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+        assert!(
+            plain == expected,
+            "{name}: differs from the program before #311:\n{plain}"
+        );
+
+        for (thickness_mm, reverse) in [(None, false), (Some(1.0), true)] {
+            let mut project = load_file(&dir.join(&file)).project;
+            let op = as_profile_mut(&mut project.operations[0]);
+            assert!(matches!(op.side, Side::Left | Side::Right), "{name}");
+            op.last_pass = Some(dc_project::LastPass {
+                allowance_mm: 0.5,
+                thickness_mm,
+                reverse,
+            });
+            let with = format!("{name}-last.dcv");
+            std::fs::write(dir.join(&with), save(&project).expect("project saves"))
+                .expect("dcv written");
+            let check = run(&dir, &["check", &with]);
+            let report = format!("{}{}", stdout(&check), stderr(&check));
+            assert_eq!(check.status.code(), Some(0), "{name}: {report}");
+            assert!(report.contains("0 error(s)"), "{name}: {report}");
+            let out = run(&dir, &["export", &with, "--date", FIXED_DATE]);
+            assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+            let text = std::fs::read_to_string(dir.join(format!("{name}-last.nc")))
+                .expect("program written");
+            assert_ne!(text, plain, "{name}: the last pass changes the program");
+        }
     }
 }
 
