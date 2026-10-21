@@ -635,7 +635,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 8] = [
+const SOURCES: [Source; 11] = [
     (
         "grblhal",
         1,
@@ -667,16 +667,34 @@ const SOURCES: [Source; 8] = [
         include_str!("definitions/linuxcnc/v1.json"),
     ),
     (
+        "linuxcnc",
+        2,
+        "linuxcnc/v2.json",
+        include_str!("definitions/linuxcnc/v2.json"),
+    ),
+    (
         "mach3",
         1,
         "mach3/v1.json",
         include_str!("definitions/mach3/v1.json"),
     ),
     (
+        "mach3",
+        2,
+        "mach3/v2.json",
+        include_str!("definitions/mach3/v2.json"),
+    ),
+    (
         "uccnc",
         1,
         "uccnc/v1.json",
         include_str!("definitions/uccnc/v1.json"),
+    ),
+    (
+        "uccnc",
+        2,
+        "uccnc/v2.json",
+        include_str!("definitions/uccnc/v2.json"),
     ),
     (
         "generic",
