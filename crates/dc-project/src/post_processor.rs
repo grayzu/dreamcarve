@@ -642,7 +642,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 13] = [
+const SOURCES: [Source; 15] = [
     (
         "grblhal",
         1,
@@ -704,6 +704,12 @@ const SOURCES: [Source; 13] = [
         include_str!("definitions/mach3/v2.json"),
     ),
     (
+        "mach3",
+        3,
+        "mach3/v3.json",
+        include_str!("definitions/mach3/v3.json"),
+    ),
+    (
         "uccnc",
         1,
         "uccnc/v1.json",
@@ -714,6 +720,12 @@ const SOURCES: [Source; 13] = [
         2,
         "uccnc/v2.json",
         include_str!("definitions/uccnc/v2.json"),
+    ),
+    (
+        "uccnc",
+        3,
+        "uccnc/v3.json",
+        include_str!("definitions/uccnc/v3.json"),
     ),
     (
         "generic",

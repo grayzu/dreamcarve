@@ -1538,10 +1538,12 @@ const ABSOLUTE_COMMAND: &str = "G90";
 /// pause: they set modal state and nothing else (S5). `G40`, `G49` and
 /// `G80` cancel cutter compensation, tool length offset and canned-cycle
 /// motion, and `G91.1` selects incremental arc centres, each the state
-/// DreamCarve assumes (#154; LinuxCNC and Mach3 headers).
-const MODAL_SETUP_CODES: [&str; 15] = [
-    "G17", "G20", "G21", "G40", "G49", "G54", "G55", "G56", "G57", "G58", "G59", "G80", "G90",
-    "G91.1", "G94",
+/// DreamCarve assumes (#154; LinuxCNC and Mach3 headers). `G50` and `G69`
+/// set every scale factor to 1 and cancel coordinate rotation on Mach3 and
+/// UCCNC (#312), which only their version 3 headers write.
+const MODAL_SETUP_CODES: [&str; 17] = [
+    "G17", "G20", "G21", "G40", "G49", "G50", "G54", "G55", "G56", "G57", "G58", "G59", "G69",
+    "G80", "G90", "G91.1", "G94",
 ];
 
 /// Whether `line` sets modal state and does nothing else: it has code
@@ -1564,7 +1566,7 @@ fn only_pauses(line: &str) -> bool {
 }
 
 /// The code words of `line`, outside `( )` and `;` comments, upper-cased.
-fn code_words(line: &str) -> Vec<String> {
+pub(crate) fn code_words(line: &str) -> Vec<String> {
     let mut code = String::new();
     let mut in_comment = false;
     for c in line.chars() {

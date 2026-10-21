@@ -44,7 +44,7 @@ use dc_project::{
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
-use crate::emit::{changes_tools_in_program, controller_sets_units};
+use crate::emit::{changes_tools_in_program, code_words, controller_sets_units};
 use crate::material::{self, Material};
 use crate::parse::{
     Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
@@ -355,6 +355,7 @@ fn check_rules(
         changes_tools_in_program(post),
         writes_canned_cycles(post),
         with_g53,
+        &header_cancel_codes(post),
     )?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
@@ -736,6 +737,30 @@ pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
 }
 /// `G53`, accepted on a machine-coordinate lift only (S16).
 const MACHINE_G: [f64; 1] = [53.0];
+/// `G50`, every scale factor back to 1, and `G69`, no coordinate rotation,
+/// as Mach3 and UCCNC define them (#312; Using Mach3Mill 1.84, 10.7.15,
+/// 10.7.20; UCCNC user's manual 1.0047, 4.1.1). Each only cancels a mode
+/// DreamCarve never turns on, but it is accepted only from a definition
+/// whose header writes it ([`header_cancel_codes`]): LinuxCNC, grblHAL,
+/// GRBL and RS274/NGC do not have them, and in other dialects `G50` is a
+/// different command. `G51` and `G68`, which scale and rotate every
+/// coordinate the program writes, are never accepted: this pass reads the
+/// program as written.
+const HEADER_CANCEL_G: [(&str, f64); 2] = [("G50", 50.0), ("G69", 69.0)];
+
+/// The codes of [`HEADER_CANCEL_G`] that `post`'s header writes.
+fn header_cancel_codes(post: &PostProcessor) -> Vec<f64> {
+    HEADER_CANCEL_G
+        .iter()
+        .filter(|(word, _)| {
+            post.program
+                .header
+                .iter()
+                .any(|line| code_words(line).iter().any(|w| w == word))
+        })
+        .map(|&(_, code)| code)
+        .collect()
+}
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
 /// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
 /// `M61`, which sets the current tool number without a stop or a move.
@@ -778,12 +803,15 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 /// change tools with `M6` (`with_m6`), those in [`CANNED_G`] when it
 /// may hold canned cycles (`with_canned`), and `G53` on the lines the
 /// parser read as a machine-coordinate lift when the definition documents
-/// it and the project sets the height (`with_g53`, S16).
+/// it and the project sets the height (`with_g53`, S16), and `header_g`,
+/// the definition's own header cancels ([`header_cancel_codes`]), on any
+/// line but a lift.
 fn check_words(
     blocks: &[Block],
     with_m6: bool,
     with_canned: bool,
     with_g53: bool,
+    header_g: &[f64],
 ) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
@@ -794,15 +822,16 @@ fn check_words(
             &[]
         };
         for word in &block.words {
-            let (allowed, extra): (&[f64], &[f64]) = match word.letter {
-                'G' if !lift.is_empty() => (&ALLOWED_G, lift),
-                'G' => (&ALLOWED_G, canned),
-                'M' => (&ALLOWED_M, tool_change),
+            let (allowed, extra, header): (&[f64], &[f64], &[f64]) = match word.letter {
+                'G' if !lift.is_empty() => (&ALLOWED_G, lift, &[]),
+                'G' => (&ALLOWED_G, canned, header_g),
+                'M' => (&ALLOWED_M, tool_change, &[]),
                 _ => continue,
             };
             if !allowed
                 .iter()
                 .chain(extra)
+                .chain(header)
                 .any(|&code| is_code(word.value, code))
             {
                 return Err(ExportError::ForbiddenWord {
@@ -2604,7 +2633,7 @@ mod tests {
             }
         }
         for (case, p) in with_them.iter().chain(&without) {
-            for (code, word) in [("G51 Z-1", "G51"), ("G68 R45", "G68")] {
+            for (code, word) in [("G51 Z-1", "G51"), ("G68", "G68")] {
                 let text = format!("G21 G90\nG54\nG0 Z11\n{code}\nM30\n");
                 let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
                 assert!(
