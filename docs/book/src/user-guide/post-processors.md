@@ -352,12 +352,40 @@ The whole `post_processor` block, in the order DreamCarve writes it:
 | `spindle_on_dwell_s` | Seconds to wait after the spindle starts. Default 3. Raise it if your spindle or VFD takes longer to reach speed; 0 means no wait. |
 | `tool_change_mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). The [user config file](configuration.md) can change the default new projects get. |
 | `decimal_places` | Digits after the point: `mm` at least 2, `inch` at least 3. Default 3 and 4. |
-| `use_canned_cycles` | `false` (default) or `true`: whether a Drill operation is written as the controller's drilling cycles (`G81`, `G82`, `G83`, `G73`) where the post-processor has them. Neither grblHAL nor GRBL has them, so `true` is an error on both; the holes are drilled the same either way. |
+| `use_canned_cycles` | `false` (default) or `true`: whether a Drill operation is written as the controller's drilling cycles (`G81`, `G82`, `G83`, `G73`) where the post-processor has them. See [Canned cycles](#canned-cycles). Neither grblHAL nor GRBL has them, so `true` is an error on both; the holes are drilled the same either way. |
 
 Names that DreamCarve puts in comments (the project, tool and operation
 names) are reduced to plain ASCII without `( ) ; ! ? ~`. Both controllers
 act on `!`, `?` and `~` immediately, even inside a comment, and `)` would
 end a comment early.
+
+## Canned cycles
+
+A canned cycle drills a whole hole in one line: `G81` (drill), `G82`
+(drill and dwell), `G83` (peck, retracting fully), `G73` (peck, breaking
+the chip). DreamCarve writes them only when you ask, with
+`"use_canned_cycles": true`, and only where the post-processor's
+definition lists them in its `canned_cycles` block. grblHAL and GRBL have
+none, so on both a Drill is always plain `G0`/`G1` moves and `true` is an
+error at `check`. Controllers that have them are added in a later release.
+
+What is written, and when DreamCarve writes plain moves instead, is in
+[Drill: canned cycles](drill.md#canned-cycles). In short:
+
+- `G98` once, so the bit returns to safe Z after every hole, one cycle
+  line per hole with `X Y Z R` and `Q` or `P`, `F` on the first, and `G80`
+  at the end.
+- `export` reads every cycle line back as the moves the controller makes,
+  from the controller's documentation, and checks those moves with the
+  same safety rules as plain moves, and against the Drill's own moves
+  ([Safety](safety.md)). A `G83` re-enters the hole, and a `G73` lifts, by
+  a distance each controller fixes itself, not by a word in the program;
+  the definition states it (`canned_cycles.reentry_gap_mm`). A definition
+  that does not state it never writes `G83` or `G73`.
+- If the cycles would not drill exactly what the plain moves drill, the
+  whole operation is written as plain moves with the warning
+  `canned_cycle_expanded`. A program never mixes the two for one
+  operation.
 
 ## Manual spindle control
 

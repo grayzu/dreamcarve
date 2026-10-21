@@ -85,7 +85,7 @@ fn export(project: &Project) -> String {
     assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
     let (program, _) = emit(
         project,
-        &[(Operation::Profile(op.clone()), tool.clone(), toolpath)],
+        &[(Operation::Profile(op.clone()), tool.clone(), toolpath).into()],
         DATE,
     )
     .expect("the program passes the safety pass");

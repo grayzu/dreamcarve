@@ -34,7 +34,7 @@ use dc_cam::{
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, ExportWarning, Program, ProgramSplit, emit_programs};
+use dc_gcode::{AxisRange, EmitOp, ExportWarning, Program, ProgramSplit, emit_programs};
 use dc_project::{
     Operation, PostProcessorRef, Project, Severity, SourceMap, ToolChangeMode, Units, validate,
 };
@@ -166,25 +166,31 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             )));
             continue;
         };
+        let plain = |toolpath: Toolpath| (toolpath, None);
         let generated = match operation {
-            Operation::Profile(op) => generate_profile(project, op),
-            Operation::Pocket(op) => generate_pocket(project, op),
-            Operation::Engrave(op) => generate_engrave(project, op),
-            // The hole records are for canned cycles, which the emitter
-            // does not write yet (slice 15): the plain moves are exported.
-            Operation::Drill(op) => {
-                generate_drill(project, op).map(|(drilled, warnings)| (drilled.toolpath, warnings))
-            }
+            Operation::Profile(op) => generate_profile(project, op).map(|(t, w)| (plain(t), w)),
+            Operation::Pocket(op) => generate_pocket(project, op).map(|(t, w)| (plain(t), w)),
+            Operation::Engrave(op) => generate_engrave(project, op).map(|(t, w)| (plain(t), w)),
+            // The hole records go to the emitter, which writes them as
+            // canned cycles when the project asks and the controller's
+            // motion for them is the toolpath.
+            Operation::Drill(op) => generate_drill(project, op)
+                .map(|(drilled, w)| ((drilled.toolpath, Some(drilled.holes)), w)),
         };
         match generated {
-            Ok((toolpath, warnings)) => {
+            Ok(((toolpath, holes), warnings)) => {
                 findings.warnings.extend(warnings.iter().map(|w| {
                     Finding::coded(
                         w.code.as_str(),
                         format!("operation `{}`: {w}", operation.id()),
                     )
                 }));
-                ops.push((operation.clone(), tool.clone(), toolpath));
+                ops.push(EmitOp {
+                    op: operation.clone(),
+                    tool: tool.clone(),
+                    toolpath,
+                    holes,
+                });
             }
             Err(e) => findings.errors.push(Finding::plain(e.to_string())),
         }
@@ -193,7 +199,7 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
     // even when another operation failed; it never needs a failed one.
     let generated: Vec<(&Operation, &Toolpath)> = ops
         .iter()
-        .map(|(operation, _, toolpath)| (operation, toolpath))
+        .map(|entry| (&entry.op, &entry.toolpath))
         .collect();
     findings
         .warnings
@@ -238,6 +244,9 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
         ExportWarning::ArcsFlattened { op, count } => format!(
             "operation `{op}`: {count} arc(s) written as short straight moves because the controller would reject them once rounded"
         ),
+        ExportWarning::CannedCycleExpanded { op, reason } => {
+            format!("operation `{op}`: written as plain moves, not canned cycles, because {reason}")
+        }
         ExportWarning::ArcFitFallback { op, runs } => format!(
             "operation `{op}`: {runs} run(s) of straight moves kept as written because the controller would reject the arc fitted to them once rounded"
         ),

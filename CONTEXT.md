@@ -181,3 +181,11 @@ _Avoid_: Step, pass (a pass is a depth level of a cutting operation)
 A timed pause with no motion: at the bottom of a Drill plunge (`dwell_s`),
 or while the spindle reaches speed. Written as `G4`.
 _Avoid_: Delay, wait
+
+**Canned Cycle**:
+A controller's one-line drilling cycle (`G81`, `G82`, `G83`, `G73`) that
+stands for a whole hole's moves. Written for a Drill only when the project
+sets `use_canned_cycles` and the controller's motion for it is the Drill's
+toolpath; otherwise the hole is written as plain moves (Expanded).
+_Avoid_: Drill cycle (that is the Drill's `cycle` setting), fixed cycle
+_PureCutCNC_: cannedCycles
