@@ -12,6 +12,12 @@
 //! violation instead of being trusted. S6 compares each operation's moves
 //! with its toolpath move for move, arc direction and centre included; see
 //! [`check_reproduces`] for exactly what it accepts.
+//!
+//! S11 (`docs/specs/phase-2/functional.md`): a canned-cycle line is checked
+//! as the moves the controller makes for it. The parser expands each one
+//! ([`crate::canned`]) into synthetic blocks that every rule here reads like
+//! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
+//! the motion the machine makes.
 
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
@@ -523,7 +529,7 @@ const CANNED_G: [f64; 7] = [73.0, 80.0, 81.0, 82.0, 83.0, 98.0, 99.0];
 /// Whether a program for `post` may hold canned cycles: the project asks
 /// for them (`use_canned_cycles`) and the definition has them.
 pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
-    false && post.use_canned_cycles && post.canned_cycles.is_some() // red: stub
+    post.use_canned_cycles && post.canned_cycles.is_some()
 }
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
 /// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and

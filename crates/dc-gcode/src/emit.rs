@@ -8,8 +8,11 @@
 //! G-code emission (`docs/specs/phase-1/design.md`, "Algorithms →
 //! Emission"; `docs/specs/phase-1/functional.md`, S1–S7).
 //!
-//! Ported from `runPostProcessor`, without canned cycles, coolant, or arc
-//! fitting (phase 1 has none of them). Re-derived for Y-up: toolpaths are
+//! Ported from `runPostProcessor`, without coolant. Arc fitting is
+//! DreamCarve's (`arcfit`); canned cycles are written as upstream's block
+//! does, but only when the controller's motion for them is the toolpath
+//! (`docs/specs/phase-2/design.md`, "Canned cycles"; see [`EmitOp`] and
+//! [`CannedExpansion`]). Re-derived for Y-up: toolpaths are
 //! Y-up and so is the machine, so arc direction carries over unchanged
 //! unless the definition's axis map mirrors the plane. Changes from
 //! upstream, from the controller facts in `dc-project/src/definitions/README.md`
@@ -287,9 +290,6 @@ impl From<(Operation, Tool, Toolpath)> for EmitOp {
     }
 }
 
-/// See [`EmitOp`].
-type OpEntry = EmitOp;
-
 /// How [`emit_programs`] splits a project whose enabled operations use
 /// more than one tool: as the project's post-processor `tool_change_mode`
 /// says, or as an `export` flag overrides it for this one export
@@ -334,7 +334,7 @@ pub enum ProgramSplit {
 /// call, so a caller never has some of the programs.
 pub fn emit_programs(
     project: &Project,
-    ops: &[OpEntry],
+    ops: &[EmitOp],
     split: ProgramSplit,
     date: &str,
 ) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError> {
@@ -357,7 +357,7 @@ pub fn emit_programs(
     // borrowed and stays as it is, so the flag is never saved.
     post.tool_change.mode = mode;
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let runs: Vec<&[&OpEntry]> = match mode {
+    let runs: Vec<&[&EmitOp]> = match mode {
         ToolChangeMode::M6 => vec![enabled.as_slice()],
         ToolChangeMode::SeparatePrograms => {
             enabled.chunk_by(|a, b| a.tool.id == b.tool.id).collect()
@@ -395,7 +395,7 @@ pub fn emit_programs(
 /// [`ExportError`].
 pub fn emit(
     project: &Project,
-    ops: &[OpEntry],
+    ops: &[EmitOp],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     emit_with(project, &project.post_processor.resolve()?, ops, date)
@@ -406,7 +406,7 @@ pub fn emit(
 pub(crate) fn emit_with(
     project: &Project,
     post: &PostProcessor,
-    ops: &[OpEntry],
+    ops: &[EmitOp],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     let (enabled, mut warnings) = enabled_ops(ops)?;
@@ -417,7 +417,7 @@ pub(crate) fn emit_with(
 
 /// The enabled entries of `ops`, and a warning for each disabled one.
 /// Fails when none is enabled.
-fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), ExportError> {
+fn enabled_ops(ops: &[EmitOp]) -> Result<(Vec<&EmitOp>, Vec<ExportWarning>), ExportError> {
     let mut warnings = Vec::new();
     let mut enabled = Vec::with_capacity(ops.len());
     for entry in ops {
@@ -439,7 +439,7 @@ fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), E
 fn emit_enabled(
     project: &Project,
     post: &PostProcessor,
-    enabled: &[&OpEntry],
+    enabled: &[&EmitOp],
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     let control = post.feed_speed.spindle_control;
@@ -850,7 +850,7 @@ struct CycleLine {
     y: Emitted,
     z: String,
     r: String,
-    /// The peck word and number, for `G83` and `G73`.
+    /// The peck number, for `G83` and `G73`.
     q: Option<String>,
     /// The dwell number, for `G82`.
     p: Option<String>,
@@ -894,9 +894,6 @@ fn canned_plan(
     safe_z_mm: f64,
 ) -> Result<CannedPlan, ExportError> {
     use CannedExpansion as Why;
-    if true {
-        return Ok(CannedPlan::NotAsked); // red: stub
-    }
     let post = w.post;
     if !(post.use_canned_cycles && matches!(op, Operation::Drill(_))) {
         return Ok(CannedPlan::NotAsked);
