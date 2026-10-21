@@ -838,7 +838,10 @@ built (design addendum, "Order and format versions").
       must be below 0 (both controllers home Z to a negative machine
       position) and is accepted only on a post-processor whose definition
       documents `G53` (grblHAL and GRBL in this addendum). The machine must
-      be homed, which DreamCarve cannot check, so `export` says so.
+      be homed, which DreamCarve cannot check, so `export` says so. It
+      also says, as the program's header does, that Z must home upward or
+      soft limits be on (`$20=1`): where Z homes downward every negative
+      machine Z is below the travel (changed in #308).
     - **`park`** `{ "x_mm": …, "y_mm": … }`, in project coordinates: at the
       end the bit rises to the clearance height (or the highest safe Z of
       the program's operations; changed in #283: the last operation's),

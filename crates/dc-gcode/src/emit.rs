@@ -1014,8 +1014,14 @@ impl Lifts {
     }
 }
 
-/// The header comment of a program that lifts with `G53` (#283).
-const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running";
+/// The header comment of a program that lifts with `G53` (#283). It names
+/// soft limits (#308): on a machine that homes Z downward every negative
+/// machine Z is below the travel, and only soft limits (`$20=1`) stop the
+/// lift before it drives Z down (definitions README, "Machine-coordinate
+/// moves"). No `( ) ;` inside, which would end the comment early, and `$`
+/// starts a system command only at the start of a line.
+const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running. \
+                                    Needs Z to home upward, or soft limits on with $20=1";
 
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under

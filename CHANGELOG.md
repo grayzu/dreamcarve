@@ -132,8 +132,11 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   written as `G53 G0 Z…` before every tool-change stop and at the end of
   every program, on grblHAL and GRBL; and a park point the program ends
   over, like VCarve's Home position ([#283]). All three are `null` on
-  upgrade and from `init`, which exports as before. `export` says to home
-  the machine when a program lifts with `G53`. The definitions gain
+  upgrade and from `init`, which exports as before. `export` and the
+  program's header say to home the machine when a program lifts with `G53`,
+  and that Z must home upward or soft limits be on (`$20=1`): on a machine
+  that homes Z downward the lift would otherwise drive Z down ([#308]). The
+  definitions gain
   `work_coordinates.machine_command` (`"G53"` on every grblHAL and GRBL
   version, `null` on the others), added in place: no program's bytes change.
   Older DreamCarve versions cannot read version 12 files.
@@ -392,3 +395,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
+[#308]: https://github.com/grayzu/dreamcarve/issues/308

@@ -481,13 +481,13 @@ switched on. DreamCarve cannot check that, so when a program has a lift
 `export` says:
 
 ```text
-Before you start: home the machine; this program moves to machine Z -5.000 mm (G53).
+Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). Z must home upward, or soft limits must be on ($20=1).
 ```
 
 and the program's header says it too (on GRBL v3, after `;`):
 
 ```text
-( Lifts to machine Z with G53: home the machine before running )
+( Lifts to machine Z with G53: home the machine before running. Needs Z to home upward, or soft limits on with $20=1 )
 ```
 
 Turn soft limits on (`$20=1`): then a machine Z outside the travel stops

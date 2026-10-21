@@ -714,7 +714,9 @@ fn report(
     // #283: `G53` moves to a machine position, which is right only on a
     // homed machine; the program cannot check that.
     if let Some(z) = &program.machine_lift {
-        outln!("Before you start: home the machine; this program moves to machine Z {z} (G53).")?;
+        outln!(
+            "Before you start: home the machine; this program moves to machine Z {z} (G53). {SOFT_LIMITS_NOTE}"
+        )?;
     }
     report_tool_length_offset(project)?;
     report_pauses(program, "")?;
@@ -735,6 +737,12 @@ fn report(
     }
     Ok(())
 }
+
+/// #308: what keeps a `G53` lift from driving Z down on a machine that
+/// homes Z downward, where every negative machine Z is below the travel
+/// (definitions README, "Machine-coordinate moves"). Only grblHAL and GRBL
+/// document `G53`, so the setting is theirs.
+const SOFT_LIMITS_NOTE: &str = "Z must home upward, or soft limits must be on ($20=1).";
 
 /// Prints the export summary of the programs of tool runs (#95): the files
 /// in the order to run them, with what to do before each, then one line
@@ -767,7 +775,9 @@ fn report_runs(
     }
     // #283: every program of the export ends with the same lift.
     if let Some(z) = programs.iter().find_map(|p| p.machine_lift.as_ref()) {
-        outln!("Before you start: home the machine; each program moves to machine Z {z} (G53).")?;
+        outln!(
+            "Before you start: home the machine; each program moves to machine Z {z} (G53). {SOFT_LIMITS_NOTE}"
+        )?;
     }
     report_tool_length_offset(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
