@@ -475,13 +475,27 @@ rises to the clearance height, from the new Z zero, before it moves across
 the work. With one program per tool run, every program ends with the park
 and the lift, so the lift is where you change bits on GRBL too.
 
-**Home the machine first.** A machine coordinate means something only on a
-machine that has been homed since it was switched on. DreamCarve cannot
-check that, so when a program has a lift `export` says:
+**Home the machine first, with soft limits on.** A machine coordinate
+means something only on a machine that has been homed since it was
+switched on. DreamCarve cannot check that, so when a program has a lift
+`export` says:
 
 ```text
 Before you start: home the machine; this program moves to machine Z -5.000 mm (G53).
 ```
+
+and the program's header says it too (on GRBL v3, after `;`):
+
+```text
+( Lifts to machine Z with G53: home the machine before running )
+```
+
+Turn soft limits on (`$20=1`): then a machine Z outside the travel stops
+the controller with an alarm before it moves, instead of driving the bit
+into a limit. A machine that homes Z downward, to the bottom of its travel
+(possible on GRBL built with `HOMING_FORCE_SET_ORIGIN`, or grblHAL with
+"force set origin"), has no machine Z below 0 inside its travel, so the
+setting cannot be used there.
 
 **Choosing the machine Z.** grblHAL and GRBL home Z to the top of its
 travel and call that just below machine Z 0: `−pulloff` (`$27`), or 0
@@ -491,6 +505,13 @@ limits on, a target above the homed position is an alarm. Pick a height
 above your clearance height on every job, so the lift only ever goes up:
 the program writes it at the clearance height, and a machine Z lower than
 that would move the bit down, straight down at the spot it is over.
+`check` also refuses a machine Z so close to 0 that the program would
+write it as 0 (under 0.0005 mm in a millimetre program, 0.00127 mm in an
+inch one).
+
+With manual spindle control, the program stops for you to switch the
+router off right after the lift. You may jog there, so before the tool
+change it lifts to the machine Z again.
 
 **Only where `G53` is documented.** The lift is written only for a
 post-processor whose definition documents `G53`

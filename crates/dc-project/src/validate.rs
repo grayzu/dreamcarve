@@ -1567,7 +1567,7 @@ impl Validator {
             // Below 0 as the program writes it: not one that rounds to 0
             // in its decimal places (#304 review).
             let half_quantum_mm = p.post_processor.decimal_places.quantum_mm(p.display_units) / 2.0;
-            if machine_z_mm >= -half_quantum_mm * 0.0 {
+            if machine_z_mm >= -half_quantum_mm {
                 self.problems
                     .push(Problem::MachineZNotBelowHome { machine_z_mm });
             }

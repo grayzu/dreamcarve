@@ -615,11 +615,12 @@ fn emit_enabled(
     // #283, #304 review: say in the program itself that it moves in
     // machine coordinates, which need a homed machine. Only with the
     // height set, so no other program's bytes change.
-    if heights.machine_z_mm.is_some() && heights.park.is_some() && heights.machine_z_mm.is_none() {
-        w.line(&format!(
+    if heights.machine_z_mm.is_some() {
+        let comment = format!(
             "{} {MACHINE_LIFT_COMMENT} {}",
             post.program.comment_prefix, post.program.comment_suffix
-        ));
+        );
+        w.line(comment.trim_end());
     }
     let mut setup: Vec<String> = post
         .program
@@ -710,7 +711,7 @@ fn emit_enabled(
             if !w.lifted {
                 w.forget_position();
                 w.retract(rise_z_mm)?;
-            } else if w.stopped_since_lift && w.tool.is_none()
+            } else if w.stopped_since_lift
                 && let Some(machine_z_mm) = heights.machine_z_mm
             {
                 // #304 review: the user may have jogged at the router-off
@@ -985,7 +986,7 @@ impl Lifts {
             // Below 0 as written: not one that rounds to 0 in the
             // program's decimal places (#304 review).
             let half_quantum_mm = post.number_format.decimal_places.quantum_mm(units) / 2.0;
-            if !(machine_z_mm.is_finite() && machine_z_mm < -half_quantum_mm * 0.0) {
+            if !(machine_z_mm.is_finite() && machine_z_mm < -half_quantum_mm) {
                 return Err(ExportError::MachineZNotBelowHome { machine_z_mm });
             }
         }
@@ -5216,13 +5217,32 @@ mod tests {
             matches!(err, ExportError::ClearanceBelowSafeZ { .. }),
             "{err:?}"
         );
-        let mut project = sample_project();
-        project.heights.tool_change_machine_z_mm = Some(0.0);
-        let err = emit(&project, &ops_for(&project), DATE).unwrap_err();
-        assert!(
-            matches!(err, ExportError::MachineZNotBelowHome { .. }),
-            "{err:?}"
-        );
+        // 0, and values that the program would write as 0: under half a
+        // unit of its last place (0.0005 mm; 0.00127 mm in inches).
+        for (units, machine_z_mm) in [
+            (Units::Mm, 0.0),
+            (Units::Mm, -0.0004),
+            (Units::Inch, -0.001),
+        ] {
+            let mut project = sample_project();
+            project.display_units = units;
+            project.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+            let err = emit(&project, &ops_for(&project), DATE).unwrap_err();
+            assert!(
+                matches!(err, ExportError::MachineZNotBelowHome { .. }),
+                "{units:?} {machine_z_mm}: {err:?}"
+            );
+        }
+        for (units, machine_z_mm, written) in [
+            (Units::Mm, -0.001, "G53 G0 Z-0.001"),
+            (Units::Inch, -0.0013, "G53 G0 Z-0.0001"),
+        ] {
+            let mut project = sample_project();
+            project.display_units = units;
+            project.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+            let text = emit_text(&project);
+            assert!(text.lines().any(|l| l == written), "{units:?}\n{text}");
+        }
     }
 
     /// Design addendum A7 with manual spindle control: the lift comes
@@ -5262,6 +5282,44 @@ mod tests {
         );
     }
 
+    /// #304 review: with manual spindle control, every tool change lifts
+    /// again after the router-off pause, right before its `T<n> M6`: three
+    /// operations with tools 1, 2, 1 change tools twice, and each change
+    /// has the lift before the pause and the one before the change.
+    #[test]
+    fn manual_relift_before_every_tool_change() {
+        let mut project = project_with("grblhal");
+        project.post_processor.spindle_control = SpindleControl::Manual;
+        let mut ops = two_tool_ops(&mut project);
+        let mut third = profile_op(&project);
+        third.id = OperationId::new("o3");
+        third.name = "Third".into();
+        project.operations.push(Operation::Profile(third.clone()));
+        let tool = project.tools[0].clone();
+        let (toolpath, _) = generate_profile(&project, &third).unwrap();
+        ops.push((Operation::Profile(third), tool, toolpath).into());
+        project.heights.tool_change_machine_z_mm = Some(-5.0);
+        let text = emit(&project, &ops, DATE).unwrap().0.text;
+        let lines = code_lines(&text);
+        let changes: Vec<usize> = (0..lines.len())
+            .filter(|&i| lines[i].contains(" M6"))
+            .collect();
+        assert_eq!(changes.len(), 2, "{text}");
+        for &change in &changes {
+            assert_eq!(lines[change - 1], "G53 G0 Z-5.000", "{text}");
+            let pause = (0..change)
+                .rev()
+                .find(|&i| lines[i] == "M0")
+                .unwrap_or_else(|| panic!("{text}"));
+            assert_eq!(lines[pause - 1], "G53 G0 Z-5.000", "{text}");
+        }
+        assert_eq!(
+            lines.iter().filter(|l| l.starts_with("G53")).count(),
+            5,
+            "two per change and one at the end\n{text}"
+        );
+    }
+
     /// #304 review: with a tool-change machine Z, the header says the
     /// program uses machine coordinates and needs a homed machine, in a
     /// comment; without one the header is as before (the goldens and the
@@ -5282,9 +5340,35 @@ mod tests {
             .unwrap_or_else(|| panic!("{text}"));
         let first_motion = lines.iter().position(|l| l.starts_with("G0")).unwrap();
         assert!(at < first_motion, "in the header\n{text}");
+        // In inches, on GRBL, and in every program of a run per tool.
+        for (post, units) in [("grbl", Units::Inch), ("grblhal", Units::Mm)] {
+            let mut project = project_with(post);
+            project.display_units = units;
+            let ops = two_tool_ops(&mut project);
+            project.heights.tool_change_machine_z_mm = Some(-5.0);
+            let (programs, _) =
+                emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE).unwrap();
+            assert_eq!(programs.len(), 2);
+            for program in &programs {
+                let definition = post_of(&project);
+                let expected = format!(
+                    "{} {MACHINE_LIFT_COMMENT} {}",
+                    definition.program.comment_prefix, definition.program.comment_suffix
+                );
+                assert!(
+                    program.text.lines().any(|l| l == expected.trim_end()),
+                    "{post} {units:?}\n{}",
+                    program.text
+                );
+            }
+        }
         // The clearance height and the park point need no homing.
         project.heights.tool_change_machine_z_mm = None;
         project.heights.clearance_mm = Some(10.0);
+        project.heights.park = Some(dc_project::ParkXy {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        });
         assert!(!emit_text(&project).contains(comment));
     }
 

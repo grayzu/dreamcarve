@@ -336,10 +336,6 @@ fn check_rules(
 ) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
     let machine_lift_mm = heights.machine_lift_mm;
-    let heights = ProgramHeights {
-        clearance_z_mm: None,
-        ..heights
-    };
     // S11: canned cycles are expanded into the moves the controller makes,
     // and every rule below checks those.
     // A controller without units words (UCCNC) reads the program in the
@@ -408,7 +404,7 @@ fn check_rules(
             // have jogged at that stop (manual spindle control: the
             // router-off pause, then the tool change).
             let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
-            let relift = false;
+            let relift = matches!(lifted, Some((_, true)));
             if !(relift || router.at_or_above(safe_z_mm)) {
                 return Err(ExportError::MachineLiftNotAtSafeZ { line });
             }

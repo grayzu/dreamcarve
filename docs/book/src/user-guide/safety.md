@@ -28,8 +28,10 @@ written. There are no safety warnings, only errors.
    Z. The check refuses a rapid that stops lower, or over a floor only
    another operation cut. With a [clearance height](post-processors.md#heights-clearance-tool-change-and-park)
    set, moves between parts and between operations rise to it, which is
-   higher still; moves after the last operation, such as the move to the
-   park point, are held to the highest safe Z of the program. Inside a [Drill](drill.md), a rapid straight
+   higher still: the check holds each operation's first move across the
+   work, every move across outside the operations (such as the move to
+   the park point) and every stop to it. Without one, moves after the last
+   operation are held to the highest safe Z of the program. Inside a [Drill](drill.md), a rapid straight
    down may stop at the retract height above the stock, or inside the
    part of the hole already drilled, and never in uncut material.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
@@ -162,8 +164,9 @@ written. There are no safety warnings, only errors.
     the project's `tool_change_machine_z_mm` (below 0), on a
     post-processor that documents `G53` (grblHAL, GRBL), and only right
     before a tool-change stop or the end of the program, from at or above
-    safe Z, at the spot the bit is already over. Any other `G53` is
-    refused. After the lift the check treats Z as unknown, as after a
+    safe Z, at the spot the bit is already over, or again right after a
+    stop that followed a lift (the router-off pause, then the tool change)
+    with nothing moved between. Any other `G53` is refused. After the lift the check treats Z as unknown, as after a
     stop (rule 5), so a move across the work needs a lift to safe Z in
     work coordinates first; a program that moves before the stop or the
     end it lifted for is refused.

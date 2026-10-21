@@ -2969,6 +2969,23 @@ above:
   start: home the machine; this program moves to machine Z -5.000 mm
   (G53).`; with one program per tool run, once, as "each program moves".
   `Program::machine_lift` carries it.
+- Review of #304. (1) With manual spindle control the router-off pause
+  follows the lift and the user may jog there, so the program lifts again
+  right before `T<n> M6`; S16 accepts a lift right after a stop that
+  followed a lift with nothing moved since, once the units are set again
+  (S5). (2) Validation and the emitter refuse a machine Z that rounds to
+  0 in the program's decimal places. (3) The safety pass takes the
+  clearance height (`safety::ProgramHeights`): with it set, each
+  operation's first XY rapid, every XY rapid outside the operations (the
+  park move) and every stop are at or above it
+  (`ExportError::RapidBelowClearance`, `PauseNotAtSafeZ`). Links between
+  parts inside an operation are not told apart from links between passes
+  in the program text, which does not say which part a move is over (a
+  pocket's island is a part of its own, and its raster ends lie on it);
+  S6 holds them to the toolpath, whose links the sequencer writes and
+  `sequence::links_between_instances_rise_to_clearance` checks. (4) A
+  program with a machine Z has the header comment `( Lifts to machine Z
+  with G53: home the machine before running )`; others are unchanged.
 - The estimate (A4). A `G53` lift has no work-coordinate motion, so
   `dc-gcode::estimate` leaves its distance, and that of the rise after it
   from an unknown Z, out of the rapid distance.

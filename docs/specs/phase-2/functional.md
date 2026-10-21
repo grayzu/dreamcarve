@@ -957,7 +957,10 @@ built (design addendum, "Order and format versions").
   the XY where the bit already is, after a retract to at least safe Z.
   The safety pass treats work Z as unknown after it, as after `M0` (S4),
   so the next XY rapid needs a retract in work coordinates first. It
-  refuses every other `G53`.
+  refuses every other `G53`, except the same lift again right after a stop
+  that followed one, with nothing moved between (changed in #304 review:
+  with manual spindle control the user may jog at the router-off pause
+  before the tool change).
 - **S2 and S6, changed.** S6's "only other motion in an operation" adds
   the rise to the clearance height before an operation's first move and
   after its last. After the last operation a program may rapid, at or

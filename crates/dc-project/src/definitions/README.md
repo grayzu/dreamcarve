@@ -261,16 +261,40 @@ negative machine position, when Z homes upward (the default):
   `−homing_pulloff` (0 with `HOMING_FORCE_SET_ORIGIN`), and
   `grbl/system.c` 348: soft limits accept `[max_travel, 0]`.
 
-So `tool_change_machine_z_mm` must be below 0: validation refuses 0 or
-more (`machine_z_not_below_home`), and the post-processors chapter says to
-stay at least the pull-off below 0. Machine coordinates mean nothing on a
-machine that is not homed, which DreamCarve cannot check, so `export` says
-to home it whenever a program has a lift.
+The exception, on both. GRBL built with `HOMING_FORCE_SET_ORIGIN` and Z
+homing downward (its bit set in `$23`, `homing_dir_mask`) sets the homed
+position to 0 and accepts `[0, −max_travel]`, a positive range
+(`grbl/system.c` 340-344); grblHAL does the same with
+`homing.flags.force_set_origin` and a downward-homing axis
+(`machine_limits.c` 129-131). There Z 0 is the bottom of the travel, and
+every negative machine Z is below it. Validation still requires a
+negative value, so on such a machine no lift DreamCarve accepts is inside
+the travel: it fails safe only with soft limits on, when the controller
+refuses the target with an alarm before it moves: every line move, `G53`
+included, goes through `limits_soft_check` (GRBL `motion_control.c`
+34-38 and `limits.c` 411-430; grblHAL `motion_control.c` 96-99). With soft limits off it
+would drive Z down toward the bottom switch, so the post-processors
+chapter asks for soft limits on whenever a machine Z is set, and a
+machine that homes Z downward cannot use the setting.
+
+So `tool_change_machine_z_mm` must be below 0 as the program writes it:
+validation refuses 0 or more, and a value that rounds to 0 in the
+program's decimal places (`machine_z_not_below_home`), and the
+post-processors chapter says to stay at least the pull-off below 0.
+Machine coordinates mean nothing on a machine that is not homed, which
+DreamCarve cannot check, so `export` says to home it whenever a program
+has a lift, and the program says so in a header comment in the
+definition's comment syntax, `( Lifts to machine Z with G53: home the
+machine before running )` (`;` on GRBL v3).
 
 What DreamCarve writes, the safety pass's S16: `G53 G0 Z<v>`, alone on its
 line, in the program's units, after a retract in work coordinates to at
 least safe Z and at the XY where the bit already is; only before a
-tool-change stop or before the footer. After it work Z is unknown, so the
+tool-change stop or before the footer. With manual spindle control the
+router-off pause follows the lift, and the user may jog there, so the
+program lifts again right before `T<n> M6`: S16 accepts a lift right
+after a stop that followed a lift, with nothing moved between, once the
+units are set again. After it work Z is unknown, so the
 next move in XY needs a retract in work coordinates first, as after a
 pause (S4). Any XY move (the park point) comes before the lift, at a work
 Z the safety pass checks, never after it. The footer stays without `G53`

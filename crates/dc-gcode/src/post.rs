@@ -884,6 +884,10 @@ fn machine_command_cited() {
         "machine_limits.c",
         "limits.c",
         "system.c",
+        // #304 review: the downward-homing case and the soft-limit check
+        // that makes it fail safe.
+        "HOMING_FORCE_SET_ORIGIN",
+        "motion_control.c",
         "4ec1ae44b857a70d2f9298344feac4b43ed0eb6b",
         "bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e",
     ] {
