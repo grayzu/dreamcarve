@@ -2453,7 +2453,9 @@ fn config_path_prints_locations() {
     assert_eq!(lines, expected("not found"));
 
     write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
-    std::fs::write(config.join("tools.json"), "{}").expect("library written");
+    // `tools import` creates the library file on first write.
+    import_sample_library(&dir);
+    assert!(config.join("tools.json").exists(), "the import created the library");
     let out = run(&dir, &["config", "path"]);
     assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
     let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
@@ -3192,4 +3194,337 @@ fn warnings_print_code_and_message() {
             );
         }
     }
+}
+
+// ── Tool library (phase 2, capability 21; design, "Tool library CLI") ──
+
+/// The library file every test's `dreamcarve` reads and writes.
+fn library_file(dir: &Path) -> PathBuf {
+    config_dir(dir).join("tools.json")
+}
+
+/// A 1/4" end mill with every value and a tool number, the tool
+/// acceptance test 35 adds to a project.
+fn quarter_inch_end_mill() -> dc_project::Tool {
+    dc_project::Tool {
+        id: ToolId::new("t1"),
+        name: "1/4 end mill".into(),
+        number: Some(3),
+        cutter: dc_project::ToolKind::EndMill,
+        diameter_mm: 6.35,
+        flutes: 2,
+        feed_mm_min: Some(1500.0),
+        plunge_mm_min: Some(500.0),
+        rpm: Some(18000),
+        step_down_mm: Some(3.0),
+        step_over_fraction: Some(0.45),
+    }
+}
+
+/// A 60° V-bit tagged as coming from a Fusion library.
+fn vbit_60() -> dc_project::Tool {
+    dc_project::Tool {
+        id: ToolId::new("t1"),
+        name: "60° V-bit".into(),
+        number: None,
+        cutter: dc_project::ToolKind::VBit {
+            included_angle_deg: 60.0,
+        },
+        diameter_mm: 12.7,
+        flutes: 2,
+        feed_mm_min: Some(800.0),
+        plunge_mm_min: Some(200.0),
+        rpm: Some(16000),
+        step_down_mm: Some(1.0),
+        step_over_fraction: None,
+    }
+}
+
+/// The source the V-bit is tagged with.
+const VBIT_SOURCE: &str = "fusion:0000-guid:preset-1";
+
+/// A DreamCarve library file holding `tools`, each with its source,
+/// written as `name` in `dir`.
+fn write_library_file(
+    dir: &Path,
+    name: &str,
+    tools: &[(dc_project::Tool, Option<&str>)],
+) -> PathBuf {
+    let mut lib = dc_library::Library::default();
+    for (tool, source) in tools {
+        dc_library::add(&mut lib, tool.clone(), source.map(str::to_owned)).expect("valid tool");
+    }
+    let path = dir.join(name);
+    std::fs::write(&path, dc_library::save(&lib).expect("library saves")).expect("file written");
+    path
+}
+
+/// Imports the two sample tools into the test's library and returns the
+/// import output.
+fn import_sample_library(dir: &Path) -> Output {
+    write_library_file(
+        dir,
+        "sample.json",
+        &[
+            (quarter_inch_end_mill(), None),
+            (vbit_60(), Some(VBIT_SOURCE)),
+        ],
+    );
+    let out = run(dir, &["tools", "import", "sample.json"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    out
+}
+
+/// The library as `dreamcarve` left it on disk.
+fn read_library(dir: &Path) -> dc_library::Library {
+    dc_library::load(&std::fs::read(library_file(dir)).expect("library readable"))
+        .expect("library loads")
+}
+
+/// `tools list` says when there is no library yet, lists every tool once
+/// there is one, and `--json` prints the file.
+#[test]
+fn tools_list_shows_every_tool() {
+    let dir = work_dir("tools_list_shows_every_tool");
+    let out = run(&dir, &["tools", "list"]);
+    assert_eq!(out.status.code(), Some(0), "list: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains(&library_file(&dir).display().to_string()),
+        "names the missing file: {}",
+        stdout(&out)
+    );
+    assert!(!library_file(&dir).exists(), "list creates nothing");
+
+    let out = import_sample_library(&dir);
+    let text = stdout(&out);
+    assert!(
+        text.contains("1/4 end mill") && text.contains("imported"),
+        "{text}"
+    );
+    assert!(text.contains("60° V-bit"), "{text}");
+    assert!(text.contains("2 imported"), "{text}");
+    assert!(library_file(&dir).exists(), "the library was created");
+
+    let out = run(&dir, &["tools", "list"]);
+    assert_eq!(out.status.code(), Some(0), "list: {}", stderr(&out));
+    let text = stdout(&out);
+    for needle in [
+        "lt1",
+        "1/4 end mill",
+        "lt2",
+        "60° V-bit",
+        "6.35",
+        "1500",
+        VBIT_SOURCE,
+    ] {
+        assert!(text.contains(needle), "list lacks {needle}:\n{text}");
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "a header and one line per tool:\n{text}");
+    assert!(
+        lines[1].starts_with("lt1") && lines[2].starts_with("lt2"),
+        "{text}"
+    );
+
+    let out = run(&dir, &["tools", "list", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "list --json: {}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        std::fs::read_to_string(library_file(&dir)).expect("library readable")
+    );
+}
+
+/// Acceptance 35: `tools add` copies the tool into the project under a
+/// fresh project id, keeping its number and every other value; the
+/// library id never appears in the project. By id works too; an unknown
+/// name fails naming it and writes nothing.
+#[test]
+fn tools_add_copies_into_project_with_new_id() {
+    let dir = work_dir("tools_add_copies_into_project_with_new_id");
+    let dcv = init_coaster(&dir);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+
+    // No library yet: an error naming the file, and the project untouched.
+    let out = run(&dir, &["tools", "add", "coaster.dcv", "1/4 end mill"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains(&library_file(&dir).display().to_string()),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+
+    import_sample_library(&dir);
+    let out = run(&dir, &["tools", "add", "coaster.dcv", "1/4 end mill"]);
+    assert_eq!(out.status.code(), Some(0), "add: {}", stderr(&out));
+    assert!(stdout(&out).contains("t2"), "{}", stdout(&out));
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tools.len(), 2, "{:?}", project.tools);
+    let added = &project.tools[1];
+    assert_eq!(added.id, ToolId::new("t2"), "next free project id");
+    let mut expected = quarter_inch_end_mill();
+    expected.id = ToolId::new("t2");
+    assert_eq!(*added, expected, "every field copied, the number kept");
+    assert!(
+        !std::fs::read_to_string(&dcv)
+            .expect("dcv readable")
+            .contains("lt1"),
+        "the library id is not in the project"
+    );
+    // The project's own tool and operations are as they were.
+    assert_eq!(project.tools[0].id, ToolId::new("t1"));
+    assert_eq!(project.operations.len(), 1);
+
+    // By id, and the next free id is t3.
+    let out = run(&dir, &["tools", "add", "coaster.dcv", "lt2"]);
+    assert_eq!(out.status.code(), Some(0), "add: {}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tools[2].id, ToolId::new("t3"));
+    assert_eq!(project.tools[2].name, "60° V-bit");
+
+    let written = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["tools", "add", "coaster.dcv", "no such tool"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("no such tool"), "{}", stderr(&out));
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), written);
+}
+
+/// Acceptance 35: projects embed copies (ADR-0002). Removing the tool
+/// from the library, and re-importing it with other feeds, leave the
+/// project file byte-identical.
+#[test]
+fn library_edit_does_not_change_project() {
+    let dir = work_dir("library_edit_does_not_change_project");
+    let dcv = init_coaster(&dir);
+    import_sample_library(&dir);
+    let out = run(&dir, &["tools", "add", "coaster.dcv", "1/4 end mill"]);
+    assert_eq!(out.status.code(), Some(0), "add: {}", stderr(&out));
+    let with_tool = std::fs::read(&dcv).expect("dcv readable");
+
+    let out = run(&dir, &["tools", "remove", "lt1"]);
+    assert_eq!(out.status.code(), Some(0), "remove: {}", stderr(&out));
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), with_tool);
+
+    let mut faster = quarter_inch_end_mill();
+    faster.feed_mm_min = Some(2500.0);
+    write_library_file(&dir, "faster.json", &[(faster, None)]);
+    let out = run(&dir, &["tools", "import", "faster.json"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), with_tool);
+    let project = load_file(&dcv).project;
+    assert_eq!(
+        project.tools[1].feed_mm_min,
+        Some(1500.0),
+        "the copy kept its feed"
+    );
+}
+
+/// Acceptance 35: `tools export` then `tools import` of the result
+/// reports every tool as already present and leaves the library
+/// byte-identical. A changed tool with the same source is a new tool
+/// unless `--replace`, which overwrites it in place.
+#[test]
+fn tools_export_import_round_trip() {
+    let dir = work_dir("tools_export_import_round_trip");
+    import_sample_library(&dir);
+    let out = run(&dir, &["tools", "export", "out.json"]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let exported = std::fs::read(dir.join("out.json")).expect("export readable");
+    assert_eq!(
+        exported,
+        std::fs::read(library_file(&dir)).expect("library readable"),
+        "the export is the library file"
+    );
+
+    let out = run(&dir, &["tools", "import", "out.json"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    let text = stdout(&out);
+    assert_eq!(text.matches("already present").count(), 3, "{text}");
+    assert!(!text.contains("imported as"), "{text}");
+    assert_eq!(
+        std::fs::read(library_file(&dir)).expect("library readable"),
+        exported,
+        "re-import changed the library"
+    );
+
+    // The same source with other feeds: without --replace a second tool
+    // under a suffixed name; with it, the existing tool is overwritten.
+    let mut changed = vbit_60();
+    changed.feed_mm_min = Some(900.0);
+    write_library_file(&dir, "changed.json", &[(changed, Some(VBIT_SOURCE))]);
+    let out = run(&dir, &["tools", "import", "changed.json"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    assert!(stdout(&out).contains("60° V-bit (2)"), "{}", stdout(&out));
+    let lib = read_library(&dir);
+    assert_eq!(lib.tools.len(), 3);
+    assert_eq!(lib.tools[2].id, dc_library::LibraryToolId::new("lt3"));
+    assert_eq!(lib.tools[2].tool.name, "60° V-bit (2)");
+
+    let out = run(&dir, &["tools", "remove", "lt3"]);
+    assert_eq!(out.status.code(), Some(0), "remove: {}", stderr(&out));
+    let out = run(&dir, &["tools", "import", "changed.json", "--replace"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    assert!(stdout(&out).contains("replaced"), "{}", stdout(&out));
+    let lib = read_library(&dir);
+    assert_eq!(lib.tools.len(), 2, "replaced in place");
+    assert_eq!(lib.tools[1].id, dc_library::LibraryToolId::new("lt2"));
+    assert_eq!(lib.tools[1].tool.feed_mm_min, Some(900.0));
+    assert_eq!(lib.tools[1].source.as_deref(), Some(VBIT_SOURCE));
+    assert_eq!(
+        lib.tools[1].tool.id,
+        ToolId::new("lt2"),
+        "the inner id follows"
+    );
+}
+
+/// `tools remove` takes a tool out and leaves the rest; removing it again
+/// is an error naming it.
+#[test]
+fn tools_remove() {
+    let dir = work_dir("tools_remove");
+    import_sample_library(&dir);
+    let out = run(&dir, &["tools", "remove", "lt1"]);
+    assert_eq!(out.status.code(), Some(0), "remove: {}", stderr(&out));
+    assert!(stdout(&out).contains("1/4 end mill"), "{}", stdout(&out));
+    let lib = read_library(&dir);
+    assert_eq!(lib.tools.len(), 1);
+    assert_eq!(lib.tools[0].id, dc_library::LibraryToolId::new("lt2"));
+    let out = run(&dir, &["tools", "list"]);
+    assert!(!stdout(&out).contains("lt1"), "{}", stdout(&out));
+
+    let out = run(&dir, &["tools", "remove", "lt1"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("lt1"), "{}", stderr(&out));
+    assert_eq!(read_library(&dir).tools.len(), 1, "nothing else removed");
+}
+
+/// A Fusion library (a `.tools` zip, or JSON with a `data` array) is
+/// recognised and refused with a pointer to the slice that adds it, not
+/// reported as a malformed DreamCarve file. Nothing is written.
+#[test]
+fn tools_import_fusion_is_not_yet_supported() {
+    let dir = work_dir("tools_import_fusion_is_not_yet_supported");
+    std::fs::write(dir.join("sample.tools"), b"PK\x03\x04not really a zip").expect("written");
+    std::fs::write(
+        dir.join("sample.json"),
+        b"{\"version\": 24, \"data\": [{\"type\": \"flat end mill\"}]}",
+    )
+    .expect("written");
+    for file in ["sample.tools", "sample.json"] {
+        let out = run(&dir, &["tools", "import", file]);
+        assert_eq!(out.status.code(), Some(1), "{file}: {}", stdout(&out));
+        assert!(
+            stderr(&out).contains("Fusion import lands in slice 21"),
+            "{file}: {}",
+            stderr(&out)
+        );
+    }
+    assert!(!library_file(&dir).exists(), "nothing written");
+
+    // A malformed DreamCarve file is an error naming it, with nothing written.
+    std::fs::write(dir.join("bad.json"), b"{\"version\": 1, \"tools\": [{}]}").expect("written");
+    let out = run(&dir, &["tools", "import", "bad.json"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("bad.json"), "{}", stderr(&out));
+    assert!(!library_file(&dir).exists(), "nothing written");
 }

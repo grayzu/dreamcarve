@@ -1,0 +1,25 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "dc-library"
+description = "DreamCarve tool library: the user's tools, outside any project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+dc-project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+dc-project = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
