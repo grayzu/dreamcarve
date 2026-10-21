@@ -304,6 +304,19 @@ pub enum ExportError {
         /// 1-based line number in the program.
         line: usize,
     },
+    /// S12: a `G2`/`G3` written in place of straight toolpath moves does
+    /// not follow them: its start or end is not a toolpath vertex, a vertex
+    /// between lies off the arc by more than the arc-fit tolerance, it
+    /// sweeps more than 90°, or it turns against the vertices.
+    #[error(
+        "emitted line {line} is an arc in place of operation `{op}`'s straight moves that does not follow them"
+    )]
+    ArcFitViolation {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+    },
     /// S6: reading the program back does not reproduce the toolpath: a
     /// move is missing, ends elsewhere, is the wrong kind, turns the wrong
     /// way, has the wrong centre, or has moves the toolpath does not.

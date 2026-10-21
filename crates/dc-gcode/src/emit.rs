@@ -57,7 +57,7 @@
 
 use std::f64::consts::{FRAC_PI_2, TAU};
 
-use dc_cam::{FeedField, MoveKind, Toolpath};
+use dc_cam::{FeedField, Move, MoveKind, Toolpath};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
 use dc_project::{
     ArcFormat, OperationId, PostProcessor, ProfileOp, Project, SpindleControl, Tool,
@@ -65,9 +65,10 @@ use dc_project::{
 };
 
 use crate::ExportError;
+use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
 use crate::parse::parse_program;
-use crate::safety::{self, Extents, OpSpan};
+use crate::safety::{self, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
 
 /// An emitted G-code program.
@@ -127,6 +128,16 @@ pub enum ExportWarning {
         op: OperationId,
         /// How many arcs.
         count: usize,
+    },
+    /// Some runs of straight moves that fit an arc were written as the
+    /// original moves because, once its numbers were rounded, the
+    /// controller would have rejected one of the run's arcs
+    /// (`arc_fit_fallback`).
+    ArcFitFallback {
+        /// The operation.
+        op: OperationId,
+        /// How many runs.
+        runs: usize,
     },
 }
 
@@ -486,11 +497,17 @@ fn emit_enabled(
             }
         }
 
-        let flattened = w.toolpath(op, toolpath)?;
-        if flattened > 0 {
+        let written = w.toolpath(op, toolpath)?;
+        if written.flattened > 0 {
             warnings.push(ExportWarning::ArcsFlattened {
                 op: op.id.clone(),
-                count: flattened,
+                count: written.flattened,
+            });
+        }
+        if written.fallback_runs > 0 {
+            warnings.push(ExportWarning::ArcFitFallback {
+                op: op.id.clone(),
+                runs: written.fallback_runs,
             });
         }
 
@@ -523,7 +540,10 @@ fn emit_enabled(
         }
     }
     w.line(&post.stop.program_end_command);
-    let flatten_tolerance_mm = w.flatten_tolerance_mm;
+    let tolerances = Tolerances {
+        flatten_mm: w.flatten_tolerance_mm,
+        arc_fit_mm: w.arc_fit_tolerance_mm,
+    };
     let text = w.finish();
 
     // Step 7: the safety pass, on the text.
@@ -543,7 +563,7 @@ fn emit_enabled(
         &transform,
         &project.stock,
         thickness_mm,
-        flatten_tolerance_mm,
+        tolerances,
         &spans,
     )?;
     let pauses = pauses(&text)?;
@@ -924,11 +944,22 @@ fn segment_count(count: f64) -> usize {
     count.ceil().clamp(1.0, MAX_ARC_SEGMENTS) as usize
 }
 
+/// What writing a toolpath had to change for the controller's sake.
+#[derive(Debug, Clone, Copy, Default)]
+struct Written {
+    /// Arcs written as straight moves.
+    flattened: usize,
+    /// Fitted runs written as their original moves.
+    fallback_runs: usize,
+}
+
 /// Writes lines and tracks the controller's modal state and position.
 struct Writer<'a> {
     post: &'a PostProcessor,
     transform: MachineTransform,
     flatten_tolerance_mm: f64,
+    /// The project's arc-fit tolerance; `None` turns fitting off.
+    arc_fit_tolerance_mm: Option<f64>,
     lines: Vec<String>,
     line_number: u32,
     /// The last motion word written.
@@ -957,6 +988,9 @@ impl<'a> Writer<'a> {
             } else {
                 FLATTEN_TOLERANCE_DEFAULT_MM
             },
+            arc_fit_tolerance_mm: project
+                .arc_fit_tolerance_mm
+                .filter(|t| t.is_finite() && *t > 0.0),
             lines: Vec::new(),
             line_number: post.program.line_number_increment,
             motion: None,
@@ -1073,36 +1107,158 @@ impl<'a> Writer<'a> {
         )
     }
 
-    /// Writes `toolpath`; returns how many arcs had to be flattened.
-    fn toolpath(&mut self, op: &ProfileOp, toolpath: &Toolpath) -> Result<usize, ExportError> {
-        let mut flattened = 0;
+    /// Writes `toolpath`, with runs of straight moves fitted to arcs when
+    /// the project has an arc-fit tolerance and the post-processor writes
+    /// arcs (`docs/specs/phase-2/design.md`, "Arc fitting"). Fitting runs
+    /// in project space; each fitted run is then judged on its rounded
+    /// machine numbers and reverts to its moves if the controller would
+    /// reject any of its arcs.
+    fn toolpath(&mut self, op: &ProfileOp, toolpath: &Toolpath) -> Result<Written, ExportError> {
+        // Every cut carries a feed, checked before fitting so the error
+        // names the move whatever the fitting does.
         for (index, mv) in toolpath.moves.iter().enumerate() {
-            if mv.is_rapid() {
-                self.rapid(mv.to)?;
-                continue;
-            }
-            let feed = mv
-                .feed_mm_min
-                .filter(|f| f.is_finite() && *f > 0.0)
-                .ok_or_else(|| ExportError::MoveWithoutFeed {
+            if !mv.is_rapid() && !mv.feed_mm_min.is_some_and(|f| f.is_finite() && f > 0.0) {
+                return Err(ExportError::MoveWithoutFeed {
                     op: op.id.clone(),
                     index,
-                })?;
-            let (centre, clockwise) = match mv.kind {
-                MoveKind::Rapid | MoveKind::Linear => {
-                    self.linear(mv.to, feed)?;
-                    continue;
+                });
+            }
+        }
+        let fitting = self
+            .arc_fit_tolerance_mm
+            .filter(|_| self.post.motion.arc_interpolation);
+        let (fitted, fallback_runs) = match fitting {
+            Some(tolerance_mm) => {
+                let fitted = arcfit::fit(&toolpath.moves, tolerance_mm);
+                let format = self.post.number_format;
+                let units = self.transform.output_units();
+                let read = move |v: f64| read_back(&format_number(v, &format, units).ok()?);
+                let opts = EmitOptions {
+                    format: &read,
+                    arc_format: self.post.motion.arc_format,
+                    mm_per_unit: self.transform.mm_per_unit(),
+                    quantum: self.quantum(),
+                };
+                let transform = self.transform;
+                let to_machine =
+                    move |p: Point| transform.to_machine(Point3::new(p.x, p.y, 0.0)).xy();
+                let start = self.emitted_xy().map(|(x, y)| Point::new(x, y));
+                arcfit::apply_fallback(fitted, &opts, start, &to_machine)
+            }
+            None => (
+                toolpath.moves.iter().copied().map(Fitted::Move).collect(),
+                0,
+            ),
+        };
+
+        let mut written = Written {
+            flattened: 0,
+            fallback_runs,
+        };
+        let mut index = 0;
+        for item in fitted {
+            match item {
+                Fitted::Move(mv) => {
+                    written.flattened += self.write_move(op, index, &mv)?;
+                    index += 1;
                 }
-                MoveKind::ArcCw { centre } => (centre, true),
-                MoveKind::ArcCcw { centre } => (centre, false),
-            };
-            let start = self.position.ok_or_else(|| ExportError::ArcWithoutStart {
+                Fitted::Arc(run) => {
+                    for arc in &run.arcs {
+                        self.fitted_arc(op, index, arc, run.feed_mm_min)?;
+                    }
+                    if let Some(last) = run.arcs.last() {
+                        self.position = Some(last.end);
+                    }
+                    index += run.fallback.len();
+                }
+            }
+        }
+        Ok(written)
+    }
+
+    /// Writes toolpath move `index` as it is; returns how many arcs had to
+    /// be flattened (0 or 1).
+    fn write_move(
+        &mut self,
+        op: &ProfileOp,
+        index: usize,
+        mv: &Move,
+    ) -> Result<usize, ExportError> {
+        if mv.is_rapid() {
+            self.rapid(mv.to)?;
+            return Ok(0);
+        }
+        let feed = mv
+            .feed_mm_min
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .ok_or_else(|| ExportError::MoveWithoutFeed {
                 op: op.id.clone(),
                 index,
             })?;
-            flattened += self.arc(start, mv.to, centre, clockwise, feed)?;
-        }
-        Ok(flattened)
+        let (centre, clockwise) = match mv.kind {
+            MoveKind::Rapid | MoveKind::Linear => {
+                self.linear(mv.to, feed)?;
+                return Ok(0);
+            }
+            MoveKind::ArcCw { centre } => (centre, true),
+            MoveKind::ArcCcw { centre } => (centre, false),
+        };
+        let start = self.position.ok_or_else(|| ExportError::ArcWithoutStart {
+            op: op.id.clone(),
+            index,
+        })?;
+        self.arc(start, mv.to, centre, clockwise, feed)
+    }
+
+    /// Writes fitted sub-arc `arc` with the words [`arcfit::resolve_emitted_arc`]
+    /// chose for it from the position the controller holds: I and J
+    /// snapped to agree, or R repaired for rounding. `apply_fallback` has
+    /// already accepted the whole run from that same position.
+    fn fitted_arc(
+        &mut self,
+        op: &ProfileOp,
+        index: usize,
+        arc: &SubArc,
+        feed_mm_min: f64,
+    ) -> Result<(), ExportError> {
+        let (sx, sy) = self
+            .emitted_xy()
+            .ok_or_else(|| ExportError::ArcWithoutStart {
+                op: op.id.clone(),
+                index,
+            })?;
+        let end = self.transform.to_machine(arc.end);
+        let centre = self
+            .transform
+            .to_machine(Point3::new(arc.centre.x, arc.centre.y, arc.end.z))
+            .xy();
+        let resolved = {
+            let format = self.post.number_format;
+            let units = self.transform.output_units();
+            let read = move |v: f64| read_back(&format_number(v, &format, units).ok()?);
+            let opts = EmitOptions {
+                format: &read,
+                arc_format: self.post.motion.arc_format,
+                mm_per_unit: self.transform.mm_per_unit(),
+                quantum: self.quantum(),
+            };
+            arcfit::resolve_emitted_arc(end.xy(), centre, Point::new(sx, sy), &opts)
+        };
+        let extra = match self.post.motion.arc_format {
+            ArcFormat::Ij => vec![
+                format!("I{}", self.number(resolved.i)?),
+                format!("J{}", self.number(resolved.j)?),
+            ],
+            ArcFormat::R => vec![format!("R{}", self.number(resolved.radius)?)],
+        };
+        let command = self.arc_command_for(arc.clockwise);
+        self.motion_line(
+            &command,
+            [Some(end.x), Some(end.y), Some(end.z)],
+            &extra,
+            Some(feed_mm_min),
+            true,
+        )
     }
 
     /// A rapid to `to`. Raises Z before moving in XY, and moves in XY
@@ -1185,8 +1341,13 @@ impl<'a> Writer<'a> {
     /// The arc command for `arc` in machine space: a mirroring axis map
     /// turns clockwise into counter-clockwise.
     fn arc_command(&self, arc: &ArcGeometry) -> String {
+        self.arc_command_for(arc.clockwise)
+    }
+
+    /// The arc command for an arc that is `clockwise` in project space.
+    fn arc_command_for(&self, clockwise: bool) -> String {
         let motion = &self.post.motion;
-        let clockwise = arc.clockwise != self.transform.mirrors_xy();
+        let clockwise = clockwise != self.transform.mirrors_xy();
         #[cfg(test)]
         let clockwise = clockwise != FLIP_ARCS.get();
         if clockwise {
