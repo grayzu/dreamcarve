@@ -63,8 +63,10 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | --- | --- |
 | `svg.rs` | `import_svg`: usvg parses; each path becomes one definition and one instance, flipped to Y-up; circular arcs become bulges, other curves are flattened. |
 | `svg/arc.rs` | Recognising usvg's Bézier pieces of circular arcs (circles, equal-radius ellipses and `A` commands, rounded-rect corners) exactly, and joining them back into arcs (#70). |
-| `dxf.rs` | `import_dxf`: the `dxf` crate parses; `$INSUNITS` scaling (no Y flip: DXF is Y-up), layer names and filter, naming. |
-| `dxf/entities.rs` | Each entity as a bulge polyline; INSERT expansion with its transform, depth limit and skip rules; SPLINE and ELLIPSE flattening. |
+| `dxf.rs` | `import_dxf`, `DxfReadError`: `$INSUNITS` scaling (no Y flip: DXF is Y-up), layer names and filter, naming. |
+| `dxf/groups.rs` | The group-code reader: ASCII and binary DXF to typed (code, value) pairs; Windows-1252 and `\U+XXXX` text. |
+| `dxf/document.rs` | The header units, blocks and entities from the pairs; VERTEX rows attached to their POLYLINE. |
+| `dxf/entities.rs` | Each entity as a bulge polyline through its OCS (extrusion direction); INSERT and MINSERT expansion with the transform, depth limit and skip rules; SPLINE and ELLIPSE flattening. |
 | `dxf/spline.rs` | Rational B-spline evaluation (de Boor) and sampling to the tolerance. |
 | `dxf/stitch.rs` | Joining open segments whose ends meet, closing chains, dropping duplicates. |
 | `lib.rs` | `ImportError`, `ImportWarning`. |
