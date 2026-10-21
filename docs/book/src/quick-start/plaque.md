@@ -407,7 +407,7 @@ Post-processor grblhal.
   op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12 mm deep
   op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12 mm deep
   op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1 mm deep
-plaque-1-T1.nc (3164 lines):
+plaque-1-T1.nc (986 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
 plaque-2-T2.nc (40 lines):
@@ -477,9 +477,9 @@ coaster's program. Then the panel's helix begins: each line goes a little
 further round a 5.08 mm circle (0.8 of the bit's diameter) and a little
 lower, 15° down from the horizontal, at the feed rate. The spiral starts
 at safe Z, so its first three and a half turns are in the air above the
-plywood, which makes the program long: most of its 3164 lines are those
-turns, one spiral for each place the bit comes down in the panel. That is
-how DreamCarve places entries today
+plywood. The panel's three spirals, one for each place the bit comes
+down in it, make up about half of the program's 986 lines. That is how
+DreamCarve places entries today
 ([#214](https://github.com/grayzu/dreamcarve/issues/214)); it is safe,
 only slow.
 

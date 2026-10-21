@@ -9,16 +9,21 @@
 //! with one instance, named after its layer (`docs/specs/phase-2/design.md`,
 //! "Algorithms → DXF import (dc-import::dxf)").
 //!
-//! Parsing (group codes, sections, blocks, entity structs) is delegated to
-//! the `dxf` crate. The `$INSUNITS` table, the entity set, bulge arcs, the
-//! INSERT transform and its skip rules, stitching with closing, and the
-//! dedupe follow PureCutCNC. Changed from upstream: DXF is already Y-up, so
-//! there is no Y flip and no arc-direction flip (ADR-0001); `ELLIPSE` is
-//! read; the join tolerance defaults to 0.01 mm instead of 0.5 mm; every
-//! skipped entity is counted in a warning instead of dropped silently; and
-//! arcs stay arcs (bulges) instead of being sampled.
+//! The file is read by DreamCarve's own group-code reader (`groups`, then
+//! `document`), ASCII and binary, as upstream parses it itself; every
+//! group code read is cited from Autodesk's published DXF Reference. The
+//! `$INSUNITS` table, the entity set, bulge arcs, the INSERT transform and
+//! its skip rules, stitching with closing, and the dedupe follow
+//! PureCutCNC. Changed from upstream: DXF is already Y-up, so there is no Y
+//! flip and no arc-direction flip (ADR-0001); `ELLIPSE` is read; the
+//! extrusion direction and MINSERT arrays are applied; the join tolerance
+//! defaults to 0.01 mm instead of 0.5 mm; every skipped entity is counted
+//! in a warning instead of dropped silently; and arcs stay arcs (bulges)
+//! instead of being sampled.
 
+mod document;
 mod entities;
+mod groups;
 mod spline;
 mod stitch;
 
@@ -29,7 +34,58 @@ use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Transform};
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, Units};
 
 use crate::svg::{MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM};
-use entities::{PARSED_TYPE_NAMES, Shape, Walker};
+use entities::{Shape, Walker};
+
+/// Why bytes are not a readable DXF file: a group that cannot be framed or
+/// whose value does not fit its code's type (DXF Reference, "Group Code
+/// Value Types"). Lines count from 1; binary offsets from the file's first
+/// byte.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DxfReadError {
+    /// An ASCII group code line that is not an integer.
+    #[error("line {line}: `{text}` is not a group code")]
+    BadCode {
+        /// The line of the code.
+        line: usize,
+        /// What the line holds.
+        text: String,
+    },
+    /// An ASCII value that does not parse as its code's type.
+    #[error("line {line}: group code {code} needs a {expected}, not `{text}`")]
+    BadValue {
+        /// The line of the value.
+        line: usize,
+        /// The group code.
+        code: i32,
+        /// The type the code's value has.
+        expected: &'static str,
+        /// What the line holds.
+        text: String,
+    },
+    /// The file ends after a group code, before its value.
+    #[error("line {line}: group code {code} has no value; the file ends early")]
+    MissingValue {
+        /// The line of the code.
+        line: usize,
+        /// The group code.
+        code: i32,
+    },
+    /// A binary file ends inside a group.
+    #[error("binary DXF ends inside the group at byte {offset}")]
+    TruncatedBinary {
+        /// Where the cut-off value starts.
+        offset: usize,
+    },
+    /// A binary group code the reference does not define, so its value's
+    /// length is unknown.
+    #[error("binary DXF has group code {code} at byte {offset}, which DXF does not define")]
+    UnknownBinaryCode {
+        /// The group code.
+        code: i32,
+        /// Where the code starts.
+        offset: usize,
+    },
+}
 
 /// Default distance within which the ends of two open segments on one
 /// layer are joined, mm. CAD programs write touching ends exactly; this
@@ -182,36 +238,32 @@ pub fn import_dxf(
         });
     }
 
-    let mut reader = bytes;
-    let drawing = ::dxf::Drawing::load(&mut reader)?;
+    let document = document::read(&groups::read(bytes)?);
 
-    let declared = DxfUnits::from_insunits(drawing.header.default_drawing_units);
+    let declared = document.insunits.and_then(DxfUnits::from_insunits);
     let mm_per_unit = match (options.units, declared) {
         (Some(Units::Mm), _) => 1.0,
         (Some(Units::Inch), _) => 25.4,
         (None, Some(units)) => units.mm_per_unit(),
         (None, None) => {
             return Err(ImportError::UnitsUnknown {
-                declared: format!("{:?}", drawing.header.default_drawing_units).to_lowercase(),
+                declared: insunits_name(document.insunits.unwrap_or(0)),
             });
         }
     };
 
     // No Y flip: DXF is Y-up (ADR-0001). The scale is the whole transform.
     let scale = Transform::scale(mm_per_unit, mm_per_unit);
-    let mut walker = Walker::new(drawing.blocks(), tolerance_mm, options.max_vertices);
-    for entity in drawing.entities() {
-        if entity.common.is_in_paper_space {
+    let mut walker = Walker::new(&document.blocks, tolerance_mm, options.max_vertices);
+    for entity in &document.entities {
+        if entity.in_paper_space() {
             continue;
         }
         walker.walk(entity, scale, None, 0)?;
     }
 
     let mut warnings = Vec::new();
-    let mut skipped = walker.skipped;
-    for (kind, count) in swallowed_entity_counts(bytes) {
-        *skipped.entry(kind).or_insert(0) += count;
-    }
+    let skipped = walker.skipped;
     if !skipped.is_empty() {
         warnings.push(ImportWarning::DxfEntitiesSkipped { counts: skipped });
     }
@@ -306,18 +358,46 @@ pub fn import_dxf(
 impl DxfUnits {
     /// The `$INSUNITS` value as units DreamCarve scales from; `None` for 0
     /// (unitless) and every unit outside the six.
-    fn from_insunits(units: ::dxf::enums::Units) -> Option<Self> {
-        use ::dxf::enums::Units as U;
-        match units {
-            U::Inches => Some(Self::Inches),
-            U::Feet => Some(Self::Feet),
-            U::Miles => Some(Self::Miles),
-            U::Millimeters => Some(Self::Millimetres),
-            U::Centimeters => Some(Self::Centimetres),
-            U::Meters => Some(Self::Metres),
+    const fn from_insunits(code: i64) -> Option<Self> {
+        match code {
+            1 => Some(Self::Inches),
+            2 => Some(Self::Feet),
+            3 => Some(Self::Miles),
+            4 => Some(Self::Millimetres),
+            5 => Some(Self::Centimetres),
+            6 => Some(Self::Metres),
             _ => None,
         }
     }
+}
+
+/// The name of an `$INSUNITS` value DreamCarve does not scale from, for
+/// [`ImportError::UnitsUnknown`] (DXF Reference, "HEADER Section Group
+/// Codes", `$INSUNITS`).
+fn insunits_name(code: i64) -> String {
+    let name = match code {
+        0 => "unitless",
+        7 => "kilometres",
+        8 => "microinches",
+        9 => "mils",
+        10 => "yards",
+        11 => "angstroms",
+        12 => "nanometres",
+        13 => "microns",
+        14 => "decimetres",
+        15 => "decametres",
+        16 => "hectometres",
+        17 => "gigametres",
+        18 => "astronomical units",
+        19 => "light years",
+        20 => "parsecs",
+        21 => "US survey feet",
+        22 => "US survey inches",
+        23 => "US survey yards",
+        24 => "US survey miles",
+        other => return format!("{other}, which DXF does not define"),
+    };
+    name.to_owned()
 }
 
 /// The first occurrence of each name, in order.
@@ -329,46 +409,6 @@ fn unique(names: Vec<String>) -> Vec<String> {
         }
     }
     out
-}
-
-/// Counts, per type name, the entities of the ENTITIES section whose type
-/// the `dxf` crate does not parse (HATCH, MESH, ...): the parser swallows
-/// them, so they are counted from the raw text. Binary DXF is not scanned.
-/// The scan is forgiving, as upstream's `parsePairs`: lines are read in
-/// code/value pairs and a code that is not a number skips its pair.
-fn swallowed_entity_counts(bytes: &[u8]) -> BTreeMap<String, usize> {
-    let mut counts = BTreeMap::new();
-    if bytes.starts_with(b"AutoCAD Binary DXF") {
-        return counts;
-    }
-    let text = String::from_utf8_lossy(bytes);
-    let mut lines = text.lines().map(str::trim);
-    let mut in_entities = false;
-    let mut expect_section_name = false;
-    while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-        let Ok(code) = code.parse::<i32>() else {
-            continue;
-        };
-        match code {
-            0 => {
-                expect_section_name = value == "SECTION";
-                if value == "SECTION" || value == "ENDSEC" {
-                    in_entities = false;
-                } else if in_entities {
-                    let name = value.to_ascii_uppercase();
-                    if !PARSED_TYPE_NAMES.contains(&name.as_str()) {
-                        *counts.entry(name).or_insert(0) += 1;
-                    }
-                }
-            }
-            2 if expect_section_name => {
-                in_entities = value.eq_ignore_ascii_case("ENTITIES");
-                expect_section_name = false;
-            }
-            _ => expect_section_name = false,
-        }
-    }
-    counts
 }
 
 #[cfg(test)]
@@ -1201,5 +1241,477 @@ mod tests {
     fn import_is_deterministic() {
         let bytes = include_bytes!("../../../tests/fixtures/plaque.dxf");
         assert_eq!(import(bytes), import(bytes));
+    }
+
+    // ── extrusion direction (OCS) ────────────────────────────────────────
+
+    /// The first segment's arc of the one profile on `name`.
+    fn first_arc(result: &DxfImport, name: &str) -> dc_geometry::Arc {
+        only(result, name)
+            .segments()
+            .next()
+            .and_then(|s| s.arc())
+            .unwrap_or_else(|| panic!("{name} starts with an arc"))
+    }
+
+    /// Under extrusion (0, 0, −1) the arbitrary axis algorithm makes the
+    /// OCS X axis world −X and keeps Y: every OCS point (x, y) is world
+    /// (−x, y) and counter-clockwise about the normal is clockwise seen from
+    /// +Z. The CIRCLE at OCS (10, 0) is centred on (−10, 0); the ARC about
+    /// OCS (20, 5), radius 5, 0°–90° runs clockwise from (−25, 5) to
+    /// (−20, 10); the LWPOLYLINE's bulge +0.5 becomes −0.5.
+    #[test]
+    fn negative_extrusion_mirrors_x() {
+        let (result, _) = import(fixture!("extrusion.dxf"));
+
+        let circle = first_arc(&result, "circle");
+        assert_approx_eq!(circle.centre.x, -10.0, TOL_MM);
+        assert_approx_eq!(circle.centre.y, 0.0, TOL_MM);
+        assert_approx_eq!(circle.radius_mm, 3.0, TOL_MM);
+        assert!(only(&result, "circle").is_closed());
+        assert!(
+            only(&result, "circle").signed_area_mm2() < 0.0,
+            "the mirror reverses the winding"
+        );
+        // The same circle with normal (0, 0, +1) is not moved.
+        assert_eq!(
+            only(&result, "up"),
+            &Polyline::circle(Point::new(10.0, 0.0), 3.0)
+        );
+
+        let poly = only(&result, "arc");
+        assert!(!poly.is_closed());
+        let b = (FRAC_PI_2 / 4.0).tan();
+        assert_approx_eq!(poly.vertices()[0].x, -25.0, TOL_MM);
+        assert_approx_eq!(poly.vertices()[0].y, 5.0, TOL_MM);
+        assert_approx_eq!(poly.vertices()[0].bulge, -b, TOL_MM);
+        assert_approx_eq!(poly.vertices()[1].x, -20.0, TOL_MM);
+        assert_approx_eq!(poly.vertices()[1].y, 10.0, TOL_MM);
+        let arc = first_arc(&result, "arc");
+        assert_approx_eq!(arc.centre.x, -20.0, TOL_MM);
+        assert_approx_eq!(arc.centre.y, 5.0, TOL_MM);
+        assert_approx_eq!(arc.radius_mm, 5.0, TOL_MM);
+        assert_approx_eq!(arc.sweep_rad, -FRAC_PI_2, TOL_MM);
+
+        let lw = only(&result, "lwpolyline");
+        assert!(!lw.is_closed());
+        let got: Vec<(f64, f64, f64)> = lw.vertices().iter().map(|v| (v.x, v.y, v.bulge)).collect();
+        for (got, want) in got
+            .iter()
+            .zip([(0.0, 0.0, -0.5), (-10.0, 0.0, 0.0), (-10.0, 10.0, 0.0)])
+        {
+            assert_approx_eq!(got.0, want.0, TOL_MM);
+            assert_approx_eq!(got.1, want.1, TOL_MM);
+            assert_approx_eq!(got.2, want.2, TOL_MM);
+        }
+        assert_eq!(got.len(), 3);
+        // The arc's middle, (5, −2.5) in the OCS, is mirrored with it.
+        let seg = lw.segments().next().unwrap();
+        let (middle, _) = seg.point_at(seg.length_mm() / 2.0).unwrap();
+        assert_approx_eq!(middle.x, -5.0, TOL_MM);
+        assert_approx_eq!(middle.y, -2.5, TOL_MM);
+
+        // The block's square is placed at OCS (100, 0): world x −110..−100,
+        // wound clockwise.
+        let insert = only(&result, "insert");
+        assert_rect(
+            insert.bounds().unwrap(),
+            (-110.0, 0.0),
+            (-100.0, 10.0),
+            TOL_MM,
+        );
+        assert_approx_eq!(insert.signed_area_mm2(), -100.0, 1e-6);
+
+        // An ELLIPSE's centre and major axis are world coordinates; the
+        // normal only decides the side of the minor axis (N × major). The
+        // half ellipse from parameter 0 to π runs from (20, 50) to
+        // (−20, 50) through (0, 40), below the major axis.
+        let tolerance = DxfImportOptions::new().flatten_tolerance_mm;
+        let ellipse = only(&result, "ellipse");
+        assert!(!ellipse.is_closed());
+        assert_rect(
+            ellipse.bounds().unwrap(),
+            (-20.0, 40.0),
+            (20.0, 50.0),
+            tolerance,
+        );
+        let first = ellipse.vertices()[0].point();
+        assert_approx_eq!(first.x, 20.0, TOL_MM);
+        assert_approx_eq!(first.y, 50.0, TOL_MM);
+
+        assert_eq!(
+            names(&result),
+            ["circle", "arc", "lwpolyline", "ellipse", "insert", "up"]
+        );
+    }
+
+    /// A normal other than ±Z puts the entity in a plane DreamCarve cannot
+    /// project without distorting it: it is skipped and counted, by type,
+    /// as not in the XY plane.
+    #[test]
+    fn tilted_extrusion_is_skipped_with_warning() {
+        let (result, warnings) = import(fixture!("extrusion.dxf"));
+        assert!(!names(&result).contains(&"tilted"), "{:?}", names(&result));
+        let counts = skipped(&warnings).expect("the tilted entities are counted");
+        let expected: BTreeMap<String, usize> = [
+            ("ARC (not in the XY plane)", 1),
+            ("CIRCLE (not in the XY plane)", 1),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v))
+        .collect();
+        assert_eq!(counts, &expected);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    // ── MINSERT ──────────────────────────────────────────────────────────
+
+    /// The lower-left corner of each profile on layer `layer`, sorted.
+    fn corners(result: &DxfImport, layer: &str) -> Vec<(f64, f64)> {
+        let mut corners: Vec<(f64, f64)> = result
+            .definitions
+            .iter()
+            .filter(|d| d.name == layer || d.name.starts_with(&format!("{layer}-")))
+            .flat_map(|d| &d.profiles)
+            .map(|p| {
+                let b = p.bounds().unwrap();
+                ((b.min.x * 1e6).round() / 1e6, (b.min.y * 1e6).round() / 1e6)
+            })
+            .collect();
+        corners.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        corners
+    }
+
+    /// A MINSERT (INSERT with 70 = 3 columns, 71 = 2 rows, 44 = 20 column
+    /// spacing, 45 = 10 row spacing) of a unit square at (100, 100) places
+    /// six squares at (100 + 20c, 100 + 10r). The spacing is in drawing
+    /// units, rotated with the insert but not scaled: the second array,
+    /// rotated 90° at scale 2, steps its columns along +Y by 20.
+    #[test]
+    fn minsert_places_every_cell() {
+        let (result, warnings) = import(fixture!("minsert.dxf"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            names(&result),
+            [
+                "grid-1",
+                "grid-2",
+                "grid-3",
+                "grid-4",
+                "grid-5",
+                "grid-6",
+                "rotated-1",
+                "rotated-2"
+            ]
+        );
+        assert_eq!(
+            corners(&result, "grid"),
+            [
+                (100.0, 100.0),
+                (100.0, 110.0),
+                (120.0, 100.0),
+                (120.0, 110.0),
+                (140.0, 100.0),
+                (140.0, 110.0)
+            ]
+        );
+        for n in 1..=6 {
+            let square = only(&result, &format!("grid-{n}"));
+            assert!(square.is_closed());
+            assert_approx_eq!(square.signed_area_mm2(), 1.0, 1e-9);
+        }
+        assert_eq!(corners(&result, "rotated"), [(-2.0, 0.0), (-2.0, 20.0)]);
+        for n in 1..=2 {
+            assert_approx_eq!(
+                only(&result, &format!("rotated-{n}")).signed_area_mm2(),
+                4.0,
+                1e-9
+            );
+        }
+    }
+
+    // ── POLYLINE fit vertices ────────────────────────────────────────────
+
+    /// A spline-fit POLYLINE (flag 4) carries its frame control points
+    /// (VERTEX flag 16) and the fitted curve's vertices (flag 8). Only the
+    /// fitted vertices are the curve AutoCAD draws; the frame is dropped.
+    #[test]
+    fn spline_fit_polyline_drops_frame_vertices() {
+        let (result, warnings) = import(fixture!("polyline_fit.dxf"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let spline = only(&result, "spline");
+        assert!(!spline.is_closed());
+        let points: Vec<(f64, f64)> = spline.vertices().iter().map(|v| (v.x, v.y)).collect();
+        assert_eq!(
+            points,
+            [
+                (0.0, 0.0),
+                (5.0, 7.0),
+                (10.0, 9.0),
+                (15.0, 7.0),
+                (20.0, 0.0)
+            ]
+        );
+        assert!(spline.segments().all(|s| s.is_line()));
+    }
+
+    /// A curve-fit POLYLINE (flag 2) keeps its own vertices and the extra
+    /// vertices curve fitting added (VERTEX flag 1), with their bulges:
+    /// together they are the fitted curve.
+    #[test]
+    fn curve_fit_polyline_keeps_every_vertex() {
+        let (result, _) = import(fixture!("polyline_fit.dxf"));
+        let curve = only(&result, "curve");
+        let got: Vec<(f64, f64, f64)> = curve
+            .vertices()
+            .iter()
+            .map(|v| (v.x, v.y, v.bulge))
+            .collect();
+        assert_eq!(got, [(0.0, 50.0, 0.2), (5.0, 53.0, 0.1), (10.0, 50.0, 0.0)]);
+    }
+
+    // ── the group-code reader ────────────────────────────────────────────
+
+    /// What a group code's value is stored as in binary DXF, by the code
+    /// ranges of the DXF reference's "Group Code Value Types" table; only
+    /// the ranges the fixtures use.
+    fn binary_kind(code: i32) -> char {
+        match code {
+            0..=9 | 100 | 102 | 105 | 300..=309 | 330..=369 | 999 | 1000..=1003 => 's',
+            10..=59 | 110..=149 | 210..=239 | 1010..=1059 => 'd',
+            60..=79 | 170..=179 | 270..=289 | 370..=389 | 1060..=1070 => 'h',
+            90..=99 | 420..=429 | 1071 => 'i',
+            290..=299 => 'b',
+            310..=319 | 1004 => 'x',
+            other => panic!("no binary kind for group code {other}"),
+        }
+    }
+
+    /// Writes an ASCII DXF as binary DXF: the 22-byte sentinel, then each
+    /// pair as a group code (2 bytes from R13 on, else 1 byte with 255
+    /// escaping a 2-byte code) and its value (strings NUL-terminated,
+    /// little-endian numbers, R13+ booleans as one byte, binary chunks as a
+    /// length byte and the bytes).
+    fn to_binary(ascii: &[u8], two_byte_codes: bool) -> Vec<u8> {
+        let text = std::str::from_utf8(ascii).unwrap();
+        let mut out = b"AutoCAD Binary DXF\r\n\x1a\0".to_vec();
+        let mut lines = text.lines();
+        while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
+            let code: i32 = code.trim().parse().unwrap();
+            let value = value.trim();
+            let code16 = u16::try_from(code).unwrap();
+            if two_byte_codes {
+                out.extend_from_slice(&code16.to_le_bytes());
+            } else if code < 255 {
+                out.push(u8::try_from(code).unwrap());
+            } else {
+                out.push(255);
+                out.extend_from_slice(&code16.to_le_bytes());
+            }
+            match binary_kind(code) {
+                's' => {
+                    out.extend_from_slice(value.as_bytes());
+                    out.push(0);
+                }
+                'd' => out.extend_from_slice(&value.parse::<f64>().unwrap().to_le_bytes()),
+                'h' => out.extend_from_slice(&value.parse::<i16>().unwrap().to_le_bytes()),
+                'i' => out.extend_from_slice(&value.parse::<i32>().unwrap().to_le_bytes()),
+                'b' if two_byte_codes => out.push(value.parse::<u8>().unwrap()),
+                'b' => out.extend_from_slice(&value.parse::<i16>().unwrap().to_le_bytes()),
+                _ => {
+                    let bytes: Vec<u8> = (0..value.len() / 2)
+                        .map(|i| u8::from_str_radix(&value[2 * i..2 * i + 2], 16).unwrap())
+                        .collect();
+                    out.push(u8::try_from(bytes.len()).unwrap());
+                    out.extend_from_slice(&bytes);
+                }
+            }
+        }
+        out
+    }
+
+    /// A LINE and a HATCH with a boundary path, an extended-data string and
+    /// a binary chunk: the HATCH is not read and must be counted.
+    const HATCH_DXF: &str = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n\
+        0\nSECTION\n2\nENTITIES\n\
+        0\nLINE\n8\nkept\n10\n0.0\n20\n0.0\n30\n0.0\n11\n10.0\n21\n0.0\n31\n0.0\n\
+        0\nHATCH\n5\n2F\n330\n1F\n100\nAcDbEntity\n8\nfill\n100\nAcDbHatch\n\
+        10\n0.0\n20\n0.0\n30\n0.0\n210\n0.0\n220\n0.0\n230\n1.0\n2\nSOLID\n70\n1\n71\n0\n\
+        91\n1\n92\n2\n72\n0\n73\n1\n93\n0\n97\n0\n75\n0\n76\n1\n98\n0\n\
+        1001\nACAD\n1000\nnote\n1004\n0A0B0C\n310\nDEADBEEF\n290\n1\n\
+        0\nENDSEC\n0\nEOF\n";
+
+    /// Issue #124: every entity type in the file is seen by the reader, so
+    /// nothing is swallowed, in ASCII or in binary DXF (both code widths).
+    #[test]
+    fn swallowed_types_counted_in_binary_dxf() {
+        let hatch = |result: &DxfImport, warnings: &[ImportWarning]| {
+            assert_eq!(names(result), ["kept"]);
+            let counts = skipped(warnings).expect("the HATCH is counted");
+            assert_eq!(counts.get("HATCH"), Some(&1), "{counts:?}");
+            assert_eq!(counts.len(), 1, "{counts:?}");
+        };
+        let (result, warnings) = import(HATCH_DXF.as_bytes());
+        hatch(&result, &warnings);
+        for two_byte_codes in [true, false] {
+            let (result, warnings) = import(&to_binary(HATCH_DXF.as_bytes(), two_byte_codes));
+            hatch(&result, &warnings);
+        }
+    }
+
+    /// The plaque written as binary DXF, with R13+ two-byte codes and with
+    /// R12 one-byte codes, imports exactly as the ASCII file does.
+    #[test]
+    fn binary_dxf_imports_like_ascii() {
+        let ascii = include_bytes!("../../../tests/fixtures/plaque.dxf");
+        let expected = import(ascii);
+        for two_byte_codes in [true, false] {
+            assert_eq!(
+                import(&to_binary(ascii, two_byte_codes)),
+                expected,
+                "two-byte codes: {two_byte_codes}"
+            );
+        }
+    }
+
+    #[test]
+    fn parser_rejects_odd_line_count_and_bad_codes() {
+        let reject = |bytes: &[u8], what: &str| {
+            let result = import_dxf(bytes, &DxfImportOptions::new());
+            assert!(
+                matches!(result, Err(ImportError::Dxf(_))),
+                "{what}: {result:?}"
+            );
+        };
+        // A group code with no value line after it.
+        reject(b"0\nSECTION\n2\nENTITIES\n0\nLINE\n8", "odd line count");
+        // A group code line that is not an integer.
+        reject(b"0\nSECTION\n2\nENTITIES\n0\nLINE\nx8\nkept\n", "bad code");
+        // A real-valued group whose value is not a number.
+        reject(
+            b"0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n40\n1..0\n",
+            "bad real",
+        );
+        // A binary file cut off inside a double.
+        let mut binary = to_binary(HATCH_DXF.as_bytes(), true);
+        binary.truncate(binary.len() - 60);
+        reject(&binary, "truncated binary");
+        // A binary group code outside every range of the DXF reference.
+        let mut unknown = b"AutoCAD Binary DXF\r\n\x1a\0".to_vec();
+        unknown.extend_from_slice(&[0, 0]);
+        unknown.extend_from_slice(b"SECTION\0");
+        unknown.extend_from_slice(&85_u16.to_le_bytes());
+        unknown.extend_from_slice(&[1, 2, 3, 4]);
+        reject(&unknown, "unknown binary code");
+    }
+
+    // ── work limit ───────────────────────────────────────────────────────
+
+    /// A DXF whose blocks are `blocks` (name, body entities) and whose
+    /// ENTITIES section is `entities`.
+    fn dxf_with_blocks(blocks: &[(&str, &str)], entities: &str) -> String {
+        let mut dxf = String::from(
+            "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nBLOCKS\n",
+        );
+        for (name, body) in blocks {
+            dxf.push_str(&format!(
+                "0\nBLOCK\n8\n0\n2\n{name}\n70\n0\n10\n0.0\n20\n0.0\n{body}0\nENDBLK\n"
+            ));
+        }
+        dxf.push_str(&format!(
+            "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n{entities}0\nENDSEC\n0\nEOF\n"
+        ));
+        dxf
+    }
+
+    /// A MINSERT of `block`, `n` × `n` cells 1 apart.
+    fn minsert(block: &str, n: usize) -> String {
+        format!(
+            "0\nINSERT\n8\narray\n2\n{block}\n10\n0.0\n20\n0.0\n70\n{n}\n71\n{n}\n44\n1.0\n45\n1.0\n"
+        )
+    }
+
+    /// A zero-length LINE: read, but it yields no vertices.
+    const DOT: &str = "0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n";
+
+    fn assert_fails_fast(dxf: &str) {
+        let start = std::time::Instant::now();
+        let result = import_dxf(dxf.as_bytes(), &DxfImportOptions::new());
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(result, Err(ImportError::TooMuchWork { limit }) if limit == MAX_IMPORT_VERTICES / 10),
+            "{result:?}"
+        );
+        assert!(elapsed.as_secs_f64() < 2.0, "took {elapsed:?}");
+    }
+
+    /// A 1000 × 1000 MINSERT of a block that yields no vertices would walk
+    /// a million cells while the vertex limit never trips; it is refused
+    /// before the first cell. A block with nothing readable at all is
+    /// never expanded (upstream's rule), so it costs nothing.
+    #[test]
+    fn huge_minsert_of_empty_block_fails_fast() {
+        assert_fails_fast(&dxf_with_blocks(&[("DOT", DOT)], &minsert("DOT", 1000)));
+        let empty = dxf_with_blocks(&[("EMPTY", "")], &minsert("EMPTY", 1000));
+        let start = std::time::Instant::now();
+        let (result, _) = import(empty.as_bytes());
+        assert!(result.definitions.is_empty());
+        assert!(start.elapsed().as_secs_f64() < 1.0);
+    }
+
+    /// Three nested 100 × 100 MINSERTs are 10¹² visits of the innermost
+    /// block; the per-visit count stops the walk at the limit.
+    #[test]
+    fn nested_minserts_fail_fast() {
+        let inner = minsert("C", 100);
+        let middle = minsert("B", 100);
+        let dxf = dxf_with_blocks(
+            &[("C", DOT), ("B", &inner), ("A", &middle)],
+            &minsert("A", 100),
+        );
+        assert_fails_fast(&dxf);
+    }
+
+    /// An INSERT's attributes (ATTRIB, after `66 = 1`, up to SEQEND) are
+    /// text and are counted, not dropped silently; the block is still
+    /// placed.
+    #[test]
+    fn insert_attributes_are_counted() {
+        let dxf = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n\
+            0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n8\n0\n2\nTAG\n70\n2\n10\n0.0\n20\n0.0\n30\n0.0\n3\nTAG\n\
+            0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n5.0\n21\n0.0\n31\n0.0\n\
+            0\nATTDEF\n8\n0\n10\n0.0\n20\n1.0\n30\n0.0\n40\n1.0\n1\n\n3\nName\n2\nNAME\n70\n0\n\
+            0\nENDBLK\n8\n0\n0\nENDSEC\n\
+            0\nSECTION\n2\nENTITIES\n\
+            0\nINSERT\n8\npart\n66\n1\n2\nTAG\n10\n10.0\n20\n10.0\n30\n0.0\n\
+            0\nATTRIB\n8\npart\n10\n10.0\n20\n11.0\n30\n0.0\n40\n1.0\n1\nbolt\n2\nNAME\n70\n0\n\
+            0\nSEQEND\n8\npart\n0\nENDSEC\n0\nEOF\n";
+        let (result, warnings) = import(dxf.as_bytes());
+        assert_eq!(names(&result), ["part"]);
+        assert_rect(
+            only(&result, "part").bounds().unwrap(),
+            (10.0, 10.0),
+            (15.0, 10.0),
+            TOL_MM,
+        );
+        let counts = skipped(&warnings).expect("the attribute is counted");
+        assert_eq!(counts.get("ATTRIB"), Some(&1), "{counts:?}");
+        assert_eq!(counts.get("ATTDEF"), Some(&1), "{counts:?}");
+    }
+
+    /// Before R2007 a DXF is written in the drawing's code page, usually
+    /// Windows-1252; a layer name that is not UTF-8 is read in that code
+    /// page. `\U+XXXX` escapes are decoded.
+    #[test]
+    fn non_utf8_names_are_read_as_windows_1252() {
+        let mut dxf = b"0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n\
+            0\nSECTION\n2\nENTITIES\n0\nLINE\n8\ncaf"
+            .to_vec();
+        dxf.push(0xE9);
+        dxf.extend_from_slice(b" \x80\n10\n0.0\n20\n0.0\n11\n1.0\n21\n0.0\n");
+        dxf.extend_from_slice(b"0\nLINE\n8\nd\\U+00E9cor\n10\n0.0\n20\n5.0\n11\n1.0\n21\n5.0\n");
+        dxf.extend_from_slice(b"0\nENDSEC\n0\nEOF\n");
+        let (result, _) = import(&dxf);
+        assert_eq!(names(&result), ["caf\u{e9} \u{20ac}", "d\u{e9}cor"]);
     }
 }

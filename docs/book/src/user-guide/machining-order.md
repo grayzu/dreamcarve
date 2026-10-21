@@ -124,7 +124,9 @@ warn when it is probably wrong; `check` and `export` print them.
   no tabs cuts its parts free; an Inside Profile through the stock frees
   the slug in its hole. Any later operation that cuts a shape inside one
   of those outlines, a hole, a pocket, an engraving, runs in a loose
-  piece. The warning names both operations and the shape. Move the later
+  piece. An open path an Engrave or an `on_line` Profile cuts counts when
+  all of it lies inside the outline; one that crosses the outline does
+  not. The warning names both operations and the shape. Move the later
   operation before the Profile, or give the Profile tabs. Cutting the
   details first and the outline last is quiet, as is the same order with
   tabs on the outline.

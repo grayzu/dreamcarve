@@ -137,8 +137,16 @@ one piece the bit goes to the nearest piece it can reach without
 lifting, so it zigzags down one side of the island, along the island's
 edge, before it lifts once to cross to the other side. Next to a round
 island no straight move from one line's end to the next stays clear of
-the island, so the bit lifts at about every line that the island
-splits, whatever the order; there the lines keep their scan order.
+the island. With a wall pass (`"last"` or `"first"`) the bit then
+follows the island's curve instead, at the cutting feed and the pass's
+depth, with its edge on the island, as the island ring will: it cuts
+nothing the island ring does not, and never into the island. On the
+100 × 50 mm rectangle with a 20 mm round island and a 6.35 mm bit, that
+is 1 lift per pass with the wall pass last (2 with it first), where a
+straight-only rule lifts at all 11 lines the island splits. With
+`"none"` the band along the island is not the pocket's to cut, so the
+bit lifts at about every line that the island splits, whatever the
+order; there the lines keep their scan order.
 
 **Scallops.** Each line leaves a shallow ridge on the floor between it and
 the next, and the zigzag cuts alternately climb and conventional, so a

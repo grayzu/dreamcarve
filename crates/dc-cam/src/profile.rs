@@ -204,8 +204,11 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// have no side.
 ///
 /// Open paths Inside and Outside, shapes the tool cannot fit, and
-/// duplicate shapes are skipped with a [`Warning`]. Shapes in different regions whose tool paths cut
-/// into each other give [`WarningCode::ToolpathsOverlap`], in cut order. Fails without a toolpath when a feed, plunge rate, or
+/// duplicate shapes are skipped with a [`Warning`]. Shapes in different
+/// regions whose tool paths cut into each other give
+/// [`WarningCode::ToolpathsOverlap`], in cut order; an open path cut On
+/// line is a shape of its own unless it lies in a region's material
+/// (#206, [`crate::overlap`]). Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
 /// allowance, when targets cross, when an id does not resolve, when the
 /// cutter would leave the stock ([`CamError::OffStock`]), when an entry's
@@ -629,7 +632,12 @@ pub fn generate_profile(
         .map(|(path, shape)| (path, Some(*shape)))
         .collect();
     warnings.extend(overlap_warnings(
-        &cut_paths, &shapes, &regions, op.side, tool,
+        &cut_paths,
+        &shapes,
+        &open_paths,
+        &regions,
+        op.side,
+        tool,
     ));
 
     // Corner relief among each shape's own passes, never after the pass

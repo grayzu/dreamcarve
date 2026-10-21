@@ -25,7 +25,7 @@ say when that order is likely a mistake.
 
 | Code | Message says | What to do |
 | --- | --- | --- |
-| `cut_inside_freed_part` | "`<shape>` lies inside `<outline>`, which operation `<id>` cuts free of the stock first, so this cut would run in a loose part" | An earlier Profile cuts through the stock around (or inside) an outline, with no tabs, and this operation then cuts a shape inside it: the cut runs in a part or slug that is no longer held. Move this operation before the one named, or give that Profile tabs. |
+| `cut_inside_freed_part` | "`<shape>` lies inside `<outline>`, which operation `<id>` cuts free of the stock first, so this cut would run in a loose part" | An earlier Profile cuts through the stock around (or inside) an outline, with no tabs, and this operation then cuts a shape inside it: the cut runs in a part or slug that is no longer held. An open path an Engrave or an `on_line` Profile cuts counts when all of it lies inside the outline. Move this operation before the one named, or give that Profile tabs. |
 | `tool_change_avoidable` | "tool `<id>` (`<name>`) is used by operations `<a>`, `<b>`, which do not run one after another, so it is fitted more than once" | Operations using one tool are separated by an operation using another, so the tool is fitted twice. Put them next to each other if the order allows; DreamCarve never moves them for you. |
 
 ## Toolpath generation
@@ -55,7 +55,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `drill_tool_wider_than_hole` | "the … mm tool is wider than the … mm hole …, so the hole comes out the tool's size" | Use a smaller bit, or draw the circle the bit's size ([Drill](drill.md#which-outlines-are-holes)). |
 | `drill_peck_deeper_than_hole` | "the … mm peck is at least the … mm depth of the holes, so each is drilled in one plunge" | Use a smaller `peck_depth_mm`, or the `"simple"` cycle ([Drill: peck](drill.md#peck)). |
 | `drill_retract_below_stock_top` | "retract_mm is … mm, below the stock top; the tool retracts to the stock top instead" | Set `retract_mm` to 0 or more ([Drill: retract height](drill.md#retract-height)). |
-| `toolpaths_overlap` | "the tool paths of … and … cut into each other: the shapes are … mm apart" | Two shapes in one operation are closer than the bit needs between them. Move them apart or use a smaller bit ([Profile: shapes too close together](profile.md#shapes-too-close-together)). |
+| `toolpaths_overlap` | "the tool paths of … and … cut into each other: the shapes are … mm apart" | Two shapes in one Profile are closer than the bit needs between them, or an open path cut `on_line` comes within half a bit of another shape's line or crosses it. Move them apart or use a smaller bit ([Profile: shapes too close together](profile.md#shapes-too-close-together)). An Engrave never gives it. |
 
 ## Export
 

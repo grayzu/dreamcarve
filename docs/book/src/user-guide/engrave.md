@@ -108,6 +108,12 @@ Engrave cuts it. An `on_line` [Profile](profile.md#open-paths) cuts open
 paths too, with a ramp entry and tabs; Engrave plunges and has no tabs,
 but can cut successive passes back and forth (`alternate_direction`).
 
+An Engrave never warns `toolpaths_overlap`: it cuts every line as drawn,
+so lines that cross or meet, as in lettering, a hatch or a border, are the
+design, not two shapes drawn too close. An Engrave inside a part that an
+earlier Profile cut free warns `cut_inside_freed_part`, for an open path
+as for a closed one, when all of the path lies inside the freed outline.
+
 The errors are those of every operation: a missing feed, plunge rate or
 step-down, a depth below the stock bottom plus the allowance, and a cut
 whose bit would reach past the stock's edge.

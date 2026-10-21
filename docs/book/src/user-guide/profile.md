@@ -248,6 +248,12 @@ line.
   `entry_fallback`: an open path's start cannot move.
 - There is no lead (`lead_dropped`, as for any On line Profile) and no
   corner relief (`relief_skipped`), and an open path frees nothing.
+- An open path is a shape of its own for
+  [shapes too close together](#shapes-too-close-together): one that comes
+  within half a bit of another shape's line, or crosses it, warns
+  `toolpaths_overlap`. One that lies wholly in a part, as a slot cut into
+  it, is not compared with that part's own lines. Cut after a Profile
+  that freed the part it lies in, it warns `cut_inside_freed_part`.
 
 A 100 mm line cut `on_line` 6 mm deep in 2 mm passes with a 15° ramp and a
 6.35 mm bit: each pass ramps out 19.05 mm along the line and back, then
@@ -444,8 +450,11 @@ that is too narrow for the bit is an error instead (see below).
 
 The warning names both shapes and the smallest gap between them, listed in
 the order the shapes are cut. It also applies to a part inside another
-part's hole: a coaster 1 mm from the wall of a frame's hole warns. A part
-and its own holes are never compared here: cut **outside**, a hole close
+part's hole: a coaster 1 mm from the wall of a frame's hole warns, and
+to an [open path](#open-paths) cut **on line**: a line 2 mm from a part,
+or crossing it, warns, as do two lines that cross. A part and its own
+holes are never compared here, nor a line lying in a part with that
+part's lines: cut **outside**, a hole close
 to its outline leaves a thin wall, not a gouge, and cut **inside** or **on
 line**, a hole too close is an error (see below). The program is still
 written as drawn. Move the

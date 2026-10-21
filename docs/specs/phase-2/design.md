@@ -64,7 +64,7 @@ slice 2, #117: #106 took version 7 first.)
 | `dc-gcode::arcfit` | `src/engine/gcode/arcFitting.ts` (`fitArcsInMachineMoves`, `splitArc`, `resolveEmittedArc`, `runSurvivesFormatting`, `applyEmittedArcFallback`), `arcReconstruction.ts` (`findArcRunsInPoints`, Kasa fit, endpoint projection, gates), `arcFitting.test.ts` | Runs in project space before the machine transform (no mirror, so handedness is preserved). Tolerance from the project. S12 gates added to the safety pass. |
 | `dc-gcode::emit` canned cycles | `src/engine/gcode/postprocessor.ts` lines 301–430 | One cycle word per Drill operation; mixed cycles expand. `G4` dwell on expansion. Safety pass expands cycles (S11). |
 | `dc-project/src/definitions/{linuxcnc,mach3,uccnc,generic}/v1.json` | `src/engine/gcode/definitions/*.json` | Data start point only. Every line re-verified against the controller's documentation or source; `G43 H` and `M6` lines removed; `G40 G49 G80` kept where the controller documents them; see "Post-processor definitions". |
-| `dc-import::dxf` | `src/import/dxf.ts` (entity set, `$INSUNITS` table, bulge-to-arc, INSERT transform and skip rules, stitching and closing, dedupe) | Parsing delegated to the `dxf` crate. No Y flip (DXF is Y-up). `ELLIPSE` added. Join tolerance 0.01 mm. Entity skips are warned with counts. |
+| `dc-import::dxf` | `src/import/dxf.ts` (entity set, `$INSUNITS` table, bulge-to-arc, INSERT transform and skip rules, stitching and closing, dedupe) | Parsed by DreamCarve's own group-code reader (ASCII and binary; #124 replaced the `dxf` crate). No Y flip (DXF is Y-up). `ELLIPSE` added. Join tolerance 0.01 mm. Entity skips are warned with counts. |
 | `dc-library::fusion` | none (PureCutCNC has no Fusion tool import; `src/toolLibrary.ts` is a bundled list) | New. Written against Autodesk's statements and vendor-published `.tools` files; see "Fusion import". |
 | `dc-library::library` | `src/toolLibrary.ts` (`parseToolLibraryFile` validation rules) | Validation rules ported (positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)). Persistence is DreamCarve's. |
 | `tests/golden/{pocket-*, drill-*, engrave-*, profile-{ramp,lead,dogbone}, order-*}` | captured via `tools/parity/` | See Test plan. Raster angle and helix sense are mirrored in the `.camj`; each case's notes say how. |
@@ -556,7 +556,27 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    cuts into an island; DreamCarve keeps its link rule, so next to a
    curved island side, where every straight link between line ends
    enters the island, each such end is a dead end and no order lifts
-   less than scan order.) Links: `sequence` stays down when the straight
+   less than scan order.) Edge links: with a wall pass (`last` or
+   `first`), two segment ends that no straight stay-down link joins but
+   that both lie on one island ring of the tool-centre region (within
+   the flattening tolerance, as the segments end on its chords) are
+   joined along that ring: to the ring, the shorter way round it with its
+   arcs kept, and off it, at the pass Z and the feed, when that way is no
+   longer than one diameter plus `s`. The ordering counts it as a
+   stay-down link; the segments and their edge links are one block,
+   whose `cleared` area is the segments' strips and the band the edge
+   links sweep (grown by `r`, cut to the region), so `sequence` sees no
+   link inside it. The tool centre on the ring touches the island wall
+   exactly, so the block cuts only the band the island's wall ring cuts
+   anyway (or, for a ring a rest operation skips, cleared air), and S9
+   holds by construction. Without a wall pass that band is not the
+   operation's to cut, and no edge link is made. (changed in #202: round
+   a curved island side every line end was a dead end, 11 lifts per pass
+   on the 20 mm circle island test pocket; following the ring, 1 lift per
+   pass with the wall pass last and 2 with it first, and round the 20 mm
+   square island, whose ring has round corners, 2, from 4. Upstream's
+   straight link there gouges the island by up to 0.38 mm.) Links:
+   `sequence` stays down when the straight
    link between two blocks lies inside the tool-centre region (no island
    between) and is shorter than one diameter plus `s`, else retracts. The wall pass rings (root rings of step 6 with no
    children) are emitted last (or first) per pass. PureCutCNC cuts the
@@ -684,6 +704,12 @@ tolerance.
 4. No direction, no entry policy (plunge), no tabs. Containment pairs
    still apply to closed paths (an engraved outline inside another is
    cut first; harmless but deterministic).
+5. No D6 `ToolpathsOverlap`, for open or closed paths. (changed in #206:
+   recorded when open paths joined D6 for On line Profile. Engrave cuts
+   every line as drawn at one depth; lines that cross or meet, as in
+   lettering, a hatch or a border, are the design, and a line has no kept
+   side for another's cut to gouge. O8 does apply to an Engrave's open
+   paths.)
 
 ### Entry (dc-cam::entry)
 
@@ -909,6 +935,22 @@ is Engrave's job, and Engrave has no such rule. The threshold is the
 diameter, not the issue's radius, because a ring between `r` and `d` wide
 is cut through too, by the two cuts together.)
 
+An open path an On line Profile cuts (#175) takes part in D6 by the same
+On line rule: its line is its tool-centre path, and it warns
+`ToolpathsOverlap` with another shape when either comes closer than `r`
+(less `EPS_MM`) to the other's line, crossing included (`gap_mm` 0). It
+belongs to the region whose material holds all of it (every vertex and
+every segment's middle, `Region::contains_point`, lines included) and is
+not compared with that region's lines, as a hole is not; held by no
+region (in the waste, in a hole's slug, or across a line) it is a group
+of its own, compared with every other closed shape and open path but
+never with itself. The pairs keep cut order. (changed in #206: an open
+path was dropped before any pair was compared, so a line drawn beside or
+across a part, or across another line, cut into it with no warning. A
+line inside a part is a cut into that part, not a second shape beside
+it, so it follows the same-region rule; whether it needs a band check
+like #199's is #210.)
+
 ### Corner relief (dc-cam::relief)
 
 Ported from `cornerRelief.ts`.
@@ -1054,6 +1096,16 @@ tools of enabled operations in project order; one `ToolChangeAvoidable
 first use, with `ops` listing every operation that uses it. A disabled
 operation does not split a run. (changed in slice 13, #134: tabs hold
 the part, and `nest` is stricter than a centroid test.)
+
+The targets of `j` include the open paths it cuts: every open path of an
+Engrave and of an On line Profile (Inside and Outside Profile, Pocket and
+Drill skip them; one of no length is skipped). An open path is inside a
+freed outline when all of it is inside or on it (every vertex and every
+segment's middle, `Region::contains_point` on the outline's region), so
+one that crosses the outline does not count, as crossing outlines do not.
+An open path frees nothing. (changed in #206: O8 read closed targets
+only, so an Engrave or an On line Profile of a line inside a freed part
+ran in the loose part with no warning.)
 
 ### Arc fitting (dc-gcode::arcfit)
 
@@ -1237,7 +1289,14 @@ height, `G53` parking and `G43` stay out (#73).
 
 ### DXF import (dc-import::dxf)
 
-Parsing by the `dxf` crate (MIT). `import_dxf(bytes, options) ->
+Parsing by `dc-import`'s own group-code reader, ported from upstream's
+`parsePairs`/`extractEntities`/`extractBlocks` (#124 replaced the `dxf`
+crate, which pulled in about 50 crates): ASCII and binary DXF (R12
+one-byte and R13+ two-byte codes) to (code, value) pairs typed by the DXF
+Reference's "Group Code Value Types", then the `$INSUNITS` header
+variable, the blocks, and every entity of the ENTITIES section with a
+POLYLINE's VERTEX rows attached. A malformed pair is
+`ImportError::Dxf(DxfReadError)`. `import_dxf(bytes, options) ->
 Result<(Vec<FeatureDefinition>, Vec<ImportWarning>), ImportError>`,
 `options = { units: Option<Units>, join_tolerance_mm: f64, layers:
 Option<Vec<String>> }`.
@@ -1259,10 +1318,22 @@ Option<Vec<String>> }`.
    flattened; `INSERT` → block entities under `T(insert) · R(rotation) ·
    S(xscale, yscale) · T(−base)`, recursively (depth ≤ 12, else a
    warning), arcs under a non-uniform scale flattened (as SVG), under a
-   mirror their bulges negated; `$MODEL_SPACE`, `$PAPER_SPACE`, names
+   mirror their bulges negated; a MINSERT (INSERT with 70/71 column and
+   row counts, 44/45 spacings) once per cell, the cell offset rotated with
+   the insert and not scaled (all expansion together places at most
+   `max_vertices / 10` block entities, skipped ones included, else
+   `ImportError::TooMuchWork`, so nested arrays of blocks that yield no
+   vertices cannot run unbounded); `$MODEL_SPACE`, `$PAPER_SPACE`, names
    starting `_`, and layers `ASHADE`/`HATCH` skipped silently as upstream.
-   Everything else counts in `DxfEntitiesSkipped { counts: BTreeMap<String,
-   usize> }`.
+   **Extrusion (210/220/230):** CIRCLE, ARC, LWPOLYLINE, 2D POLYLINE and
+   INSERT coordinates are in the entity's OCS (arbitrary axis algorithm):
+   normal +Z is the world frame, −Z a mirror in X (bulges negated);
+   ELLIPSE keeps its world centre and axis and runs clockwise under −Z;
+   any other normal counts as `<TYPE> (not in the XY plane)`. A spline-fit
+   POLYLINE (flag 4) drops its frame vertices (VERTEX flag 16); a
+   curve-fit one (flag 2) keeps every vertex. Everything else, ATTRIB
+   included, counts in `DxfEntitiesSkipped { counts: BTreeMap<String,
+   usize> }`, in ASCII and binary files alike.
 3. **No Y flip.** Coordinates are already Y-up; `y' = y × scale`.
 4. **Layers:** the entity's layer, inheriting the INSERT's for layer `0`
    inside a block; `options.layers` filters by name (layer `0` shapes
@@ -1448,7 +1519,7 @@ crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection
 crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder), migrate.rs (v7_to_v8), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
 crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, overlap.rs, stock.rs, warning.rs}
 crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, canned.rs (controller model of G81–G83/G73), safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4, `%`), post.rs (definition checks)}
-crates/dc-import/src/{svg.rs, dxf.rs, dxf/{entities.rs, spline.rs, stitch.rs}}
+crates/dc-import/src/{svg.rs, dxf.rs, dxf/{groups.rs, document.rs, entities.rs, spline.rs, stitch.rs}}
 crates/dc-library/src/{lib.rs, library.rs, fusion.rs, error.rs}
 crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs, tools.rs, config.rs}
 tests/golden/{pocket-offset-rect, pocket-offset-island, pocket-raster-0deg, pocket-raster-45deg, pocket-rough-then-rest, drill-simple, drill-peck, engrave-open-closed, profile-ramp, profile-helix-inside, profile-lead, profile-dogbone, order-full-depth-first, order-pass-first, post-linuxcnc-coaster, post-mach3-coaster, post-uccnc-coaster, post-generic-coaster}/
@@ -1457,7 +1528,7 @@ crates/dc-project/tests/fixtures/dcv/{v7, v8}/sample.dcv
 ```
 
 New dependencies: `i_overlay` (MIT, booleans; already a settled decision),
-`dxf` (MIT), `zip` (MIT, `default-features = false`, `features =
+`zip` (MIT, `default-features = false`, `features =
 ["deflate-flate2-zlib-rs"]`: deflate decoding only, the Fusion `.tools`
 container), `toml` (MIT/Apache-2.0, the CLI only). `NOTICE` entries as
 their licenses require (`zip` and `nix` are listed). `directories` is not
@@ -1509,6 +1580,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::raster::scan_starts_half_a_step_below_the_top`, `pocket::raster::closing_line_when_the_scan_stops_short` (#195).
 - `pocket::rings::ring_starts_at_nearest_point_of_an_arc`, `pocket::ring_starts_at_nearest_point_not_nearest_vertex` (#196).
 - `pocket::raster_lifts_around_island_are_minimised`, `pocket::raster::pieces_round_a_square_island_are_cut_nearest_first`, `pocket::raster::scan_order_is_kept_round_a_circle` (#150).
+- `pocket::raster_links_follow_a_round_island_edge`, `pocket::edge_link_never_enters_the_island`, `pocket::raster::pieces_round_a_circle_link_along_its_edge`, `safety::raster_edge_links_round_an_island_pass_s9` (#202; `pocket::raster_lifts_around_island_are_minimised` updated).
 - `pocket::allowance_leaves_material_on_walls` — footprint stays `allowance` from the wall.
 - `pocket::rest_region_is_corners_and_wall_band`, `pocket::rest_coverage_with_rough_reaches_small_tool_inset` (acceptance 22), `pocket::rest_of_that_clears_nothing_warns`, `pocket::rest_footprint_stays_inside_region` (S14).
 - `pocket::step_down_from_tool_when_operation_unset`, `pocket::depth_below_bottom_is_error`.
@@ -1556,8 +1628,12 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
+**dc-cam — overlap**
+- `overlap::open_on_line_path_too_close_to_a_part_warns`, `overlap::open_line_far_from_shapes_is_quiet`, `overlap::open_lines_too_close_to_each_other_warn`, `overlap::open_path_in_a_part_is_not_compared_with_its_lines`, `engrave::crossing_lines_do_not_warn_toolpaths_overlap` (#206).
+
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.
+- `order::open_path_inside_freed_part_warns` (#206: an Engrave and an On line Profile of a line in a freed part warn; an Inside Profile of it is quiet), `order::open_path_crossing_a_freed_outline_is_quiet` (#206).
 
 **dc-gcode — arcfit**
 - Ports from `arcFitting.test.ts`: `accepted_circular_run_gives_four_arcs`, `clockwise_is_g2`, `rejects_straight_run`, `rejects_z_changing_run`, `rejects_mixed_feed_run`, `rejects_discontinuous_run`, `splits_around_rapids`, `short_run_stays_linear`, `rejects_ambiguous_direction`, `rejects_high_residual_ellipse`, `splits_large_arc_at_90_degrees`, `split_arc_offsets_relative`, `rejects_near_collinear_run`, `rejects_long_straight_with_corner_fragment` (inch tolerance), `accepts_ordinary_arc_after_collinear_gate`, `full_circle_loop_is_four_arcs`, `partial_arc_with_straight_leads`, `adjacent_runs_share_endpoints_exactly`, `fitted_arcs_pass_through_source_endpoints`, `ij_derived_from_previous_emitted_point` (#447), `invalid_run_falls_back_to_original_moves`, `fallback_leaves_valid_runs_alone`, `r_format_rejects_unrepresentable_chord`, `inch_output_uses_millimetre_budget`, `snapping_never_worsens_agreement`, `r_format_repairs_rounding_shortfall_only`.
@@ -1581,6 +1657,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::layer_names_become_shape_names`, `dxf::layer_filter_keeps_only_named_layers`, `dxf::block_entities_on_layer_0_inherit_insert_layer`.
 - `dxf::four_lines_stitch_into_closed_shape`, `dxf::gap_beyond_tolerance_stays_open`, `dxf::stitching_does_not_cross_layers`, `dxf::identical_shapes_are_deduped`.
 - `dxf::plaque_dxf_matches_plaque_svg_within_0_01` (acceptance 34), `dxf::coordinate_limit_applies`.
+- `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
+- `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
 
 **dc-library**
 - `library::round_trip_is_byte_identical`, `library::add_detects_already_present`, `library::find_by_id_then_unique_name`, `library::ambiguous_name_is_error`, `library::validation_rules_from_upstream` (port of `parseToolLibraryFile` rules: positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)).

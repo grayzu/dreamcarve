@@ -33,13 +33,22 @@
 //! - The pieces are ordered nearest-first per tool-centre region, not
 //!   over every region of the pocket at once; the regions keep their
 //!   order, each starting nearest the end of the one before (#150).
+//! - With a wall pass, two line ends against one island that no straight
+//!   link joins inside the region are joined along the island's
+//!   tool-centre ring, at the pass Z and the feed, when that way is no
+//!   longer than a stay-down link may be (#202). Upstream stays down on a
+//!   straight link up to a diameter long there, which cuts into a curved
+//!   island side.
 
-use super::rings::{Ring, RingNode, RingTree, WallRings, inset_region};
+use super::rings::{Ring, RingNode, RingTree, WallRings, closest_point, inset_region, shorter_way};
 use super::{MAX_RINGS, ring_path};
 use crate::footprint::capsule;
 use crate::sequence::link_inside_cleared;
-use dc_geometry::{EPS_MM, Point, Polyline, Region, Vertex, area_mm2, difference, intersection};
+use dc_geometry::{
+    EPS_MM, Point, Polyline, Region, Vertex, area_mm2, difference, intersection, union,
+};
 use dc_project::CutDirection;
+use std::collections::BTreeMap;
 
 /// One raster line piece, in cut direction (mm, Y-up).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -144,6 +153,74 @@ pub(super) type Piece = (RasterLine, Option<Region>);
 /// One end of a piece: its index, and 0 for its start or 1 for its end.
 type End = (usize, usize);
 
+/// The island rings of one tool-centre region that a link may follow
+/// instead of lifting (#202): its holes, the tool-centre boundary round
+/// each island, where the tool touches the island's wall and does not cut
+/// into it. Following one cuts only the band the island's wall ring cuts,
+/// so they are offered only when the wall pass runs ([`Self::of`]).
+#[derive(Debug, Clone, Default)]
+pub(super) struct IslandEdges {
+    rings: Vec<Polyline>,
+    /// How far a line end may lie off a ring and still be on it, mm: the
+    /// lines end on the ring's chords ([`raster_lines`] flattens it).
+    tolerance_mm: f64,
+}
+
+impl IslandEdges {
+    /// The island rings of `root`, when `wall` cuts them; none without a
+    /// wall pass, where the band along an island is not the operation's
+    /// to cut. A ring a rest operation does not cut (#167) sweeps only
+    /// cleared material, so it is offered too.
+    pub(super) fn of(root: &Region, wall: WallRings, tolerance_mm: f64) -> Self {
+        let rings = match wall {
+            WallRings::Last | WallRings::First => {
+                root.holes().iter().map(|h| h.polyline().clone()).collect()
+            }
+            WallRings::Omitted => Vec::new(),
+        };
+        Self {
+            rings,
+            tolerance_mm,
+        }
+    }
+
+    /// The ring `p` lies on, and the point of it nearest `p`.
+    fn ring_of(&self, p: Point) -> Option<(usize, Point)> {
+        self.rings.iter().enumerate().find_map(|(index, ring)| {
+            let (q, d) = closest_point(ring, p)?;
+            (d <= self.tolerance_mm + EPS_MM).then_some((index, q))
+        })
+    }
+
+    /// The edge link from `p` to `q`, both on one ring: to the ring (a
+    /// move no longer than the tolerance, from a line end on a chord), the
+    /// shorter way along it ([`shorter_way`]), and off it to `q`. `None`
+    /// when they are not on one ring or the link is longer than
+    /// `link_max_mm`, a stay-down link's limit.
+    fn link(&self, p: Point, q: Point, link_max_mm: f64) -> Option<Polyline> {
+        let (ring_p, on_p) = self.ring_of(p)?;
+        let (ring_q, on_q) = self.ring_of(q)?;
+        if ring_p != ring_q {
+            return None;
+        }
+        let way = shorter_way(self.rings.get(ring_p)?, on_p, on_q)?;
+        let mut vertices = way.vertices().to_vec();
+        match vertices.first_mut() {
+            Some(first) if on_p.distance_to(p) <= EPS_MM => (first.x, first.y) = (p.x, p.y),
+            _ => vertices.insert(0, Vertex::line(p.x, p.y)),
+        }
+        match vertices.last_mut() {
+            Some(last) if on_q.distance_to(q) <= EPS_MM => (last.x, last.y) = (q.x, q.y),
+            _ => vertices.push(Vertex::line(q.x, q.y)),
+        }
+        let link = Polyline::new(vertices, false);
+        (link.length_mm() <= link_max_mm + EPS_MM).then_some(link)
+    }
+}
+
+/// The edge links [`order_nearest_first`] found, from one end to another.
+type EdgeLinks = BTreeMap<(End, End), Polyline>;
+
 /// `pieces` in cut order, nearest-first (upstream `orderOpenSegmentsGreedy`,
 /// #150): from `start`, the next piece is the one with an end nearest
 /// where the tool is, entered at that end, so a piece runs either way.
@@ -163,27 +240,37 @@ type End = (usize, usize);
 ///   else to the nearest end.
 /// - When `pieces` as given (scan order) would lift fewer times, they are
 ///   kept as given. Round an island whose sides facing the lines are
-///   curved, every line end against it is a dead end, so any order lifts
-///   about once per split line, and scan order is as good as it gets.
+///   curved and with no edge to follow, every line end against it is a
+///   dead end, so any order lifts about once per split line, and scan
+///   order is as good as it gets.
 ///
 /// So the tool zigzags along one side of an island as far as its links
 /// stay inside the region before it crosses, and the order never lifts
 /// more than scan order does.
+///
+/// Where no straight link is inside the strips but both ends lie on one
+/// of `edges`' island rings, a link along that ring, no longer than
+/// `link_max_mm` either, counts as a stay-down link too (#202): round a
+/// curved island side, where every straight link enters the island. Each
+/// piece comes with the edge link that leads into it from the piece
+/// before, which [`region_paths`] joins into one path; `None` where the
+/// tool links straight or lifts.
 #[must_use]
 pub(super) fn order_nearest_first(
     pieces: Vec<Piece>,
     start: Option<Point>,
     link_max_mm: f64,
-) -> Vec<Piece> {
+    edges: &IslandEdges,
+) -> Vec<(Piece, Option<Polyline>)> {
     let Some(start) = start.or_else(|| pieces.first().map(|(l, _)| l.start)) else {
-        return pieces;
+        return Vec::new();
     };
     let point = |(index, end): End| {
         pieces
             .get(index)
             .map(|(l, _)| if end == 0 { l.start } else { l.end })
     };
-    let links = stay_down_links(&pieces, link_max_mm);
+    let (links, mut edge_links) = stay_down_links(&pieces, link_max_mm, edges);
     let links_of = |e: End| links.get(e.0).and_then(|l| l.get(e.1));
     let mut done = vec![false; pieces.len()];
     let is_live = |done: &[bool], index: usize| done.get(index).is_some_and(|d| !d);
@@ -234,6 +321,7 @@ pub(super) fn order_nearest_first(
         order = scan;
     }
     let mut slots: Vec<Option<Piece>> = pieces.into_iter().map(Some).collect();
+    let mut exit: Option<End> = None;
     order
         .into_iter()
         .filter_map(|(index, entry)| {
@@ -241,17 +329,25 @@ pub(super) fn order_nearest_first(
             if entry == 1 {
                 std::mem::swap(&mut line.start, &mut line.end);
             }
-            Some((line, strip))
+            let edge = exit.and_then(|from| edge_links.remove(&(from, (index, entry))));
+            exit = Some((index, 1 - entry));
+            Some(((line, strip), edge))
         })
         .collect()
 }
 
 /// For every end of every piece, the ends of other pieces a stay-down link
-/// reaches from it (at most `link_max_mm` and inside both strips), nearest
-/// first, ties by index. A link is the same either way, so the lists are
-/// symmetric. Ends are swept in X order, so only ends within the limit in
-/// X are compared.
-fn stay_down_links(pieces: &[Piece], link_max_mm: f64) -> Vec<[Vec<End>; 2]> {
+/// reaches from it, nearest first, ties by index: a straight link at most
+/// `link_max_mm` long and inside both strips, else an edge link along an
+/// island ring of `edges` no longer than that, measured along it, and
+/// returned from each end to the other. A link is the same either way, so
+/// the lists are symmetric. Ends are swept in X order, so only ends within
+/// the limit in X are compared.
+fn stay_down_links(
+    pieces: &[Piece],
+    link_max_mm: f64,
+    edges: &IslandEdges,
+) -> (Vec<[Vec<End>; 2]>, EdgeLinks) {
     let ends: Vec<(Point, End)> = pieces
         .iter()
         .enumerate()
@@ -263,6 +359,7 @@ fn stay_down_links(pieces: &[Piece], link_max_mm: f64) -> Vec<[Vec<End>; 2]> {
         x(a).total_cmp(&x(b)).then(a.cmp(&b))
     });
     let mut found: Vec<[Vec<(f64, End)>; 2]> = vec![[Vec::new(), Vec::new()]; pieces.len()];
+    let mut edge_links = EdgeLinks::new();
     for (k, &a) in by_x.iter().enumerate() {
         let Some(&(p, (i, e))) = ends.get(a) else {
             continue;
@@ -274,7 +371,7 @@ fn stay_down_links(pieces: &[Piece], link_max_mm: f64) -> Vec<[Vec<End>; 2]> {
             if q.x - p.x > link_max_mm + EPS_MM {
                 break;
             }
-            let d = p.distance_to(q);
+            let mut d = p.distance_to(q);
             if i == j || d > link_max_mm + EPS_MM {
                 continue;
             }
@@ -283,7 +380,12 @@ fn stay_down_links(pieces: &[Piece], link_max_mm: f64) -> Vec<[Vec<End>; 2]> {
                 _ => false,
             };
             if !inside {
-                continue;
+                let Some(link) = edges.link(p, q, link_max_mm) else {
+                    continue;
+                };
+                d = link.length_mm();
+                edge_links.insert(((j, f), (i, e)), link.reversed());
+                edge_links.insert(((i, e), (j, f)), link);
             }
             if let Some(list) = found.get_mut(i).and_then(|l| l.get_mut(e)) {
                 list.push((d, (j, f)));
@@ -293,7 +395,7 @@ fn stay_down_links(pieces: &[Piece], link_max_mm: f64) -> Vec<[Vec<End>; 2]> {
             }
         }
     }
-    found
+    let links = found
         .into_iter()
         .map(|lists| {
             lists.map(|mut list| {
@@ -301,7 +403,8 @@ fn stay_down_links(pieces: &[Piece], link_max_mm: f64) -> Vec<[Vec<End>; 2]> {
                 list.into_iter().map(|(_, end)| end).collect()
             })
         })
-        .collect()
+        .collect();
+    (links, edge_links)
 }
 
 /// The lowest and highest Y of `points`, `None` for fewer than three.
@@ -359,8 +462,10 @@ pub(super) struct RasterSettings {
 
 /// The raster paths of one tool-centre region `root` in cut order, each
 /// with the area it has cleared at its Z: the raster lines (open paths)
-/// nearest-first from where the tool is ([`order_nearest_first`]), then
-/// the wall rings for `WallRings::Last`, the rings first for
+/// nearest-first from where the tool is ([`order_nearest_first`]), lines
+/// joined by an edge link along an island's ring (#202) as one path
+/// ([`join_edge_links`]), then the wall rings for `WallRings::Last`, the
+/// rings first for
 /// `WallRings::First` (starting nearest the first scan line), or none.
 /// Wall rings `keep` refuses are not cut ([`RingTree::walk_keeping`]).
 /// `index` is the region's place among the pocket's tool-centre regions;
@@ -376,6 +481,8 @@ pub(super) struct RasterSettings {
 ///   Two lines' strips meet when the lines are at most a diameter apart,
 ///   so `sequence` stays down from one line to the next inside `root`, and
 ///   lifts across an island, which lies outside both.
+/// - lines joined by edge links: their strips and the band the links
+///   sweep, cut to `root`.
 /// - a wall ring cut last: all of `root`, which the lines have cleared.
 /// - a wall ring cut first: the band of `root` within the tool radius of
 ///   its rings, which is all the ring itself has cleared.
@@ -409,20 +516,11 @@ pub(super) fn region_paths(
         .map(|line| (line, strip(root, &line, settings)))
         .collect();
     let link_max_mm = 2.0 * settings.radius_mm + settings.stepover_mm;
-    let pieces = order_nearest_first(pieces, *anchor, link_max_mm);
-    let last_end = pieces.last().map(|(l, _)| l.end);
-    let line_paths = || {
-        pieces.iter().map(|(line, strip)| {
-            let path = Polyline::new(
-                vec![
-                    Vertex::line(line.start.x, line.start.y),
-                    Vertex::line(line.end.x, line.end.y),
-                ],
-                false,
-            );
-            (path, strip.clone())
-        })
-    };
+    let edges = IslandEdges::of(root, settings.wall, settings.tolerance_mm);
+    let pieces = order_nearest_first(pieces, *anchor, link_max_mm, &edges);
+    let last_end = pieces.last().map(|((l, _), _)| l.end);
+    let joined = join_edge_links(root, pieces, settings);
+    let line_paths = || joined.iter().cloned();
     let mut out = Vec::new();
     match settings.wall {
         WallRings::First => {
@@ -451,6 +549,94 @@ pub(super) fn region_paths(
         }
     }
     Some(out)
+}
+
+/// The ordered `pieces` as open paths, each with the area it has cleared:
+/// a piece on its own is its line and its strip; a run of pieces joined
+/// by edge links (#202) is one path, line, edge link, line and so on, so
+/// `sequence` sees no link to check inside it, and it has cleared the
+/// pieces' strips and the band its edge links sweep (each grown by the
+/// tool radius, cut to `root`), the piece of their union holding its first
+/// line. In tool-centre terms, as a strip is, so a straight link to or
+/// from it still stays inside `root`.
+fn join_edge_links(
+    root: &Region,
+    pieces: Vec<(Piece, Option<Polyline>)>,
+    settings: &RasterSettings,
+) -> Vec<(Polyline, Option<Region>)> {
+    // One path being built: its vertices, its pieces' strips, its edge
+    // links, and where its first line is.
+    struct Joined {
+        vertices: Vec<Vertex>,
+        strips: Vec<Region>,
+        links: Vec<Polyline>,
+        first_mid: Point,
+    }
+    let finish = |joined: Joined| -> (Polyline, Option<Region>) {
+        let path = Polyline::new(joined.vertices, false);
+        if joined.links.is_empty() {
+            return (path, joined.strips.into_iter().next());
+        }
+        let grown: Vec<Region> = joined
+            .links
+            .iter()
+            .flat_map(|link| {
+                let flat = link.with_arcs_flattened(settings.tolerance_mm);
+                flat.segments()
+                    .filter_map(|s| capsule(s.start, s.end, settings.radius_mm))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let band = intersection(
+            &union(&grown, &[], settings.tolerance_mm),
+            std::slice::from_ref(root),
+            settings.tolerance_mm,
+        );
+        let cleared = union(&joined.strips, &band, settings.tolerance_mm);
+        let piece = cleared
+            .iter()
+            .find(|r| r.contains_point(joined.first_mid))
+            .or_else(|| {
+                cleared.iter().max_by(|a, b| {
+                    area_mm2(std::slice::from_ref(a)).total_cmp(&area_mm2(std::slice::from_ref(b)))
+                })
+            })
+            .cloned();
+        (path, piece)
+    };
+    let mut out = Vec::new();
+    let mut current: Option<Joined> = None;
+    for ((line, strip), edge) in pieces {
+        match (current.as_mut(), edge) {
+            (Some(joined), Some(link)) => {
+                // The link starts where the last line ends, with the
+                // bulge of its first segment, and ends where this line
+                // starts.
+                joined.vertices.pop();
+                joined.vertices.extend(link.vertices().iter().copied());
+                joined.vertices.push(Vertex::line(line.end.x, line.end.y));
+                joined.strips.extend(strip);
+                joined.links.push(link);
+            }
+            _ => {
+                out.extend(current.take().map(finish));
+                current = Some(Joined {
+                    vertices: vec![
+                        Vertex::line(line.start.x, line.start.y),
+                        Vertex::line(line.end.x, line.end.y),
+                    ],
+                    strips: strip.into_iter().collect(),
+                    links: Vec::new(),
+                    first_mid: Point::new(
+                        (line.start.x + line.end.x) / 2.0,
+                        (line.start.y + line.end.y) / 2.0,
+                    ),
+                });
+            }
+        }
+    }
+    out.extend(current.map(finish));
+    out
 }
 
 /// The wall rings of `root` (its outer and its islands) that `keep`
@@ -625,7 +811,7 @@ mod tests {
             .into_iter()
             .map(|l| (l, strip(&r, &l, &settings)))
             .collect();
-        let ordered = order_nearest_first(pieces.clone(), None, 4.0);
+        let ordered = nearest_first(pieces.clone(), &IslandEdges::default());
         let got: Vec<(f64, f64, f64)> = ordered
             .iter()
             .map(|(l, _)| (l.start.y, l.start.x, l.end.x))
@@ -647,13 +833,21 @@ mod tests {
                 "{got:?}"
             );
         }
-        assert_eq!(order_nearest_first(pieces, None, 4.0), ordered);
+        assert_eq!(nearest_first(pieces, &IslandEdges::default()), ordered);
     }
 
-    /// Round a circle every line end against it is a dead end, so
-    /// nearest-first cannot lift less than scan order, which is kept.
-    #[test]
-    fn scan_order_is_kept_round_a_circle() {
+    /// [`order_nearest_first`] from no anchor with a 4 mm link limit, the
+    /// pieces only.
+    fn nearest_first(pieces: Vec<Piece>, edges: &IslandEdges) -> Vec<Piece> {
+        order_nearest_first(pieces, None, 4.0, edges)
+            .into_iter()
+            .map(|(piece, _)| piece)
+            .collect()
+    }
+
+    /// The 40 × 20 rect with a 5 mm circle island and its pieces at 0°,
+    /// step 2, tool radius 1.
+    fn circle_pieces() -> (Region, Vec<Piece>) {
         let r = region(vec![
             Polyline::rect(Point::new(0.0, 0.0), 40.0, 20.0),
             Polyline::circle(Point::new(20.0, 10.0), 5.0),
@@ -666,12 +860,58 @@ mod tests {
             wall: WallRings::Omitted,
             direction: CutDirection::Climb,
         };
-        let pieces: Vec<Piece> = raster_lines(&r, 2.0, 0.0, TOL, false, 100)
+        let pieces = raster_lines(&r, 2.0, 0.0, TOL, false, 100)
             .unwrap()
             .into_iter()
             .map(|l| (l, strip(&r, &l, &settings)))
             .collect();
-        assert_eq!(order_nearest_first(pieces.clone(), None, 4.0), pieces);
+        (r, pieces)
+    }
+
+    /// Round a circle every straight link between line ends against it
+    /// enters the island, so with no edge to follow (no wall pass) each
+    /// such end is a dead end, nearest-first cannot lift less than scan
+    /// order, and scan order is kept.
+    #[test]
+    fn scan_order_is_kept_round_a_circle() {
+        let (_, pieces) = circle_pieces();
+        assert_eq!(
+            nearest_first(pieces.clone(), &IslandEdges::default()),
+            pieces
+        );
+        let edges = IslandEdges::of(&circle_pieces().0, WallRings::Omitted, TOL);
+        assert_eq!(nearest_first(pieces.clone(), &edges), pieces);
+    }
+
+    /// #202: with the island's ring to follow, the line ends against the
+    /// circle link along it: every edge link starts where the piece before
+    /// ends and ends where its piece starts, keeps to the ring (radius 5)
+    /// within the flattening, and is no longer than the limit along it.
+    #[test]
+    fn pieces_round_a_circle_link_along_its_edge() {
+        let (r, pieces) = circle_pieces();
+        let edges = IslandEdges::of(&r, WallRings::Last, TOL);
+        let ordered = order_nearest_first(pieces.clone(), None, 4.0, &edges);
+        assert_eq!(ordered.len(), pieces.len());
+        let mut links = 0;
+        for pair in ordered.windows(2) {
+            let (((before, _), _), ((piece, _), edge)) = (&pair[0], &pair[1]);
+            let Some(edge) = edge else { continue };
+            links += 1;
+            let v = edge.vertices();
+            assert!(v[0].point().distance_to(before.end) <= EPS_MM, "{edge:?}");
+            assert!(v[v.len() - 1].point().distance_to(piece.start) <= EPS_MM);
+            assert!(edge.length_mm() <= 4.0 + EPS_MM, "{edge:?}");
+            for p in edge.with_arcs_flattened(TOL).vertices() {
+                let d = p.point().distance_to(Point::new(20.0, 10.0));
+                assert!(
+                    (5.0 - TOL - EPS_MM..=5.0 + EPS_MM).contains(&d),
+                    "{p:?} at {d}"
+                );
+            }
+        }
+        assert!(links >= 4, "{ordered:?}");
+        assert_eq!(order_nearest_first(pieces, None, 4.0, &edges), ordered);
     }
 
     #[test]
