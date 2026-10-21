@@ -182,6 +182,18 @@ pub enum CamError {
         /// The allowed range, as the user reads it.
         range: &'static str,
     },
+    /// A raster Pocket's angle is not a number of degrees in [0, 180).
+    /// Validation reports it at `strategy.raster.angle_deg`; the generator
+    /// refuses it too rather than guess what was meant.
+    #[error(
+        "operation `{op}` has raster angle {angle_deg}°; it must be 0 or more and less than 180"
+    )]
+    InvalidRasterAngle {
+        /// The operation.
+        op: OperationId,
+        /// The angle given, degrees.
+        angle_deg: f64,
+    },
     /// The operation asks for something this build does not generate yet.
     /// Validation accepts it, so a project may carry it; export refuses it
     /// rather than cutting something else.

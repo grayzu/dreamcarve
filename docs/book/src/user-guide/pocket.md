@@ -3,9 +3,10 @@
 A **Pocket** clears all the material inside a closed shape down to a
 depth: a recess for an inlay, a tray, a lid seat. Shapes inside the pocket
 are **islands**, left standing at full height; a shape inside an island is
-a pocket again. This build clears with the **offset** strategy: concentric
-rings stepping in from the wall by the stepover, as VCarve's "Offset"
-pocketing does.
+a pocket again. Two clearance strategies, named as VCarve names them:
+**offset**, concentric rings stepping in from the wall by the stepover,
+and **raster**, parallel straight lines at an angle you choose. See
+[Raster](#raster).
 
 Add it to the project's `operations` list by hand; `init` writes only a
 Profile. A complete Pocket:
@@ -47,12 +48,12 @@ is free, the pocket would be cut in a loose part (`check` warns
 | `enabled` | `false` leaves the operation out of the program, with a warning. |
 | `targets` | The ids of the instances to pocket. Every closed outline of each one takes part; open paths are skipped with a warning. |
 | `tool` | The id of the tool. It must be an `"end_mill"`: the pocket is offset by half the diameter, which only a flat end mill cuts at every depth. |
-| `strategy` | `"offset"`. `{ "raster": { "angle_deg": … } }` loads and validates, but this build refuses to export it; see [Not yet in this build](#not-yet-in-this-build). |
+| `strategy` | `"offset"` for concentric rings, or `{ "raster": { "angle_deg": 0.0 } }` for parallel lines at that angle, 0 or more and less than 180. See [Raster](#raster). |
 | `wall_pass` | `"last"` (as `init` would write it), `"first"` or `"none"`. See [Wall pass](#wall-pass). |
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required.** |
 | `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, export refuses. |
 | `step_over_fraction` | The stepover as a fraction of the tool diameter, more than 0 and at most 1. `null` uses the tool's `step_over_fraction`; if both are `null`, export refuses. See [Stepover](#stepover). |
-| `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
+| `direction` | `"climb"` or `"conventional"`, for the rings. Raster lines ignore it. See [Direction](#direction). |
 | `allowance_mm` | Material to leave on the walls. Must be 0 in this build. |
 | `rest_of` | Rest machining. Must be `null` in this build. |
 | `entry` | How the bit gets down to each pass: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`. See [Entry](#entry). |
@@ -99,15 +100,63 @@ gap.
 A shape inside an island is a pocket of its own, cut after the pocket
 around the island.
 
+## Raster
+
+`{ "raster": { "angle_deg": A } }` clears each tool-centre area with
+straight lines one stepover apart, then cuts the wall ring (see
+[Wall pass](#wall-pass)).
+
+**The angle** is in degrees from the +X axis, counter-clockwise, seen
+from above with Y pointing up, as on every drawing in DreamCarve. `0`
+runs the lines along X, `90` along Y, `45` up and to the right, `135` up
+and to the left. 0 to 180 covers every direction a line can have, so
+180 and more, and anything below 0, are refused (`check` names
+`strategy.raster.angle_deg`). PureCutCNC draws Y downwards, so its 45° is
+DreamCarve's 135°.
+
+**The lines** start half a stepover in from the edge of the tool-centre
+area and step across it by the stepover. Where the area is narrower than
+one stepover, there is one line down its middle. If the last line would
+end up more than a stepover from the far edge, one more line goes half a
+stepover from it, so no strip is left between the lines and the wall
+ring. Lines run in alternate directions, a zigzag. An island cuts a line
+into pieces, one on each side of it.
+
+**Between lines** the bit stays down and cuts straight across to the
+start of the next line when that move is shorter than the bit's diameter
+plus the stepover and stays inside the tool-centre area, through
+material the two lines have just cut. Otherwise, as across an island, it
+lifts to safe Z and plunges again. A rectangle at 0° is cut in one
+zigzag per pass with no lift.
+
+**Scallops.** Each line leaves a shallow ridge on the floor between it and
+the next, and the zigzag cuts alternately climb and conventional, so a
+raster floor shows faint lines along the raster angle, more visibly in
+soft woods. A smaller stepover makes them finer. If the floor finish
+matters more than time, use `"offset"`, which follows the wall all the
+way in.
+
+**Wall pass.** With `"last"`, the default, the wall and island rings are
+cut after the lines and clean up the scallops and line ends along every
+wall. `"first"` cuts them before the lines; `"none"` leaves the walls with
+the line ends on them, and the pocket up to one stepover undersize on the
+walls that run along the lines.
+The wall rings follow `direction`; the lines do not.
+
+A 100 × 50 mm rectangle with a 6.35 mm bit at 40 % stepover and 0° gives
+17 lines per pass, 2.54 mm apart, each 93.65 mm long, then the wall ring.
+
 ## Wall pass
 
 - `"last"`: each pass ends with the wall ring and the island rings, so
   the walls are cut once more after the clearing, cleanly.
 - `"first"`: each pass starts with them.
-- `"none"`: they are not cut. The pocket comes out one stepover undersize
-  on every wall, and the walls keep the clearing rings' marks (VCarve's
-  "no profile pass"). A pocket too small for a second ring is then not
-  cut at all.
+- `"none"`: they are not cut. With `"offset"` the pocket comes out one
+  stepover undersize on every wall, and the walls keep the clearing
+  rings' marks (VCarve's "no profile pass"); a pocket too small for a
+  second ring is then not cut at all. With `"raster"` the walls keep the
+  line ends, and the walls along the lines are up to one stepover
+  undersize.
 
 ## Stepover
 
@@ -126,28 +175,29 @@ climb runs the wall ring and every ring inside it **counter-clockwise**;
 round an island the material is inside the ring, so climb runs it
 **clockwise**. **Conventional** reverses both. The island and the wall
 always turn opposite ways for one setting; that is what keeps the cut the
-same kind on both.
+same kind on both. Raster lines zigzag whatever `direction` says; the
+wall rings of a raster pocket follow it.
 
 ## Entry
 
 `entry` says how the bit gets down to the depth of each pass, wherever it
-arrives from safe Z (VCarve's "Ramps"; Fusion's "Ramp Type"). A ring
-reached by a stay-down link from the ring before is already at depth, so
-it has no entry.
+arrives from safe Z (VCarve's "Ramps"; Fusion's "Ramp Type"). A ring or
+raster line reached by a stay-down link from the one before is already at
+depth, so it has no entry.
 
 - `"plunge"`: straight down at the tool's plunge rate. A bit that does
   not cut well at its centre, as most do not, takes this hard.
 - `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag. The bit runs back and
-  forth along a short straight line through the point where the ring
-  starts, going down `angle_deg` from the horizontal, until it reaches
-  the pass depth, then moves to the ring's start. The line is the longest
+  forth along a short straight line through the point where the ring or
+  raster line starts, going down `angle_deg` from the horizontal, until it reaches
+  the pass depth, then moves to that start. The line is the longest
   one through that point that fits in the tool-centre area, kept a tenth
   of the bit's diameter in from its edge so the ramp does not mark the
   wall, and at most three diameters long.
 - `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`: a spiral
   down, `diameter_fraction` of the bit's diameter across (5.08 mm for a
   6.35 mm bit at 0.8), at `angle_deg`, then one flat turn at the pass
-  depth to clean the floor, then on to the ring's start. The helix is
+  depth to clean the floor, then on to the ring's or line's start. The helix is
   placed next to that start, where it fits with the same margin from the
   edge. A fraction at most 1 leaves no core standing in the middle.
 
@@ -183,10 +233,9 @@ material the pocket removes: the [safety](#safety) check covers it.
 
 These load and validate, so a project can carry them, but:
 
-- `strategy` `raster`, `allowance_mm` above 0 and `rest_of` are refused
-  at `check` and `export` ("not supported by this build yet"): cutting
-  something else would make the wrong pocket. Set them to `"offset"`, 0
-  and `null` for now.
+- `allowance_mm` above 0 and `rest_of` are refused at `check` and
+  `export` ("not supported by this build yet"): cutting something else
+  would make the wrong pocket. Set them to 0 and `null` for now.
 - `corner_relief` `dogbone` or `t_bone` is skipped (`relief_skipped`).
   The pocket is still the one asked for.
 

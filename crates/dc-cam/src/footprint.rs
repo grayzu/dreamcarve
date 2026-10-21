@@ -168,7 +168,7 @@ fn capsules(steps: &[Step], radius_mm: f64, tolerance_mm: f64, out: &mut Vec<Reg
 }
 
 /// The segment `a → b` grown by `radius_mm`, round-ended.
-fn capsule(a: Point, b: Point, radius_mm: f64) -> Option<Region> {
+pub(crate) fn capsule(a: Point, b: Point, radius_mm: f64) -> Option<Region> {
     let along = (b - a).normalized()?;
     let left = along.perp() * radius_mm;
     // Counter-clockwise: up the right side, round b, back down the left,
