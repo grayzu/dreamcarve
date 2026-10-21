@@ -1580,6 +1580,7 @@ mod tests {
             CamError::MissingStepDown {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
 
@@ -1608,6 +1609,7 @@ mod tests {
             CamError::MissingStepOver {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
         op.step_over_fraction = Some(1.5);

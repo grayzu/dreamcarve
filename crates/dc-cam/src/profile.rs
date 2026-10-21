@@ -2216,6 +2216,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Feed
             }
         );
@@ -2226,6 +2227,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Plunge
             }
         );
@@ -2236,6 +2238,36 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed { .. }
         ));
+    }
+
+    /// #71: two tools may share a name, so an error about a tool carries
+    /// its id as well as the name it prints.
+    #[test]
+    fn tool_errors_carry_the_tool_id() {
+        let tool_id = |err: CamError| match err {
+            CamError::MissingFeed { tool_id, .. }
+            | CamError::CutterNotFlat { tool_id, .. }
+            | CamError::MissingStepDown { tool_id, .. }
+            | CamError::InvalidToolDiameter { tool_id, .. } => tool_id,
+            other => panic!("a tool error, not {other:?}"),
+        };
+        let t1 = ToolId::new("t1");
+        let op = profile_op(&rect_project(), Side::Outside, CutDirection::Climb);
+        let fails = |change: &dyn Fn(&mut Project)| {
+            let mut p = rect_project();
+            change(&mut p);
+            assert_eq!(p.tools[0].id, t1);
+            generate_profile(&p, &op).unwrap_err()
+        };
+        let errors = [
+            fails(&|p| p.tools[0].feed_mm_min = None),
+            fails(&|p| p.tools[0].cutter = dc_project::ToolKind::BallNose),
+            fails(&|p| p.tools[0].diameter_mm = 0.0),
+            fails(&|p| p.tools[0].step_down_mm = None),
+        ];
+        for err in errors {
+            assert_eq!(tool_id(err.clone()), t1, "{err:?}");
+        }
     }
 
     /// #67: Profile offsets by half the diameter, right only for a flat end
@@ -2253,6 +2285,7 @@ mod tests {
             CamError::CutterNotFlat {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 cutter: "a V-bit",
             }
         );
@@ -2300,6 +2333,7 @@ mod tests {
             CamError::MissingStepDown {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
     }
