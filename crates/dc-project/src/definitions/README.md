@@ -16,6 +16,9 @@ Upstream paths, at commit `2ebab10e5e17c48281ff96805d5e936af135cb58`:
 
 `grblhal/v2.json` and `grbl/v2.json` are version 1 of each with one line
 changed; see "Comments on grblHAL and GRBL" below (#171).
+`linuxcnc/v2.json`, `mach3/v2.json` and `uccnc/v2.json` are version 1 of
+each without `G49` in the header; see "Tool length offset at touch-off"
+below (#286).
 
 grblHAL and GRBL are checked under "Verification" below. LinuxCNC, Mach3,
 UCCNC and generic (slice 17, #164) each have a section of their own, with
@@ -81,6 +84,8 @@ These files were modified from the upstream copies (Apache-2.0 §4(b)):
   "Versions" above).
 - Version 2 of grblHAL and GRBL opens with `( Project: {programName} )`
   and `; Project: {programName}` (#171; "Comments on grblHAL and GRBL").
+- Version 2 of LinuxCNC, Mach3 and UCCNC has no `G49` in its header
+  (#286; "Tool length offset at touch-off").
 - The safety and correctness changes listed under "Verification" below,
   and, for the four later files, under "Changed from PureCutCNC" in each
   one's section.
@@ -323,9 +328,11 @@ Choices that apply to all four:
   (`"separate_programs"`, #95). Each definition's tool change is `M5`,
   `M0`. It is never written: `emit` refuses a second tool in one program
   on a definition without `M6`.
-- **No `G43 H`.** A tool length offset needs a tool table DreamCarve does
-  not write. The user sets Z zero with each bit, as on grblHAL. The
-  headers cancel any offset with `G49` where the controller documents it.
+- **No `G43 H`, and since version 2 no `G49`.** A tool length offset needs
+  a tool table DreamCarve does not write. The user sets Z zero with each
+  bit, as on grblHAL. Version 1 of each header cancelled any offset with
+  `G49`; version 2 leaves the offset alone, because the zero the user set
+  includes it (see "Tool length offset at touch-off").
 - **User text never opens a comment.** LinuxCNC acts on a comment that
   starts with a keyword: `(MSG,`, `(DEBUG,`, `(PRINT,`, `(LOG,`,
   `(LOGOPEN,file)`, which truncates the file, and `(PROBEOPEN file)`
@@ -341,15 +348,101 @@ Choices that apply to all four:
   `M0 (MSG, ...)`. LinuxCNC and Mach3 show the message. UCCNC documents no
   `MSG`; RS274/NGC says messages "should be displayed" (3.3.4). Where the
   message is not shown, `export` still lists every pause.
-- **Header modal codes.** `G40`, `G49` and `G80` only cancel modes
-  DreamCarve never sets. `G91.1` selects incremental arc centres, which is
+- **Header modal codes.** `G40` and `G80` (and, in version 1, `G49`)
+  only cancel modes DreamCarve never sets. `G91.1` selects incremental arc centres, which is
   how DreamCarve writes `I` and `J`. The safety pass accepts all four in
   any program, and `G90.1` in none (#154). Each line of the header is
   written again after every pause, with the units and WCS lines (#55).
 
-## LinuxCNC (`linuxcnc/v1.json`)
+## Tool length offset at touch-off (version 2 of LinuxCNC, Mach3, UCCNC)
 
-Checked against the LinuxCNC 2.9.10 documentation (the "stable" pages,
+The #73 review found that on grblHAL and GRBL the work zero a user sets
+with `G10 L20` includes the active tool length offset, so `G49` at program
+start would move every Z by it. Those headers never had `G49`. The
+question for LinuxCNC, Mach3 and UCCNC, whose version 1 headers have it
+(#286): if the user sets Z zero while an offset is active, does `G49`
+move Z relative to that zero? Each was checked on 2026-10-21. The rule
+was conservative: unless the documentation shows `G49` is harmless there,
+it is removed.
+
+- **LinuxCNC: it moves Z.** The documentation does not say. The G-code
+  reference, `#gcode:g10-l20`, says only that `G10 L20` sets the offset
+  "to a calculated value that makes the current coordinates become the
+  given value". `#gcode:g49` says only that `G49` "cancels tool length
+  compensation". The tool compensation page,
+  <https://linuxcnc.org/docs/stable/html/gcode/tool-compensation.html>,
+  "Touch Off", is silent on an offset already in effect. The interpreter
+  source on branch `2.9`, at `a33293f46575c809e082e0806e79ab996f982513`,
+  settles it:
+  - `interp_convert.cc` L2447 gives the machine position as
+    `current_z + axis_offset_z + origin_offset_z + tool_offset.tran.z`.
+  - `G10 L20` (L4263, L4325) takes `cz` from `find_current_in_system`
+    (`interp_find.cc` L467-510), which starts from `current_z`, the
+    position with the tool offset already taken out. It does not use
+    `find_current_in_system_without_tlo`, which `G10 L10`/`L11` use
+    (L4030). So the new G5x Z is machine Z − offset − G92 − the given
+    value.
+  - AXIS's Touch Off sends exactly that `G10 L20`
+    (`src/emc/usr_intf/axis/scripts/axis.py` L2790).
+  - `G49` sets the offset to 0 and adds the old one to `current_z`
+    (`interp_convert.cc` L5793).
+
+  From then on, every programmed Z is reached with the tip one offset
+  lower than the zero the user touched off, when the offset is positive.
+  `M2` does not reset `G43`/`G49` ([M] `#mcode:m2-m30` lists what it
+  resets), so an offset applied by a tool-setter routine or MDI is still
+  active when the program starts.
+- **Mach3: it moves Z, and the manual does not say otherwise.**
+  *Using Mach3Mill* 1.84 (above, [MILL]):
+  - 10.1.4 "Controlled Point" (p. 10-4): the point is moved "out along
+    the spindle axis by specifying some positive amount for the tool
+    length offset".
+  - 7.2.1 (p. 7-3): "The work offset values are always added [to] the
+    numbers in the axis DROs (i.e. the current coordinates of the
+    controlled point) to give the absolute machine coordinates". Zeroing
+    an axis DRO updates the work offset "so the controlled point is
+    referred to by the value now in the axis DRO" (p. 7-4).
+  - 6.2.11.1 (p. 6-10): Set Z "will set up the Z value of the current
+    work offset so that the tool is at the given height".
+  - 7.3.1 (p. 7-5): with a tool's offset switched on, "the Z axis DRO
+    will read 0.0", and the offsets are switched on and off "in the part
+    program (T word, M6, G43 and G49)".
+  - 10.1.11 (p. 10-6): the current position numbers are adjusted, with
+    no motion, when the "Tool length offset is changed".
+
+  So a zero set with the Tool Offset On/Off toggle on includes the
+  offset, and `G49` moves the controlled point back by it. 6.6.2 still
+  advises a program to include `G49`, and 10.7.14 says only "To use no
+  tool length offset, program G49". Neither says it is safe after such
+  a zero.
+- **UCCNC: the manual does not establish it is harmless.** [UM] (below):
+  - 3.10 "Offsets" (p. 42-43): the "Tool offset ... is the tool length
+    compensation", and "Clearing the tool offset adds the tool offset to
+    the Current coordinates", so the current coordinates include it.
+  - 3.11.1 (p. 43): "The tool offset can be cleared programming G49".
+  - 4.1.1 "Tool Length Offsets : G43, G44 and G49" (p. 57-58): "To
+    cancel the tool length offset compensation, program G49."
+  - 4.3.4 and 4.3.5 (p. 72): the axis zero buttons and the offsets.
+
+  The manual does not say whether zeroing an axis with a tool offset in
+  force takes the offset into account. If it does, as the current
+  coordinates do, `G49` moves Z by the offset.
+
+So version 2 of each is version 1 with `G49` removed from the header
+line, and nothing else changed (`post::linuxcnc_v2_header_has_no_g49`,
+`mach3_v2_…`, `uccnc_v2_…`). No line of any definition sets an offset
+(`post::no_definition_has_g43`), and version 2 has no `G44` or `G49`
+either. So the offset in force when the user set Z zero, if any, stays
+in force for the whole program, and the zero means what it meant at
+touch-off. `G40` and `G80` stay: they cancel modes DreamCarve never uses,
+and neither affects where Z is. A project that names version 1 keeps it,
+byte for byte, until `export --post <id>`
+(`cli::linuxcnc_v1_project_still_exports_byte_identically`).
+
+## LinuxCNC (`linuxcnc/v1.json`, `linuxcnc/v2.json`)
+
+Version 2 is version 1 without `G49` (see "Tool length offset at
+touch-off"). Checked against the LinuxCNC 2.9.10 documentation (the "stable" pages,
 updated 2026-10-17) and the source on branch `2.9`, with `master` at
 `3a1c48a1eeb8cbeaf47b00c6e2dd815cff81b1f6` (2.10.0~pre2) where it differs.
 
@@ -362,7 +455,8 @@ updated 2026-10-17) and the source on branch `2.9`, with `master` at
 | Line | Source | Why |
 | --- | --- | --- |
 | `( Project: {programName} )`, `( Generated by DreamCarve on {date} )` | [O] `#gcode:comments`: "Comments can be embedded in a line using parentheses ()" | One comment per line; LinuxCNC interprets only the last comment of a line. User text never comes first (see the rules above). |
-| `G90 G17 G40 G49 G80 G94` | [G] `#gcode:g90-g91`, `#gcode:g17-g19.1`, `#gcode:g40` ("It is OK to turn compensation off when it is already off"), `#gcode:g49` ("cancels tool length compensation"), `#gcode:g80`, `#gcode:g93-g94-g95`; [O] `#gcode:best-practices`, whose mill preamble is `G17 G20 G40 G49 G54 G80 G90 G94` | Absolute distance, XY plane, no cutter compensation, no tool length offset, no canned-cycle motion, feed per minute. A previous program or MDI may leave any of them set. `G40`'s errors (an arc as the next move) apply when compensation was on; DreamCarve's next move is a `G0`. |
+| `G90 G17 G40 G49 G80 G94` (v1) | [G] `#gcode:g90-g91`, `#gcode:g17-g19.1`, `#gcode:g40` ("It is OK to turn compensation off when it is already off"), `#gcode:g49` ("cancels tool length compensation"), `#gcode:g80`, `#gcode:g93-g94-g95`; [O] `#gcode:best-practices`, whose mill preamble is `G17 G20 G40 G49 G54 G80 G90 G94` | Absolute distance, XY plane, no cutter compensation, no tool length offset, no canned-cycle motion, feed per minute. A previous program or MDI may leave any of them set. `G40`'s errors (an arc as the next move) apply when compensation was on; DreamCarve's next move is a `G0`. |
+| `G90 G17 G40 G80 G94` (v2) | As v1, without `#gcode:g49` | The best-practices preamble assumes a program that applies its own offset with `G43` after `M6`. DreamCarve writes none, so `G49` would cancel the offset the user's Z zero includes (#286, "Tool length offset at touch-off"). |
 | `G91.1` | [G] `#gcode:g90.1-g91.1`: "G91.1 Returns I, J & K to their default behavior"; [G] "Center Format Arcs": "Incremental Arc Distance Mode is default"; [SRC] 2.9 `rs274ngc_pre.cc` L1171 | DreamCarve writes `I`, `J` from the arc's start. `G90.1` is modal and not reset by `M2` ([M] `#mcode:m2-m30` lists what is), so a previous program could leave it on. |
 | `{unitsCommand}`: `G21`, `G20` | [G] `#gcode:g20-g21`: "a good idea to include units in the preamble" | Millimetre or inch program. |
 | `{wcsCommand}`: `G54` | [G] `#gcode:g54-g59.3`: "G54 - select coordinate system 1" | S5. |
@@ -414,9 +508,10 @@ unnecessary, and whether 3 s is enough without one. PureCutCNC validated its Lin
 `rs274` standalone interpreter (`scripts/gcode-conformance/README.md`);
 DreamCarve's has not been run through it yet.
 
-## Mach3 (`mach3/v1.json`)
+## Mach3 (`mach3/v1.json`, `mach3/v2.json`)
 
-Checked against ArtSoft's manuals on machsupport.com:
+Version 2 is version 1 without `G49` (see "Tool length offset at
+touch-off"). Checked against ArtSoft's manuals on machsupport.com:
 
 - [MILL] *Using Mach3Mill*, Rev 1.84-A2,
   <https://www.machsupport.com/wp-content/uploads/2013/02/Mach3Mill_1.84.pdf>.
@@ -433,7 +528,8 @@ and was not read.
 | --- | --- | --- |
 | `%` | [MILL] 10.5.5 "Comments and Messages": "A line that starts with the percent character, %, is treated as a comment and not interpreted in any way." | Acceptance 36. Harmless; `emit` writes it without a line number, which would stop it starting the line. |
 | `( Project: {programName} )`, `( Generated by DreamCarve on {date} )` | [MILL] 10.5.5: "A left parenthesis always starts a comment"; 10.5.6: "If more than one comment appears on a line, only the last one will be used" | One comment per line. |
-| `G90 G94 G17 G40 G49 G80` | [MILL] 10.7.25 (G90), 10.7.28 (G94: "units per minute mode"), 10.7.8 (G17), 10.7.13 (G40: "It is OK to turn compensation off when it is already off"), 10.7.14 (G49: "To use no tool length offset, program G49"), 10.7.23 (G80: "Program G80 to ensure no axis motion will occur"); 6.6.2: a program "should therefore include G17/G18/G19, G20/G21, G40, G49, G61/G62, G90/G91, G93/G94" | Mach3 keeps modal state between programs. |
+| `G90 G94 G17 G40 G49 G80` | [MILL] 10.7.25 (G90), 10.7.28 (G94: "units per minute mode"), 10.7.8 (G17), 10.7.13 (G40: "It is OK to turn compensation off when it is already off"), 10.7.14 (G49: "To use no tool length offset, program G49"), 10.7.23 (G80: "Program G80 to ensure no axis motion will occur"); 6.6.2: a program "should therefore include G17/G18/G19, G20/G21, G40, G49, G61/G62, G90/G91, G93/G94" | Mach3 keeps modal state between programs. Version 1. |
+| `G90 G94 G17 G40 G80` (v2) | As v1, without 10.7.14 | 7.2.1, 7.3.1 and 10.1.11: a Z zero set with the tool offset on includes it, and `G49` moves Z by it (#286, "Tool length offset at touch-off"). |
 | `G91.1` | [MILL] 10.7.26 "Set IJ Mode - G90.1 and G91.1": "To go into incremental IJ mode, program G91.1 ... Incorrect settings of this mode will generally result in large incorrectly oriented arcs"; 10.7.3.2 and [CFG] 5.6.6.2: the IJ mode is a startup setting | The manuals' screenshots show the setting at incremental, but a profile can be set to absolute, and [CFG] calls it "the most frequent cause of questions from users when trying to cut circles". |
 | `{unitsCommand}`: `G21`, `G20` | [MILL] 10.7.9 | Millimetre or inch program. |
 | `{wcsCommand}`: `G54` | [MILL] 10.7.18 | S5. |
@@ -488,9 +584,10 @@ Before the first cut, check in Config > Logic that "G04 Dwell param in
 ms" is unchecked and the IJ mode is incremental, and run the program in
 the simulator.
 
-## UCCNC (`uccnc/v1.json`)
+## UCCNC (`uccnc/v1.json`, `uccnc/v2.json`)
 
-Checked against [UM] *UCCNC software installation and user's guide*,
+Version 2 is version 1 without `G49` (see "Tool length offset at
+touch-off"). Checked against [UM] *UCCNC software installation and user's guide*,
 manual version 1.0047, software 1.2113, CNC Drive,
 <https://cncdrive.com/UCCNC/UCCNC_usersmanual.pdf> (87 pages; page numbers
 are the manual's `n/87`). The current software is 1.2115
@@ -501,7 +598,8 @@ forum (<https://forum.cncdrive.com/>) was searched; its pages returned HTTP
 | Line | Source | Why |
 | --- | --- | --- |
 | `( Project: {programName} )`, `( Generated by DreamCarve on {date} )` | [UM] 4.2 "Parametric programming", p. 68: "in the RS274NGC programming the round brackets '(' and ')' are used to defined comments" | `;` is not a comment on UCCNC: it separates function arguments (p. 70). |
-| `G90 G17 G40 G49 G80 G94` | [UM] 4.1.1, modal group table, p. 50 (G90/G91, G17, G40/G41/G42, G43/G44/G49, G93/G94, G80 in group 1); entries p. 52-63 | Every word is in UCCNC's list of supported codes. |
+| `G90 G17 G40 G49 G80 G94` | [UM] 4.1.1, modal group table, p. 50 (G90/G91, G17, G40/G41/G42, G43/G44/G49, G93/G94, G80 in group 1); entries p. 52-63 | Every word is in UCCNC's list of supported codes. Version 1. |
+| `G90 G17 G40 G80 G94` (v2) | As v1, without G49 (p. 57-58) | 3.10, p. 42-43: the current coordinates include the tool offset, and the manual does not say a Z zero leaves it out, so `G49` may move Z by it (#286, "Tool length offset at touch-off"). |
 | `{wcsCommand}`: `G54` | [UM] 4.1.1, "Coordinate System (Group 12)", p. 50, p. 59 | S5. |
 | `( Operation {operationIndex}: {operationName} )`, `( Tool {toolNumber}: {toolName} )` | [UM] 4.2, p. 68 | |
 | `G0`, `G1`, `G2`, `G3` | [UM] 4.1.1, p. 50-51 | Arcs "in the center format ... I and J specifies the center of the arc". The manual does not say the centre is relative to the start. It says UCCNC follows "the industry standard RS274 format" (4.1, p. 49), where "I and J are the offsets from the current location" (NIST IR 6556, 3.5.3.2). CNC Drive staff on the forum: UCCNC always uses incremental IJ and does not support `G90.1`/`G91.1` (search summary only). So arcs are written, without `G91.1`. |
