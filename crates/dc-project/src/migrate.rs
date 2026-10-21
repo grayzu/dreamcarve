@@ -636,6 +636,11 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 13 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                op.as_object_mut().unwrap().shift_remove("last_pass");
+            }
+        }
         if version < 11 {
             root.as_object_mut().unwrap().shift_remove("tabs");
         }
@@ -1319,6 +1324,102 @@ mod tests {
             crate::test_support::profile_mut(&mut p).side = side;
             assert_eq!(load(save(&p).unwrap().as_bytes()).unwrap().project, p);
         }
+    }
+
+    // Version 12 → 13 (#284): the Profile last pass allowance.
+
+    const V11_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v11/sample.dcv");
+    const V12_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v12/sample.dcv");
+
+    #[test]
+    fn version_11_fixture_loads() {
+        let loaded = load(V11_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    #[test]
+    fn version_12_fixture_loads() {
+        let loaded = load(V12_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #284: every Profile of a version 12 file gains `last_pass: null`
+    /// right after `corner_relief`, so each pass cuts on the line as
+    /// before; other operations are unchanged. The fixture then loads as
+    /// the sample, whose program `dreamcarve`'s migration corpus test
+    /// holds byte for byte.
+    #[test]
+    fn v12_to_v13_adds_null_last_pass() {
+        let mut root: Value = serde_json::from_slice(V12_FIXTURE).unwrap();
+        let profile = root["operations"][0].clone();
+        let mut second = profile.clone();
+        second["id"] = json!("o2");
+        let pocket = serde_json::to_value(crate::Operation::Pocket(
+            crate::test_support::sample_pocket(),
+        ))
+        .unwrap();
+        let operations = root["operations"].as_array_mut().unwrap();
+        operations.push(second);
+        operations.push(pocket.clone());
+        let migrated = migrate(root, 12).unwrap();
+        let operations = migrated["operations"].as_array().unwrap();
+        for op in operations.iter().take(2) {
+            assert_eq!(op["last_pass"], Value::Null, "{op}");
+            let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
+            let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+            assert_eq!(at("last_pass"), at("corner_relief") + 1, "{keys:?}");
+            assert_eq!(keys.len(), at("last_pass") + 1, "{keys:?}");
+        }
+        assert_eq!(operations[2], pocket, "a Pocket has no last pass");
+
+        let migrated = migrate(sample_root_at(12), 12).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
+            "key order"
+        );
+        let mut loaded = load(V12_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(
+            crate::test_support::profile_mut(&mut loaded.project).last_pass,
+            None
+        );
+    }
+
+    #[test]
+    fn v12_with_last_pass_already_present_fails() {
+        let mut root = sample_root_at(12);
+        root["operations"][0]["last_pass"] = Value::Null;
+        let err = migrate(root, 12).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 12, to: 13, message }
+                if message.contains("last_pass")),
+            "{err:?}"
+        );
+    }
+
+    /// #284: a last pass saves with every field and loads back.
+    #[test]
+    fn last_pass_round_trips() {
+        let mut p = sample_project();
+        crate::test_support::profile_mut(&mut p).last_pass = Some(crate::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: Some(1.0),
+            reverse: true,
+        });
+        let text = save(&p).unwrap();
+        assert!(
+            text.contains(
+                "\"last_pass\": {\n        \"allowance_mm\": 0.5,\n        \"thickness_mm\": 1.0,\n        \"reverse\": true\n      }"
+            ),
+            "{text}"
+        );
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
     }
 
     #[test]

@@ -1609,7 +1609,8 @@ impl Validator {
 mod tests {
     use super::*;
     use crate::model::{
-        ClearanceStrategy, CornerRelief, DrillCycle, Entry, Lead, Operation, PeckRetract, ToolKind,
+        ClearanceStrategy, CornerRelief, DrillCycle, Entry, LastPass, Lead, Operation, PeckRetract,
+        ToolKind,
     };
     use crate::test_support::{
         profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
@@ -3370,6 +3371,139 @@ mod tests {
                 "{field} {value}"
             );
         }
+    }
+
+    /// The last pass acceptance 46 asks for, on the sample's Outside
+    /// Profile (#284).
+    fn last_pass(allowance_mm: f64) -> LastPass {
+        LastPass {
+            allowance_mm,
+            thickness_mm: None,
+            reverse: false,
+        }
+    }
+
+    /// #284 (capability 34, acceptance 46): the allowance is more than 0
+    /// and at most a third of the bit's diameter, as VCarve advises. 0, a
+    /// negative value and 2.2 mm with the 6.35 mm bit are errors naming the
+    /// diameter and the limit; 0.5 and exactly a third are valid.
+    #[test]
+    fn last_pass_allowance_limit() {
+        let mut p = sample_project();
+        for allowance_mm in [0.5, 6.35 / 3.0] {
+            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
+            assert_eq!(validate(&p), vec![], "{allowance_mm}");
+        }
+        for allowance_mm in [0.0, -0.5, 2.2] {
+            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::LastPassAllowance {
+                    operation: OperationId::new("o1"),
+                    name: "Cut out".into(),
+                    tool_name: "6.35 mm upcut".into(),
+                    allowance_mm,
+                    diameter_mm: 6.35,
+                    limit_mm: 6.35 / 3.0,
+                }],
+                "{allowance_mm}"
+            );
+            let problem = &problems[0];
+            assert!(problem.is_error());
+            assert_eq!(problem.code(), "last_pass_allowance");
+            assert_eq!(
+                problem.field().as_deref(),
+                Some("operations[o1].last_pass.allowance_mm")
+            );
+            let message = problem.to_string();
+            for part in ["6.35 mm", "2.117 mm", "a third"] {
+                assert!(message.contains(part), "{message}");
+            }
+        }
+        profile_mut(&mut p).last_pass = Some(last_pass(f64::NAN));
+        assert_eq!(
+            validate(&p),
+            vec![Problem::NonFinite {
+                field: "operations[o1].last_pass.allowance_mm".into()
+            }]
+        );
+    }
+
+    /// #284: On line has no wall to leave material on, and Left and Right
+    /// are open-path cuts the last pass does not cover: Inside and Outside
+    /// only.
+    #[test]
+    fn last_pass_on_line_is_error() {
+        for side in [Side::OnLine, Side::Left, Side::Right] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.last_pass = Some(last_pass(0.5));
+            let problems = validate(&p);
+            let expected = Problem::LastPassNeedsSide {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                side,
+            };
+            assert!(problems.contains(&expected), "{side:?}: {problems:?}");
+            assert!(expected.is_error());
+            assert_eq!(expected.code(), "last_pass_needs_side");
+            assert_eq!(
+                expected.field().as_deref(),
+                Some("operations[o1].last_pass")
+            );
+        }
+        for side in [Side::Inside, Side::Outside] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.last_pass = Some(last_pass(0.5));
+            assert_eq!(validate(&p), vec![], "{side:?}");
+        }
+    }
+
+    /// #284: `thickness_mm`, the last pass's depth, is more than 0 and at
+    /// most the operation's `depth_mm`.
+    #[test]
+    fn last_pass_thickness_range() {
+        let mut p = sample_project();
+        for thickness_mm in [0.5, 2.0, 6.0] {
+            profile_mut(&mut p).last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            assert_eq!(validate(&p), vec![], "{thickness_mm}");
+        }
+        for thickness_mm in [0.0, -1.0, 6.5] {
+            profile_mut(&mut p).last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            assert_eq!(
+                validate(&p),
+                vec![Problem::OutOfRange {
+                    field: "operations[o1].last_pass.thickness_mm".into(),
+                    value: thickness_mm,
+                    expected: LAST_PASS_THICKNESS,
+                }],
+                "{thickness_mm}"
+            );
+        }
+        // With the depth unset, only the depth is reported.
+        let op = profile_mut(&mut p);
+        op.depth_mm = None;
+        op.last_pass = Some(LastPass {
+            thickness_mm: Some(6.5),
+            ..last_pass(0.5)
+        });
+        assert!(
+            validate(&p)
+                .iter()
+                .all(|problem| !matches!(problem, Problem::OutOfRange { .. })),
+            "{:?}",
+            validate(&p)
+        );
     }
 
     /// Functional spec, capability 16: a ramp steeper than 45° is a

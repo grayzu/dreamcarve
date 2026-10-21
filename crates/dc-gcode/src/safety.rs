@@ -4999,6 +4999,105 @@ mod tests {
         }
     }
 
+    /// #284 (acceptance 46, S9 with a last pass): the sample made a 60 × 40
+    /// mm rectangle on 12 mm stock, cut 12 mm deep in 4 mm passes with a
+    /// 0.5 mm last pass allowance, passes every rule of the safety pass
+    /// (S1–S16), Inside and Outside; with a plunge, a ramp and lead, and a
+    /// helix, lead and dogbones; with its tab request and with those tabs
+    /// placed; with `thickness_mm: 1` and with `reverse`. Every program
+    /// cuts to the full depth (Z-12 below the stock top) and rises over
+    /// the 5 mm tabs (Z-7) on the last pass too.
+    #[test]
+    fn last_pass_program_passes_s9() {
+        let lead = dc_project::Lead {
+            radius_mm: 4.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 1.0,
+        };
+        let mut base = sample_project();
+        base.stock.thickness_mm = Some(12.0);
+        base.instances[0].z_top_mm = Some(12.0);
+        if let Some(def) = base.definitions.values_mut().next() {
+            def.profiles = vec![dc_geometry::Polyline::rect(
+                Point::new(0.0, 0.0),
+                60.0,
+                40.0,
+            )];
+        }
+        for side in [dc_project::Side::Outside, dc_project::Side::Inside] {
+            for (entry, lead, relief) in [
+                (
+                    dc_project::Entry::Plunge,
+                    None,
+                    dc_project::CornerRelief::None,
+                ),
+                (
+                    dc_project::Entry::Ramp { angle_deg: 10.0 },
+                    Some(lead.clone()),
+                    dc_project::CornerRelief::None,
+                ),
+                (
+                    dc_project::Entry::Helix {
+                        diameter_fraction: 0.8,
+                        angle_deg: 5.0,
+                    },
+                    Some(lead.clone()),
+                    dc_project::CornerRelief::Dogbone,
+                ),
+            ] {
+                for last_pass in [
+                    dc_project::LastPass {
+                        allowance_mm: 0.5,
+                        thickness_mm: None,
+                        reverse: false,
+                    },
+                    dc_project::LastPass {
+                        allowance_mm: 0.5,
+                        thickness_mm: Some(1.0),
+                        reverse: true,
+                    },
+                ] {
+                    for placed in [false, true] {
+                        let mut project = base.clone();
+                        let op = dc_project::test_support::profile_mut(&mut project);
+                        op.side = side;
+                        op.depth_mm = Some(12.0);
+                        op.step_down_mm = Some(4.0);
+                        op.entry = entry.clone();
+                        op.lead = lead.clone();
+                        op.corner_relief = relief;
+                        op.last_pass = Some(last_pass.clone());
+                        if let Some(tabs) = &mut op.tabs {
+                            tabs.height_mm = 5.0;
+                        }
+                        if placed {
+                            project = dc_cam::placed_tabs::place_requests(&project).unwrap().0;
+                            assert_eq!(project.tabs.len(), 4);
+                        }
+                        let case = format!("{side:?} {entry:?} {lead:?} {last_pass:?} {placed}");
+                        let op = project.operations[0].clone();
+                        let Operation::Profile(profile) = &op else {
+                            unreachable!("the sample's operation is a Profile");
+                        };
+                        let (toolpath, _) = generate_profile(&project, profile)
+                            .unwrap_or_else(|e| panic!("{case}: {e}"));
+                        dc_cam::test_support::assert_safe(&toolpath, &project, &op);
+                        let (program, _) = emit(
+                            &project,
+                            &[(op, project.tools[0].clone(), toolpath).into()],
+                            "2026-10-21",
+                        )
+                        .unwrap_or_else(|e| panic!("{case}: {e}"));
+                        for z in ["Z-12.000", "Z-7.000"] {
+                            assert!(program.text.contains(z), "{case}: no {z}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// #105: programs cut round placed tabs pass the safety pass (S1–S7,
     /// S9, S10, S12): the sample's tabs placed from its request, with a
     /// fifth, taller and smooth, on the right-hand edge, on each side, with
