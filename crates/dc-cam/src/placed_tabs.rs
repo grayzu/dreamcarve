@@ -854,6 +854,35 @@ mod tests {
         }
     }
 
+    /// #105 review: a Profile crosses a tab only when its cut goes below
+    /// the tab's top. A 1 mm On line score pass of the rectangle stops at
+    /// Z 5, above a 3 mm tab, so it does not cross it: it warns nothing
+    /// about the tab's range, and alone it leaves the tab `tab_not_crossed`.
+    /// The full-depth cut-out crosses it.
+    #[test]
+    fn a_profile_above_a_tab_does_not_cross_it() {
+        let mut p = untabbed();
+        p.tabs = vec![PlacedTab {
+            height_mm: 3.0,
+            ..sample_tab("tab1", 25.0, 0.0)
+        }];
+        let mut score = profile_mut(&mut p).clone();
+        score.id = OperationId::new("o2");
+        score.side = Side::OnLine;
+        score.depth_mm = Some(1.0);
+        let full = profile_mut(&mut p).clone();
+        p.operations.push(Operation::Profile(score.clone()));
+        assert!(crossed_by(&p, &score).unwrap().is_empty());
+        assert_eq!(crossed_by(&p, &full).unwrap(), vec![TabId::new("tab1")]);
+        let score_op = Operation::Profile(score);
+        let (tp, warnings) = generate_of(&p, &score_op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            codes(&check(&p, &[(&score_op, &tp)])),
+            vec![WarningCode::TabNotCrossed]
+        );
+    }
+
     /// #105: placing the same tabs again adds none, and new tabs take the
     /// next free ids.
     #[test]

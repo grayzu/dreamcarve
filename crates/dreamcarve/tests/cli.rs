@@ -5636,6 +5636,19 @@ fn tabs_place_refuses_what_it_cannot_place() {
         "{}",
         stderr(&out)
     );
+    // No count of 0, and no size or shape with nothing to place.
+    for args in [
+        &["--count", "0"][..],
+        &["--width", "5"][..],
+        &["--height", "2"][..],
+        &["--shape", "smooth"][..],
+        &["--on-holes"][..],
+    ] {
+        let mut all = vec!["tabs", "place", "coaster.dcv", "op1"];
+        all.extend_from_slice(args);
+        let out = run(&dir, &all);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+    }
     assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
 }
 
@@ -5740,5 +5753,53 @@ fn left_profile_of_an_svg_line_exports_on_its_left() {
     assert!(
         (first.from.x.expect("X known") - x0).abs() <= 1e-3,
         "climb starts beside the first vertex: {first:?}"
+    );
+}
+
+/// #105 review: `tabs clear <dcv> <op>` removes only the tabs that Profile
+/// cuts round, refuses an operation that is not a Profile, and says when
+/// the tabs it removed leave a part a through cut frees with no tab. The
+/// coaster's four tabs are crossed by its cut-out `op1`; a 1 mm On line
+/// score pass `op3` stops above the tab tops, so it crosses none and
+/// removes none; clearing `op1` removes all four and names the part.
+#[test]
+fn tabs_clear_op_removes_only_the_tabs_it_cuts_round() {
+    let dir = work_dir("tabs_clear_op_removes_only_the_tabs_it_cuts_round");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mut project = load_file(&dcv).project;
+    let mut score = as_profile(&project.operations[0]).clone();
+    score.id = OperationId::new("op3");
+    score.side = Side::OnLine;
+    score.depth_mm = Some(1.0);
+    score.through_cut_allowance_mm = 0.0;
+    project.operations.push(Operation::Pocket(sample_pocket()));
+    project.operations.push(Operation::Profile(score));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "o2"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("only a Profile"), "{}", stderr(&out));
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op3"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Removed 0 tab(s)"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(load_file(&dcv).project.tabs.len(), 4);
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert!(printed.contains("Removed 4 tab(s)"), "{printed}");
+    assert!(
+        printed.contains("`coaster` (instance `i1`, profile 0)") && printed.contains("no tab"),
+        "names the part op1 now cuts free: {printed}"
     );
 }
