@@ -910,7 +910,18 @@ built (design addendum, "Order and format versions").
     `thickness_mm` may be no more than the step-down; the last pass may
     take off no more than the allowance, √2 times it in a square corner,
     so a corner sharper than 90° is refused; and a one-pass cut warns
-    `last_pass_unused`.)
+    `last_pass_unused`. Changed again in #324: a sharp corner is cut. The
+    earlier passes cut both its walls and stop short of where they meet,
+    so the last pass takes the wedge between, `a / sin(θ/2)` thick at a
+    corner of `θ`; that may be up to a third of the bit diameter, the
+    thickest skin the allowance itself may be, or √2 times the allowance
+    where that is more. With a 6.35 mm bit that cuts corners down to
+    about 27° at 0.5 mm and 11° at 0.2 mm: triangles and stars cut
+    inside, V notches cut outside, and the corners of letters such as A,
+    V, W, M and K. A narrower tip is refused, and
+    so is a notch, slot or inlet that the earlier passes bridge and skip,
+    however thin the last pass's cut there, once it is thicker than a
+    square corner's.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 
@@ -1028,4 +1039,7 @@ built (design addendum, "Order and format versions").
   and stays out of, the operation's other parts; nearer than `r + a` it
   cuts only their skin, which is allowed. The last pass takes off at most
   `√2 · allowance_mm` plus 0.05 mm anywhere, and no pass before it cuts
-  into stock a tab leaves.)
+  into stock a tab leaves. Changed in #324: at a corner, where the
+  earlier passes cut both walls, the last pass may take off up to a third
+  of the bit diameter, or that bound where it is more; nowhere else more
+  than the square corner's.)

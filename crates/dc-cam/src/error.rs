@@ -451,15 +451,17 @@ pub enum CamError {
         /// The gap the passes before the last need, mm.
         needed_mm: f64,
     },
-    /// #284, #310 review: somewhere the last pass on `shape` would take
-    /// off more than the allowance, `√2` times it as in a square corner
-    /// (plus 0.05 mm): a neck, slot, notch or small hole wider than the
+    /// #284, #310 review, changed in #324: somewhere the passes before the
+    /// last on `shape` skip material the last pass would then cut whole at
+    /// full depth: a neck, slot, notch, inlet or small hole wider than the
     /// tool but narrower than the tool plus the allowance on both sides,
-    /// which the passes before the last skip, or a corner sharper than
-    /// 90°, where they stop short of the last pass. The last pass would
-    /// cut that material at full depth in one go.
+    /// which they bridge (refused once the last pass would take off more
+    /// than a square corner's `√2` times the allowance there), or a tip so
+    /// narrow that the last pass would take off more than a third of the
+    /// tool (or `√2` times the allowance, if more) where they stop short.
+    /// A corner whose wedge is thinner than that is cut.
     #[error(
-        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the last pass would take off more than the allowance at full depth, where the passes before it cannot follow it: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a corner sharper than 90°; make last_pass.allowance_mm smaller (it does not help a sharp corner) or set last_pass to null; no toolpath was produced"
+        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the passes before the last cannot follow it and the last pass would cut what they skip at full depth: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a tip so narrow that the last pass would take off more than a third of the tool there; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
     )]
     ShapeNarrowerThanAllowance {
         /// The operation.
