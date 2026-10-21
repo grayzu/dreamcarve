@@ -1140,6 +1140,38 @@ mod tests {
                 "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 1.5 mm bit it keeps 4.5 mm of the tool path raised on a 6.5 mm path (69.2%), so the part or hole would not cut free. No tab is cut there. To keep it, make it at most 1.75 mm wide.",
             ),
             (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 20.0,
+                    tab_count: 1,
+                    tab_width_mm: 8.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 14.35,
+                    tab_total_mm: 14.35,
+                    cut_count: 1,
+                    max_width_mm: Some(3.65),
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 8 mm wide, and with the 6.35 mm bit it keeps 14.35 mm of the tool path raised on a 20 mm path (71.8%), so the part or hole would not cut free. Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand. To let it cut free, make it at most 3.65 mm wide.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 20.0,
+                    tab_count: 4,
+                    tab_width_mm: 8.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 14.35,
+                    tab_total_mm: 57.4,
+                    cut_count: 1,
+                    max_width_mm: None,
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 20 mm path (287%), so the part or hole would not cut free. Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand.",
+            ),
+            (
                 Warning::ToolpathsOverlap {
                     shape: shape(),
                     other: ShapeRef {

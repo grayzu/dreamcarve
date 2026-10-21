@@ -1621,27 +1621,31 @@ mod tests {
         }
     }
 
+    /// The tabs asked and cut, and the text, of the one coverage warning
+    /// in `warnings`.
+    fn cover_of(warnings: &[Warning]) -> (usize, usize, String) {
+        let cover = coverage_warnings(warnings);
+        assert_eq!(cover.len(), 1, "{warnings:?}");
+        let Warning::TabsCoverMostOfContour {
+            tab_count,
+            cut_count,
+            ..
+        } = cover[0]
+        else {
+            panic!("{:?}", cover[0]);
+        };
+        (*tab_count, *cut_count, cover[0].to_string())
+    }
+
     /// #109: an outline too short for its tabs gets the most that keep
-    /// them to half of its tool path (the coverage threshold), down to
-    /// none, and the coverage warning names the shape and says how many
-    /// are cut. `count` tabs are re-spaced evenly; of `at_distances`, the
-    /// first in the list are kept.
+    /// them to half of its tool path (the coverage threshold), and the
+    /// coverage warning names the shape and says how many are cut.
+    /// `count` tabs are re-spaced evenly; of `at_distances`, the first in
+    /// the list are kept. A hole with `on_holes` may get none; a part
+    /// keeps at least one ([`short_part_outline_keeps_at_least_one_tab`]).
     #[test]
     fn too_short_outline_gets_fewer_tabs_and_warns() {
         let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
-        let cover_of = |warnings: &[Warning]| -> (usize, usize, String) {
-            let cover = coverage_warnings(warnings);
-            assert_eq!(cover.len(), 1, "{warnings:?}");
-            let Warning::TabsCoverMostOfContour {
-                tab_count,
-                cut_count,
-                ..
-            } = cover[0]
-            else {
-                panic!("{:?}", cover[0]);
-            };
-            (*tab_count, *cut_count, cover[0].to_string())
-        };
 
         // Eleven 14.35 mm spans would cover 52% of the coaster's 302.7 mm
         // path; ten (47%) are cut, evenly spaced.
@@ -1693,16 +1697,55 @@ mod tests {
         assert_eq!(runs(&laps[0], |m| m.at_z(TAB_Z_MM)).len(), 1);
         assert_eq!(runs(&laps[1], |m| m.at_z(TAB_Z_MM)).len(), 4);
 
-        // A 12 mm circle cut inside has a 17.7 mm path: even one tab
-        // covers more than half, so none is cut and the lap cuts free.
-        let (p, op) = circle_job(6.0, Side::Inside, Some(four_rect_tabs()));
+        // A 13 mm square hole with hole tabs on has a 26.6 mm path: even
+        // one 14.35 mm span covers more than half, so the hole gets none
+        // and its slug cuts free. The square keeps its four.
+        let (p, op) = square_with_hole(13.0, Some(four_rect_tabs_on_holes()));
         let (tp, warnings) = generate(&p, &op);
         let (asked, cut, text) = cover_of(&warnings);
         assert_eq!((asked, cut), (4, 0));
         assert!(text.contains("No tab is cut"), "{text}");
         let laps = final_laps_by_contour(&tp);
-        assert_eq!(laps.len(), 1);
+        assert_eq!(laps.len(), 2);
         assert!(laps[0].iter().all(|m| m.at_z(0.0)), "{:?}", laps[0]);
+        assert_eq!(runs(&laps[1], |m| m.at_z(TAB_Z_MM)).len(), 4);
+    }
+
+    /// #109: a part that asked for tabs keeps at least one, however short
+    /// its outline: cut free, a small part can be thrown by the bit,
+    /// which is worse than one held by a tab that covers most of it. A
+    /// 12 mm circle cut inside has a 17.7 mm path, and one 14.35 mm span
+    /// covers 81% of it: the one tab is cut, and the warning says the
+    /// part may need cutting free by hand.
+    #[test]
+    fn short_part_outline_keeps_at_least_one_tab() {
+        for (count, asked) in [(4, 4), (1, 1)] {
+            let spec = tab_spec(TabPlacement::Count { count }, TabShape::Rect);
+            let (p, op) = circle_job(6.0, Side::Inside, Some(spec));
+            let (tp, warnings) = generate(&p, &op);
+            let (tab_count, cut, text) = cover_of(&warnings);
+            assert_eq!((tab_count, cut), (asked, 1), "count {count}");
+            assert!(text.contains("by hand"), "{text}");
+            let laps = final_laps_by_contour(&tp);
+            assert_eq!(laps.len(), 1);
+            let raised = runs(&laps[0], |m| m.at_z(TAB_Z_MM));
+            assert_eq!(raised.len(), 1, "count {count}: {raised:?}");
+        }
+
+        // Of `at_distances`, the first is the one kept.
+        let spec = tab_spec(
+            TabPlacement::AtDistances {
+                distances_mm: vec![9.0, 0.0],
+            },
+            TabShape::Rect,
+        );
+        let (p, op) = circle_job(6.0, Side::Inside, Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!((cover_of(&warnings).0, cover_of(&warnings).1), (2, 1));
+        let lap = final_lap(&tp);
+        let raised = raised_runs(&lap);
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert_approx_eq!(raised[0].start_mm + raised[0].length_mm / 2.0, 9.0, TOL);
     }
 
     #[test]
