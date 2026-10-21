@@ -837,7 +837,7 @@ impl fmt::Display for Problem {
             ),
             Self::MachineZNotBelowHome { machine_z_mm } => write!(
                 f,
-                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL home Z at the top of its travel, where machine Z is just below 0, so the lift must be below 0, at least the homing pull-off below it"
+                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL, and LinuxCNC as its configuration tools set it up, home Z at the top of its travel, where machine Z is 0 or just below, so the lift must be below 0, at least the homing pull-off below it"
             ),
             Self::MachineZNeedsG53 { post } => write!(
                 f,

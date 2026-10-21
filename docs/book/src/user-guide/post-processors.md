@@ -434,7 +434,7 @@ program is exactly what it was before they existed.
 | Setting | What it does | Like |
 | --- | --- | --- |
 | `clearance_mm` | Above the stock top. Moves between parts, between operations, before a tool change and at the end rise to it. Moves between the passes of one part stay at that operation's `safe_z_mm`. It must be at least every enabled operation's `safe_z_mm`. | VCarve's Clearance gap (Z1); Fusion's clearance height, with `safe_z_mm` as its retract height. |
-| `tool_change_machine_z_mm` | A height in machine coordinates. Before every tool-change stop and at the end of every program, the bit lifts to it with `G53 G0 Z…`. grblHAL and GRBL only. | Fusion's tool-change retract to the machine's home Z. |
+| `tool_change_machine_z_mm` | A height in machine coordinates. Before every tool-change stop and at the end of every program, the bit lifts to it with `G53 G0 Z…`. grblHAL, GRBL and LinuxCNC only. | Fusion's tool-change retract to the machine's home Z. |
 | `park` | `{ "x_mm": …, "y_mm": … }`, in project coordinates (from the stock's front left corner, like the shapes). At the end the bit rises to the clearance height, moves there, then lifts to the machine Z if set. | VCarve's Home position, without its Z. |
 
 ```json
@@ -497,6 +497,13 @@ into a limit. A machine that homes Z downward, to the bottom of its travel
 "force set origin"), has no machine Z below 0 inside its travel, so the
 setting cannot be used there.
 
+LinuxCNC needs no setting for either. It refuses to run a program until
+the machine is homed, unless your configuration sets `[TRAJ]
+NO_FORCE_HOMING = 1`; leave it unset. Once homed, its soft limits
+(`[AXIS_Z] MIN_LIMIT`, `MAX_LIMIT`) always apply, and a lift outside them
+stops the program with "Linear move on line … would exceed Z's … limit"
+before the machine moves.
+
 **Choosing the machine Z.** grblHAL and GRBL home Z to the top of its
 travel and call that just below machine Z 0: `−pulloff` (`$27`), or 0
 without hard limits. So `tool_change_machine_z_mm` must be below 0, which
@@ -509,17 +516,42 @@ that would move the bit down, straight down at the spot it is over.
 write it as 0 (under 0.0005 mm in a millimetre program, 0.00127 mm in an
 inch one).
 
+On LinuxCNC, machine Z after homing is your configuration's `[JOINT_n]
+HOME` (usually 0), and the Z travel is its `MIN_LIMIT` to `MAX_LIMIT`.
+Stepconf and PnCconf set Z up from −100 to 0 mm (−4 to 0 in) with home
+at 0, the top, so the rule is the same as on grblHAL: below 0, and above
+your clearance height. Not every configuration puts 0 at the top, so take
+the value from the machine itself: home it, jog Z to the height you want,
+and read Z with the display in machine coordinates (in AXIS, View >
+Show Machine Position). A configuration whose Z travel is all above 0
+cannot use the setting, since `check` accepts only values below 0.
+
 With manual spindle control, the program stops for you to switch the
 router off right after the lift. You may jog there, so before the tool
 change it lifts to the machine Z again.
 
 **Only where `G53` is documented.** The lift is written only for a
 post-processor whose definition documents `G53`
-(`work_coordinates.machine_command`): grblHAL and GRBL, every version,
-checked against their source (definitions README, "Machine-coordinate
-moves"). On LinuxCNC, Mach3, UCCNC and generic, `check` and `export` refuse
-`tool_change_machine_z_mm` until their documents are checked; the
-clearance height and the park point work on every post-processor.
+(`work_coordinates.machine_command`): grblHAL, GRBL and LinuxCNC, every
+version, checked against their source (definitions README,
+"Machine-coordinate moves"). On LinuxCNC, which has no `M6` here, every
+program of a run per tool ends with the lift, before `M5` and `M2`:
+
+```text
+Z20.000
+X0.000 Y0.000
+G53 G0 Z-5.000
+M5
+M2
+```
+
+On Mach3, UCCNC and generic, `check` and `export` refuse
+`tool_change_machine_z_mm` (`machine_z_needs_g53`): their manuals do not
+say what `G53` does with a tool length offset (and on UCCNC with `G51`
+scaling), and machine Z after homing is a setting with no convention to
+check against. Generic is for controllers nobody has checked, so it never
+will. The clearance height and the park point work on every
+post-processor.
 
 **Canned cycles.** A Drill whose holes are separate parts crosses between
 them at the clearance height, which a canned cycle's `G98` return cannot
