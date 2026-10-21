@@ -162,6 +162,8 @@ pub(crate) struct Reduced {
     pub asked: usize,
     /// How many are cut.
     pub cut: usize,
+    /// They are placed tabs, cut as placed (#105), not a request cut down.
+    pub placed: bool,
 }
 
 /// Fails with [`CamError::InvalidTab`] for operation `op` when a tab's
@@ -241,9 +243,12 @@ impl Tabs {
         if cuts.is_empty() {
             return (layout, false);
         }
-        let mut overlap = cuts
-            .iter()
-            .any(|cut| cut.width_mm + self.diameter_mm >= l - EPS_MM);
+        // One span alone over the whole path overlaps another only when
+        // there is another; a single tab covering it warns its coverage.
+        let mut overlap = cuts.len() > 1
+            && cuts
+                .iter()
+                .any(|cut| cut.width_mm + self.diameter_mm >= l - EPS_MM);
         let mut spans: Vec<Raw> = cuts.iter().map(|cut| self.closed_span(cut, l)).collect();
         spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
 
@@ -321,7 +326,7 @@ impl Tabs {
         layout.full = merged
             .iter()
             .any(|s| s.start_mm <= EPS_MM && s.end_mm >= l - EPS_MM);
-        overlap |= layout.full;
+        overlap |= layout.full && cuts.len() > 1;
         layout.spans = merged
             .iter()
             .map(|s| {
@@ -463,7 +468,14 @@ impl Request {
             }
         };
         let cut = kept.len();
-        (kept, Some(Reduced { asked, cut }))
+        (
+            kept,
+            Some(Reduced {
+                asked,
+                cut,
+                placed: false,
+            }),
+        )
     }
 }
 
@@ -855,6 +867,7 @@ pub(crate) fn coverage_warning(
         tab_total_mm: total_mm,
         cut_count: reduced.cut,
         max_width_mm: (max_width_mm > 0.0).then_some(max_width_mm),
+        placed: reduced.placed,
     }
 }
 

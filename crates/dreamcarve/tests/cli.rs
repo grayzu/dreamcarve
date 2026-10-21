@@ -5500,9 +5500,10 @@ fn tabs_place_list_and_clear() {
 }
 
 /// #105: `tabs place --at` puts a tab at each distance along the
-/// outline from its first vertex. The coaster's circle starts at its
-/// rightmost point, (100, 60), and runs counter-clockwise, 282.74 mm
-/// round, so a quarter of the way is its top, (60, 100).
+/// outline from its first vertex. The coaster's circle, centred at
+/// (55, 55), starts at its rightmost point, (100, 55), and runs clockwise
+/// as the SVG draws it, 282.74 mm round, so a quarter of the way is its
+/// bottom, (55, 10): a chord of 45√2 mm from the start.
 #[test]
 fn tabs_place_at_puts_tabs_along_the_outline() {
     let dir = work_dir("tabs_place_at_puts_tabs_along_the_outline");

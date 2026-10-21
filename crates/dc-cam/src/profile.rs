@@ -943,7 +943,11 @@ fn plan_tabs(
         {
             let n = layout.tab_count();
             *slot = Some((
-                Reduced { asked: n, cut: n },
+                Reduced {
+                    asked: n,
+                    cut: n,
+                    placed: true,
+                },
                 cuts.iter().map(|c| c.width_mm).collect(),
             ));
         }
