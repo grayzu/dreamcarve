@@ -246,7 +246,7 @@ dreamcarve export coaster.dcv
 
 ```text
 Wrote coaster.nc (47 lines, post-processor grblhal).
-  op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
+  op1 `Profile`: tool `t1` (Set me), 1 target(s), 12.000 mm deep
 Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
   The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
 Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.

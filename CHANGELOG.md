@@ -125,6 +125,12 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   `at_distances` tabs are measured from. `export` writes it with the programs,
   all or none; it is never written over the project, a program, or a file that
   is not an earlier preview ([#281]).
+- **Inch input.** Any length or feed in a project or tool library file may be
+  written with its unit: `"depth_mm": "0.5 in"`, `"1 1/4 in"`,
+  `"feed_mm_min": "60 in/min"`, `"safe_z_mm": "5 mm"`. Inches are converted to
+  millimetres exactly when the file is read, so the program is the one the
+  millimetre numbers give; a bad unit is an error at its line and column. A
+  command that saves the file writes millimetre numbers back ([#282]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -225,6 +231,10 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   only by its tabs, such as a hole cut after its tabbed part ([#269]). A
   lighter cut, such as a shallow engraving, stays quiet. A tabbed part used to count as
   held, so this order gave no warning.
+- `export`'s summary states each operation's depth in the project's display
+  units, with the post-processor's decimal places for them: `0.5000 in deep`
+  in an inch project, `12.000 mm deep` (was `12 mm deep`) in a millimetre one
+  ([#282]).
 - **Names in comments keep their letters** ([#278]). Accented letters and
   common symbols in project, operation and tool names are spelled in ASCII
   instead of dropped: "Café Ø6 ½" is written `Cafe O6 1/2`, not `Caf 6`.
@@ -348,3 +358,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
+[#282]: https://github.com/grayzu/dreamcarve/issues/282
