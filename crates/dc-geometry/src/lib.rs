@@ -21,7 +21,10 @@ mod transform;
 pub use boolean::{BooleanOp, boolean, difference, intersection, union};
 pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;
-pub use distance::{distance_mm, point_segment_distance_mm, segment_distance_mm};
+pub use distance::{
+    distance_away_from_mm, distance_mm, meeting_points, point_segment_distance_mm,
+    segment_distance_mm,
+};
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, flatten};
 pub use offset::offset;
 pub use point::{EPS_MM, MAX_COORDINATE_MM, Point, Point3, Rect, Vec2, approx_eq};

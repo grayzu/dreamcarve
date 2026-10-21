@@ -252,8 +252,11 @@ line.
   [shapes too close together](#shapes-too-close-together): one that comes
   within half a bit of another shape's line, or crosses it, warns
   `toolpaths_overlap`. One that lies wholly in a part, as a slot cut into
-  it, is not compared with that part's own lines. Cut after a Profile
-  that freed the part it lies in, it warns `cut_inside_freed_part`.
+  it, is not compared with that part's own lines there; instead, one that
+  runs closer than a bit's width beside them stops the operation (see
+  [Bands narrower than the bit](#bands-narrower-than-the-bit)). Cut after
+  a Profile that freed the part it lies in, it warns
+  `cut_inside_freed_part`.
 
 A 100 mm line cut `on_line` 6 mm deep in 2 mm passes with a 15° ramp and a
 6.35 mm bit: each pass ramps out 19.05 mm along the line and back, then
@@ -470,7 +473,8 @@ or crossing it, warns, as do two lines that cross. A part and its own
 holes are never compared here, nor a line lying in a part with that
 part's lines: cut **outside**, a hole close
 to its outline leaves a thin wall, not a gouge, and cut **inside** or **on
-line**, a hole too close is an error (see below). The program is still
+line**, a hole too close is an error, and so is a line in a part that runs
+too close beside its lines (see below). The program is still
 written as drawn. Move the
 shapes apart, or use a smaller bit.
 
@@ -503,6 +507,23 @@ and the part falls apart there. That is the same error: a 4.5 mm ring
 with a 6.35 mm bit is refused, even though neither cut alone reaches the
 other line. A band at least as wide as the bit is cut as drawn. To cut a
 double line on purpose, use [Engrave](engrave.md).
+
+The same holds for an [open path](#open-paths) drawn in a part. A line
+1 mm inside the outline, 3 mm from a hole, or 2 mm from another line in
+the part is refused with that error: its cut and the other line's cut
+the wall between them away. A line that **meets** another, though, is
+cut as drawn: a kerf slot drawn from the part's edge, a saw cut from
+edge to edge, a slot from a hole's edge, two slots joined at a corner,
+or two crossing. Near the point where they meet (within 1.41 bit
+widths, 9 mm for a 6.35 mm bit) the two lines are not compared, so a
+slot that meets the edge at 45° or more is fine. Past that the line must
+keep a bit's width from the other: a slot from the bottom edge that runs
+up 2 mm beside the side edge, turns to run along the bottom edge, or
+leaves it at a shallow 10° is refused, and the error gives the narrowest
+gap past the meeting point. Lines meet when they touch, cross, or stop
+within `flatten_tolerance_mm` of each other; a slot that stops 1 mm short
+of the edge leaves a 1 mm wall and is refused. Draw the slot to the edge,
+move the line a bit's width away, or cut it with Engrave.
 
 Cut **outside**, a hole close to its outline only leaves a thin wall and
 is cut as drawn.
