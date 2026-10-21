@@ -5465,6 +5465,39 @@ mod tests {
         Polyline::new(points, true)
     }
 
+    /// A closed outline through `points`.
+    fn closed(points: &[(f64, f64)]) -> Polyline {
+        Polyline::new(
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+            true,
+        )
+    }
+
+    /// An equilateral triangle of 60 mm sides: three 60° corners.
+    fn triangle_60() -> Polyline {
+        closed(&[(0.0, 0.0), (60.0, 0.0), (30.0, 30.0 * 3f64.sqrt())])
+    }
+
+    /// A right isosceles triangle of 60 mm legs: two 45° corners.
+    fn triangle_45() -> Polyline {
+        closed(&[(0.0, 0.0), (60.0, 0.0), (0.0, 60.0)])
+    }
+
+    /// The 60 × 40 mm rectangle with a V notch of `angle_deg`, 20 mm deep,
+    /// in the middle of its top edge.
+    fn vee_notched(angle_deg: f64) -> Polyline {
+        let half = (angle_deg / 2.0).to_radians().tan() * 20.0;
+        closed(&[
+            (0.0, 0.0),
+            (60.0, 0.0),
+            (60.0, 40.0),
+            (30.0 + half, 40.0),
+            (30.0, 20.0),
+            (30.0 - half, 40.0),
+            (0.0, 40.0),
+        ])
+    }
+
     /// Points along every cutting move of `moves`, from `from`, at most
     /// `step_mm` apart, arcs along the arc, Z interpolated.
     fn cut_points(from: Point3, moves: &[Move], step_mm: f64) -> Vec<Point3> {
@@ -5585,18 +5618,21 @@ mod tests {
     }
 
     /// The #310 review's repro: four 8 × 6 mm tabs, 12 mm deep in 2 mm
-    /// steps with a 0.5 mm allowance, on a star, so the passes at Z 4 and
-    /// 2 are earlier passes below the tab top. Outside the star of radii
-    /// 35 and 15; Inside one of 35 and 26, whose tips are 93°, as the
-    /// sharper star is refused Inside
-    /// ([`last_pass_refuses_a_last_pass_thicker_than_the_allowance`]).
-    /// Rect and smooth, requested and placed: no earlier pass cuts below
-    /// what the last pass leaves standing, anywhere over a tab.
+    /// steps with a 0.5 mm allowance, so the passes at Z 4 and 2 are
+    /// earlier passes below the tab top. The star of radii 35 and 15
+    /// Outside and Inside, whose 42° tips the last pass cuts since #324,
+    /// and the 60° and 45° triangles both ways. Rect and smooth, requested
+    /// and placed: no earlier pass cuts below what the last pass leaves
+    /// standing, anywhere over a tab.
     #[test]
     fn last_pass_tabs_keep_off_the_tab_material() {
         for (side, outline) in [
             (Side::Outside, star(35.0, 15.0)),
-            (Side::Inside, star(35.0, 26.0)),
+            (Side::Inside, star(35.0, 15.0)),
+            (Side::Inside, triangle_60()),
+            (Side::Outside, triangle_60()),
+            (Side::Inside, triangle_45()),
+            (Side::Outside, triangle_45()),
         ] {
             let mut p = last_pass_project_of(vec![outline]);
             p.stock.width_mm = 300.0;
@@ -5643,15 +5679,15 @@ mod tests {
         }
     }
 
-    /// The #310 review: the last pass may take off no more than the
-    /// allowance, √2 times it in a 90° corner, plus 0.05 mm. A notch or
-    /// tip the earlier passes skip, which the last pass would cut whole
-    /// at full depth, is refused: Outside, a 7 × 3 mm notch with 0.5 mm and
-    /// a 10 × 4 mm notch with 2.1 mm; Inside, a tip of 10° half-angle and
-    /// the review's star of radii 35 and 15, whose 42° tips the last pass
-    /// would cut 1.4 mm thick. Square corners are cut at any allowance up
-    /// to a third of the bit: a rectangle Inside and Outside and an L
-    /// Outside at 2.1 mm.
+    /// The #310 review, kept by #324: a notch or tip the earlier passes
+    /// skip, which the last pass would cut whole at full depth, is
+    /// refused: Outside, a 7 × 3 mm notch with 0.5 mm (the last pass
+    /// would take 1.0 mm off, as thin as a 60° corner's, but the earlier
+    /// passes never enter the notch) and a 10 × 4 mm notch with 2.1 mm;
+    /// Inside, a tip of 10° half-angle with 0.5 mm, which the last pass
+    /// would cut 2.9 mm thick, more than a third of the bit. Square
+    /// corners are cut at any allowance up to a third of the bit: a
+    /// rectangle Inside and Outside and an L Outside at 2.1 mm.
     #[test]
     fn last_pass_refuses_a_last_pass_thicker_than_the_allowance() {
         let points = |pts: &[(f64, f64)]| {
@@ -5683,8 +5719,7 @@ mod tests {
         let refused = [
             ("7 × 3 notch", Side::Outside, notched(7.0, 3.0), 0.5),
             ("10 × 4 notch", Side::Outside, notched(10.0, 4.0), 2.1),
-            ("10° tip", Side::Inside, tipped, 0.5),
-            ("42° star tips", Side::Inside, star(35.0, 15.0), 0.5),
+            ("10° tip", Side::Inside, tipped.clone(), 0.5),
         ];
         for (case, side, outline, allowance_mm) in refused {
             let p = last_pass_project_of(vec![outline]);
@@ -5724,6 +5759,210 @@ mod tests {
                 ..last_pass_op(&p, side)
             };
             generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case} {side:?}: {e}"));
+        }
+        // #324: with 0.2 mm the tip's wedge is 1.15 mm, within a third of
+        // the bit, and the notch's cut no more than a square corner's.
+        for (case, side, outline) in [
+            ("10° tip", Side::Inside, tipped),
+            ("7 × 3 notch", Side::Outside, notched(7.0, 3.0)),
+        ] {
+            let p = last_pass_project_of(vec![outline]);
+            let op = ProfileOp {
+                last_pass: Some(allowance(0.2)),
+                ..last_pass_op(&p, side)
+            };
+            generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case} at 0.2: {e}"));
+        }
+    }
+
+    /// One squared distance transform along a line of the lattice
+    /// (Felzenszwalb and Huttenlocher's lower envelope of parabolas):
+    /// `f` is 0 where a point is not removed and huge where it is.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "lattice indices of coordinates within the stock"
+    )]
+    fn squared_distances(f: &[f64]) -> Vec<f64> {
+        let n = f.len();
+        let mut out = vec![0.0; n];
+        if n == 0 {
+            return out;
+        }
+        let at = |q: usize| q as f64;
+        let mut v = vec![0usize; n];
+        let mut z = vec![0.0; n + 1];
+        let mut k = 0usize;
+        z[0] = f64::NEG_INFINITY;
+        z[1] = f64::INFINITY;
+        let meet = |q: usize, p: usize| {
+            ((f[q] + at(q) * at(q)) - (f[p] + at(p) * at(p))) / (2.0 * (at(q) - at(p)))
+        };
+        for q in 1..n {
+            let mut s = meet(q, v[k]);
+            // z[0] is −∞, so this stops at k = 0.
+            while s <= z[k] {
+                k -= 1;
+                s = meet(q, v[k]);
+            }
+            k += 1;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = f64::INFINITY;
+        }
+        k = 0;
+        for (q, slot) in out.iter_mut().enumerate() {
+            while z[k + 1] < at(q) {
+                k += 1;
+            }
+            let p = v[k];
+            *slot = (at(q) - at(p)).powi(2) + f[p];
+        }
+        out
+    }
+
+    /// The #324 swept-area check, on the emitted moves, independent of
+    /// the generator's own measure: the stock at `layer_z_mm`, on a
+    /// 0.05 mm lattice, cut by every earlier cut through that layer (the
+    /// moves before `split`), then by the last pass's (the moves after
+    /// it). Returns the diameter of the widest disc in what the last pass
+    /// removes there, less one lattice step for the lattice (the thickest
+    /// it cuts, anywhere, mm), and the area it removes, mm².
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "lattice indices of coordinates within the stock"
+    )]
+    fn last_pass_removal(tp: &Toolpath, split: usize, layer_z_mm: f64) -> (f64, f64) {
+        const LATTICE_MM: f64 = 0.05;
+        let through = |from: Point3, moves: &[Move], step_mm: f64| -> Vec<Point> {
+            cut_points(from, moves, step_mm)
+                .into_iter()
+                .filter(|p| p.z <= layer_z_mm)
+                .map(|p| p.xy())
+                .collect()
+        };
+        let earlier = through(tp.moves[0].to, &tp.moves[..split], 0.1);
+        let last = through(tp.moves[split].to, &tp.moves[split + 1..], 0.05);
+        let margin = R_MM + 2.0 * LATTICE_MM;
+        let (mut lo, mut hi) = (
+            Point::new(f64::MAX, f64::MAX),
+            Point::new(f64::MIN, f64::MIN),
+        );
+        for p in &last {
+            lo = Point::new(lo.x.min(p.x - margin), lo.y.min(p.y - margin));
+            hi = Point::new(hi.x.max(p.x + margin), hi.y.max(p.y + margin));
+        }
+        let nx = ((hi.x - lo.x) / LATTICE_MM).ceil() as usize + 1;
+        let ny = ((hi.y - lo.y) / LATTICE_MM).ceil() as usize + 1;
+        // 0: stock; 1: cut before the last pass; 2: cut by the last pass.
+        let mut cells = vec![0u8; nx * ny];
+        let stamp = |cells: &mut [u8], c: Point, set: u8| {
+            let j0 = ((c.y - R_MM - lo.y) / LATTICE_MM).floor().max(0.0) as usize;
+            let j1 = (((c.y + R_MM - lo.y) / LATTICE_MM).ceil() as usize).min(ny - 1);
+            for j in j0..=j1 {
+                let dy = lo.y + j as f64 * LATTICE_MM - c.y;
+                let reach = R_MM * R_MM - dy * dy;
+                if reach < 0.0 {
+                    continue;
+                }
+                let half = reach.sqrt();
+                let i0 = ((c.x - half - lo.x) / LATTICE_MM).ceil().max(0.0) as usize;
+                let i1 = (((c.x + half - lo.x) / LATTICE_MM).floor() as usize).min(nx - 1);
+                for cell in &mut cells[j * nx + i0..=j * nx + i1] {
+                    if *cell == 0 {
+                        *cell = set;
+                    }
+                }
+            }
+        };
+        for p in &earlier {
+            stamp(&mut cells, *p, 1);
+        }
+        for p in &last {
+            stamp(&mut cells, *p, 2);
+        }
+        let removed = cells.iter().filter(|&&c| c == 2).count();
+        // More than any squared distance on the lattice.
+        let far = ((nx + ny) as f64).powi(2);
+        let mut f: Vec<f64> = cells
+            .iter()
+            .map(|&c| if c == 2 { far } else { 0.0 })
+            .collect();
+        for row in f.chunks_mut(nx) {
+            let d = squared_distances(row);
+            row.copy_from_slice(&d);
+        }
+        for i in 0..nx {
+            let column: Vec<f64> = (0..ny).map(|j| f[j * nx + i]).collect();
+            for (j, d) in squared_distances(&column).into_iter().enumerate() {
+                f[j * nx + i] = d;
+            }
+        }
+        let widest = f.iter().copied().fold(0.0, f64::max).sqrt();
+        (
+            (2.0 * widest - 1.0).max(0.0) * LATTICE_MM,
+            removed as f64 * LATTICE_MM * LATTICE_MM,
+        )
+    }
+
+    /// #324: sharp corners are cut, not refused. Inside the 60° and 45°
+    /// triangles and the star of radii 35 and 15 (42° tips), Outside that
+    /// star and 80° and 60° V notches, at 0.2 and 0.5 mm with the 6.35 mm
+    /// bit: each is generated (and passes `assert_safe`), the earlier
+    /// passes keep `r + a` from the part and the last pass exactly `r`.
+    /// The material check ([`last_pass_removal`]) finds the last pass
+    /// cutting the corner's wedge, `a / sin(θ/2)` thick, and nowhere more
+    /// than the bound: a third of the bit, or `√2 · a + 0.05` where that
+    /// is more.
+    #[test]
+    fn last_pass_allows_sharp_corners() {
+        let bound_mm = |a: f64| (6.35 / 3.0_f64).max(2f64.sqrt() * a + 0.05);
+        let star_tip_deg = 2.0
+            * (15.0 * (0.2 * PI).sin())
+                .atan2(35.0 - 15.0 * (0.2 * PI).cos())
+                .to_degrees();
+        for (case, side, outline, corner_deg) in [
+            ("60° triangle", Side::Inside, triangle_60(), 60.0),
+            ("45° triangle", Side::Inside, triangle_45(), 45.0),
+            ("star", Side::Inside, star(35.0, 15.0), star_tip_deg),
+            ("star", Side::Outside, star(35.0, 15.0), 114.2),
+            ("80° V notch", Side::Outside, vee_notched(80.0), 80.0),
+            ("60° V notch", Side::Outside, vee_notched(60.0), 60.0),
+        ] {
+            let part = at_20_20().apply_polyline(&outline).unwrap();
+            for a in [0.2, 0.5] {
+                let case = format!("{case} {side:?} at {a} mm");
+                let p = last_pass_project_of(vec![outline.clone()]);
+                let op = ProfileOp {
+                    last_pass: Some(allowance(a)),
+                    ..last_pass_op(&p, side)
+                };
+                let (tp, _) = generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case}: {e}"));
+                assert_safe(&tp, &p, &Operation::Profile(op.clone()));
+                let split = last_pass_start(&tp, LAST_PASS_Z_MM[1], LAST_SAFE_Z_MM);
+                let (near, _) = gap_range_mm(&part, tp.moves[0].to, &tp.moves[..split]).unwrap();
+                assert!(near >= R_MM + a - 1e-3, "{case}: an earlier pass at {near}");
+                let (near, _) =
+                    gap_range_mm(&part, tp.moves[split].to, &tp.moves[split + 1..]).unwrap();
+                assert!(
+                    (near - R_MM).abs() <= 1e-3,
+                    "{case}: the last pass at {near}"
+                );
+                let (widest_mm, removed_mm2) =
+                    last_pass_removal(&tp, split, LAST_PASS_Z_MM[1] + 0.01);
+                let wedge_mm = a / (corner_deg / 2.0_f64).to_radians().sin();
+                assert!(removed_mm2 > 0.0, "{case}");
+                assert!(
+                    widest_mm >= wedge_mm.max(a) - 0.15,
+                    "{case}: the last pass cuts {widest_mm} mm, not the {wedge_mm} mm wedge"
+                );
+                assert!(
+                    widest_mm <= bound_mm(a) + 0.1,
+                    "{case}: the last pass cuts {widest_mm} mm thick, over {}",
+                    bound_mm(a)
+                );
+            }
         }
     }
 

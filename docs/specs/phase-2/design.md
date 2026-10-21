@@ -1680,6 +1680,11 @@ Ported from `cornerRelief.ts`.
 3. **End point:** dogbone `C + bisector·r`; T-bone `C + u·r` along the
    longer adjacent edge (tie: the more X-parallel edge, then `+x`). Notch
    depth past the wall: `r(1 − sin(θ/2))` dogbone, `r` T-bone (tests).
+   The excursion, descend point to end point, must keep `r` from every
+   edge of the site's loops but the corner's own two, else
+   `ReliefCornerTooTight` (`NearOtherWall`, #322): nearer, the notch
+   cuts past that wall too, through a part thinner there than the notch
+   is deep or into an island, which S9's notch rule refuses.
 4. **Pass:** the levels are `generateStepLevels(top, bottom,
    tool.step_down)`; per corner and level: plunge at the descend point,
    cut to the end, cut back. Only corners whose descend point the main
@@ -3233,7 +3238,31 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    `ShapeNarrowerThanAllowance`. This replaces the earlier bound of `r`,
    which let a notch, slot or tip the earlier passes skip be cut whole at
    full depth; it refuses every path corner sharper than 90°, at any
-   allowance, since there the last pass takes `a / sin(θ/2)`.)
+   allowance, since there the last pass takes `a / sin(θ/2)`. Changed in
+   #324, `last_pass::cuts_only_corners`: the part path is sampled every
+   `min(r/8, 0.25)` mm and at each vertex, with its distance to the
+   allowance path. Nowhere may it be farther than
+   `max(D/3, √2 · a + 0.05)`. A *departure* is a stretch farther than
+   `a + 0.05`; one that reaches past `√2 · a + 0.05` must be a corner:
+   its turning, summed between samples, is one way (at most 1° the other,
+   for sampling and flattening) and less than 179°. Otherwise it is
+   `ShapeNarrowerThanAllowance`. Why: a corner's earlier passes cut both
+   its walls and stop `a / sin(θ/2)` short of the last pass, which takes
+   only the wedge between. D/3 is the thickest skin `check` lets the
+   allowance be on a straight wall, so the wedge is never thicker than a
+   skin the last pass may already take at full depth; `√2 · a + 0.05`
+   keeps everything #310 cut. A stretch that turns back, or as far as a
+   U-turn, goes into a notch, slot or inlet the allowance path bridges:
+   the earlier passes never enter it, and the last pass cuts it whole,
+   about as wide as the bit. Thickness alone cannot tell the two apart:
+   a 7 × 3 mm notch cut outside at 0.5 mm with a 6.35 mm bit takes 1.0 mm
+   off, as a 60° corner does. Measured on a 0.05 mm material lattice
+   against the earlier passes' cuts (`profile::last_pass_allows_sharp_corners`),
+   the last pass's widest removal is the wedge within the lattice: at
+   0.5 mm, 0.98 mm in a 60° triangle, 1.28 mm in a 45° one, 1.36 mm at a
+   42° star tip, 0.95 mm in a 60° V notch. Its momentary engagement as it
+   meets the next wall's skin in any inside corner, square ones
+   included, is not what this bounds; #310 allowed that too.)
 3. **Tabs** are laid out on the final path (the tabs left on the part).
    On the allowance path each tab stretch is the nearest-point projection
    of the final stretch's ends, widened by `a` each way, so the raised

@@ -472,7 +472,11 @@ has just cut, without lifting to safe Z first. A corner under a [tab](tabs.md)
 is skipped with `relief_corner_not_cut`: the path rises over the tab
 there, so the notch would plunge into uncut material. Edges shorter than
 the bit is wide skip their corner with `relief_corner_too_tight`, and a
-tool with no `step_down_mm` skips the relief with `relief_skipped`.
+tool with no `step_down_mm` skips the relief with `relief_skipped`. So
+does a corner whose notch would come nearer another wall than the bit's
+radius (`relief_corner_too_tight`): a T-bone reaches the bit's radius
+past its wall, so in a hole whose part is thinner than that beyond the
+wall it would cut through the part.
 
 On a through cut the last pass frees the part (or the slug of a hole),
 so its notch levels are cut from inside that last lap instead, never
@@ -546,21 +550,33 @@ notches are cut from the last pass only, the one that cuts the corner:
 an earlier pass does not reach it, so a notch after it would plunge into
 the skin.
 
-**When it does not fit.** The last pass may take off at most the
-allowance, and √2 times it where the wall turns a square corner, plus
-0.05 mm; and the earlier passes need the bit plus the allowance on both
-sides wherever the last pass goes. A drawing where that is not so is
-refused, naming the shapes, and nothing is exported:
+**Sharp corners.** Where the bit's path turns a corner sharper than
+90° (the points of a triangle or star cut inside, an inward V notch cut
+outside, the corners of letters such as A, V, W, M and K), the earlier
+passes cut both walls and stop short of where they meet. The last pass
+then takes the wedge between, `a / sin(θ/2)` thick at a corner of `θ`:
+2a in a 60° corner, 2.6a in a 45° one. That is allowed up to a third of
+the bit's diameter, the thickest skin the allowance itself may be (or √2
+times the allowance, a square corner's, where that is more). With a
+6.35 mm bit that is 2.1 mm, so corners down to about 27° are cut at
+0.5 mm, and down to about 11° at 0.2 mm. A square corner is cut at any
+allowance.
+
+**When it does not fit.** The earlier passes need the bit plus the
+allowance on both sides wherever the last pass goes, and the last pass
+may take off no more than a square corner's √2 times the allowance
+(plus 0.05 mm) except in a corner as above. A drawing where that is not
+so is refused, naming the shapes, and nothing is exported:
 
 - A notch, slot, neck or small hole that the bit fits but the bit plus
-  the allowance does not: the earlier passes skip it and the last pass
-  would cut it whole at full depth. A 7 × 3 mm notch in a part cut
-  outside with a 6.35 mm bit and 0.5 mm is refused, and so is a 10 × 4 mm
-  one with 2.1 mm.
-- A corner sharper than 90° that the bit's path turns (the points of a
-  star or a narrow V cut inside, an inward V notch cut outside): the
-  earlier passes stop short of it by more than √2 times the allowance, at
-  any allowance. A square corner is cut at any allowance.
+  the allowance does not: the earlier passes bridge it and skip it, and
+  the last pass would cut it whole, about as wide as the bit, at full
+  depth. A 7 × 3 mm notch in a part cut outside with a 6.35 mm bit and
+  0.5 mm is refused, though the last pass would take only 1 mm off
+  there, and so is a 10 × 4 mm one with 2.1 mm.
+- A tip so narrow that its wedge is thicker than a third of the bit: a
+  20° tip cut inside with a 6.35 mm bit and 0.5 mm, whose wedge is
+  2.9 mm. A smaller allowance helps: the same tip is cut at 0.2 mm.
 - Inside, an island closer to the outline than the bit plus twice the
   allowance (a 7 mm band with a 6.35 mm bit and 0.5 mm, which needs
   7.35 mm).

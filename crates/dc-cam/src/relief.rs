@@ -67,7 +67,7 @@ use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{ReliefCornerReason, ReliefSkippedReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, point_segment_distance_mm,
-    union,
+    segment_distance_mm, union,
 };
 use dc_project::{
     CornerRelief, InstanceId, MachiningOrder, OperationId, ProfileOp, Project, Side, Tool,
@@ -317,9 +317,10 @@ fn not_cut_warning(op: &OperationId, shape: &ShapeRef, g: &CornerGeometry) -> Wa
 /// point and end point, and a [`Warning::ReliefCornerTooTight`] for
 /// each corner rejected: an adjacent edge under `2r` (a T-bone's slot and
 /// its cutter need that much along the wall, and arc-like runs of short
-/// edges fail it), or no tool-centre ring crossing within reach. A relief
-/// that is not where the geometry says is worse than none, so corners are
-/// rejected rather than approximated.
+/// edges fail it), no tool-centre ring crossing within reach, or a notch
+/// that would come nearer another wall of the site than `r` (#322). A
+/// relief that is not where the geometry says is worse than none, so
+/// corners are rejected rather than approximated.
 pub(crate) fn collect(
     op: &OperationId,
     style: Style,
@@ -333,8 +334,9 @@ pub(crate) fn collect(
         return (corners, warnings);
     }
     let segments = wall_segments(&site.walls, tolerance_mm);
+    let edges = loop_edges(site);
     let min_edge_mm = 2.0 * radius_mm - EPS_MM;
-    for l in &site.loops {
+    for (index, l) in site.loops.iter().enumerate() {
         for g in corners_of(&canonical(l)) {
             let too_tight = |reason| Warning::ReliefCornerTooTight {
                 op: op.clone(),
@@ -347,18 +349,70 @@ pub(crate) fn collect(
                 warnings.push(too_tight(ReliefCornerReason::ShortEdge));
                 continue;
             }
-            match locate_descend(&g, &segments, radius_mm) {
-                Some(descend) => corners.push(ReliefCorner {
-                    geometry: g,
-                    descend,
-                    end: excursion_end(&g, style, radius_mm),
-                    shape: l.shape.clone(),
-                }),
-                None => warnings.push(too_tight(ReliefCornerReason::NoWallPath)),
+            let Some(descend) = locate_descend(&g, &segments, radius_mm) else {
+                warnings.push(too_tight(ReliefCornerReason::NoWallPath));
+                continue;
+            };
+            let end = excursion_end(&g, style, radius_mm);
+            if reaches_another_wall(&g, index, descend, end, &edges, radius_mm) {
+                warnings.push(too_tight(ReliefCornerReason::NearOtherWall));
+                continue;
             }
+            corners.push(ReliefCorner {
+                geometry: g,
+                descend,
+                end,
+                shape: l.shape.clone(),
+            });
         }
     }
     (corners, warnings)
+}
+
+/// Every segment of `site`'s loops with length, arcs as arcs, and the
+/// index of its loop.
+fn loop_edges(site: &Site) -> Vec<(usize, Segment)> {
+    site.loops
+        .iter()
+        .enumerate()
+        .flat_map(|(index, l)| {
+            l.polyline
+                .segments()
+                .filter(|s| s.length_mm() > EPS_MM)
+                .map(move |s| (index, s))
+        })
+        .collect()
+}
+
+/// Whether the notch at corner `g` of loop `index`, cut from `descend` to
+/// `end` and back, brings the cutter nearer than `radius_mm` to an edge
+/// of `edges` other than the corner's own two (#322). A notch may bite
+/// past its own corner's walls, by design; nearer another wall it cuts
+/// into material past that one too. For an outside Profile that wall is
+/// the far side of a part thinner than the notch is deep, which the notch
+/// would cut through; for a Pocket, an island. S9's notch rule refuses
+/// that cut (`dc_gcode`'s `material`, "Corner relief, the notch rule"),
+/// so the corner is skipped here, where the warning can name it.
+fn reaches_another_wall(
+    g: &CornerGeometry,
+    index: usize,
+    descend: Point,
+    end: Point,
+    edges: &[(usize, Segment)],
+    radius_mm: f64,
+) -> bool {
+    let excursion = Segment {
+        start: descend,
+        end,
+        bulge: 0.0,
+    };
+    let own = |s: &Segment| {
+        s.start.distance_to(g.corner) <= EPS_MM || s.end.distance_to(g.corner) <= EPS_MM
+    };
+    edges
+        .iter()
+        .filter(|(i, s)| *i != index || !own(s))
+        .any(|(_, s)| segment_distance_mm(excursion, *s) < radius_mm - RELIEF_POSITION_TOLERANCE_MM)
 }
 
 /// The guard: whether a cutting move of `toolpath` with both ends at or
@@ -2769,6 +2823,57 @@ mod tests {
         let want = at(30.0 - R * FRAC_1_SQRT_2, 30.0 + R * FRAC_1_SQRT_2);
         assert!(out[0].end.distance_to(want) < 1e-9, "{out:?}");
         assert!(out[0].start.distance_to(at(28.0, 32.0)) < 1e-6, "{out:?}");
+    }
+
+    /// #322: an outside Profile of a 30 mm wide frame round a 14 × 10 mm
+    /// hole, by the 4 mm tool. Each T-bone in the hole runs along its
+    /// 14 mm walls and reaches `r` = 2 mm past the top or bottom wall. With
+    /// the frame 1.5 mm thick there, that notch would cut through it into
+    /// the outside, so each corner is skipped with
+    /// [`Warning::ReliefCornerTooTight`] and no notch is cut. A dogbone
+    /// reaches only `r(1 − sin 45°)` past each wall, so it fits the same
+    /// frame; and with the frame 3 mm thick the T-bones fit.
+    #[test]
+    fn t_bone_through_a_thin_wall_is_skipped() {
+        let frame = |height: f64, hole_y: f64| {
+            vec![
+                rect(30.0, height),
+                poly(&[
+                    (8.0, hole_y),
+                    (22.0, hole_y),
+                    (22.0, hole_y + 10.0),
+                    (8.0, hole_y + 10.0),
+                ]),
+            ]
+        };
+        let thin = one_tool(frame(13.0, 1.5));
+        let (_, warnings, cut) =
+            profile_run(&thin, &profile_op(Side::Outside, CornerRelief::TBone));
+        assert_eq!(
+            relief_codes(&warnings),
+            [WarningCode::ReliefCornerTooTight; 4],
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().all(|w| !matches!(
+                w,
+                Warning::ReliefCornerTooTight { reason, .. }
+                    if *reason != ReliefCornerReason::NearOtherWall
+            )),
+            "{warnings:?}"
+        );
+        assert!(cut.is_empty(), "no notch is cut: {cut:?}");
+
+        let (_, warnings, cut) =
+            profile_run(&thin, &profile_op(Side::Outside, CornerRelief::Dogbone));
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        assert_eq!(outward(&cut).len(), 4);
+
+        let thick = one_tool(frame(16.0, 3.0));
+        let (_, warnings, cut) =
+            profile_run(&thick, &profile_op(Side::Outside, CornerRelief::TBone));
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        assert_eq!(outward(&cut).len(), 4);
     }
 
     /// S9: the notches cut past the pocket's walls only in their corners'

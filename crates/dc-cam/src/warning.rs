@@ -250,6 +250,10 @@ pub enum ReliefCornerReason {
     ShortEdge,
     /// The tool-centre path does not turn the corner within reach.
     NoWallPath,
+    /// The notch would bring the cutter nearer another wall than its
+    /// radius, cutting into the material past that wall too: past a part
+    /// thinner there than the notch is deep, or into an island (#322).
+    NearOtherWall,
 }
 
 /// Something the user should know about that still yields a safe toolpath:
@@ -1103,6 +1107,9 @@ impl fmt::Display for Warning {
                     ReliefCornerReason::ShortEdge => {
                         "an edge beside it is shorter than the bit is wide"
                     }
+                    ReliefCornerReason::NearOtherWall => {
+                        "its notch would come nearer another wall than the bit's radius and cut through the material there"
+                    }
                 };
                 write!(
                     f,
@@ -1623,6 +1630,16 @@ mod tests {
                     reason: ReliefCornerReason::NoWallPath,
                 },
                 "the corner of `Shape` (instance `i1`, profile 2) at (1.5, 2.25) mm is not relieved: the tool path does not turn it within reach, so it keeps the bit's radius",
+            ),
+            (
+                Warning::ReliefCornerTooTight {
+                    op: op(),
+                    shape: shape(),
+                    x_mm: 4.617,
+                    y_mm: 4.195,
+                    reason: ReliefCornerReason::NearOtherWall,
+                },
+                "the corner of `Shape` (instance `i1`, profile 2) at (4.62, 4.2) mm is not relieved: its notch would come nearer another wall than the bit's radius and cut through the material there, so it keeps the bit's radius",
             ),
             (
                 Warning::ReliefCornerNotCut {
