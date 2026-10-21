@@ -1021,7 +1021,13 @@ cut direction and cut side.
   the ramp falls back to a plunge, reason `too_small` (changed in #273: a
   leg cut short 0.0055 mm past a chord vertex ended in a piece falling
   0.0014 mm, written level at the plunge-limited feed in inch, which S3
-  refuses). The pass then cuts the full path from the start vertex, so
+  refuses). The ramp then returns along the path at pass Z to the start
+  vertex, and a level piece of that return running less than √2 units in
+  XY is merged the same way; one that cannot be is kept (#321: a leg
+  ending 0.00015 mm past a chord vertex went back to it first, a move
+  the program writes as nothing, which arc fitting counted as one of a
+  fitted arc's three chords and S12 did not). The pass then cuts the
+  full path from the start vertex, so
   the ramped stretch is cut again at full depth (VCarve's Zig Zag ramp).
   On an open path shorter than one leg the ramp reverses at the path
   end. The feed scale of S10 applies to every leg.
