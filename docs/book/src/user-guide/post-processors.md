@@ -481,13 +481,13 @@ switched on. DreamCarve cannot check that, so when a program has a lift
 `export` says:
 
 ```text
-Before you start: home the machine; this program moves to machine Z -5.000 mm (G53).
+Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). Z must home upward, or soft limits must be on ($20=1).
 ```
 
 and the program's header says it too (on GRBL v3, after `;`):
 
 ```text
-( Lifts to machine Z with G53: home the machine before running )
+( Lifts to machine Z with G53: home the machine before running. Needs Z to home upward, or soft limits on with $20=1 )
 ```
 
 Turn soft limits on (`$20=1`): then a machine Z outside the travel stops
@@ -499,7 +499,14 @@ setting cannot be used there.
 
 LinuxCNC needs no setting for either. It refuses to run a program until
 the machine is homed, unless your configuration sets `[TRAJ]
-NO_FORCE_HOMING = 1`; leave it unset. Once homed, its soft limits
+NO_FORCE_HOMING = 1`; leave it unset. Its note and header say that
+instead of `$20=1`:
+
+```text
+Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.
+( Lifts to machine Z with G53: home the machine before running. Soft limits apply only once homed: leave NO_FORCE_HOMING unset )
+```
+ Once homed, its soft limits
 (`[AXIS_Z] MIN_LIMIT`, `MAX_LIMIT`) always apply, and a lift outside them
 stops the program with "Linear move on line … would exceed Z's … limit"
 before the machine moves.

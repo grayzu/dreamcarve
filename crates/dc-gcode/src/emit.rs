@@ -620,8 +620,10 @@ fn emit_enabled(
     // height set, so no other program's bytes change.
     if heights.machine_z_mm.is_some() {
         let comment = format!(
-            "{} {MACHINE_LIFT_COMMENT} {}",
-            post.program.comment_prefix, post.program.comment_suffix
+            "{} {} {}",
+            post.program.comment_prefix,
+            machine_lift_comment(&post.id),
+            post.program.comment_suffix
         );
         w.line(comment.trim_end());
     }
@@ -1025,8 +1027,46 @@ impl Lifts {
     }
 }
 
-/// The header comment of a program that lifts with `G53` (#283).
-const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running";
+/// The start of the header comment of a program that lifts with `G53`
+/// (#283).
+const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running.";
+
+/// The header comment of a program that lifts with `G53` on the
+/// definition `post_id` (#283): home the machine, then what keeps a lift
+/// outside the travel from moving (#308; definitions README,
+/// "Machine-coordinate moves"). On grblHAL and GRBL, where a machine that
+/// homes Z downward has every negative machine Z below the travel, Z
+/// homing upward or soft limits on (`$20=1`). On LinuxCNC, whose soft
+/// limits always apply once homed, homing that is not skipped with
+/// `NO_FORCE_HOMING`. No `( ) ;` inside, which would end the comment
+/// early; `$` starts a GRBL system command only at the start of a line.
+fn machine_lift_comment(post_id: &str) -> String {
+    let limits = match post_id {
+        "grblhal" | "grbl" => Some("Needs Z to home upward, or soft limits on with $20=1"),
+        "linuxcnc" => Some("Soft limits apply only once homed: leave NO_FORCE_HOMING unset"),
+        _ => None,
+    };
+    limits.map_or_else(
+        || MACHINE_LIFT_COMMENT.to_owned(),
+        |limits| format!("{MACHINE_LIFT_COMMENT} {limits}"),
+    )
+}
+
+/// What the export note of a program that lifts with `G53` on the
+/// definition `post_id` adds after "home the machine" (#308): the
+/// controller's own condition for a lift outside the travel to stop before
+/// it moves, as in [`machine_lift_comment`]. `None` for a definition that
+/// has no such check documented.
+#[must_use]
+pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
+    match post_id {
+        "grblhal" | "grbl" => Some("Z must home upward, or soft limits must be on ($20=1)."),
+        "linuxcnc" => Some(
+            "LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.",
+        ),
+        _ => None,
+    }
+}
 
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under
@@ -5363,7 +5403,7 @@ mod tests {
                         program
                             .text
                             .lines()
-                            .any(|l| l == format!("( {MACHINE_LIFT_COMMENT} )")),
+                            .any(|l| l == format!("( {} )", machine_lift_comment("linuxcnc"))),
                         "{}",
                         program.text
                     );
@@ -5554,17 +5594,49 @@ mod tests {
         );
     }
 
-    /// #304 review: with a tool-change machine Z, the header says the
-    /// program uses machine coordinates and needs a homed machine, in a
-    /// comment; without one the header is as before (the goldens and the
-    /// heights-migration corpus prove the bytes).
+    /// #308 on LinuxCNC (#306): `$20` is a GRBL setting, so the header names
+    /// LinuxCNC's own condition instead. Its soft limits always apply once
+    /// the machine is homed ("The axis must be homed before MIN_LIMIT is in
+    /// force", INI document; `motion/command.c` 1011-1025), and a program
+    /// does not run unhomed unless `[TRAJ] NO_FORCE_HOMING` is set
+    /// (`emctaskmain.cc` 121, 2302-2303; definitions README,
+    /// "Machine-coordinate moves"). In mm and inches, and no `$20` anywhere.
+    #[test]
+    fn machine_z_header_comment_on_linuxcnc() {
+        let comment = "( Lifts to machine Z with G53: home the machine before running. \
+                       Soft limits apply only once homed: leave NO_FORCE_HOMING unset )";
+        for units in [Units::Mm, Units::Inch] {
+            let mut project = project_with("linuxcnc");
+            project.display_units = units;
+            project.heights.tool_change_machine_z_mm = Some(-5.0);
+            let text = emit_text(&project);
+            assert_eq!(
+                text.lines().filter(|l| *l == comment).count(),
+                1,
+                "{units:?}\n{text}"
+            );
+            assert!(!text.contains("$20"), "{units:?}\n{text}");
+        }
+    }
+
+    /// #304 review, #308: with a tool-change machine Z, the header says
+    /// the program uses machine coordinates and needs a homed machine, and
+    /// names what keeps the lift from driving Z down on a machine that
+    /// homes Z downward: soft limits (`$20=1`), which alarm before the move
+    /// (GRBL `motion_control.c` 34-38, grblHAL `motion_control.c` 96-99;
+    /// definitions README, "Machine-coordinate moves"). In the definition's
+    /// comment syntax: `( )` on grblHAL, `;` on GRBL v3. Without the height
+    /// the header is as before (the goldens and the heights-migration
+    /// corpus prove the bytes).
     #[test]
     fn machine_z_header_comment() {
         let mut project = project_with("grblhal");
-        let comment = "( Lifts to machine Z with G53: home the machine before running )";
+        let comment = "( Lifts to machine Z with G53: home the machine before running. \
+                       Needs Z to home upward, or soft limits on with $20=1 )";
         let text = emit_text(&project);
         assert!(!text.contains("G53"), "{text}");
         assert!(!text.contains("home the machine"), "{text}");
+        assert!(!text.contains("soft limits"), "{text}");
         project.heights.tool_change_machine_z_mm = Some(-5.0);
         let text = emit_text(&project);
         let lines: Vec<&str> = text.lines().collect();
@@ -5574,8 +5646,17 @@ mod tests {
             .unwrap_or_else(|| panic!("{text}"));
         let first_motion = lines.iter().position(|l| l.starts_with("G0")).unwrap();
         assert!(at < first_motion, "in the header\n{text}");
-        // In inches, on GRBL, and in every program of a run per tool.
-        for (post, units) in [("grbl", Units::Inch), ("grblhal", Units::Mm)] {
+        // In inches on GRBL v3, in mm on grblHAL, and in every program of a
+        // run per tool.
+        for (post, units, expected) in [
+            (
+                "grbl",
+                Units::Inch,
+                "; Lifts to machine Z with G53: home the machine before running. \
+                 Needs Z to home upward, or soft limits on with $20=1",
+            ),
+            ("grblhal", Units::Mm, comment),
+        ] {
             let mut project = project_with(post);
             project.display_units = units;
             let ops = two_tool_ops(&mut project);
@@ -5584,16 +5665,17 @@ mod tests {
                 emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE).unwrap();
             assert_eq!(programs.len(), 2);
             for program in &programs {
-                let definition = post_of(&project);
-                let expected = format!(
-                    "{} {MACHINE_LIFT_COMMENT} {}",
-                    definition.program.comment_prefix, definition.program.comment_suffix
-                );
                 assert!(
-                    program.text.lines().any(|l| l == expected.trim_end()),
+                    program.text.lines().any(|l| l == expected),
                     "{post} {units:?}\n{}",
                     program.text
                 );
+                let named = program
+                    .text
+                    .lines()
+                    .filter(|l| l.contains("soft limits") && l.contains("$20=1"))
+                    .count();
+                assert_eq!(named, 1, "{post} {units:?}\n{}", program.text);
             }
         }
         // The clearance height and the park point need no homing.

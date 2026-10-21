@@ -841,7 +841,12 @@ built (design addendum, "Order and format versions").
       position) and is accepted only on a post-processor whose definition
       documents `G53` (grblHAL and GRBL in this addendum; LinuxCNC too,
       changed in #306). The machine must
-      be homed, which DreamCarve cannot check, so `export` says so.
+      be homed, which DreamCarve cannot check, so `export` says so. It
+      also says, as the program's header does, what keeps a lift outside
+      the travel from moving: on grblHAL and GRBL, Z homing upward or soft
+      limits on (`$20=1`), since where Z homes downward every negative
+      machine Z is below the travel; on LinuxCNC, homing, after which its
+      soft limits always apply (changed in #308).
     - **`park`** `{ "x_mm": …, "y_mm": … }`, in project coordinates: at the
       end the bit rises to the clearance height (or the highest safe Z of
       the program's operations; changed in #283: the last operation's),
