@@ -2594,8 +2594,10 @@ fn warnings_print_code_and_message() {
             );
             codes.push(code);
         }
+        // The open path is reported by validation (`init` never targets
+        // one), so its code is `open_profile`, not `open_path_skipped`.
         for expected in [
-            "open_path_skipped",
+            "open_profile",
             "duplicate_shape_dropped",
             "tool_too_large",
             "tabs_overlap",

@@ -11,9 +11,12 @@
 //! Nothing here depends on Y-up or Y-down: containment is symmetric under
 //! the flip.
 
+use crate::error::ShapeRef;
+use crate::profile::same_contour;
 use crate::toolpath::Toolpath;
-use crate::warning::Warning;
-use dc_project::{Operation, Project};
+use crate::warning::{Warning, WarningCode};
+use dc_geometry::{Contour, EPS_MM, GeometryWarning, nest};
+use dc_project::{Operation, OperationId, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -22,16 +25,180 @@ use dc_project::{Operation, Project};
 ///
 /// Returns, in a deterministic order:
 ///
-/// - [`crate::WarningCode::CutInsideFreedPart`] for every closed target of
-///   a later operation that lies inside an outline an earlier Profile cut
-///   through the stock, by operation order then target order;
-/// - [`crate::WarningCode::ToolChangeAvoidable`] once per tool that the
-///   enabled operations, in order, use again after a different tool, by
-///   the tool's first use.
+/// - [`WarningCode::CutInsideFreedPart`] for every closed target of a
+///   later operation that lies inside an outline an earlier Profile cut
+///   through the stock, by operation order, then target order, then the
+///   freeing operation's order;
+/// - [`WarningCode::ToolChangeAvoidable`] once per tool that the enabled
+///   operations, in order, use again after a different tool, by the
+///   tool's first use.
 #[must_use]
 pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
-    let _ = (project, generated);
-    Vec::new()
+    let targets: Vec<Vec<(ShapeRef, Contour)>> = generated
+        .iter()
+        .map(|(op, _)| closed_targets(project, op))
+        .collect();
+    let freeing: Vec<bool> = generated
+        .iter()
+        .map(|(op, toolpath)| frees_its_targets(op, toolpath))
+        .collect();
+
+    let mut warnings = Vec::new();
+    for (j, (later, _)) in generated.iter().enumerate() {
+        let Some(shapes) = targets.get(j) else {
+            continue;
+        };
+        for (shape, contour) in shapes {
+            for (i, (earlier, _)) in generated.iter().enumerate().take(j) {
+                if !freeing.get(i).copied().unwrap_or(false) {
+                    continue;
+                }
+                let freed = targets
+                    .get(i)
+                    .and_then(|outlines| outlines.iter().find(|(_, o)| lies_inside(contour, o)));
+                if let Some((freed_shape, _)) = freed {
+                    warnings.push(
+                        Warning::new(WarningCode::CutInsideFreedPart)
+                            .with("op", later.id())
+                            .with("earlier_op", earlier.id())
+                            .with("instance", &shape.instance)
+                            .with("instance_name", &shape.instance_name)
+                            .with("profile", shape.profile)
+                            .with("freed_instance", &freed_shape.instance)
+                            .with("freed_instance_name", &freed_shape.instance_name)
+                            .with("freed_profile", freed_shape.profile),
+                    );
+                }
+            }
+        }
+    }
+    warnings.extend(tool_change_hints(project));
+    warnings
+}
+
+/// True when `op`, with the toolpath generated for it, leaves whatever is
+/// inside its target outlines loose: a Profile whose final pass reaches
+/// the stock bottom (a cutting move ends at Z ≤ 0, so its depth is at
+/// least the thickness) and that leaves no tabs. Any side frees: Outside
+/// and On line free the part, Inside frees the hole's slug. Tabs hold the
+/// part through the final pass, so a tabbed Profile frees nothing.
+fn frees_its_targets(op: &Operation, toolpath: &Toolpath) -> bool {
+    let Operation::Profile(profile) = op else {
+        return false;
+    };
+    if profile.tabs.is_some() {
+        return false;
+    }
+    toolpath
+        .moves
+        .iter()
+        .any(|m| !m.is_rapid() && m.to.z <= EPS_MM)
+}
+
+/// True when `inner` lies within `outer` (edges may touch) or is the same
+/// outline, judged on the true curves as [`nest`] does; false when the
+/// two cross or are apart. Which is inside which is read from which one
+/// `nest` makes the outer, so a shape that encloses the freed outline
+/// does not count as inside it.
+fn lies_inside(inner: &Contour, outer: &Contour) -> bool {
+    let Ok((regions, warnings)) = nest(vec![outer.clone(), inner.clone()]) else {
+        return false;
+    };
+    if warnings
+        .iter()
+        .any(|w| matches!(w, GeometryWarning::DuplicateContourDropped { .. }))
+    {
+        return true;
+    }
+    match regions.as_slice() {
+        [region] => region.holes().len() == 1 && same_contour(outer, region.outer()),
+        _ => false,
+    }
+}
+
+/// Every closed profile of every target instance of `op`, placed in
+/// project space, in target then profile order. Open paths, and anything
+/// validation already rejects (a missing instance or definition, a
+/// degenerate outline), are left out: this check only warns.
+fn closed_targets(project: &Project, op: &Operation) -> Vec<(ShapeRef, Contour)> {
+    let mut shapes = Vec::new();
+    for instance_id in op.targets() {
+        let Some(instance) = project.instances.iter().find(|i| &i.id == instance_id) else {
+            continue;
+        };
+        let Some(definition) = project.definitions.get(&instance.definition) else {
+            continue;
+        };
+        for (profile, polyline) in definition.profiles.iter().enumerate() {
+            if !polyline.is_closed() {
+                continue;
+            }
+            let Ok(contour) = instance
+                .transform
+                .apply_polyline(polyline)
+                .and_then(Contour::new)
+            else {
+                continue;
+            };
+            shapes.push((
+                ShapeRef {
+                    instance: instance.id.clone(),
+                    instance_name: instance.name.clone(),
+                    profile,
+                },
+                contour,
+            ));
+        }
+    }
+    shapes
+}
+
+/// One hint per tool that the enabled operations, in project order, come
+/// back to after a different tool, by the tool's first use. Operations
+/// are never reordered (D7); the hint lists the tool's operations so the
+/// user can put them together.
+fn tool_change_hints(project: &Project) -> Vec<Warning> {
+    let enabled: Vec<&Operation> = project
+        .operations
+        .iter()
+        .filter(|op| op.enabled())
+        .collect();
+    let mut by_first_use: Vec<(&ToolId, Vec<&OperationId>)> = Vec::new();
+    for op in &enabled {
+        match by_first_use.iter_mut().find(|(tool, _)| *tool == op.tool()) {
+            Some((_, ops)) => ops.push(op.id()),
+            None => by_first_use.push((op.tool(), vec![op.id()])),
+        }
+    }
+    by_first_use
+        .into_iter()
+        .filter(|(tool, ops)| {
+            // The tool's uses are one run when no other tool's operation
+            // sits between its first and last.
+            let run_len = enabled
+                .iter()
+                .skip_while(|op| op.tool() != *tool)
+                .take_while(|op| op.tool() == *tool)
+                .count();
+            run_len < ops.len()
+        })
+        .map(|(tool, ops)| {
+            let name = project
+                .tools
+                .iter()
+                .find(|t| &t.id == tool)
+                .map_or("?", |t| t.name.as_str());
+            let ops = ops
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Warning::new(WarningCode::ToolChangeAvoidable)
+                .with("tool", tool)
+                .with("tool_name", name)
+                .with("ops", ops)
+        })
+        .collect()
 }
 
 #[cfg(test)]

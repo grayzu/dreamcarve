@@ -88,7 +88,7 @@ width that would cover at most half. For example, the default
 four 8 mm tabs on a 20 mm square hole, cut with a 6.35 mm bit:
 
 ```text
-warning: operation `op1`: tabs on `small-hole` (instance `i3`, profile 0) cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 54.6 mm path (105.1%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide, or make the 4 tab(s) at most 0.47 mm wide. The tabs are cut as set.
+warning: tabs_cover_most_of_contour: operation `op1`: tabs on `small-hole` (instance `i3`, profile 0) cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 54.6 mm path (105.1%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide, or make the 4 tab(s) at most 0.47 mm wide. The tabs are cut as set.
 ```
 
 DreamCarve does not change your tabs. Export continues and cuts them as

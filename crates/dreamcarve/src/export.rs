@@ -18,13 +18,16 @@
 //!
 //! A finding about one value of the file is printed as
 //! `coaster.dcv:9:21: error: …`, the form editors and terminals turn into a
-//! link to that line and column (#76).
+//! link to that line and column (#76). Every warning carries its stable
+//! `snake_case` code and prints as `warning: <code>: <message>` (functional
+//! spec, capability 25); the Warnings chapter lists the codes. After
+//! generation, `dc_cam::order::check` adds the operation-order warnings.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dc_cam::generate_profile;
+use dc_cam::{Toolpath, generate_profile, order};
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{AxisRange, ExportWarning, Program, emit_programs};
@@ -40,15 +43,28 @@ pub struct Finding {
     /// The field it is about, as validation names it
     /// (`tools[t1].feed_mm_min`), when it is about one.
     pub field: Option<String>,
+    /// The finding's stable `snake_case` code, printed before the
+    /// message. Every warning has one; errors print their message alone.
+    pub code: Option<String>,
     /// What is wrong.
     pub message: String,
 }
 
 impl Finding {
-    /// A finding about no one field.
+    /// A finding about no one field, with no code.
     fn plain(message: String) -> Self {
         Self {
             field: None,
+            code: None,
+            message,
+        }
+    }
+
+    /// A warning with code `code`, about no one field.
+    fn coded(code: &str, message: String) -> Self {
+        Self {
+            field: None,
+            code: Some(code.to_owned()),
             message,
         }
     }
@@ -84,9 +100,13 @@ impl ProjectFile<'_> {
             .as_deref()
             .filter(|f| !(self.post_replaced && f.starts_with("post_processor")))
             .and_then(|f| self.map.as_ref()?.locate(f));
+        let message = match &finding.code {
+            Some(code) => format!("{code}: {}", finding.message),
+            None => finding.message.clone(),
+        };
         match position {
-            Some(at) => format!("{}:{at}: {label}: {}", self.path.display(), finding.message),
-            None => format!("{label}: {}", finding.message),
+            Some(at) => format!("{}:{at}: {label}: {message}", self.path.display()),
+            None => format!("{label}: {message}"),
         }
     }
 }
@@ -106,11 +126,13 @@ pub struct Built {
 pub fn build(project: &Project, date: &str) -> Built {
     let mut findings = Findings::default();
     for problem in validate(project) {
+        let severity = problem.severity();
         let finding = Finding {
             field: problem.field(),
+            code: (severity == Severity::Warning).then(|| problem.code().to_owned()),
             message: problem.to_string(),
         };
-        match problem.severity() {
+        match severity {
             Severity::Error => findings.errors.push(finding),
             Severity::Warning => findings.warnings.push(finding),
         }
@@ -151,16 +173,32 @@ pub fn build(project: &Project, date: &str) -> Built {
         };
         match generate_profile(project, op) {
             Ok((toolpath, warnings)) => {
-                findings.warnings.extend(
-                    warnings
-                        .iter()
-                        .map(|w| Finding::plain(format!("operation `{}`: {w}", op.id))),
-                );
+                findings.warnings.extend(warnings.iter().map(|w| {
+                    Finding::coded(w.code.as_str(), format!("operation `{}`: {w}", op.id))
+                }));
                 ops.push((op.clone(), tool.clone(), toolpath));
             }
             Err(e) => findings.errors.push(Finding::plain(e.to_string())),
         }
     }
+    // The order check runs on whatever generated, so `check` reports it
+    // even when another operation failed; it never needs a failed one.
+    let generated: Vec<(&Operation, &Toolpath)> = ops
+        .iter()
+        .filter_map(|(op, _, toolpath)| {
+            let operation = project.operations.iter().find(|o| o.id() == &op.id)?;
+            Some((operation, toolpath))
+        })
+        .collect();
+    findings
+        .warnings
+        .extend(order::check(project, &generated).iter().map(|w| {
+            let message = match w.param("op") {
+                Some(op) => format!("operation `{op}`: {w}"),
+                None => w.to_string(),
+            };
+            Finding::coded(w.code.as_str(), message)
+        }));
     if !findings.errors.is_empty() {
         return Built {
             programs: Vec::new(),
@@ -173,7 +211,7 @@ pub fn build(project: &Project, date: &str) -> Built {
             findings.warnings.extend(
                 warnings
                     .iter()
-                    .map(|w| Finding::plain(describe_export_warning(w))),
+                    .map(|w| Finding::coded(w.code(), describe_export_warning(w))),
             );
             Built { programs, findings }
         }

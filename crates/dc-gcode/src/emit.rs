@@ -130,6 +130,18 @@ pub enum ExportWarning {
     },
 }
 
+impl ExportWarning {
+    /// The stable `snake_case` code of the warning, as `check` and
+    /// `export` print it before the message.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::DisabledOperationSkipped { .. } => "disabled_operation_skipped",
+            Self::ArcsFlattened { .. } => "arcs_flattened",
+        }
+    }
+}
+
 /// Fewest decimal places accepted in millimetres. The safety pass tolerates
 /// one unit in the last place, so this bounds that tolerance at 0.01 mm.
 pub const MIN_DECIMAL_PLACES_MM: u8 = 2;
