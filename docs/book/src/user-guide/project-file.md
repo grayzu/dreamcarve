@@ -93,7 +93,7 @@ The fields, in the order DreamCarve writes them:
 | `name` | The project name, written at the top of the program. `init` uses the SVG's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
-| `arc_fit_tolerance_mm` | How far, at most, an arc written in place of a run of short straight moves may stray from them. `init` writes 0.01; `null` turns arc fitting off. Read by export once arc fitting lands (phase 2); until then it changes nothing. |
+| `arc_fit_tolerance_mm` | How far, at most, an arc written in place of a run of short straight moves may stray from their corners. `init` writes 0.01; `null` turns arc fitting off. See [Arc fitting](#arc-fitting). |
 | `stock` | The block of material. |
 | `origin` | Where work zero is on the stock. |
 | `tools` | The tools. |
@@ -101,6 +101,35 @@ The fields, in the order DreamCarve writes them:
 | `instances` | Placed copies of the shapes. |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
 | `definitions` | The shapes, keyed by id. Last, because it is most of the file. |
+
+## Arc fitting
+
+A curve in an SVG is imported as short straight edges, within
+`flatten_tolerance_mm` of the curve, so a circle becomes a hundred or
+more `G1` moves per lap. With `arc_fit_tolerance_mm` set, `export` looks
+for runs of straight cutting moves, at one depth and one feed, whose
+corners all lie on one circle within that distance, and writes each run
+as `G2`/`G3` arcs instead: the coaster's lap of 160 edges becomes 7 arcs.
+Each arc sweeps at most 90°, starts and ends exactly on corners of the
+run, and passes within the tolerance of every corner between. Rapids,
+plunges, moves that change depth, and arcs the toolpath already has are
+left as they are, and the post-processor must write arcs
+(`arc_interpolation`); a definition that cannot gets the straight moves.
+
+A fitted arc is checked twice. Before it is written, DreamCarve rounds its
+numbers as the post-processor will and runs the controller's own arc test
+on them (GRBL and grblHAL reject an arc whose start and end are not the
+same distance from its centre, beyond 0.005 mm); an arc that would fail is
+not written, and its whole run goes out as the original straight moves,
+with the warning `arc_fit_fallback` naming the operation and how many
+runs. After the program is written, the safety pass reads every arc back
+and refuses the export unless it follows the toolpath's corners as above
+(rule 8 in [Safety](safety.md)).
+
+`init` writes `0.01`. Set it to `null` to export the straight moves as
+they are; the program is then exactly what earlier versions wrote. A
+larger value fits more freely but lets the cut stray further from the
+drawing's corners, so leave it at or below `flatten_tolerance_mm`.
 
 ## `stock`
 

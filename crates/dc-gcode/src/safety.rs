@@ -13,14 +13,15 @@
 //! with its toolpath move for move, arc direction and centre included; see
 //! [`check_reproduces`] for exactly what it accepts.
 
-use std::f64::consts::TAU;
+use std::f64::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 
-use dc_cam::{MoveKind, Toolpath};
+use dc_cam::{Move, MoveKind, Toolpath};
 use dc_geometry::{Arc, EPS_MM, Point, Point3, approx_eq};
 use dc_project::{PostProcessor, ProfileOp, SpindleControl, Stock, Tool, ToolId, Units};
 
 use crate::ExportError;
+use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
 use crate::emit::changes_tools_in_program;
 use crate::format::decimal_places;
 use crate::parse::{Block, MachineMove, MachinePosition, MotionKind, is_code, parse_program};
@@ -44,10 +45,19 @@ pub(crate) struct OpSpan<'a> {
     pub lines: Range<usize>,
 }
 
+/// How far the program may depart from the toolpath by design.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Tolerances {
+    /// The most a straight move written for an arc may cut inside it.
+    pub flatten_mm: f64,
+    /// The most a vertex of a run of straight moves may lie from the arc
+    /// written for the run (S12); `None` when arc fitting is off, so no
+    /// arc may stand for straight moves.
+    pub arc_fit_mm: Option<f64>,
+}
+
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S7, and returns the program's extents.
-/// `flatten_tolerance_mm` is the most a straight move written for an arc
-/// may cut inside it.
+/// in `spans`, against S1–S7 and S12, and returns the program's extents.
 ///
 /// # Errors
 ///
@@ -58,13 +68,13 @@ pub(crate) fn check(
     transform: &MachineTransform,
     stock: &Stock,
     stock_thickness_mm: f64,
-    flatten_tolerance_mm: f64,
+    tolerances: Tolerances,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
     let blocks = check_rules(text, post, transform, stock_thickness_mm, spans)?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
-        check_reproduces(span, &blocks, post, transform, flatten_tolerance_mm)?;
+        check_reproduces(span, &blocks, post, transform, tolerances)?;
     }
     // S7: every cut stays on the stock.
     check_on_stock(&blocks, post, transform, stock, stock_thickness_mm, spans)?;
@@ -746,12 +756,21 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 /// allowed in the span is a retract (a rapid up in Z alone) before the
 /// first toolpath move or after the last: the tool-change and router
 /// retracts. Ends compare within one unit in the last written place.
+///
+/// S12: with arc fitting on (`tolerances.arc_fit_mm`), a `G2`/`G3` may
+/// stand for a run of straight moves (and the shallow corner arcs among
+/// them) when it starts and ends at toolpath vertices, covers at least
+/// [`crate::arcfit::MIN_RUN_CHORDS`] moves, every vertex between (and
+/// every shallow arc's midpoint) lies within the arc-fit tolerance plus
+/// one unit in the last place of it, it sweeps at most 90°, and it turns
+/// the way the vertices do; see [`match_fitted_arc`]. Any other arc in
+/// place of straight moves is [`ExportError::ArcFitViolation`].
 fn check_reproduces(
     span: &OpSpan<'_>,
     blocks: &[Block],
     post: &PostProcessor,
     transform: &MachineTransform,
-    flatten_tolerance_mm: f64,
+    tolerances: Tolerances,
 ) -> Result<(), ExportError> {
     let motions: Vec<ReadMove<'_>> = blocks
         .iter()
@@ -768,7 +787,9 @@ fn check_reproduces(
         .position(|m| !is_retract(m.mv))
         .unwrap_or(motions.len());
     let mut previous: Option<Point3> = None;
-    for (index, mv) in span.toolpath.moves.iter().enumerate() {
+    let moves = &span.toolpath.moves;
+    let mut index = 0;
+    while let Some(mv) = moves.get(index) {
         let rest = motions.get(cursor..).unwrap_or_default();
         // Where the controller is before `rest`.
         let here = rest
@@ -785,7 +806,7 @@ fn check_reproduces(
             MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
                 let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
                 match previous.map(|start| ToolpathArc::new(start, mv.to, centre, clockwise)) {
-                    Some(Some(arc)) => match_arc(rest, &arc, transform, flatten_tolerance_mm),
+                    Some(Some(arc)) => match_arc(rest, &arc, transform, tolerances.flatten_mm),
                     // Too small to be an arc: `emit` writes a straight cut.
                     Some(None) => match_linear(rest, mv.to, already_there),
                     // `emit` cannot write an arc without a start.
@@ -793,8 +814,33 @@ fn check_reproduces(
                 }
             }
         };
-        cursor += consumed.ok_or_else(|| mismatch(index))?;
-        previous = Some(mv.to);
+        if let Some(consumed) = consumed {
+            cursor += consumed;
+            previous = Some(mv.to);
+            index += 1;
+            continue;
+        }
+        // S12: an arc where the toolpath has straight moves (or a shallow
+        // corner arc a run may take as its chord).
+        let fitted = rest
+            .first()
+            .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
+        let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
+            return Err(mismatch(index));
+        };
+        if !run_eligible(previous, mv, arc_fit_mm) {
+            return Err(mismatch(index));
+        }
+        let (lines, covered) = match_fitted_arc(
+            rest, moves, index, previous, transform, arc_fit_mm,
+        )
+        .ok_or_else(|| ExportError::ArcFitViolation {
+            op: span.op.id.clone(),
+            line: read.mv.line,
+        })?;
+        cursor += lines;
+        index += covered;
+        previous = moves.get(index.wrapping_sub(1)).map(|m| m.to);
     }
     if motions
         .get(cursor..)
@@ -939,6 +985,160 @@ fn match_arc(
     None
 }
 
+/// Whether toolpath move `mv`, from `previous`, is one a fitted run may
+/// take: a straight cut, or an arc whose sagitta is within `arc_fit_mm`.
+/// With `previous` unknown nothing is.
+fn run_eligible(previous: Option<Point3>, mv: &Move, arc_fit_mm: f64) -> bool {
+    match mv.kind {
+        MoveKind::Rapid => false,
+        MoveKind::Linear => true,
+        MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+            let cw = matches!(mv.kind, MoveKind::ArcCw { .. });
+            previous.is_some_and(|p| {
+                shallow_arc_midpoint(p.xy(), mv.to.xy(), centre, cw, arc_fit_mm).is_some()
+            })
+        }
+    }
+}
+
+/// S12: how many lines of `rest` and how many toolpath moves from `index`
+/// a fitted run accounts for, if the lines may stand for the moves.
+///
+/// The lines are a chain of consecutive arc moves about one centre, one
+/// way, each sweeping at most 90°, the first starting at `previous`, the
+/// end of the toolpath move before, and the last ending at the end of a
+/// toolpath move: a fitted run is split into sub-arcs whose ends between
+/// are on the circle, and only the run's ends are vertices. The chain
+/// covers at least [`MIN_RUN_CHORDS`] moves, all straight cuts or shallow
+/// corner arcs (sagitta within `arc_fit_mm`) at the run's Z. Every vertex
+/// between, and every shallow arc's midpoint, lies on the chain within
+/// `arc_fit_mm` plus the lines' rounding, and the vertices turn the
+/// chain's way about its centre. The chain may stop short of its last
+/// line where the toolpath goes on with a move a run cannot take, if the
+/// line before ends at the vertex there.
+fn match_fitted_arc(
+    rest: &[ReadMove<'_>],
+    moves: &[Move],
+    index: usize,
+    previous: Option<Point3>,
+    transform: &MachineTransform,
+    arc_fit_mm: f64,
+) -> Option<(usize, usize)> {
+    let start = previous?;
+    let first = rest.first()?;
+    let tolerance_mm = first.tolerance_mm;
+    let allowed_mm = arc_fit_mm + tolerance_mm;
+
+    // The chain of sub-arcs.
+    let mut pieces: Vec<ToolpathArc> = Vec::new();
+    let mut expect_from = start;
+    for read in rest {
+        if !matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw) {
+            break;
+        }
+        let (Some(from), Some(to)) = (read.from, read.to) else {
+            break;
+        };
+        let Some((centre, clockwise)) = read_arc_centre(read, transform) else {
+            break;
+        };
+        // Each sub-arc's I and J are snapped within a few quanta to agree
+        // with its own rounded ends, so the pieces' centres differ by
+        // more than one unit in the last place, within the allowance.
+        let same_circle = pieces.first().is_none_or(|p: &ToolpathArc| {
+            p.clockwise == clockwise
+                && approx_eq(p.centre.x, centre.x, allowed_mm)
+                && approx_eq(p.centre.y, centre.y, allowed_mm)
+        });
+        if !same_circle || !near(from, expect_from, tolerance_mm) {
+            break;
+        }
+        let arc = ToolpathArc::new(from, to, centre, clockwise)?;
+        if arc.sweep_rad > FRAC_PI_2 + arc.angle_tolerance_rad(allowed_mm) {
+            return None;
+        }
+        pieces.push(arc);
+        expect_from = to;
+    }
+    let chain = pieces.first()?;
+    let (centre, clockwise) = (chain.centre, chain.clockwise);
+
+    // Walk the vertices along the chain.
+    let mut piece = 0;
+    let mut vertex = start;
+    let mut cross = 0.0;
+    let mut covered = 0;
+    let done =
+        |piece: usize, covered: usize, vertex: Point3, cross: f64| -> Option<(usize, usize)> {
+            let current = pieces.get(piece)?;
+            let turns_with = if clockwise { cross < 0.0 } else { cross > 0.0 };
+            (near(vertex, current.end, tolerance_mm) && turns_with && covered >= MIN_RUN_CHORDS)
+                .then_some((piece + 1, covered))
+        };
+    for mv in moves.get(index..)? {
+        if !run_eligible(Some(vertex), mv, arc_fit_mm) || !approx_eq(mv.to.z, start.z, tolerance_mm)
+        {
+            // The toolpath goes on with a move no run takes: the chain
+            // must end at the vertex before it.
+            return done(piece, covered, vertex, cross);
+        }
+        let midpoint = match mv.kind {
+            MoveKind::ArcCw { centre: c } | MoveKind::ArcCcw { centre: c } => {
+                let cw = matches!(mv.kind, MoveKind::ArcCw { .. });
+                shallow_arc_midpoint(vertex.xy(), mv.to.xy(), c, cw, arc_fit_mm)
+            }
+            MoveKind::Rapid | MoveKind::Linear => None,
+        };
+        for p in midpoint.into_iter().chain([mv.to.xy()]) {
+            // On the current piece, or past its end and on the next.
+            loop {
+                let current = pieces.get(piece)?;
+                if current.turn_to(p, allowed_mm).is_some() {
+                    break;
+                }
+                let on_circle =
+                    (p.distance_to(current.centre) - current.radius_mm).abs() <= allowed_mm;
+                if !on_circle || piece + 1 >= pieces.len() {
+                    return None;
+                }
+                piece += 1;
+            }
+        }
+        cross += (vertex.xy() - centre).cross(mv.to.xy() - centre);
+        covered += 1;
+        vertex = mv.to;
+        if piece + 1 == pieces.len() && near(vertex, chain_end(&pieces)?, tolerance_mm) {
+            return done(piece, covered, vertex, cross);
+        }
+    }
+    done(piece, covered, vertex, cross)
+}
+
+/// Where the last piece of `pieces` ends.
+fn chain_end(pieces: &[ToolpathArc]) -> Option<Point3> {
+    pieces.last().map(|p| p.end)
+}
+
+/// The centre of arc move `read` in project space, and whether it turns
+/// clockwise there: from I and J, or from R as the controller derives it,
+/// with a mirroring axis map swapping the direction.
+fn read_arc_centre(read: &ReadMove<'_>, transform: &MachineTransform) -> Option<(Point, bool)> {
+    let mv = read.mv;
+    let machine_cw = mv.kind == MotionKind::ArcCw;
+    let (sx, sy, ex, ey) = (mv.from.x?, mv.from.y?, mv.to.x?, mv.to.y?);
+    let machine_centre = match mv.arc.r {
+        Some(r) => r_centre(sx, sy, ex, ey, r, machine_cw),
+        None => Point::new(sx + mv.arc.i.unwrap_or(0.0), sy + mv.arc.j.unwrap_or(0.0)),
+    };
+    let centre = transform
+        .to_project(
+            Point3::new(machine_centre.x, machine_centre.y, 0.0),
+            mv.units,
+        )
+        .xy();
+    Some((centre, machine_cw != transform.mirrors_xy()))
+}
+
 /// Whether arc move `read`, which ends `turn_rad` along `arc`, runs along
 /// `arc` from `turned_rad`: same direction, and the same centre (I/J) or
 /// a midpoint on the arc (R).
@@ -1058,7 +1258,7 @@ impl ToolpathArc {
 mod tests {
     use super::*;
     use crate::emit::{emit, emit_with};
-    use std::f64::consts::FRAC_PI_2;
+    use std::f64::consts::{FRAC_PI_2, PI};
 
     use dc_cam::{Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3};
@@ -1828,8 +2028,18 @@ mod tests {
     }
 
     /// Runs the whole safety pass, S6 included, on `text` as the fixture's
-    /// operation with `toolpath`.
+    /// operation with `toolpath`, with the fixture's arc-fit tolerance.
     fn check_against(text: &str, toolpath: &Toolpath) -> Result<(), ExportError> {
+        let (project, _, _) = fixture();
+        check_against_with(text, toolpath, project.arc_fit_tolerance_mm)
+    }
+
+    /// [`check_against`] with the arc-fit tolerance `arc_fit_mm`.
+    fn check_against_with(
+        text: &str,
+        toolpath: &Toolpath,
+        arc_fit_mm: Option<f64>,
+    ) -> Result<(), ExportError> {
         let (project, op, tool) = fixture();
         let post = project.post_processor.resolve().unwrap();
         let transform = MachineTransform::new(&project, &post).unwrap();
@@ -1845,7 +2055,10 @@ mod tests {
             &transform,
             &project.stock,
             project.stock.thickness_mm.unwrap(),
-            project.flatten_tolerance_mm,
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm,
+            },
             &spans,
         )
         .map(|_| ())
@@ -1989,5 +2202,81 @@ mod tests {
             "{result:?}"
         );
         emit_one(&project, &op, &tool, line_then_arc()).unwrap();
+    }
+
+    /// Rapid in, plunge to Z 5, then `n` chords of the circle of radius 10
+    /// about (50, 50) from +X through `sweep_rad` counter-clockwise, retract.
+    /// Vertex `bump` (1-based along the chords), if any, is pushed 0.05 mm
+    /// outwards, off the circle.
+    fn chord_run(n: u32, sweep_rad: f64, bump: Option<u32>) -> Toolpath {
+        let mut moves = vec![
+            Move::rapid(Point3::new(60.0, 50.0, 11.0)),
+            Move::linear(Point3::new(60.0, 50.0, 5.0), 300.0),
+        ];
+        for k in 1..=n {
+            let angle = sweep_rad * f64::from(k) / f64::from(n);
+            let r = if bump == Some(k) { 10.05 } else { 10.0 };
+            moves.push(Move::linear(
+                Point3::new(50.0 + r * angle.cos(), 50.0 + r * angle.sin(), 5.0),
+                1000.0,
+            ));
+        }
+        let last = moves.last().unwrap().to;
+        moves.push(Move::rapid(Point3::new(last.x, last.y, 11.0)));
+        Toolpath { moves }
+    }
+
+    /// The program for [`chord_run`] with `arc` written for the chords.
+    fn chord_run_text(arc: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX60 Y50\nG1 Z-1 F300\n{arc}G0 Z5\nM5\n")
+    }
+
+    /// S12: one `G3` in place of eight chords of a quarter circle passes
+    /// S6 when arc fitting is on; with the tolerance `null` the program
+    /// must have the chords.
+    #[test]
+    fn fitted_arcs_pass_s6() {
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
+        let toolpath = chord_run(8, FRAC_PI_2, None);
+        check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+        let result = check_against_with(&text, &toolpath, None);
+        assert!(is_mismatch_at(&result, 2), "{result:?}");
+        // Two arcs over the run, meeting at a vertex, pass too.
+        let text = chord_run_text("G3 X57.071 Y57.071 I-10 J0 F1000\nX50 Y60 I-7.071 J-7.071\n");
+        check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+    }
+
+    /// S12: a vertex between the arc's ends that is off the arc by more
+    /// than the tolerance fails.
+    #[test]
+    fn arc_off_the_vertices_fails_s6() {
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, Some(4)), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        // An arc that ends between vertices fails too.
+        let text = chord_run_text("G3 X50.5 Y59.987 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, None), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+    }
+
+    /// S12: one arc over 180° of chords is refused even though every vertex
+    /// is on it: a fitted arc sweeps at most 90°.
+    #[test]
+    fn arc_over_90_degrees_fails_s12() {
+        let text = chord_run_text("G3 X40 Y50 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(16, PI, None), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        // The same run as two 90° arcs passes.
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\n");
+        check_against_with(&text, &chord_run(16, PI, None), Some(0.01)).unwrap();
     }
 }

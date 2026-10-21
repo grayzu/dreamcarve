@@ -46,7 +46,7 @@ DXF has a chapter of its own: [Importing DXF](importing-dxf.md).
 | Option | Meaning |
 | --- | --- |
 | `-o`, `--output <DCV>` | Where to write the project. Default: the drawing's name with `.dcv`. |
-| `--post <ID>` | Post-processor to use, at its latest version: `grblhal` (default) or `grbl`. |
+| `--post <ID>` | Post-processor to use, at its latest version: `grblhal` (default) or `grbl`. Its settings are the defaults, with your [configured](configuration.md) ones on top. |
 | `--units <mm\|inch>` | Units the G-code is written in. Default `mm`. For a DXF, also the units the drawing is in: required when the file does not say, and overriding it when it does. |
 | `--join-tolerance <MM>` | DXF only. Join open segments whose ends are within this distance, and close a chain whose ends meet. Default `0.01`. |
 | `--layer <NAME>` | DXF only. Import only this layer; repeat the option for several. |
@@ -81,7 +81,9 @@ default ([Projects with more than one tool](post-processors.md#projects-with-mor
 | Option | Meaning |
 | --- | --- |
 | `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). With one program per tool run, its stem and extension name them: `-o job.nc` writes `job-1-T1.nc`, `job-2-T2.nc`, … |
-| `--post <ID>` | Switch the project to the latest version of this post-processor, with its default settings, save the project with it, then export. With the project's own id, it upgrades to the latest version ([Versions](post-processors.md#versions)). The project is checked against the new post-processor, not the old one. |
+| `--post <ID>` | Switch the project to the latest version of this post-processor, with its default settings (and your [configured](configuration.md) ones), save the project with it, then export. With the project's own id, it upgrades to the latest version ([Versions](post-processors.md#versions)). The project is checked against the new post-processor, not the old one. |
+| `--programs-per-tool` | One program per tool run, whatever the project's `tool_change_mode` says. Not saved to the project. |
+| `--one-program` | One program with `T<n> M6` tool changes, whatever the project's `tool_change_mode` says; an error on a post-processor without `M6` (GRBL). Not saved to the project. Cannot be combined with `--programs-per-tool`. |
 
 Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed
@@ -128,13 +130,18 @@ program when there is one per tool run.
 
 Lists the bundled post-processors.
 
+### `dreamcarve config path`
+
+Prints where the user config file and the tool library live on this
+machine, and whether each exists ([Configuration](configuration.md)).
+
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | Success. |
 | 1 | The project has an error, a file could not be read or written, or the SVG could not be imported. |
-| 2 | Bad arguments, or an unknown post-processor id. |
+| 2 | Bad arguments (including `--one-program` with `--programs-per-tool`), or an unknown post-processor id. |
 
 ## Chapters
 
@@ -145,5 +152,7 @@ Lists the bundled post-processors.
 - [Tabs](tabs.md): holding the part in place.
 - [Post-processors](post-processors.md): grblHAL, GRBL, and routers you
   switch on by hand.
+- [Configuration](configuration.md): the user config file and where it
+  lives.
 - [Warnings](warnings.md): every warning code, its message, and what to do.
 - [Safety](safety.md): what DreamCarve checks, and what it cannot.

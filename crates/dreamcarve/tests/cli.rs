@@ -38,13 +38,40 @@ fn dreamcarve() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
 }
 
+/// The environment variable that overrides the user config directory
+/// (`docs/specs/phase-2/design.md`, "User config (CLI only)").
+const CONFIG_DIR_VAR: &str = "DREAMCARVE_CONFIG_DIR";
+
+/// The user config directory every test runs with: `config/` under its
+/// working directory, so no test reads the developer's own `config.toml`
+/// and tests can write one of their own. It need not exist.
+fn config_dir(dir: &Path) -> PathBuf {
+    dir.join("config")
+}
+
+/// `dreamcarve` set up to run in `dir`, with [`config_dir`] as its user
+/// config directory. Tests that need another environment edit it.
+fn command(dir: &Path) -> Command {
+    let mut command = dreamcarve();
+    command
+        .current_dir(dir)
+        .env(CONFIG_DIR_VAR, config_dir(dir));
+    command
+}
+
 /// Runs `dreamcarve` with `args` in `dir`.
 fn run(dir: &Path, args: &[&str]) -> Output {
-    dreamcarve()
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .expect("binary runs")
+    command(dir).args(args).output().expect("binary runs")
+}
+
+/// Writes `text` as the user config file of a test working in `dir` and
+/// returns its path.
+fn write_config(dir: &Path, text: &str) -> PathBuf {
+    let config = config_dir(dir);
+    std::fs::create_dir_all(&config).expect("config dir created");
+    let path = config.join("config.toml");
+    std::fs::write(&path, text).expect("config written");
+    path
 }
 
 fn stdout(out: &Output) -> String {
@@ -1381,13 +1408,41 @@ fn printed_range(summary: &str, label: char) -> (f64, f64) {
     )
 }
 
+/// Functional acceptance 37: with `arc_fit_tolerance_mm: null` the program
+/// is the phase 1 program, byte for byte:
+/// `tests/expected/coaster-grblhal-unfitted.nc` is `coaster-grblhal.nc` as
+/// it was before arc fitting.
+#[test]
+fn null_arc_fit_tolerance_exports_the_unfitted_program() {
+    let dir = work_dir("null_arc_fit_tolerance");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    assert_eq!(project.arc_fit_tolerance_mm, Some(0.01), "init's default");
+    project.arc_fit_tolerance_mm = None;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    assert_exports_match(&dir, &[], &[("coaster.nc", "coaster-grblhal-unfitted.nc")]);
+    // The fitted program is a fraction of the length.
+    let fitted = include_str!("expected/coaster-grblhal.nc");
+    let unfitted = include_str!("expected/coaster-grblhal-unfitted.nc");
+    assert!(fitted.lines().count() < unfitted.lines().count() / 4);
+}
+
 /// #62: `export` and `check` print the program's extents in machine
 /// coordinates, rounded as the program is. Z is exactly the range of the Z
-/// words (Z min is the deepest cut). X and Y are the range of the X and Y
-/// words, except that an arc may bulge past both its end words, so they may
-/// reach further, by under 0.005 mm on the coaster.
+/// words (Z min is the deepest cut). X and Y reach at least as far as the
+/// X and Y words, and further where an arc bulges past its end words: with
+/// arc fitting the coaster's lap is a few arcs, so the extents are the
+/// tool-centre circle, radius 45 + 3.175 mm about (55, 55), within the
+/// rounding of the written arcs.
 #[test]
 fn export_prints_extents() {
+    /// The tool-centre circle's reach, mm.
+    const CIRCLE_MIN_MM: f64 = 55.0 - 48.175;
+    /// See [`CIRCLE_MIN_MM`].
+    const CIRCLE_MAX_MM: f64 = 55.0 + 48.175;
+    /// How far the extents read from the written arcs may differ from it.
+    const SLACK_MM: f64 = 0.01;
     let expected = include_str!("expected/coaster-grblhal.nc");
     let dir = work_dir("export_prints_extents");
     let dcv = init_coaster(&dir);
@@ -1407,11 +1462,11 @@ fn export_prints_extents() {
             let (min, max) = printed_range(&summary, axis);
             let (word_min, word_max) = word_range(expected, axis);
             assert!(
-                min <= word_min && min >= word_min - 0.005,
+                min <= word_min && (min - CIRCLE_MIN_MM).abs() <= SLACK_MM,
                 "{command}: {axis} min {min} vs words {word_min}: {summary}"
             );
             assert!(
-                max >= word_max && max <= word_max + 0.005,
+                max >= word_max && (max - CIRCLE_MAX_MM).abs() <= SLACK_MM,
                 "{command}: {axis} max {max} vs words {word_max}: {summary}"
             );
         }
@@ -2160,6 +2215,355 @@ fn hole_role_is_decided_within_one_operation() {
         panic!("both are cut");
     };
     assert!(last_star < first_hole, "file order: the star first");
+}
+
+/// The `tool_change_mode` of the `.dcv` at `dcv`, as written in the file.
+fn written_tool_change_mode(dcv: &Path) -> String {
+    let block = post_processor_block(dcv);
+    block
+        .get("tool_change_mode")
+        .and_then(serde_json::Value::as_str)
+        .expect("tool_change_mode is a string")
+        .to_owned()
+}
+
+/// Acceptance 33: the user config's `tool_change_mode` is what `init` and
+/// `export --post` write into a new post-processor reference; nothing else
+/// reads it, so a plain `export` leaves the project's mode alone. A `"m6"`
+/// default on GRBL, which has no `M6`, is refused naming the config file
+/// and the post-processor, so a bad default never lands in a project.
+#[test]
+fn config_tool_change_mode_seeds_init() {
+    let dir = work_dir("config_tool_change_mode_seeds_init");
+    // No config file: the definition's default.
+    let dcv = init_coaster(&dir);
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+
+    let config = write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(&dir, &["init", "coaster.svg", "-o", "m6.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dir.join("m6.dcv")), "m6");
+
+    // `export --post` writes the configured mode with the new settings.
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "export --post: {}",
+        stderr(&out)
+    );
+    assert_eq!(written_tool_change_mode(&dcv), "m6");
+
+    // A plain `export` does not read the config: the project's mode stays.
+    set_tool_change_mode(&dcv, ToolChangeMode::SeparatePrograms);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+
+    // GRBL has no `M6`: the configured default cannot apply, and the error
+    // names the file to fix.
+    let out = run(
+        &dir,
+        &["init", "coaster.svg", "-o", "grbl.dcv", "--post", "grbl"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "init --post grbl: {}",
+        stdout(&out)
+    );
+    let message = stderr(&out);
+    assert!(
+        message.contains(&config.display().to_string()) && message.contains("grbl"),
+        "{message}"
+    );
+    assert!(!dir.join("grbl.dcv").exists(), "nothing written");
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--post", "grbl"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "export --post grbl: {}",
+        stdout(&out)
+    );
+    assert!(
+        stderr(&out).contains(&config.display().to_string()),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        before,
+        "the project is untouched"
+    );
+}
+
+/// Acceptance 33: `--one-program` on grblHAL writes one file with `T2 M6`
+/// between the tools, and on GRBL is an error naming the post-processor;
+/// `--programs-per-tool` on a project in `"m6"` mode writes one file per
+/// tool run. Neither flag changes the project file. Both together is a
+/// usage error.
+#[test]
+fn one_program_and_programs_per_tool_flags() {
+    let dir = work_dir("one_program_and_programs_per_tool_flags");
+    let dcv = two_tool_coaster(&dir);
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "--one-program: {}",
+        stderr(&out)
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(program.lines().any(|l| l.starts_with("T2 M6")), "{program}");
+    assert!(!dir.join("coaster-1-T1.nc").exists(), "one file only");
+    assert!(
+        stdout(&out).contains("sender must stop at M6"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        before,
+        "--one-program is not saved"
+    );
+    std::fs::remove_file(dir.join("coaster.nc")).expect("program removed");
+
+    // GRBL has no `M6`.
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::PostProcessorRef::latest("grbl").expect("grbl is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "--one-program on grbl: {}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("`grbl`"), "{}", stderr(&out));
+    assert!(!dir.join("coaster.nc").exists(), "nothing written");
+    assert!(!dir.join("coaster-1-T1.nc").exists(), "nothing written");
+
+    // `"m6"` in the project, one program per tool run asked for.
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("grblhal").expect("grblhal is bundled");
+    project.post_processor.tool_change_mode = ToolChangeMode::M6;
+    let text = save(&project).expect("project saves");
+    std::fs::write(&dcv, &text).expect("dcv written");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--programs-per-tool",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "--programs-per-tool: {}",
+        stderr(&out)
+    );
+    for name in ["coaster-1-T1.nc", "coaster-2-T2.nc"] {
+        let run_program = std::fs::read_to_string(dir.join(name)).expect("run program written");
+        assert!(!has_code_word(&run_program, "M6"), "{name} has M6");
+        assert!(!has_code_word(&run_program, "M61"), "{name} has M61");
+    }
+    assert!(!dir.join("coaster.nc").exists(), "no single program");
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        text,
+        "--programs-per-tool is not saved"
+    );
+
+    // The flags contradict each other.
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--one-program",
+            "--programs-per-tool",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2), "usage error: {}", stderr(&out));
+    let usage = stderr(&out);
+    assert!(
+        usage.contains("--one-program") && usage.contains("--programs-per-tool"),
+        "{usage}"
+    );
+}
+
+/// `config path` prints the config directory, the config file and the
+/// tool library file, each with whether it exists, so a user can find
+/// them (design, "Tool library CLI").
+#[test]
+fn config_path_prints_locations() {
+    let dir = work_dir("config_path_prints_locations");
+    let config = config_dir(&dir);
+    let expected = |state: &str| {
+        vec![
+            format!("Config directory: {} ({state})", config.display()),
+            format!(
+                "Config file:      {} ({state})",
+                config.join("config.toml").display()
+            ),
+            format!(
+                "Tool library:     {} ({state})",
+                config.join("tools.json").display()
+            ),
+        ]
+    };
+    let out = run(&dir, &["config", "path"]);
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
+    assert_eq!(lines, expected("not found"));
+
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    std::fs::write(config.join("tools.json"), "{}").expect("library written");
+    let out = run(&dir, &["config", "path"]);
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
+    assert_eq!(lines, expected("exists"));
+}
+
+/// The first line of `config path`, the config directory, run with the
+/// environment edits `edit` makes.
+fn config_dir_line(dir: &Path, edit: impl FnOnce(&mut Command)) -> Output {
+    let mut cmd = command(dir);
+    cmd.env_remove(CONFIG_DIR_VAR).env_remove("XDG_CONFIG_HOME");
+    edit(&mut cmd);
+    cmd.args(["config", "path"]).output().expect("binary runs")
+}
+
+/// `DREAMCARVE_CONFIG_DIR` replaces the platform directory, which comes
+/// from the environment: macOS `$HOME/Library/Application Support`,
+/// Windows `%APPDATA%`, elsewhere `$XDG_CONFIG_HOME` or `$HOME/.config`,
+/// each with `dreamcarve` under it (design, "User config (CLI only)"). A
+/// missing base variable is an error naming it.
+#[test]
+fn config_dir_env_override() {
+    let dir = work_dir("config_dir_env_override");
+    let custom = dir.join("elsewhere");
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env(CONFIG_DIR_VAR, &custom);
+    });
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    assert_eq!(
+        stdout(&out).lines().next().unwrap_or_default(),
+        format!("Config directory: {} (not found)", custom.display())
+    );
+
+    // Without the override: the platform directory under the base set for
+    // this run.
+    let base = dir.join("base");
+    let (var, platform) = if cfg!(target_os = "windows") {
+        ("APPDATA", base.join("dreamcarve"))
+    } else if cfg!(target_os = "macos") {
+        (
+            "HOME",
+            base.join("Library")
+                .join("Application Support")
+                .join("dreamcarve"),
+        )
+    } else {
+        ("HOME", base.join(".config").join("dreamcarve"))
+    };
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env(var, &base);
+    });
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    assert_eq!(
+        stdout(&out).lines().next().unwrap_or_default(),
+        format!("Config directory: {} (not found)", platform.display())
+    );
+
+    // Where XDG applies, `XDG_CONFIG_HOME` beats `$HOME/.config`.
+    if !cfg!(any(target_os = "windows", target_os = "macos")) {
+        let xdg = dir.join("xdg");
+        let out = config_dir_line(&dir, |cmd| {
+            cmd.env(var, &base).env("XDG_CONFIG_HOME", &xdg);
+        });
+        assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+        assert_eq!(
+            stdout(&out).lines().next().unwrap_or_default(),
+            format!(
+                "Config directory: {} (not found)",
+                xdg.join("dreamcarve").display()
+            )
+        );
+    }
+
+    // No base variable and no override: an error naming the variable.
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env_remove(var);
+    });
+    assert_eq!(out.status.code(), Some(1), "config path: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains(var) && stderr(&out).contains(CONFIG_DIR_VAR),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// A config file that does not parse fails the commands that read it,
+/// naming the file and the line, and nothing is written.
+#[test]
+fn malformed_config_fails_init_naming_file_and_line() {
+    let dir = work_dir("malformed_config_fails_init_naming_file_and_line");
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    let config = write_config(&dir, "[export]\ntool_change_mode = m6\n");
+    let out = run(&dir, &["init", "coaster.svg"]);
+    assert_eq!(out.status.code(), Some(1), "init: {}", stdout(&out));
+    let message = stderr(&out);
+    assert!(
+        message.contains(&format!("{}:2:", config.display())),
+        "names the file and line 2: {message}"
+    );
+    assert!(!dir.join("coaster.dcv").exists(), "nothing written");
+
+    // An unknown key is a typo the user needs to see, not a silent default.
+    write_config(&dir, "[export]\ntool_change_mod = \"m6\"\n");
+    let out = run(&dir, &["init", "coaster.svg"]);
+    assert_eq!(out.status.code(), Some(1), "init: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains("tool_change_mod"),
+        "names the key: {}",
+        stderr(&out)
+    );
+    assert!(!dir.join("coaster.dcv").exists(), "nothing written");
 }
 
 // ── DXF import (phase 2, slice 19; functional spec capability 20, ─────────

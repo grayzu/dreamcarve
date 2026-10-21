@@ -7,7 +7,9 @@
 //! program, `<stem>.<ext>`. With more than one tool, the post-processor's
 //! `tool_change.mode` decides (#95): `"separate_programs"` writes one
 //! program per tool run, `<stem>-<k>-T<n>.<ext>`, and `"m6"` one program
-//! with `M6` tool changes. Nothing is written unless every step succeeds:
+//! with `M6` tool changes; `--programs-per-tool` and `--one-program`
+//! override it for one export without saving it (functional spec,
+//! capability 19). Nothing is written unless every step succeeds:
 //! every program (and, with `--post`, the updated project) is staged in a
 //! temporary file, and all are renamed into place at the end.
 //!
@@ -30,12 +32,13 @@ use std::process::ExitCode;
 use dc_cam::{Toolpath, generate_profile, order};
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, ExportWarning, Program, emit_programs};
+use dc_gcode::{AxisRange, ExportWarning, Program, ProgramSplit, emit_programs};
 use dc_project::{
     Operation, PostProcessorRef, Project, Severity, SourceMap, ToolChangeMode, Units, validate,
 };
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
+use crate::config;
 
 /// One error or warning.
 #[derive(Debug)]
@@ -122,8 +125,10 @@ pub struct Built {
 
 /// Validates `project`, generates every enabled operation's toolpath, and
 /// emits the programs, collecting every error and warning on the way.
-/// `date` fills each program header's `{date}`.
-pub fn build(project: &Project, date: &str) -> Built {
+/// `split` is how a multi-tool project is divided into programs (the
+/// project's mode, or an `export` flag); `date` fills each program
+/// header's `{date}`.
+pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
     let mut findings = Findings::default();
     for problem in validate(project) {
         let severity = problem.severity();
@@ -206,7 +211,7 @@ pub fn build(project: &Project, date: &str) -> Built {
         };
     }
 
-    match emit_programs(project, &ops, date) {
+    match emit_programs(project, &ops, split, date) {
         Ok((programs, warnings)) => {
             findings.warnings.extend(
                 warnings
@@ -232,6 +237,9 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
         }
         ExportWarning::ArcsFlattened { op, count } => format!(
             "operation `{op}`: {count} arc(s) written as short straight moves because the controller would reject them once rounded"
+        ),
+        ExportWarning::ArcFitFallback { op, runs } => format!(
+            "operation `{op}`: {runs} run(s) of straight moves kept as written because the controller would reject the arc fitted to them once rounded"
         ),
     }
 }
@@ -263,13 +271,16 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     // newer version of its own (#106): an explicit action, reported below.
     let mut switched_from = None;
     if let Some(id) = &args.post {
-        let latest = lookup_post(id)?;
+        let mut latest = lookup_post(id)?;
+        // The new settings are the definition's defaults with the user's
+        // configured ones on top, as `init` writes them.
+        config::seed_post(&mut latest)?;
         switched_from = Some(std::mem::replace(&mut project.post_processor, latest));
         file.post_replaced = true;
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
 
-    let Built { programs, findings } = build(&project, &date);
+    let Built { programs, findings } = build(&project, args.split(), &date);
     for warning in &findings.warnings {
         eprintln!("{}", file.describe("warning", warning));
     }
@@ -388,9 +399,17 @@ fn report(
         name_suffix(&program.first_tool.name)
     );
     report_pauses(program, "");
-    // #95: the user chose one program with M6; it stops only if the
-    // sender lets M6 through or stops for it itself.
-    if project.post_processor.tool_change_mode == ToolChangeMode::M6 && changes_tools(project) {
+    // #95: the user chose one program with M6, in the project or with
+    // `--one-program`; it stops only if the sender lets M6 through or
+    // stops for it itself.
+    let one_program = match args.split() {
+        ProgramSplit::OneProgram => true,
+        ProgramSplit::ProgramPerTool => false,
+        ProgramSplit::ProjectDefault => {
+            project.post_processor.tool_change_mode == ToolChangeMode::M6
+        }
+    };
+    if one_program && changes_tools(project) {
         println!(
             "This program changes tools with M6, so your sender must stop at M6; see \"One program with M6\" in the post-processors chapter."
         );

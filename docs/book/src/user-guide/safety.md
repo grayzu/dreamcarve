@@ -62,7 +62,11 @@ written. There are no safety warnings, only errors.
    same centre, and there are no moves in between except a rapid split
    into its up-or-down and sideways parts, an arc written as short
    straight moves along it, and a lift to safe Z before or after the
-   operation.
+   operation. An arc written in place of a run of straight moves
+   ([Arc fitting](project-file.md#arc-fitting)) is accepted only if it
+   starts and ends on the toolpath's corners, every corner between lies
+   on it within `arc_fit_tolerance_mm`, it sweeps at most 90°, and it
+   turns the way the corners do.
 9. **The cut stays on the stock.** Every cutting move, widened by the
    bit's radius, stays inside the stock's `width_mm` by `height_mm`
    rectangle; arcs count all the way round, not just at their ends. A shape

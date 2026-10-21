@@ -33,8 +33,9 @@
 //!   zero with it before starting the program (#57). By default a program
 //!   has one tool: [`emit_programs`] writes one program per tool run, which
 //!   every sender and controller stops between (#95). Only with the
-//!   post-processor's `tool_change.mode` `"m6"` and a definition whose tool
-//!   change has `M6` (grblHAL) does one program change tools; otherwise
+//!   post-processor's `tool_change.mode` `"m6"` (or `export --one-program`,
+//!   [`ProgramSplit::OneProgram`]) and a definition whose tool change has
+//!   `M6` (grblHAL) does one program change tools; otherwise
 //!   [`emit`] refuses a second tool. The change retracts to safe Z and
 //!   stops the spindle, then
 //!   writes DreamCarve's own `T<n> M6 (MSG, Fit T<n> <name>. Set Z zero,
@@ -57,7 +58,7 @@
 
 use std::f64::consts::{FRAC_PI_2, TAU};
 
-use dc_cam::{FeedField, MoveKind, Toolpath};
+use dc_cam::{FeedField, Move, MoveKind, Toolpath};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
 use dc_project::{
     ArcFormat, OperationId, PostProcessor, ProfileOp, Project, SpindleControl, Tool,
@@ -65,9 +66,10 @@ use dc_project::{
 };
 
 use crate::ExportError;
+use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
 use crate::parse::parse_program;
-use crate::safety::{self, Extents, OpSpan};
+use crate::safety::{self, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
 
 /// An emitted G-code program.
@@ -128,6 +130,16 @@ pub enum ExportWarning {
         /// How many arcs.
         count: usize,
     },
+    /// Some runs of straight moves that fit an arc were written as the
+    /// original moves because, once its numbers were rounded, the
+    /// controller would have rejected one of the run's arcs
+    /// (`arc_fit_fallback`).
+    ArcFitFallback {
+        /// The operation.
+        op: OperationId,
+        /// How many runs.
+        runs: usize,
+    },
 }
 
 impl ExportWarning {
@@ -138,6 +150,7 @@ impl ExportWarning {
         match self {
             Self::DisabledOperationSkipped { .. } => "disabled_operation_skipped",
             Self::ArcsFlattened { .. } => "arcs_flattened",
+            Self::ArcFitFallback { .. } => "arc_fit_fallback",
         }
     }
 }
@@ -151,34 +164,74 @@ pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 /// One operation to emit: the operation, its tool, and its toolpath.
 type OpEntry = (ProfileOp, Tool, Toolpath);
 
+/// How [`emit_programs`] splits a project whose enabled operations use
+/// more than one tool: as the project's post-processor `tool_change_mode`
+/// says, or as an `export` flag overrides it for this one export
+/// (`docs/specs/phase-2/functional.md`, capability 19). The project is
+/// never changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProgramSplit {
+    /// As the project's `tool_change_mode` says (#95).
+    #[default]
+    ProjectDefault,
+    /// One program with `T<n> M6` tool changes (`--one-program`), whatever
+    /// the project's mode. Needs a definition whose tool change has `M6`;
+    /// otherwise [`ExportError::OneProgramNeedsM6`].
+    OneProgram,
+    /// One program per tool run (`--programs-per-tool`), whatever the
+    /// project's mode.
+    ProgramPerTool,
+}
+
 /// Emits the programs `export` writes for the enabled operations in `ops`,
-/// as [`emit`] does, split as the post-processor's `tool_change_mode` says
-/// (#95):
+/// as [`emit`] does, split as `split` says: by default as the
+/// post-processor's `tool_change_mode` (#95):
 ///
-/// - `"separate_programs"`: one program per tool run, a run being
+/// - `"separate_programs"` (or [`ProgramSplit::ProgramPerTool`]): one
+///   program per tool run, a run being
 ///   consecutive operations with the same tool, in operation order.
 ///   Operations are never regrouped by tool, which would change the cut
 ///   order. Each program is exactly what [`emit`] writes for its run alone:
 ///   a one-tool program with no `M6` and no `M61`, checked by the safety
 ///   pass on its own, with its own extents. A one-tool project is one
 ///   program, the same as [`emit`]'s.
-/// - `"m6"`: the one program [`emit`] writes, with `T<n> M6` at each tool
-///   change.
+/// - `"m6"` (or [`ProgramSplit::OneProgram`]): the one program [`emit`]
+///   writes, with `T<n> M6` at each tool change.
 ///
 /// Warnings are those of every program, disabled operations once.
 ///
 /// # Errors
 ///
-/// As for [`emit`]; the first program that fails fails the whole call, so
-/// a caller never has some of the programs.
+/// [`ExportError::OneProgramNeedsM6`] for [`ProgramSplit::OneProgram`] on
+/// a definition whose tool change has no `M6`, before anything is emitted.
+/// Otherwise as for [`emit`]; the first program that fails fails the whole
+/// call, so a caller never has some of the programs.
 pub fn emit_programs(
     project: &Project,
     ops: &[OpEntry],
+    split: ProgramSplit,
     date: &str,
 ) -> Result<(Vec<Program>, Vec<ExportWarning>), ExportError> {
-    let post = project.post_processor.resolve()?;
+    let mut post = project.post_processor.resolve()?;
+    let mode = match split {
+        ProgramSplit::ProjectDefault => post.tool_change.mode,
+        ProgramSplit::OneProgram => {
+            // GRBL 1.1 has no `M6`, so no program of its own can stop for a
+            // new bit (#57); the flag asks for exactly that.
+            if !post.tool_change.has_m6() {
+                return Err(ExportError::OneProgramNeedsM6 {
+                    post: post.id.clone(),
+                });
+            }
+            ToolChangeMode::M6
+        }
+        ProgramSplit::ProgramPerTool => ToolChangeMode::SeparatePrograms,
+    };
+    // The effective post-processor for this export only; `project` is
+    // borrowed and stays as it is, so the flag is never saved.
+    post.tool_change.mode = mode;
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let runs: Vec<&[&OpEntry]> = match post.tool_change.mode {
+    let runs: Vec<&[&OpEntry]> = match mode {
         ToolChangeMode::M6 => vec![enabled.as_slice()],
         ToolChangeMode::SeparatePrograms => enabled.chunk_by(|a, b| a.1.id == b.1.id).collect(),
     };
@@ -498,11 +551,17 @@ fn emit_enabled(
             }
         }
 
-        let flattened = w.toolpath(op, toolpath)?;
-        if flattened > 0 {
+        let written = w.toolpath(op, toolpath)?;
+        if written.flattened > 0 {
             warnings.push(ExportWarning::ArcsFlattened {
                 op: op.id.clone(),
-                count: flattened,
+                count: written.flattened,
+            });
+        }
+        if written.fallback_runs > 0 {
+            warnings.push(ExportWarning::ArcFitFallback {
+                op: op.id.clone(),
+                runs: written.fallback_runs,
             });
         }
 
@@ -535,7 +594,10 @@ fn emit_enabled(
         }
     }
     w.line(&post.stop.program_end_command);
-    let flatten_tolerance_mm = w.flatten_tolerance_mm;
+    let tolerances = Tolerances {
+        flatten_mm: w.flatten_tolerance_mm,
+        arc_fit_mm: w.arc_fit_tolerance_mm,
+    };
     let text = w.finish();
 
     // Step 7: the safety pass, on the text.
@@ -555,7 +617,7 @@ fn emit_enabled(
         &transform,
         &project.stock,
         thickness_mm,
-        flatten_tolerance_mm,
+        tolerances,
         &spans,
     )?;
     let pauses = pauses(&text)?;
@@ -936,11 +998,22 @@ fn segment_count(count: f64) -> usize {
     count.ceil().clamp(1.0, MAX_ARC_SEGMENTS) as usize
 }
 
+/// What writing a toolpath had to change for the controller's sake.
+#[derive(Debug, Clone, Copy, Default)]
+struct Written {
+    /// Arcs written as straight moves.
+    flattened: usize,
+    /// Fitted runs written as their original moves.
+    fallback_runs: usize,
+}
+
 /// Writes lines and tracks the controller's modal state and position.
 struct Writer<'a> {
     post: &'a PostProcessor,
     transform: MachineTransform,
     flatten_tolerance_mm: f64,
+    /// The project's arc-fit tolerance; `None` turns fitting off.
+    arc_fit_tolerance_mm: Option<f64>,
     lines: Vec<String>,
     line_number: u32,
     /// The last motion word written.
@@ -969,6 +1042,9 @@ impl<'a> Writer<'a> {
             } else {
                 FLATTEN_TOLERANCE_DEFAULT_MM
             },
+            arc_fit_tolerance_mm: project
+                .arc_fit_tolerance_mm
+                .filter(|t| t.is_finite() && *t > 0.0),
             lines: Vec::new(),
             line_number: post.program.line_number_increment,
             motion: None,
@@ -1085,36 +1161,158 @@ impl<'a> Writer<'a> {
         )
     }
 
-    /// Writes `toolpath`; returns how many arcs had to be flattened.
-    fn toolpath(&mut self, op: &ProfileOp, toolpath: &Toolpath) -> Result<usize, ExportError> {
-        let mut flattened = 0;
+    /// Writes `toolpath`, with runs of straight moves fitted to arcs when
+    /// the project has an arc-fit tolerance and the post-processor writes
+    /// arcs (`docs/specs/phase-2/design.md`, "Arc fitting"). Fitting runs
+    /// in project space; each fitted run is then judged on its rounded
+    /// machine numbers and reverts to its moves if the controller would
+    /// reject any of its arcs.
+    fn toolpath(&mut self, op: &ProfileOp, toolpath: &Toolpath) -> Result<Written, ExportError> {
+        // Every cut carries a feed, checked before fitting so the error
+        // names the move whatever the fitting does.
         for (index, mv) in toolpath.moves.iter().enumerate() {
-            if mv.is_rapid() {
-                self.rapid(mv.to)?;
-                continue;
-            }
-            let feed = mv
-                .feed_mm_min
-                .filter(|f| f.is_finite() && *f > 0.0)
-                .ok_or_else(|| ExportError::MoveWithoutFeed {
+            if !mv.is_rapid() && !mv.feed_mm_min.is_some_and(|f| f.is_finite() && f > 0.0) {
+                return Err(ExportError::MoveWithoutFeed {
                     op: op.id.clone(),
                     index,
-                })?;
-            let (centre, clockwise) = match mv.kind {
-                MoveKind::Rapid | MoveKind::Linear => {
-                    self.linear(mv.to, feed)?;
-                    continue;
+                });
+            }
+        }
+        let fitting = self
+            .arc_fit_tolerance_mm
+            .filter(|_| self.post.motion.arc_interpolation);
+        let (fitted, fallback_runs) = match fitting {
+            Some(tolerance_mm) => {
+                let fitted = arcfit::fit(&toolpath.moves, tolerance_mm);
+                let format = self.post.number_format;
+                let units = self.transform.output_units();
+                let read = move |v: f64| read_back(&format_number(v, &format, units).ok()?);
+                let opts = EmitOptions {
+                    format: &read,
+                    arc_format: self.post.motion.arc_format,
+                    mm_per_unit: self.transform.mm_per_unit(),
+                    quantum: self.quantum(),
+                };
+                let transform = self.transform;
+                let to_machine =
+                    move |p: Point| transform.to_machine(Point3::new(p.x, p.y, 0.0)).xy();
+                let start = self.emitted_xy().map(|(x, y)| Point::new(x, y));
+                arcfit::apply_fallback(fitted, &opts, start, &to_machine)
+            }
+            None => (
+                toolpath.moves.iter().copied().map(Fitted::Move).collect(),
+                0,
+            ),
+        };
+
+        let mut written = Written {
+            flattened: 0,
+            fallback_runs,
+        };
+        let mut index = 0;
+        for item in fitted {
+            match item {
+                Fitted::Move(mv) => {
+                    written.flattened += self.write_move(op, index, &mv)?;
+                    index += 1;
                 }
-                MoveKind::ArcCw { centre } => (centre, true),
-                MoveKind::ArcCcw { centre } => (centre, false),
-            };
-            let start = self.position.ok_or_else(|| ExportError::ArcWithoutStart {
+                Fitted::Arc(run) => {
+                    for arc in &run.arcs {
+                        self.fitted_arc(op, index, arc, run.feed_mm_min)?;
+                    }
+                    if let Some(last) = run.arcs.last() {
+                        self.position = Some(last.end);
+                    }
+                    index += run.fallback.len();
+                }
+            }
+        }
+        Ok(written)
+    }
+
+    /// Writes toolpath move `index` as it is; returns how many arcs had to
+    /// be flattened (0 or 1).
+    fn write_move(
+        &mut self,
+        op: &ProfileOp,
+        index: usize,
+        mv: &Move,
+    ) -> Result<usize, ExportError> {
+        if mv.is_rapid() {
+            self.rapid(mv.to)?;
+            return Ok(0);
+        }
+        let feed = mv
+            .feed_mm_min
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .ok_or_else(|| ExportError::MoveWithoutFeed {
                 op: op.id.clone(),
                 index,
             })?;
-            flattened += self.arc(start, mv.to, centre, clockwise, feed)?;
-        }
-        Ok(flattened)
+        let (centre, clockwise) = match mv.kind {
+            MoveKind::Rapid | MoveKind::Linear => {
+                self.linear(mv.to, feed)?;
+                return Ok(0);
+            }
+            MoveKind::ArcCw { centre } => (centre, true),
+            MoveKind::ArcCcw { centre } => (centre, false),
+        };
+        let start = self.position.ok_or_else(|| ExportError::ArcWithoutStart {
+            op: op.id.clone(),
+            index,
+        })?;
+        self.arc(start, mv.to, centre, clockwise, feed)
+    }
+
+    /// Writes fitted sub-arc `arc` with the words [`arcfit::resolve_emitted_arc`]
+    /// chose for it from the position the controller holds: I and J
+    /// snapped to agree, or R repaired for rounding. `apply_fallback` has
+    /// already accepted the whole run from that same position.
+    fn fitted_arc(
+        &mut self,
+        op: &ProfileOp,
+        index: usize,
+        arc: &SubArc,
+        feed_mm_min: f64,
+    ) -> Result<(), ExportError> {
+        let (sx, sy) = self
+            .emitted_xy()
+            .ok_or_else(|| ExportError::ArcWithoutStart {
+                op: op.id.clone(),
+                index,
+            })?;
+        let end = self.transform.to_machine(arc.end);
+        let centre = self
+            .transform
+            .to_machine(Point3::new(arc.centre.x, arc.centre.y, arc.end.z))
+            .xy();
+        let resolved = {
+            let format = self.post.number_format;
+            let units = self.transform.output_units();
+            let read = move |v: f64| read_back(&format_number(v, &format, units).ok()?);
+            let opts = EmitOptions {
+                format: &read,
+                arc_format: self.post.motion.arc_format,
+                mm_per_unit: self.transform.mm_per_unit(),
+                quantum: self.quantum(),
+            };
+            arcfit::resolve_emitted_arc(end.xy(), centre, Point::new(sx, sy), &opts)
+        };
+        let extra = match self.post.motion.arc_format {
+            ArcFormat::Ij => vec![
+                format!("I{}", self.number(resolved.i)?),
+                format!("J{}", self.number(resolved.j)?),
+            ],
+            ArcFormat::R => vec![format!("R{}", self.number(resolved.radius)?)],
+        };
+        let command = self.arc_command_for(arc.clockwise);
+        self.motion_line(
+            &command,
+            [Some(end.x), Some(end.y), Some(end.z)],
+            &extra,
+            Some(feed_mm_min),
+            true,
+        )
     }
 
     /// A rapid to `to`. Raises Z before moving in XY, and moves in XY
@@ -1197,8 +1395,13 @@ impl<'a> Writer<'a> {
     /// The arc command for `arc` in machine space: a mirroring axis map
     /// turns clockwise into counter-clockwise.
     fn arc_command(&self, arc: &ArcGeometry) -> String {
+        self.arc_command_for(arc.clockwise)
+    }
+
+    /// The arc command for an arc that is `clockwise` in project space.
+    fn arc_command_for(&self, clockwise: bool) -> String {
         let motion = &self.post.motion;
-        let clockwise = arc.clockwise != self.transform.mirrors_xy();
+        let clockwise = clockwise != self.transform.mirrors_xy();
         #[cfg(test)]
         let clockwise = clockwise != FLIP_ARCS.get();
         if clockwise {
@@ -2714,7 +2917,8 @@ mod tests {
             let mut project = project_with(post);
             let ops = two_tool_ops(&mut project);
             project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
-            let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+            let (programs, _) =
+                emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
             assert_eq!(programs.len(), 2, "{post}: one program per tool run");
             for (k, program) in programs.iter().enumerate() {
                 let text = &program.text;
@@ -2731,7 +2935,8 @@ mod tests {
                 let (alone, _) = emit(&project, &ops[k..=k], DATE).unwrap();
                 assert_eq!(program, &alone, "{post} program {k} is its run alone");
             }
-            let (again, _) = emit_programs(&project, &ops, DATE).unwrap();
+            let (again, _) =
+                emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
             assert_eq!(again, programs, "{post}: deterministic");
         }
     }
@@ -2742,7 +2947,8 @@ mod tests {
     fn m6_mode_emits_one_program_with_m6() {
         let mut project = project_with("grblhal");
         let ops = two_tool_ops(&mut project);
-        let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
         let (single, _) = emit(&project, &ops, DATE).unwrap();
         assert_eq!(programs, [single]);
     }
@@ -2760,5 +2966,91 @@ mod tests {
             matches!(err, ExportError::ToolChangeNotSupported { .. }),
             "{err:?}"
         );
+    }
+
+    /// Acceptance 33: `--one-program` ([`ProgramSplit::OneProgram`]) on
+    /// grblHAL writes the one program `"m6"` mode writes, `T2 M6` included,
+    /// while the project's own mode stays `"separate_programs"`.
+    #[test]
+    fn one_program_flag_writes_m6_on_grblhal() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        let (programs, _) = emit_programs(&project, &ops, ProgramSplit::OneProgram, DATE).unwrap();
+        let [program] = programs.as_slice() else {
+            panic!("one program, not {}", programs.len());
+        };
+        assert!(
+            program.text.lines().any(|l| l.starts_with("T2 M6")),
+            "{}",
+            program.text
+        );
+        let mut m6 = project.clone();
+        m6.post_processor.tool_change_mode = ToolChangeMode::M6;
+        let (expected, _) = emit(&m6, &ops, DATE).unwrap();
+        assert_eq!(*program, expected, "the program `\"m6\"` mode writes");
+    }
+
+    /// Acceptance 33: GRBL has no `M6`, so one program with tool changes is
+    /// refused naming the post-processor, whatever the project's mode says.
+    #[test]
+    fn one_program_flag_on_grbl_is_error() {
+        for mode in [ToolChangeMode::SeparatePrograms, ToolChangeMode::M6] {
+            let mut project = project_with("grbl");
+            let ops = two_tool_ops(&mut project);
+            project.post_processor.tool_change_mode = mode;
+            let err = emit_programs(&project, &ops, ProgramSplit::OneProgram, DATE).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OneProgramNeedsM6 { post } if post == "grbl"),
+                "{mode:?}: {err:?}"
+            );
+            assert!(err.to_string().contains("`grbl`"), "{err}");
+        }
+    }
+
+    /// Acceptance 33: `--programs-per-tool` ([`ProgramSplit::ProgramPerTool`])
+    /// on a project in `"m6"` mode writes one program per tool run, exactly
+    /// what `"separate_programs"` writes, and leaves the project as it was.
+    #[test]
+    fn programs_per_tool_flag_overrides_m6_mode_without_saving() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        assert_eq!(project.post_processor.tool_change_mode, ToolChangeMode::M6);
+        let before = project.clone();
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE).unwrap();
+        assert_eq!(programs.len(), 2, "one program per tool run");
+        for (k, program) in programs.iter().enumerate() {
+            for word in ["M6", "M61"] {
+                assert!(
+                    !program.text.lines().any(|l| has_word(l, word)),
+                    "program {k} has {word}: {}",
+                    program.text
+                );
+            }
+        }
+        let mut separate = project.clone();
+        separate.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        let (expected, _) =
+            emit_programs(&separate, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        assert_eq!(programs, expected, "what `\"separate_programs\"` writes");
+        assert_eq!(project, before, "the project is not changed");
+    }
+
+    /// Without a flag ([`ProgramSplit::ProjectDefault`]) the project's mode
+    /// decides, as before (#95): `"m6"` is the one program [`emit`] writes,
+    /// `"separate_programs"` one per tool run.
+    #[test]
+    fn project_default_split_follows_the_project_mode() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        let (single, _) = emit(&project, &ops, DATE).unwrap();
+        assert_eq!(programs, [single], "m6: one program");
+        project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        assert_eq!(programs.len(), 2, "separate_programs: one per tool run");
     }
 }
