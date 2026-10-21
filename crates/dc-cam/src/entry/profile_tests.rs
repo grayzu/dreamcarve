@@ -743,15 +743,17 @@ fn descents(tp: &Toolpath) -> Vec<Descent> {
     out
 }
 
-/// Acceptance test 26 (#250): "the first move into each pass is a zigzag".
-/// On the outside fixture every pass of both parts is entered by a descent
-/// of at least two legs, each turning back on the one before (XY dot
-/// product < 0), each at 15° within 0.1°; the descent, with its level
-/// handoff if it has one, ends at the lap's start point at the pass Z (an
-/// outside lap is closed, so its start is where it ends).
+/// Acceptance test 26 (#250, changed in #257): "the first move into each
+/// pass is a ramp". On the outside fixture every pass of both parts is
+/// entered by a descent of one or more legs, each at 15° within 0.1°; a
+/// second leg, when there is one, turns back on the one before (XY dot
+/// product < 0), as a zigzag does. A ramp turns back only when one run
+/// (at most 3·D) cannot reach the pass depth, so here each pass is one
+/// leg. The descent, with its level handoff if it has one, ends at the
+/// lap's start point at the pass Z (an outside lap is closed, so its
+/// start is where it ends).
 #[test]
-#[ignore = "#257"]
-fn acceptance_26_outside_ramp_zigzags_at_every_pass() {
+fn acceptance_26_outside_ramp_enters_every_pass() {
     let (p, o) = acceptance_26_outside();
     let (tp, warnings) = generate(&p, &o);
     assert!(fallbacks(&warnings).is_empty(), "{warnings:?}");
@@ -771,9 +773,8 @@ fn acceptance_26_outside_ramp_zigzags_at_every_pass() {
         assert_approx_eq!(*got, *z, EPS_MM);
         let d = &all[k];
         assert!(
-            d.legs.len() >= 2,
-            "descent {k} into Z {z} has {} leg(s): {:?}",
-            d.legs.len(),
+            !d.legs.is_empty(),
+            "descent {k} into Z {z} has no ramp leg: {:?}",
             d.legs
         );
         for (j, (from, mv)) in d.legs.iter().enumerate() {
