@@ -856,7 +856,13 @@ the scale state: `$G` ends with `G50`, or `G51:` and the scaled axes
 scaled axes (`report.c` 1565-1568). A soft reset clears every factor,
 because `gc_init` calls `set_scaling` on the machine's state directly
 (822). So the post-processors chapter tells the user to soft-reset after
-any `G51` in MDI, and to check `$G`.
+any `G51` in MDI, and to check `$G`. `export` says so too, once per
+export, for a grblHAL definition whose header writes `G50` (#320;
+`dc_gcode::scaling_note`, `post::scaling_note_only_for_grblhal_with_g50`,
+`cli::export_grblhal_v4_prints_scaling_note`,
+`cli::export_without_g50_prints_no_scaling_note`). The note is printed,
+not written, so no program changes. Once a grblHAL commit with the loop
+fixed is checked, the note can name the first version that has the fix.
 
 Version 4 still writes `G50`. It clears every scale that touches X. It
 can do no harm: with no scale active it changes nothing, and it moves
