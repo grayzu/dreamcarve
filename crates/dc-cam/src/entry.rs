@@ -870,8 +870,16 @@ fn reachable_helix(
 
 /// Upstream `findSafeHelixEndpoint`: the point of the circle nearest the
 /// target's direction, then alternately either side of it, whose segment
-/// to the target stays inside the region.
+/// to the target stays inside the region. Only the piece that reaches the
+/// target may leave the flattened rings, and by no more than the target
+/// itself does, at most the target slack (#213): a target on a round
+/// boundary lies on the arc, outside its chords. (Changed in #272: the
+/// slack held along the whole handoff let one to a target on an island's
+/// chord run 0.005 mm inside the chords, 0.015 mm inside the island's
+/// tool-centre circle, past the flatten tolerance S9 allows.)
 fn safe_endpoint(area: &Area, centre: Point, radius: f64, target: Point) -> Option<Point> {
+    let outside_mm = (-area.signed_distance(target)).clamp(0.0, area.tolerance_mm);
+    let end_slack_mm = outside_mm + ON_BOUNDARY_MM;
     let to_target = target - centre;
     let preferred = to_target.y.atan2(to_target.x);
     let step = TAU / HELIX_ENDPOINT_ANGLE_SAMPLES as f64;
@@ -881,7 +889,7 @@ fn safe_endpoint(area: &Area, centre: Point, radius: f64, target: Point) -> Opti
         let offset = if i % 2 == 0 { -offset } else { offset };
         let angle = preferred + offset * step;
         let endpoint = centre + Vec2::new(angle.cos(), angle.sin()) * radius;
-        area.segment_inside(endpoint, target, area.target_slack_mm())
+        area.segment_inside_ending(endpoint, target, ON_BOUNDARY_MM, end_slack_mm)
             .then_some(endpoint)
     })
 }
@@ -1209,6 +1217,18 @@ impl Area {
     /// any boundary edge, has every piece's midpoint in the region (or at
     /// most `slack_mm` outside it).
     fn segment_inside(&self, from: Point, to: Point, slack_mm: f64) -> bool {
+        self.segment_inside_ending(from, to, slack_mm, slack_mm)
+    }
+
+    /// [`Area::segment_inside`], the last piece (the one ending at `to`)
+    /// held to `end_slack_mm` and every other piece to `slack_mm`.
+    fn segment_inside_ending(
+        &self,
+        from: Point,
+        to: Point,
+        slack_mm: f64,
+        end_slack_mm: f64,
+    ) -> bool {
         let mut ts = vec![0.0, 1.0];
         ts.extend(
             self.edges()
@@ -1216,8 +1236,12 @@ impl Area {
         );
         ts.sort_by(f64::total_cmp);
         ts.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
-        ts.windows(2).all(|w| match w {
-            [a, b] => self.contains_within(from + (to - from) * ((a + b) / 2.0), slack_mm),
+        let last = ts.len().saturating_sub(2);
+        ts.windows(2).enumerate().all(|(i, w)| match w {
+            [a, b] => self.contains_within(
+                from + (to - from) * ((a + b) / 2.0),
+                if i == last { end_slack_mm } else { slack_mm },
+            ),
             _ => true,
         })
     }
@@ -1463,7 +1487,8 @@ mod tests {
     use super::*;
     use crate::toolpath::MoveKind;
     use dc_geometry::{
-        Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point3, Polyline, assert_approx_eq, nest,
+        Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point3, Polyline, Vertex, assert_approx_eq,
+        nest,
     };
     use std::f64::consts::PI;
 
@@ -2075,6 +2100,61 @@ mod tests {
             assert!(
                 away <= D_MM * 2.0 + 1e-6,
                 "helix strayed {away} mm from the cut start: {p:?}"
+            );
+        }
+    }
+
+    /// #272 (the Pocket property, `PROPTEST_RNG_SEED=108`): the
+    /// tool-centre region of a ring pocket (outer 13.7528 mm, island
+    /// 6.8532 mm, by a 3.2349 mm tool, rotated −5.49°), entered by a 0.976
+    /// helix at 9.316° at a raster start on the island's flattened circle.
+    /// The reachable placement's handoff to it was checked with the target
+    /// slack (#213) along its whole length, so it ran 0.0051 mm inside the
+    /// island's chords, 0.0151 mm inside its circle: past the flatten
+    /// tolerance S9 allows, into the island. The slack is for the piece
+    /// that ends on the target; the rest of the handoff stays in the
+    /// flattened region, so it keeps the island's radius less the
+    /// tolerance.
+    #[test]
+    fn helix_handoff_keeps_out_of_the_island() {
+        let d_mm = 3.234_923_320_453_882;
+        let (c, along) = (
+            Point::new(40.0, 120.0),
+            Vec2::new(0.995_419_341_093_451_9, -0.095_605_101_208_450_6),
+        );
+        let circle = |r: f64| {
+            let (a, b) = (c + along * -r, c + along * r);
+            Polyline::new(
+                vec![Vertex::new(a.x, a.y, -1.0), Vertex::new(b.x, b.y, -1.0)],
+                true,
+            )
+        };
+        let island_mm = 6.853_196_837_408_963 + d_mm / 2.0;
+        let ring = region(
+            circle(13.752_766_298_916_859 - d_mm / 2.0),
+            vec![circle(island_mm)],
+        );
+        let tool = EntryTool {
+            diameter_mm: d_mm,
+            direction: CutDirection::Climb,
+            ..tool()
+        };
+        let target = Point::new(31.983_307, 117.293_382);
+        let domain = EntryDomain::new(&[ring], d_mm, FLATTEN_TOLERANCE_DEFAULT_MM);
+        let d = synthesize(
+            &domain,
+            &helix(0.976_100_214_112_066_5, 9.315_963_293_422_808),
+            target,
+            21.9,
+            17.765,
+            &tool,
+        );
+        assert_eq!(d.used, EntryKind::Helix);
+        for (i, (from, mv)) in steps(&d, 21.9).iter().enumerate() {
+            let near = segment_distance_sq(c, from.xy(), mv.to.xy()).sqrt();
+            assert!(
+                near >= island_mm - FLATTEN_TOLERANCE_DEFAULT_MM - 1e-9,
+                "move {i} passes {near} mm from the island's centre: {mv:?}"
             );
         }
     }

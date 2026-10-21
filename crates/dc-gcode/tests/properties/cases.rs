@@ -2,21 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The minimal cases the properties shrank their failures to, as named
-//! tests (#231, #232, #234, #235): each project validates, generates, and
-//! exports through the full safety pass. Every case is built from
-//! `dc_project::test_support::sample_project()` on 240 × 160 mm stock,
-//! its one instance placed about (120, 80), as in the issue that reports
+//! tests (#231, #232, #234, #235, #265, #272, #273): each project
+//! validates, generates, and exports through the full safety pass. Every
+//! case is built from `dc_project::test_support::sample_project()` on
+//! 240 × 160 mm stock, its instances placed as in the issue that reports
 //! it.
 
 use super::{DATE, generate};
 use dc_cam::entry::EntryKind;
 use dc_cam::{Warning, WarningCode, generate_profile};
 use dc_gcode::emit;
-use dc_geometry::{Point, Polyline, Transform};
+use dc_geometry::{Point, Polyline, Transform, Vertex};
 use dc_project::test_support::{sample_pocket, sample_project};
 use dc_project::{
-    ClearanceStrategy, CornerRelief, Entry, MachineOrigin, Operation, OriginXy, OriginZ, PocketOp,
-    PostProcessorRef, ProfileOp, Project, Side, Stock, Units, WallPass, validate,
+    ClearanceStrategy, CornerRelief, DefinitionId, Entry, FeatureDefinition, InstanceId,
+    MachineOrigin, Operation, OriginXy, OriginZ, PocketOp, PostProcessorRef, ProfileOp, Project,
+    Side, Stock, Units, WallPass, validate,
 };
 
 /// The sample project on 240 × 160 × `thickness_mm` stock, its one
@@ -315,6 +316,162 @@ fn helix_too_small_to_write_falls_back_and_exports() {
                     ..
                 }
             )),
+            "{units:?}: {warnings:?}"
+        );
+    }
+}
+
+/// #272 (the Pocket property, `PROPTEST_RNG_SEED=108`): a raster Pocket
+/// of a 23 × 26.9 mm rectangle and a ring (13.753 and 6.853 mm circles)
+/// by a 3.235 mm tool with a 0.976 helix at 9.316°. The helix's straight
+/// handoff to a raster start on the island's tool-centre circle passed
+/// 0.0151 mm inside that circle, past the flatten tolerance S9 allows, and
+/// S9 refused it, in mm and in inch. The handoff now keeps to the
+/// flattened region (`entry::safe_endpoint`); the helix is still cut, and
+/// the program exports in both.
+#[test]
+fn helix_handoff_in_a_ring_pocket_exports() {
+    let clockwise = |r: f64| {
+        Polyline::new(
+            vec![Vertex::new(-r, 0.0, -1.0), Vertex::new(r, 0.0, -1.0)],
+            true,
+        )
+    };
+    let ring = vec![
+        clockwise(13.752_766_298_916_859),
+        clockwise(6.853_196_837_408_963),
+    ];
+    let (hw, hh) = (11.499_195_343_669_689, 13.456_119_896_218_437);
+    let rect = FeatureDefinition {
+        id: DefinitionId::new("d0"),
+        name: "Cell 0".into(),
+        profiles: vec![Polyline::rect(Point::new(-hw, -hh), 2.0 * hw, 2.0 * hh)],
+    };
+    let transform = Transform::from([
+        0.995_419_341_093_451_9,
+        -0.095_605_101_208_450_6,
+        0.095_605_101_208_450_6,
+        0.995_419_341_093_451_9,
+        40.0,
+        120.0,
+    ]);
+    let thickness_mm = 21.905_684_661_758_25;
+    let op = PocketOp {
+        strategy: ClearanceStrategy::Raster {
+            angle_deg: 150.923_010_870_125_7,
+        },
+        wall_pass: WallPass::None,
+        depth_mm: Some(thickness_mm),
+        step_down_mm: Some(4.140_381_675_746_728),
+        step_over_fraction: Some(0.518_261_200_233_289_6),
+        entry: Entry::Helix {
+            diameter_fraction: 0.976_100_214_112_066_5,
+            angle_deg: 9.315_963_293_422_808,
+        },
+        safe_z_mm: 1.325_278_948_592_093_3,
+        targets: vec![InstanceId::new("i0"), InstanceId::new("i1")],
+        ..sample_pocket()
+    };
+    for units in [Units::Mm, Units::Inch] {
+        let mut project = case(
+            ring.clone(),
+            transform,
+            thickness_mm,
+            Operation::Pocket(op.clone()),
+        );
+        let mut cell = project.instances[0].clone();
+        cell.id = InstanceId::new("i0");
+        cell.definition = rect.id.clone();
+        cell.transform = Transform::from([
+            -0.688_295_984_496_706_4,
+            0.725_429_967_485_290_5,
+            -0.725_429_967_485_290_5,
+            -0.688_295_984_496_706_4,
+            40.0,
+            40.0,
+        ]);
+        project.instances.insert(0, cell);
+        project.definitions.insert(rect.id.clone(), rect.clone());
+        project.display_units = units;
+        project.origin = MachineOrigin {
+            xy: OriginXy::TopRight,
+            z: OriginZ::StockTop,
+        };
+        project.arc_fit_tolerance_mm = None;
+        project.post_processor = PostProcessorRef::latest("uccnc").expect("UCCNC is bundled");
+        let tool = &mut project.tools[0];
+        tool.diameter_mm = 3.234_923_320_453_882;
+        tool.feed_mm_min = Some(1_965.292_560_643_942);
+        tool.plunge_mm_min = Some(228.163_855_244_435_87);
+        tool.step_down_mm = Some(3.864_272_970_794_913);
+        tool.step_over_fraction = Some(0.482_127_398_535_474_37);
+        let warnings = exports(&project);
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, Warning::EntryFallback { .. })),
+            "{units:?}: {warnings:?}"
+        );
+    }
+}
+
+/// #273 (the Profile property, `PROPTEST_RNG_SEED=500`): an On line
+/// Profile of a 14.33 mm circle by a 1.614 mm tool, ramping at 14.3°. Each
+/// pass's leg ended 0.0055 mm past a chord vertex, a piece falling
+/// 0.0014 mm, under an inch program's last place, so it was written level
+/// at the plunge-limited 3344.631 mm/min, which S3 refused. The piece is
+/// merged into the chord before it (`entry::wall::along_path`); the ramp
+/// is still cut, and the program exports in mm and in inch.
+#[test]
+fn on_line_ramp_on_a_circle_in_inch_exports() {
+    let Operation::Profile(outside) = outside_profile(CornerRelief::None, 12.526_247_561_272_07)
+    else {
+        unreachable!("outside_profile is a Profile");
+    };
+    let op = Operation::Profile(ProfileOp {
+        side: Side::OnLine,
+        direction: dc_project::CutDirection::Climb,
+        lead: None,
+        step_down_mm: None,
+        safe_z_mm: 1.0,
+        entry: Entry::Ramp {
+            angle_deg: 14.301_902_402_989_514,
+        },
+        ..outside
+    });
+    let circle = vec![Polyline::circle(
+        Point::new(0.0, 0.0),
+        14.332_509_386_700_824,
+    )];
+    let transform = Transform::from([
+        -0.854_220_693_433_206,
+        0.519_910_575_878_672_4,
+        -0.519_910_575_878_672_4,
+        -0.854_220_693_433_206,
+        120.0,
+        120.0,
+    ]);
+    let thickness_mm = 19.578_559_092_336_132;
+    for units in [Units::Mm, Units::Inch] {
+        let mut project = case(circle.clone(), transform, thickness_mm, op.clone());
+        project.display_units = units;
+        project.origin = MachineOrigin {
+            xy: OriginXy::TopRight,
+            z: OriginZ::StockTop,
+        };
+        project.arc_fit_tolerance_mm = None;
+        project.post_processor = PostProcessorRef::latest("uccnc").expect("UCCNC is bundled");
+        let tool = &mut project.tools[0];
+        tool.diameter_mm = 1.614_062_019_946_190_8;
+        tool.feed_mm_min = Some(4_484.108_985_070_408);
+        tool.plunge_mm_min = Some(826.228_185_717_551_9);
+        tool.step_down_mm = Some(0.802_067_899_102_111);
+        tool.step_over_fraction = Some(0.282_757_627_478_426_64);
+        let warnings = exports(&project);
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| matches!(w, Warning::EntryFallback { .. })),
             "{units:?}: {warnings:?}"
         );
     }
