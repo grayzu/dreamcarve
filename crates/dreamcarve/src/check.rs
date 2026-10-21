@@ -9,6 +9,9 @@
 //! 30) as `export` prints them, for each program when there is one per tool
 //! run (#95). Exits 1 when any error was found.
 //!
+//! The one file it may write is `--preview`'s SVG (addendum A5), when
+//! every operation generated its toolpath, whatever else was found.
+//!
 //! Every value the user has yet to set is an error, so one run lists all of
 //! them, each as `coaster.dcv:line:column: error: …` (#76).
 
@@ -16,7 +19,7 @@ use std::process::ExitCode;
 
 use dc_gcode::ProgramSplit;
 
-use crate::cli::{CheckArgs, Failure};
+use crate::cli::{CheckArgs, Failure, StagedFile};
 use crate::config;
 use crate::export;
 use crate::output::outln;
@@ -26,11 +29,29 @@ const CHECK_DATE: &str = "check";
 
 /// Runs `check`.
 pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
+    if let Some(preview) = &args.preview {
+        export::check_preview_path(preview, &args.dcv)?;
+    }
     let (project, file) = export::load_project(&args.dcv)?;
     let estimate_settings = config::estimate_settings()?;
     // `check` has no split flags: it reports what a plain `export` would.
-    let export::Built { programs, findings } =
-        export::build(&project, ProgramSplit::ProjectDefault, CHECK_DATE);
+    let export::Built {
+        programs,
+        findings,
+        generated,
+    } = export::build(&project, ProgramSplit::ProjectDefault, CHECK_DATE);
+    if let Some(preview) = &args.preview {
+        // Where a plain `export` would write its programs; with none, the
+        // one program's default path.
+        let mut outputs = export::output_paths(None, &args.dcv, &programs)?;
+        if programs.is_empty() {
+            outputs = vec![
+                args.dcv
+                    .with_extension(&project.post_processor.file_extension),
+            ];
+        }
+        export::check_preview_not_program(preview, &outputs)?;
+    }
     let estimates = export::Estimates::new(&project, &programs, estimate_settings);
 
     for error in &findings.errors {
@@ -59,6 +80,18 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
         }
         if let Some(total) = estimates.total_line() {
             outln!("{total}")?;
+        }
+    }
+    // Addendum A5: the preview is written when every operation generated,
+    // whatever the warnings, and even if the programs then failed.
+    if let Some(preview) = &args.preview {
+        match &generated {
+            Some(generated) => {
+                let svg = export::preview_svg(&project, generated);
+                StagedFile::write(preview, svg.as_bytes())?.commit()?;
+                outln!("Wrote preview {}.", preview.display())?;
+            }
+            None => outln!("Preview not written: not every operation generated a toolpath.")?,
         }
     }
     outln!(

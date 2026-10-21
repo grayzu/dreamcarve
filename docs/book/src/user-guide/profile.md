@@ -234,6 +234,13 @@ cannot move) does the bit plunge there, as without an entry, and
 `entry_fallback` says so. A Profile with a [lead](#leads) starts where
 the lead arrives instead, which is already off the tabs.
 
+**Seeing where the path starts.** `dreamcarve check part.dcv --preview
+part-preview.svg` draws the toolpath ([Toolpath
+preview](overview.md#toolpath-preview)). Each pass starts at a circle the
+size of the bit, with a tick pointing the way the cut goes, and the tabs
+show as heavy marks, so you can check where a moved start or an
+`at_distances` tab landed before you cut.
+
 **Feed rate.** A ramp or helix moves at the tool's feed rate, except that
 its speed straight down is never faster than the plunge rate: when
 `feed × sin(angle)` would exceed the plunge rate, the feed of each

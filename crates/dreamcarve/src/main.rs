@@ -24,6 +24,7 @@ mod config;
 mod export;
 mod init;
 mod output;
+mod preview;
 mod tabs;
 mod tools;
 
