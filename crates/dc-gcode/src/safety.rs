@@ -803,9 +803,9 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 /// change tools with `M6` (`with_m6`), those in [`CANNED_G`] when it
 /// may hold canned cycles (`with_canned`), and `G53` on the lines the
 /// parser read as a machine-coordinate lift when the definition documents
-/// it and the project sets the height (`with_g53`, S16), and `header_g`,
-/// the definition's own header cancels ([`header_cancel_codes`]), on any
-/// line but a lift.
+/// it and the project sets the height (`with_g53`, S16). The definition's
+/// own header cancels, `header_g` ([`header_cancel_codes`]), are allowed
+/// only where [`check_header_cancel`] places them.
 fn check_words(
     blocks: &[Block],
     with_m6: bool,
@@ -815,6 +815,10 @@ fn check_words(
 ) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
+    // #312: true in the header, before the first move or spindle start,
+    // and again after each stop until the next one: the two places `emit`
+    // writes the setup lines.
+    let mut in_setup = true;
     for block in blocks {
         let lift: &[f64] = if with_g53 && block.machine_lift_mm.is_some() {
             &MACHINE_G
@@ -822,16 +826,19 @@ fn check_words(
             &[]
         };
         for word in &block.words {
-            let (allowed, extra, header): (&[f64], &[f64], &[f64]) = match word.letter {
-                'G' if !lift.is_empty() => (&ALLOWED_G, lift, &[]),
-                'G' => (&ALLOWED_G, canned, header_g),
-                'M' => (&ALLOWED_M, tool_change, &[]),
+            if word.letter == 'G' && header_g.iter().any(|&code| is_code(word.value, code)) {
+                check_header_cancel(block, word, in_setup)?;
+                continue;
+            }
+            let (allowed, extra): (&[f64], &[f64]) = match word.letter {
+                'G' if !lift.is_empty() => (&ALLOWED_G, lift),
+                'G' => (&ALLOWED_G, canned),
+                'M' => (&ALLOWED_M, tool_change),
                 _ => continue,
             };
             if !allowed
                 .iter()
                 .chain(extra)
-                .chain(header)
                 .any(|&code| is_code(word.value, code))
             {
                 return Err(ExportError::ForbiddenWord {
@@ -840,8 +847,39 @@ fn check_words(
                 });
             }
         }
+        if block.motion.is_some() || block.machine_lift_mm.is_some() || block.has('M', 3.0) {
+            in_setup = false;
+        }
+        if block.has('M', 0.0) || block.has('M', 1.0) || (with_m6 && block.has('M', 6.0)) {
+            in_setup = true;
+        }
     }
     Ok(())
+}
+
+/// #312: `word`, one of the definition's header cancels (`G50`, `G69`),
+/// is accepted only as `emit` writes it: alone on its line, but for a line
+/// number, so no axis, feed, speed or other value word can ride with it,
+/// and only in the header or in the setup after a stop (`in_setup`). On a
+/// dialect where `G50` takes axis words it is a different command, so
+/// anything else is refused.
+fn check_header_cancel(block: &Block, word: &Word, in_setup: bool) -> Result<(), ExportError> {
+    let alone = block.words.iter().filter(|w| w.letter != 'N').count() == 1;
+    let reason = if !alone {
+        Some("it shares its line with other words")
+    } else if !in_setup {
+        Some("it is outside the header and the setup after a stop")
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(ExportError::MisplacedSetupWord {
+            line: block.line,
+            word: format!("{}{}", word.letter, word.value),
+            reason,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// One output unit in the last written decimal place of a feed, in

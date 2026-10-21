@@ -611,7 +611,13 @@ after each manual-spindle `M0` (`emit::setup_after_stop_repeats_g50_g69`).
 The safety pass accepts `G50` and `G69` only from a definition whose header
 writes them, and `G51` and `G68` from none (`safety::g50_g69_accepted`):
 LinuxCNC and RS274/NGC lack them (below), and a code the safety pass has
-not checked against a definition's controller is refused.
+not checked against a definition's controller is refused. Even there it
+accepts each only as `emit` writes it: alone on its line (a line number
+aside), and only in the header or in the setup after a stop, before the
+next move or spindle start. With a value word (`G50 X0`) it would be a
+different command on some dialects, which a check that read it as a
+cancel would let through, so the export fails with
+`ExportError::MisplacedSetupWord` (`safety::g50_g69_only_where_emit_writes_them`).
 
 Not added elsewhere:
 
