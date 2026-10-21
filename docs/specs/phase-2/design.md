@@ -861,7 +861,13 @@ cut direction and cut side.
   and the ramp's chord may start there (#213: a raster Pocket's wall
   ring starts on a round corner of the tool-centre region, on the arc,
   outside the chords the domain holds for it, and neither helix nor ramp
-  was placed). Success below the requested diameter warns
+  was placed). Only the handoff's piece that reaches the target may lie
+  outside the chords, and by no more than the target does; the rest keeps
+  to them (changed in #272: the slack held along the whole handoff let
+  one to a raster start on an island's chord run 0.005 mm inside the
+  chords, 0.015 mm inside the island's tool-centre circle, past the
+  flatten tolerance S9 allows, and S9 refused it). Success below the
+  requested diameter warns
   `HelixDiameterReduced`. Descent: `ceil(depth/pitch · 48)` segments, Z
   linear, then one flat revolution, then a straight handoff to the target
   if the helix end is not on it. **Sense (Y-up):** tool inside a wall
@@ -911,10 +917,22 @@ cut direction and cut side.
   ramp runs along the cut path itself: from the start vertex, forward
   along the path for `run = min(3·D, L)` and back, descending at `angle`
   on each leg until pass Z is reached, the final partial leg clamped (a
-  final leg that would fall less than `RAMP_MIN_LAST_DROP_MM` runs the
-  whole leg, shallower; changed in #234, as for the Pocket ramp);
-  arcs are split into chords within the flatten tolerance while Z
-  changes. The pass then cuts the full path from the start vertex, so
+  final leg that would fall less than `RAMP_MIN_LAST_DROP_MM` shares the
+  last two legs' depth, each at `angle`, the first cut short and the
+  second back to where it began, as the Pocket ramp; a one-leg ramp that
+  shallow runs the whole leg; changed in #234, and in #273 from a whole
+  shallower last leg, whose chords along an arc fell under an inch
+  program's last place); arcs are split into chords within the flatten
+  tolerance while Z changes. A descending piece that would fall less
+  than one unit in the program's last place (`EntryTool::quantum_mm`) or
+  run less than √2 units in XY is merged into its neighbour within the
+  leg (the vertex between them dropped, the leg's ends kept), so its ends
+  round apart and keep their slope; when a leg of one piece is still that
+  short, or a dropped vertex lies more than a unit off the merged move,
+  the ramp falls back to a plunge, reason `too_small` (changed in #273: a
+  leg cut short 0.0055 mm past a chord vertex ended in a piece falling
+  0.0014 mm, written level at the plunge-limited feed in inch, which S3
+  refuses). The pass then cuts the full path from the start vertex, so
   the ramped stretch is cut again at full depth (VCarve's Zig Zag ramp).
   On an open path shorter than one leg the ramp reverses at the path
   end. The feed scale of S10 applies to every leg.
@@ -963,7 +981,9 @@ cut direction and cut side.
   write is not a helix, and one that small removes nothing a ramp would
   not. The rule needs the program's unit, which is why the entry reads
   the post-processor's decimal places; a constant for the coarsest
-  program allowed, 0.0254 mm, would refuse a 2.5 mm helix at 5°.) `ramp` is the default for new projects (`init`, the chapter
+  program allowed, 0.0254 mm, would refuse a 2.5 mm helix at 5°.) An
+  On line ramp follows the same rule (On line ramp, above; #273).
+  `ramp` is the default for new projects (`init`, the chapter
   blocks), so a project whose shapes leave no room for a zigzag (a hole
   barely wider than the tool) will warn on every export until the user
   sets `plunge`; the warning says so.

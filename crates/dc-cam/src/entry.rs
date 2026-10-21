@@ -870,8 +870,16 @@ fn reachable_helix(
 
 /// Upstream `findSafeHelixEndpoint`: the point of the circle nearest the
 /// target's direction, then alternately either side of it, whose segment
-/// to the target stays inside the region.
+/// to the target stays inside the region. Only the piece that reaches the
+/// target may leave the flattened rings, and by no more than the target
+/// itself does, at most the target slack (#213): a target on a round
+/// boundary lies on the arc, outside its chords. (Changed in #272: the
+/// slack held along the whole handoff let one to a target on an island's
+/// chord run 0.005 mm inside the chords, 0.015 mm inside the island's
+/// tool-centre circle, past the flatten tolerance S9 allows.)
 fn safe_endpoint(area: &Area, centre: Point, radius: f64, target: Point) -> Option<Point> {
+    let outside_mm = (-area.signed_distance(target)).clamp(0.0, area.tolerance_mm);
+    let end_slack_mm = outside_mm + ON_BOUNDARY_MM;
     let to_target = target - centre;
     let preferred = to_target.y.atan2(to_target.x);
     let step = TAU / HELIX_ENDPOINT_ANGLE_SAMPLES as f64;
@@ -881,7 +889,7 @@ fn safe_endpoint(area: &Area, centre: Point, radius: f64, target: Point) -> Opti
         let offset = if i % 2 == 0 { -offset } else { offset };
         let angle = preferred + offset * step;
         let endpoint = centre + Vec2::new(angle.cos(), angle.sin()) * radius;
-        area.segment_inside(endpoint, target, area.target_slack_mm())
+        area.segment_inside_ending(endpoint, target, ON_BOUNDARY_MM, end_slack_mm)
             .then_some(endpoint)
     })
 }
@@ -1209,6 +1217,18 @@ impl Area {
     /// any boundary edge, has every piece's midpoint in the region (or at
     /// most `slack_mm` outside it).
     fn segment_inside(&self, from: Point, to: Point, slack_mm: f64) -> bool {
+        self.segment_inside_ending(from, to, slack_mm, slack_mm)
+    }
+
+    /// [`Area::segment_inside`], the last piece (the one ending at `to`)
+    /// held to `end_slack_mm` and every other piece to `slack_mm`.
+    fn segment_inside_ending(
+        &self,
+        from: Point,
+        to: Point,
+        slack_mm: f64,
+        end_slack_mm: f64,
+    ) -> bool {
         let mut ts = vec![0.0, 1.0];
         ts.extend(
             self.edges()
@@ -1216,8 +1236,12 @@ impl Area {
         );
         ts.sort_by(f64::total_cmp);
         ts.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
-        ts.windows(2).all(|w| match w {
-            [a, b] => self.contains_within(from + (to - from) * ((a + b) / 2.0), slack_mm),
+        let last = ts.len().saturating_sub(2);
+        ts.windows(2).enumerate().all(|(i, w)| match w {
+            [a, b] => self.contains_within(
+                from + (to - from) * ((a + b) / 2.0),
+                if i == last { end_slack_mm } else { slack_mm },
+            ),
             _ => true,
         })
     }

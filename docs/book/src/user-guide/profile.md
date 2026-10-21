@@ -184,10 +184,13 @@ away anyway, never in the part:
   runs back and forth along the line itself, from the start of the outline
   forward three bit diameters (less on a shorter outline) and back. Curves
   are followed in short straight moves, 0.01 mm from the curve at most
-  (the project's `flatten_tolerance_mm`). Once at depth the bit goes back
-  to the start and cuts the whole outline, so the ramped stretch is cut
-  again at full depth. A helix is an error on On line: `check` reports
-  it, and export refuses.
+  (the project's `flatten_tolerance_mm`); one too short for the program
+  to write, as where a leg ends just past the end of one, is joined to
+  the move before it. When the depth is a hair over a whole number of
+  legs, the last two legs share what is left, each at `angle_deg`. Once
+  at depth the bit goes back to the start and cuts the whole outline, so
+  the ramped stretch is cut again at full depth. A helix is an error on
+  On line: `check` reports it, and export refuses.
 
 An Inside or Outside ramp starts at the start of the outline and runs into
 the waste along the longest straight line that fits, at most three bit
@@ -228,7 +231,8 @@ that does not fit, as in a hole barely wider than the bit (a 7 mm hole
 with a 6.35 mm bit), falls back to a plunge. A helix too small for the
 program to write, whose moves would each fall less than the last decimal
 place or run less than about one and a half of it sideways, falls back
-to a ramp too. Each fallback warns `entry_fallback`, naming the shape
+to a ramp too, and an On line ramp that small (every leg falling less
+than the last decimal place) to a plunge. Each fallback warns `entry_fallback`, naming the shape
 and both entries. A shape that can only be plunged warns on every export
 until its `entry` is `"plunge"`.
 

@@ -30,13 +30,13 @@ use super::{
     Area, Descent, ENTRY_EPS, EntryDomain, EntryKind, EntryPlan, EntryTool, FallbackReason,
     MAX_RAMP_RUN_DIAMETERS, MIN_RAMP_RUN_FRACTION, RAMP_DIRECTIONS, RAMP_MIN_LAST_DROP_MM,
     RampPlacement, boundary_safety_mm, count_within_cap, is_descent_move, move_feed_mm_min,
-    plan_with,
+    plan_with, segment_distance_sq,
 };
 use crate::toolpath::Move;
 use dc_geometry::{EPS_MM, Point, Point3, Polyline, Vec2};
 use dc_project::Entry;
 use std::cmp::Ordering;
-use std::f64::consts::PI;
+use std::f64::consts::{PI, SQRT_2};
 
 /// [`super::plan`] for a target on a Profile's tool-centre path, the edge
 /// of `domain`: the helix as [`super::plan`] places it, the ramp from the
@@ -256,10 +256,13 @@ impl Flat {
 /// The On line ramp (design spec, "On line ramp"): from the start vertex
 /// of `path` at `start_z_mm`, forward along the path for `run = min(3·D,
 /// L, max_run_mm)` and back, again and again, each leg descending at
-/// `angle_deg` until `z_mm`, the final leg cut short there, or run whole at
-/// a shallower slope when it would fall less than
-/// [`RAMP_MIN_LAST_DROP_MM`] (#234); arcs are split
-/// into chords within `tolerance_mm` while Z changes. The tool then
+/// `angle_deg` until `z_mm`, the final leg cut short there, or sharing the
+/// depth with the leg before when it would fall less than
+/// [`RAMP_MIN_LAST_DROP_MM`] ([`plan_legs`]; #234, #273); arcs are split
+/// into chords within `tolerance_mm` while Z changes, and a chord the
+/// program cannot write is merged into its neighbour
+/// ([`merge_unwritable`]), else the ramp falls back to a plunge with
+/// [`FallbackReason::TooSmall`] (#273). The tool then
 /// returns along the path at `z_mm` to the start vertex, where the lap
 /// starts, so the ramped stretch is cut again at full depth. On an open
 /// path shorter than a leg the legs turn at its end. Every descending move
@@ -314,46 +317,35 @@ pub fn along_path(
         }
     };
     let mut current = Point3::new(from.x, from.y, start_z_mm);
-    let mut s_mm = 0.0;
     let mut moves = Vec::new();
-    'legs: for leg in 0..legs {
-        let (leg_from, leg_to) = if leg % 2 == 0 {
-            (0.0, run_mm)
-        } else {
-            (run_mm, 0.0)
-        };
+    let leg_plan = plan_legs(legs, run_mm, slope, depth_mm);
+    let mut s_mm = 0.0;
+    for (i, &(leg_from, leg_to, leg_slope)) in leg_plan.iter().enumerate() {
         let leg_z = current.z;
-        // #234: a last leg that would fall less than the least drop runs
-        // the whole leg, shallower, rather than a fragment.
-        let leg_slope = if leg_z - z_mm < RAMP_MIN_LAST_DROP_MM {
-            (leg_z - z_mm) / run_mm
-        } else {
-            slope
-        };
+        let last = i + 1 == leg_plan.len();
+        let mut points = vec![current];
         let mut stops = flat.between(leg_from, leg_to);
         stops.push(leg_to);
         for stop in stops {
-            let z_at = leg_z - (stop - leg_from).abs() * leg_slope;
-            let (s, z, done) = if z_at <= z_mm + EPS_MM {
-                let reach = ((leg_z - z_mm) / leg_slope).min(run_mm);
-                let s = if leg_to >= leg_from {
-                    leg_from + reach
-                } else {
-                    leg_from - reach
-                };
-                (s, z_mm, true)
-            } else {
-                (stop, z_at, false)
-            };
-            let p = flat.point_at(s);
-            let next = Point3::new(p.x, p.y, z);
+            let p = flat.point_at(stop);
+            let z = leg_z - (stop - leg_from).abs() * leg_slope;
+            points.push(Point3::new(p.x, p.y, z));
+        }
+        if last && let Some(end) = points.last_mut() {
+            end.z = z_mm;
+        }
+        // #273: a piece of the leg the program cannot write is merged into
+        // its neighbour, or the ramp is not cut.
+        if !merge_unwritable(&mut points, tool.quantum_mm) {
+            descent.used = EntryKind::Plunge;
+            descent.reason = Some(FallbackReason::TooSmall);
+            return descent;
+        }
+        for next in points.into_iter().skip(1) {
             moves.push(Move::linear(next, move_feed_mm_min(tool, current, next)));
             current = next;
-            s_mm = s;
-            if done {
-                break 'legs;
-            }
         }
+        s_mm = leg_to;
     }
     // Back along the path to the start vertex, at the pass Z.
     let mut stops = flat.between(s_mm, 0.0);
@@ -367,6 +359,89 @@ pub fn along_path(
     }
     descent.moves = moves;
     descent
+}
+
+/// The legs of an On line ramp of `legs` legs over `depth_mm`, along a run
+/// of `run_mm` at `slope` (tan of the angle): each leg's start and end,
+/// distances along the path, and its slope. Legs alternate out from the
+/// start vertex and back, each falling `run_mm × slope`; the last is cut
+/// short where it reaches the depth. When that last leg would fall less
+/// than [`RAMP_MIN_LAST_DROP_MM`], the last two legs share their depth
+/// instead, each at the angle, the first cut short and the second back to
+/// where the first began, as the Pocket ramp's do (#234); a ramp of one
+/// such leg runs the whole leg, shallower. (Changed in #273: the shallow
+/// last leg of #234 fell so gently that its chords along an arc each fell
+/// less than an inch program's last place.)
+fn plan_legs(legs: usize, run_mm: f64, slope: f64, depth_mm: f64) -> Vec<(f64, f64, f64)> {
+    let full_mm = run_mm * slope;
+    let rest_mm = depth_mm - legs.saturating_sub(1) as f64 * full_mm;
+    let ends = |leg: usize| {
+        if leg.is_multiple_of(2) {
+            (0.0, run_mm)
+        } else {
+            (run_mm, 0.0)
+        }
+    };
+    let toward = |from: f64, to: f64, reach_mm: f64| {
+        if to >= from {
+            from + reach_mm
+        } else {
+            from - reach_mm
+        }
+    };
+    let mut plan: Vec<(f64, f64, f64)> = (0..legs)
+        .map(|leg| {
+            let (from, to) = ends(leg);
+            (from, to, slope)
+        })
+        .collect();
+    if rest_mm >= RAMP_MIN_LAST_DROP_MM {
+        if let Some(last) = plan.last_mut() {
+            last.1 = toward(last.0, last.1, (rest_mm / slope).min(run_mm));
+        }
+    } else if legs >= 2 {
+        let reach_mm = (full_mm + rest_mm) / (2.0 * slope);
+        let (from, to) = ends(legs - 2);
+        let turn = toward(from, to, reach_mm.min(run_mm));
+        plan.truncate(legs - 2);
+        plan.push((from, turn, slope));
+        plan.push((turn, from, slope));
+    } else if let Some(only) = plan.first_mut() {
+        only.2 = depth_mm / run_mm;
+    }
+    plan
+}
+
+/// #273: merges each piece of `points`, one leg's descent through its
+/// stops from its start, that falls less than `quantum_mm` or runs less
+/// than √2 of it in XY, into a neighbour, so every move the program writes
+/// keeps two Z values and two XY points and so its slope (S3, S10, as
+/// [`super::helix_writable`] for the helix). The stop between them goes:
+/// the piece's end, or its start when the piece ends the leg; a leg's ends
+/// stay. False when a leg of one piece is still too short, or when a stop
+/// lies more than a unit off the merged move, which would leave the path.
+fn merge_unwritable(points: &mut Vec<Point3>, quantum_mm: f64) -> bool {
+    let short = |a: &Point3, b: &Point3| {
+        a.z - b.z < quantum_mm || a.xy().distance_to(b.xy()) < SQRT_2 * quantum_mm
+    };
+    while let Some(i) = points
+        .windows(2)
+        .position(|w| matches!(w, [a, b] if short(a, b)))
+    {
+        let gone = if i + 2 < points.len() { i + 1 } else { i };
+        let (Some(before), Some(at), Some(after)) = (
+            gone.checked_sub(1).and_then(|k| points.get(k)),
+            points.get(gone),
+            points.get(gone + 1),
+        ) else {
+            return false;
+        };
+        if segment_distance_sq(at.xy(), before.xy(), after.xy()).sqrt() > quantum_mm {
+            return false;
+        }
+        points.remove(gone);
+    }
+    true
 }
 
 #[cfg(test)]
