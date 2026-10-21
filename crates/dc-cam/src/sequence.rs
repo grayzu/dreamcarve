@@ -76,8 +76,10 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// link is nothing when `b` is the next pass of `a`'s shape and its descent
 /// starts where `a` ended; a stay-down `Linear` at feed when both blocks
 /// have `cleared` areas at one Z and the straight link lies inside their
-/// union and is at most `tool_diameter_mm + stepover_mm` long; otherwise a
-/// rapid up to safe Z, a rapid in XY, and the descent. A block's empty
+/// union and is at most `tool_diameter_mm + stepover_mm` long, which runs to
+/// `b`'s entry and skips `b`'s descent (the tool is already at `b`'s Z in
+/// cleared material); otherwise a rapid up to safe Z, a rapid in XY, and
+/// the descent. A block's empty
 /// descent is a straight plunge at the plunge rate; its own descent moves
 /// are written as given, after a plunge to `descent_from_z_mm` when that is
 /// below the height the tool arrives at. Zero-length moves are never
@@ -375,8 +377,12 @@ impl<'a> Emitter<'a, '_> {
             (Some(previous), Some(current)) => match self.link(previous, block, current) {
                 Link::None => {}
                 Link::StayDown => {
-                    let to = Point3::new(block.descent_from.x, block.descent_from.y, current.z);
+                    // Already at the block's Z in cleared material: straight
+                    // to its entry, and its descent is not cut.
+                    let to = Point3::new(block.entry.x, block.entry.y, current.z);
                     self.push(Move::linear(to, self.input.feed_mm_min));
+                    self.cut(block);
+                    return;
                 }
                 Link::Retract => {
                     self.push(Move::rapid(Point3::new(current.x, current.y, safe_z)));
@@ -396,6 +402,11 @@ impl<'a> Emitter<'a, '_> {
             }
         }
         self.descend(block);
+        self.cut(block);
+    }
+
+    /// Writes `block`'s cuts and makes it the previous block.
+    fn cut(&mut self, block: &'a CutBlock) {
         for cut in &block.cuts {
             self.push(*cut);
         }
@@ -412,10 +423,10 @@ impl<'a> Emitter<'a, '_> {
             && (a.z_mm - b.z_mm).abs() <= EPS_MM
             && (current.z - b.z_mm).abs() <= EPS_MM
         {
-            let length_mm = current.xy().distance_to(b.descent_from);
+            let length_mm = current.xy().distance_to(b.entry);
             let limit_mm = self.input.tool_diameter_mm + self.input.stepover_mm;
             if length_mm <= limit_mm + EPS_MM
-                && link_inside_cleared(cleared_a, cleared_b, current.xy(), b.descent_from)
+                && link_inside_cleared(cleared_a, cleared_b, current.xy(), b.entry)
             {
                 return Link::StayDown;
             }

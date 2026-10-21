@@ -7,9 +7,10 @@
 //   src/engine/toolpaths/pocketPatterns.ts
 
 //! Pocket toolpaths (`docs/specs/phase-2/design.md`, "Algorithms → Pocket",
-//! steps 1–2, 4–6, 8, 11–12): clear the inside of closed shapes with
+//! steps 1–2, 4–6, 8–9, 11–12): clear the inside of closed shapes with
 //! concentric rings, leaving nested shapes as islands. The ring tree is in
-//! [`rings`]; the raster strategy, pocket allowance and rest machining land
+//! [`rings`] and each pass's ramp or helix in [`crate::entry`]; the raster
+//! strategy, pocket allowance and rest machining land
 //! in later slices.
 //!
 //! Re-derived for Y-up (ADR-0001) rather than copied: PureCutCNC's "conventional
@@ -22,6 +23,7 @@
 pub mod rings;
 
 use crate::block::CutBlock;
+use crate::entry::{self, CutSide, EntryDomain, EntryPlan, EntryTool, EntryWarnings};
 use crate::error::{CamError, ShapeRef};
 use crate::footprint::footprint_at;
 use crate::passes::pass_z_mm;
@@ -31,7 +33,7 @@ use crate::profile::{
 use crate::sequence::{SequenceInput, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::lap_cuts;
-use crate::toolpath::Toolpath;
+use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryWarning, Point, Polyline, Region, area_mm2, difference, distance_mm,
@@ -100,12 +102,20 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// missing, when the depth goes below the stock bottom plus allowance, when
 /// targets cross, when an id does not resolve, when the cutter is not a
 /// flat end mill, when the cutter would leave the stock
-/// ([`CamError::OffStock`]) or its footprint would leave the pocket's
-/// material (S9, [`CamError::OffMaterial`]). Not yet generated: a raster
-/// strategy, an allowance, and rest machining fail with
-/// [`CamError::NotSupportedYet`]; a ramp or helix entry plunges instead
-/// ([`WarningCode::EntryFallback`]) and corner relief is skipped
-/// ([`WarningCode::ReliefSkipped`]).
+/// ([`CamError::OffStock`]) or its footprint, descents included, would
+/// leave the pocket's material (S9, [`CamError::OffMaterial`]), and when
+/// the entry's angle or helix fraction is out of range
+/// ([`CamError::InvalidEntry`]).
+///
+/// Each ring's pass starts with the operation's entry (design step 9,
+/// [`entry`]): a helix or zigzag ramp placed once per ring in the
+/// tool-centre region its tree cuts, from safe Z on the first pass and
+/// from the previous pass Z after; where it does not fit the entry falls
+/// back to a ramp, then a plunge ([`WarningCode::EntryFallback`],
+/// [`WarningCode::HelixDiameterReduced`]). A ring reached by a stay-down
+/// link skips its descent. Not yet generated: a raster strategy, an
+/// allowance, and rest machining fail with [`CamError::NotSupportedYet`];
+/// corner relief is skipped ([`WarningCode::ReliefSkipped`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_pocket(
     project: &Project,
@@ -142,6 +152,7 @@ pub fn generate_pocket(
         });
     }
     refuse_later_slices(op)?;
+    check_entry(op)?;
     let step_down_mm =
         op.step_down_mm
             .or(tool.step_down_mm)
@@ -183,6 +194,13 @@ pub fn generate_pocket(
     let tolerance_mm = project.flatten_tolerance_mm;
 
     let mut warnings = fallback_warnings(op);
+    let entry_tool = EntryTool {
+        diameter_mm: tool.diameter_mm,
+        feed_mm_min: rates.feed_mm_min,
+        plunge_mm_min: rates.plunge_mm_min,
+        direction: op.direction,
+        side: CutSide::Internal,
+    };
     let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
@@ -207,9 +225,11 @@ pub fn generate_pocket(
         WallPass::None => WallRings::Omitted,
     };
     // Every ring in cut order: its shape, its path (oriented, starting at
-    // its entry), and the tool-centre area it lies in.
-    let mut rings: Vec<(ShapeRef, Polyline, Region)> = Vec::new();
+    // its entry), the tool-centre area it lies in, and its placed entry.
+    let mut rings: Vec<(ShapeRef, Polyline, Region, Option<EntryPlan>)> = Vec::new();
     let mut anchor: Option<Point> = None;
+    // Every tool-centre region, for the S9 check on descents.
+    let mut centre_regions: Vec<Region> = Vec::new();
     for region in &regions {
         // `nest` keeps every contour or reverses it, so this always finds
         // the shape.
@@ -227,9 +247,13 @@ pub fn generate_pocket(
             );
             continue;
         }
+        centre_regions.extend(tool_centre.iter().cloned());
         for root in tool_centre {
             let tree = RingTree::build(root, stepover_mm, tolerance_mm, MAX_RINGS)
                 .ok_or_else(invalid_step_over)?;
+            let domain = (op.entry != Entry::Plunge).then(|| {
+                EntryDomain::new(&entry_regions(&tree, wall), tool.diameter_mm, tolerance_mm)
+            });
             for ring in tree.walk(wall, &mut anchor) {
                 let side = match ring.kind {
                     RingKind::Outer => RingWall::Pocket,
@@ -244,35 +268,48 @@ pub fn generate_pocket(
                 let Some(node) = tree.nodes.get(ring.node) else {
                     continue;
                 };
+                let plan = domain
+                    .as_ref()
+                    .map(|d| entry::plan(d, &op.entry, ring.start, &entry_tool));
                 rings.push((
                     shape.clone(),
                     starting_at(&path, ring.start),
                     node.region.clone(),
+                    plan,
                 ));
             }
         }
     }
 
     let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
+    let mut entry_warnings = EntryWarnings::default();
     for (pass, &z_mm) in pass_z.iter().enumerate() {
         let descent_from_z_mm = pass
             .checked_sub(1)
             .and_then(|k| pass_z.get(k).copied())
             .unwrap_or(safe_z_mm);
-        for (shape, path, cleared) in &rings {
+        for (shape, path, cleared, plan) in &rings {
             let Some(start) = path.vertices().first().map(|v| v.point()) else {
                 continue;
             };
             let Some(lap) = lap_cuts(path, z_mm, None, rates) else {
                 continue;
             };
+            let (descent_from, descent) = match plan {
+                Some(plan) => {
+                    let descent = plan.descend(descent_from_z_mm, z_mm);
+                    entry_warnings.record(shape, &descent);
+                    (descent.from, descent.moves)
+                }
+                None => (start, Vec::new()),
+            };
             blocks.push(CutBlock {
                 shape: shape.clone(),
                 pass,
                 z_mm,
-                descent_from: start,
+                descent_from,
                 descent_from_z_mm,
-                descent: Vec::new(),
+                descent,
                 entry: start,
                 cuts: lap.moves,
                 exit: start,
@@ -283,6 +320,7 @@ pub fn generate_pocket(
             });
         }
     }
+    warnings.extend(entry_warnings.into_warnings(&op.id));
     let containment = nested_pockets(&regions, &shapes);
     let input = SequenceInput {
         blocks,
@@ -305,7 +343,15 @@ pub fn generate_pocket(
             overhang,
         });
     }
-    check_in_material(op, &toolpath, radius_mm, tolerance_mm, &regions, &shapes)?;
+    check_in_material(
+        op,
+        &toolpath,
+        radius_mm,
+        tolerance_mm,
+        &regions,
+        &centre_regions,
+        &shapes,
+    )?;
     Ok((toolpath, warnings))
 }
 
@@ -331,25 +377,59 @@ fn refuse_later_slices(op: &PocketOp) -> Result<(), CamError> {
     }
 }
 
-/// Warnings for the entry and corner relief this build replaces with a
-/// plunge and nothing (slices 9 and 12). Both still give the pocket asked
-/// for, so they warn rather than fail.
+/// The angle in (0, 45] degrees and the helix fraction in (0, 1] that
+/// validation requires, checked again: an entry outside them would cut
+/// something other than what validation passed.
+fn check_entry(op: &PocketOp) -> Result<(), CamError> {
+    let (angle_deg, fraction) = match op.entry {
+        Entry::Plunge => return Ok(()),
+        Entry::Ramp { angle_deg } => (angle_deg, None),
+        Entry::Helix {
+            diameter_fraction,
+            angle_deg,
+        } => (angle_deg, Some(diameter_fraction)),
+    };
+    if !(angle_deg > 0.0 && angle_deg <= 45.0) {
+        return Err(CamError::InvalidEntry {
+            op: op.id.clone(),
+            field: "angle_deg",
+            value: angle_deg,
+            range: "more than 0 and at most 45",
+        });
+    }
+    match fraction {
+        Some(f) if !(f > 0.0 && f <= 1.0) => Err(CamError::InvalidEntry {
+            op: op.id.clone(),
+            field: "diameter_fraction",
+            value: f,
+            range: "more than 0 and at most 1",
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// The clearance regions of a ring tree's entries: the material every
+/// pass of the tree removes. That is the root tool-centre region, or with
+/// the wall pass omitted its children, so a descent from the previous pass
+/// Z never starts above the uncut band the omitted wall ring leaves.
+fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
+    let Some(root) = tree.nodes.first() else {
+        return Vec::new();
+    };
+    match wall {
+        WallRings::Omitted => root
+            .children
+            .iter()
+            .filter_map(|&c| tree.nodes.get(c).map(|n| n.region.clone()))
+            .collect(),
+        WallRings::First | WallRings::Last => vec![root.region.clone()],
+    }
+}
+
+/// Warnings for the corner relief this build does not cut yet (slice 12).
+/// It still gives the pocket asked for, so it warns rather than fails.
 fn fallback_warnings(op: &PocketOp) -> Vec<Warning> {
     let mut warnings = Vec::new();
-    let entry = match op.entry {
-        Entry::Plunge => None,
-        Entry::Ramp { .. } => Some("ramp"),
-        Entry::Helix { .. } => Some("helix"),
-    };
-    if let Some(requested) = entry {
-        warnings.push(
-            Warning::new(WarningCode::EntryFallback)
-                .with("op", &op.id)
-                .with("requested", requested)
-                .with("used", "plunge")
-                .with("reason", "not_supported_yet"),
-        );
-    }
     let relief = match op.corner_relief {
         CornerRelief::None => None,
         CornerRelief::Dogbone => Some("dogbone"),
@@ -451,52 +531,75 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
 /// S9: the tool's footprint along `toolpath` lies in the pockets'
 /// material, inside every region and outside every island. Flattening
 /// moves both outlines by up to `tolerance_mm`, so area within that band
-/// of the boundaries is allowed.
+/// of the boundaries is allowed. Ramp and helix moves are checked on their
+/// tool centres, which must stay in `centre_regions` (the tool-centre
+/// regions, where the whole tool is in the material), and the rest of the
+/// toolpath on its swept footprint.
 fn check_in_material(
     op: &PocketOp,
     toolpath: &Toolpath,
     radius_mm: f64,
     tolerance_mm: f64,
     regions: &[Region],
+    centre_regions: &[Region],
     shapes: &[(ShapeRef, Contour)],
 ) -> Result<(), CamError> {
-    let swept = footprint_at(toolpath, radius_mm, tolerance_mm);
-    if swept.is_empty() {
-        return Ok(());
-    }
-    let outside = difference(&swept, regions, tolerance_mm);
     let boundary_mm: f64 = regions
         .iter()
         .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
         .map(|c| c.polyline().length_mm())
         .sum();
     let allowed_mm2 = (tolerance_mm + EPS_MM) * boundary_mm;
-    let area = area_mm2(&outside);
-    if area <= allowed_mm2 {
+    let off_material = |swept: &[Region], probe: Option<Point>| {
+        let outside = difference(swept, regions, tolerance_mm);
+        let area = area_mm2(&outside);
+        if area <= allowed_mm2 {
+            return Ok(());
+        }
+        // Name the pocket whose outline holds the stray area, else the first.
+        let probe = probe.or_else(|| {
+            outside
+                .iter()
+                .find_map(|r| r.outer().polyline().vertices().first().map(|v| v.point()))
+        });
+        let named = regions
+            .iter()
+            .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
+            .or_else(|| regions.first())
+            .and_then(|r| shape_of(shapes, r.outer()));
+        match named {
+            Some(shape) => Err(CamError::OffMaterial {
+                op: op.id.clone(),
+                shape: shape.clone(),
+                area_mm2: area,
+            }),
+            None => Ok(()),
+        }
+    };
+    if let Some(i) = entry::first_descent_outside(toolpath, centre_regions, tolerance_mm)
+        && let (Some(from), Some(mv)) = (
+            i.checked_sub(1).and_then(|k| toolpath.moves.get(k)),
+            toolpath.moves.get(i),
+        )
+    {
+        // The one stray move's own footprint, to measure and name.
+        let stray = Toolpath {
+            moves: vec![Move::rapid(from.to), *mv],
+        };
+        let swept = footprint_at(&stray, radius_mm, tolerance_mm);
+        off_material(&swept, Some(mv.to.xy()))?;
+    }
+    let swept = footprint_at(&entry::without_descents(toolpath), radius_mm, tolerance_mm);
+    if swept.is_empty() {
         return Ok(());
     }
-    // Name the pocket whose outline holds the stray area, else the first.
-    let probe = outside
-        .iter()
-        .find_map(|r| r.outer().polyline().vertices().first().map(|v| v.point()));
-    let named = regions
-        .iter()
-        .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
-        .or_else(|| regions.first())
-        .and_then(|r| shape_of(shapes, r.outer()));
-    match named {
-        Some(shape) => Err(CamError::OffMaterial {
-            op: op.id.clone(),
-            shape: shape.clone(),
-            area_mm2: area,
-        }),
-        None => Ok(()),
-    }
+    off_material(&swept, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entry::without_descents;
     use crate::error::CamError;
     use crate::footprint::footprint;
     use crate::test_support::assert_safe;
@@ -1392,6 +1495,16 @@ mod tests {
         }
     }
 
+    fn assert_in_rect(q: Point, r: Rect, what: &str) {
+        assert!(
+            q.x >= r.min.x - TOL
+                && q.x <= r.max.x + TOL
+                && q.y >= r.min.y - TOL
+                && q.y <= r.max.y + TOL,
+            "{what} {q:?} leaves {r:?}"
+        );
+    }
+
     /// True when `mv` from `from` falls while it moves in XY: a ramp or
     /// helix move.
     fn sloped(from: Point3, mv: &Move) -> bool {
@@ -1469,6 +1582,7 @@ mod tests {
             let diameter = 2.0 * mv.to.xy().distance_to(centre);
             assert_approx_eq!(diameter, 5.08, 0.01);
         }
+        let centre_area = inset(wall(), RADIUS_MM);
         for (from, mv) in sloped_moves(&tp) {
             if mv.to.z < PASS_Z_MM[0] - TOL {
                 assert!(
@@ -1476,9 +1590,11 @@ mod tests {
                     "a second-pass descent starts above the first floor: {from:?} -> {mv:?}"
                 );
             }
+            assert_in_rect(mv.to.xy(), centre_area, "helix point");
         }
+        // The descents are in the tool-centre region; the rest by footprint.
         let region = region_of(&[rect_100x50()], at_20_20());
-        let fp = footprint(&tp, RADIUS_MM);
+        let fp = footprint(&without_descents(&tp), RADIUS_MM);
         let outside = difference(&fp, std::slice::from_ref(&region), FLAT_TOL);
         assert!(area_mm2(&outside) <= 1e-3, "{}", area_mm2(&outside));
     }
@@ -1600,7 +1716,7 @@ mod tests {
             ],
             at_20_20(),
         );
-        let fp = footprint(&tp, RADIUS_MM);
+        let fp = footprint(&without_descents(&tp), RADIUS_MM);
         let outside = difference(&fp, std::slice::from_ref(&region), FLAT_TOL);
         let band_mm2 = 2.0 * FLAT_TOL * TAU * 10.0;
         assert!(
@@ -1663,6 +1779,50 @@ mod tests {
             let vertical = f * (from.z - mv.to.z) / length;
             assert!(vertical <= 50.0 + 1e-6, "{vertical} mm/min: {mv:?}");
         }
+    }
+
+    /// S9 on descents: a ramp whose tool centre leaves the tool-centre
+    /// region takes the tool through the wall, and the check refuses it;
+    /// the same ramp kept inside passes.
+    #[test]
+    fn descent_through_the_wall_is_off_material() {
+        let p = rect_project();
+        let op = pocket_op(&p, CutDirection::Climb);
+        let region = region_of(&[rect_100x50()], at_20_20());
+        let centre = inset_region(&region, RADIUS_MM, FLAT_TOL);
+        let shapes = vec![(
+            ShapeRef {
+                instance: InstanceId::new("i1"),
+                instance_name: "Shape i1".into(),
+                profile: 0,
+            },
+            region.outer().clone(),
+        )];
+        let ramp_to = |x: f64| Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(50.0, 40.0, SAFE_Z_MM)),
+                Move::linear(Point3::new(50.0, 40.0, THICKNESS_MM), PLUNGE_MM_MIN),
+                Move::linear(Point3::new(x, 40.0, PASS_Z_MM[0]), FEED_MM_MIN),
+                Move::rapid(Point3::new(x, 40.0, SAFE_Z_MM)),
+            ],
+        };
+        let check = |tp: &Toolpath| {
+            check_in_material(
+                &op,
+                tp,
+                RADIUS_MM,
+                FLAT_TOL,
+                std::slice::from_ref(&region),
+                &centre,
+                &shapes,
+            )
+        };
+        check(&ramp_to(30.0)).unwrap();
+        let err = check(&ramp_to(21.0)).unwrap_err();
+        assert!(
+            matches!(err, CamError::OffMaterial { area_mm2, .. } if area_mm2 > 1.0),
+            "{err:?}"
+        );
     }
 
     /// Validation's ranges, enforced again by the generator: an entry angle
