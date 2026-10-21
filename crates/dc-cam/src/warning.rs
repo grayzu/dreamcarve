@@ -1160,6 +1160,15 @@ mod tests {
                 "tab `tab3` on `Shape` (instance `i1`, profile 2) is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`)",
             ),
             (
+                Warning::TabOffOutline {
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                    off_mm: 20.000_000_000_4,
+                    limit_mm: 12.350_000_000_1,
+                },
+                "tab `tab3` on `Shape` (instance `i1`, profile 2) is 20 mm from that outline, more than its width plus the widest bit that cuts round it (12.35 mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`",
+            ),
+            (
                 Warning::TabsCoverMostOfContour {
                     op: op(),
                     contour: 0,

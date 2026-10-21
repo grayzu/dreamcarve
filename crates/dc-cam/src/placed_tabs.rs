@@ -857,6 +857,118 @@ mod tests {
         assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1);
     }
 
+    /// #300: tabs placed on a hole for the Profile that cuts it, by a
+    /// request or `--count` with `on_holes` (a version 8 file's migrated
+    /// request among them), sit on that Profile's tool path round the
+    /// hole. They hold the slug because the user asked, so generation does
+    /// not warn `tab_on_hole` for them on every export; `on_holes` lists
+    /// them, for `tabs place` to warn once. The same tab moved onto the
+    /// hole's outline, where nothing places a tab for this cut unasked,
+    /// still warns. A 40 mm hole in a 60 mm frame: its 33.65 mm square path
+    /// takes all four tabs.
+    #[test]
+    fn hole_tabs_placed_for_the_cut_do_not_warn() {
+        let square = |side_mm: f64| {
+            Polyline::rect(
+                Point::new(25.0 - side_mm / 2.0, 15.0 - side_mm / 2.0),
+                side_mm,
+                side_mm,
+            )
+        };
+        let mut p = with_profiles(vec![square(60.0), square(40.0)]);
+        let op = OperationId::new("o1");
+        p.tabs = place(&p, &op, &four_tabs(true)).unwrap().tabs;
+        let on_hole: Vec<TabId> = p
+            .tabs
+            .iter()
+            .filter(|t| t.profile == 1)
+            .map(|t| t.id.clone())
+            .collect();
+        assert_eq!(on_hole.len(), 4, "{:?}", p.tabs);
+        let (tp, warnings) = generate(&p);
+        assert!(
+            !codes(&warnings).contains(&WarningCode::TabOnHole),
+            "{warnings:?}"
+        );
+        assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 8);
+        let profile = profile_mut(&mut p).clone();
+        let listed: Vec<TabId> = on_holes(&p, &profile)
+            .unwrap()
+            .into_iter()
+            .map(|(tab, _)| tab)
+            .collect();
+        assert_eq!(listed, on_hole);
+
+        let moved = p
+            .tabs
+            .iter()
+            .position(|t| t.profile == 1)
+            .expect("a hole tab");
+        let foot = outline_foot(&p, &p.tabs[moved]).unwrap();
+        let foot = p.instances[0].transform.inverse().unwrap().apply(foot);
+        p.tabs[moved].x_mm = foot.x;
+        p.tabs[moved].y_mm = foot.y;
+        let (_, warnings) = generate(&p);
+        let warned: Vec<&Warning> = warnings
+            .iter()
+            .filter(|w| w.code() == WarningCode::TabOnHole)
+            .collect();
+        assert_eq!(warned.len(), 1, "{warnings:?}");
+        assert!(
+            matches!(warned[0], Warning::TabOnHole { tab, .. } if *tab == p.tabs[moved].id),
+            "{warned:?}"
+        );
+    }
+
+    /// #300, the issue's first test: a tab whose point is far from its
+    /// outline is cut at the outline's nearest point, and warns
+    /// `tab_off_outline` with the distance. Far is more than the tab's
+    /// width plus the widest bit that cuts round it: a tab placed from a
+    /// request is a bit radius off, and one on the outline none. 20 mm
+    /// below the sample's bottom edge is past 6 + 6.35 mm; the sample's own
+    /// request, placed, is not.
+    #[test]
+    fn tab_far_from_its_outline_warns() {
+        let mut p = untabbed();
+        p.tabs = vec![tab("tab1", 25.0, -20.0)];
+        let op = p.operations[0].clone();
+        let (tp, _) = generate(&p);
+        assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1);
+        assert_approx_eq!(off_outline_mm(&p, &p.tabs[0]).unwrap(), 20.0, TOL);
+        let warnings = check(&p, &[(&op, &tp)]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let Warning::TabOffOutline {
+            tab,
+            off_mm,
+            limit_mm,
+            ..
+        } = &warnings[0]
+        else {
+            panic!("tab_off_outline, not {warnings:?}");
+        };
+        assert_eq!(tab.as_str(), "tab1");
+        assert_approx_eq!(*off_mm, 20.0, TOL);
+        assert_approx_eq!(*limit_mm, 6.0 + 6.35, TOL);
+        assert!(warnings[0].op().is_none());
+        assert!(
+            warnings[0]
+                .to_string()
+                .contains("is 20 mm from that outline"),
+            "{}",
+            warnings[0]
+        );
+
+        let (placed, _) = place_requests(&sample_project()).unwrap();
+        assert!(!placed.tabs.is_empty());
+        let op = placed.operations[0].clone();
+        let (tp, _) = generate(&placed);
+        for t in &placed.tabs {
+            assert_approx_eq!(off_outline_mm(&placed, t).unwrap(), 6.35 / 2.0, 1e-6);
+        }
+        let warnings = check(&placed, &[(&op, &tp)]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
     /// #105: one tab placed with `--at --on-holes` on a hole whose tool
     /// path is shorter than the tab's span covers all of it. It is cut as
     /// placed and warns `tabs_cover_most_of_contour` as a placed tab, not
