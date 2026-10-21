@@ -21,7 +21,7 @@ use dc_geometry::{Contour, EPS_MM, Polyline, Rect, Region, distance_mm};
 use dc_project::{Side, Tool};
 
 /// One tool-centre path in cut order, with the shape it cuts.
-pub(crate) type CutPath<'a> = (Polyline, Option<&'a ShapeRef>);
+pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 
 /// One [`WarningCode::ToolpathsOverlap`] per pair of shapes, from different
 /// regions, where either one's tool path comes closer than the tool radius
@@ -49,7 +49,7 @@ pub(crate) fn overlap_warnings(
                     .chain(r.holes())
                     .any(|c| c == contour || *c == contour.reversed())
             })?;
-            Some((path, shape, contour, region))
+            Some((*path, shape, contour, region))
         })
         .collect();
 

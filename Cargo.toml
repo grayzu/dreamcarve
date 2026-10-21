@@ -51,8 +51,12 @@ i_overlay = { version = "9.1", default-features = false }
 # features are off: they add text shaping, system font loading (file I/O),
 # svgz, and the writer, none of which an importer needs.
 usvg = { version = "0.48", default-features = false }
-# `config.toml` parsing (phase 2 design, "User config (CLI only)"). Default features are off: `display` (the writer)
-# is not needed; `parse` and `serde` deserialize the file into a struct.
+# DXF parsing (group codes, sections, blocks, entity structs). The `serialize`
+# feature is the only optional one and stays off.
+dxf = { version = "0.6", default-features = false }
+# `config.toml` parsing (phase 2 design, "User config (CLI only)"). Default
+# features are off: `display` (the writer) is not needed; `parse` and
+# `serde` deserialize the file into a struct.
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and

@@ -2537,3 +2537,246 @@ fn malformed_config_fails_init_naming_file_and_line() {
     );
     assert!(!dir.join("coaster.dcv").exists(), "nothing written");
 }
+
+// ── DXF import (phase 2, slice 19; functional spec capability 20, ─────────
+// ── acceptance test 34) ──────────────────────────────────────────────────
+
+/// The repository's `tests/fixtures/` directory.
+fn tests_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(name)
+}
+
+/// Copies the fixture `tests/fixtures/<name>` into `dir` as `as_name`.
+fn copy_fixture(dir: &Path, name: &str, as_name: &str) -> PathBuf {
+    let dest = dir.join(as_name);
+    std::fs::copy(tests_fixture(name), &dest).expect("fixture copied");
+    dest
+}
+
+/// The one definition named `name` in `project`.
+fn definition_named<'a>(project: &'a Project, name: &str) -> &'a dc_project::FeatureDefinition {
+    project
+        .definitions
+        .values()
+        .find(|d| d.name == name)
+        .unwrap_or_else(|| {
+            let names: Vec<&str> = project
+                .definitions
+                .values()
+                .map(|d| d.name.as_str())
+                .collect();
+            panic!("no definition named {name}; have {names:?}")
+        })
+}
+
+/// Definition names in `project`, in instance order.
+fn definition_names(project: &Project) -> Vec<String> {
+    project
+        .instances
+        .iter()
+        .map(|i| {
+            project
+                .definitions
+                .get(&i.definition)
+                .expect("instance's definition exists")
+                .name
+                .clone()
+        })
+        .collect()
+}
+
+/// Acceptance test 34: a DXF with no `$INSUNITS` fails `init` asking for
+/// `--units`; with `--units inch` a 1-unit line is 25.4 mm long, and the
+/// project's display units are inches.
+#[test]
+fn init_dxf_without_units_asks_for_flag() {
+    let dir = work_dir("init_dxf_without_units_asks_for_flag");
+    copy_fixture(&dir, "dxf/no_units.dxf", "part.dxf");
+
+    let out = run(&dir, &["init", "part.dxf"]);
+    assert_eq!(out.status.code(), Some(1), "init: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("--units"), "names the flag: {err}");
+    assert!(err.contains("mm|inch"), "and its values: {err}");
+    assert!(!dir.join("part.dcv").exists(), "nothing is written");
+
+    let out = run(&dir, &["init", "part.dxf", "--units", "inch"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(summary.contains("part.dxf"), "{summary}");
+    assert!(summary.contains("25.4"), "says what one unit is: {summary}");
+    let project = load_file(&dir.join("part.dcv")).project;
+    assert_eq!(project.display_units, dc_project::Units::Inch);
+    assert_eq!(project.definitions.len(), 1);
+    let line = &definition_named(&project, "0").profiles[0];
+    assert!(!line.is_closed());
+    assert_approx_eq!(line.length_mm(), 25.4, 1e-6);
+}
+
+/// `--layer` keeps only the named layers; `--join-tolerance` closes a chain
+/// the default leaves open, and `check` reports the open one by name
+/// (acceptance test 34); the three flags are DXF-only, so on an SVG they
+/// are a usage error (exit 2).
+#[test]
+fn init_dxf_layer_and_join_flags() {
+    let dir = work_dir("init_dxf_layer_and_join_flags");
+
+    // Layers: `a` holds two lines, `b` a circle, `0` a circle.
+    copy_fixture(&dir, "dxf/layers.dxf", "layers.dxf");
+    let out = run(&dir, &["init", "layers.dxf", "--layer", "a"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let project = load_file(&dir.join("layers.dcv")).project;
+    assert_eq!(definition_names(&project), ["a-1", "a-2"]);
+    let out = run(
+        &dir,
+        &[
+            "init",
+            "layers.dxf",
+            "-o",
+            "two-layers.dcv",
+            "--layer",
+            "b",
+            "--layer",
+            "0",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let project = load_file(&dir.join("two-layers.dcv")).project;
+    assert_eq!(definition_names(&project), ["b", "0"]);
+
+    // Joining: four lines whose last end stops 0.5 mm short of the start.
+    copy_fixture(&dir, "dxf/stitch_gap.dxf", "gap.dxf");
+    let out = run(&dir, &["init", "gap.dxf"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let project = load_file(&dir.join("gap.dcv")).project;
+    assert_eq!(definition_names(&project), ["box"]);
+    let chain = &definition_named(&project, "box").profiles[0];
+    assert!(!chain.is_closed(), "0.5 mm is beyond the 0.01 mm default");
+    assert_eq!(chain.vertices().len(), 5);
+    assert!(
+        project.operations[0].targets().is_empty(),
+        "an open chain is not targeted"
+    );
+    fill_in(&dir.join("gap.dcv"), 1500.0, 500.0, 18000);
+    let out = run(&dir, &["check", "gap.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    let line = report
+        .lines()
+        .find(|l| l.contains("box"))
+        .unwrap_or_else(|| panic!("check names the open chain: {report}"));
+    assert!(line.contains("open"), "says it is open: {line}");
+
+    let out = run(
+        &dir,
+        &[
+            "init",
+            "gap.dxf",
+            "-o",
+            "joined.dcv",
+            "--join-tolerance",
+            "1",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let project = load_file(&dir.join("joined.dcv")).project;
+    let shape = &definition_named(&project, "box").profiles[0];
+    assert!(shape.is_closed(), "joined within 1 mm and closed");
+    assert_eq!(shape.vertices().len(), 4);
+    assert_eq!(project.operations[0].targets().len(), 1);
+
+    // The flags mean nothing for an SVG.
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    for flags in [
+        &["--layer", "a"][..],
+        &["--join-tolerance", "1"][..],
+        &["--layer", "a", "--join-tolerance", "1"][..],
+    ] {
+        let mut args = vec!["init", "coaster.svg"];
+        args.extend_from_slice(flags);
+        let out = run(&dir, &args);
+        assert_eq!(out.status.code(), Some(2), "{flags:?}: {}", stderr(&out));
+        let err = stderr(&out);
+        assert!(
+            err.contains("DXF"),
+            "{flags:?}: says the flag is for DXF: {err}"
+        );
+        assert!(
+            !dir.join("coaster.dcv").exists(),
+            "{flags:?}: nothing written"
+        );
+    }
+}
+
+/// Acceptance test 34, the `init` half: `plaque.dxf` and `plaque.svg`
+/// (the phase 2 test part) produce projects with the same shapes, named
+/// alike, in the same order, placed alike, within 0.01 mm. The export half
+/// (`plaque_dxf_exports_same_programs_as_svg`) needs the Pocket, Drill and
+/// Engrave operations and lands with them.
+#[test]
+fn plaque_dxf_imports_same_shapes_as_svg() {
+    let dir = work_dir("plaque_dxf_imports_same_shapes_as_svg");
+    copy_fixture(&dir, "plaque.dxf", "plaque.dxf");
+    copy_fixture(&dir, "plaque.svg", "plaque.svg");
+    let out = run(&dir, &["init", "plaque.dxf", "-o", "from-dxf.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "init dxf: {}", stderr(&out));
+    assert!(
+        stderr(&out).is_empty(),
+        "the plaque imports without warnings: {}",
+        stderr(&out)
+    );
+    let out = run(&dir, &["init", "plaque.svg", "-o", "from-svg.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "init svg: {}", stderr(&out));
+
+    let from_dxf = load_file(&dir.join("from-dxf.dcv")).project;
+    let from_svg = load_file(&dir.join("from-svg.dcv")).project;
+    assert_eq!(definition_names(&from_dxf), definition_names(&from_svg));
+    assert_eq!(from_dxf.definitions.len(), 10);
+    assert_approx_eq!(from_dxf.stock.width_mm, from_svg.stock.width_mm, 0.01);
+    assert_approx_eq!(from_dxf.stock.height_mm, from_svg.stock.height_mm, 0.01);
+    for (a, b) in from_dxf.instances.iter().zip(&from_svg.instances) {
+        assert_eq!(a.name, b.name);
+        let (ta, tb): ([f64; 6], [f64; 6]) = (a.transform.into(), b.transform.into());
+        for (x, y) in ta.iter().zip(&tb) {
+            assert_approx_eq!(*x, *y, 0.01);
+        }
+        let da = definition_named(&from_dxf, &a.name);
+        let db = definition_named(&from_svg, &b.name);
+        assert_eq!(da.profiles.len(), 1, "{}", a.name);
+        assert_eq!(db.profiles.len(), 1, "{}", b.name);
+        assert_eq!(
+            da.profiles[0].is_closed(),
+            db.profiles[0].is_closed(),
+            "{}",
+            a.name
+        );
+        let (ra, rb) = (
+            da.profiles[0].bounds().expect("bounds"),
+            db.profiles[0].bounds().expect("bounds"),
+        );
+        for (x, y) in [
+            (ra.min.x, rb.min.x),
+            (ra.min.y, rb.min.y),
+            (ra.max.x, rb.max.x),
+            (ra.max.y, rb.max.y),
+        ] {
+            assert_approx_eq!(x, y, 0.01);
+        }
+    }
+    // The DXF keeps its arcs: the pocket's corners and the island.
+    let pocket = &definition_named(&from_dxf, "pocket").profiles[0];
+    assert_eq!(pocket.segments().filter(|s| !s.is_line()).count(), 4);
+    let island = &definition_named(&from_dxf, "island").profiles[0];
+    assert_eq!(island.vertices().len(), 2);
+    // Both target the same shapes with the Profile `init` writes.
+    assert_eq!(
+        from_dxf.operations[0].targets().len(),
+        from_svg.operations[0].targets().len()
+    );
+    assert_eq!(
+        from_dxf.operations[0].targets().len(),
+        9,
+        "all but the squiggle"
+    );
+}

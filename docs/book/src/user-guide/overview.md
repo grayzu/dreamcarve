@@ -35,17 +35,21 @@ Every length in the project file is in millimetres.
 
 ## The commands
 
-### `dreamcarve init <svg>`
+### `dreamcarve init <svg|dxf>`
 
-Creates a project from an SVG drawing. Each path in the drawing becomes a
-shape; closed shapes are targeted by one Profile operation. The defaults are
+Creates a project from an SVG or a DXF drawing, told apart by the file
+extension. Each path (SVG) or shape (DXF) in the drawing becomes a shape;
+closed shapes are targeted by one Profile operation. The defaults are
 listed in the [quick start](../quick-start/first-cut.md#2-create-the-project).
+DXF has a chapter of its own: [Importing DXF](importing-dxf.md).
 
 | Option | Meaning |
 | --- | --- |
-| `-o`, `--output <DCV>` | Where to write the project. Default: the SVG's name with `.dcv`. |
+| `-o`, `--output <DCV>` | Where to write the project. Default: the drawing's name with `.dcv`. |
 | `--post <ID>` | Post-processor to use, at its latest version: `grblhal` (default) or `grbl`. Its settings are the defaults, with your [configured](configuration.md) ones on top. |
-| `--units <mm\|inch>` | Units the G-code is written in. Default `mm`. |
+| `--units <mm\|inch>` | Units the G-code is written in. Default `mm`. For a DXF, also the units the drawing is in: required when the file does not say, and overriding it when it does. |
+| `--join-tolerance <MM>` | DXF only. Join open segments whose ends are within this distance, and close a chain whose ends meet. Default `0.01`. |
+| `--layer <NAME>` | DXF only. Import only this layer; repeat the option for several. |
 
 `init` leaves the values only you can know unset (`null`): the stock
 thickness, the cut depth, and the tool's feed rate, plunge rate and spindle

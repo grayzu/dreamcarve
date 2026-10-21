@@ -1,15 +1,20 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Importers for DreamCarve. Importers flip Y to the internal Y-up frame
-//! (ADR-0001). Phase 1 adds SVG ([`import_svg`]), phase 2 DXF.
+//! Importers for DreamCarve. Importers bring geometry into the internal
+//! Y-up frame (ADR-0001): SVG ([`import_svg`], phase 1) flips Y; DXF
+//! ([`import_dxf`], phase 2) is already Y-up and only scales to millimetres.
 //!
 //! Importers take bytes and return values: no file I/O, no printing.
 //! Problems that leave a usable result are [`ImportWarning`]s; anything that
 //! makes the result untrustworthy is an [`ImportError`].
 
+pub mod dxf;
 pub mod svg;
 
+pub use dxf::{
+    DxfImport, DxfImportOptions, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM, MAX_INSERT_DEPTH, import_dxf,
+};
 pub use svg::{
     MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM, RootUnits, SvgImport, SvgImportOptions,
     import_svg,
@@ -22,6 +27,27 @@ pub enum ImportError {
     /// well-formed XML, compressed SVGZ, or no valid size).
     #[error("SVG could not be read: {0}")]
     Svg(#[from] usvg::Error),
+    /// The bytes are not a DXF document the `dxf` crate can read (a group
+    /// code or value that does not parse, or a truncated file).
+    #[error("DXF could not be read: {0}")]
+    Dxf(#[from] ::dxf::DxfError),
+    /// The DXF declares no units DreamCarve can scale from (`$INSUNITS`
+    /// absent, 0, or a unit outside inch, foot, mile, mm, cm, m) and the
+    /// caller gave no override.
+    #[error(
+        "DXF declares no usable units ($INSUNITS is {declared}); say which units it is drawn in"
+    )]
+    UnitsUnknown {
+        /// What `$INSUNITS` held: `unitless` when absent or 0, else the
+        /// unit's name.
+        declared: String,
+    },
+    /// The join tolerance is negative or not finite.
+    #[error("join tolerance {tolerance_mm} mm must be a finite length of 0 or more")]
+    InvalidJoinTolerance {
+        /// The rejected tolerance, millimetres.
+        tolerance_mm: f64,
+    },
     /// A path's coordinates are NaN or infinite after transforming to mm.
     #[error("path `{path}` has a coordinate that is not a finite number")]
     NonFinite {
@@ -118,6 +144,26 @@ pub enum ImportWarning {
         /// The units on the root `width`/`height`.
         units: RootUnits,
     },
+    /// DXF entities DreamCarve does not read were skipped: how many of each
+    /// type, keyed by the DXF type name (`TEXT`, `DIMENSION`, `HATCH`, ...).
+    /// `POLYLINE (mesh)` counts polygon and polyface meshes; `<TYPE>
+    /// (degenerate)` counts entities with no length, too few vertices, or
+    /// an INSERT scale of 0.
+    DxfEntitiesSkipped {
+        /// Skipped entities per type name, in name order.
+        counts: std::collections::BTreeMap<String, usize>,
+    },
+    /// An INSERT of block `block` nests more than [`MAX_INSERT_DEPTH`]
+    /// levels deep; the levels past the limit were skipped.
+    DxfInsertTooDeep {
+        /// The block whose insert exceeded the limit.
+        block: String,
+    },
+    /// An INSERT names a block the file does not define; it was skipped.
+    DxfBlockMissing {
+        /// The missing block's name.
+        block: String,
+    },
 }
 
 impl std::fmt::Display for ImportWarning {
@@ -151,6 +197,27 @@ impl std::fmt::Display for ImportWarning {
                 f,
                 "page size is in {units} but there is no viewBox, so coordinates are read as CSS pixels (96 per inch)"
             ),
+            Self::DxfEntitiesSkipped { counts } => {
+                let total: usize = counts.values().sum();
+                write!(
+                    f,
+                    "dxf_entities_skipped: {total} entity(ies) DreamCarve does not read were skipped: "
+                )?;
+                for (i, (kind, count)) in counts.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{kind}: {count}")?;
+                }
+                Ok(())
+            }
+            Self::DxfInsertTooDeep { block } => write!(
+                f,
+                "block `{block}` is inserted more than {MAX_INSERT_DEPTH} levels deep; the deeper levels were skipped"
+            ),
+            Self::DxfBlockMissing { block } => {
+                write!(f, "INSERT of undefined block `{block}` was skipped")
+            }
         }
     }
 }

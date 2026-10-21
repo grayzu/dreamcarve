@@ -40,10 +40,39 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &ProfileOp) {
         .iter()
         .find(|t| t.id == op.tool)
         .expect("operation's tool is in the project");
-    let feed = tool.feed_mm_min.expect("tool has a feed");
-    let plunge = tool.plunge_mm_min.expect("tool has a plunge rate");
-    let safe_z = project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm;
-    let floor_z = -op.through_cut_allowance_mm;
+    assert_safe_within(
+        toolpath,
+        &Limits {
+            safe_z_mm: project.stock.thickness_mm.expect("stock has a thickness") + op.safe_z_mm,
+            floor_z_mm: -op.through_cut_allowance_mm,
+            feed_mm_min: tool.feed_mm_min.expect("tool has a feed"),
+            plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
+        },
+    );
+}
+
+/// The limits [`assert_safe_within`] checks a toolpath against, for tests
+/// that build moves or cut blocks without a project.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Limits {
+    /// Absolute safe Z, mm.
+    pub safe_z_mm: f64,
+    /// Lowest permitted move end, mm: stock bottom minus the through-cut
+    /// allowance.
+    pub floor_z_mm: f64,
+    /// The tool's cutting feed, mm/min.
+    pub feed_mm_min: f64,
+    /// The tool's plunge rate, mm/min.
+    pub plunge_mm_min: f64,
+}
+
+/// [`assert_safe`] with the limits given directly instead of read from a
+/// project and operation. The checks are the same.
+pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
+    let feed = limits.feed_mm_min;
+    let plunge = limits.plunge_mm_min;
+    let safe_z = limits.safe_z_mm;
+    let floor_z = limits.floor_z_mm;
     let at_or_above = |z: f64, limit: f64| z >= limit - EPS_MM;
 
     let Some(first) = toolpath.moves.first() else {

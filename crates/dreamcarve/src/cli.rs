@@ -33,7 +33,7 @@ pub struct Cli {
 /// The subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Create a project (.dcv) from an SVG drawing.
+    /// Create a project (.dcv) from an SVG or DXF drawing.
     Init(InitArgs),
     /// Write G-code for a project.
     Export(ExportArgs),
@@ -64,17 +64,26 @@ pub enum ConfigCommand {
 /// Arguments of `init`.
 #[derive(Debug, clap::Args)]
 pub struct InitArgs {
-    /// The SVG drawing to import.
-    pub svg: PathBuf,
-    /// Where to write the project [default: the SVG's name with .dcv].
+    /// The drawing to import: an SVG (.svg) or a DXF (.dxf), by extension.
+    pub drawing: PathBuf,
+    /// Where to write the project [default: the drawing's name with .dcv].
     #[arg(short, long, value_name = "DCV")]
     pub output: Option<PathBuf>,
     /// Post-processor to use, at its latest version (see `dreamcarve posts`).
     #[arg(long, value_name = "ID", default_value = "grblhal")]
     pub post: String,
-    /// Display units of the project; G-code is written in these units.
-    #[arg(long, value_enum, default_value_t = UnitsArg::Mm)]
-    pub units: UnitsArg,
+    /// Display units of the project; G-code is written in these units
+    /// [default: mm]. For a DXF, also the units the drawing is in: required
+    /// when the file declares none ($INSUNITS), overriding it when it does.
+    #[arg(long, value_enum)]
+    pub units: Option<UnitsArg>,
+    /// DXF only: join open segments whose ends are within this distance,
+    /// in mm, and close a chain whose ends meet [default: 0.01].
+    #[arg(long, value_name = "MM")]
+    pub join_tolerance: Option<f64>,
+    /// DXF only: import only this layer; repeat for several layers.
+    #[arg(long = "layer", value_name = "NAME")]
+    pub layers: Vec<String>,
 }
 
 /// Arguments of `export`.
@@ -133,6 +142,15 @@ pub enum UnitsArg {
     Mm,
     /// Inches.
     Inch,
+}
+
+impl fmt::Display for UnitsArg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Mm => "mm",
+            Self::Inch => "inch",
+        })
+    }
 }
 
 impl From<UnitsArg> for dc_project::Units {
