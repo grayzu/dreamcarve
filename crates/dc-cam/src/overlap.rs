@@ -26,12 +26,15 @@
 //! beside it, and `generate_profile`'s band check refuses one closer than
 //! the diameter to them away from where they meet (#210). An open path held by no region (in the waste, in a hole's
 //! slug, or crossing a line) is a group of its own and is compared with
-//! every other shape. Engrave takes no part: it cuts every line as drawn,
+//! every other shape, and with itself (#224): where two of its stretches
+//! far apart along it come closer than the radius, as in a tight spiral or
+//! a hairpin, it warns as two separate paths there would. Engrave takes no part: it cuts every line as drawn,
 //! so lines that cross or meet are the design, not shapes too close.
 
 use crate::error::ShapeRef;
+use crate::profile::MEETING_REACH_DIAMETERS;
 use crate::warning::{Warning, WarningCode};
-use dc_geometry::{Contour, EPS_MM, Polyline, Rect, Region, distance_mm};
+use dc_geometry::{Contour, EPS_MM, Polyline, Rect, Region, SelfBand, distance_mm};
 use dc_project::{Side, Tool};
 
 /// One tool-centre path in cut order, with the shape it cuts.
@@ -44,6 +47,15 @@ pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 /// first is named first. `shapes` are the resolved closed targets,
 /// `regions` what `nest` made of them, and `open` the open paths cut On
 /// line, as drawn (#206).
+///
+/// An open path no region holds is also measured against itself (#224,
+/// [`SelfBand`], with the project's flatten tolerance `tolerance_mm` for
+/// where it meets itself): where two of its stretches more than
+/// [`MEETING_REACH_DIAMETERS`]` · d` apart along it come closer than the
+/// radius, it warns with itself as both shapes, before its pairs with
+/// later paths. Its sharp corners and the points where it touches or
+/// crosses itself are set aside as `generate_profile`'s band check sets
+/// them aside (#221).
 #[must_use]
 pub(crate) fn overlap_warnings(
     paths: &[CutPath<'_>],
@@ -52,6 +64,7 @@ pub(crate) fn overlap_warnings(
     regions: &[Region],
     side: Side,
     tool: &Tool,
+    tolerance_mm: f64,
 ) -> Vec<Warning> {
     let radius_mm = tool.diameter_mm / 2.0;
     // Each path that has a known shape, with that shape's line and the
@@ -79,9 +92,36 @@ pub(crate) fn overlap_warnings(
         })
         .collect();
 
+    let warning = |a: &ShapeRef, b: &ShapeRef, gap_mm: f64| {
+        Warning::new(WarningCode::ToolpathsOverlap)
+            .with("instance", &a.instance)
+            .with("instance_name", &a.instance_name)
+            .with("profile", a.profile)
+            .with("other_instance", &b.instance)
+            .with("other_instance_name", &b.instance_name)
+            .with("other_profile", b.profile)
+            .with("gap_mm", gap_mm)
+            .with("tool", &tool.name)
+            .with("diameter_mm", tool.diameter_mm)
+            .with("needed_mm", needed_gap_mm(side, tool.diameter_mm))
+    };
     let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
     let mut warnings = Vec::new();
     for (index, &(path_a, shape_a, line_a, region_a)) in placed.iter().enumerate() {
+        // #224: an open path in the waste against itself, as D6 compares
+        // two paths there: at the radius.
+        if region_a >= regions.len() && !line_a.is_closed() && !warned.contains(&(shape_a, shape_a))
+        {
+            let band = SelfBand::new(
+                line_a,
+                MEETING_REACH_DIAMETERS * tool.diameter_mm,
+                tolerance_mm.max(EPS_MM),
+            );
+            if let Some(gap_mm) = band.narrowest_mm(radius_mm - EPS_MM, |_, _| true) {
+                warned.push((shape_a, shape_a));
+                warnings.push(warning(shape_a, shape_a, gap_mm));
+            }
+        }
         for &(path_b, shape_b, line_b, region_b) in placed.iter().skip(index + 1) {
             if region_a == region_b
                 || warned
@@ -94,19 +134,7 @@ pub(crate) fn overlap_warnings(
                 continue;
             }
             warned.push((shape_a, shape_b));
-            warnings.push(
-                Warning::new(WarningCode::ToolpathsOverlap)
-                    .with("instance", &shape_a.instance)
-                    .with("instance_name", &shape_a.instance_name)
-                    .with("profile", shape_a.profile)
-                    .with("other_instance", &shape_b.instance)
-                    .with("other_instance_name", &shape_b.instance_name)
-                    .with("other_profile", shape_b.profile)
-                    .with("gap_mm", distance_mm(line_a, line_b))
-                    .with("tool", &tool.name)
-                    .with("diameter_mm", tool.diameter_mm)
-                    .with("needed_mm", needed_gap_mm(side, tool.diameter_mm)),
-            );
+            warnings.push(warning(shape_a, shape_b, distance_mm(line_a, line_b)));
         }
     }
     warnings

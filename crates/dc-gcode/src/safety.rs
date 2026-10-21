@@ -4076,8 +4076,10 @@ mod tests {
             "the plunge on the 3 mm square: {err:?}"
         );
 
-        let (large, op) = square(7.0);
+        let (mut large, op) = square(7.0);
         check_material_text(&cut(7.0), &large, &Operation::Profile(op.clone())).unwrap();
+        // Arc fitting would write the square's lap as a circle (#229).
+        large.arc_fit_tolerance_mm = None;
         let (toolpath, _) = generate_profile(&large, &op).unwrap();
         emit(
             &large,

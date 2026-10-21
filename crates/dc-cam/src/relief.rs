@@ -61,7 +61,7 @@ use crate::error::{CamError, ShapeRef};
 use crate::footprint::{capsule, move_bulge};
 use crate::passes::pass_z_mm;
 use crate::profile::{Wall, rates_of, shape_of, shape_warning};
-use crate::sequence::{SequenceInput, sequence};
+use crate::sequence::{SequenceInput, nearest_of, sequence};
 use crate::tabs::LapRates;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{Warning, WarningCode};
@@ -425,20 +425,19 @@ fn moves_cut_at(
 }
 
 /// `corners` in nearest-neighbour order from `start`, by descend point,
-/// ties in the order given.
+/// ties in the order given: distances within
+/// [`crate::sequence::NEAREST_TIE_MM`] are a tie (#215).
 fn nearest_neighbour(mut corners: Vec<ReliefCorner>, start: Point) -> Vec<ReliefCorner> {
     let mut ordered = Vec::with_capacity(corners.len());
     let mut from = start;
     while !corners.is_empty() {
-        let next = corners
-            .iter()
-            .enumerate()
-            .min_by(|(ia, a), (ib, b)| {
-                from.distance_to(a.descend)
-                    .total_cmp(&from.distance_to(b.descend))
-                    .then(ia.cmp(ib))
-            })
-            .map_or(0, |(i, _)| i);
+        let next = nearest_of(
+            corners
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i, from.distance_to(c.descend))),
+        )
+        .unwrap_or(0);
         let corner = corners.remove(next);
         from = corner.descend;
         ordered.push(corner);

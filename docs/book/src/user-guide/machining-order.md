@@ -74,6 +74,11 @@ Within an operation, and within each pass under pass first:
    are visited in a short route rather than in the order they were drawn.
 3. **Ties go to drawing order.** Two shapes equally near are taken in the
    order they were drawn, so the order is the same on every export.
+   Distances within 0.001 mm of each other count as equal, so the tiny
+   rounding an SVG import adds to coordinates does not change the order:
+   an SVG and a DXF of the same drawing are cut in the same order. The
+   same rule orders corner relief notches, drilled holes, and a Pocket's
+   rings and raster lines.
 
 Squares drawn at X 10, 50 and 30 are cut at 10, 30, then 50.
 

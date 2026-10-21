@@ -35,7 +35,8 @@ use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
-    distance_away_from_mm, distance_mm, meeting_points, nest, offset, point_segment_distance_mm,
+    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset,
+    point_segment_distance_mm,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
@@ -223,6 +224,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// region's lines and its other open paths away from where they meet,
 /// #210; an On line line is also compared with its own stretches far
 /// along it, #221, so a hairpin or a narrow neck is refused),
+/// when an On line part is nowhere as wide as the tool, so the cut
+/// removes it whole ([`CamError::PartNarrowerThanTool`], #223),
 /// when an On line Profile asks for a helix
 /// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
 /// would leave its waste domain ([`CamError::OffMaterial`], a defect).
@@ -661,6 +664,7 @@ pub fn generate_profile(
         &regions,
         op.side,
         tool,
+        project.flatten_tolerance_mm,
     ));
 
     // Corner relief among each shape's own passes, never after the pass
@@ -709,7 +713,10 @@ pub fn generate_profile(
 ///   the band together with that line's cut: the part loses material it
 ///   keeps. `contour` is also measured against itself
 ///   ([`check_self_band`], #221; `tolerance_mm` is the project's flatten
-///   tolerance, where it meets itself).
+///   tolerance, where it meets itself). A region's outline whose inset by
+///   `r` is empty bounds a part the cut removes whole, however short its
+///   outline: [`CamError::PartNarrowerThanTool`] (#223). Its holes need no
+///   such check: one within `d` of the outline is refused above.
 /// - **Outside** needs no check: there the outline's path runs outside
 ///   the region and every hole's inside its hole, so each is at least `r`
 ///   from every other line of the region, and a band between them is a
@@ -765,6 +772,16 @@ fn check_band(
     let Some(shape) = shape_of(shapes, contour) else {
         return Ok(());
     };
+    // #223: a part nowhere as wide as the bit is removed whole, however
+    // short its outline (the self-band check below compares only
+    // stretches `√2·d` apart along it, and a small circle has none).
+    if contour == region.outer() && inset_is_empty(contour, tool.diameter_mm / 2.0) {
+        return Err(CamError::PartNarrowerThanTool {
+            op: op.clone(),
+            shape: shape.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
     let line = contour.polyline();
     let between = |p: Point, q: Point| material_between(region, line, p, q);
     check_self_band(op, shape, line, tool, tolerance_mm, between)

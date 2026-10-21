@@ -35,6 +35,26 @@ use dc_project::MachiningOrder;
 /// order.
 pub(crate) const NEAREST_TIE_MM: f64 = 1e-3;
 
+/// Nearest first (#215): of `candidates`, each with its distance in mm,
+/// the first in the order given whose distance is within
+/// [`NEAREST_TIE_MM`] of the nearest one's. So a candidate is taken
+/// before an earlier one only when it is nearer by more than the
+/// tolerance, and the order given (drawing order) settles every tie, not
+/// float noise. `None` when there are none; the first when no distance is
+/// a number.
+pub(crate) fn nearest_of<T>(candidates: impl IntoIterator<Item = (T, f64)>) -> Option<T> {
+    let candidates: Vec<(T, f64)> = candidates.into_iter().collect();
+    let nearest_mm = candidates
+        .iter()
+        .map(|(_, d)| *d)
+        .fold(f64::INFINITY, f64::min);
+    let pick = candidates
+        .iter()
+        .position(|(_, d)| *d <= nearest_mm + NEAREST_TIE_MM)
+        .unwrap_or(0);
+    candidates.into_iter().nth(pick).map(|(t, _)| t)
+}
+
 /// Everything [`sequence`] needs, in project space (mm, Y-up, Z-up).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SequenceInput<'a> {
@@ -228,7 +248,8 @@ impl Shapes {
     }
 
     /// The greedy walk (spec step 3): from the current exit, the nearest
-    /// available unit or stack by `f64::total_cmp`, ties by drawing order.
+    /// available unit or stack ([`nearest_of`]: distances within
+    /// [`NEAREST_TIE_MM`] are a tie), ties by drawing order.
     /// `done[s]` counts the passes of shape `s` already emitted.
     fn walk(&self, order: MachiningOrder) -> Result<Vec<usize>, CamError> {
         let total: usize = self
@@ -284,21 +305,21 @@ impl Shapes {
     /// Full depth first: the nearest unstarted shape whose enclosed shapes
     /// are all finished.
     fn nearest_stack(&self, done: &[usize], current: Point) -> Option<usize> {
-        self.shapes
-            .iter()
-            .enumerate()
-            .filter(|(s, shape)| {
-                done.get(*s).copied().unwrap_or(0) == 0
-                    && shape.enclosed.iter().all(|&e| self.finished(done, e))
-            })
-            .filter_map(|(s, shape)| shape.units.first().map(|u| (s, u.start)))
-            .min_by(|(sa, a), (sb, b)| {
-                current
-                    .distance_to(*a)
-                    .total_cmp(&current.distance_to(*b))
-                    .then(sa.cmp(sb))
-            })
-            .map(|(s, _)| s)
+        nearest_of(
+            self.shapes
+                .iter()
+                .enumerate()
+                .filter(|(s, shape)| {
+                    done.get(*s).copied().unwrap_or(0) == 0
+                        && shape.enclosed.iter().all(|&e| self.finished(done, e))
+                })
+                .filter_map(|(s, shape)| {
+                    shape
+                        .units
+                        .first()
+                        .map(|u| (s, current.distance_to(u.start)))
+                }),
+        )
     }
 
     /// Pass first: among the available next units, the shallowest pass,
@@ -306,7 +327,8 @@ impl Shapes {
     /// enclosed shape has finished pass `k` (or has no pass `k` and is
     /// finished) and, when the unit frees, has finished entirely.
     fn nearest_unit(&self, done: &[usize], current: Point) -> Option<usize> {
-        self.shapes
+        let available: Vec<(usize, usize, Point)> = self
+            .shapes
             .iter()
             .enumerate()
             .filter_map(|(s, shape)| {
@@ -322,12 +344,14 @@ impl Shapes {
                 });
                 available.then_some((s, k, unit.start))
             })
-            .min_by(|(sa, ka, a), (sb, kb, b)| {
-                ka.cmp(kb)
-                    .then(current.distance_to(*a).total_cmp(&current.distance_to(*b)))
-                    .then(sa.cmp(sb))
-            })
-            .map(|(s, _, _)| s)
+            .collect();
+        let shallowest = available.iter().map(|(_, k, _)| *k).min()?;
+        nearest_of(
+            available
+                .into_iter()
+                .filter(|(_, k, _)| *k == shallowest)
+                .map(|(s, _, start)| (s, current.distance_to(start))),
+        )
     }
 
     fn finished(&self, done: &[usize], shape: usize) -> bool {
