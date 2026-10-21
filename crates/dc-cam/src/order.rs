@@ -305,6 +305,7 @@ mod tests {
             width_mm: 6.0,
             height_mm: 2.0,
             shape: TabShape::Rect,
+            on_holes: false,
         }
     }
 
@@ -563,6 +564,77 @@ mod tests {
             with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
             "quiet: {warnings:?}"
         );
+    }
+
+    /// [`part_and_hole`] with the hole `hole_radius_mm` in radius, one
+    /// Outside Profile `o1` of the rectangle and the hole together with
+    /// [`four_tabs`] (`on_holes` as given), then an On line Profile `o2`
+    /// of a 3 mm circle `i3` at the hole's centre: a cut on the hole's
+    /// slug.
+    fn slug_cut_after(on_holes: bool, hole_radius_mm: f64) -> Project {
+        let mut project = part_and_hole();
+        if let Some(hole) = project.definitions.get_mut(&DefinitionId::new("d2")) {
+            hole.profiles = vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, hole_radius_mm)];
+        }
+        let dot = FeatureDefinition {
+            id: DefinitionId::new("d3"),
+            name: "Dot".into(),
+            profiles: vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, 1.5)],
+        };
+        project.definitions.insert(dot.id.clone(), dot);
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new("i3"),
+            definition: DefinitionId::new("d3"),
+            transform: Transform::translate(35.0, 25.0),
+            name: "Dot".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        let mut both = profile("o1", "i1", Side::Outside, 6.0);
+        both.targets.push(InstanceId::new("i2"));
+        both.tabs = Some(TabSpec {
+            on_holes,
+            ..four_tabs()
+        });
+        project.operations = vec![
+            Operation::Profile(both),
+            Operation::Profile(profile("o2", "i3", Side::OnLine, 1.0)),
+        ];
+        project
+    }
+
+    /// #109: tabs hold only the outlines they are on. A tabbed Profile
+    /// cuts its hole free when the hole gets no tabs, by default or
+    /// because none fits its tool path, so a later cut on the slug warns;
+    /// a hole that keeps its tabs is held. The tabbed rectangle is held
+    /// either way.
+    #[test]
+    fn tabbed_profile_frees_the_outlines_it_leaves_untabbed() {
+        for (on_holes, hole_radius_mm, freed) in [
+            // Holes get no tabs by default.
+            (false, 5.0, true),
+            // The 10 mm hole's 11.5 mm path has room for no tab.
+            (true, 5.0, true),
+            // Two of the four fit the 24 mm hole's 55.4 mm path.
+            (true, 12.0, false),
+        ] {
+            let warnings = check_all(&slug_cut_after(on_holes, hole_radius_mm));
+            let found: Vec<_> = with_code(&warnings, WarningCode::CutInsideFreedPart)
+                .into_iter()
+                .map(freed_of)
+                .map(|(op, earlier, shape, outline)| {
+                    (op, earlier, shape.instance.as_str(), outline.instance.as_str())
+                })
+                .collect();
+            let expected = if freed {
+                vec![("o2", "o1", "i3", "i2")]
+            } else {
+                vec![]
+            };
+            assert_eq!(found, expected, "on_holes {on_holes}, r {hole_radius_mm}");
+        }
     }
 
     /// Operations are never reordered (D7): the warnings come back in

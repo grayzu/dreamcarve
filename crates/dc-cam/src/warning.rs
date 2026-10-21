@@ -1083,10 +1083,10 @@ mod tests {
                     diameter_mm: 6.35,
                     tab_span_mm: 16.35,
                     tab_total_mm: 65.4,
-                    max_count: 3.0,
+                    cut_count: 3,
                     max_width_mm: Some(6.15),
                 },
-                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole may not cut free. To let it cut free, use at most 3 tab(s) this wide, or make the 4 tab(s) at most 6.15 mm wide. The tabs are cut as set.",
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole would not cut free. Only 3 of them are cut there. To keep all 4, make them at most 6.15 mm wide.",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1099,10 +1099,10 @@ mod tests {
                     diameter_mm: 8.0,
                     tab_span_mm: 13.0,
                     tab_total_mm: 26.0,
-                    max_count: 1.0,
+                    cut_count: 1,
                     max_width_mm: None,
                 },
-                "tabs on contour 2 in cut order cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide. The tabs are cut as set.",
+                "tabs on contour 2 in cut order would cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole would not cut free. Only 1 of them is cut there.",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1115,10 +1115,26 @@ mod tests {
                     diameter_mm: 3.175,
                     tab_span_mm: 6.175,
                     tab_total_mm: 6.175,
-                    max_count: 0.0,
+                    cut_count: 0,
                     max_width_mm: None,
                 },
-                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole may not cut free. To let it cut free, even one tab this wide covers more than half: this outline is too short for tabs with this bit, so consider removing them. The tabs are cut as set.",
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole would not cut free. No tab is cut there: this outline is too short for tabs with this bit.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 6.5,
+                    tab_count: 1,
+                    tab_width_mm: 3.0,
+                    diameter_mm: 1.5,
+                    tab_span_mm: 4.5,
+                    tab_total_mm: 4.5,
+                    cut_count: 0,
+                    max_width_mm: Some(1.75),
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 1.5 mm bit it keeps 4.5 mm of the tool path raised on a 6.5 mm path (69.2%), so the part or hole would not cut free. No tab is cut there. To keep it, make it at most 1.75 mm wide.",
             ),
             (
                 Warning::ToolpathsOverlap {

@@ -2608,6 +2608,7 @@ mod tests {
             width_mm: 10.0,
             height_mm: 3.0,
             shape: TabShape::Rect,
+            on_holes: false,
         });
         let (_, warnings) = generate(&p, &op);
         let covered: Vec<(usize, &str)> = warnings
@@ -2622,6 +2623,152 @@ mod tests {
             })
             .collect();
         assert_eq!(covered, [(0, "i1"), (1, "i3"), (2, "i2")]);
+    }
+
+    // ── #109: a part and its hole in one operation ──
+
+    const STAR_CENTRE: Point = Point::new(50.0, 50.0);
+    const STAR_HOLE_CENTRE: Point = Point::new(50.0, 70.0);
+
+    /// The maintainer's manual case (`tests/manual/star_with_hole`, #109),
+    /// redrawn with straight edges: a five-pointed star (points 40 mm and
+    /// notches 22 mm from (50, 50), one point straight up) as instance
+    /// `i1`, and a 7 mm circle 20 mm up its top arm as instance `i2`,
+    /// leaving a 6.6 mm web. 100 × 100 × 12 mm stock.
+    fn star_with_hole_project() -> Project {
+        let mut p = sample_project();
+        p.stock = Stock {
+            width_mm: 100.0,
+            height_mm: 100.0,
+            thickness_mm: Some(12.0),
+        };
+        let star = (0..10u32)
+            .map(|k| {
+                let angle_rad = PI / 2.0 + f64::from(k) * PI / 5.0;
+                let r_mm = if k % 2 == 0 { 40.0 } else { 22.0 };
+                Vertex::line(
+                    STAR_CENTRE.x + r_mm * angle_rad.cos(),
+                    STAR_CENTRE.y + r_mm * angle_rad.sin(),
+                )
+            })
+            .collect();
+        let definitions = [
+            ("d1", "Star", Polyline::new(star, true)),
+            ("d2", "Hole", Polyline::circle(STAR_HOLE_CENTRE, 3.5)),
+        ];
+        p.definitions = definitions
+            .iter()
+            .map(|(id, name, profile)| {
+                let def = FeatureDefinition {
+                    id: DefinitionId::new(*id),
+                    name: (*name).into(),
+                    profiles: vec![profile.clone()],
+                };
+                (def.id.clone(), def)
+            })
+            .collect();
+        p.instances = [("i1", "d1", "star"), ("i2", "d2", "hole")]
+            .iter()
+            .map(|(id, def, name)| FeatureInstance {
+                id: InstanceId::new(*id),
+                definition: DefinitionId::new(*def),
+                transform: Transform::IDENTITY,
+                name: (*name).into(),
+                visible: true,
+                locked: false,
+                z_top_mm: Some(12.0),
+                z_bottom_mm: Some(0.0),
+            })
+            .collect();
+        p.operations.clear();
+        p
+    }
+
+    /// #109: one Outside Profile of the star and its hole, with four
+    /// smooth 6 × 3 mm tabs and the 6.35 mm bit, 12 mm deep in 4 mm
+    /// passes, 0.01 mm through. Containment cuts the hole first; the
+    /// hole, a slug of waste, gets no tabs and is cut free; only the
+    /// star's last pass rises over tabs, four times. Before #109 this
+    /// took two operations in the right order.
+    #[test]
+    fn star_and_its_hole_cut_in_one_operation() {
+        let p = star_with_hole_project();
+        let op = ProfileOp {
+            targets: vec![InstanceId::new("i1"), InstanceId::new("i2")],
+            depth_mm: Some(12.0),
+            step_down_mm: Some(4.0),
+            through_cut_allowance_mm: 0.01,
+            tabs: Some(TabSpec {
+                placement: TabPlacement::Count { count: 4 },
+                width_mm: 6.0,
+                height_mm: 3.0,
+                shape: TabShape::Smooth,
+                on_holes: false,
+            }),
+            ..profile_op(&p, Side::Outside, CutDirection::Climb)
+        };
+        let (tp, warnings) = generate(&p, &op);
+        assert!(
+            !warnings.iter().any(|w| matches!(
+                w.code(),
+                WarningCode::TabsCoverMostOfContour | WarningCode::TabsOverlap
+            )),
+            "{warnings:?}"
+        );
+
+        // Every move along a path, with where it starts.
+        let mut cuts: Vec<(Point3, Move)> = Vec::new();
+        for pair in tp.moves.windows(2) {
+            let (from, mv) = (pair[0].to, pair[1]);
+            if !mv.is_rapid() && from.xy().distance_to(mv.to.xy()) > EPS_MM {
+                cuts.push((from, mv));
+            }
+        }
+        let in_hole = |(from, mv): &(Point3, Move)| {
+            from.xy().distance_to(STAR_HOLE_CENTRE) < 3.5
+                && mv.to.xy().distance_to(STAR_HOLE_CENTRE) < 3.5
+        };
+        let last_hole = cuts.iter().rposition(in_hole).expect("the hole is cut");
+        let first_star = cuts
+            .iter()
+            .position(|c| !in_hole(c))
+            .expect("the star is cut");
+        assert!(last_hole < first_star, "the hole is cut before the star");
+
+        let floor_mm = tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min);
+        assert_approx_eq!(floor_mm, -0.01, TOL);
+        let on_last_pass = |(from, mv): &(Point3, Move)| from.z < 3.5 && mv.to.z < 3.5;
+        let level = |(from, mv): &(Point3, Move)| {
+            (from.z - floor_mm).abs() <= TOL && (mv.to.z - floor_mm).abs() <= TOL
+        };
+
+        let hole_last: Vec<_> = cuts[..=last_hole]
+            .iter()
+            .filter(|c| on_last_pass(c))
+            .collect();
+        assert!(!hole_last.is_empty(), "the hole's last pass is cut");
+        for cut in &hole_last {
+            assert!(level(cut), "the hole has no tabs: {cut:?}");
+        }
+
+        let star_last: Vec<_> = cuts[first_star..]
+            .iter()
+            .filter(|c| on_last_pass(c))
+            .collect();
+        let raised: Vec<bool> = star_last.iter().map(|c| !level(c)).collect();
+        let mut tabs = raised
+            .windows(2)
+            .filter(|w| !w[0] && w[1])
+            .count();
+        if raised.first() == Some(&true) && raised.last() != Some(&true) {
+            tabs += 1;
+        }
+        assert_eq!(tabs, 4, "the star rises over its four tabs");
+        let top_mm = star_last
+            .iter()
+            .map(|(from, mv)| from.z.max(mv.to.z))
+            .fold(f64::MIN, f64::max);
+        assert_approx_eq!(top_mm, 3.0, TOL);
     }
 
     // ── #176: the start moves off a tab ──
@@ -2640,6 +2787,7 @@ mod tests {
             width_mm: 8.0,
             height_mm: TAB_TOP_MM,
             shape,
+            on_holes: false,
         }
     }
 

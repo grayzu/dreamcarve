@@ -863,6 +863,7 @@ mod tests {
             width_mm: TAB_WIDTH_MM,
             height_mm: TAB_Z_MM,
             shape,
+            on_holes: false,
         }
     }
 
@@ -1051,6 +1052,7 @@ mod tests {
                     width_mm,
                     height_mm: TAB_Z_MM,
                     shape: TabShape::Rect,
+                    on_holes: false,
                 }),
             )
         };
@@ -1070,9 +1072,9 @@ mod tests {
             assert_approx_eq!(run.length_mm, span_mm, TOL);
         }
 
-        // Four tabs all but cover it (port of "four tabs cover a circle"),
-        // yet leave a gap to cut through, so nothing overlaps. They cover
-        // most of the path, which warns but changes nothing.
+        // Four tabs would all but cover it (port of "four tabs cover a
+        // circle"): they cover most of the path, so only the two that fit
+        // in half of it are cut, and that warns (#109).
         let (p, op) = small(4);
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(
@@ -1081,12 +1083,12 @@ mod tests {
             "{warnings:?}"
         );
         let lap = final_lap(&tp);
+        assert_eq!(raised_runs(&lap).len(), 2, "{lap:?}");
         let free: f64 = runs(&lap, |m| m.at_z(0.0))
             .iter()
             .map(|r| r.length_mm)
             .sum();
-        assert_approx_eq!(free, path_mm - 4.0 * span_mm, TOL);
-        assert!(free / path_mm < 0.05 && free > 0.0, "free {free}");
+        assert_approx_eq!(free, path_mm - 2.0 * span_mm, TOL);
 
         // And on the coaster each tab spans 8 + 6.35 mm.
         let (p, op) = coaster(Some(four_rect_tabs()));
@@ -1274,21 +1276,33 @@ mod tests {
         assert_approx_eq!(held, 8.0 + DIAMETER_MM, TOL);
         assert_no_vertical_step_in_final_pass(&tp);
 
-        // Tabs wide enough to cover the whole path merge into one: the
-        // final pass rides the tab top all the way round.
+        // Four tabs wide enough to cover the whole path would merge into
+        // one; only the one that fits in half of it is cut (#109), so
+        // nothing overlaps.
         let mut spec = four_rect_tabs();
         spec.width_mm = 80.0;
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(
             codes(&warnings),
-            vec![
-                WarningCode::TabsOverlap,
-                WarningCode::TabsCoverMostOfContour
-            ]
+            vec![WarningCode::TabsCoverMostOfContour]
         );
-        let lap = final_lap(&tp);
-        assert!(lap.iter().all(|m| m.at_z(TAB_Z_MM)), "{lap:?}");
+        let raised = raised_runs(&final_lap(&tp));
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert_approx_eq!(raised[0].length_mm, 80.0 + DIAMETER_MM, TOL);
+
+        // Distances so close the tabs overlap, but in less than half the
+        // path, are cut as set: merged, with a warning.
+        let spec = tab_spec(
+            TabPlacement::AtDistances {
+                distances_mm: vec![100.0, 104.0, 108.0],
+            },
+            TabShape::Rect,
+        );
+        let (p, op) = coaster(Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!(codes(&warnings), vec![WarningCode::TabsOverlap]);
+        assert_eq!(raised_runs(&final_lap(&tp)).len(), 1);
 
         // Spaced-out tabs do not warn.
         let (p, op) = coaster(Some(four_rect_tabs()));
@@ -1335,11 +1349,19 @@ mod tests {
             .collect()
     }
 
+    /// [`four_rect_tabs`] on the holes too.
+    fn four_rect_tabs_on_holes() -> TabSpec {
+        TabSpec {
+            on_holes: true,
+            ..four_rect_tabs()
+        }
+    }
+
     #[test]
     fn tabs_covering_most_of_contour_warn() {
         // Default tabs (4 × 8 mm, 6.35 mm bit) on a 20 mm square hole:
         // 57.4 mm of tab on a 54.6 mm tool path.
-        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs()));
+        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs_on_holes()));
         let (_, warnings) = generate(&p, &op);
         let cover = coverage_warnings(&warnings);
         assert_eq!(cover.len(), 1, "only the hole: {warnings:?}");
@@ -1352,7 +1374,7 @@ mod tests {
             tab_count,
             tab_span_mm,
             tab_total_mm,
-            max_count,
+            cut_count,
             max_width_mm: Some(max_width_mm),
             ..
         } = w
@@ -1370,21 +1392,23 @@ mod tests {
         assert_approx_eq!(*path_length_mm, path_mm, TOL);
         assert_approx_eq!(*tab_span_mm, span_mm, TOL);
         assert_approx_eq!(*tab_total_mm, 4.0 * span_mm, TOL);
-        // One 14.35 mm tab covers at most half of 54.6 mm; four tabs fit
-        // in half only if each is at most 27.3 / 4 − 6.35 = 0.475 mm wide.
-        assert_approx_eq!(*max_count, 1.0, TOL);
+        // One 14.35 mm tab covers at most half of 54.6 mm, so one is cut
+        // (#109); four tabs fit in half only if each is at most
+        // 27.3 / 4 − 6.35 = 0.475 mm wide.
+        assert_eq!(*cut_count, 1);
         assert!(*max_width_mm <= path_mm / 2.0 / 4.0 - DIAMETER_MM);
 
         // The text names the shape, the path, the tab total and the share,
-        // says what may happen, and suggests changes, in rounded values.
+        // says what would happen and what is cut instead, and suggests a
+        // width, in rounded values.
         let text = w.to_string();
         for needle in [
             "`Square 1`",
             "54.6 mm",
             "57.4 mm",
             "105.1%",
-            "may not cut free",
-            "at most 1 tab",
+            "would not cut free",
+            "Only 1 of them is cut",
             "0.47 mm",
         ] {
             assert!(text.contains(needle), "{needle:?} in {text:?}");
@@ -1406,7 +1430,13 @@ mod tests {
             width_mm: 3.0,
             ..four_rect_tabs()
         };
-        let (mut p, op) = square_with_hole(13.175, Some(spec));
+        let (mut p, op) = square_with_hole(
+            13.175,
+            Some(TabSpec {
+                on_holes: true,
+                ..spec
+            }),
+        );
         p.tools[0].diameter_mm = 3.175;
         let (_, warnings) = generate(&p, &op);
         let cover = coverage_warnings(&warnings);
@@ -1444,31 +1474,125 @@ mod tests {
         assert!(!text.contains("tab(s) of 6.17 mm each"), "{text}");
     }
 
+    /// #109: a hole's slug is waste, so by default only the part's
+    /// outline gets tabs: the 40 mm hole of the 60 mm square is cut free
+    /// all the way round on its last pass, while the square rises over
+    /// its four tabs. Nothing warns.
     #[test]
-    fn tabs_are_not_changed_when_they_warn() {
-        // Eleven 14.35 mm spans on the 302.7 mm coaster path cover 52%:
-        // a warning, and still eleven tabs exactly as set.
+    fn holes_get_no_tabs_by_default() {
+        let (p, op) = square_with_hole(40.0, Some(four_rect_tabs()));
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let laps = final_laps_by_contour(&tp);
+        assert_eq!(laps.len(), 2, "the hole, then the square");
+        assert!(
+            laps[0].iter().all(|m| m.at_z(0.0)),
+            "the hole has no tabs: {:?}",
+            laps[0]
+        );
+        let square = runs(&laps[1], |m| m.at_z(TAB_Z_MM));
+        assert_eq!(square.len(), 4, "the square keeps its tabs: {square:?}");
+        assert!(laps[1].iter().all(|m| m.at_z(0.0) || m.at_z(TAB_Z_MM)));
+    }
+
+    /// #109: with `on_holes` the hole is held too, by the same four tabs
+    /// as its part, as every outline was before version 9 (a 134.6 mm
+    /// hole path; four 14.35 mm spans cover 43% of it, so all are cut).
+    #[test]
+    fn on_holes_opt_in_keeps_hole_tabs() {
+        let (p, op) = square_with_hole(40.0, Some(four_rect_tabs_on_holes()));
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let laps = final_laps_by_contour(&tp);
+        assert_eq!(laps.len(), 2, "the hole, then the square");
+        for (name, lap) in ["hole", "square"].iter().zip(&laps) {
+            let raised = runs(lap, |m| m.at_z(TAB_Z_MM));
+            assert_eq!(raised.len(), 4, "{name}: {raised:?}");
+        }
+    }
+
+    /// #109: an outline too short for its tabs gets the most that keep
+    /// them to half of its tool path (the coverage threshold), down to
+    /// none, and the coverage warning names the shape and says how many
+    /// are cut. `count` tabs are re-spaced evenly; of `at_distances`, the
+    /// first in the list are kept.
+    #[test]
+    fn too_short_outline_gets_fewer_tabs_and_warns() {
+        let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
+        let cover_of = |warnings: &[Warning]| -> (usize, usize, String) {
+            let cover = coverage_warnings(warnings);
+            assert_eq!(cover.len(), 1, "{warnings:?}");
+            let Warning::TabsCoverMostOfContour {
+                tab_count,
+                cut_count,
+                ..
+            } = cover[0]
+            else {
+                panic!("{:?}", cover[0]);
+            };
+            (*tab_count, *cut_count, cover[0].to_string())
+        };
+
+        // Eleven 14.35 mm spans would cover 52% of the coaster's 302.7 mm
+        // path; ten (47%) are cut, evenly spaced.
         let spec = tab_spec(TabPlacement::Count { count: 11 }, TabShape::Rect);
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
-        assert_eq!(
-            codes(&warnings),
-            vec![WarningCode::TabsCoverMostOfContour],
-            "{warnings:?}"
-        );
+        assert_eq!(codes(&warnings), vec![WarningCode::TabsCoverMostOfContour]);
+        let (asked, cut, text) = cover_of(&warnings);
+        assert_eq!((asked, cut), (11, 10));
+        assert!(text.contains("`Coaster 1`"), "names the shape: {text}");
+        assert!(text.contains("Only 10 of them are cut"), "{text}");
         let raised = raised_runs(&final_lap(&tp));
-        assert_eq!(raised.len(), 11, "{raised:?}");
+        assert_eq!(raised.len(), 10, "{raised:?}");
+        let tenth = coaster_path_mm() / 10.0;
+        for pair in raised.windows(2) {
+            assert_approx_eq!(pair[1].start_mm - pair[0].start_mm, tenth, TOL);
+        }
         for run in &raised {
-            assert_approx_eq!(run.length_mm, TAB_WIDTH_MM + DIAMETER_MM, TOL);
+            assert_approx_eq!(run.length_mm, span_mm, TOL);
         }
 
-        // Tabs that cover a whole hole are kept too: its final lap rides
-        // the tab top all the way round.
-        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs()));
-        let (tp, _) = generate(&p, &op);
+        // Twelve distances 25 mm apart would cover 57%; the first ten are
+        // cut, the last two (250 and 275 mm) are not.
+        let distances_mm: Vec<f64> = (0..12).map(|k| 25.0 * f64::from(k)).collect();
+        let spec = tab_spec(TabPlacement::AtDistances { distances_mm }, TabShape::Rect);
+        let (p, op) = coaster(Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!((cover_of(&warnings).0, cover_of(&warnings).1), (12, 10));
+        let l = coaster_path_mm();
+        let mut centres: Vec<f64> = raised_runs(&final_lap(&tp))
+            .iter()
+            .map(|r| (r.start_mm + r.length_mm / 2.0).rem_euclid(l))
+            .map(|c| if c > l - 1.0 { c - l } else { c })
+            .collect();
+        centres.sort_by(f64::total_cmp);
+        assert_eq!(centres.len(), 10, "{centres:?}");
+        for (k, c) in centres.iter().enumerate() {
+            assert_approx_eq!(*c, 25.0 * k as f64, TOL);
+        }
+
+        // A 20 mm square hole with hole tabs on: one of the four fits
+        // its 54.6 mm path. The square keeps all four.
+        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs_on_holes()));
+        let (tp, warnings) = generate(&p, &op);
+        let (asked, cut, text) = cover_of(&warnings);
+        assert_eq!((asked, cut), (4, 1));
+        assert!(text.contains("`Square 1`"), "{text}");
         let laps = final_laps_by_contour(&tp);
-        assert_eq!(laps.len(), 2);
-        assert!(laps[0].iter().all(|m| m.at_z(TAB_Z_MM)), "{:?}", laps[0]);
+        assert_eq!(runs(&laps[0], |m| m.at_z(TAB_Z_MM)).len(), 1);
+        assert_eq!(runs(&laps[1], |m| m.at_z(TAB_Z_MM)).len(), 4);
+
+        // A 12 mm circle cut inside has a 17.7 mm path: even one tab
+        // covers more than half, so none is cut and the lap cuts free.
+        let (p, op) = circle_job(6.0, Side::Inside, Some(four_rect_tabs()));
+        let (tp, warnings) = generate(&p, &op);
+        let (asked, cut, text) = cover_of(&warnings);
+        assert_eq!((asked, cut), (4, 0));
+        assert!(text.contains("No tab is cut"), "{text}");
+        let laps = final_laps_by_contour(&tp);
+        assert_eq!(laps.len(), 1);
+        assert!(laps[0].iter().all(|m| m.at_z(0.0)), "{:?}", laps[0]);
     }
 
     #[test]

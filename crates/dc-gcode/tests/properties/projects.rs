@@ -416,8 +416,9 @@ fn step_down() -> impl Strategy<Value = Option<f64>> {
     prop::option::of(0.3..6.0_f64)
 }
 
-/// Tabs as (placement, width mm, height as a fraction of the stock, shape).
-fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape)>> {
+/// Tabs as (placement, width mm, height as a fraction of the stock, shape,
+/// whether holes get them too).
+fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape, bool)>> {
     prop::option::of((
         prop_oneof![
             (1_u8..=6).prop_map(|count| TabPlacement::Count { count }),
@@ -427,6 +428,7 @@ fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape)>> {
         1.0..10.0_f64,
         0.05..0.8_f64,
         prop_oneof![Just(TabShape::Rect), Just(TabShape::Smooth)],
+        any::<bool>(),
     ))
 }
 
@@ -481,11 +483,14 @@ pub fn profile_project() -> impl Strategy<Value = Project> {
                         direction,
                         through_cut_allowance_mm: depth.allowance_mm,
                         safe_z_mm,
-                        tabs: tabs.map(|(placement, width_mm, height, shape)| TabSpec {
-                            placement,
-                            width_mm,
-                            height_mm: height * s.thickness_mm,
-                            shape,
+                        tabs: tabs.map(|(placement, width_mm, height, shape, on_holes)| {
+                            TabSpec {
+                                placement,
+                                width_mm,
+                                height_mm: height * s.thickness_mm,
+                                shape,
+                                on_holes,
+                            }
                         }),
                         machining_order: order,
                         entry,

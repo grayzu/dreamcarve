@@ -489,6 +489,7 @@ fn tabs_are_kept_out_of_the_entry() {
         width_mm,
         height_mm: tab_top_mm,
         shape: TabShape::Rect,
+        on_holes: false,
     });
     // How far the cutter at `s` reaches into the tab: the tab is the kerf
     // over its stretch, the stretch grown by r; the cutter adds r more.

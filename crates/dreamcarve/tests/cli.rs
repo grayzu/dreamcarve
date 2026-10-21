@@ -4623,6 +4623,13 @@ fn warnings_print_code_and_message() {
     let first = as_profile_mut(&mut project.operations[0]);
     if let Some(tabs) = &mut first.tabs {
         tabs.height_mm = thickness_mm + 1.0;
+        // Two tabs 5 mm apart overlap on every outline; with the third,
+        // they would cover more than half of the small hole's path, so
+        // the hole keeps the first two (#109).
+        tabs.placement = TabPlacement::AtDistances {
+            distances_mm: vec![10.0, 15.0, 40.0],
+        };
+        tabs.on_holes = true;
     }
     let mut outline_op = first.clone();
     outline_op.id = OperationId::new("op2");
