@@ -76,14 +76,30 @@ wood with a brad-point or twist drill that clears its own chips.
 
 `{ "peck": { "peck_depth_mm": 4.0, "retract": "full" } }` drills in steps
 of `peck_depth_mm`, lifting between them to clear the chips and let the
-bit cool. Each step is at most `peck_depth_mm` deeper than the last; only
-the last one is shorter. 12 mm in 4 mm pecks is three plunges; 12 mm in
-5 mm pecks is 5, 5 and 2 mm.
+bit cool. The steps are counted from the
+[retract height](#retract-height), where each hole starts, as a
+controller's own peck cycle (`G83`, `G73`) counts them. The first step
+starts in the air, so it cuts `peck_depth_mm` less `retract_mm` into the
+material; every later step goes one full `peck_depth_mm` deeper, and the
+last one may be shorter. No step ever goes more than `peck_depth_mm`
+below the depth already drilled.
+
+With `retract_mm: 1`, 12 mm in 4 mm pecks is four plunges: to 3, 7 and
+11 mm below the stock top, then to 12. With `retract_mm: 0` it is three:
+to 4, 8 and 12. A `retract_mm` larger than `peck_depth_mm` makes the first
+peck stop in the air, as the controller's cycle would; keep the retract
+height below the peck depth.
 
 `peck_depth_mm: null` uses the tool's `step_down_mm`, as VCarve uses the
 tool's pass depth; with both unset, `check` reports it and export refuses.
-A peck at least as deep as the hole drills it in one plunge and warns
-`drill_peck_deeper_than_hole`.
+A peck that reaches the bottom of the hole from the retract height in one
+go drills it in one plunge and warns `drill_peck_deeper_than_hole`.
+
+**Changed in phase 2.** Earlier builds counted the pecks from the stock
+top ([#153](https://github.com/grayzu/dreamcarve/issues/153)). With a
+retract height above the stock, each peck now ends `retract_mm` higher
+than it did, and a hole may take one more peck. The holes' depth is the
+same. A project exported again gives a different peck program.
 
 `retract` says how far the bit lifts between pecks:
 
@@ -135,8 +151,9 @@ For each hole:
 
 1. Rapid at safe Z to above the hole.
 2. Rapid down to the retract height.
-3. Plunge at the plunge rate to the first peck depth (or the full depth
-   for a simple cycle), then wait `dwell_s` if set.
+3. Plunge at the plunge rate to the first peck depth, `peck_depth_mm`
+   below the retract height (or the full depth for a simple cycle), then
+   wait `dwell_s` if set.
 4. For each further peck: lift (to the retract height and back down to
    0.5 mm above the depth reached, or by the chip-break gap), plunge to
    the next depth, wait.
@@ -154,7 +171,8 @@ line. They are off by default. To use them, set
 `"use_canned_cycles": true` in the project's `post_processor` block, with
 a post-processor that has them ([Post-processors](post-processors.md#canned-cycles)).
 DreamCarve writes `G81` and `G82` on LinuxCNC and Mach3, and no peck
-cycles anywhere. grblHAL, GRBL, UCCNC and generic have none, so `check`
+cycles with any bundled post-processor
+([why](post-processors.md#controllers-compared)). grblHAL, GRBL, UCCNC and generic have none, so `check`
 reports `true` as an error there.
 
 With canned cycles on, a Drill is written as:
@@ -193,11 +211,11 @@ One operation is never part cycles and part moves. This happens when:
 
 - a peck also has a dwell (no cycle does both);
 - the post-processor has no command for the cycle, or does not state how
-  far its `G83` or `G73` backs off between pecks;
-- a peck cycle has a retract height above the stock top. Controllers
-  measure each peck from `R`, DreamCarve from the stock top, so the pecks
-  would land at different depths. Set `retract_mm` to 0 to get `G83` or
-  `G73`; a simple cycle (`G81`, `G82`) works with any retract height.
+  far its `G83` or `G73` backs off between pecks.
+
+A post-processor that has `G83` and `G73` writes them with any retract
+height: DreamCarve counts the pecks from the retract height `R`, as the
+controller does, so the cycle and the plain moves are the same pecks.
 
 ## Warnings
 
@@ -205,7 +223,7 @@ One operation is never part cycles and part moves. This happens when:
 | --- | --- |
 | `drill_target_not_circle` | A target outline is not a circle, or is open, so it is not drilled. Draw a circle, or remove the target. |
 | `drill_tool_wider_than_hole` | The bit is wider than the circle drawn. The hole comes out the bit's size. Use a smaller bit, or draw the circle the bit's size. |
-| `drill_peck_deeper_than_hole` | `peck_depth_mm` (or the tool's step-down) is at least the hole's depth, so it is drilled in one plunge. Use a smaller peck, or the `"simple"` cycle. |
+| `drill_peck_deeper_than_hole` | `peck_depth_mm` (or the tool's step-down) reaches the hole's bottom from the retract height, so it is drilled in one plunge. Use a smaller peck, or the `"simple"` cycle. |
 | `drill_retract_below_stock_top` | `retract_mm` is below the stock top; the bit retracts to the stock top instead. |
 | `drill_cutter_unusual` | The tool is not a drill or an end mill, so the hole's bottom is a cone. |
 
