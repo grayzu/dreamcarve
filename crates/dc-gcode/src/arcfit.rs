@@ -257,7 +257,7 @@ impl RunMove {
             return None;
         }
         let midpoint = match mv.kind {
-            MoveKind::Rapid => return None,
+            MoveKind::Rapid | MoveKind::Dwell { .. } => return None,
             MoveKind::Linear => None,
             MoveKind::ArcCw { centre } => Some(shallow_arc_midpoint(
                 from.xy(),

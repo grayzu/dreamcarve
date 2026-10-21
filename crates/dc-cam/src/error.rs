@@ -296,6 +296,17 @@ pub enum CamError {
         /// The value, mm.
         value_mm: f64,
     },
+    /// A Drill setting cannot be cut: a chip-break gap that is not a
+    /// positive number, or a dwell that is negative or not finite.
+    #[error("operation `{op}` has {field} {value}; it must be a non-negative number")]
+    InvalidDrillSetting {
+        /// The operation.
+        op: OperationId,
+        /// Which setting: `gap_mm` or `dwell_s`.
+        field: &'static str,
+        /// The value as set.
+        value: f64,
+    },
     /// A generator produced a cut block the sequencer cannot trust. This
     /// is a defect in the generator, never in the user's project.
     #[error("shape {shape}, pass {pass}: {problem}")]

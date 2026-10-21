@@ -90,6 +90,22 @@ pub enum WarningCode {
     /// this is a hint. Params: `tool`, `tool_name`, `ops` (the ids of
     /// every enabled operation using the tool, comma separated, in order).
     ToolChangeAvoidable,
+    /// A Drill target is not a circle (or is an open path), so it was
+    /// skipped. Params: `op`, `instance`, `instance_name`, `profile`.
+    DrillTargetNotCircle,
+    /// The drilling tool is wider than the hole it drills; the hole comes
+    /// out the tool's size. Params: `op`, `instance`, `instance_name`,
+    /// `profile`, `hole_mm`, `tool_mm`.
+    DrillToolWiderThanHole,
+    /// The peck depth is at least the depth of the operation's holes, so
+    /// each is drilled in one plunge. Reported once per operation: every
+    /// hole has the same depth. Params: `op`, `peck_mm`, `depth_mm`.
+    DrillPeckDeeperThanHole,
+    /// The retract height is below the stock top, so it was raised to the
+    /// top: the tool must never rapid into material. Params: `op`,
+    /// `requested_mm` (the height above the stock top as set, negative),
+    /// `used_mm` (0).
+    DrillRetractBelowStockTop,
 }
 
 impl WarningCode {
@@ -111,6 +127,10 @@ impl WarningCode {
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
+            Self::DrillTargetNotCircle => "drill_target_not_circle",
+            Self::DrillToolWiderThanHole => "drill_tool_wider_than_hole",
+            Self::DrillPeckDeeperThanHole => "drill_peck_deeper_than_hole",
+            Self::DrillRetractBelowStockTop => "drill_retract_below_stock_top",
         }
     }
 }
@@ -349,6 +369,29 @@ impl fmt::Display for Warning {
                 self.text("tool_name"),
                 self.text("ops")
             ),
+            WarningCode::DrillTargetNotCircle => write!(
+                f,
+                "{} is not a circle; Drill plunges only at the centre of circles, so it is not drilled",
+                self.shape()
+            ),
+            WarningCode::DrillToolWiderThanHole => write!(
+                f,
+                "the {} mm tool is wider than the {} mm hole {}, so the hole comes out the tool's size",
+                self.number("tool_mm", DIAMETER_DECIMALS),
+                self.mm("hole_mm"),
+                self.shape()
+            ),
+            WarningCode::DrillPeckDeeperThanHole => write!(
+                f,
+                "the {} mm peck is at least the {} mm depth of the holes, so each is drilled in one plunge",
+                self.mm("peck_mm"),
+                self.mm("depth_mm")
+            ),
+            WarningCode::DrillRetractBelowStockTop => write!(
+                f,
+                "retract_mm is {} mm, below the stock top; the tool retracts to the stock top instead, because it must never rapid into material",
+                self.mm("requested_mm")
+            ),
             WarningCode::TabsCoverMostOfContour => {
                 let path_mm = self
                     .param("path_length_mm")
@@ -447,6 +490,36 @@ mod tests {
         assert_eq!(
             w.to_string(),
             "the tool paths of `Left` (instance `a`, profile 0) and `Right` (instance `b`, profile 1) cut into each other: the shapes are 2 mm apart, closer than the 6 mm tool `6 mm upcut` (6 mm) needs between them, so cutting one gouges the other. Move them at least 6 mm apart or use a smaller bit."
+        );
+    }
+
+    #[test]
+    fn drill_warnings_name_the_shape_and_sizes() {
+        let shape = |code| {
+            Warning::new(code)
+                .with("op", "o3")
+                .with("instance", "s")
+                .with("instance_name", "Slot")
+                .with("profile", 0)
+        };
+        assert_eq!(
+            shape(WarningCode::DrillTargetNotCircle).to_string(),
+            "`Slot` (instance `s`, profile 0) is not a circle; Drill plunges only at the centre of circles, so it is not drilled"
+        );
+        let wide = shape(WarningCode::DrillToolWiderThanHole)
+            .with("hole_mm", 4.999_999_9)
+            .with("tool_mm", 6.35);
+        assert_eq!(
+            wide.to_string(),
+            "the 6.35 mm tool is wider than the 5 mm hole `Slot` (instance `s`, profile 0), so the hole comes out the tool's size"
+        );
+        let peck = Warning::new(WarningCode::DrillPeckDeeperThanHole)
+            .with("op", "o3")
+            .with("peck_mm", 20.0)
+            .with("depth_mm", 12.0);
+        assert_eq!(
+            peck.to_string(),
+            "the 20 mm peck is at least the 12 mm depth of the holes, so each is drilled in one plunge"
         );
     }
 }

@@ -33,6 +33,14 @@ pub enum MoveKind {
         /// Arc centre, mm.
         centre: Point,
     },
+    /// A pause with no motion, at the bottom of a drilled hole
+    /// (`docs/specs/phase-2/design.md`, "Algorithms → Drill", step 5). The
+    /// move's `to` is where the tool already is; the post-processor writes
+    /// its dwell command and the safety parser sees no motion.
+    Dwell {
+        /// How long to wait, seconds, more than 0.
+        seconds: f64,
+    },
 }
 
 /// One tool move.
@@ -42,8 +50,8 @@ pub struct Move {
     pub kind: MoveKind,
     /// End point, mm, absolute project coordinates.
     pub to: Point3,
-    /// Feed rate, mm/min. `None` for rapids; `Some` for every linear and
-    /// arc move, always a value the user supplied on the tool.
+    /// Feed rate, mm/min. `None` for rapids and dwells; `Some` for every
+    /// linear and arc move, always a value the user supplied on the tool.
     pub feed_mm_min: Option<f64>,
 }
 
@@ -68,9 +76,34 @@ impl Move {
         }
     }
 
+    /// A dwell of `seconds` at `at`, where the tool already is.
+    #[must_use]
+    pub const fn dwell(at: Point3, seconds: f64) -> Self {
+        Self {
+            kind: MoveKind::Dwell { seconds },
+            to: at,
+            feed_mm_min: None,
+        }
+    }
+
     /// True for a rapid.
     #[must_use]
     pub const fn is_rapid(&self) -> bool {
         matches!(self.kind, MoveKind::Rapid)
+    }
+
+    /// True for a dwell, which moves nothing.
+    #[must_use]
+    pub const fn is_dwell(&self) -> bool {
+        matches!(self.kind, MoveKind::Dwell { .. })
+    }
+
+    /// True for a move that cuts: a straight cut or an arc.
+    #[must_use]
+    pub const fn is_cut(&self) -> bool {
+        matches!(
+            self.kind,
+            MoveKind::Linear | MoveKind::ArcCw { .. } | MoveKind::ArcCcw { .. }
+        )
     }
 }

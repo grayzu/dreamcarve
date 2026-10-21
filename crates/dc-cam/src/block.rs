@@ -41,8 +41,10 @@ pub struct CutBlock {
     /// stay down between passes.
     pub descent_from_z_mm: f64,
     /// Ramp, helix or plunge moves from `descent_from` to `entry` at `z_mm`,
-    /// every one `Linear` or an arc at the plunge or feed rate. Empty means
-    /// a straight plunge at the plunge rate, which the sequencer writes.
+    /// every one `Linear` or an arc at the plunge or feed rate, except a
+    /// Drill's single rapid straight down to its retract height above the
+    /// stock. Empty means a straight plunge at the plunge rate, which the
+    /// sequencer writes.
     pub descent: Vec<Move>,
     /// XY, mm, where the descent ends and cutting begins.
     pub entry: Point,
