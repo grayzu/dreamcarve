@@ -8,9 +8,9 @@ use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
     ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
-    FeatureDefinition, FeatureInstance, MachineOrigin, MachiningOrder, Operation, OriginXy,
-    OriginZ, PlacedTab, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec,
-    Tool, ToolKind, Units, WallPass,
+    FeatureDefinition, FeatureInstance, Heights, MachineOrigin, MachiningOrder, Operation,
+    OriginXy, OriginZ, PlacedTab, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement,
+    TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
@@ -49,7 +49,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v11/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v12/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -71,6 +71,7 @@ pub fn sample_project() -> Project {
             xy: OriginXy::BottomLeft,
             z: OriginZ::StockTop,
         },
+        heights: Heights::unset(),
         definitions: BTreeMap::from([(rect.id.clone(), rect)]),
         instances: vec![FeatureInstance {
             id: InstanceId::new("i1"),

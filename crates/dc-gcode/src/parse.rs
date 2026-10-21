@@ -109,6 +109,11 @@ pub struct Block {
     /// the same line number. The line's own block has the cycle's words and
     /// no motion.
     pub synthetic: bool,
+    /// For a `G53 G0 Z<v>` line (S16, #283), the machine Z it lifts to,
+    /// millimetres: a move in machine coordinates, which is not a
+    /// [`MachineMove`] (those are work coordinates). Work Z is unknown
+    /// after it.
+    pub machine_lift_mm: Option<f64>,
 }
 
 impl Block {
@@ -296,6 +301,12 @@ impl State {
         words: Vec<Word>,
         blocks: &mut Vec<Block>,
     ) -> Result<(), String> {
+        if words
+            .iter()
+            .any(|w| w.letter == 'G' && is_code(w.value, 53.0))
+        {
+            return self.machine_lift(line, words, blocks);
+        }
         let mut dwell = false;
         for w in &words {
             match w.letter {
@@ -344,12 +355,14 @@ impl State {
                 words,
                 motion: None,
                 synthetic: false,
+                machine_lift_mm: None,
             });
             blocks.extend(hole.into_iter().map(|(words, motion)| Block {
                 line,
                 words,
                 motion,
                 synthetic: true,
+                machine_lift_mm: None,
             }));
             return Ok(());
         }
@@ -382,6 +395,54 @@ impl State {
             words,
             motion,
             synthetic: false,
+            machine_lift_mm: None,
+        });
+        Ok(())
+    }
+
+    /// S16 (#283): a line with `G53` must be `G53 G0 Z<v>` and nothing
+    /// else but a line number: one rapid in Z alone in machine
+    /// coordinates, which grblHAL and GRBL run ignoring work and tool
+    /// offsets (grblHAL `gcode.c` 3254-3277, GRBL `gcode.c` 592-597). It
+    /// leaves `G0` the motion mode and work Z unknown; X and Y do not move.
+    /// Any other `G53` is refused rather than modelled.
+    fn machine_lift(
+        &mut self,
+        line: usize,
+        words: Vec<Word>,
+        blocks: &mut Vec<Block>,
+    ) -> Result<(), String> {
+        let refuse = || "`G53` is accepted only as `G53 G0 Z…`, alone on its line (S16)".to_owned();
+        let count = |letter: char, value: Option<f64>| {
+            words
+                .iter()
+                .filter(|w| w.letter == letter && value.is_none_or(|v| is_code(w.value, v)))
+                .count()
+        };
+        let only_these = words.iter().all(|w| matches!(w.letter, 'G' | 'Z' | 'N'));
+        if !(only_these
+            && count('G', Some(53.0)) == 1
+            && count('G', Some(0.0)) == 1
+            && count('G', None) == 2
+            && count('Z', None) == 1
+            && count('N', None) <= 1)
+        {
+            return Err(refuse());
+        }
+        let z = words
+            .iter()
+            .find(|w| w.letter == 'Z')
+            .map(|w| w.value)
+            .ok_or_else(refuse)?;
+        self.mode = Some(Mode::Move(MotionKind::Rapid));
+        self.initial_z = None;
+        self.pos.z = None;
+        blocks.push(Block {
+            line,
+            words,
+            motion: None,
+            synthetic: false,
+            machine_lift_mm: Some(z * mm_per_unit(self.units)),
         });
         Ok(())
     }

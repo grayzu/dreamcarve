@@ -23,7 +23,7 @@ use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
 use crate::passes::pass_z_mm;
 use crate::profile::{containment_pairs, rates_of};
-use crate::sequence::{SequenceInput, sequence};
+use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::segment_kind;
 use crate::toolpath::{Move, Toolpath};
@@ -158,6 +158,7 @@ pub fn generate_engrave(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
         stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,

@@ -26,7 +26,7 @@ use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadW
 use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
 use crate::passes::pass_z_mm;
 use crate::relief;
-use crate::sequence::{SequenceInput, plan, sequence};
+use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
     LapRates, Least, PathEnds, PathTabs, Reduced, Request, TabCut, Tabs, check_size,
@@ -598,6 +598,7 @@ pub fn generate_profile(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
         stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,

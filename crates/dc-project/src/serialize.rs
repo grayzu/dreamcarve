@@ -355,7 +355,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v11/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v12/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -824,6 +824,7 @@ mod tests {
         &["units", "mm_command"],
         &["units", "inch_command"],
         &["work_coordinates", "select_command"],
+        &["work_coordinates", "machine_command"],
         &["canned_cycles"],
         &["canned_cycles", "drill_command"],
         &["canned_cycles", "drill_with_dwell_command"],
@@ -843,6 +844,8 @@ mod tests {
         // The fixture predates the phase 2 definition fields (#117).
         post["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
         post["use_canned_cycles"] = Value::from(false);
+        // And the one #283 added.
+        post["work_coordinates"]["machine_command"] = Value::from("G53");
         // grblHAL has no canned cycles; fill them so their options are there
         // to remove.
         post["canned_cycles"] = serde_json::json!({

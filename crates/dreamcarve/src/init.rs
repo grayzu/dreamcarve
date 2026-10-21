@@ -33,9 +33,9 @@ use dc_import::{
 };
 use dc_project::{
     CURRENT_VERSION, CornerRelief, CutDirection, Entry, FeatureDefinition, FeatureInstance,
-    MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PostProcessorRef,
-    ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId,
-    ToolKind, Units, validate,
+    Heights, MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ,
+    PostProcessorRef, ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec,
+    Tool, ToolId, ToolKind, Units, validate,
 };
 
 use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
@@ -318,6 +318,10 @@ fn default_project(
             xy: OriginXy::BottomLeft,
             z: OriginZ::StockTop,
         },
+        // #283: the clearance, tool-change and park heights are the
+        // user's to set, like the thickness; unset, the program is as
+        // before they existed.
+        heights: Heights::unset(),
         definitions,
         instances,
         tools: vec![tool],
