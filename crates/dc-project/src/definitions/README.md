@@ -123,7 +123,14 @@ Rules for the emitter that come from the same check (enforced in `emit`, not
 here): text substituted into comments (`{programName}`, `{toolName}`,
 `{operationName}`) is reduced to printable ASCII without `( ) ; ! ? ~`,
 since both controllers act on `!`, `~`, `?` and bytes above 0x7F even inside
-comments, and `)` ends a comment early. On grblHAL, `!`, `?` and `~` inside a
+comments, and `)` ends a comment early. Since #278 a non-ASCII character is
+first transliterated by DreamCarve's own table (`dc-gcode/src/ascii.rs`:
+Latin-1 Supplement, Latin Extended-A, the General Punctuation dashes, quotes
+and dots, and `™`; "Café" → `Cafe`, "½" → `1/2`, "—" → `-`), and only a
+character with no entry is dropped; no entry produces `( ) ; ! ? ~ { } %`,
+which a test checks over every code point. This is an emitter rule, so it
+applies to every definition version without a new one: it changes comment
+bytes only, for names that hold such characters. On grblHAL, `!`, `?` and `~` inside a
 comment act only while `legacy_rt_commands` (`$39`) is on, which is the
 default (`DEFAULT_LEGACY_RTCOMMANDS On` in `config.h`; checked in
 `protocol.c`), so they are still removed. Never emit M4 (needs a direction pin
