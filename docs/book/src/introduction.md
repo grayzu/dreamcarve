@@ -16,10 +16,14 @@ and its outputs form the golden corpus our tests compare against.
 Development runs in phases, each ending in a working product. The
 [Roadmap](roadmap.md) lists them. Phase 0 built the scaffold: a Cargo
 workspace, continuous integration on Windows, macOS, and Linux, releases,
-and this site. Phase 1 brings the first G-code: a command line tool that
+and this site. Phase 1 brought the first G-code: a command line tool that
 imports an SVG and writes a Profile toolpath, with tabs, for a
-grblHAL or GRBL machine. Start with
-[Your first cut from an SVG](quick-start/first-cut.md).
+grblHAL or GRBL machine. Phase 2 adds every 2.5D operation except V-Carve
+(Pocket, Drill, Engrave, and Profile entries, leads and corner relief), DXF
+import, a tool library with Fusion import, and six controllers. Start with
+[Your first cut from an SVG](quick-start/first-cut.md), then
+[A pocketed plaque from DXF](quick-start/plaque.md). The
+[Changelog](changelog.md) lists what changed in each release.
 
 ## Who this site is for
 

@@ -2,6 +2,7 @@
 
 [Introduction](introduction.md)
 [Roadmap](roadmap.md)
+[Changelog](changelog.md)
 
 # Quick start
 
