@@ -156,6 +156,7 @@ pub fn generate_engrave(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,
         feed_mm_min: rates.feed_mm_min,

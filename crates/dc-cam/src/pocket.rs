@@ -407,10 +407,14 @@ pub fn generate_pocket(
     let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
     let mut entry_warnings = EntryWarnings::default();
     for (pass, &z_mm) in pass_z.iter().enumerate() {
-        let descent_from_z_mm = pass
+        // #214: a ramp or helix starts the entry clearance above the stock
+        // top, and on a later pass above the floor the pass before cleared
+        // (the whole tool-centre region, every pass), not at safe Z.
+        let above_mm = pass
             .checked_sub(1)
             .and_then(|k| pass_z.get(k).copied())
-            .unwrap_or(safe_z_mm);
+            .unwrap_or(thickness_mm);
+        let descent_from_z_mm = entry::descent_start_z_mm(above_mm, safe_z_mm);
         for (shape, path, cleared, plan) in &rings {
             let Some(start) = path.vertices().first().map(|v| v.point()) else {
                 continue;
@@ -456,6 +460,7 @@ pub fn generate_pocket(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm,
         feed_mm_min: rates.feed_mm_min,
@@ -2252,8 +2257,11 @@ mod tests {
     /// Acceptance test 27, first part: a Pocket with `entry: helix` at 80 %
     /// and a 6.35 mm tool descends on a helix 5.08 mm across, then turns
     /// one flat revolution at the pass Z, all inside the region. The first
-    /// pass's helix starts at safe Z; later passes start at the previous
-    /// pass Z, never in the air above the floor already cut.
+    /// pass's helix starts 1 mm above the stock top, reached by a rapid
+    /// straight down from safe Z; later passes start 1 mm above the
+    /// previous pass Z, never higher in the air above the floor already
+    /// cut. (changed in #214: the first pass's helix started at safe Z, and
+    /// later passes at the previous pass Z.)
     #[test]
     fn helix_80_percent_is_5_08_mm_for_6_35_tool() {
         let p = rect_project();
@@ -2268,7 +2276,10 @@ mod tests {
             .expect("a helix")
             + 1;
         assert!(m[first - 1].is_rapid(), "{:?}", m[first - 1]);
-        assert_approx_eq!(m[first - 1].to.z, SAFE_Z_MM, TOL);
+        assert_approx_eq!(m[first - 1].to.z, THICKNESS_MM + 1.0, TOL);
+        assert!(m[first - 2].is_rapid(), "{:?}", m[first - 2]);
+        assert_approx_eq!(m[first - 2].to.z, SAFE_Z_MM, TOL);
+        assert!(m[first - 2].to.xy().distance_to(m[first - 1].to.xy()) <= TOL);
         let mut end = first;
         while end < m.len() && sloped(m[end - 1].to, &m[end]) {
             end += 1;
@@ -2296,7 +2307,7 @@ mod tests {
         for (from, mv) in sloped_moves(&tp) {
             if mv.to.z < PASS_Z_MM[0] - TOL {
                 assert!(
-                    from.z <= PASS_Z_MM[0] + TOL,
+                    from.z <= PASS_Z_MM[0] + 1.0 + TOL,
                     "a second-pass descent starts above the first floor: {from:?} -> {mv:?}"
                 );
             }
@@ -3570,8 +3581,7 @@ mod tests {
             let first_side = sides.first().expect("the wall ring is cut").index;
             let last_line = raster_lines_at(&tp, z)
                 .into_iter()
-                .filter(|c| c.index < first_side)
-                .last()
+                .rfind(|c| c.index < first_side)
                 .expect("lines come before the wall ring")
                 .index;
             let between = &tp.moves[last_line + 1..first_side];
