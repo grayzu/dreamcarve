@@ -277,6 +277,102 @@ fn closest_on_segment(seg: Segment, p: Point) -> Point {
     }
 }
 
+/// The point of a polyline nearest a given point ([`nearest_point`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Nearest {
+    /// The nearest point of the polyline.
+    pub point: Point,
+    /// How far along the polyline from its first vertex `point` is, mm,
+    /// counting only segments longer than [`EPS_MM`], as
+    /// [`Polyline::point_at`] walks it.
+    pub along_mm: f64,
+    /// The distance from the given point to `point`, mm.
+    pub gap_mm: f64,
+    /// The index of the segment `point` is on, in [`Polyline::segments`]
+    /// order.
+    pub segment: usize,
+    /// How far along that segment `point` is, mm.
+    pub along_segment_mm: f64,
+}
+
+/// The point of `path` nearest `p`, following arcs, with how far along
+/// `path` it is (#105). Where several points are equally near, the first
+/// along the path wins, except on an arc centred on `p`, every point of
+/// which is equally near: there the arc's middle is taken, so a point at
+/// a corner maps to the middle of the arc an offset path turns round it.
+/// `None` when `path` has no segment longer than [`EPS_MM`].
+#[must_use]
+pub fn nearest_point(path: &Polyline, p: Point) -> Option<Nearest> {
+    let mut best: Option<Nearest> = None;
+    // Whether `best` is the middle of an arc centred on `p`, which the
+    // ends of the segments beside it tie with.
+    let mut best_is_centred = false;
+    let mut walked_mm = 0.0;
+    for (segment, seg) in path.segments().enumerate() {
+        let length_mm = seg.length_mm();
+        if length_mm <= EPS_MM {
+            continue;
+        }
+        let centred = seg
+            .arc()
+            .is_some_and(|arc| arc.centre.distance_to(p) <= EPS_MM);
+        let (point, along_segment_mm) = if centred {
+            let half_mm = length_mm / 2.0;
+            let point = seg.point_at(half_mm).map_or(seg.start, |(q, _)| q);
+            (point, half_mm)
+        } else {
+            let point = closest_on_segment(seg, p);
+            (point, along_segment(seg, point))
+        };
+        let gap_mm = p.distance_to(point);
+        let better = best.is_none_or(|b| {
+            if centred {
+                gap_mm <= b.gap_mm + EPS_MM
+            } else if best_is_centred {
+                gap_mm < b.gap_mm - EPS_MM
+            } else {
+                gap_mm < b.gap_mm
+            }
+        });
+        if better {
+            best_is_centred = centred;
+            best = Some(Nearest {
+                point,
+                along_mm: walked_mm + along_segment_mm,
+                gap_mm,
+                segment,
+                along_segment_mm,
+            });
+        }
+        walked_mm += length_mm;
+    }
+    best
+}
+
+/// How far along `seg` its point `q` is, mm: along the chord for a line,
+/// round the sweep for an arc.
+fn along_segment(seg: Segment, q: Point) -> f64 {
+    match seg.arc() {
+        Some(arc) => {
+            let v = q - arc.centre;
+            let angle_rad = v.y.atan2(v.x);
+            let swept_rad = if arc.sweep_rad > 0.0 {
+                (angle_rad - arc.start_angle_rad).rem_euclid(TAU)
+            } else {
+                (arc.start_angle_rad - angle_rad).rem_euclid(TAU)
+            };
+            // A point at the start can come out a hair short of a full turn.
+            let swept_rad = if swept_rad > arc.sweep_rad.abs() + EPS_MM / arc.radius_mm {
+                0.0
+            } else {
+                swept_rad.min(arc.sweep_rad.abs())
+            };
+            swept_rad * arc.radius_mm
+        }
+        None => seg.start.distance_to(q),
+    }
+}
+
 /// True when the direction `angle_rad` from the arc centre falls within the
 /// arc's sweep.
 fn sweep_contains(arc: Arc, angle_rad: f64) -> bool {
@@ -522,5 +618,65 @@ mod tests {
             3.0,
         );
         assert!(near.is_infinite(), "{near}");
+    }
+
+    /// #105: the nearest point of a polyline names how far along it lies,
+    /// on the segment it is on.
+    #[test]
+    fn nearest_point_on_a_line_reports_distance_along() {
+        let square = Polyline::rect(Point::new(0.0, 0.0), 10.0, 10.0);
+        let near = nearest_point(&square, Point::new(13.0, 4.0)).unwrap();
+        assert_approx_eq!(near.point.x, 10.0, 1e-12);
+        assert_approx_eq!(near.point.y, 4.0, 1e-12);
+        assert_approx_eq!(near.gap_mm, 3.0, 1e-12);
+        assert_approx_eq!(near.along_mm, 14.0, 1e-12);
+        assert_eq!(near.segment, 1);
+        assert_approx_eq!(near.along_segment_mm, 4.0, 1e-12);
+        // A point on the path is its own nearest point.
+        let (on, _) = square.point_at(27.5).unwrap();
+        let near = nearest_point(&square, on).unwrap();
+        assert_approx_eq!(near.gap_mm, 0.0, 1e-12);
+        assert_approx_eq!(near.along_mm, 27.5, 1e-9);
+    }
+
+    /// #105: on an arc the distance along follows the sweep, either way
+    /// round.
+    #[test]
+    fn nearest_point_on_an_arc_follows_the_sweep() {
+        for circle in [
+            Polyline::circle(Point::new(0.0, 0.0), 10.0),
+            Polyline::circle(Point::new(0.0, 0.0), 10.0).reversed(),
+        ] {
+            for along_mm in [0.5, 10.0, 31.0, 50.0, 62.0] {
+                let (on, _) = circle.point_at(along_mm).unwrap();
+                let outside = on + (on - Point::new(0.0, 0.0)) * 0.3;
+                let near = nearest_point(&circle, outside).unwrap();
+                assert_approx_eq!(near.gap_mm, 3.0, 1e-9);
+                assert_approx_eq!(near.along_mm, along_mm, 1e-9);
+            }
+        }
+    }
+
+    /// #105: every point of an arc centred on the given point is equally
+    /// near it, so the arc's middle is taken: a tab at a corner lands in
+    /// the middle of the arc an offset path turns round that corner.
+    #[test]
+    fn nearest_point_at_an_arc_centre_takes_the_arc_middle() {
+        // A quarter arc of radius 2 round (10, 0), from (10, -2) to (12, 0).
+        let path = Polyline::new(
+            vec![
+                Vertex::line(0.0, -2.0),
+                Vertex::new(10.0, -2.0, (std::f64::consts::PI / 8.0).tan()),
+                Vertex::line(12.0, 0.0),
+                Vertex::line(12.0, 10.0),
+            ],
+            false,
+        );
+        let near = nearest_point(&path, Point::new(10.0, 0.0)).unwrap();
+        let middle = std::f64::consts::FRAC_PI_4;
+        assert_approx_eq!(near.point.x, 10.0 + 2.0 * middle.sin(), 1e-9);
+        assert_approx_eq!(near.point.y, -2.0 * middle.cos(), 1e-9);
+        assert_approx_eq!(near.along_mm, 10.0 + std::f64::consts::PI / 2.0, 1e-9);
+        assert!(nearest_point(&Polyline::new(Vec::new(), false), Point::new(0.0, 0.0)).is_none());
     }
 }

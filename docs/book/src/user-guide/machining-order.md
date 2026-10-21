@@ -125,9 +125,9 @@ comes back down in the same place.
 The program is always written as listed. Three checks look at the order and
 warn when it is probably wrong; `check` and `export` print them.
 
-- **`cut_inside_freed_part`.** A Profile that cuts through the stock with
-  no tabs cuts its parts free; an Inside Profile through the stock frees
-  the slug in its hole. Any later operation that cuts a shape inside one
+- **`cut_inside_freed_part`.** A Profile that cuts through the stock
+  frees each outline it cuts with no tab over it: an Outside Profile cuts
+  its parts free; an Inside Profile frees the slug in its hole. Any later operation that cuts a shape inside one
   of those outlines, a hole, a pocket, an engraving, runs in a loose
   piece. An open path an Engrave or an `on_line` Profile cuts counts when
   all of it lies inside the outline; one that crosses the outline does
@@ -135,7 +135,8 @@ warn when it is probably wrong; `check` and `export` print them.
   operation before the Profile. Cutting the details first and the
   outline last is quiet.
 - **`cut_inside_tab_held_part`.** A Profile that cuts through the stock
-  with [tabs](tabs.md) leaves its parts held only by them. A later
+  round an outline with [tabs](tabs.md) on it leaves that part held only
+  by them. A later
   operation that cuts deeper than half the stock inside one of those
   outlines (a hole through it, a deep pocket) works on a piece held by a
   few small bridges, which can flex, chatter or break a tab. A lighter
