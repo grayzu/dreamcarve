@@ -5360,8 +5360,8 @@ fn tools_import_twice_is_already_present() {
 /// (up the page), which after the importer's flip to Y-up (ADR-0001) is
 /// one bit radius above the placed line. `check` reports nothing about the
 /// open path, `export` passes the safety pass (S9 holds the cut to its
-/// offset path), and conventional starts at the end beside the first
-/// vertex, as VCarve's.
+/// offset path), and climb starts at the end beside the first vertex,
+/// keeping the part (below the line) on the right of travel (#287).
 #[test]
 fn left_profile_of_an_svg_line_exports_on_its_left() {
     let dir = work_dir("left_profile_of_an_svg_line_exports_on_its_left");
@@ -5383,7 +5383,7 @@ fn left_profile_of_an_svg_line_exports_on_its_left() {
     // `init` targets closed outlines only.
     op.targets = targets;
     op.side = Side::Left;
-    op.direction = dc_project::CutDirection::Conventional;
+    op.direction = dc_project::CutDirection::Climb;
     op.tabs = None;
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     let line = placed_vertices(&project, "edge");
@@ -5423,6 +5423,6 @@ fn left_profile_of_an_svg_line_exports_on_its_left() {
     let first = cuts[0];
     assert!(
         (first.from.x.expect("X known") - x0).abs() <= 1e-3,
-        "conventional starts beside the first vertex: {first:?}"
+        "climb starts beside the first vertex: {first:?}"
     );
 }

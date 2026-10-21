@@ -84,6 +84,27 @@ pub fn traversal_is_ccw(wall: Wall, direction: CutDirection) -> bool {
     }
 }
 
+/// The open-path direction rule: true when an open path cut on `side`
+/// with `direction` runs from its last vertex to its first.
+///
+/// Left and Right (#207) cut one flank of the bit against kept material,
+/// so `direction` is the milling mode, as in [`traversal_is_ccw`]: climb
+/// keeps the part on the right of travel (#287). Left runs the tool to the
+/// path's left with the part beyond the path, which is on the tool's right
+/// going from the first vertex to the last; Right is the mirror. On line
+/// cuts with both flanks, so no milling mode exists and `direction` picks
+/// the starting end as VCarve's does (#242): "Conventional starts cutting
+/// at the Start point Climb cutting starts cutting at the end point".
+fn open_runs_reversed(side: Side, direction: CutDirection) -> bool {
+    let climb = direction == CutDirection::Climb;
+    match side {
+        Side::Left => !climb,
+        Side::Right | Side::OnLine => climb,
+        // Never asked: Inside and Outside cut no open path.
+        Side::Inside | Side::Outside => climb,
+    }
+}
+
 /// A contour's place in its region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
@@ -216,9 +237,12 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// ([`offset_open`]: round on the outside of a turn, trimmed on the
 /// inside, ending square on the normals through the path's ends), and
 /// skips closed targets with [`Warning::SideNeedsOpenPath`]. A path whose
-/// offset vanishes warns [`Warning::ToolTooLarge`]. Direction, ramp and
-/// tabs are On line's, along the offset path; it has no lead or relief and
-/// frees nothing. A cut that comes within the radius of another of its
+/// offset vanishes warns [`Warning::ToolTooLarge`]. Direction is the
+/// milling mode (#287): climb keeps the part on the right of travel, so
+/// Left climb runs from the end beside the first vertex and Right climb
+/// from the end beside the last; conventional is the reverse. Ramp and
+/// tabs are On line's, along the offset path; it has no lead or relief
+/// and frees nothing. A cut that comes within the radius of another of its
 /// lines, or of the strip a line keeps, fails with
 /// [`CamError::CutsIntoKeptSide`]; D6's overlap warning, whose condition
 /// that is, does not apply.
@@ -440,14 +464,12 @@ pub fn generate_profile(
     if let Some(left_mm) = side_mm {
         check_kept_sides(op, tool, &open_paths, &open_centres, left_mm)?;
     }
-    // #175: an open path is cut On line as drawn. #242: from its first
-    // vertex under conventional and from its last under climb, as VCarve
-    // ("Conventional starts cutting at the Start point Climb cutting
-    // starts cutting at the end point"); #207: so is a Left or Right
-    // offset of one, from the end beside that vertex. It bounds no
-    // region, so no containment and no waste domain; its wall is never
-    // asked.
-    let reversed_open = op.direction == CutDirection::Climb;
+    // #175: an open path is cut On line as drawn, from the end
+    // `open_runs_reversed` picks (#242 On line, #287 Left and Right); a
+    // Left or Right offset of one (#207) from the end beside that vertex.
+    // It bounds no region, so no containment and no waste domain; its
+    // wall is never asked.
+    let reversed_open = open_runs_reversed(op.side, op.direction);
     for (shape, centres) in open_centres {
         for path in centres {
             let path = if reversed_open { path.reversed() } else { path };
@@ -3450,32 +3472,30 @@ mod tests {
     /// `(−dy, dx)`. The line from (20, 20) to (120, 20) is cut at Y 20 + r
     /// over its whole length, the cut ending square on the normals through
     /// its ends; drawn the other way, its left is −Y; drawn upward, −X.
-    /// Conventional, so each pass runs from the first vertex.
+    /// Climb, so each pass runs from the first vertex (#287).
     #[test]
     fn open_path_left_offsets_to_the_left() {
-        let conventional = CutDirection::Conventional;
+        let climb = CutDirection::Climb;
         let p = line_project();
-        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Left, conventional));
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::Left, climb));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_laps_run(&tp, true, 20.0 + R_MM, (20.0, 120.0), "left, drawn +X");
 
-        let back = project(
-            vec![open(&[(100.0, 0.0), (0.0, 0.0)])],
-            &[("i1", at_20_20())],
-        );
-        let (tp, _) = generate(&back, &profile_op(&back, Side::Left, conventional));
+        let back = back_line_project();
+        let (tp, _) = generate(&back, &profile_op(&back, Side::Left, climb));
         assert_laps_run(&tp, true, 20.0 - R_MM, (120.0, 20.0), "left, drawn −X");
 
         let up = project(
             vec![open(&[(0.0, 0.0), (0.0, 50.0)])],
             &[("i1", at_20_20())],
         );
-        let (tp, _) = generate(&up, &profile_op(&up, Side::Left, conventional));
+        let (tp, _) = generate(&up, &profile_op(&up, Side::Left, climb));
         assert_laps_run(&tp, false, 20.0 - R_MM, (20.0, 70.0), "left, drawn +Y");
     }
 
     /// #207: Right is the mirror of Left: the tool centre one radius to
-    /// the right of the path as drawn, `(dy, −dx)`.
+    /// the right of the path as drawn, `(dy, −dx)`. Conventional, so each
+    /// pass runs from the first vertex (#287).
     #[test]
     fn open_path_right_offsets_to_the_right() {
         let conventional = CutDirection::Conventional;
@@ -3484,10 +3504,7 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_laps_run(&tp, true, 20.0 - R_MM, (20.0, 120.0), "right, drawn +X");
 
-        let back = project(
-            vec![open(&[(100.0, 0.0), (0.0, 0.0)])],
-            &[("i1", at_20_20())],
-        );
+        let back = back_line_project();
         let (tp, _) = generate(&back, &profile_op(&back, Side::Right, conventional));
         assert_laps_run(&tp, true, 20.0 + R_MM, (120.0, 20.0), "right, drawn −X");
 
@@ -3537,37 +3554,95 @@ mod tests {
         );
     }
 
-    /// #207: as VCarve's open vectors ("Conventional starts cutting at the
-    /// Start point Climb cutting starts cutting at the end point"), on
-    /// either side and as for On line (#242): conventional cuts the offset
-    /// path from the end beside the first vertex, climb from the end beside
-    /// the last. Every pass plunges at its start and runs to the other end.
-    #[test]
-    fn left_right_direction_follows_vcarve() {
-        let p = line_project();
-        for (side, y) in [(Side::Left, 20.0 + R_MM), (Side::Right, 20.0 - R_MM)] {
-            for (direction, start, end) in [
-                (CutDirection::Conventional, 20.0, 120.0),
-                (CutDirection::Climb, 120.0, 20.0),
-            ] {
-                let case = format!("{side:?} {direction:?}");
-                let (tp, warnings) = generate(&p, &profile_op(&p, side, direction));
-                assert!(warnings.is_empty(), "{case}: {warnings:?}");
-                assert_laps_run(&tp, true, y, (start, end), &case);
-                let toward = (end - start).signum();
-                for (from, mv) in xy_cuts(&tp) {
-                    assert!((mv.to.x - from.x) * toward > 0.0, "{case}: {mv:?}");
-                }
-                let plunges = plunges_below_top(&tp);
-                assert!(!plunges.is_empty(), "{case}");
-                for (from, _) in plunges {
-                    assert!(
-                        from.xy().distance_to(Point::new(start, y)) <= TOL,
-                        "{case}: plunge at {from:?}"
-                    );
-                }
-            }
+    /// The 100 mm line of [`line_project`] drawn the other way, from
+    /// (120, 20) to (20, 20).
+    fn back_line_project() -> Project {
+        project(
+            vec![open(&[(100.0, 0.0), (0.0, 0.0)])],
+            &[("i1", at_20_20())],
+        )
+    }
+
+    /// Checks that `p`'s line along Y 20, cut on `side` with `direction`,
+    /// runs every pass at `y` from X `start` to X `end`, plunging at
+    /// `start`, and that the line, with the part beyond it, lies on the
+    /// right of every cutting move when `part_on_right` and on its left
+    /// otherwise.
+    fn assert_side_cut(
+        p: &Project,
+        (side, direction): (Side, CutDirection),
+        y: f64,
+        (start, end): (f64, f64),
+        part_on_right: bool,
+    ) {
+        let case = format!("{side:?} {direction:?}, {start} to {end}");
+        let (tp, warnings) = generate(p, &profile_op(p, side, direction));
+        assert!(warnings.is_empty(), "{case}: {warnings:?}");
+        assert_laps_run(&tp, true, y, (start, end), &case);
+        let cuts = xy_cuts(&tp);
+        assert!(!cuts.is_empty(), "{case}");
+        let toward = (end - start).signum();
+        for (from, mv) in cuts {
+            let (dx, dy) = (mv.to.x - from.x, mv.to.y - from.y);
+            assert!(dx * toward > 0.0, "{case}: {mv:?}");
+            // The cross product of travel `(dx, dy)` with the way to the
+            // line, `(0, 20 − y)`, is negative when the line is on the
+            // right of travel; the cut is level, so `dy` is zero.
+            assert!(dy.abs() <= TOL, "{case}: {mv:?}");
+            let cross = dx * (20.0 - from.y);
+            assert_eq!(cross < 0.0, part_on_right, "{case}: {mv:?}");
         }
+        let plunges = plunges_below_top(&tp);
+        assert!(!plunges.is_empty(), "{case}");
+        for (from, _) in plunges {
+            assert!(
+                from.xy().distance_to(Point::new(start, y)) <= TOL,
+                "{case}: plunge at {from:?}"
+            );
+        }
+    }
+
+    /// #287: on a Left cut only the bit's flank toward the line meets kept
+    /// material, so `direction` is the milling mode, as for closed shapes:
+    /// the spindle turns clockwise from above, so climb keeps the part on
+    /// the right of travel. The tool runs left of the line and the part is
+    /// beyond the line, so climb runs from the end beside the first vertex
+    /// to the end beside the last. The line from (20, 20) to (120, 20) is
+    /// cut at Y 20 + r moving +X, the part (below) on its right; drawn the
+    /// other way, at Y 20 − r moving −X, the part (above) on its right.
+    #[test]
+    fn left_climb_keeps_the_part_on_the_right_of_travel() {
+        let climb = (Side::Left, CutDirection::Climb);
+        assert_side_cut(&line_project(), climb, 20.0 + R_MM, (20.0, 120.0), true);
+        let back = back_line_project();
+        assert_side_cut(&back, climb, 20.0 - R_MM, (120.0, 20.0), true);
+    }
+
+    /// #287: on a Right cut the part is on the line's left, so climb, the
+    /// part on the right of travel, runs from the end beside the last
+    /// vertex to the end beside the first: at Y 20 − r moving −X, the part
+    /// (above) on its right; drawn the other way, at Y 20 + r moving +X.
+    #[test]
+    fn right_climb_keeps_the_part_on_the_right_of_travel() {
+        let climb = (Side::Right, CutDirection::Climb);
+        assert_side_cut(&line_project(), climb, 20.0 - R_MM, (120.0, 20.0), true);
+        let back = back_line_project();
+        assert_side_cut(&back, climb, 20.0 + R_MM, (20.0, 120.0), true);
+    }
+
+    /// #287: conventional is the reverse of climb, the part on the left
+    /// of travel: Left conventional runs from the end beside the last
+    /// vertex, Right conventional from the end beside the first.
+    #[test]
+    fn left_conventional_is_the_reverse() {
+        let p = line_project();
+        let left = (Side::Left, CutDirection::Conventional);
+        assert_side_cut(&p, left, 20.0 + R_MM, (120.0, 20.0), false);
+        let back = back_line_project();
+        assert_side_cut(&back, left, 20.0 - R_MM, (20.0, 120.0), false);
+        let right = (Side::Right, CutDirection::Conventional);
+        assert_side_cut(&p, right, 20.0 - R_MM, (20.0, 120.0), false);
+        assert_side_cut(&back, right, 20.0 + R_MM, (120.0, 20.0), false);
     }
 
     /// #207: VCarve allows ramps and tabs on open profile toolpaths, and
@@ -3581,8 +3656,12 @@ mod tests {
     #[test]
     fn left_right_ramp_and_tabs() {
         let p = line_project();
-        for (side, y) in [(Side::Left, 20.0 + R_MM), (Side::Right, 20.0 - R_MM)] {
-            let op = sided_op(&p, side, CutDirection::Conventional, |op| {
+        // The direction that starts beside the first vertex (#287).
+        for (side, y, forward) in [
+            (Side::Left, 20.0 + R_MM, CutDirection::Climb),
+            (Side::Right, 20.0 - R_MM, CutDirection::Conventional),
+        ] {
+            let op = sided_op(&p, side, forward, |op| {
                 op.entry = Entry::Ramp { angle_deg: 5.0 };
             });
             let (tp, warnings) = generate(&p, &op);
