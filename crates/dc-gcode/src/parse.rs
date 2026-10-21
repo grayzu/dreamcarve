@@ -402,8 +402,10 @@ impl State {
 
     /// S16 (#283): a line with `G53` must be `G53 G0 Z<v>` and nothing
     /// else but a line number: one rapid in Z alone in machine
-    /// coordinates, which grblHAL and GRBL run ignoring work and tool
-    /// offsets (grblHAL `gcode.c` 3254-3277, GRBL `gcode.c` 592-597). It
+    /// coordinates, which grblHAL, GRBL and LinuxCNC run ignoring work and
+    /// tool offsets (grblHAL `gcode.c` 3254-3277, GRBL `gcode.c` 592-597,
+    /// LinuxCNC `interp_find.cc` 170-200; definitions README,
+    /// "Machine-coordinate moves"). It
     /// leaves `G0` the motion mode and work Z unknown; X and Y do not move.
     /// Any other `G53` is refused rather than modelled.
     fn machine_lift(

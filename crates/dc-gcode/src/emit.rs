@@ -5255,10 +5255,10 @@ mod tests {
 
     /// Design addendum A7: a program per tool run ends each program with
     /// the park and the lift, which is the tool-change height on GRBL; a
-    /// definition without `G53` (LinuxCNC) refuses the machine Z, while
-    /// the clearance height and the park need none.
+    /// definition without `G53` (Mach3, UCCNC, generic; #306) refuses the
+    /// machine Z, while the clearance height and the park need none.
     #[test]
-    fn every_program_ends_with_the_lift_and_linuxcnc_refuses_it() {
+    fn every_program_ends_with_the_lift_and_unchecked_definitions_refuse_it() {
         let mut project = plaque();
         project.heights = acceptance_45_heights();
         let (programs, _) = emit_programs(
@@ -5277,27 +5277,167 @@ mod tests {
                 .collect();
             assert_eq!(tail, ["X0.000 Y0.000", "G53 G0 Z-5.000", "M5", "M30"]);
         }
+        for id in ["mach3", "uccnc", "generic"] {
+            let mut project = project.clone();
+            project.post_processor = PostProcessorRef::latest(id).unwrap();
+            let err = emit_programs(
+                &project,
+                &generated_ops(&project),
+                ProgramSplit::ProjectDefault,
+                DATE,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&err, ExportError::MachineZNeedsG53 { post } if post == id),
+                "{id}: {err:?}"
+            );
+            project.heights.tool_change_machine_z_mm = None;
+            let (programs, _) = emit_programs(
+                &project,
+                &generated_ops(&project),
+                ProgramSplit::ProjectDefault,
+                DATE,
+            )
+            .unwrap();
+            assert!(programs.iter().all(|p| !p.text.contains("G53")), "{id}");
+        }
+    }
+
+    /// #306: LinuxCNC documents `G53` (`interp_find.cc` 170-191: the
+    /// work, `G92` and tool length offsets are taken out of the Z word;
+    /// `interp_check.cc` 103-108: `G0` or `G1`, absolute), so on both of
+    /// its versions each program of a run per tool lifts to the machine Z
+    /// in the program's units, after the park, right before the footer
+    /// `M5`, `M2`, and nowhere else. `emit` runs the safety pass (S16), so
+    /// a program returned is one it accepted.
+    #[test]
+    fn machine_lift_on_linuxcnc() {
+        for version in [1, 2] {
+            for (units, park, lift, note) in [
+                (Units::Mm, "X0.000 Y0.000", "G53 G0 Z-5.000", "-5.000 mm"),
+                (
+                    Units::Inch,
+                    "X0.0000 Y0.0000",
+                    "G53 G0 Z-0.1969",
+                    "-0.1969 inch",
+                ),
+            ] {
+                let mut project = project_with("linuxcnc");
+                project.post_processor.definition_version = version;
+                project.display_units = units;
+                let ops = two_tool_ops(&mut project);
+                // No `M6` on LinuxCNC: one program per tool run.
+                project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+                project.heights = dc_project::Heights {
+                    clearance_mm: Some(10.0),
+                    tool_change_machine_z_mm: Some(-5.0),
+                    park: Some(dc_project::ParkXy {
+                        x_mm: 0.0,
+                        y_mm: 0.0,
+                    }),
+                };
+                let (programs, _) =
+                    emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE)
+                        .unwrap_or_else(|e| panic!("v{version} {units:?}: {e:?}"));
+                assert_eq!(programs.len(), 2, "v{version} {units:?}");
+                for program in &programs {
+                    let lines = code_lines(&program.text);
+                    let tail: Vec<&str> = lines[lines.len() - 4..]
+                        .iter()
+                        .map(String::as_str)
+                        .collect();
+                    assert_eq!(
+                        tail,
+                        [park, lift, "M5", "M2"],
+                        "v{version} {units:?}\n{}",
+                        program.text
+                    );
+                    assert_eq!(
+                        lines.iter().filter(|l| l.starts_with("G53")).count(),
+                        1,
+                        "{}",
+                        program.text
+                    );
+                    assert_eq!(program.machine_lift.as_deref(), Some(note));
+                    assert!(
+                        program
+                            .text
+                            .lines()
+                            .any(|l| l == format!("( {MACHINE_LIFT_COMMENT} )")),
+                        "{}",
+                        program.text
+                    );
+                }
+            }
+        }
+    }
+
+    /// #306 with manual spindle control on LinuxCNC: the lift comes right
+    /// before the router-off pause `M0` at the end of each program, with
+    /// no retract in work coordinates between them, and the footer has no
+    /// `M5`.
+    #[test]
+    fn machine_lift_before_router_off_on_linuxcnc() {
+        for units in [Units::Mm, Units::Inch] {
+            let mut project = manual_project("linuxcnc");
+            project.display_units = units;
+            project.heights.tool_change_machine_z_mm = Some(-5.0);
+            let text = emit_text(&project);
+            let lines = code_lines(&text);
+            let lift = lines
+                .iter()
+                .position(|l| l.starts_with("G53 G0 Z-"))
+                .unwrap_or_else(|| panic!("{units:?}\n{text}"));
+            assert_eq!(lines[lift + 1..], ["M0", "M2"], "{units:?}\n{text}");
+        }
+    }
+
+    /// #306: LinuxCNC with canned cycles: the series of `G81` cycles is
+    /// cancelled with `G80` before the lift (`G53` needs `G0` or `G1`,
+    /// `interp_check.cc` 104-105, and the lift's `G0` sets it), and the
+    /// safety pass accepts the lift from the `G98` return height.
+    #[test]
+    fn machine_lift_after_canned_cycles_on_linuxcnc() {
+        let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
         project.post_processor = PostProcessorRef::latest("linuxcnc").unwrap();
-        let err = emit_programs(
-            &project,
-            &generated_ops(&project),
-            ProgramSplit::ProjectDefault,
-            DATE,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, ExportError::MachineZNeedsG53 { post } if post == "linuxcnc"),
-            "{err:?}"
-        );
-        project.heights.tool_change_machine_z_mm = None;
-        let (programs, _) = emit_programs(
-            &project,
-            &generated_ops(&project),
-            ProgramSplit::ProjectDefault,
-            DATE,
-        )
-        .unwrap();
-        assert!(programs.iter().all(|p| !p.text.contains("G53")));
+        project.post_processor.use_canned_cycles = true;
+        project.heights.tool_change_machine_z_mm = Some(-5.0);
+        let (program, warnings) = emit(&project, &drill_entry(&project, &op), DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lines = code_lines(&program.text);
+        assert!(has_cycle_word(&program.text), "{}", program.text);
+        let lift = lines.iter().position(|l| l == "G53 G0 Z-5.000").unwrap();
+        let cancel = lines.iter().rposition(|l| l == "G80").unwrap();
+        assert!(cancel < lift, "{}", program.text);
+        assert_eq!(lines[lift + 1..], ["M5", "M2"], "{}", program.text);
+    }
+
+    /// #306, ADR-0004: a definition's `machine_command` writes nothing
+    /// unless the project sets the machine Z, so enabling it in place on
+    /// a released version changes no program that version could export
+    /// before. Every bundled version exports the sample project, in mm and
+    /// inch, with the same bytes whether its `machine_command` is set or
+    /// not.
+    #[test]
+    fn machine_command_writes_nothing_without_the_height() {
+        for definition in dc_project::bundled_definitions().unwrap() {
+            for units in [Units::Mm, Units::Inch] {
+                let mut project = sample_project();
+                project.post_processor = definition.default_ref();
+                project.display_units = units;
+                assert_eq!(project.heights, dc_project::Heights::unset());
+                let post = post_of(&project);
+                let mut without = post.clone();
+                without.work_coordinates.machine_command = None;
+                let text = emit_text(&project);
+                assert!(!text.contains("G53"), "{}", definition.path);
+                assert!(
+                    text == emit_text_with(&project, &without),
+                    "{} {units:?}",
+                    definition.path
+                );
+            }
+        }
     }
 
     /// Design addendum A7, validation repeated at export: a clearance

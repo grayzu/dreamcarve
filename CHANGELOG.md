@@ -133,12 +133,16 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   operation's `safe_z_mm` stays the height between passes of one part, like
   Fusion's retract height); a tool-change height in machine coordinates,
   written as `G53 G0 Z…` before every tool-change stop and at the end of
-  every program, on grblHAL and GRBL; and a park point the program ends
-  over, like VCarve's Home position ([#283]). All three are `null` on
-  upgrade and from `init`, which exports as before. `export` says to home
-  the machine when a program lifts with `G53`. The definitions gain
-  `work_coordinates.machine_command` (`"G53"` on every grblHAL and GRBL
-  version, `null` on the others), added in place: no program's bytes change.
+  every program, on grblHAL, GRBL and LinuxCNC; and a park point the
+  program ends over, like VCarve's Home position ([#283]). All three are
+  `null` on upgrade and from `init`, which exports as before. `export` says
+  to home the machine when a program lifts with `G53`. The definitions gain
+  `work_coordinates.machine_command` (`"G53"` on every grblHAL, GRBL and
+  LinuxCNC version, `null` on the others), added in place: no program's
+  bytes change. LinuxCNC's `G53` was checked against its 2.9 interpreter
+  source ([#306]). Mach3, UCCNC and generic still refuse the tool-change
+  height: their manuals do not say what `G53` does with a tool length
+  offset, and the definitions README gives each reason.
   Older DreamCarve versions cannot read version 12 files.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
@@ -398,3 +402,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
+[#306]: https://github.com/grayzu/dreamcarve/issues/306

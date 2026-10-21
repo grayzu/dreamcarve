@@ -2924,9 +2924,20 @@ tool offsets. The homed envelope is negative: grblHAL
 `−pulloff`), GRBL `limits.c` 382 (Z homes to `−pulloff`) and `system.c`
 348 (soft limits allow `[max_travel, 0]`). So the validation rule is
 `tool_change_machine_z_mm < 0`, and the chapter says to stay at least the
-pull-off below 0. The four other controllers' documents were not checked
-for `G53` for this addendum, so they stay `null` until a follow-up cites
-the section for each (as the slice 17 tables do) and sets it.
+pull-off below 0. LinuxCNC v1 and v2 are `"G53"`, set in place and
+re-pinned (changed in #306: they were `null` because their documents had
+not been checked). The README cites the 2.9 interpreter at `a33293f`:
+`interp_array.cc` 109 (group 0), `interp_check.cc` 103-108 (`G0` or
+`G1`, absolute), `interp_convert.cc` 4855-4857 (no cutter compensation),
+`interp_find.cc` 170-200 with `get_abs_position` (no work, `G92` or tool
+length offset), and 2749-2830 (program units); and for machine Z,
+`emctaskmain.cc` 2302-2303 (no program before homing, by default),
+`motion/command.c` 1011-1025 (a move past a soft limit is refused before
+it runs) and stepconf's and pncconf's Z travel of −100 to 0 mm. The
+validation rule and S16 are unchanged. Mach3, UCCNC and generic stay
+`null`, with the reason in the README: their manuals do not say what
+`G53` does with a tool length offset (UCCNC: nor with `G51` scaling), and
+machine Z after homing is a user setting there; generic cannot be checked.
 
 **Validation** (errors): `clearance_mm` below any enabled operation's
 `safe_z_mm` (`Problem::ClearanceBelowSafeZ`, at the field, naming the
