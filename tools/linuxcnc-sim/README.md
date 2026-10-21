@@ -111,7 +111,8 @@ from a work move. The tests add three more machines:
 
 On 2026-10-21, with LinuxCNC 2.9.4, all 17 LinuxCNC and generic corpus
 programs agreed in every session: 4879 logged moves, 4 `M0` pauses, every
-end. The run takes about three minutes. The `G53` lift reached machine
+end. The run takes three to seven minutes, depending on the host's
+load; the tests take about as long again. The `G53` lift reached machine
 Z -5 under a work offset of Z -76.2, and the router-off pause after it
 was there too. A deepened cut was reported on its line.
 
@@ -132,6 +133,12 @@ Two things about LinuxCNC are worth knowing when reading a report:
 - `motion-logger` prints positions and speeds with `%.6g`. Below 1000 mm
   that keeps three decimals, as many as DreamCarve writes. Speeds match
   to 1e-5 relative, not `rs274`'s 1e-6.
+- When interp goes idle at the program end, the motion queue can be empty
+  and `inpos` set while the last segment still blends into its end point.
+  The UI records a pause or an end only once the machine has had no
+  velocity and the same position for a whole second. The servo thread is
+  not realtime in a container, and on a loaded host it stalls for long
+  enough that a 100 ms window recorded positions short of the end.
 
 ## What it does not check
 

@@ -327,8 +327,9 @@ The test that guards the program set always runs. More in
 
 On 2026-10-21, with LinuxCNC 2.9.4, all 17 LinuxCNC and generic programs
 agreed in every session: 4879 logged moves, 4 `M0` pauses and every end
-position. The run takes about three minutes, most of it `motion-logger`,
-which answers about one command per 10 ms. Under the short Z travel the
+position. The corpus takes three to seven minutes, depending on the
+host's load. Most of it is `motion-logger`, which answers about one
+command per 10 ms. Under the short Z travel the
 lift was refused with "Linear move on line 530 would exceed Z's positive
 limit". Motion refuses a move when task queues it, and task reads ahead,
 so the program stopped while motion was on line 119, mid-cut, with the
@@ -346,7 +347,7 @@ second workflow PR, because it is one step in that job. Agents cannot
 merge either: the token has no `workflow` scope.
 
 Layer 3 needs a non-root user, which a job container does not have by
-default (LinuxCNC refuses to run as root), and about three minutes. So
+default (LinuxCNC refuses to run as root), and several minutes. So
 it is proposed on #264 as its own job on `ubuntu-latest`: build the
 `rs274-motion` image with podman, then run `cargo test -p linuxcnc-sim`
 with `DREAMCARVE_LINUXCNC=podman:dreamcarve-rs274`.

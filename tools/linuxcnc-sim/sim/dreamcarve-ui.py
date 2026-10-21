@@ -27,7 +27,7 @@
 #   END      <rcs_state> <current_line> <motion_line> <x> <y> <z>
 #   DONE
 # Positions are machine coordinates in the INI's units. Every M0 pause is
-# recorded once the motion queue has drained, then resumed.
+# recorded once the machine has stopped moving, then resumed.
 
 import os
 import subprocess
@@ -98,6 +98,26 @@ def machine_position():
     return stat.actual_position[:3]
 
 
+def wait_until_still(seconds):
+    # The queue can be empty and inpos set while the last segment still
+    # blends into its end, so wait for the machine itself to stop: no
+    # velocity, and the same position for a whole second. LinuxCNC's
+    # servo thread is not realtime here, and on a loaded host it can stall
+    # for a moment, which a shorter window mistakes for a stop.
+    deadline = time.time() + seconds
+    last, same = None, 0
+    while time.time() < deadline:
+        stat.poll()
+        here = tuple(machine_position())
+        still = stat.queue == 0 and stat.inpos and stat.current_vel == 0 and here == last
+        same = same + 1 if still else 0
+        if same >= 50:
+            return True
+        last = here
+        time.sleep(0.02)
+    return False
+
+
 def make_ready():
     stat.poll()
     if stat.task_state != linuxcnc.STATE_ON:
@@ -160,7 +180,7 @@ for program in programs:
             wait_for(lambda: stat.interp_state == linuxcnc.INTERP_IDLE, 10)
             break
         if stat.task_paused:
-            wait_for(lambda: stat.queue == 0 and stat.inpos, 60)
+            wait_until_still(60)
             x, y, z = machine_position()
             record(
                 "PAUSE",
@@ -176,8 +196,7 @@ for program in programs:
             wait_for(lambda: not stat.task_paused, 30)
             continue
         time.sleep(0.005)
-    wait_for(lambda: stat.queue == 0 and stat.inpos, 60)
-    time.sleep(0.1)
+    wait_until_still(60)
     stat.poll()
     drain_errors()
     x, y, z = machine_position()
