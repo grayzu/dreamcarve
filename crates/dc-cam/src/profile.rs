@@ -2851,7 +2851,7 @@ mod tests {
     }
 
     /// #175: an open path with no length has nothing to cut On line; it
-    /// is skipped with `open_path_skipped` (`reason: no_length`).
+    /// is skipped with `open_path_skipped` ([`OpenPathReason::NoLength`]).
     #[test]
     fn on_line_open_path_with_no_length_is_skipped() {
         let dot = Polyline::new(vec![Vertex::line(5.0, 5.0), Vertex::line(5.0, 5.0)], false);
