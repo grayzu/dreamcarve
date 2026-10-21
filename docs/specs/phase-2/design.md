@@ -1040,7 +1040,8 @@ Rules for all four (README, "Rules for the slice 17 definitions"):
   not write; the user sets Z zero per tool, as on grblHAL.
 - **User text never opens a comment.** LinuxCNC acts on comments that
   start with a keyword (`(LOGOPEN,file)` truncates a file), so the first
-  header comment is `( Project: {programName} )`.
+  header comment is `( Project: {programName} )`. grblHAL and GRBL got the
+  same header in version 2 of each (#171).
 - **Header modal codes.** `G40`, `G49`, `G80` and `G91.1` are accepted
   in any program and written again after every pause; `G90.1` is
   refused (#154).
