@@ -2070,6 +2070,38 @@ mod tests {
         );
     }
 
+    /// Straight plunges at (20, 20) on the fixture's stock: rapid straight
+    /// down to machine Z `first`, plunge to Z −1, cut to X 30 and back,
+    /// lift, rapid straight down to `second`, plunge to Z −2, cut, out.
+    fn plunge_program(first: &str, second: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX20 Y20\nZ{first}\nG1 Z-1 F300\nX30 F1000\nX20\nG0 Z5\nZ{second}\nG1 Z-2 F300\nX30 F1000\nG0 Z5\nM5\n"
+        )
+    }
+
+    /// S2 as changed in #214 and #227: a straight plunge (`entry:
+    /// plunge`, an Engrave pass, a corner-relief notch) is reached by the
+    /// same rapid straight down from safe Z as a ramp or helix, stopping
+    /// 1 mm above the stock top or above the floor the operation cut
+    /// there; one that stops lower is still refused.
+    #[test]
+    fn rapid_down_to_a_plunge_below_the_clearance_fails() {
+        check_text(&plunge_program("1", "0")).unwrap();
+        let below_at = |text: &str, at: usize| {
+            let err = check_text(text).unwrap_err();
+            assert!(
+                matches!(err, ExportError::RapidBelowSafeZ { line, .. } if line == at),
+                "line {at}: {err:?}"
+            );
+        };
+        // Into the stock top's clearance where nothing was cut.
+        below_at(&plunge_program("0.9", "0"), 7);
+        below_at(&plunge_program("0", "0"), 7);
+        // Less than 1 mm above the Z −1 the first pass cut at (20, 20).
+        below_at(&plunge_program("1", "-0.1"), 12);
+        below_at(&plunge_program("1", "-1"), 12);
+    }
+
     #[test]
     fn every_cut_has_active_feed() {
         let ok =
@@ -3033,13 +3065,14 @@ mod tests {
         format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX60 Y50\nG1 Z-1 F300\n{arc}G0 Z5\nM5\n")
     }
 
-    /// S12: one `G3` in place of eight chords of a quarter circle passes
+    /// S12: one `G3` in place of 32 chords of a quarter circle passes
     /// S6 when arc fitting is on; with the tolerance `null` the program
-    /// must have the chords.
+    /// must have the chords. (changed in #226: of eight chords, which bow
+    /// 0.048 mm from the arc, more than the tolerance allows.)
     #[test]
     fn fitted_arcs_pass_s6() {
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
-        let toolpath = chord_run(8, FRAC_PI_2, None);
+        let toolpath = chord_run(32, FRAC_PI_2, None);
         check_against_with(&text, &toolpath, Some(0.01)).unwrap();
         let result = check_against_with(&text, &toolpath, None);
         assert!(is_mismatch_at(&result, 2), "{result:?}");
@@ -3049,18 +3082,18 @@ mod tests {
     }
 
     /// S12: a vertex between the arc's ends that is off the arc by more
-    /// than the tolerance fails.
+    /// than the tolerance fails. (changed in #226: of eight chords.)
     #[test]
     fn arc_off_the_vertices_fails_s6() {
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
-        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, Some(4)), Some(0.01));
+        let result = check_against_with(&text, &chord_run(32, FRAC_PI_2, Some(16)), Some(0.01));
         assert!(
             matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
             "{result:?}"
         );
         // An arc that ends between vertices fails too.
-        let text = chord_run_text("G3 X50.5 Y59.987 I-10 J0 F1000\n");
-        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, None), Some(0.01));
+        let text = chord_run_text("G3 X50.262 Y59.997 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(32, FRAC_PI_2, None), Some(0.01));
         assert!(
             matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
             "{result:?}"
@@ -3068,18 +3101,103 @@ mod tests {
     }
 
     /// S12: one arc over 180° of chords is refused even though every vertex
-    /// is on it: a fitted arc sweeps at most 90°.
+    /// is on it: a fitted arc sweeps at most 90°. (changed in #226: of 16
+    /// chords, which bow 0.19 mm from the arc.)
     #[test]
     fn arc_over_90_degrees_fails_s12() {
         let text = chord_run_text("G3 X40 Y50 I-10 J0 F1000\n");
-        let result = check_against_with(&text, &chord_run(16, PI, None), Some(0.01));
+        let result = check_against_with(&text, &chord_run(64, PI, None), Some(0.01));
         assert!(
             matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
             "{result:?}"
         );
         // The same run as two 90° arcs passes.
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\n");
-        check_against_with(&text, &chord_run(16, PI, None), Some(0.01)).unwrap();
+        check_against_with(&text, &chord_run(64, PI, None), Some(0.01)).unwrap();
+    }
+
+    /// #226 (the #213 case): a 0.006 mm fragment, a short chord and a
+    /// 40 mm straight side, every vertex on one 154.75 mm circle, written
+    /// as one `G3`. The arc bows 1.3 mm off the side, so S12 refuses it,
+    /// though every vertex is on it. So does one `G3` for eight chords of
+    /// a 10 mm quarter circle, each bowing 0.048 mm, past the 0.01 mm
+    /// tolerance plus one unit in the last place.
+    #[test]
+    fn arc_bowing_off_a_long_straight_move_fails_s12() {
+        let r = 154.75;
+        let centre = Point::new(60.0 - r, 50.0);
+        let side_rad = 2.0 * (20.0 / r).asin();
+        let (fragment_rad, chord_rad) = (0.006 / r, 0.086 / r);
+        let on_circle =
+            |angle: f64| Point3::new(centre.x + r * angle.cos(), centre.y + r * angle.sin(), 5.0);
+        let angles = [
+            -side_rad / 2.0 - chord_rad - fragment_rad,
+            -side_rad / 2.0 - chord_rad,
+            -side_rad / 2.0,
+            side_rad / 2.0,
+        ];
+        let (start, end) = (on_circle(angles[0]), on_circle(angles[3]));
+        let mut moves = vec![
+            Move::rapid(Point3::new(start.x, start.y, 11.0)),
+            Move::linear(start, 300.0),
+        ];
+        moves.extend(
+            angles[1..]
+                .iter()
+                .map(|&a| Move::linear(on_circle(a), 1000.0)),
+        );
+        moves.push(Move::rapid(Point3::new(end.x, end.y, 11.0)));
+        let toolpath = Toolpath { moves };
+        let program = |cut: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX{:.3} Y{:.3}\nG1 Z-1 F300\n{cut}G0 Z5\nM5\n",
+                start.x, start.y,
+            )
+        };
+        let arc = format!(
+            "G3 X{:.3} Y{:.3} I{:.3} J{:.3} F1000\n",
+            end.x,
+            end.y,
+            centre.x - start.x,
+            centre.y - start.y,
+        );
+        let result = check_against_with(&program(&arc), &toolpath, Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        // Written as its straight moves, the same toolpath passes.
+        let lines: String = angles[1..]
+            .iter()
+            .map(|&a| on_circle(a))
+            .map(|p| format!("G1 X{:.3} Y{:.3} F1000\n", p.x, p.y))
+            .collect();
+        check_against_with(&program(&lines), &toolpath, Some(0.01)).unwrap();
+
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, None), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+    }
+
+    /// #226: an arc within the tolerance of every chord it replaces, its
+    /// sagitta over each at most the tolerance plus one unit in the last
+    /// place, passes: 18 chords of a 10 mm quarter circle bow 0.0095 mm,
+    /// 32 chords 0.003 mm; as one arc and as two meeting at a vertex.
+    #[test]
+    fn arc_within_tolerance_of_every_chord_passes() {
+        for n in [18, 32] {
+            let toolpath = chord_run(n, FRAC_PI_2, None);
+            let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
+            check_against_with(&text, &toolpath, Some(0.01))
+                .unwrap_or_else(|e| panic!("{n} chords: {e:?}"));
+            let text =
+                chord_run_text("G3 X57.071 Y57.071 I-10 J0 F1000\nX50 Y60 I-7.071 J-7.071\n");
+            check_against_with(&text, &toolpath, Some(0.01))
+                .unwrap_or_else(|e| panic!("{n} chords, two arcs: {e:?}"));
+        }
     }
 
     // S11: canned cycles (`docs/specs/phase-2/design.md`, "S11 expansion").

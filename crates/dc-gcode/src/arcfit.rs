@@ -991,6 +991,33 @@ mod tests {
         assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
     }
 
+    /// #229: a 7 mm square's four corners lie on one circle, with even 90°
+    /// steps, so every vertex gate passes; but each side is a chord that
+    /// circle bows 1.45 mm off. A run's every straight move must lie within
+    /// the tolerance of its arc, not only its ends.
+    #[test]
+    fn square_is_not_fitted_as_a_circle() {
+        let moves = vec![
+            Move::rapid(pt(30.0, 20.0, 0.0)),
+            Move::linear(pt(37.0, 20.0, 0.0), FEED),
+            Move::linear(pt(37.0, 27.0, 0.0), FEED),
+            Move::linear(pt(30.0, 27.0, 0.0), FEED),
+            Move::linear(pt(30.0, 20.0, 0.0), FEED),
+        ];
+        let fitted = fit(&moves, TOL);
+        assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
+        assert_eq!(lines_of(&fitted), 4);
+    }
+
+    /// #229: a regular octagon of 10 mm radius, its chords bowing
+    /// 0.76 mm from the circle through its corners, stays eight lines; the
+    /// same circle as 72 chords (0.0095 mm each) is fitted.
+    #[test]
+    fn regular_octagon_of_long_chords_is_not_fitted() {
+        assert_eq!(runs_of(&fit(&chords(10.0, 8, 0.0, TAU, 0.0), TOL)), 0);
+        assert_eq!(runs_of(&fit(&chords(10.0, 72, 0.0, TAU, 0.0), TOL)), 1);
+    }
+
     #[test]
     fn rejects_z_changing_run() {
         let moves = vec![

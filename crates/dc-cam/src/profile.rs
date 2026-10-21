@@ -1592,6 +1592,34 @@ mod tests {
         }
     }
 
+    /// #227, S2: with `entry: plunge` the tool rapids straight down from
+    /// safe Z to 1 mm above the stock top and plunges at the plunge rate
+    /// from there, not from safe Z through the air. A later pass after a
+    /// lift (the rect's next pass follows at its start, so none here) would
+    /// stop 1 mm above the floor already cut.
+    #[test]
+    fn plunge_entry_rapids_to_just_above_the_stock() {
+        let p = rect_project();
+        let (tp, _) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+        let first = tp.moves[0];
+        assert!(first.is_rapid(), "{first:?}");
+        assert_approx_eq!(first.to.z, SAFE_Z_MM, TOL);
+        let (rapid, plunge) = (tp.moves[1], tp.moves[2]);
+        assert_eq!(
+            rapid,
+            Move::rapid(Point3::new(first.to.x, first.to.y, THICKNESS_MM + 1.0)),
+            "{:?}",
+            &tp.moves[..4]
+        );
+        assert_eq!(
+            plunge,
+            Move::linear(
+                Point3::new(first.to.x, first.to.y, PASS_Z_MM[0]),
+                PLUNGE_MM_MIN
+            )
+        );
+    }
+
     #[test]
     fn inside_rect_offsets_inward() {
         let p = rect_project();

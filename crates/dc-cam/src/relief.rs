@@ -1919,6 +1919,49 @@ mod tests {
         }
     }
 
+    /// #227, S2: a notch's plunge at its descend point, where the main
+    /// path has cut the floor at Z 4, starts from a rapid straight down
+    /// from safe Z that stops 1 mm above that floor, not at safe Z: for a
+    /// Pocket's relief pass, cut after the main path, and for an inside
+    /// Profile's notches, cut among its passes.
+    #[test]
+    fn notch_rapids_to_just_above_the_cut_floor() {
+        let p = one_tool(vec![rect(40.0, 40.0)]);
+        let descend_points = [at(2.0, 2.0), at(38.0, 2.0), at(38.0, 38.0), at(2.0, 38.0)];
+        let safe_z_mm = THICKNESS_MM + 5.0;
+        let pocket = generate_pocket(&p, &pocket_op(CornerRelief::Dogbone))
+            .unwrap()
+            .0;
+        let profile = generate_profile(&p, &profile_op(Side::Inside, CornerRelief::Dogbone))
+            .unwrap()
+            .0;
+        for (name, tp) in [("pocket", pocket), ("profile", profile)] {
+            for d in descend_points {
+                let at_d = |m: &Move| m.to.xy().distance_to(d) < 1e-6;
+                let i = tp
+                    .moves
+                    .iter()
+                    .position(|m| m.is_rapid() && at_d(m) && m.to.z < safe_z_mm - EPS_MM)
+                    .unwrap_or_else(|| panic!("{name}: no rapid down at {d:?}: {:?}", tp.moves));
+                assert_eq!(
+                    tp.moves[i - 1],
+                    Move::rapid(Point3::new(d.x, d.y, safe_z_mm)),
+                    "{name} at {d:?}"
+                );
+                assert_eq!(
+                    tp.moves[i],
+                    Move::rapid(Point3::new(d.x, d.y, 5.0)),
+                    "{name} at {d:?}"
+                );
+                assert_eq!(
+                    tp.moves[i + 1],
+                    Move::linear(Point3::new(d.x, d.y, 4.0), 300.0),
+                    "{name} at {d:?}"
+                );
+            }
+        }
+    }
+
     /// Upstream: "acute, right and obtuse corners of one pocket are all
     /// relieved"; the acute corner needs the longest excursion,
     /// `r(1/sin(θ/2) − 1)`.
