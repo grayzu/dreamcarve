@@ -370,7 +370,14 @@ every line of the region whose material holds the path and from every
 other open path that region holds, the stretches within `√2·d` of a
 point where the two meet set aside. (changed in #210: a cut on an open
 path was held to the path only, so a line drawn beside its part's wall
-passed; dc-cam now refuses it, see "Profile bands".) The notch rule applies Inside and Outside,
+passed; dc-cam now refuses it, see "Profile bands".) A cut on a region's
+line, or on an open path it holds, also keeps `d` from the stretches of
+that line more than `√2·d` along it from where the cut runs, the
+stretches within `√2·d` of where the line meets itself set aside, and on
+a closed line only where the part lies between them; an open path drawn
+twice is one path. (changed in #221: a cut was never measured against
+its own line, so a hand-written hairpin passed; dc-cam now refuses it,
+see "Profile bands".) The notch rule applies Inside and Outside,
 so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
 outline on its waste side. It passes even where an outline of another
@@ -1008,8 +1015,52 @@ alongside:
 
 The shapes are named in drawing order. Open paths in different regions,
 or held by none, stay D6's. S9 holds an On line Profile's cuts on an open
-path to the same rule. A line closer than `d` to itself (a hairpin) is not
-compared.
+path to the same rule.
+
+A line is also measured against itself (`dc_geometry::SelfBand`): every
+closed line of a region cut On line, and every open path a region holds.
+Two stretches of one line closer than `d` cut through the part between
+them as two lines do: a hairpin, a spiral with tight turns, an outline
+with a neck narrower than the bit (a dumbbell). `generate_profile`
+refuses it with `BandNarrowerThanTool`, `shape` and `other` both the
+line, `band_mm` the narrowest gap so measured.
+
+- Only points more than `√2·d` apart along the line are compared (the
+  shorter way round a closed line), so a line is never compared with the
+  stretches next to it. A stretch that turns by at most 90° is at least
+  `1/√2` of its length long end to end, so a smooth curve and a corner of
+  90° or more never come within `d` of themselves. The line is cut into
+  stretches at most `√2·d / 8` long for this, so where along it a
+  stretch lies is known to an eighth of that reach.
+- **Corners:** a vertex where the line turns by more than 90° is where
+  two lines meet, as above: the stretch within `√2·d` of its tip is set
+  aside. A V of 45° or more is cut, as a slot meeting the edge at 45° is,
+  and a sharper one (a 10° spike, a star whose points are sharper than
+  45°) is refused, with the band `√2·d · sin θ`. Where an open path
+  touches or crosses itself, or comes within the flatten tolerance of
+  itself, it meets itself there too.
+- **Which side:** an open path a region holds has the part on both
+  sides, so every pair counts. For a closed line only a pair with the
+  part between them counts: the point midway lies in the region's
+  material, at least a quarter of their gap from the line. A notch
+  narrower than the bit cut into an outline, or a hole with a narrow
+  neck, has waste between its stretches and is cut; a pair along one edge
+  across a notch's mouth has its midpoint on the line and does not count.
+
+An open path drawn twice, the same vertices in either direction, is cut
+once: the later copy is dropped with `DuplicateShapeDropped` naming the
+first, before any band or overlap check, as `nest` drops a closed shape
+drawn twice. S9 drops it the same way.
+
+(changed in #221: a line was never compared with itself, so a hairpin, a
+tight spiral or a dumbbell outline cut On line cut through the part with
+no finding, and a duplicate open path in a part was refused with a band
+of 0 while a duplicate closed shape was dropped. The rule is #210's
+applied to one line: its corners meet as two lines do, so a V turn and
+two slots joined at the same angle get the same answer. Only the part
+counts for a closed line, because an On line cut already takes `r` from
+each side of every line, and clearing waste between two stretches costs
+the part nothing more.)
 
 (changed in #210: an open path inside a part, closer than `d` to that
 part's own lines, cut through the wall between them with no finding: D6
@@ -1605,7 +1656,7 @@ it and the warnings per operation, each as `<code>: <message>`.
 ## Module layout
 
 ```
-crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection on Regions), circle.rs (circle test, Kasa fit)}
+crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection on Regions), circle.rs (circle test, Kasa fit), self_band.rs (a line against itself, #221)}
 crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder), migrate.rs (v7_to_v8), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
 crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, overlap.rs, stock.rs, warning.rs}
 crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, canned.rs (controller model of G81–G83/G73), safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4, `%`), post.rs (definition checks)}
@@ -1635,6 +1686,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-geometry**
 - `boolean::difference_of_rect_and_circle_has_one_hole`, `boolean::union_of_touching_rects_is_one_region`, `boolean::intersection_of_disjoint_is_empty`.
 - `circle::sixteen_facets_are_a_circle_within_tolerance`, `circle::two_bulge_arcs_are_a_circle`, `circle::ellipse_is_not_a_circle`, `circle::kasa_fit_recovers_centre_and_radius`.
+- `self_band::hairpins_are_narrow_and_square_corners_are_not`, `self_band::a_neck_in_a_closed_outline_is_narrow`, `self_band::sharp_corners_meet_and_set_their_arms_aside`, `self_band::a_crossing_is_a_meeting`, `self_band::far_from_leaves_out_the_stretches_near_the_cut`, `distance::closest_points_follow_arcs_and_ends` (#221).
 
 **dc-project**
 - `migrate::v7_profile_gains_phase_2_fields_with_defaults` — fixture loads with `machining_order: full_depth_first`, `entry: plunge`, `lead: null`, `corner_relief: none`, `arc_fit_tolerance_mm: 0.01`, `use_canned_cycles: false`; `migrate::v7_to_v8_writes_the_defaults`, `migrate::v7_with_phase_2_field_already_present_fails`.
@@ -1714,7 +1766,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `relief::bottom_level_notches_do_not_plunge` (#193: ramp entry, both orders, one and two levels in the freeing pass, with a lead: no straight plunge below what is already cut at a descend point; every bottom notch within the final lap).
 
 **dc-cam — profile**
-- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210).
+- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221).
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
@@ -1735,7 +1787,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::canned_cycle_expansion_matches_drill_toolpath` (S11), `safety::canned_cycle_below_floor_fails_s1`, `safety::canned_cycle_rapid_into_uncut_fails`.
 - `safety::ramp_steeper_than_plunge_fails_s10`, `safety::helix_feed_scaled_passes_s10`.
 - `safety::pocket_cut_outside_region_fails_s9` (on the toolpath via `footprint`).
-- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177), `safety::inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9` (#192), `safety::on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9` (#199), `safety::on_line_open_path_cutting_through_a_wall_fails_s9` (#210).
+- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177), `safety::inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9` (#192), `safety::on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9` (#199), `safety::on_line_open_path_cutting_through_a_wall_fails_s9` (#210), `safety::on_line_hairpin_fails_s9`, `safety::s9_check_is_fast_on_an_on_line_outline_of_many_chords` (#221).
 - `post::six_definitions_validate`, `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect` (acceptance 36), `post::mach3_numbers_every_line`, `post::uccnc_writes_no_line_numbers_percent_or_units_word`, `post::generic_strips_trailing_zeros`, `post::generic_refuses_m6_mode`, `post::linuxcnc_mach3_uccnc_refuse_m6_mode`, `post::canned_cycles_only_where_documented`, `post::no_definition_has_g43`, `post::every_definition_line_is_cited_in_readme` (a test that scans the README for each non-placeholder header/footer/tool-change line).
 - `emit::one_program_flag_writes_m6_on_grblhal`, `emit::one_program_flag_on_grbl_is_error`, `emit::programs_per_tool_flag_overrides_m6_mode_without_saving`.
 
