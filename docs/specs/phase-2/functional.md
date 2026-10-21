@@ -574,7 +574,11 @@ with `G98` retract) and checks S1, S2 and S6 against that expansion, so
 a canned-cycle program is accepted only if its expansion is the Drill
 toolpath move for move. Rapids along one vertical line in one direction
 count as one move there: from a clearance height, `G98`'s return and the
-rapid down to `R` pass safe Z without stopping (changed in #305).
+rapid down to `R` pass safe Z without stopping (changed in #305). A Drill
+linked at the clearance height between parts and at safe Z within one is
+one `G98` series per part, each from safe Z and ended by `G80`; a series
+must end with `G80` before any other motion (changed in #314: such a
+Drill was written as plain moves).
 - **S12 Arc fitting is a refinement, not a change.** A fitted run of arcs
 replaces only straight moves, and corner arcs shallower than the
 tolerance, whose vertices and shallow-arc midpoints all lie on the

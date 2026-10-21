@@ -104,7 +104,8 @@ written. There are no safety warnings, only errors.
     controller makes for it, and rules 1, 2, 8 and 9 are checked on those
     moves: they must be the Drill's own moves, hole for hole, depth for
     depth. A cycle the check cannot read back exactly, such as one with a
-    word missing, is refused.
+    word missing, is refused, and so is any other move before the `G80`
+    that ends the cycles.
 11. **Nothing goes down faster than the plunge rate.** For every cutting
     move that goes down, the check works out its slope from the numbers
     written in the program, and its speed straight down: the feed rate

@@ -320,7 +320,13 @@ impl State {
                     };
                     if let Some(mode) = mode {
                         if !matches!(mode, Mode::Cycle(_)) {
-                            // Any other motion ends a series of cycles.
+                            // #314: a series of cycles ends with `G80`.
+                            // LinuxCNC also ends it at any other motion
+                            // ([G] `#gcode:g80`), but Mach3Mill does not
+                            // say that resets the `G98` level (10.7.29).
+                            if matches!(self.mode, Some(Mode::Cycle(_))) {
+                                return Err(series_without_cancel());
+                            }
                             self.initial_z = None;
                         }
                         self.mode = Some(mode);
@@ -414,6 +420,9 @@ impl State {
         words: Vec<Word>,
         blocks: &mut Vec<Block>,
     ) -> Result<(), String> {
+        if matches!(self.mode, Some(Mode::Cycle(_))) {
+            return Err(series_without_cancel());
+        }
         let refuse = || "`G53` is accepted only as `G53 G0 Z…`, alone on its line (S16)".to_owned();
         let count = |letter: char, value: Option<f64>| {
             words
@@ -564,6 +573,12 @@ impl State {
     }
 }
 
+/// Why a motion word or a `G53` lift while a canned cycle is the motion
+/// mode is refused (S11, #314).
+fn series_without_cancel() -> String {
+    "a series of canned cycles must end with G80 before any other motion".to_owned()
+}
+
 /// A block the parser synthesises for a canned cycle: the words of the
 /// plain line that makes the same move or dwell, and the move.
 type Synthetic = (Vec<Word>, Option<MachineMove>);
@@ -708,6 +723,31 @@ mod tests {
             ..CycleModel::default()
         };
         parse_program_with("G21\nG0 Z5\nG98 G83 X10 Y0 Z-3 R1 Q1 F300\n", &model).unwrap();
+    }
+
+    /// #314, S11: a series of cycles ends with `G80`. A motion word or a
+    /// `G53` lift while a cycle is the motion mode ends it too on LinuxCNC
+    /// ([G] `#gcode:g80`), but Mach3Mill (10.7.23, 10.7.29) does not say
+    /// that resets the `G98` level, so the parser refuses it rather than
+    /// model it. After `G80` a new series starts from the Z the tool is at:
+    /// here Z 8, so its hole returns to Z 8.
+    #[test]
+    fn a_series_of_cycles_ends_with_g80() {
+        let start = "G21\nG0 Z5\nX0 Y0\nG98 G81 X10 Y0 Z-3 R1 F300\n";
+        for (next, line) in [("G0 Z8\n", 5), ("G1 X20 Z-1\n", 5), ("G53 G0 Z-5\n", 5)] {
+            let result = parse_program(&format!("{start}{next}"));
+            assert!(
+                matches!(&result, Err(ExportError::Unparseable { line: l, .. }) if *l == line),
+                "{next}: {result:?}"
+            );
+        }
+        let text = format!("{start}G80\nG0 Z8\nG81 X20 Y0 Z-3 R1\nG80\n");
+        let moves = parse_motion(&text).unwrap();
+        let last = moves.last().unwrap();
+        assert_eq!(
+            (last.kind, last.to.x, last.to.z),
+            (MotionKind::Rapid, Some(20.0), Some(8.0))
+        );
     }
 
     #[test]
