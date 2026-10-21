@@ -635,7 +635,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 8] = [
+const SOURCES: [Source; 10] = [
     (
         "grblhal",
         1,
@@ -649,6 +649,12 @@ const SOURCES: [Source; 8] = [
         include_str!("definitions/grblhal/v2.json"),
     ),
     (
+        "grblhal",
+        3,
+        "grblhal/v3.json",
+        include_str!("definitions/grblhal/v3.json"),
+    ),
+    (
         "grbl",
         1,
         "grbl/v1.json",
@@ -659,6 +665,12 @@ const SOURCES: [Source; 8] = [
         2,
         "grbl/v2.json",
         include_str!("definitions/grbl/v2.json"),
+    ),
+    (
+        "grbl",
+        3,
+        "grbl/v3.json",
+        include_str!("definitions/grbl/v3.json"),
     ),
     (
         "linuxcnc",
@@ -1294,7 +1306,7 @@ mod tests {
         assert_eq!(*at, Some(value), "{err}");
         assert!(message.contains("99"), "{err}");
         assert!(message.contains("`grbl`"), "{err}");
-        assert!(message.ends_with("available: 1, 2"), "{err}");
+        assert!(message.ends_with("available: 1, 2, 3"), "{err}");
     }
 
     /// The definition that `id`.json on main parsed to, before #106, kept as

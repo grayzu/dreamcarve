@@ -2488,7 +2488,7 @@ mod tests {
             for line in &lines[..units] {
                 let c = code(line);
                 assert!(
-                    c.is_empty() || ["G90", "G17", "G94"].contains(&c.as_str()),
+                    c.is_empty() || ["G90", "G17", "G94", "G80", "G40"].contains(&c.as_str()),
                     "{post}: {line}"
                 );
             }
@@ -4281,25 +4281,30 @@ mod tests {
         text.lines().map(code).collect()
     }
 
-    /// Whether `text` has any canned-cycle word.
+    /// Whether `text` has any canned-cycle word. `G80` alone is no cycle:
+    /// the grblHAL and GRBL v3 headers write it to cancel one (#279).
     fn has_cycle_word(text: &str) -> bool {
-        ["G73", "G80", "G81", "G82", "G83", "G98", "G99"]
+        ["G73", "G81", "G82", "G83", "G98", "G99"]
             .iter()
             .any(|w| text.lines().any(|l| has_word(l, w)))
     }
 
-    /// The lines between the one `G98` and the one `G80` of `text`; also
-    /// asserts the line before `G98` is the rapid over the first hole.
+    /// The lines between the one `G98` and the one `G80` after it of
+    /// `text`; also asserts the line before `G98` is the rapid over the
+    /// first hole. A `G80` before the `G98` is the header's (#279).
     fn cycle_lines(text: &str, first: (f64, f64)) -> Vec<String> {
         let codes = codes(text);
-        let at = |word: &str| -> usize {
-            let found: Vec<usize> = (0..codes.len())
+        let all = |word: &str, from: usize| -> Vec<usize> {
+            (from..codes.len())
                 .filter(|&i| codes[i].split_whitespace().any(|w| w == word))
-                .collect();
-            assert_eq!(found.len(), 1, "one {word} in\n{text}");
-            found[0]
+                .collect()
         };
-        let (g98, g80) = (at("G98"), at("G80"));
+        let [g98] = all("G98", 0)[..] else {
+            panic!("one G98 in\n{text}");
+        };
+        let [g80] = all("G80", g98)[..] else {
+            panic!("one G80 after the G98 in\n{text}");
+        };
         assert_eq!(codes[g98], "G98", "{text}");
         assert_eq!(codes[g80], "G80", "{text}");
         assert_eq!(
