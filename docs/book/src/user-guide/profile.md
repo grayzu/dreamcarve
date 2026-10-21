@@ -295,19 +295,23 @@ round them, so a rectangle cut outside gets no notches at all. An On line
 Profile has no waste side to put a notch in: it skips the relief with
 `relief_skipped`.
 
-The notches are cut after every pass of the operation, nearest corner
-first, each plunging where the outline's path turned that corner and
-stepping down by the **tool's** `step_down_mm` to the operation's depth.
-A corner under a [tab](tabs.md) is skipped with `relief_corner_not_cut`:
-the path rises over the tab there, so the notch would plunge into uncut
-material. Edges shorter than the bit is wide skip their corner with
-`relief_corner_too_tight`, and a tool with no `step_down_mm` skips the
-relief with `relief_skipped`.
+Each notch plunges where the outline's path turned that corner and steps
+down by the **tool's** `step_down_mm` to the operation's depth. The
+notches are cut among the outline's own passes, nearest corner first: a
+notch level comes right after the pass that cut down to it, so the bit
+plunges into the slot that pass opened. A corner under a [tab](tabs.md)
+is skipped with `relief_corner_not_cut`: the path rises over the tab
+there, so the notch would plunge into uncut material. Edges shorter than
+the bit is wide skip their corner with `relief_corner_too_tight`, and a
+tool with no `step_down_mm` skips the relief with `relief_skipped`.
 
-The notches come after the outline's last pass. On a through cut with no
-tabs the part or slug is already loose by then, and the bit cuts beside
-a piece that can shift: hold it with [tabs](tabs.md) clear of the
-corners (a notch away from a tab is still cut).
+On a through cut the last pass frees the part (or the slug of a hole),
+so its notch levels come just before it instead, never after it: every
+notch is cut while the uncut skin still holds the piece, and tabs are not
+needed for the notches. At those levels the bit
+plunges straight through the skin, at most one step-down deep, even when
+the Profile's [entry](#entry) is a ramp or a helix. Tabs still hold the
+part through the last pass itself, as without relief.
 
 An inside Profile of a 40 × 30 mm rectangle with a 6.35 mm bit and
 `"dogbone"` gets four notches, each ending 3.175 mm from its corner along
@@ -358,7 +362,8 @@ one drawn (see [Machining order](#machining-order)). For each outline:
 
 Every move between shapes is at safe Z; the tool never travels through
 material from one shape to another. With [corner relief](#corner-relief)
-the notches follow, each corner reached at safe Z.
+each pass is followed by its notches, each corner reached at safe Z; on
+a through cut the notches of the last pass go before it.
 
 ## Warnings
 

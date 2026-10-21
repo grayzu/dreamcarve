@@ -1220,7 +1220,17 @@ fn pocket_dogbone_exports_and_passes_safety() {
     pocket.tool = project.operations[0].tool().clone();
     pocket.step_over_fraction = Some(0.4);
     pocket.corner_relief = CornerRelief::Dogbone;
+    // #189, #177: then the same rectangle cut through inside, with no tabs,
+    // with dogbones too, before the coaster's own Profile.
+    let mut hole = as_profile(&project.operations[0]).clone();
+    hole.id = OperationId::new("panel_hole");
+    hole.name = "Panel hole".into();
+    hole.targets = vec![InstanceId::new("panel1")];
+    hole.side = Side::Inside;
+    hole.tabs = None;
+    hole.corner_relief = CornerRelief::Dogbone;
     project.operations.insert(0, Operation::Pocket(pocket));
+    project.operations.insert(1, Operation::Profile(hole));
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
     let check = run(&dir, &["check", "coaster.dcv"]);
@@ -1261,6 +1271,57 @@ fn pocket_dogbone_exports_and_passes_safety() {
             "no notch ends at {end:?}:\n{program}"
         );
     }
+
+    // #189: the hole's notches reach the bottom, and every one of them is
+    // cut before the lap that frees the slug: after the last notch the
+    // program still cuts a full lap of the 33.65 × 23.65 mm tool-centre
+    // rectangle at the bottom.
+    let bottom_z = -(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
+    let at_bottom = |m: &MachineMove| {
+        m.from
+            .z
+            .zip(m.to.z)
+            .is_some_and(|(a, b)| (a - bottom_z).abs() < 1e-3 && (b - bottom_z).abs() < 1e-3)
+    };
+    let in_panel = |m: &MachineMove| {
+        m.to.x
+            .zip(m.to.y)
+            .is_some_and(|(x, y)| (30.0..=70.0).contains(&x) && (35.0..=65.0).contains(&y))
+    };
+    let mut last_notch = 0;
+    for (cx, cy, sx, sy) in [
+        (30.0, 35.0, 1.0, 1.0),
+        (70.0, 35.0, -1.0, 1.0),
+        (70.0, 65.0, -1.0, -1.0),
+        (30.0, 65.0, 1.0, -1.0),
+    ] {
+        let end = Point::new(cx + sx * r, cy + sy * r);
+        let notch = moves.iter().rposition(|m| {
+            m.kind.is_cut()
+                && at_bottom(m)
+                && m.to
+                    .x
+                    .zip(m.to.y)
+                    .is_some_and(|(x, y)| Point::new(x, y).distance_to(end) < 1e-3)
+        });
+        let notch = notch.unwrap_or_else(|| panic!("no notch at the bottom ends at {end:?}"));
+        last_notch = last_notch.max(notch);
+    }
+    let after: f64 = moves
+        .iter()
+        .skip(last_notch + 1)
+        .filter(|m| m.kind.is_cut() && at_bottom(m) && in_panel(m))
+        .filter_map(|m| {
+            let (x0, y0) = m.from.x.zip(m.from.y)?;
+            let (x1, y1) = m.to.x.zip(m.to.y)?;
+            Some(Point::new(x0, y0).distance_to(Point::new(x1, y1)))
+        })
+        .sum();
+    let lap = 2.0 * ((40.0 - 6.35) + (30.0 - 6.35));
+    assert!(
+        after >= lap - 1e-2,
+        "only {after:.3} mm of the {lap:.3} mm freeing lap follows the last notch:\n{program}"
+    );
 }
 
 /// Slice 9 (#147), capability 16 and S10 end to end: the coaster's Pocket

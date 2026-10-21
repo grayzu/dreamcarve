@@ -1590,6 +1590,16 @@ mod tests {
         (project, op, tool)
     }
 
+    /// [`fixture`] with a Profile of no targets: the hand-written cuts of
+    /// the S7, extents and S10 tests cross the sample rectangle, and with
+    /// no part to keep out of, S9 (#177) passes them, so each test sees
+    /// only its own rule.
+    fn partless_fixture() -> (Project, dc_project::ProfileOp, Tool) {
+        let (project, mut op, tool) = fixture();
+        op.targets.clear();
+        (project, op, tool)
+    }
+
     /// A cut from (`x0`, `y0`) to (`x1`, `y1`) at Z 3, then a clockwise
     /// half circle about (`x1` + 10, `y1`), which bulges 10 mm past both
     /// its ends in +Y.
@@ -1618,7 +1628,7 @@ mod tests {
     /// them fails at +Y by 3 mm.
     #[test]
     fn cut_off_stock_fails_s7() {
-        let (project, op, mut tool) = fixture();
+        let (project, op, mut tool) = partless_fixture();
         tool.diameter_mm = 6.0;
         emit_one(
             &project,
@@ -1668,7 +1678,7 @@ mod tests {
     /// and Y and machine Z is project Z minus 6.
     #[test]
     fn extents_include_arc_bulges() {
-        let (project, op, mut tool) = fixture();
+        let (project, op, mut tool) = partless_fixture();
         tool.diameter_mm = 6.0;
         let program = emit(
             &project,
@@ -1757,7 +1767,7 @@ mod tests {
             op: &op,
             tool: &tool,
             toolpath: &toolpath,
-            material: &Material::Profile,
+            material: &Material::Unchecked,
             lines: 1..lines,
         }];
         check_rules(
@@ -2486,7 +2496,7 @@ mod tests {
             op: &op,
             tool: &tool,
             toolpath,
-            material: &Material::Profile,
+            material: &Material::Unchecked,
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -3124,7 +3134,7 @@ mod tests {
     /// it passes. The same on a hand-written program.
     #[test]
     fn ramp_steeper_than_plunge_fails_s10() {
-        let (project, op, tool) = fixture();
+        let (project, op, tool) = partless_fixture();
         let scaled = 300.0 * 20f64.sqrt() / 2.0;
         let text = emit_one(&project, &op, &tool, ramp(scaled)).unwrap();
         let ramp_line = line_with(&text, "X14");
@@ -3189,7 +3199,7 @@ mod tests {
     /// rate fails; scaled, it passes. The up slope is not a descent.
     #[test]
     fn tab_slope_steeper_than_plunge_fails_s10() {
-        let (project, op, tool) = fixture();
+        let (project, op, tool) = partless_fixture();
         let scaled = 300.0 * 13f64.sqrt() / 2.0;
         let text = emit_one(&project, &op, &tool, tab_lap(scaled)).unwrap();
         let down_line = line_with(&text, "X29");
@@ -3465,6 +3475,317 @@ mod tests {
         assert!(
             matches!(err, ExportError::OffMaterial { line: 6, .. }),
             "{err:?}"
+        );
+    }
+
+    /// The sample project's outside Profile (#177).
+    fn sample_profile_op() -> Operation {
+        sample_project().operations[0].clone()
+    }
+
+    /// S9 for Profile (#177): the sample's outside Profile of the
+    /// rectangle X 10 to 60, Y 10 to 40 with the 6.35 mm tool. A ramp
+    /// that zigzags out into the waste and back to the tool-centre path
+    /// (X 6.825), then a lap along it, passes; the same ramp swung into
+    /// the part, its tool centre at X 12, fails with `OffMaterial` at the
+    /// ramp's line.
+    #[test]
+    fn profile_ramp_into_part_fails_s9() {
+        let project = sample_project();
+        let op = sample_profile_op();
+        let program = |ramp: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX6.825 Y25\nG1 Z0 F300\n{ramp}\nX6.825 Y25 Z-2\n\
+                 Y40 F1000\nG2 X10 Y43.175 I3.175 J0\nG0 Z5\n"
+            )
+        };
+        check_material_text(&program("X2 Y30 Z-1 F500"), &project, &op).unwrap();
+        let err = check_material_text(&program("X12 Y30 Z-1 F500"), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+            "{err:?}"
+        );
+    }
+
+    /// The sample project with a second part, 20 × 30 mm at (`x`, 10), in
+    /// the Profile's targets: `x − 60` mm right of the rectangle.
+    fn two_part_profile(x: f64) -> (Project, Operation) {
+        let mut project = sample_project();
+        let narrow = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d2"),
+            name: "Narrow".into(),
+            profiles: vec![dc_geometry::Polyline::rect(
+                Point::new(0.0, 0.0),
+                20.0,
+                30.0,
+            )],
+        };
+        project.definitions.insert(narrow.id.clone(), narrow);
+        let mut instance = project.instances[0].clone();
+        instance.id = dc_project::InstanceId::new("i2");
+        instance.definition = dc_project::DefinitionId::new("d2");
+        instance.transform = dc_geometry::Transform::translate(x, 10.0);
+        project.instances.push(instance);
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.targets.push(dc_project::InstanceId::new("i2"));
+        let op = Operation::Profile(op.clone());
+        (project, op)
+    }
+
+    /// S9 for Profile (#177): a lead-in arc onto the rectangle's right-hand
+    /// tool-centre path (X 63.175) that stays in the 6.825 mm gap before
+    /// the second part passes; one that swings out to X 75.675, into the
+    /// second part, fails with `OffMaterial` at the arc's line.
+    #[test]
+    fn profile_lead_arc_into_neighbouring_part_fails_s9() {
+        let (project, op) = two_part_profile(70.0);
+        let program = |start_y: f64, arc: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX63.175 Y{start_y}\nG1 Z-1 F300\n{arc}\n\
+                 Y10 F1000\nG0 Z5\n"
+            )
+        };
+        let small = program(31.0, "G2 X63.175 Y25 I0 J-3 F1000");
+        check_material_text(&small, &project, &op).unwrap();
+        let wide = program(50.0, "G2 X63.175 Y25 I0 J-12.5 F1000");
+        let err = check_material_text(&wide, &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+            "{err:?}"
+        );
+    }
+
+    /// S9's lap rule (#177): with the second part 4 mm from the rectangle,
+    /// closer than the 6.35 mm bit (`toolpaths_overlap`), the generated
+    /// Profile still exports: each lap runs at the radius from its own
+    /// outline, and the gouge into the neighbour is the one dc-cam warns
+    /// about. A cut off the lap, to a tool centre in the middle of the
+    /// gap, 2 mm from both parts, still fails.
+    #[test]
+    fn lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails() {
+        let (project, op) = two_part_profile(64.0);
+        let Operation::Profile(profile) = &op else {
+            unreachable!("a Profile");
+        };
+        let (toolpath, warnings) = generate_profile(&project, profile).unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.code == dc_cam::WarningCode::ToolpathsOverlap),
+            "{warnings:?}"
+        );
+        emit(
+            &project,
+            &[(op.clone(), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
+        let program =
+            |cut: &str| format!("G21 G90\nG54\nG0 Z5\nX63.175 Y20\nG1 Z-1 F300\n{cut}\nG0 Z5\n");
+        check_material_text(&program("Y30 F1000"), &project, &op).unwrap();
+        let err = check_material_text(&program("X62 Y25 F1000"), &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S9's notch rule on an outside Profile (#177): the generated dogbone
+    /// in an L part's inside corner passes; the same program checked as a
+    /// Profile without relief fails at the notch.
+    #[test]
+    fn outside_notch_passes_s9_only_with_relief() {
+        let mut project = sample_project();
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles = vec![dc_geometry::Polyline::new(
+                [
+                    (0.0, 0.0),
+                    (40.0, 0.0),
+                    (40.0, 40.0),
+                    (20.0, 40.0),
+                    (20.0, 20.0),
+                    (0.0, 20.0),
+                ]
+                .into_iter()
+                .map(|(x, y)| dc_geometry::Vertex::line(x, y))
+                .collect(),
+                true,
+            )];
+        }
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.tabs = None;
+        op.corner_relief = dc_project::CornerRelief::Dogbone;
+        let op = op.clone();
+        let (toolpath, _) = generate_profile(&project, &op).unwrap();
+        let text = emit(
+            &project,
+            &[(
+                Operation::Profile(op.clone()),
+                project.tools[0].clone(),
+                toolpath,
+            )
+                .into()],
+            "2026-10-21",
+        )
+        .map(|(p, _)| p.text)
+        .unwrap();
+        let without = Operation::Profile(dc_project::ProfileOp {
+            corner_relief: dc_project::CornerRelief::None,
+            ..op
+        });
+        let err = check_material_text(&text, &project, &without).unwrap_err();
+        assert!(matches!(err, ExportError::OffMaterial { .. }), "{err:?}");
+    }
+
+    /// S9 for an inside Profile (#177): the tool centre stays inside the
+    /// hole, a radius from its walls, as a Pocket's; a cut that crosses
+    /// out of the hole fails.
+    #[test]
+    fn inside_profile_cut_outside_hole_fails_s9() {
+        let mut project = sample_project();
+        dc_project::test_support::profile_mut(&mut project).side = dc_project::Side::Inside;
+        let op = project.operations[0].clone();
+        let program = |to_x: &str| {
+            format!("G21 G90\nG54\nG0 Z5\nX13.175 Y25\nG1 Z-1 F300\nX{to_x} F1000\nG0 Z5\n")
+        };
+        check_material_text(&program("56.825"), &project, &op).unwrap();
+        let err = check_material_text(&program("58"), &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The generated sample Profile with `edit` applied, emitted: tabs and
+    /// whatever entry, lead and relief `edit` sets.
+    fn emit_profile(edit: impl FnOnce(&mut dc_project::ProfileOp)) -> Result<String, ExportError> {
+        let mut project = sample_project();
+        edit(dc_project::test_support::profile_mut(&mut project));
+        let op = project.operations[0].clone();
+        let Operation::Profile(profile) = &op else {
+            unreachable!("the sample's operation is a Profile");
+        };
+        let (toolpath, _) = generate_profile(&project, profile).unwrap();
+        emit(
+            &project,
+            &[(op, project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .map(|(p, _)| p.text)
+    }
+
+    /// S9 for Profile (#177) on generated programs: the sample's tabbed
+    /// outside Profile, with a ramp, a helix and a lead in and out, and
+    /// inside and on the line, all pass the safety pass.
+    #[test]
+    fn generated_profiles_pass_s9() {
+        let ramp = dc_project::Entry::Ramp { angle_deg: 5.0 };
+        let lead = dc_project::Lead {
+            radius_mm: 4.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 1.0,
+        };
+        let helix = dc_project::Entry::Helix {
+            diameter_fraction: 0.8,
+            angle_deg: 5.0,
+        };
+        for side in [
+            dc_project::Side::Outside,
+            dc_project::Side::Inside,
+            dc_project::Side::OnLine,
+        ] {
+            emit_profile(|op| op.side = side).unwrap();
+            emit_profile(|op| {
+                op.side = side;
+                op.entry = ramp.clone();
+            })
+            .unwrap();
+            if side != dc_project::Side::OnLine {
+                emit_profile(|op| {
+                    op.side = side;
+                    op.entry = helix.clone();
+                    op.lead = Some(lead.clone());
+                    op.corner_relief = dc_project::CornerRelief::Dogbone;
+                })
+                .unwrap();
+            }
+        }
+    }
+
+    /// 20 parts, 15 × 15 mm, 10 mm apart in a 5 × 4 grid, cut outside
+    /// with ramps, leads, tabs and dogbones (#177's cost bound).
+    fn twenty_part_profile() -> (Project, Operation) {
+        let mut project = sample_project();
+        project.stock = dc_project::Stock {
+            width_mm: 160.0,
+            height_mm: 130.0,
+            thickness_mm: Some(6.0),
+        };
+        let square = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d1"),
+            name: "Square".into(),
+            profiles: vec![dc_geometry::Polyline::rect(
+                Point::new(0.0, 0.0),
+                15.0,
+                15.0,
+            )],
+        };
+        project.definitions = std::collections::BTreeMap::from([(square.id.clone(), square)]);
+        let template = project.instances[0].clone();
+        project.instances = (0..20)
+            .map(|k| {
+                let (col, row) = (f64::from(k % 5), f64::from(k / 5));
+                dc_project::FeatureInstance {
+                    id: dc_project::InstanceId::new(format!("i{k}")),
+                    name: format!("Square {k}"),
+                    transform: dc_geometry::Transform::translate(
+                        15.0 + 25.0 * col,
+                        15.0 + 25.0 * row,
+                    ),
+                    ..template.clone()
+                }
+            })
+            .collect();
+        let targets = project.instances.iter().map(|i| i.id.clone()).collect();
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.targets = targets;
+        op.entry = dc_project::Entry::Ramp { angle_deg: 5.0 };
+        op.lead = Some(dc_project::Lead {
+            radius_mm: 3.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 1.0,
+        });
+        op.corner_relief = dc_project::CornerRelief::Dogbone;
+        let op = Operation::Profile(op.clone());
+        (project, op)
+    }
+
+    /// #177: S9 on a 20-part Profile with ramps, leads and tabs checks
+    /// each move against the outlines near it, so it stays fast in a debug
+    /// build.
+    #[test]
+    fn s9_check_is_fast_on_twenty_profile_parts() {
+        let (project, op) = twenty_part_profile();
+        let Operation::Profile(profile) = &op else {
+            unreachable!("a Profile");
+        };
+        let (toolpath, _) = generate_profile(&project, profile).unwrap();
+        let text = emit(
+            &project,
+            &[(op.clone(), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .map(|(p, _)| p.text)
+        .unwrap();
+        let start = std::time::Instant::now();
+        check_material_text(&text, &project, &op).unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "S9 took {elapsed:?} on {} lines",
+            text.lines().count()
         );
     }
 

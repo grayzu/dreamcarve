@@ -2728,13 +2728,14 @@ mod tests {
 
     #[test]
     fn arc_ij_is_relative_to_emitted_start() {
-        // The start rounds from 10.0004 to 10.000. I taken from the
+        // The start rounds from 70.0004 to 70.000. I taken from the
         // unrounded start would be 5.0004 -> "5.000"; from the emitted
-        // start it is 5.0008 -> "5.001".
+        // start it is 5.0008 -> "5.001". The arc lies in the waste beside
+        // the sample part, so S9 (#177) passes it.
         let project = project_with("grblhal");
         let mut ops = ops_for(&project);
-        let start = Point3::new(10.0004, 20.0, 5.0);
-        let centre = Point::new(15.0008, 20.0);
+        let start = Point3::new(70.0004, 60.0, 5.0);
+        let centre = Point::new(75.0008, 60.0);
         let r = centre.x - start.x;
         ops[0].toolpath = Toolpath {
             moves: vec![
@@ -3590,6 +3591,10 @@ mod tests {
 
             ops[1].tool = ops[0].tool.clone();
             profile_of(&mut ops[1].op).tool = ops[0].tool.id.clone();
+            // Generated for the tool it now has: the 3 mm tool's path cut
+            // with the 6.35 mm tool would cut into the part (S9, #177).
+            let second = profile_of(&mut ops[1].op).clone();
+            ops[1].toolpath = generate_profile(&project, &second).unwrap().0;
             emit(&project, &ops, DATE).unwrap();
         }
     }
