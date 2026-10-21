@@ -1205,6 +1205,7 @@ impl Rates {
             if !rate.is_some_and(|r| r.is_finite() && r > 0.0) {
                 return Err(ExportError::MissingFeed {
                     tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
                     field,
                 });
             }
@@ -1213,6 +1214,7 @@ impl Rates {
         if rpm.is_none() && control == SpindleControl::Automatic {
             return Err(ExportError::MissingRpm {
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             });
         }
         Ok(Self { rpm })

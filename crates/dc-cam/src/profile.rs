@@ -129,6 +129,7 @@ fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
 pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
     let missing = |field| CamError::MissingFeed {
         tool: tool.name.clone(),
+        tool_id: tool.id.clone(),
         field,
     };
     Ok(LapRates {
@@ -249,6 +250,7 @@ pub fn generate_profile(
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             cutter: tool.cutter.describe(),
         });
     }
@@ -256,6 +258,7 @@ pub fn generate_profile(
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -275,6 +278,7 @@ pub fn generate_profile(
             .ok_or_else(|| CamError::MissingStepDown {
                 op: op.id.clone(),
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             })?;
     let thickness_mm = project
         .stock
