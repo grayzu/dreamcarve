@@ -18,6 +18,7 @@
 - [Tabs](user-guide/tabs.md)
 - [Pocket operation](user-guide/pocket.md)
 - [Engrave operation](user-guide/engrave.md)
+- [Drill operation](user-guide/drill.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)
 - [Tool library](user-guide/tool-library.md)

@@ -234,6 +234,20 @@ pub enum ExportError {
         /// Safe Z above stock bottom, mm.
         safe_z_mm: f64,
     },
+    /// S15: inside a Drill, a rapid in Z alone descends below the stock
+    /// top deeper than any cut has reached at that XY, into uncut material.
+    #[error(
+        "emitted line {line} rapids down to {z_mm:.4} mm above stock bottom, into material no cut has opened at that point"
+    )]
+    RapidIntoUncut {
+        /// 1-based line number in the program.
+        line: usize,
+        /// Where the rapid ends, above stock bottom, mm.
+        z_mm: f64,
+        /// The deepest a cut has reached at that XY, mm above stock bottom;
+        /// `None` when no cut has been made there.
+        cut_mm: Option<f64>,
+    },
     /// S3: a cutting move has no active feed rate.
     #[error("emitted line {line} cuts with no feed rate set")]
     CutWithoutFeed {

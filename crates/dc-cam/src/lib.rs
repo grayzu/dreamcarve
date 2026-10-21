@@ -7,12 +7,14 @@
 //! generator onto cut blocks ([`CutBlock`]) that one shared step,
 //! [`sequence`], orders and links (`docs/specs/phase-2/design.md`,
 //! "Algorithms → Sequence"), and adds [`order::check`], which warns when the
-//! order of operations cuts inside a part an earlier one freed.
+//! order of operations cuts inside a part an earlier one freed. Phase 2
+//! also adds Drill ([`generate_drill`]).
 //!
 //! Toolpaths use the project's absolute frame: Y-up, Z-up, millimetres
 //! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.
 
 mod block;
+mod drill;
 mod engrave;
 mod error;
 mod footprint;
@@ -31,6 +33,7 @@ mod warning;
 pub mod test_support;
 
 pub use block::CutBlock;
+pub use drill::{CannedKind, DrillHole, DrillToolpath, PECK_REENTRY_MM, generate_drill};
 pub use engrave::generate_engrave;
 pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use footprint::footprint;

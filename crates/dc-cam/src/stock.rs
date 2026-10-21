@@ -75,7 +75,7 @@ pub fn swept_bounds(toolpath: &Toolpath, tool_radius_mm: f64) -> Option<Rect> {
     for mv in &toolpath.moves {
         let end = mv.to.xy();
         match mv.kind {
-            MoveKind::Rapid => {}
+            MoveKind::Rapid | MoveKind::Dwell { .. } => {}
             MoveKind::Linear => {
                 if let Some(start) = previous {
                     include(start);
