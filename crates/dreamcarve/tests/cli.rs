@@ -5760,3 +5760,237 @@ fn left_profile_of_an_svg_line_exports_on_its_left() {
         "climb starts beside the first vertex: {first:?}"
     );
 }
+
+/// One open, straight line 98 mm long.
+const ESTIMATE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="40mm" viewBox="0 0 120 40">
+  <path id="line" d="M 10 20 L 108 20"/>
+</svg>
+"#;
+
+/// A project whose program is, besides setup lines, acceptance test 42's:
+/// one Engrave of a 98 mm line, 1 mm deep in one pass, at safe Z 25 mm,
+/// feed and plunge 600 mm/min and the 3 s spin-up dwell. So the program
+/// feeds 100 mm (the 2 mm plunge from 1 mm above the stock, then the
+/// line), 10 s, and rapids 50 mm: 24 mm down to 1 mm above the stock and
+/// 26 mm back up. The first rapid starts where the machine was left, so it
+/// has no length.
+fn estimate_project(dir: &Path) -> PathBuf {
+    std::fs::write(dir.join("line.svg"), ESTIMATE_SVG).expect("svg written");
+    let out = run(dir, &["init", "line.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("line.dcv");
+    fill_in(&dcv, 600.0, 600.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.operations = vec![Operation::Engrave(EngraveOp {
+        id: OperationId::new("op1"),
+        name: "Engrave".into(),
+        enabled: true,
+        targets: project.instances.iter().map(|i| i.id.clone()).collect(),
+        tool: project
+            .tools
+            .first()
+            .expect("init writes a tool")
+            .id
+            .clone(),
+        depth_mm: Some(1.0),
+        step_down_mm: Some(1.0),
+        alternate_direction: false,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 25.0,
+    })];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// The line `export` prints for [`estimate_project`] with no `[estimate]`.
+const ESTIMATE_LINE: &str = "Estimated time: 13 s (cutting 10 s, dwells 3 s); 50 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.";
+
+/// The line of `report` that starts with `prefix`, trimmed.
+fn line_starting<'a>(report: &'a str, prefix: &str) -> Option<&'a str> {
+    report
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with(prefix))
+}
+
+/// Capability 30 on the quick start's coaster, whose program is pinned in
+/// `tests/expected/coaster-grblhal.nc`: its estimate is pinned with it.
+/// The rapids are the 4 mm down to the ramp's start and the 17 mm back up
+/// to safe Z. With manual spindle control the program pauses twice, to
+/// turn the router on and off, and the line says those are left out.
+#[test]
+fn coaster_prints_estimate() {
+    let dir = work_dir("coaster_prints_estimate");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration."
+        ),
+        "{report}"
+    );
+    set_spindle_control(&dcv, SpindleControl::Manual);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    let line = line_starting(&report, "Estimated time:")
+        .unwrap_or_else(|| panic!("an estimate: {report}"));
+    assert!(
+        line.ends_with("Excludes acceleration and 2 pauses."),
+        "{line}"
+    );
+}
+
+/// Acceptance 42 (functional capability 30): a program of 100 mm of feed
+/// at F600, a 3 s spin-up dwell and 50 mm of rapids is estimated at 10 s
+/// cutting and 3 s dwell, and with no rapid rate configured the 50 mm is
+/// named and left out, with how to include it. `check` prints the same
+/// line once the program builds.
+#[test]
+fn export_prints_estimate() {
+    let dir = work_dir("export_prints_estimate");
+    estimate_project(&dir);
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(ESTIMATE_LINE),
+        "{report}"
+    );
+    let check = run(&dir, &["check", "line.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "check: {}", stdout(&check));
+    let report = stdout(&check);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(ESTIMATE_LINE),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: with `rapid_mm_min = 3000`, the 50 mm of rapids take
+/// 1 s, which the estimate adds.
+#[test]
+fn estimate_with_rapid_rate() {
+    let dir = work_dir("estimate_with_rapid_rate");
+    estimate_project(&dir);
+    write_config(&dir, "[estimate]\nrapid_mm_min = 3000\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 14 s (cutting 10 s, dwells 3 s, rapids 1 s at 3000 mm/min). Excludes acceleration."
+        ),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: `scale_factor = 2` doubles every time, the rapids' too.
+#[test]
+fn estimate_scale_factor_multiplies() {
+    let dir = work_dir("estimate_scale_factor_multiplies");
+    estimate_project(&dir);
+    write_config(&dir, "[estimate]\nscale_factor = 2\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 26 s (cutting 20 s, dwells 6 s; scale factor 2); 50 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration."
+        ),
+        "{report}"
+    );
+    write_config(&dir, "[estimate]\nscale_factor = 2\nrapid_mm_min = 3000\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 28 s (cutting 20 s, dwells 6 s, rapids 2 s at 3000 mm/min; scale factor 2). Excludes acceleration."
+        ),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: the estimate never changes a program. The bytes are the
+/// same with and without `[estimate]`. A bad `[estimate]` value fails the
+/// export at its line and column, and nothing is written.
+#[test]
+fn estimate_config_does_not_change_program() {
+    let dir = work_dir("estimate_config_does_not_change_program");
+    estimate_project(&dir);
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let without = std::fs::read(dir.join("line.nc")).expect("line.nc written");
+    write_config(&dir, "[estimate]\nrapid_mm_min = 3000\nscale_factor = 2\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let with = std::fs::read(dir.join("line.nc")).expect("line.nc written");
+    assert!(with == without, "the program changed with [estimate]");
+
+    std::fs::remove_file(dir.join("line.nc")).expect("line.nc removed");
+    let config = write_config(&dir, "[estimate]\nrapid_mm_min = 0\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let message = stderr(&out);
+    assert!(
+        message.contains(&format!("{}:2:16:", config.display())),
+        "{message}"
+    );
+    assert!(!dir.join("line.nc").exists(), "nothing is written");
+}
+
+/// Capability 30: one program per tool run gets an estimate each, then
+/// the total of them.
+#[test]
+fn estimate_per_program_and_total() {
+    let dir = work_dir("estimate_per_program_and_total");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    let lines: Vec<&str> = report
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("Estimated time:"))
+        .collect();
+    assert_eq!(lines.len(), 2, "one per program: {report}");
+    let total = line_starting(&report, "Estimated total time:")
+        .unwrap_or_else(|| panic!("a total: {report}"));
+    assert!(total.contains("rapids not included"), "{total}");
+    // The total is the programs' sum, to the second.
+    let seconds = |line: &str| -> u64 {
+        let time = line
+            .split(':')
+            .nth(1)
+            .and_then(|rest| rest.split('(').next())
+            .unwrap_or_else(|| panic!("a time in {line}"))
+            .trim();
+        let mut words = time.split_whitespace();
+        let mut sum = 0;
+        while let (Some(n), Some(unit)) = (words.next(), words.next()) {
+            let n: u64 = n.parse().unwrap_or_else(|_| panic!("{line}"));
+            sum += n * match unit {
+                "h" => 3600,
+                "min" => 60,
+                "s" => 1,
+                other => panic!("unit {other} in {line}"),
+            };
+        }
+        sum
+    };
+    let parts: u64 = lines.iter().map(|l| seconds(l)).sum();
+    assert!(
+        seconds(total).abs_diff(parts) <= 1,
+        "{total} is not the sum of {lines:?}"
+    );
+}

@@ -225,8 +225,9 @@ dreamcarve check coaster.dcv
 it found:
 
 ```text
-Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
-  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 coaster.dcv: 0 error(s), 0 warning(s)
 ```
 
@@ -247,6 +248,7 @@ Wrote coaster.nc (47 lines, post-processor grblhal).
   op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
 Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
   The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Before you start: fit T1 Set me and set work zero with it.
 This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
 ```
@@ -258,6 +260,13 @@ the 6.35 mm diameter further out, between X 3.65 and 107.16 mm (Y between
 3.65 and 106.35 mm: the ramp into each pass, step 7, reaches a little past
 the circle on the right). Z runs from −12, the deepest cut, up to 5, safe Z. You place
 clamps from these numbers in step 8.
+
+The **estimated time** is how long the cutting and the spindle's spin-up
+wait take at the feed rates you set. It leaves out the rapids, because
+DreamCarve does not know how fast your machine moves; set your machine's
+rapid rate in the [configuration](../user-guide/configuration.md#estimated-run-time)
+to include them. The real job takes a little longer: the machine also
+speeds up and slows down.
 
 The program does not stop for its first bit: you fit it and set work zero
 with it before you start, as the "Before you start" line says. A program that stops, for a second bit or for a router you

@@ -358,9 +358,12 @@ warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider 
 Program 1 (T1):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
+  Estimated time: 3 min 2 s (cutting 2 min 59 s, dwells 3 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 2 (T2):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 35 s (cutting 3 min 29 s, dwells 6 s); 1.6 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 plaque.dcv: 0 error(s), 5 warning(s)
 ```
 
@@ -402,15 +405,21 @@ Post-processor grblhal.
 plaque-1-T1.nc (516 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
+  Estimated time: 3 min 2 s (cutting 2 min 59 s, dwells 3 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 plaque-2-T2.nc (51 lines):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 35 s (cutting 3 min 29 s, dwells 6 s); 1.6 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 ```
 
 The project uses two bits, so export writes two programs, one per bit,
 numbered in the order to run them: `plaque-1-T1.nc` with the 6.35 mm bit
 (the two pockets, the holes and the cut-out), then `plaque-2-T2.nc` with
 the 3.175 mm bit (the engraving). `T1` and `T2` are the tools' numbers.
+Each program's estimated time, and the total, leave out the rapids and
+the bit change between programs; see
+[Estimated run time](../user-guide/configuration.md#estimated-run-time).
 
 The **Before you start** line of each program says what to do before you
 press start:

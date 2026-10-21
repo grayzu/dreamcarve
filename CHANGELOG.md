@@ -95,6 +95,13 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   within `arc_fit_tolerance_mm` (default 0.01 mm) are written as `G2`/`G3`
   arcs, so a curve exports as a few arcs instead of hundreds of lines. Set it to
   `null` to turn fitting off.
+- **Estimated run time.** `export` and `check` print how long each program,
+  and all of them together, should take: feed moves at their feed rates
+  (arcs by their length), dwells, and rapids at the rate you set in the new
+  `[estimate] rapid_mm_min` of `config.toml`, all times `scale_factor`.
+  Without a rapid rate the rapids' distance is printed instead of a guessed
+  time. Acceleration and the time at pauses and tool changes are left out,
+  and the line says so ([#280]). The estimate never changes a program.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
@@ -303,6 +310,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
 [#278]: https://github.com/grayzu/dreamcarve/issues/278
 [#277]: https://github.com/grayzu/dreamcarve/issues/277
+[#280]: https://github.com/grayzu/dreamcarve/issues/280
 [#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
