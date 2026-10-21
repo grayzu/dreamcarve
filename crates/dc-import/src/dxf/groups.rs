@@ -18,10 +18,15 @@
 //! each group as a little-endian code of 2 bytes, or of 1 byte before R13,
 //! and its value: NUL-terminated strings, little-endian integers and IEEE
 //! doubles, binary chunks as a length byte and the bytes).
+//!
+//! Text is UTF-8 when it is valid UTF-8, else in the code page the caller
+//! names, which `import_dxf` takes from `$DWGCODEPAGE` before R2007
+//! (#209); `\U+XXXX` escapes are decoded.
 
 use std::borrow::Cow;
 
 use super::DxfReadError;
+use super::code_page::CodePage;
 
 /// The first 22 bytes of a binary DXF file ("Binary DXF Files").
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
@@ -131,20 +136,33 @@ impl Kind {
     }
 }
 
-/// The groups of a DXF file, up to and including `0 EOF` (or the end of
-/// the bytes when it is missing).
-pub(super) fn read(bytes: &[u8]) -> Result<Vec<Group>, DxfReadError> {
+/// The groups of a DXF file, and whether any of its text was read in a
+/// code page.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Groups {
+    /// The groups, up to and including `0 EOF` (or the end of the bytes
+    /// when it is missing).
+    pub groups: Vec<Group>,
+    /// Whether some text was not UTF-8, and so was read in the code page
+    /// [`read`] was given.
+    pub not_utf8: bool,
+}
+
+/// The groups of a DXF file. Text is read as UTF-8, else in `code_page`
+/// ([`decode`]).
+pub(super) fn read(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError> {
     match bytes.strip_prefix(BINARY_SENTINEL) {
-        Some(rest) => read_binary(rest),
-        None => read_ascii(bytes),
+        Some(rest) => read_binary(rest, code_page),
+        None => read_ascii(bytes, code_page),
     }
 }
 
 /// ASCII DXF: a code line and a value line per group, both trimmed. Blank
 /// lines after the last group are allowed.
-fn read_ascii(bytes: &[u8]) -> Result<Vec<Group>, DxfReadError> {
+fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError> {
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-    let text = decode(bytes);
+    let mut not_utf8 = false;
+    let text = decode(bytes, code_page, &mut not_utf8);
     let mut lines = text
         .split('\n')
         .map(|l| l.strip_suffix('\r').unwrap_or(l).trim());
@@ -186,16 +204,21 @@ fn read_ascii(bytes: &[u8]) -> Result<Vec<Group>, DxfReadError> {
             break;
         }
     }
-    Ok(groups)
+    Ok(Groups { groups, not_utf8 })
 }
 
 /// Binary DXF after the sentinel. The first group is `0 SECTION` (or a
 /// `999` comment): its code is `00 00` (`E7 03`) when codes take two bytes
 /// (R13 and later), and `00` followed by the `S` of `SECTION` (`FF E7 03`)
 /// when they take one.
-fn read_binary(data: &[u8]) -> Result<Vec<Group>, DxfReadError> {
+fn read_binary(data: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError> {
     let two_byte_codes = matches!(data, [_, 0, ..] | [0xE7, 0x03, ..]);
-    let mut reader = Bytes { data, pos: 0 };
+    let mut reader = Bytes {
+        data,
+        pos: 0,
+        code_page,
+        not_utf8: false,
+    };
     let mut groups = Vec::new();
     while !reader.at_end() {
         let offset = reader.offset();
@@ -231,13 +254,20 @@ fn read_binary(data: &[u8]) -> Result<Vec<Group>, DxfReadError> {
             break;
         }
     }
-    Ok(groups)
+    Ok(Groups {
+        groups,
+        not_utf8: reader.not_utf8,
+    })
 }
 
 /// A cursor over the bytes after the sentinel.
 struct Bytes<'a> {
     data: &'a [u8],
     pos: usize,
+    /// What text that is not UTF-8 is read in.
+    code_page: CodePage,
+    /// Whether some text was not UTF-8.
+    not_utf8: bool,
 }
 
 impl<'a> Bytes<'a> {
@@ -286,37 +316,20 @@ impl<'a> Bytes<'a> {
             })?;
         let bytes = self.take(len)?;
         self.pos += 1;
-        Ok(unescape(&decode(bytes)).into_owned())
+        Ok(unescape(&decode(bytes, self.code_page, &mut self.not_utf8)).into_owned())
     }
 }
 
-/// Text as UTF-8 (R2007 and later write UTF-8), else as Windows-1252, the
-/// code page most earlier files are written in (`$DWGCODEPAGE`
-/// `ANSI_1252`).
-fn decode(bytes: &[u8]) -> Cow<'_, str> {
+/// Text as UTF-8 (R2007 and later write UTF-8), else in `code_page`, the
+/// one earlier files are written in (`$DWGCODEPAGE`; #209); sets
+/// `not_utf8` in the second case.
+fn decode<'a>(bytes: &'a [u8], code_page: CodePage, not_utf8: &mut bool) -> Cow<'a, str> {
     match std::str::from_utf8(bytes) {
         Ok(text) => Cow::Borrowed(text),
-        Err(_) => Cow::Owned(bytes.iter().map(|&b| windows_1252(b)).collect()),
-    }
-}
-
-/// One Windows-1252 byte as a character: Latin-1 except 0x80–0x9F, which
-/// hold typographic characters (Microsoft, "Code Page 1252 Windows Latin
-/// 1"); the five unassigned bytes map to the C1 control of the same value.
-fn windows_1252(byte: u8) -> char {
-    const HIGH: [char; 32] = [
-        '\u{20AC}', '\u{81}', '\u{201A}', '\u{192}', '\u{201E}', '\u{2026}', '\u{2020}',
-        '\u{2021}', '\u{2C6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8D}', '\u{17D}',
-        '\u{8F}', '\u{90}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}',
-        '\u{2014}', '\u{2DC}', '\u{2122}', '\u{161}', '\u{203A}', '\u{153}', '\u{9D}', '\u{17E}',
-        '\u{178}',
-    ];
-    match byte {
-        0x80..=0x9F => HIGH
-            .get(usize::from(byte - 0x80))
-            .copied()
-            .unwrap_or(char::REPLACEMENT_CHARACTER),
-        _ => char::from(byte),
+        Err(_) => {
+            *not_utf8 = true;
+            Cow::Owned(bytes.iter().map(|&b| code_page.char(b)).collect())
+        }
     }
 }
 
@@ -356,6 +369,11 @@ mod tests {
     #![allow(clippy::unwrap_used, reason = "tests")]
 
     use super::*;
+
+    /// The groups, with text that is not UTF-8 read as Windows-1252.
+    fn read(bytes: &[u8]) -> Result<Vec<Group>, DxfReadError> {
+        super::read(bytes, CodePage::WINDOWS_1252).map(|g| g.groups)
+    }
 
     fn text(code: i32, value: &str) -> Group {
         Group {
@@ -463,8 +481,19 @@ mod tests {
 
     #[test]
     fn windows_1252_and_unicode_escapes() {
-        assert_eq!(decode(b"caf\xE9 \x80"), "café €");
-        assert_eq!(decode("café".as_bytes()), "café");
+        let mut not_utf8 = false;
+        assert_eq!(
+            decode("café".as_bytes(), CodePage::WINDOWS_1252, &mut not_utf8),
+            "café"
+        );
+        assert!(!not_utf8);
+        assert_eq!(
+            decode(b"caf\xE9 \x80", CodePage::WINDOWS_1252, &mut not_utf8),
+            "café €"
+        );
+        assert!(not_utf8);
+        let cp1251 = CodePage::from_dwgcodepage("ANSI_1251").unwrap();
+        assert_eq!(decode(b"\xC4\xE0", cp1251, &mut not_utf8), "Да");
         assert_eq!(unescape("d\\U+00E9cor"), "décor");
         assert_eq!(unescape("a\\U+12"), "a\\U+12");
         assert_eq!(unescape("a\\U++123b"), "a\\U++123b");

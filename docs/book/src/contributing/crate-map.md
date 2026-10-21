@@ -81,8 +81,9 @@ dev-dependencies only.
 | `svg.rs` | `import_svg`: usvg parses; each path becomes one definition and one instance, flipped to Y-up; circular arcs become bulges, other curves are flattened. |
 | `svg/arc.rs` | Recognising usvg's Bézier pieces of circular arcs (circles, equal-radius ellipses and `A` commands, rounded-rect corners) exactly, and joining them back into arcs (#70). |
 | `dxf.rs` | `import_dxf`, `DxfReadError`: `$INSUNITS` scaling (no Y flip: DXF is Y-up), layer names and filter, naming. |
-| `dxf/groups.rs` | The group-code reader: ASCII and binary DXF to typed (code, value) pairs; Windows-1252 and `\U+XXXX` text. |
-| `dxf/document.rs` | The header units, blocks and entities from the pairs; VERTEX rows attached to their POLYLINE. |
+| `dxf/groups.rs` | The group-code reader: ASCII and binary DXF to typed (code, value) pairs; UTF-8, code page and `\U+XXXX` text. |
+| `dxf/code_page.rs` | The single-byte Windows code pages (874, 1250–1258) that text before R2007 is read in, by `$DWGCODEPAGE` (#209). |
+| `dxf/document.rs` | The header units, version and code page, blocks and entities from the pairs; VERTEX rows attached to their POLYLINE. |
 | `dxf/entities.rs` | Each entity as a bulge polyline through its OCS (extrusion direction); INSERT and MINSERT expansion with the transform, depth limit and skip rules; SPLINE and ELLIPSE flattening. |
 | `dxf/spline.rs` | Rational B-spline evaluation (de Boor) and sampling to the tolerance. |
 | `dxf/stitch.rs` | Joining open segments whose ends meet, closing chains, dropping duplicates. |
@@ -150,6 +151,7 @@ the code they test.
 | --- | --- |
 | `main.rs` | Entry point: runs the command and maps its result to an exit code. |
 | `cli.rs` | Arguments (clap), exit codes, staged file writes, the date. |
+| `output.rs` | `outln!`, `out!`, `errln!`: all printing; a closed stdout pipe stops output and keeps the exit code (#216). |
 | `init.rs` | `init`: SVG or DXF import and the default project; the DXF-only `--units`, `--join-tolerance` and `--layer`. |
 | `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`. |
 | `check.rs` | `check`. |
