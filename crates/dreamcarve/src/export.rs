@@ -431,6 +431,7 @@ fn report(
         program.first_tool.number,
         name_suffix(&program.first_tool.name)
     )?;
+    report_tool_length_offset(project)?;
     report_pauses(program, "")?;
     // #95: the user chose one program with M6, in the project or with
     // `--one-program`; it stops only if the sender lets M6 through or
@@ -477,6 +478,7 @@ fn report_runs(
             output.display()
         )?;
     }
+    report_tool_length_offset(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
     report_post_and_operations(project, args, switched)?;
     for (program, output) in programs.iter().zip(outputs) {
@@ -558,6 +560,24 @@ fn report_post_and_operations(
             op.name(),
             op.tool(),
             op.targets().len(),
+        )?;
+    }
+    Ok(())
+}
+
+/// The post-processors whose programs leave the tool length offset
+/// (`G43.1`) alone: grblHAL and GRBL fold an active offset into the work
+/// zero the user sets (`G10 L20`), so a `G49` after the user zeroes Z
+/// would move every Z by it (#279; `dc-project/src/definitions/README.md`,
+/// "Header modal state").
+const KEEPS_TOOL_LENGTH_OFFSET: [&str; 2] = ["grblhal", "grbl"];
+
+/// Prints, for a program that leaves the tool length offset alone, when
+/// to set one (functional spec, capability 29).
+fn report_tool_length_offset(project: &Project) -> Result<(), Failure> {
+    if KEEPS_TOOL_LENGTH_OFFSET.contains(&project.post_processor.id.as_str()) {
+        outln!(
+            "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero."
         )?;
     }
     Ok(())

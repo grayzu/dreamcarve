@@ -635,7 +635,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 11] = [
+const SOURCES: [Source; 13] = [
     (
         "grblhal",
         1,
@@ -649,6 +649,12 @@ const SOURCES: [Source; 11] = [
         include_str!("definitions/grblhal/v2.json"),
     ),
     (
+        "grblhal",
+        3,
+        "grblhal/v3.json",
+        include_str!("definitions/grblhal/v3.json"),
+    ),
+    (
         "grbl",
         1,
         "grbl/v1.json",
@@ -659,6 +665,12 @@ const SOURCES: [Source; 11] = [
         2,
         "grbl/v2.json",
         include_str!("definitions/grbl/v2.json"),
+    ),
+    (
+        "grbl",
+        3,
+        "grbl/v3.json",
+        include_str!("definitions/grbl/v3.json"),
     ),
     (
         "linuxcnc",
@@ -1407,7 +1419,7 @@ mod tests {
         assert_eq!(*at, Some(value), "{err}");
         assert!(message.contains("99"), "{err}");
         assert!(message.contains("`grbl`"), "{err}");
-        assert!(message.ends_with("available: 1, 2"), "{err}");
+        assert!(message.ends_with("available: 1, 2, 3"), "{err}");
     }
 
     /// The definition that `id`.json on main parsed to, before #106, kept as
@@ -1631,12 +1643,16 @@ mod tests {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
         // `default_settings.use_canned_cycles` reached every version (a
         // schema-wide field; see `definitions/README.md`, "Versions").
-        const PINNED: [(&str, u64); 11] = [
+        const PINNED: [(&str, u64); 13] = [
             ("grblhal/v1.json", 0xac47_0795_847b_c94d),
             // #171: the project name no longer opens a comment.
             ("grblhal/v2.json", 0x0ee4_d80e_2afc_557c),
+            // #279: the header cancels canned-cycle motion and cutter
+            // compensation (`G80`, `G40`).
+            ("grblhal/v3.json", 0x4a20_1e24_454c_d6da),
             ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
             ("grbl/v2.json", 0x355c_00fe_3f6a_a808),
+            ("grbl/v3.json", 0x73ad_5169_aa8e_3d12),
             // Slice 17 (#164).
             ("linuxcnc/v1.json", 0x9d07_5dad_8ee8_1225),
             // #286: no `G49` in the header.

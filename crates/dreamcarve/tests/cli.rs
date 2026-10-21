@@ -2941,15 +2941,19 @@ fn init_writes_post_processor_reference() {
     );
 }
 
-/// #171: `init` writes grblHAL version 2, whose program opens with fixed
-/// text, so the project name never starts a comment.
+/// #171: `init` writes the latest grblHAL version, whose program opens
+/// with fixed text, so the project name never starts a comment.
 #[test]
-fn init_writes_grblhal_v2() {
-    let dir = work_dir("init_writes_grblhal_v2");
+fn init_writes_latest_grblhal() {
+    let dir = work_dir("init_writes_latest_grblhal");
     let dcv = init_coaster(&dir);
     let block = post_processor_block(&dcv);
+    let latest = dc_project::latest_definition("grblhal").expect("grblHAL is bundled");
     assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
-    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+    assert_eq!(
+        block.get("definition_version"),
+        Some(&serde_json::json!(latest.version))
+    );
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
@@ -2957,12 +2961,42 @@ fn init_writes_grblhal_v2() {
     assert_eq!(program.lines().next(), Some("( Project: coaster )"));
 }
 
-/// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
-/// exports the bytes it did before version 2 existed
+/// The lines of an older grblHAL or GRBL program as version 3 writes
+/// them: the first line `first`, and `G80`, `G40` after `G94` (#279).
+fn as_v3(program: &str, first: &str) -> Vec<String> {
+    let mut lines: Vec<String> = program.lines().map(str::to_owned).collect();
+    if let Some(line) = lines.first_mut() {
+        first.clone_into(line);
+    }
+    let g94 = lines
+        .iter()
+        .position(|l| l == "G94")
+        .expect("the header has G94");
+    lines.splice(g94 + 1..g94 + 1, ["G80".to_owned(), "G40".to_owned()]);
+    lines
+}
+
+/// Writes the coaster project in `dir`, filled in as the quick start does,
+/// naming version `version` of `id`'s definition with its default
+/// settings.
+fn coaster_at_version(dir: &Path, id: &str, version: u32) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::bundled_definition(id, version)
+        .expect("the version is bundled")
+        .default_ref();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// #171, #279, ADR-0004: a project that names version 1 of grblHAL or
+/// GRBL exports the bytes it did before version 2 existed
 /// (`tests/expected/coaster-<id>-v1.nc`, committed before #171; its ramp
 /// re-captured in #214, which changed the motion, not the format) until the
-/// user runs `export --post <id>`. That upgrades it to version 2, says so,
-/// and changes only the program's first line.
+/// user runs `export --post <id>`. That upgrades it to the latest version,
+/// says so, and changes only the program's first line and the header's
+/// `G80`, `G40`.
 #[test]
 fn v1_project_exports_v1_bytes_until_upgraded() {
     for (id, expected, first) in [
@@ -2970,13 +3004,7 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
         ("grbl", "coaster-grbl-v1.nc", "; Project: coaster"),
     ] {
         let dir = work_dir(&format!("v1_project_exports_v1_bytes_{id}"));
-        let dcv = init_coaster(&dir);
-        fill_in(&dcv, 1500.0, 500.0, 18000);
-        let mut project = load_file(&dcv).project;
-        project.post_processor = dc_project::bundled_definition(id, 1)
-            .expect("version 1 is bundled")
-            .default_ref();
-        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let dcv = coaster_at_version(&dir, id, 1);
         assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
         let v1 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
 
@@ -2987,18 +3015,102 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
         assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
         let report = stdout(&out);
         assert!(
-            report.contains(&format!("post-processor {id} v1 → v2,")),
+            report.contains(&format!("post-processor {id} v1 → v3,")),
             "{report}"
         );
         let block = post_processor_block(&dcv);
-        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
-        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
-        assert_eq!(v2.lines().next(), Some(first), "{id}");
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+        let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
         assert!(
-            v2.lines().skip(1).eq(v1.lines().skip(1)),
-            "{id}: only the first line changes\nv1:\n{v1}\nv2:\n{v2}"
+            v3.lines().eq(as_v3(&v1, first).iter().map(String::as_str)),
+            "{id}: only the first line and G80, G40 change\nv1:\n{v1}\nv3:\n{v3}"
         );
     }
+}
+
+/// #279, acceptance 41, ADR-0004: `init` writes grblHAL version 3, and a
+/// project that names version 2 of grblHAL or GRBL exports the bytes it
+/// did before version 3 existed (`tests/expected/coaster-<id>-v2.nc`,
+/// committed before #279) until `export --post <id>` upgrades it, which
+/// adds only `G80` and `G40` after `G94`.
+#[test]
+fn v2_project_exports_v2_bytes() {
+    let dir = work_dir("v2_project_exports_v2_bytes_init");
+    let dcv = init_coaster(&dir);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+
+    for (id, expected, first) in [
+        ("grblhal", "coaster-grblhal-v2.nc", "( Project: coaster )"),
+        ("grbl", "coaster-grbl-v2.nc", "; Project: coaster"),
+    ] {
+        let dir = work_dir(&format!("v2_project_exports_v2_bytes_{id}"));
+        let dcv = coaster_at_version(&dir, id, 2);
+        assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
+        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+        assert!(!v2.lines().any(|l| l == "G80" || l == "G40"), "{id}: {v2}");
+
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v2 → v3,")),
+            "{report}"
+        );
+        let block = post_processor_block(&dcv);
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+        let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+        assert!(
+            v3.lines().eq(as_v3(&v2, first).iter().map(String::as_str)),
+            "{id}: only G80, G40 are added\nv2:\n{v2}\nv3:\n{v3}"
+        );
+    }
+}
+
+/// The note `export` prints for grblHAL and GRBL programs (functional
+/// capability 29): the program leaves the tool length offset alone.
+const TOOL_LENGTH_NOTE: &str = "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.";
+
+/// #279: grblHAL and GRBL fold an active tool length offset into the work
+/// zero the user sets, so their programs leave it alone and `export` says
+/// so, once, for one program and for one program per tool run. The note
+/// names grblHAL's and GRBL's `G43.1`, so it is not printed for LinuxCNC
+/// (functional spec, capability 29).
+#[test]
+fn export_grblhal_prints_tool_length_note() {
+    for (post, notes) in [("grblhal", 1), ("grbl", 1), ("linuxcnc", 0)] {
+        let dir = work_dir(&format!("export_tool_length_note_{post}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "coaster.dcv",
+                "--post",
+                post,
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{post}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert_eq!(
+            report.matches(TOOL_LENGTH_NOTE).count(),
+            notes,
+            "{post}: {report}"
+        );
+    }
+    let dir = work_dir("export_tool_length_note_runs");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains("Wrote 2 programs"), "{report}");
+    assert_eq!(report.matches(TOOL_LENGTH_NOTE).count(), 1, "{report}");
 }
 
 /// The motion of `program`: every move, as where it goes, at what feed,
