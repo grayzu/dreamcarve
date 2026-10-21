@@ -17,7 +17,9 @@
 //! as the moves the controller makes for it. The parser expands each one
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
 //! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
-//! the motion the machine makes.
+//! the motion the machine makes. A series of cycles must end with `G80`
+//! before any other motion (#314): the parser models `G98`'s return level
+//! only from one `G80` to the next.
 //!
 //! S16 (#283; `docs/specs/phase-2/functional.md`, "Safety (addendum)"):
 //! the parser reads `G53 G0 Z` lines as machine-coordinate lifts and

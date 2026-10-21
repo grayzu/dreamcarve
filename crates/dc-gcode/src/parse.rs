@@ -320,7 +320,13 @@ impl State {
                     };
                     if let Some(mode) = mode {
                         if !matches!(mode, Mode::Cycle(_)) {
-                            // Any other motion ends a series of cycles.
+                            // #314: a series of cycles ends with `G80`.
+                            // LinuxCNC also ends it at any other motion
+                            // ([G] `#gcode:g80`), but Mach3Mill does not
+                            // say that resets the `G98` level (10.7.29).
+                            if matches!(self.mode, Some(Mode::Cycle(_))) {
+                                return Err(series_without_cancel());
+                            }
                             self.initial_z = None;
                         }
                         self.mode = Some(mode);
@@ -414,6 +420,9 @@ impl State {
         words: Vec<Word>,
         blocks: &mut Vec<Block>,
     ) -> Result<(), String> {
+        if matches!(self.mode, Some(Mode::Cycle(_))) {
+            return Err(series_without_cancel());
+        }
         let refuse = || "`G53` is accepted only as `G53 G0 Z…`, alone on its line (S16)".to_owned();
         let count = |letter: char, value: Option<f64>| {
             words
@@ -562,6 +571,12 @@ impl State {
         let mv = self.make(line, kind, to, ArcWords::default());
         Some((vec![word('G', g), word('Z', z)], Some(mv)))
     }
+}
+
+/// Why a motion word or a `G53` lift while a canned cycle is the motion
+/// mode is refused (S11, #314).
+fn series_without_cancel() -> String {
+    "a series of canned cycles must end with G80 before any other motion".to_owned()
 }
 
 /// A block the parser synthesises for a canned cycle: the words of the
