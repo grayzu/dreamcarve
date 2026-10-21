@@ -2205,7 +2205,8 @@ fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
 /// on it run again against the new one. A tool with no spindle speed is
 /// fine while the router is switched by hand; switching to grblHAL, which
 /// sets the speed with `S`, must report validation's missing-rpm problem,
-/// fail, and write nothing.
+/// fail, and write nothing. `--reset-settings` drops the manual control,
+/// which a plain `--post` keeps (#277).
 #[test]
 fn post_override_revalidates() {
     let dir = work_dir("post_override_revalidates");
@@ -2223,7 +2224,16 @@ fn post_override_revalidates() {
     assert_eq!(out.status.code(), Some(0), "manual post passes: {report}");
 
     let before = std::fs::read(&dcv).expect("dcv readable");
-    let out = run(&dir, &["export", "coaster.dcv", "--post", "grblhal"]);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--reset-settings",
+        ],
+    );
     let stderr = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "exits 1: {stderr}");
     assert!(
@@ -2240,7 +2250,10 @@ fn post_override_revalidates() {
 
 /// #61, the reverse: a problem that only the embedded post-processor
 /// causes (here an extension that would overwrite the project) fails
-/// `check`, but `export --post grblhal` replaces that post and exports.
+/// `check`, but `export --post grblhal --reset-settings` replaces that
+/// post and its settings and exports. A plain `--post` keeps the
+/// extension the user set (#277), so it fails the same check and writes
+/// nothing.
 #[test]
 fn post_override_to_valid_post_succeeds() {
     let dir = work_dir("post_override_to_valid_post_succeeds");
@@ -2254,6 +2267,21 @@ fn post_override_to_valid_post_succeeds() {
     let report = format!("{}{}", stdout(&out), stderr(&out));
     assert_eq!(out.status.code(), Some(1), "embedded post fails: {report}");
 
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--post", "grblhal"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "kept extension: {}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("`dcv`"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(&dcv).expect("dcv readable"),
+        before,
+        "the .dcv is untouched"
+    );
+
     let out = run(
         &dir,
         &[
@@ -2261,6 +2289,7 @@ fn post_override_to_valid_post_succeeds() {
             "coaster.dcv",
             "--post",
             "grblhal",
+            "--reset-settings",
             "--date",
             FIXED_DATE,
         ],
@@ -2924,15 +2953,19 @@ fn init_writes_post_processor_reference() {
     );
 }
 
-/// #171: `init` writes grblHAL version 2, whose program opens with fixed
-/// text, so the project name never starts a comment.
+/// #171: `init` writes the latest grblHAL version, whose program opens
+/// with fixed text, so the project name never starts a comment.
 #[test]
-fn init_writes_grblhal_v2() {
-    let dir = work_dir("init_writes_grblhal_v2");
+fn init_writes_latest_grblhal() {
+    let dir = work_dir("init_writes_latest_grblhal");
     let dcv = init_coaster(&dir);
     let block = post_processor_block(&dcv);
+    let latest = dc_project::latest_definition("grblhal").expect("grblHAL is bundled");
     assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
-    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+    assert_eq!(
+        block.get("definition_version"),
+        Some(&serde_json::json!(latest.version))
+    );
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
@@ -2940,12 +2973,42 @@ fn init_writes_grblhal_v2() {
     assert_eq!(program.lines().next(), Some("( Project: coaster )"));
 }
 
-/// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
-/// exports the bytes it did before version 2 existed
+/// The lines of an older grblHAL or GRBL program as version 3 writes
+/// them: the first line `first`, and `G80`, `G40` after `G94` (#279).
+fn as_v3(program: &str, first: &str) -> Vec<String> {
+    let mut lines: Vec<String> = program.lines().map(str::to_owned).collect();
+    if let Some(line) = lines.first_mut() {
+        first.clone_into(line);
+    }
+    let g94 = lines
+        .iter()
+        .position(|l| l == "G94")
+        .expect("the header has G94");
+    lines.splice(g94 + 1..g94 + 1, ["G80".to_owned(), "G40".to_owned()]);
+    lines
+}
+
+/// Writes the coaster project in `dir`, filled in as the quick start does,
+/// naming version `version` of `id`'s definition with its default
+/// settings.
+fn coaster_at_version(dir: &Path, id: &str, version: u32) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::bundled_definition(id, version)
+        .expect("the version is bundled")
+        .default_ref();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// #171, #279, ADR-0004: a project that names version 1 of grblHAL or
+/// GRBL exports the bytes it did before version 2 existed
 /// (`tests/expected/coaster-<id>-v1.nc`, committed before #171; its ramp
 /// re-captured in #214, which changed the motion, not the format) until the
-/// user runs `export --post <id>`. That upgrades it to version 2, says so,
-/// and changes only the program's first line.
+/// user runs `export --post <id>`. That upgrades it to the latest version,
+/// says so, and changes only the program's first line and the header's
+/// `G80`, `G40`.
 #[test]
 fn v1_project_exports_v1_bytes_until_upgraded() {
     for (id, expected, first) in [
@@ -2953,13 +3016,7 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
         ("grbl", "coaster-grbl-v1.nc", "; Project: coaster"),
     ] {
         let dir = work_dir(&format!("v1_project_exports_v1_bytes_{id}"));
-        let dcv = init_coaster(&dir);
-        fill_in(&dcv, 1500.0, 500.0, 18000);
-        let mut project = load_file(&dcv).project;
-        project.post_processor = dc_project::bundled_definition(id, 1)
-            .expect("version 1 is bundled")
-            .default_ref();
-        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let dcv = coaster_at_version(&dir, id, 1);
         assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
         let v1 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
 
@@ -2970,18 +3027,102 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
         assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
         let report = stdout(&out);
         assert!(
-            report.contains(&format!("post-processor {id} v1 → v2,")),
+            report.contains(&format!("post-processor {id} v1 → v3,")),
             "{report}"
         );
         let block = post_processor_block(&dcv);
-        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
-        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
-        assert_eq!(v2.lines().next(), Some(first), "{id}");
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+        let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
         assert!(
-            v2.lines().skip(1).eq(v1.lines().skip(1)),
-            "{id}: only the first line changes\nv1:\n{v1}\nv2:\n{v2}"
+            v3.lines().eq(as_v3(&v1, first).iter().map(String::as_str)),
+            "{id}: only the first line and G80, G40 change\nv1:\n{v1}\nv3:\n{v3}"
         );
     }
+}
+
+/// #279, acceptance 41, ADR-0004: `init` writes grblHAL version 3, and a
+/// project that names version 2 of grblHAL or GRBL exports the bytes it
+/// did before version 3 existed (`tests/expected/coaster-<id>-v2.nc`,
+/// committed before #279) until `export --post <id>` upgrades it, which
+/// adds only `G80` and `G40` after `G94`.
+#[test]
+fn v2_project_exports_v2_bytes() {
+    let dir = work_dir("v2_project_exports_v2_bytes_init");
+    let dcv = init_coaster(&dir);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+
+    for (id, expected, first) in [
+        ("grblhal", "coaster-grblhal-v2.nc", "( Project: coaster )"),
+        ("grbl", "coaster-grbl-v2.nc", "; Project: coaster"),
+    ] {
+        let dir = work_dir(&format!("v2_project_exports_v2_bytes_{id}"));
+        let dcv = coaster_at_version(&dir, id, 2);
+        assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
+        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+        assert!(!v2.lines().any(|l| l == "G80" || l == "G40"), "{id}: {v2}");
+
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v2 → v3,")),
+            "{report}"
+        );
+        let block = post_processor_block(&dcv);
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(3)));
+        let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+        assert!(
+            v3.lines().eq(as_v3(&v2, first).iter().map(String::as_str)),
+            "{id}: only G80, G40 are added\nv2:\n{v2}\nv3:\n{v3}"
+        );
+    }
+}
+
+/// The note `export` prints for grblHAL and GRBL programs (functional
+/// capability 29): the program leaves the tool length offset alone.
+const TOOL_LENGTH_NOTE: &str = "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.";
+
+/// #279: grblHAL and GRBL fold an active tool length offset into the work
+/// zero the user sets, so their programs leave it alone and `export` says
+/// so, once, for one program and for one program per tool run. The note
+/// names grblHAL's and GRBL's `G43.1`, so it is not printed for LinuxCNC
+/// (functional spec, capability 29).
+#[test]
+fn export_grblhal_prints_tool_length_note() {
+    for (post, notes) in [("grblhal", 1), ("grbl", 1), ("linuxcnc", 0)] {
+        let dir = work_dir(&format!("export_tool_length_note_{post}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "coaster.dcv",
+                "--post",
+                post,
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{post}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert_eq!(
+            report.matches(TOOL_LENGTH_NOTE).count(),
+            notes,
+            "{post}: {report}"
+        );
+    }
+    let dir = work_dir("export_tool_length_note_runs");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains("Wrote 2 programs"), "{report}");
+    assert_eq!(report.matches(TOOL_LENGTH_NOTE).count(), 1, "{report}");
 }
 
 /// The motion of `program`: every move, as where it goes, at what feed,
@@ -2995,21 +3136,23 @@ fn motion(program: &str) -> Vec<String> {
 }
 
 /// #106, acceptance test 13: `export --post grbl` rewrites the reference
-/// to GRBL's latest version with the default settings, as switching always
-/// did, and the program has the same motion as grblHAL's.
+/// to GRBL's latest version, and the program has the same motion as
+/// grblHAL's. The settings the user changed (an extension, manual spindle
+/// control) are kept (#277, acceptance 39); the others take GRBL's
+/// defaults.
 #[test]
 fn export_post_switch_writes_reference() {
     let dir = work_dir("export_post_switch_writes_reference");
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
-    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
-    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
-    let grblhal = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
-
     let mut project = load_file(&dcv).project;
     project.post_processor.file_extension = "tap".into();
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     set_spindle_control(&dcv, SpindleControl::Manual);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let grblhal = std::fs::read_to_string(dir.join("coaster.tap")).expect("coaster.tap written");
+
     let out = run(
         &dir,
         &[
@@ -3032,15 +3175,15 @@ fn export_post_switch_writes_reference() {
         serde_json::json!({
             "id": "grbl",
             "definition_version": latest.version,
-            "file_extension": "nc",
-            "spindle_control": "automatic",
+            "file_extension": "tap",
+            "spindle_control": "manual",
             "spindle_on_dwell_s": 3.0,
             "tool_change_mode": "separate_programs",
             "decimal_places": { "mm": 3, "inch": 4 },
             "use_canned_cycles": false
         })
     );
-    let grbl = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+    let grbl = std::fs::read_to_string(dir.join("coaster.tap")).expect("coaster.tap rewritten");
     assert_ne!(grbl, grblhal, "the dialects differ");
     assert_eq!(motion(&grbl), motion(&grblhal));
 }
@@ -3422,10 +3565,12 @@ fn written_tool_change_mode(dcv: &Path) -> String {
 }
 
 /// Acceptance 33: the user config's `tool_change_mode` is what `init` and
-/// `export --post` write into a new post-processor reference; nothing else
-/// reads it, so a plain `export` leaves the project's mode alone. A `"m6"`
-/// default on GRBL, which has no `M6`, is refused naming the config file
-/// and the post-processor, so a bad default never lands in a project.
+/// `export --post --reset-settings` write into a new post-processor
+/// reference; nothing else reads it, so a plain `export` leaves the
+/// project's mode alone (a plain `--post` applies it only to a setting it
+/// resets, #277). A `"m6"` default on GRBL, which has no `M6`, is refused
+/// naming the config file and the post-processor, so a bad default never
+/// lands in a project.
 #[test]
 fn config_tool_change_mode_seeds_init() {
     let dir = work_dir("config_tool_change_mode_seeds_init");
@@ -3438,7 +3583,8 @@ fn config_tool_change_mode_seeds_init() {
     assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
     assert_eq!(written_tool_change_mode(&dir.join("m6.dcv")), "m6");
 
-    // `export --post` writes the configured mode with the new settings.
+    // `export --post --reset-settings` writes the configured mode with the
+    // new settings.
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(
         &dir,
@@ -3447,6 +3593,7 @@ fn config_tool_change_mode_seeds_init() {
             "coaster.dcv",
             "--post",
             "grblhal",
+            "--reset-settings",
             "--date",
             FIXED_DATE,
         ],
@@ -3484,7 +3631,16 @@ fn config_tool_change_mode_seeds_init() {
     );
     assert!(!dir.join("grbl.dcv").exists(), "nothing written");
     let before = std::fs::read_to_string(&dcv).expect("dcv readable");
-    let out = run(&dir, &["export", "coaster.dcv", "--post", "grbl"]);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grbl",
+            "--reset-settings",
+        ],
+    );
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -3500,6 +3656,184 @@ fn config_tool_change_mode_seeds_init() {
         std::fs::read_to_string(&dcv).expect("dcv readable"),
         before,
         "the project is untouched"
+    );
+}
+
+/// The filled-in coaster with its post-processor set to `post`, saved.
+fn coaster_with_post(dir: &Path, post: dc_project::PostProcessorRef) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = post;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// The bundled reference `id` v`version` with its default settings.
+fn default_post(id: &str, version: u32) -> dc_project::PostProcessorRef {
+    dc_project::bundled_definition(id, version)
+        .expect("definition is bundled")
+        .default_ref()
+}
+
+/// The latest reference of `id` with its default settings, as JSON.
+fn latest_default_block(id: &str) -> serde_json::Value {
+    let latest = dc_project::latest_definition(id).expect("definition is bundled");
+    serde_json::to_value(latest.default_ref()).expect("reference serializes")
+}
+
+/// Acceptance 39 (#277): a grblHAL v1 project with a raised spin-up dwell,
+/// exported with `--post grblhal`, is saved at the latest grblHAL version
+/// with the dwell kept and every other setting unchanged, its program
+/// dwells for it, and the summary says the settings were kept.
+#[test]
+fn export_post_keeps_dwell() {
+    let dir = work_dir("export_post_keeps_dwell");
+    let mut post = default_post("grblhal", 1);
+    post.spindle_on_dwell_s = 6.0;
+    let dcv = coaster_with_post(&dir, post);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut expected = latest_default_block("grblhal");
+    expected["spindle_on_dwell_s"] = serde_json::json!(6.0);
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        expected
+    );
+    let latest = dc_project::latest_definition("grblhal").expect("grblHAL is bundled");
+    let report = stdout(&out);
+    assert!(
+        report.contains(&format!(
+            "Updated coaster.dcv: post-processor grblhal v1 → v{}, keeping your settings.",
+            latest.version
+        )),
+        "{report}"
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(
+        program.lines().any(|l| l.trim() == "G4 P6.000"),
+        "{program}"
+    );
+}
+
+/// #277: a setting the new post-processor cannot use is reset to its
+/// default, never kept to fail, and the summary names it, both values and
+/// why: GRBL has no `M6` tool change (#57).
+#[test]
+fn export_post_reports_reset_setting() {
+    let dir = work_dir("export_post_reports_reset_setting");
+    let mut post = dc_project::latest_definition("grblhal")
+        .expect("grblHAL is bundled")
+        .default_ref();
+    post.tool_change_mode = ToolChangeMode::M6;
+    let dcv = coaster_with_post(&dir, post);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grbl",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+    let report = stdout(&out);
+    let line = report
+        .lines()
+        .find(|l| l.contains("tool_change_mode"))
+        .unwrap_or_else(|| panic!("a line names the reset setting: {report}"));
+    assert!(
+        line.contains("\"m6\" → \"separate_programs\""),
+        "both values: {line}"
+    );
+    assert!(
+        line.contains("grbl") && line.contains("no M6"),
+        "why: {line}"
+    );
+}
+
+/// #277: `--reset-settings` keeps the old way: every setting from the new
+/// definition's defaults, with the user config's `tool_change_mode` on
+/// top. It needs `--post`.
+#[test]
+fn export_post_reset_settings_restores_defaults() {
+    let dir = work_dir("export_post_reset_settings_restores_defaults");
+    let mut post = default_post("grblhal", 1);
+    post.spindle_on_dwell_s = 6.0;
+    post.file_extension = "gcode".into();
+    post.spindle_control = SpindleControl::Manual;
+    let dcv = coaster_with_post(&dir, post);
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--reset-settings",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut expected = latest_default_block("grblhal");
+    expected["tool_change_mode"] = serde_json::json!("m6");
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        expected
+    );
+    let report = stdout(&out);
+    assert!(report.contains("with its default settings."), "{report}");
+
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--reset-settings"]);
+    assert_eq!(out.status.code(), Some(2), "usage error: {}", stdout(&out));
+    assert!(stderr(&out).contains("--post"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        before,
+        "the project is untouched"
+    );
+}
+
+/// #277, functional capability 27: the user config's `tool_change_mode`
+/// applies only to a setting `--post` resets, so a configured `"m6"` does
+/// not override a project's kept `"separate_programs"`.
+#[test]
+fn export_post_config_applies_only_to_reset_settings() {
+    let dir = work_dir("export_post_config_applies_only_to_reset_settings");
+    let dcv = coaster_with_post(&dir, default_post("grbl", 1));
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        latest_default_block("grblhal")
     );
 }
 

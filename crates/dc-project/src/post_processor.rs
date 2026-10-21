@@ -635,7 +635,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 11] = [
+const SOURCES: [Source; 13] = [
     (
         "grblhal",
         1,
@@ -649,6 +649,12 @@ const SOURCES: [Source; 11] = [
         include_str!("definitions/grblhal/v2.json"),
     ),
     (
+        "grblhal",
+        3,
+        "grblhal/v3.json",
+        include_str!("definitions/grblhal/v3.json"),
+    ),
+    (
         "grbl",
         1,
         "grbl/v1.json",
@@ -659,6 +665,12 @@ const SOURCES: [Source; 11] = [
         2,
         "grbl/v2.json",
         include_str!("definitions/grbl/v2.json"),
+    ),
+    (
+        "grbl",
+        3,
+        "grbl/v3.json",
+        include_str!("definitions/grbl/v3.json"),
     ),
     (
         "linuxcnc",
@@ -915,6 +927,101 @@ pub fn latest_definition(id: &str) -> Result<&'static BundledDefinition, PostPro
         .into_iter()
         .find(|d| d.id == id)
         .ok_or_else(|| unknown_id(id))
+}
+
+/// A setting [`switch_post`] could not keep: the user had changed it, but
+/// the new definition cannot use the value, so it took the new default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingReset {
+    /// The setting's key in the reference, for example `tool_change_mode`.
+    pub setting: &'static str,
+    /// The value it had, as the `.dcv` writes it (`"m6"`, `true`).
+    pub from: String,
+    /// The value it has now, the new definition's default, written the
+    /// same way.
+    pub to: String,
+    /// Why the new definition cannot use `from`.
+    pub reason: ResetReason,
+}
+
+/// Why [`switch_post`] reset a setting: the rule `validate` would have
+/// broken with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetReason {
+    /// `tool_change_mode: "m6"` on a definition whose tool change has no
+    /// `M6` line.
+    NoM6,
+    /// `use_canned_cycles: true` on a definition without canned cycles.
+    NoCannedCycles,
+}
+
+/// The latest version of `id` with `old`'s settings carried over
+/// (`docs/specs/phase-2/functional.md`, capability 27): what
+/// `export --post <id>` writes. Each setting still at the default of the
+/// version `old` names takes the new version's default; one the user
+/// changed is kept, unless the new definition cannot use it, and then it
+/// takes the new default and is reported. So switching to the project's
+/// own id changes only `definition_version`.
+///
+/// # Errors
+///
+/// As for [`bundled_definition`] for `old`'s definition, and as for
+/// [`latest_definition`] for `id`.
+pub fn switch_post(
+    old: &PostProcessorRef,
+    id: &str,
+) -> Result<(PostProcessorRef, Vec<SettingReset>), PostProcessorError> {
+    let old_default = old.definition()?.default_ref();
+    let target = latest_definition(id)?;
+    let post = target.post_processor();
+    let mut new = target.default_ref();
+    let mut resets = Vec::new();
+
+    if old.file_extension != old_default.file_extension {
+        new.file_extension.clone_from(&old.file_extension);
+    }
+    if old.spindle_control != old_default.spindle_control {
+        new.spindle_control = old.spindle_control;
+    }
+    // Bit equality, not a tolerance: the question is whether the user
+    // changed the number, and an unchanged one is the default's own bits,
+    // read from the same JSON text.
+    if old.spindle_on_dwell_s.to_bits() != old_default.spindle_on_dwell_s.to_bits() {
+        new.spindle_on_dwell_s = old.spindle_on_dwell_s;
+    }
+    if old.decimal_places != old_default.decimal_places {
+        new.decimal_places = old.decimal_places;
+    }
+    if old.tool_change_mode != old_default.tool_change_mode {
+        if old.tool_change_mode == ToolChangeMode::M6 && !post.tool_change.has_m6() {
+            resets.push(SettingReset {
+                setting: "tool_change_mode",
+                from: setting_text(&old.tool_change_mode),
+                to: setting_text(&new.tool_change_mode),
+                reason: ResetReason::NoM6,
+            });
+        } else {
+            new.tool_change_mode = old.tool_change_mode;
+        }
+    }
+    if old.use_canned_cycles != old_default.use_canned_cycles {
+        if old.use_canned_cycles && post.canned_cycles.is_none() {
+            resets.push(SettingReset {
+                setting: "use_canned_cycles",
+                from: setting_text(&old.use_canned_cycles),
+                to: setting_text(&new.use_canned_cycles),
+                reason: ResetReason::NoCannedCycles,
+            });
+        } else {
+            new.use_canned_cycles = old.use_canned_cycles;
+        }
+    }
+    Ok((new, resets))
+}
+
+/// `value` as the `.dcv` writes it: `"m6"`, `true`.
+fn setting_text(value: &impl Serialize) -> String {
+    serde_json::to_string(value).unwrap_or_default()
 }
 
 /// [`PostProcessorError::UnknownId`] for `id`, listing the bundled ids
@@ -1312,7 +1419,7 @@ mod tests {
         assert_eq!(*at, Some(value), "{err}");
         assert!(message.contains("99"), "{err}");
         assert!(message.contains("`grbl`"), "{err}");
-        assert!(message.ends_with("available: 1, 2"), "{err}");
+        assert!(message.ends_with("available: 1, 2, 3"), "{err}");
     }
 
     /// The definition that `id`.json on main parsed to, before #106, kept as
@@ -1388,6 +1495,137 @@ mod tests {
         assert!(err.contains("default_settings.line_numbers"), "{err}");
     }
 
+    // #277, functional capability 27: `export --post` keeps the settings
+    // the user changed.
+
+    /// The default reference of `id` at `version`.
+    fn default_at(id: &str, version: u32) -> PostProcessorRef {
+        bundled_definition(id, version).unwrap().default_ref()
+    }
+
+    /// The latest version of `id`.
+    fn latest_version(id: &str) -> u32 {
+        latest_definition(id).unwrap().version
+    }
+
+    /// A raised spin-up dwell, the #73 case, survives an upgrade of grblHAL
+    /// v1 to its latest version, and nothing is reported reset.
+    #[test]
+    fn switch_keeps_changed_dwell() {
+        let mut old = default_at("grblhal", 1);
+        old.spindle_on_dwell_s = 6.0;
+        let (new, resets) = switch_post(&old, "grblhal").unwrap();
+        assert_eq!(new.definition_version, latest_version("grblhal"));
+        assert!(
+            (new.spindle_on_dwell_s - 6.0).abs() < 1e-12,
+            "{}",
+            new.spindle_on_dwell_s
+        );
+        assert_eq!(resets, []);
+    }
+
+    /// A setting still at the old definition's default follows the new
+    /// one: grblHAL's `nc` becomes LinuxCNC's `ngc`.
+    #[test]
+    fn switch_takes_new_default_for_default_extension() {
+        let old = latest_definition("grblhal").unwrap().default_ref();
+        assert_eq!(old.file_extension, "nc");
+        let (new, resets) = switch_post(&old, "linuxcnc").unwrap();
+        assert_eq!(new, latest_definition("linuxcnc").unwrap().default_ref());
+        assert_eq!(new.file_extension, "ngc");
+        assert_eq!(resets, []);
+    }
+
+    /// An extension the user chose is theirs, whatever the new
+    /// definition's default.
+    #[test]
+    fn switch_keeps_changed_extension() {
+        let mut old = latest_definition("grblhal").unwrap().default_ref();
+        old.file_extension = "gcode".into();
+        for id in ["grblhal", "grbl", "linuxcnc", "mach3", "uccnc", "generic"] {
+            let (new, resets) = switch_post(&old, id).unwrap();
+            assert_eq!(new.id, id);
+            assert_eq!(new.file_extension, "gcode", "{id}");
+            assert_eq!(resets, [], "{id}");
+        }
+    }
+
+    /// GRBL's tool change has no `M6` (#57), so a grblHAL project's `"m6"`
+    /// cannot move with it: it is reset to GRBL's default and reported,
+    /// never kept to fail validation.
+    #[test]
+    fn switch_resets_m6_without_m6_line() {
+        let mut old = latest_definition("grblhal").unwrap().default_ref();
+        old.tool_change_mode = ToolChangeMode::M6;
+        let (new, resets) = switch_post(&old, "grbl").unwrap();
+        assert_eq!(new.tool_change_mode, ToolChangeMode::SeparatePrograms);
+        assert_eq!(
+            resets,
+            [SettingReset {
+                setting: "tool_change_mode",
+                from: "\"m6\"".into(),
+                to: "\"separate_programs\"".into(),
+                reason: ResetReason::NoM6,
+            }]
+        );
+        // grblHAL has M6, so the mode stays on an upgrade.
+        let (same, resets) = switch_post(&old, "grblhal").unwrap();
+        assert_eq!(same.tool_change_mode, ToolChangeMode::M6);
+        assert_eq!(resets, []);
+    }
+
+    /// grblHAL's definition has no canned cycles (#117), so LinuxCNC's
+    /// `use_canned_cycles: true` is reset to `false` and reported.
+    #[test]
+    fn switch_resets_canned_cycles_without_them() {
+        let mut old = latest_definition("linuxcnc").unwrap().default_ref();
+        old.use_canned_cycles = true;
+        let (new, resets) = switch_post(&old, "grblhal").unwrap();
+        assert!(!new.use_canned_cycles);
+        assert_eq!(
+            resets,
+            [SettingReset {
+                setting: "use_canned_cycles",
+                from: "true".into(),
+                to: "false".into(),
+                reason: ResetReason::NoCannedCycles,
+            }]
+        );
+        // Mach3 has them, so the setting moves there.
+        let (mach3, resets) = switch_post(&old, "mach3").unwrap();
+        assert!(mach3.use_canned_cycles);
+        assert_eq!(resets, []);
+    }
+
+    /// `export --post` with the project's own id, to upgrade the version,
+    /// changes only the version: from every bundled version, with every
+    /// setting changed to a value that definition accepts, and with every
+    /// setting at its default.
+    #[test]
+    fn switch_same_id_changes_only_version() {
+        for definition in bundled_definitions().unwrap() {
+            let post = definition.post_processor();
+            let mut changed = definition.default_ref();
+            changed.file_extension = "gcode".into();
+            changed.spindle_control = SpindleControl::Manual;
+            changed.spindle_on_dwell_s = 6.5;
+            changed.decimal_places = DecimalPlaces { mm: 2, inch: 3 };
+            changed.tool_change_mode = if post.tool_change.has_m6() {
+                ToolChangeMode::M6
+            } else {
+                ToolChangeMode::SeparatePrograms
+            };
+            changed.use_canned_cycles = post.canned_cycles.is_some();
+            for old in [definition.default_ref(), changed] {
+                let (new, resets) = switch_post(&old, definition.id).unwrap();
+                let mut expected = old.clone();
+                expected.definition_version = latest_version(definition.id);
+                assert_eq!(new, expected, "{}", definition.path);
+                assert_eq!(resets, [], "{}", definition.path);
+            }
+        }
+    }
+
     /// FNV-1a, 64 bit: enough to notice an edit, which is all the pin is
     /// for. It is not a security measure.
     fn fnv1a(bytes: &[u8]) -> u64 {
@@ -1405,12 +1643,16 @@ mod tests {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
         // `default_settings.use_canned_cycles` reached every version (a
         // schema-wide field; see `definitions/README.md`, "Versions").
-        const PINNED: [(&str, u64); 11] = [
+        const PINNED: [(&str, u64); 13] = [
             ("grblhal/v1.json", 0xac47_0795_847b_c94d),
             // #171: the project name no longer opens a comment.
             ("grblhal/v2.json", 0x0ee4_d80e_2afc_557c),
+            // #279: the header cancels canned-cycle motion and cutter
+            // compensation (`G80`, `G40`).
+            ("grblhal/v3.json", 0x4a20_1e24_454c_d6da),
             ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
             ("grbl/v2.json", 0x355c_00fe_3f6a_a808),
+            ("grbl/v3.json", 0x73ad_5169_aa8e_3d12),
             // Slice 17 (#164).
             ("linuxcnc/v1.json", 0x9d07_5dad_8ee8_1225),
             // #286: no `G49` in the header.

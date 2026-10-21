@@ -73,6 +73,7 @@ use dc_project::{
 
 use crate::ExportError;
 use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
+use crate::ascii;
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
 use crate::material::Material;
@@ -1446,13 +1447,24 @@ fn comment_text(text: &str) -> String {
     sanitize_comment(text, MAX_PLACEHOLDER_CHARS)
 }
 
-/// `text` made safe for a comment on GRBL and grblHAL: printable ASCII,
-/// without `( ) ;` (which end a comment early), `! ? ~` (real-time
-/// commands even inside a comment), `{ }` (placeholder syntax) or `%`
-/// (a program delimiter to some senders), whitespace collapsed, and at
-/// most `max_chars` long.
+/// `text` made safe for a comment on GRBL and grblHAL: non-ASCII
+/// characters transliterated where [`ascii::transliterate`] has an entry
+/// (#278), then printable ASCII only, without `( ) ;` (which end a comment
+/// early), `! ? ~` (real-time commands even inside a comment), `{ }`
+/// (placeholder syntax) or `%` (a program delimiter to some senders),
+/// whitespace collapsed, and at most `max_chars` long, counted after
+/// transliteration.
 fn sanitize_comment(text: &str, max_chars: usize) -> String {
-    let cleaned: String = text
+    let mut ascii = String::with_capacity(text.len());
+    for c in text.chars() {
+        match ascii::transliterate(c) {
+            Some(spelled) => ascii.push_str(spelled),
+            // ASCII is kept or replaced below; an unmapped character is
+            // replaced by the filter, as before #278.
+            None => ascii.push(c),
+        }
+    }
+    let cleaned: String = ascii
         .chars()
         .map(|c| {
             let printable = (' '..='~').contains(&c);
@@ -2488,7 +2500,7 @@ mod tests {
             for line in &lines[..units] {
                 let c = code(line);
                 assert!(
-                    c.is_empty() || ["G90", "G17", "G94"].contains(&c.as_str()),
+                    c.is_empty() || ["G90", "G17", "G94", "G80", "G40"].contains(&c.as_str()),
                     "{post}: {line}"
                 );
             }
@@ -2727,9 +2739,13 @@ mod tests {
         assert!(text.contains(&format!("Z{:.4}", -6.0 / 25.4)), "{text}");
     }
 
+    /// The characters the controllers act on, and control characters, are
+    /// removed from every name. The non-ASCII character is one with no
+    /// transliteration (U+2603), so it is dropped; before #278 this was an
+    /// em dash, which is now written `-` (`comment_text_transliterates`).
     #[test]
     fn comment_text_is_sanitized() {
-        let nasty = "Bad!~?(name);\nnext\u{2014}line\u{18}";
+        let nasty = "Bad!~?(name);\nnext\u{2603}line\u{18}";
         for post in ["grblhal", "grbl"] {
             let mut project = project_with(post);
             project.name = nasty.into();
@@ -2771,6 +2787,51 @@ mod tests {
                 assert!(!inner.contains(['(', ')', ';']), "{post}: {line:?}");
                 assert!(inner.contains("Bad name next line"), "{post}: {line:?}");
             }
+        }
+    }
+
+    /// Acceptance 40 (#278): a name with accents and symbols keeps its
+    /// letters, transliterated before the sanitizer runs, in each comment
+    /// style; the program stays printable ASCII. Tool and operation names
+    /// go through the same rule.
+    #[test]
+    fn comment_text_transliterates() {
+        for (post, header) in [
+            ("grblhal", "( Project: Cafe O6 1/2 )"),
+            ("grbl", "; Project: Cafe O6 1/2"),
+        ] {
+            let mut project = project_with(post);
+            project.name = "Café Ø6 ½".into();
+            let mut ops = ops_for(&project);
+            profile_of(&mut ops[0].op).name = "Découpe — Straße".into();
+            ops[0].tool.name = "Ø6 mm ¼\u{2033}".into();
+            let text = emit(&project, &ops, DATE).unwrap().0.text;
+            assert_eq!(text.lines().next(), Some(header), "{post}:\n{text}");
+            assert!(text.contains("Decoupe - Strasse"), "{post}:\n{text}");
+            assert!(text.contains("O6 mm 1/4"), "{post}:\n{text}");
+            assert!(
+                text.bytes()
+                    .all(|b| b == b'\n' || (b' '..=b'~').contains(&b)),
+                "{post}: a byte that is not printable ASCII:\n{text}"
+            );
+        }
+    }
+
+    /// Acceptance 40: a name made only of characters with no
+    /// transliteration (CJK here) writes an empty name, as before #278,
+    /// and every byte is printable ASCII.
+    #[test]
+    fn comment_text_drops_unmapped() {
+        for (post, header) in [("grblhal", "( Project:  )"), ("grbl", "; Project:")] {
+            let mut project = project_with(post);
+            project.name = "木工".into();
+            let text = emit(&project, &ops_for(&project), DATE).unwrap().0.text;
+            assert_eq!(text.lines().next(), Some(header), "{post}:\n{text}");
+            assert!(
+                text.bytes()
+                    .all(|b| b == b'\n' || (b' '..=b'~').contains(&b)),
+                "{post}: a byte that is not printable ASCII:\n{text}"
+            );
         }
     }
 
@@ -3486,6 +3547,72 @@ mod tests {
             }
         }
         assert!(checked > 0);
+    }
+
+    /// #279, acceptance 41: grblHAL v3 and GRBL v3 cancel canned-cycle
+    /// motion and cutter compensation again in the setup written after
+    /// every stop, `G80` before `G40` as in the header, after an `M6` and
+    /// after a manual-spindle `M0`.
+    #[test]
+    fn setup_after_stop_repeats_g80_g40() {
+        let (mut after_m6, mut after_m0) = (0, 0);
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            for (line, between) in after_pauses(&text) {
+                if has_word(lines[line - 1], "M6") {
+                    after_m6 += 1;
+                } else {
+                    after_m0 += 1;
+                }
+                let at = |word: &str| between.iter().position(|l| has_word(l, word));
+                let (g80, g40) = (at("G80"), at("G40"));
+                assert!(
+                    g80.is_some() && g40.is_some(),
+                    "{case}: no G80 or G40 after the stop on line {line}: {between:?}"
+                );
+                assert!(
+                    g80 < g40,
+                    "{case}: G40 before G80 after the stop on line {line}: {between:?}"
+                );
+            }
+        }
+        assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
+    }
+
+    /// #279: in `G80` mode a line with axis words and no motion word is an
+    /// error on grblHAL and GRBL (`definitions/README.md`, "Header modal
+    /// state"). So the first line that moves after the header's `G80`, and
+    /// after each `G80` of a setup written again after a stop, carries
+    /// `G0` or `G1`.
+    #[test]
+    fn first_motion_after_g80_has_motion_word() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let moves = |l: &str| {
+                let c = code(l);
+                c.contains('X') || c.contains('Y') || c.contains('Z')
+            };
+            let cancels: Vec<usize> = (0..lines.len())
+                .filter(|&i| has_word(lines[i], "G80"))
+                .collect();
+            let first_move = first_index(&lines, moves).unwrap();
+            assert!(
+                cancels.first().is_some_and(|&i| i < first_move),
+                "{case}: no G80 before the first move: {text}"
+            );
+            let stops = after_pauses(&text).len();
+            assert_eq!(cancels.len(), 1 + stops, "{case}: {text}");
+            for i in cancels {
+                let next = (i + 1..lines.len()).find(|&k| moves(lines[k])).unwrap();
+                assert!(
+                    has_word(lines[next], "G0") || has_word(lines[next], "G1"),
+                    "{case}: line {} moves after the G80 on line {} without G0 or G1: {}",
+                    next + 1,
+                    i + 1,
+                    lines[next]
+                );
+            }
+        }
     }
 
     /// #55: an inch project sets inches again after a pause, never
@@ -4215,25 +4342,30 @@ mod tests {
         text.lines().map(code).collect()
     }
 
-    /// Whether `text` has any canned-cycle word.
+    /// Whether `text` has any canned-cycle word. `G80` alone is no cycle:
+    /// the grblHAL and GRBL v3 headers write it to cancel one (#279).
     fn has_cycle_word(text: &str) -> bool {
-        ["G73", "G80", "G81", "G82", "G83", "G98", "G99"]
+        ["G73", "G81", "G82", "G83", "G98", "G99"]
             .iter()
             .any(|w| text.lines().any(|l| has_word(l, w)))
     }
 
-    /// The lines between the one `G98` and the one `G80` of `text`; also
-    /// asserts the line before `G98` is the rapid over the first hole.
+    /// The lines between the one `G98` and the one `G80` after it of
+    /// `text`; also asserts the line before `G98` is the rapid over the
+    /// first hole. A `G80` before the `G98` is the header's (#279).
     fn cycle_lines(text: &str, first: (f64, f64)) -> Vec<String> {
         let codes = codes(text);
-        let at = |word: &str| -> usize {
-            let found: Vec<usize> = (0..codes.len())
+        let all = |word: &str, from: usize| -> Vec<usize> {
+            (from..codes.len())
                 .filter(|&i| codes[i].split_whitespace().any(|w| w == word))
-                .collect();
-            assert_eq!(found.len(), 1, "one {word} in\n{text}");
-            found[0]
+                .collect()
         };
-        let (g98, g80) = (at("G98"), at("G80"));
+        let [g98] = all("G98", 0)[..] else {
+            panic!("one G98 in\n{text}");
+        };
+        let [g80] = all("G80", g98)[..] else {
+            panic!("one G80 after the G98 in\n{text}");
+        };
         assert_eq!(codes[g98], "G98", "{text}");
         assert_eq!(codes[g80], "G80", "{text}");
         assert_eq!(
