@@ -1235,12 +1235,7 @@ fn check_reproduces(
             MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
                 let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
                 match previous.map(|start| ToolpathArc::new(start, mv.to, centre, clockwise)) {
-                    // An arc of at most a half turn that ends where the
-                    // controller already is lies wholly within the
-                    // rounding of it: `emit` writes it as nothing, as it
-                    // does such a straight move.
-                    Some(Some(arc)) => match_arc(rest, &arc, transform, tolerances.flatten_mm)
-                        .or_else(|| (already_there && arc.sweep_rad <= PI).then_some(0)),
+                    Some(Some(arc)) => match_arc(rest, &arc, transform, tolerances.flatten_mm),
                     // Too small to be an arc: `emit` writes a straight cut.
                     Some(None) => match_linear(rest, mv.to, already_there),
                     // `emit` cannot write an arc without a start.
@@ -1259,22 +1254,32 @@ fn check_reproduces(
         }
         // S12: an arc where the toolpath has straight moves (or a shallow
         // corner arc a run may take as its chord).
-        let fitted = rest
-            .first()
-            .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
-        let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
-            return Err(mismatch(index));
+        let fitted = (|| {
+            let fitted = rest
+                .first()
+                .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
+            let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
+                return Err(mismatch(index));
+            };
+            if !run_eligible(previous, mv, arc_fit_mm) {
+                return Err(mismatch(index));
+            }
+            match_fitted_arc(rest, moves, index, previous, transform, arc_fit_mm).ok_or_else(|| {
+                ExportError::ArcFitViolation {
+                    op: span.op.id().clone(),
+                    line: read.mv.line,
+                }
+            })
+        })();
+        let (lines, covered) = match fitted {
+            Ok(fitted) => fitted,
+            // An arc of at most a half turn that ends where the controller
+            // already is lies wholly within the rounding of it: `emit`
+            // writes it as nothing, as it does such a straight move. Tried
+            // last, so a fitted run that takes the arc is matched first.
+            Err(_) if already_there && written_as_nothing(previous, mv) => (0, 1),
+            Err(error) => return Err(error),
         };
-        if !run_eligible(previous, mv, arc_fit_mm) {
-            return Err(mismatch(index));
-        }
-        let (lines, covered) = match_fitted_arc(
-            rest, moves, index, previous, transform, arc_fit_mm,
-        )
-        .ok_or_else(|| ExportError::ArcFitViolation {
-            op: span.op.id().clone(),
-            line: read.mv.line,
-        })?;
         cursor += lines;
         index += covered;
         previous = moves.get(index.wrapping_sub(1)).map(|m| m.to);
@@ -1289,6 +1294,19 @@ fn check_reproduces(
     } else {
         Err(mismatch(span.toolpath.moves.len()))
     }
+}
+
+/// Whether toolpath move `mv`, from `previous`, is an arc of at most a
+/// half turn: every point of it lies no further from its start than its
+/// end does, so it is wholly within the rounding when its end is.
+fn written_as_nothing(previous: Option<Point3>, mv: &Move) -> bool {
+    let (MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre }) = mv.kind else {
+        return false;
+    };
+    let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
+    previous
+        .and_then(|start| ToolpathArc::new(start, mv.to, centre, clockwise))
+        .is_some_and(|arc| arc.sweep_rad <= PI)
 }
 
 /// A parsed move with its ends in project space, mm.
