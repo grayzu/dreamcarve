@@ -167,7 +167,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
 /// Inside and Outside contours are re-seamed where an arc tangent to them
-/// fits in the waste domain away from corners ([`crate::lead`]): each
+/// fits in the waste domain away from corners (the `lead` module): each
 /// pass descends at the arc's far end, its staging point, cuts the arc,
 /// the lap from the arrival, the overcut and the exit arc at the feed
 /// rate, and retracts. Below the tab top the arcs keep off the tabs, and

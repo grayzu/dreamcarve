@@ -20,7 +20,7 @@
 //!   [`LEAD_SWEEP_FALLBACKS_DEG`] below it, each arrival and each free side
 //!   (a probe either side of the contour), the first arc that stays in the
 //!   waste domain wins ([`lead_fits`], upstream `validateLead`). The
-//!   contour is re-seamed at the arrival ([`reseam`]).
+//!   contour is re-seamed at the arrival ([`reseam_at`]).
 //! - [`plan_lead_out`] continues along the re-seamed contour by the
 //!   overcut, then the mirror arc, on the same ladder.
 //!
