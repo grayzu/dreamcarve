@@ -76,7 +76,7 @@ use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
 use crate::material::Material;
-use crate::parse::{CycleModel, parse_program_with};
+use crate::parse::Block;
 use crate::safety::{self, DWELL_TOLERANCE_S, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
 
@@ -805,7 +805,7 @@ fn emit_enabled(
             lines,
         })
         .collect();
-    let extents = safety::check(
+    let (extents, blocks) = safety::check_parsed(
         &text,
         post,
         &transform,
@@ -814,7 +814,7 @@ fn emit_enabled(
         tolerances,
         &spans,
     )?;
-    let pauses = pauses(&text, post)?;
+    let pauses = pauses(&text, &blocks);
 
     Ok((
         Program {
@@ -1166,14 +1166,17 @@ thread_local! {
 }
 
 /// Most straight moves one flattened arc becomes.
-const MAX_ARC_SEGMENTS: f64 = 100_000.0;
+const MAX_ARC_SEGMENTS: u32 = 100_000;
 
 /// Arcs are written with at most this sweep in R format, where a
 /// half-circle leaves the controller unable to place the centre.
 const MAX_R_ARC_SWEEP_RAD: f64 = FRAC_PI_2;
 
-/// An arc whose sweep or radius is below these is drawn as a straight move.
+/// An arc whose sweep is below this is drawn as a straight move.
 const MIN_ARC_SWEEP_RAD: f64 = 1e-9;
+
+/// An arc whose radius is below this is drawn as a straight move.
+const MIN_ARC_RADIUS_MM: f64 = 1e-9;
 
 /// GRBL and grblHAL (`gcode.c`, arc radius check) accept an I/J arc when
 /// its start and end radii differ by at most 0.005 mm, or by at most
@@ -1205,6 +1208,7 @@ impl Rates {
             if !rate.is_some_and(|r| r.is_finite() && r > 0.0) {
                 return Err(ExportError::MissingFeed {
                     tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
                     field,
                 });
             }
@@ -1213,6 +1217,7 @@ impl Rates {
         if rpm.is_none() && control == SpindleControl::Automatic {
             return Err(ExportError::MissingRpm {
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             });
         }
         Ok(Self { rpm })
@@ -1402,9 +1407,9 @@ fn comment_of(line: &str) -> String {
     text.trim().to_owned()
 }
 
-/// Every `M0` and `M6` line of `text`, with its message.
-fn pauses(text: &str, post: &PostProcessor) -> Result<Vec<Pause>, ExportError> {
-    let blocks = parse_program_with(text, &CycleModel::of(post))?;
+/// Every `M0` and `M6` line of `text`, with its message; `blocks` are
+/// those `text` parses into.
+fn pauses(text: &str, blocks: &[Block]) -> Vec<Pause> {
     let mut raw = text.lines().enumerate();
     let mut out = Vec::new();
     for block in blocks.iter().filter(|b| b.has('M', 0.0) || b.has('M', 6.0)) {
@@ -1417,7 +1422,7 @@ fn pauses(text: &str, post: &PostProcessor) -> Result<Vec<Pause>, ExportError> {
             message,
         });
     }
-    Ok(out)
+    out
 }
 
 /// A non-empty command from the post-processor, or the error naming it.
@@ -1514,7 +1519,7 @@ impl ArcGeometry {
             end_angle_rad - start_angle_rad
         };
         let sweep_rad = turn.rem_euclid(TAU);
-        (radius_mm > MIN_ARC_SWEEP_RAD && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
+        (radius_mm > MIN_ARC_RADIUS_MM && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
             start,
             end,
             centre,
@@ -1567,7 +1572,7 @@ fn segment_count(count: f64) -> usize {
     if count.is_nan() {
         return 1;
     }
-    count.ceil().clamp(1.0, MAX_ARC_SEGMENTS) as usize
+    count.ceil().clamp(1.0, f64::from(MAX_ARC_SEGMENTS)) as usize
 }
 
 /// What writing a toolpath had to change for the controller's sake.
@@ -1704,9 +1709,11 @@ impl<'a> Writer<'a> {
         self.motion = None;
         self.feed = None;
         if moves_after {
-            for line in self.setup.clone() {
-                self.line(&line);
+            let setup = std::mem::take(&mut self.setup);
+            for line in &setup {
+                self.line(line);
             }
+            self.setup = setup;
         }
     }
 
@@ -1717,8 +1724,14 @@ impl<'a> Writer<'a> {
             Point3::new(p.x, p.y, p.z.max(safe_z_mm))
         });
         let z = self.transform.to_machine(to).z;
-        let command = self.post.motion.rapid_command.clone();
-        self.motion_line(&command, [None, None, Some(z)], &[], None, false)?;
+        let post = self.post;
+        self.motion_line(
+            &post.motion.rapid_command,
+            [None, None, Some(z)],
+            &[],
+            None,
+            false,
+        )?;
         if let Some(position) = &mut self.position {
             position.z = to.z;
         }
@@ -1961,7 +1974,7 @@ impl<'a> Writer<'a> {
         };
         let command = self.arc_command_for(arc.clockwise);
         self.motion_line(
-            &command,
+            command,
             [Some(end.x), Some(end.y), Some(end.z)],
             &extra,
             Some(feed_mm_min),
@@ -1975,7 +1988,8 @@ impl<'a> Writer<'a> {
     fn rapid(&mut self, to: Point3) -> Result<(), ExportError> {
         let m = self.transform.to_machine(to);
         let rising = self.position.is_none_or(|p| to.z >= p.z);
-        let command = self.post.motion.rapid_command.clone();
+        let post = self.post;
+        let command = post.motion.rapid_command.as_str();
         let z_only = [None, None, Some(m.z)];
         let xy_only = [Some(m.x), Some(m.y), None];
         let (first, second) = if rising {
@@ -1983,17 +1997,17 @@ impl<'a> Writer<'a> {
         } else {
             (xy_only, z_only)
         };
-        self.motion_line(&command, first, &[], None, false)?;
-        self.motion_line(&command, second, &[], None, false)?;
+        self.motion_line(command, first, &[], None, false)?;
+        self.motion_line(command, second, &[], None, false)?;
         self.position = Some(to);
         Ok(())
     }
 
     fn linear(&mut self, to: Point3, feed_mm_min: f64) -> Result<(), ExportError> {
         let m = self.transform.to_machine(to);
-        let command = self.post.motion.linear_command.clone();
+        let post = self.post;
         self.motion_line(
-            &command,
+            &post.motion.linear_command,
             [Some(m.x), Some(m.y), Some(m.z)],
             &[],
             Some(feed_mm_min),
@@ -2048,20 +2062,21 @@ impl<'a> Writer<'a> {
 
     /// The arc command for `arc` in machine space: a mirroring axis map
     /// turns clockwise into counter-clockwise.
-    fn arc_command(&self, arc: &ArcGeometry) -> String {
+    fn arc_command(&self, arc: &ArcGeometry) -> &'a str {
         self.arc_command_for(arc.clockwise)
     }
 
     /// The arc command for an arc that is `clockwise` in project space.
-    fn arc_command_for(&self, clockwise: bool) -> String {
-        let motion = &self.post.motion;
+    fn arc_command_for(&self, clockwise: bool) -> &'a str {
+        let post: &'a PostProcessor = self.post;
+        let motion = &post.motion;
         let clockwise = clockwise != self.transform.mirrors_xy();
         #[cfg(test)]
         let clockwise = clockwise != FLIP_ARCS.get();
         if clockwise {
-            motion.cw_arc_command.clone()
+            &motion.cw_arc_command
         } else {
-            motion.ccw_arc_command.clone()
+            &motion.ccw_arc_command
         }
     }
 
@@ -2116,7 +2131,7 @@ impl<'a> Writer<'a> {
         }
         let command = self.arc_command(arc);
         self.motion_line(
-            &command,
+            command,
             [Some(end.x), Some(end.y), Some(end.z)],
             &[format!("I{i_text}"), format!("J{j_text}")],
             Some(feed_mm_min),
@@ -2144,7 +2159,7 @@ impl<'a> Writer<'a> {
         }
         let command = self.arc_command(arc);
         self.motion_line(
-            &command,
+            command,
             [Some(end.x), Some(end.y), Some(end.z)],
             &[format!("R{r_text}")],
             Some(feed_mm_min),
@@ -2195,9 +2210,11 @@ impl<'a> Writer<'a> {
         let format = self.post.number_format;
         let units = self.transform.output_units();
         let mut axis_words = Vec::with_capacity(3);
-        let mut updated = self.axes.clone();
-        for (((slot, letter), value), force) in updated
+        // The axes this line changes; the rest keep what was written.
+        let mut changed_axes: [Option<Emitted>; 3] = [None, None, None];
+        for ((((slot, written), letter), value), force) in changed_axes
             .iter_mut()
+            .zip(&self.axes)
             .zip(['X', 'Y', 'Z'])
             .zip(axes)
             .zip([force_xy, force_xy, false])
@@ -2206,7 +2223,7 @@ impl<'a> Writer<'a> {
                 continue;
             };
             let text = format_number(value, &format, units)?;
-            if !force && slot.as_ref().is_some_and(|e| e.text == text) {
+            if !force && written.as_ref().is_some_and(|e| e.text == text) {
                 continue;
             }
             let read = read_back(&text).ok_or(ExportError::NonFiniteNumber { value })?;
@@ -2216,7 +2233,11 @@ impl<'a> Writer<'a> {
         if axis_words.is_empty() && extra.is_empty() {
             return Ok(());
         }
-        self.axes = updated;
+        for (slot, changed) in self.axes.iter_mut().zip(changed_axes) {
+            if changed.is_some() {
+                *slot = changed;
+            }
+        }
 
         let mut words = Vec::with_capacity(axis_words.len() + extra.len() + 2);
         if !self.post.motion.modal_motion || self.motion.as_deref() != Some(command) {
@@ -2233,7 +2254,7 @@ impl<'a> Writer<'a> {
                 let word = format!("{}{text}", fs.feed_command);
                 if fs.inline_with_motion {
                     words.push(word);
-                } else if changed {
+                } else {
                     self.line(&word);
                 }
                 self.feed = Some(text);
@@ -2350,7 +2371,7 @@ mod tests {
         ops[0].tool.feed_mm_min = None;
         let err = emit(&project, &ops, DATE).unwrap_err();
         assert!(
-            matches!(&err, ExportError::MissingFeed { tool, field: FeedField::Feed } if tool == "6.35 mm upcut"),
+            matches!(&err, ExportError::MissingFeed { tool, field: FeedField::Feed, .. } if tool == "6.35 mm upcut"),
             "{err:?}"
         );
         let message = err.to_string();
@@ -2402,10 +2423,32 @@ mod tests {
             ops[0].tool.rpm = rpm;
             let err = emit(&project, &ops, DATE).unwrap_err();
             assert!(
-                matches!(&err, ExportError::MissingRpm { tool } if tool == "6.35 mm upcut"),
+                matches!(&err, ExportError::MissingRpm { tool, .. } if tool == "6.35 mm upcut"),
                 "{err:?}"
             );
         }
+    }
+
+    /// #71: two tools may share a name, so an error about a tool's rates
+    /// carries its id as well as the name it prints.
+    #[test]
+    fn tool_errors_carry_the_tool_id() {
+        let project = sample_project();
+        let t1 = ToolId::new("t1");
+        let mut ops = ops_for(&project);
+        ops[0].tool.feed_mm_min = None;
+        let err = emit(&project, &ops, DATE).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::MissingFeed { tool_id, .. } if *tool_id == t1),
+            "{err:?}"
+        );
+        let mut ops = ops_for(&project);
+        ops[0].tool.rpm = None;
+        let err = emit(&project, &ops, DATE).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::MissingRpm { tool_id, .. } if *tool_id == t1),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -2491,6 +2534,65 @@ mod tests {
                 .filter(|m| m.kind == MotionKind::ArcCw)
                 .all(|m| m.arc.i.is_some() && m.arc.j.is_some())
         );
+    }
+
+    /// The feed lines of `text` with the motion lines they come before:
+    /// for each cut, whether the line just before it is an `F` line on
+    /// its own. Fails if any motion line carries an `F` word.
+    fn separate_feeds(text: &str) -> (Vec<String>, Vec<bool>) {
+        let lines: Vec<String> = text.lines().map(code).collect();
+        let is_feed = |l: &String| l.starts_with('F');
+        for l in lines.iter().filter(|l| !is_feed(l)) {
+            assert!(
+                !l.split_whitespace().any(|w| w.starts_with('F')),
+                "F on a motion line: {l}"
+            );
+        }
+        let cuts = parse_motion(text)
+            .unwrap()
+            .iter()
+            .filter(|m| m.kind.is_cut())
+            .map(|m| {
+                m.line
+                    .checked_sub(2)
+                    .and_then(|i| lines.get(i))
+                    .is_some_and(is_feed)
+            })
+            .collect();
+        (lines.into_iter().filter(is_feed).collect(), cuts)
+    }
+
+    /// A definition that writes the feed on a line of its own
+    /// (`inline_with_motion: false`) and keeps it modal writes an `F` line
+    /// only when the rate changes, never the same rate twice running
+    /// (#71).
+    #[test]
+    fn separate_feed_line_is_not_repeated_when_modal() {
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.feed_speed.inline_with_motion = false;
+        let (feeds, before_cut) = separate_feeds(&emit_text_with(&project, &post));
+        assert!(!feeds.is_empty());
+        for pair in feeds.windows(2) {
+            assert_ne!(pair[0], pair[1], "feed repeated: {feeds:?}");
+        }
+        assert!(feeds.len() < before_cut.len(), "{feeds:?}");
+    }
+
+    /// With `modal_feed_speed: false` the feed is written before every
+    /// feed move, on a line of its own when the definition says so (#71).
+    /// It used to be repeated only when written inline.
+    #[test]
+    fn separate_feed_line_is_repeated_when_not_modal() {
+        let project = project_with("grblhal");
+        let mut post = post_of(&project);
+        post.feed_speed.inline_with_motion = false;
+        post.feed_speed.modal_feed_speed = false;
+        let (feeds, before_cut) = separate_feeds(&emit_text_with(&project, &post));
+        assert_eq!(feeds.len(), before_cut.len(), "{feeds:?}");
+        for (k, preceded) in before_cut.iter().enumerate() {
+            assert!(preceded, "cut {k} has no F line before it");
+        }
     }
 
     #[test]
@@ -4468,7 +4570,7 @@ mod tests {
             let canned = emit_with(&project, &post, &ops, DATE).unwrap().0.text;
             assert!(canned.lines().any(|l| has_word(l, word)), "{canned}");
             let plain = emit(&project, &ops, DATE).unwrap().0.text;
-            let model = CycleModel::of(&post);
+            let model = crate::parse::CycleModel::of(&post);
             let expanded = crate::parse::parse_motion_with(&canned, &model).unwrap();
             let moves = parse_motion(&plain).unwrap();
             let shape = |m: &crate::MachineMove| {

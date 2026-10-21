@@ -129,6 +129,7 @@ fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
 pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
     let missing = |field| CamError::MissingFeed {
         tool: tool.name.clone(),
+        tool_id: tool.id.clone(),
         field,
     };
     Ok(LapRates {
@@ -249,6 +250,7 @@ pub fn generate_profile(
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             cutter: tool.cutter.describe(),
         });
     }
@@ -256,6 +258,7 @@ pub fn generate_profile(
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -275,6 +278,7 @@ pub fn generate_profile(
             .ok_or_else(|| CamError::MissingStepDown {
                 op: op.id.clone(),
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             })?;
     let thickness_mm = project
         .stock
@@ -331,22 +335,15 @@ pub fn generate_profile(
     // the index of its region, in drawing order.
     let mut placed: Vec<(Polyline, &ShapeRef, Wall, usize)> = Vec::new();
     for (region_index, region) in regions.iter().enumerate() {
-        let ordered = region
-            .holes()
-            .iter()
-            .map(|h| (h, Role::Hole))
-            .chain(std::iter::once((region.outer(), Role::Outer)));
-        for (contour, role) in ordered {
+        let ordered = hole_shapes(region, &shapes)
+            .map(|(h, shape)| (h, shape, Role::Hole))
+            .chain(outer_shape(region, &shapes).map(|shape| (region.outer(), shape, Role::Outer)));
+        for (contour, shape, role) in ordered {
             let (how, wall) = placement(op.side, role);
             let centres = match how {
                 Offset::Grow => offset(contour, radius_mm),
                 Offset::Shrink => offset(contour, -radius_mm),
                 Offset::None => vec![contour.clone()],
-            };
-            // `nest` keeps every contour or reverses it, so this always
-            // finds the shape.
-            let Some(shape) = shape_of(&shapes, contour) else {
-                continue;
             };
             if centres.is_empty() {
                 warnings.push(
@@ -361,7 +358,7 @@ pub fn generate_profile(
                 op.side,
                 tool,
                 region,
-                contour,
+                (contour, shape),
                 &centres,
                 &shapes,
                 project.flatten_tolerance_mm,
@@ -745,7 +742,7 @@ fn check_band(
     side: Side,
     tool: &Tool,
     region: &Region,
-    contour: &Contour,
+    (contour, shape): (&Contour, &ShapeRef),
     centres: &[Contour],
     shapes: &[(ShapeRef, Contour)],
     tolerance_mm: f64,
@@ -755,17 +752,14 @@ fn check_band(
         Side::OnLine => tool.diameter_mm,
         Side::Outside => return Ok(()),
     };
-    let lines = std::iter::once(region.outer()).chain(region.holes());
-    for line in lines.filter(|l| *l != contour) {
+    for (line, b) in region_shapes(region, shapes).filter(|(l, _)| *l != contour) {
         if !centres
             .iter()
             .any(|c| within(c.polyline(), line.polyline(), reach_mm))
         {
             continue;
         }
-        let (Some(a), Some(b)) = (shape_of(shapes, contour), shape_of(shapes, line)) else {
-            continue;
-        };
+        let a = shape;
         let drawn = |s: &ShapeRef| shapes.iter().position(|(x, _)| x == s);
         let (shape, other) = if drawn(a) <= drawn(b) { (a, b) } else { (b, a) };
         return Err(CamError::BandNarrowerThanTool {
@@ -779,9 +773,6 @@ fn check_band(
     if side != Side::OnLine {
         return Ok(());
     }
-    let Some(shape) = shape_of(shapes, contour) else {
-        return Ok(());
-    };
     // #223: a part nowhere as wide as the bit is removed whole, however
     // short its outline (the self-band check below compares only
     // stretches `√2·d` apart along it, and a small circle has none).
@@ -918,9 +909,7 @@ fn check_open_bands(
         let Some(region) = region_index.and_then(|i| regions.get(i)) else {
             continue;
         };
-        let lines = std::iter::once(region.outer())
-            .chain(region.holes())
-            .filter_map(|c| Some((shape_of(shapes, c)?, c.polyline())));
+        let lines = region_shapes(region, shapes).map(|(c, shape)| (shape, c.polyline()));
         let later = open
             .iter()
             .zip(&held)
@@ -1225,13 +1214,11 @@ pub(crate) fn containment_pairs(
 ) -> Vec<(ShapeRef, ShapeRef)> {
     let mut pairs = Vec::new();
     for region in regions {
-        let Some(outer) = shape_of(shapes, region.outer()) else {
+        let Some(outer) = outer_shape(region, shapes) else {
             continue;
         };
-        for hole in region.holes() {
-            if let Some(hole) = shape_of(shapes, hole) {
-                pairs.push((hole.clone(), outer.clone()));
-            }
+        for (_, hole) in hole_shapes(region, shapes) {
+            pairs.push((hole.clone(), outer.clone()));
         }
         let Some(parent_depth) = region.depth().checked_sub(2) else {
             continue;
@@ -1242,9 +1229,9 @@ pub(crate) fn containment_pairs(
         let enclosing_hole = regions
             .iter()
             .filter(|r| r.depth() == parent_depth)
-            .flat_map(|r| r.holes())
-            .find(|hole| contour_contains(hole, probe.point()));
-        if let Some(hole) = enclosing_hole.and_then(|h| shape_of(shapes, h)) {
+            .flat_map(|r| hole_shapes(r, shapes))
+            .find(|(hole, _)| contour_contains(hole, probe.point()));
+        if let Some((_, hole)) = enclosing_hole {
             pairs.push((outer.clone(), hole.clone()));
         }
     }
@@ -1257,6 +1244,40 @@ pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
         .ok()
         .and_then(|(regions, _)| regions.into_iter().next())
         .is_some_and(|region| region.contains_point(p))
+}
+
+/// The shape `region`'s outer came from, `region` being one that `nest`
+/// returned for the contours of `shapes`, in order.
+pub(crate) fn outer_shape<'s>(
+    region: &Region,
+    shapes: &'s [(ShapeRef, Contour)],
+) -> Option<&'s ShapeRef> {
+    shapes.get(region.outer_index()).map(|(s, _)| s)
+}
+
+/// Each hole of `region` with the shape it came from, in hole order;
+/// `region` as for [`outer_shape`].
+pub(crate) fn hole_shapes<'r, 's>(
+    region: &'r Region,
+    shapes: &'s [(ShapeRef, Contour)],
+) -> impl Iterator<Item = (&'r Contour, &'s ShapeRef)> {
+    region
+        .holes()
+        .iter()
+        .zip(region.hole_indices())
+        .filter_map(|(hole, &i)| shapes.get(i).map(|(s, _)| (hole, s)))
+}
+
+/// The outer of `region` then its holes, each with the shape it came
+/// from; `region` as for [`outer_shape`].
+pub(crate) fn region_shapes<'r, 's>(
+    region: &'r Region,
+    shapes: &'s [(ShapeRef, Contour)],
+) -> impl Iterator<Item = (&'r Contour, &'s ShapeRef)> {
+    outer_shape(region, shapes)
+        .map(|s| (region.outer(), s))
+        .into_iter()
+        .chain(hole_shapes(region, shapes))
 }
 
 /// The shape `contour`, as `nest` returned it, came from.
@@ -2217,6 +2238,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Feed
             }
         );
@@ -2227,6 +2249,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Plunge
             }
         );
@@ -2237,6 +2260,36 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed { .. }
         ));
+    }
+
+    /// #71: two tools may share a name, so an error about a tool carries
+    /// its id as well as the name it prints.
+    #[test]
+    fn tool_errors_carry_the_tool_id() {
+        let tool_id = |err: CamError| match err {
+            CamError::MissingFeed { tool_id, .. }
+            | CamError::CutterNotFlat { tool_id, .. }
+            | CamError::MissingStepDown { tool_id, .. }
+            | CamError::InvalidToolDiameter { tool_id, .. } => tool_id,
+            other => panic!("a tool error, not {other:?}"),
+        };
+        let t1 = ToolId::new("t1");
+        let op = profile_op(&rect_project(), Side::Outside, CutDirection::Climb);
+        let fails = |change: &dyn Fn(&mut Project)| {
+            let mut p = rect_project();
+            change(&mut p);
+            assert_eq!(p.tools[0].id, t1);
+            generate_profile(&p, &op).unwrap_err()
+        };
+        let errors = [
+            fails(&|p| p.tools[0].feed_mm_min = None),
+            fails(&|p| p.tools[0].cutter = dc_project::ToolKind::BallNose),
+            fails(&|p| p.tools[0].diameter_mm = 0.0),
+            fails(&|p| p.tools[0].step_down_mm = None),
+        ];
+        for err in errors {
+            assert_eq!(tool_id(err.clone()), t1, "{err:?}");
+        }
     }
 
     /// #67: Profile offsets by half the diameter, right only for a flat end
@@ -2254,6 +2307,7 @@ mod tests {
             CamError::CutterNotFlat {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 cutter: "a V-bit",
             }
         );
@@ -2301,6 +2355,7 @@ mod tests {
             CamError::MissingStepDown {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
     }

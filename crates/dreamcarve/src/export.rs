@@ -11,7 +11,8 @@
 //! override it for one export without saving it (functional spec,
 //! capability 19). Nothing is written unless every step succeeds:
 //! every program (and, with `--post`, the updated project) is staged in a
-//! temporary file, and all are renamed into place at the end.
+//! temporary file, and all are renamed into place at the end. If one
+//! rename fails, the files already moved are put back as they were.
 //!
 //! [`build`] is the whole pipeline without writing; `check` runs it too, so
 //! `check` reports exactly what `export` would. It validates the project it
@@ -39,7 +40,7 @@ use dc_project::{
     Operation, PostProcessorRef, Project, Severity, SourceMap, ToolChangeMode, Units, validate,
 };
 
-use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
+use crate::cli::{ExportArgs, Failure, StagedFile, commit_all, lookup_post, read_file, today_utc};
 use crate::config;
 use crate::output::{errln, outln};
 
@@ -334,12 +335,9 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         }
         None => None,
     };
-    for staged in staged_programs {
-        staged.commit()?;
-    }
-    if let Some(staged) = staged_project {
-        staged.commit()?;
-    }
+    // All or nothing: a program in place beside a project that failed to
+    // move, or the reverse, would not match what was reported.
+    commit_all(staged_programs.into_iter().chain(staged_project).collect())?;
 
     match (programs.as_slice(), outputs.as_slice()) {
         ([program], [output]) => report(&project, program, output, args, switched_from.as_ref())?,
