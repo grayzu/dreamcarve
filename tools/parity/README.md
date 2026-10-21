@@ -34,7 +34,11 @@ acceptance test for this tool.
    and any intentional difference from PureCutCNC. The capture copies them
    into the case's README as written.
 3. Run the capture.
-4. Commit the case and the golden files together, with a message that says
+4. Write the equivalent DreamCarve project as
+   `tests/golden/<name>/dreamcarve.dcv` and its test in
+   `crates/dc-gcode/tests/golden.rs`. The capture never writes that file.
+   See the Golden corpus chapter (`docs/book/src/contributing/golden-corpus.md`).
+5. Commit the case and the golden files together, with a message that says
    what the case covers.
 
 A golden file changes only in a commit whose message says why.
