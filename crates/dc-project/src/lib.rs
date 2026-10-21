@@ -21,14 +21,14 @@ mod validate;
 pub mod test_support;
 
 pub use history::{History, MAX_UNDO_STEPS};
-pub use ids::{DefinitionId, InstanceId, OperationId, ToolId};
+pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
     ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
     FeatureDefinition, FeatureInstance, Lead, MachineOrigin, MachiningOrder, Operation, OriginXy,
-    OriginZ, PeckRetract, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement, TabShape,
-    TabSpec, Tool, ToolKind, Units, WallPass,
+    OriginZ, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement,
+    TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,

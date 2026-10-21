@@ -16,8 +16,9 @@ listed.
 2. `dreamcarve init part.svg` (or `part.dxf`) writes a **project file**,
    `part.dcv`, with one Profile of every closed shape.
 3. Edit `part.dcv` in a text editor: the stock, the tools and their feeds,
-   the operations, and the tabs. `dreamcarve tools add` copies a tool from
-   your [tool library](tool-library.md) instead of typing it in.
+   and the operations. `dreamcarve tools add` copies a tool from
+   your [tool library](tool-library.md) instead of typing it in, and
+   `dreamcarve tabs place` places [tabs](tabs.md) on the part.
 4. `dreamcarve check part.dcv` reports problems without writing anything.
 5. `dreamcarve export part.dcv` writes the G-code program, `part.nc`.
 6. Air cut, then cut.
@@ -108,8 +109,10 @@ Export writes nothing unless every step succeeds. It refuses a project with
 any error, including a tool with no feed rate, plunge rate or spindle speed
 (the speed is optional when the router is switched by hand), and one whose
 cut would leave the stock. After the file is written it lists each
-operation, prints the program's extents, names the bit to fit and set work
-zero with before you start, then lists every place the program stops. The
+operation, prints the program's extents and
+[estimated run time](configuration.md#estimated-run-time), names the bit to
+fit and set work zero with before you start, then lists every place the
+program stops. The
 extents are in machine coordinates, the numbers your controller shows once
 work zero is set: first where the centre of the bit goes on each axis (Z
 min is the deepest cut), then where its edge reaches in X and Y. Place
@@ -117,8 +120,9 @@ clamps from them ([Safety](safety.md#before-every-cut)). The coaster, with
 one bit and the default automatic spindle control, does not stop:
 
 ```text
-Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
-  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
@@ -193,6 +197,17 @@ Manages your [tool library](tool-library.md): `tools list`, `tools import
 <file>` (a DreamCarve library or a Fusion 360 `.tools` or `.json`
 library), `tools export <file>`, `tools add <project.dcv> <tool>` to copy
 a library tool into a project, and `tools remove <tool>`.
+
+### `dreamcarve tabs`
+
+Places, lists and removes the project's [tabs](tabs.md): `tabs place
+<dcv> <op> --count N` (or `--at d1,d2,…`, or neither for the operation's
+own tab request) puts tabs on the outlines a Profile cuts, `tabs list
+<dcv>` shows every tab and the Profiles that cut round it, and `tabs
+clear <dcv>` removes all of them, those one Profile cuts round (`tabs
+clear <dcv> <op>`, which names any part a through cut then frees with no
+tab), or the ones named with `--tab <id>`. `place`
+and `clear` save the project.
 
 ### `dreamcarve config path`
 

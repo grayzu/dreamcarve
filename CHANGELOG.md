@@ -95,6 +95,25 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   within `arc_fit_tolerance_mm` (default 0.01 mm) are written as `G2`/`G3`
   arcs, so a curve exports as a few arcs instead of hundreds of lines. Set it to
   `null` to turn fitting off.
+- **Placed tabs.** A tab is now part of the project, placed on one outline of
+  one shape with its own width, height and shape, and it moves with its shape
+  ([#105]). Every enabled Profile that cuts that outline rises over it.
+  `dreamcarve tabs place <dcv> <op> --count N` places tabs with the rules of
+  the tab setting (none on holes unless `--on-holes`, fewer on a short
+  outline), `--at d1,d2,…` puts them at distances along each outline,
+  `tabs list` shows every tab and the Profiles that cut round it, and
+  `tabs clear` removes them (`tabs clear <dcv> <op>` the tabs one Profile cuts
+  round, naming any part a through cut then frees with no tab). A Profile cuts
+  round a tab only when its cut goes below the tab's top. `check` warns
+  `tab_not_crossed` for a tab no enabled Profile cuts round, and `tab_on_hole`
+  for a tab that holds a hole's slug.
+- **Estimated run time.** `export` and `check` print how long each program,
+  and all of them together, should take: feed moves at their feed rates
+  (arcs by their length), dwells, and rapids at the rate you set in the new
+  `[estimate] rapid_mm_min` of `config.toml`, all times `scale_factor`.
+  Without a rapid rate the rapids' distance is printed instead of a guessed
+  time. Acceleration and the time at pauses and tool changes are left out,
+  and the line says so ([#280]). The estimate never changes a program.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
@@ -120,6 +139,9 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   strictly in drawing order (research decision D5, [#127]). A shape inside a hole
   is still cut before the hole, and ties keep drawing order ([#215]). A
   one-shape operation exports exactly as before.
+- **One tab alone no longer warns `tabs_overlap`.** A single tab whose span
+  covers its whole tool path warns only `tabs_cover_most_of_contour`; before,
+  it warned that tabs overlapped as well ([#105]). The program is the same.
 - **`init` writes a 15° ramp entry** for its Profile ([#119]). Projects from 0.1
   keep `entry: "plunge"` when upgraded, so they cut as before.
 - **Ramps, helixes and straight plunges start 1 mm above the stock.** The bit
@@ -144,6 +166,14 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   name can never start a controller command such as `( MSG, ...)` ([#171]). `init`
   writes version 2. A version 1 project keeps exporting version 1 bytes until
   you run `export --post <id>`, which upgrades it and says so.
+- **grblHAL and GRBL definitions version 3.** The header, and the setup
+  written again after every pause and tool change, cancel a canned-cycle
+  motion mode (`G80`) and then cutter compensation (`G40`) after `G94`, so a
+  mode left by an earlier job or by MDI cannot change the program ([#279]).
+  `G49` is not added: both controllers fold an active tool length offset into
+  the work zero you set, so cancelling it would move every Z. `export` now
+  says so for grblHAL and GRBL programs. `init` writes version 3; a version 1
+  or 2 project keeps its bytes until `export --post <id>`.
 - **LinuxCNC, Mach3 and UCCNC definitions version 2** leave the tool length
   offset alone: the header no longer has `G49` ([#286]). The work zero you
   set with a tool length offset active includes the offset, so cancelling it
@@ -181,11 +211,27 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   `tabs_cover_most_of_contour` says how many are cut; before, the tabs were cut
   as set. A version 8 file is upgraded with `on_holes: true`,
   so its holes keep their tabs.
+- **Placed tabs; project format version 11.** Adds the project's `tabs`
+  list, empty on upgrade ([#105]). A Profile's `tabs` setting stays as a tab
+  request: it is cut exactly as before, and the first `dreamcarve tabs`
+  command that saves the project writes it as placed tabs. `init` still
+  writes its four tabs as a request. Once placed, two Profiles that cut one
+  outline both rise over all its tabs; before, each rose over its own only.
+  Placed tabs are never cut down on a short outline: they are cut as placed,
+  with a `tabs_cover_most_of_contour` warning. Older DreamCarve versions
+  cannot read version 11 files.
 - `check` warns `cut_inside_tab_held_part` when an operation cuts deeper than
   half the stock inside a part that an earlier Profile through the stock holds
   only by its tabs, such as a hole cut after its tabbed part ([#269]). A
   lighter cut, such as a shallow engraving, stays quiet. A tabbed part used to count as
   held, so this order gave no warning.
+- **Names in comments keep their letters** ([#278]). Accented letters and
+  common symbols in project, operation and tool names are spelled in ASCII
+  instead of dropped: "Café Ø6 ½" is written `Cafe O6 1/2`, not `Caf 6`.
+  A character DreamCarve has no spelling for is still dropped, and the
+  characters controllers act on are still removed. This changes comment
+  bytes only, on every post-processor and definition version, and only for
+  names that hold such characters.
 - **`export --post` keeps your settings** ([#277]). Switching post-processor,
   or upgrading to a newer version of your own, used to reset all six
   post-processor settings to the definition's defaults. Now a setting you
@@ -270,6 +316,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [0.1.0]: https://github.com/grayzu/dreamcarve/releases/tag/v0.1.0
 [#17]: https://github.com/grayzu/dreamcarve/issues/17
 [#70]: https://github.com/grayzu/dreamcarve/issues/70
+[#105]: https://github.com/grayzu/dreamcarve/issues/105
 [#109]: https://github.com/grayzu/dreamcarve/issues/109
 [#119]: https://github.com/grayzu/dreamcarve/issues/119
 [#124]: https://github.com/grayzu/dreamcarve/issues/124
@@ -294,7 +341,10 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#207]: https://github.com/grayzu/dreamcarve/issues/207
 [#242]: https://github.com/grayzu/dreamcarve/issues/242
 [#269]: https://github.com/grayzu/dreamcarve/issues/269
+[#278]: https://github.com/grayzu/dreamcarve/issues/278
 [#277]: https://github.com/grayzu/dreamcarve/issues/277
+[#280]: https://github.com/grayzu/dreamcarve/issues/280
+[#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281

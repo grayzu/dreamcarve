@@ -5,7 +5,7 @@
 //! (`docs/specs/phase-1/functional.md`, capabilities 1–5;
 //! `docs/specs/phase-1/design.md`, "CLI (dreamcarve)"), and from phase 2
 //! `config` and `tools` (`docs/specs/phase-2/design.md`, "Tool library
-//! CLI").
+//! CLI") and `tabs` (#105, "Placed tabs").
 //!
 //! The binary owns argument parsing, file I/O, the clock, printing, and exit
 //! codes. Every decision about geometry, toolpaths, and G-code is made by
@@ -25,6 +25,7 @@ mod export;
 mod init;
 mod output;
 mod preview;
+mod tabs;
 mod tools;
 
 fn main() -> ExitCode {

@@ -57,6 +57,12 @@
 //!   cut open paths beside them. No version 9 file holds either, so the
 //!   migration changes only the version; the bump makes an older reader
 //!   refuse a file that uses them.
+//! - **11**: adds the project's placed tabs, `tabs: []` after
+//!   `operations` (#105, ADR-0005). A Profile's `tabs` setting stays as a
+//!   tab request: placing it needs the Profile's tool paths, which only
+//!   `dc-cam` builds, so generation places it before it cuts, and each
+//!   `dreamcarve tabs` command that saves the project writes it as placed
+//!   tabs.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -67,7 +73,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 10;
+pub const CURRENT_VERSION: u32 = 11;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -86,6 +92,7 @@ fn step(from: u32) -> Option<Step> {
         7 => Some(v7_to_v8),
         8 => Some(v8_to_v9),
         9 => Some(v9_to_v10),
+        10 => Some(v10_to_v11),
         _ => None,
     }
 }
@@ -444,6 +451,31 @@ fn v9_to_v10(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
+/// Version 10 → 11 (#105): `tabs: []` after `operations`, the project's
+/// placed tabs, none yet. Each Profile's `tabs` setting is left as it is:
+/// it is now a tab request, placed when the project is cut or saved by
+/// `dreamcarve tabs` (ADR-0005). Fails if the project already has `tabs`: that is
+/// not a version 10 file.
+fn v10_to_v11(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    if root.contains_key("tabs") {
+        return Err("a version 10 file has no `tabs`, but this one does".into());
+    }
+    let mut out = Map::with_capacity(root.len() + 1);
+    let mut inserted = false;
+    for (key, value) in root {
+        let after_this = key == "operations";
+        out.insert(key, value);
+        if after_this {
+            out.insert("tabs".into(), Value::Array(Vec::new()));
+            inserted = true;
+        }
+    }
+    if !inserted {
+        out.insert("tabs".into(), Value::Array(Vec::new()));
+    }
+    Ok(out)
+}
+
 /// `map` with `key: value` inserted right after `after`, or at the end
 /// when `after` is absent. Fails if `key` is already there, naming it
 /// under `at` (a path prefix such as `tools[0].`).
@@ -604,6 +636,9 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 11 {
+            root.as_object_mut().unwrap().shift_remove("tabs");
+        }
         if version < 9 {
             for op in root["operations"].as_array_mut().unwrap() {
                 if let Some(tabs) = op["tabs"].as_object_mut() {
@@ -1203,10 +1238,11 @@ mod tests {
         );
     }
 
-    // Version 9 → 10 (#207): a Profile's `side` may be `"left"` or
-    // `"right"`, which no version 9 file holds.
+    // Version 10 → 11 (#105): placed tabs. The tab setting stays as a
+    // request, which `dreamcarve` places when it loads the project.
 
     const V9_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v9/sample.dcv");
+    const V10_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v10/sample.dcv");
 
     #[test]
     fn version_9_fixture_loads() {
@@ -1216,6 +1252,42 @@ mod tests {
         assert_eq!(loaded.problems, vec![]);
     }
 
+    #[test]
+    fn version_10_fixture_loads() {
+        let loaded = load(V10_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #105: a version 10 project gains an empty list of placed tabs right
+    /// after its operations; each Profile keeps its tab setting, now a
+    /// request, so the project cuts the same.
+    #[test]
+    fn v10_project_gains_an_empty_tab_list() {
+        let root: Value = serde_json::from_slice(V10_FIXTURE).unwrap();
+        let tabs_before = root["operations"][0]["tabs"].clone();
+        let migrated = migrate(root, 10).unwrap();
+        assert_eq!(migrated["tabs"], json!([]));
+        assert_eq!(migrated["operations"][0]["tabs"], tabs_before);
+        let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
+        let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+        assert_eq!(at("tabs"), at("operations") + 1, "{keys:?}");
+        assert_eq!(migrate(sample_root_at(10), 10).unwrap(), sample_root_at(11));
+    }
+
+    #[test]
+    fn v10_with_tabs_already_present_fails() {
+        let mut root = sample_root_at(10);
+        root["tabs"] = json!([]);
+        let err = migrate(root, 10).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 10, to: 11, message }
+                if message.contains("tabs")),
+            "{err:?}"
+        );
+    }
+
     /// #207: version 10 only adds the `left` and `right` sides, so the
     /// migration changes nothing but the version: every version 9 file
     /// cuts the same. The bump makes a reader of version 9 refuse a file
@@ -1223,9 +1295,8 @@ mod tests {
     #[test]
     fn v9_to_v10_changes_only_the_version() {
         let root: Value = serde_json::from_slice(V9_FIXTURE).unwrap();
-        let mut expected = root.clone();
-        expected["version"] = Value::from(CURRENT_VERSION);
-        assert_eq!(migrate(root, 9).unwrap(), expected);
+        let stepped = v9_to_v10(root.as_object().unwrap().clone()).unwrap();
+        assert_eq!(Value::Object(stepped), root);
         for side in ["inside", "outside", "on_line"] {
             let mut root = sample_root_at(9);
             root["operations"][0]["side"] = json!(side);

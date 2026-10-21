@@ -355,7 +355,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v10/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v11/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -382,6 +382,38 @@ mod tests {
         op.depth_mm = None;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert_eq!(loaded.project, p);
+    }
+
+    /// #105: placed tabs save after the operations, every field in
+    /// declaration order, and load back equal.
+    #[test]
+    fn placed_tabs_round_trip() {
+        let mut p = sample_project();
+        profile_mut(&mut p).tabs = None;
+        p.tabs = vec![
+            crate::test_support::sample_tab("tab1", 25.0, -3.175),
+            crate::PlacedTab {
+                shape: crate::TabShape::Smooth,
+                height_mm: 3.5,
+                ..crate::test_support::sample_tab("tab2", 50.0, 15.0)
+            },
+        ];
+        let text = save(&p).unwrap();
+        let compact: String = text.split_whitespace().collect();
+        assert!(
+            compact.contains(
+                "\"tabs\":[{\"id\":\"tab1\",\"instance\":\"i1\",\"profile\":0,\"x_mm\":25.0,\"y_mm\":-3.175,\"width_mm\":6.0,\"height_mm\":2.0,\"shape\":\"rect\"}"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.find("\"operations\"") < text.find("\"tabs\": [")
+                && text.find("\"tabs\": [") < text.find("\"instances\""),
+            "{text}"
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(loaded.problems, vec![]);
     }
 
     #[test]
