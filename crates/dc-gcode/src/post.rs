@@ -291,7 +291,7 @@ fn grblhal_and_grbl_differ_only_in_dialect() {
     };
     let tool = project.tools[0].clone();
     let (toolpath, _) = dc_cam::generate_profile(&project, &op).unwrap();
-    let ops = [(dc_project::Operation::Profile(op), tool, toolpath)];
+    let ops = [(dc_project::Operation::Profile(op), tool, toolpath).into()];
     let mut texts = Vec::new();
     for id in ["grblhal", "grbl"] {
         project.post_processor = dc_project::PostProcessorRef::latest(id).unwrap();
