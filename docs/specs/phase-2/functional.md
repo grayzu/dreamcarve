@@ -270,7 +270,8 @@ outline, and too-short outlines kept tabs covering most of them.)
 
 ### Open paths
 
-27. **Left and Right of an open path** (#207). A Profile's `side` may be
+37. **Left and Right of an open path** (#207; numbered after the #73
+addendum's 27–36). A Profile's `side` may be
 `left` or `right` (format version 10), as VCarve's Profile cuts "to the
 Left, to the Right or On the selected vectors". The tool centre runs one
 radius to that side of each open target, looking along it from its first
