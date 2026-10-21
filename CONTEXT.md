@@ -239,7 +239,7 @@ _Avoid_: Safe height, rapid height
 **Tool-change Machine Z**:
 A height in machine coordinates (`heights.tool_change_machine_z_mm`), below
 0, that the program lifts to with `G53 G0 Z` before each tool-change stop
-and at the end, on grblHAL and GRBL (#283). Needs a homed machine.
+and at the end, on grblHAL, GRBL (#283) and LinuxCNC (#306). Needs a homed machine.
 _Avoid_: Home Z, tool-change height (that is a sender's setting)
 
 **Park Point**:

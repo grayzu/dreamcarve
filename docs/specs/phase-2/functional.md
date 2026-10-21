@@ -572,7 +572,9 @@ recomputing the slope of every descending `G1` with XY motion.
 motion the controller performs (per that controller's documentation,
 with `G98` retract) and checks S1, S2 and S6 against that expansion, so
 a canned-cycle program is accepted only if its expansion is the Drill
-toolpath move for move.
+toolpath move for move. Rapids along one vertical line in one direction
+count as one move there: from a clearance height, `G98`'s return and the
+rapid down to `R` pass safe Z without stopping (changed in #305).
 - **S12 Arc fitting is a refinement, not a change.** A fitted run of arcs
 replaces only straight moves, and corner arcs shallower than the
 tolerance, whose vertices and shallow-arc midpoints all lie on the
@@ -845,8 +847,14 @@ built (design addendum, "Order and format versions").
       program there, which serves as the tool-change height on GRBL. It
       must be below 0 (both controllers home Z to a negative machine
       position) and is accepted only on a post-processor whose definition
-      documents `G53` (grblHAL and GRBL in this addendum). The machine must
-      be homed, which DreamCarve cannot check, so `export` says so.
+      documents `G53` (grblHAL and GRBL in this addendum; LinuxCNC too,
+      changed in #306). The machine must
+      be homed, which DreamCarve cannot check, so `export` says so. It
+      also says, as the program's header does, what keeps a lift outside
+      the travel from moving: on grblHAL and GRBL, Z homing upward or soft
+      limits on (`$20=1`), since where Z homes downward every negative
+      machine Z is below the travel; on LinuxCNC, homing, after which its
+      soft limits always apply (changed in #308).
     - **`park`** `{ "x_mm": …, "y_mm": … }`, in project coordinates: at the
       end the bit rises to the clearance height (or the highest safe Z of
       the program's operations; changed in #283: the last operation's),
@@ -945,8 +953,9 @@ built (design addendum, "Order and format versions").
     20 (work zero at the stock top) and links between passes of one part
     to its safe Z; the tool change is `G0 Z20.000`, `G53 G0 Z-5.000`,
     `M5`, `T2 M6`; the program ends with a rapid to the park point at Z
-    20, then `G53 G0 Z-5.000`, then the footer. On LinuxCNC
-    `tool_change_machine_z_mm` is an error naming the setting; a
+    20, then `G53 G0 Z-5.000`, then the footer. On Mach3
+    `tool_change_machine_z_mm` is an error naming the setting (changed in
+    #306: on LinuxCNC, which now documents `G53`); a
     `clearance_mm` below an enabled operation's `safe_z_mm` is an error;
     with all three unset the program is byte-identical to before.
 46. **Last pass.** An outside Profile of a 60 × 40 mm rectangle, 12 mm

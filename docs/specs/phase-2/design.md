@@ -2009,7 +2009,9 @@ command the definition has (`G81 → drill_command`, `G82 →
 drill_with_dwell_command`, `G83 → peck_drill_command`, `G73 →
 chip_break_drill_command`): rapid to the first hole's XY at safe Z (Z
 first, then XY, as phase 1 rapids), write `retract_mode` (`G98`: return to
-the initial Z, which is safe Z) once, then one line per hole: the command
+the initial Z, which is safe Z) once (changed in #305: at the clearance
+height, when the project sets one and every link between holes is at it;
+see "As built (#283)"), then one line per hole: the command
 word (modal), `X Y`, `Z` (bottom, machine coordinates), `R` (retract
 plane), `Q` (peck for `G83`/`G73`), `P` (dwell seconds for `G82`), `F`
 (plunge rate, once). Every line carries its own `Z`, `R` and `Q`/`P`,
@@ -2060,6 +2062,12 @@ toolpath move for move (S6), a Z-only rapid inside a hole matching
 within the re-entry gap stated in the definition
 (`canned_cycles.reentry_gap_mm`, a new definition field, `null` where no
 fixed gap is documented); S1 and S15 still check where that rapid ends.
+In a Drill written as cycles, a toolpath rapid in Z alone may also end
+partway along one rapid of the controller's in Z alone at its XY, when
+the toolpath goes on the same way along that line by a rapid in Z alone,
+or ends there going up (changed in #305: cycles from the clearance height
+go straight from it to `R` and from the bottom back to it, where the
+toolpath stops at safe Z).
 Only controllers whose documentation states these semantics get
 canned-cycle commands in their definition.
 
@@ -2922,9 +2930,20 @@ tool offsets. The homed envelope is negative: grblHAL
 `−pulloff`), GRBL `limits.c` 382 (Z homes to `−pulloff`) and `system.c`
 348 (soft limits allow `[max_travel, 0]`). So the validation rule is
 `tool_change_machine_z_mm < 0`, and the chapter says to stay at least the
-pull-off below 0. The four other controllers' documents were not checked
-for `G53` for this addendum, so they stay `null` until a follow-up cites
-the section for each (as the slice 17 tables do) and sets it.
+pull-off below 0. LinuxCNC v1 and v2 are `"G53"`, set in place and
+re-pinned (changed in #306: they were `null` because their documents had
+not been checked). The README cites the 2.9 interpreter at `a33293f`:
+`interp_array.cc` 109 (group 0), `interp_check.cc` 103-108 (`G0` or
+`G1`, absolute), `interp_convert.cc` 4855-4857 (no cutter compensation),
+`interp_find.cc` 170-200 with `get_abs_position` (no work, `G92` or tool
+length offset), and 2749-2830 (program units); and for machine Z,
+`emctaskmain.cc` 2302-2303 (no program before homing, by default),
+`motion/command.c` 1011-1025 (a move past a soft limit is refused before
+it runs) and stepconf's and pncconf's Z travel of −100 to 0 mm. The
+validation rule and S16 are unchanged. Mach3, UCCNC and generic stay
+`null`, with the reason in the README: their manuals do not say what
+`G53` does with a tool length offset (UCCNC: nor with `G51` scaling), and
+machine Z after homing is a user setting there; generic cannot be checked.
 
 **Validation** (errors): `clearance_mm` below any enabled operation's
 `safe_z_mm` (`Problem::ClearanceBelowSafeZ`, at the field, naming the
@@ -2948,7 +2967,9 @@ work Z unknown. At the end, before that lift: rapid at the clearance
 height (or the last operation's safe Z) to `park` if set. XY moves before
 the lift, at a work Z the safety pass can check, rather than after it.
 `export` prints `Before you start: home the machine; this program moves to
-machine Z <v> (G53).` when the program has a lift. The README's "Tool
+machine Z <v> (G53). Z must home upward, or soft limits must be on
+($20=1).` when the program has a lift (changed in #308: the soft-limits
+sentence added). The README's "Tool
 changes" paragraph "The tool-change height is not set" is replaced.
 
 **Safety** (`dc-gcode::safety`, `parse`): S16 as in the functional spec;
@@ -2999,6 +3020,39 @@ above:
   the clearance height, which `G98` cannot follow, so with a clearance
   height above safe Z it is written as moves with
   `CannedExpansion::ClearanceHeight`. Holes of one instance keep cycles.
+  (Changed in #305: such a Drill is written as cycles from the clearance
+  height; see the next item. Only a Drill whose links are at both
+  heights is still written as moves with that reason.)
+- Canned cycles from the clearance height (#305). `G98` returns each hole
+  to the Z before the first cycle of the series (LinuxCNC 2.9
+  `interp_cycles.cc` 926-931 and 976, the initial level `cycle_il`, reset
+  by any motion that is not a cycle, `interp_convert.cc` 3818-3819; [G]
+  `#gcode:g98-g99`; Mach3Mill 10.7.29, whose "just before the canned
+  cycle started" gives the same height in a `G98` series, since each line
+  starts where the one before returned). So when the project sets a
+  clearance height and every link between holes is at it (holes that are
+  separate parts, or one hole), `canned_plan` takes it as the initial Z:
+  the rapid over the first hole is at the clearance height, where the
+  operation starts, and `G98` brings every hole back to it. Links at safe
+  Z keep safe Z as the initial Z, as before; links at both fail the
+  comparison (`ClearanceHeight`). The controller then rapids from the
+  clearance height straight to `R` (preliminary motion, [G]
+  `#gcode:preliminary-motion`, Mach3Mill 10.7.24.1) and from the bottom
+  straight back up, where the toolpath stops at safe Z both ways. The
+  toolpath is unchanged; `expansion_is_toolpath` and S6 instead take
+  rapids along one vertical line in one direction as one rapid
+  (`join_rapids`; `safety::match_rapid_on_the_way`), only for a Drill
+  written as cycles, so plain programs are held to every move as before.
+  Tests: `emit::canned_cycles_at_the_clearance_height` (the plaque on
+  LinuxCNC, `G81` and `G82`),
+  `emit::canned_motion_from_the_clearance_height_equals_plain_program`
+  (`G81`, `G82`, `G83`, `G73` on the test definition, the same pecks),
+  `emit::canned_cycles_with_the_clearance_height_at_safe_z`,
+  `emit::canned_cycles_from_the_clearance_height_with_the_lift_on_linuxcnc`
+  (with #306's `G53` lift: `G80`, the park, the lift, the footer),
+  `emit::clearance_height_expands_canned_cycles` (links at both heights),
+  `safety::canned_cycles_from_clearance_match_the_toolpath`,
+  `safety::vertical_rapids_join_only_along_a_cycle_rapid`.
 - Corner relief. A Pocket's notches, sequenced one corner at a time after
   its main path, are reached at the clearance height when the corner is of
   another instance than the one before, and the first one always (where
@@ -3026,7 +3080,27 @@ above:
   S6 holds them to the toolpath, whose links the sequencer writes and
   `sequence::links_between_instances_rise_to_clearance` checks. (4) A
   program with a machine Z has the header comment `( Lifts to machine Z
-  with G53: home the machine before running )`; others are unchanged.
+  with G53: home the machine before running. Needs Z to home upward, or
+  soft limits on with $20=1 )`; others are unchanged (changed in #308:
+  the soft-limits sentence added).
+- Soft limits (#308). On GRBL or grblHAL with Z homing downward
+  (`HOMING_FORCE_SET_ORIGIN`, grblHAL "force set origin"), every negative
+  machine Z is below the travel: with soft limits on the controller
+  alarms before the lift moves, with them off the lift drives Z down. The
+  export note and the header comment name both conditions. DreamCarve
+  cannot read the homing direction or `$20`, so it is a note, not a
+  refusal. Header bytes change only for a program with a machine Z, so
+  no definition version is added. The wording is per controller, since
+  `$20` is GRBL's: on LinuxCNC (#306), whose soft limits always apply once
+  homed and which runs no program unhomed unless `[TRAJ] NO_FORCE_HOMING`
+  is set, the header says `Soft limits apply only once homed: leave
+  NO_FORCE_HOMING unset` and the note `LinuxCNC applies soft limits only
+  once homed: leave [TRAJ] NO_FORCE_HOMING unset.`
+  (`dc_gcode::machine_lift_limits_note`). Tests:
+  `emit::machine_z_header_comment`,
+  `emit::machine_z_header_comment_on_linuxcnc`,
+  `cli::export_machine_z_note_names_soft_limits`,
+  `cli::export_machine_z_note_on_linuxcnc`.
 - The estimate (A4). A `G53` lift has no work-coordinate motion, so
   `dc-gcode::estimate` leaves its distance, and that of the rise after it
   from an unknown Z, out of the rapid distance.

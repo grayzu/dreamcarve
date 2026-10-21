@@ -428,7 +428,8 @@ pub enum ExportError {
         safe_z_mm: f64,
     },
     /// #283: the tool-change machine Z is 0 or above, or not a number.
-    /// grblHAL and GRBL home Z to a negative machine position, so the lift
+    /// grblHAL and GRBL, and LinuxCNC as its configuration tools set it up
+    /// (#306), home Z to machine Z 0 or a negative position, so the lift
     /// would go past the limit switch. Validation refuses it first.
     #[error("the tool-change machine Z {machine_z_mm} mm is not below 0, where Z homes")]
     MachineZNotBelowHome {

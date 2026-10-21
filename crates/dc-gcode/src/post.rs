@@ -919,9 +919,11 @@ fn machine_command_section() -> &'static str {
 /// command is verified against the controller's source and cited. Every
 /// version with a `machine_command` has a row in the README's
 /// machine-coordinate section naming its file and the command, with a
-/// `gcode.c` citation (or "As" the version it repeats); a version without
-/// one has a `null` row. Every such definition maps Z to Z, since the lift
-/// writes machine Z as it is, and only grblHAL and GRBL have one.
+/// source citation (`gcode.c` for grblHAL and GRBL, the `rs274ngc`
+/// interpreter for LinuxCNC, or "As" the version it repeats); a version
+/// without one has a `null` row that cites the document checked and says
+/// why (#306). Every such definition maps Z to Z, since the lift writes
+/// machine Z as it is, and only grblHAL, GRBL and LinuxCNC have one.
 #[test]
 fn machine_command_cited() {
     let section = machine_command_section();
@@ -942,13 +944,27 @@ fn machine_command_cited() {
                 assert_eq!(command, "G53", "{path}");
                 assert!(row.contains(&format!("| `{command}` |")), "{path}: {row}");
                 assert!(
-                    row.contains("gcode.c") || row.contains("| As `"),
+                    row.contains("gcode.c") || row.contains("interp_") || row.contains("| As `"),
                     "{path} cites no source: {row}"
                 );
-                assert!(["grblhal", "grbl"].contains(&definition.id), "{path}");
+                assert!(
+                    ["grblhal", "grbl", "linuxcnc"].contains(&definition.id),
+                    "{path}"
+                );
                 assert_eq!(post.coordinate_system.z_axis, dc_project::Axis::Z, "{path}");
             }
-            None => assert!(row.contains("| `null` |"), "{path}: {row}"),
+            None => {
+                assert!(row.contains("| `null` |"), "{path}: {row}");
+                // #306: the reason, from the document that was checked.
+                let source = match definition.id {
+                    "mach3" => "[MILL]",
+                    "uccnc" => "[UM]",
+                    "generic" => "[NIST]",
+                    other => panic!("{other} has no `G53` and no reason"),
+                };
+                assert!(row.contains(source), "{path} cites no source: {row}");
+                assert!(!row.contains("Not checked"), "{path}: {row}");
+            }
         }
     }
     for source in [
@@ -961,6 +977,16 @@ fn machine_command_cited() {
         "motion_control.c",
         "4ec1ae44b857a70d2f9298344feac4b43ed0eb6b",
         "bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e",
+        // #306: LinuxCNC's interpreter, the motion module's limit check,
+        // the forced homing, and where the configuration tools put Z.
+        "a33293f46575c809e082e0806e79ab996f982513",
+        "interp_find.cc",
+        "interp_check.cc",
+        "interp_array.cc",
+        "command.c",
+        "emctaskmain.cc",
+        "stepconf.py",
+        "#gcode:g53",
     ] {
         assert!(section.contains(source), "the section cites {source}");
     }

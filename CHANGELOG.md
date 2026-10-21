@@ -26,7 +26,10 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   peck with a full retract, peck with chip breaking, and dwell. Shapes that are
   not circles are skipped with a warning. On LinuxCNC and Mach3 you can turn on
   canned cycles (`use_canned_cycles`, off by default) to get `G81` and `G82`
-  lines; every other case writes the same holes as plain moves.
+  lines; every other case writes the same holes as plain moves. With a
+  clearance height, a Drill of separately drawn circles is written as cycles
+  from it, which `G98` returns each hole to; one that crosses at both the
+  clearance height and safe Z is written as plain moves ([#305]).
 - **Engrave operation.** Cuts along open and closed lines with the bit centred
   on the line, at a fixed depth, in passes. `alternate_direction` cuts an open
   line back and forth instead of retracting between passes.
@@ -130,12 +133,20 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   operation's `safe_z_mm` stays the height between passes of one part, like
   Fusion's retract height); a tool-change height in machine coordinates,
   written as `G53 G0 Z…` before every tool-change stop and at the end of
-  every program, on grblHAL and GRBL; and a park point the program ends
-  over, like VCarve's Home position ([#283]). All three are `null` on
-  upgrade and from `init`, which exports as before. `export` says to home
-  the machine when a program lifts with `G53`. The definitions gain
-  `work_coordinates.machine_command` (`"G53"` on every grblHAL and GRBL
-  version, `null` on the others), added in place: no program's bytes change.
+  every program, on grblHAL, GRBL and LinuxCNC; and a park point the
+  program ends over, like VCarve's Home position ([#283]). All three are
+  `null` on upgrade and from `init`, which exports as before. `export` and
+  the program's header say to home the machine when a program lifts with
+  `G53`, and what keeps a lift outside the travel from moving: on grblHAL
+  and GRBL, Z homing upward or soft limits on (`$20=1`), since where Z homes
+  downward the lift would otherwise drive Z down; on LinuxCNC, homing, after
+  which its soft limits always apply ([#308]). The definitions gain
+  `work_coordinates.machine_command` (`"G53"` on every grblHAL, GRBL and
+  LinuxCNC version, `null` on the others), added in place: no program's
+  bytes change. LinuxCNC's `G53` was checked against its 2.9 interpreter
+  source ([#306]). Mach3, UCCNC and generic still refuse the tool-change
+  height: their manuals do not say what `G53` does with a tool length
+  offset, and the definitions README gives each reason.
   Older DreamCarve versions cannot read version 12 files.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
@@ -304,7 +315,9 @@ it is written:
   enters the part.
 - **S10:** a ramp or helix never descends faster than the plunge rate.
 - **S11:** a canned-cycle line is expanded into the moves the controller makes,
-  and that expansion must match the Drill toolpath move for move.
+  and that expansion must match the Drill toolpath move for move. Rapids along
+  one vertical line in one direction count as one move there, since cycles
+  from the clearance height pass safe Z without stopping ([#305]).
 - **S12:** a fitted arc replaces only moves it stays within the tolerance of,
   along their whole length, keeps the run's end points, sweeps at most 90°, and
   is dropped for the original lines if the controller would reject it after
@@ -395,6 +408,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#280]: https://github.com/grayzu/dreamcarve/issues/280
 [#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#283]: https://github.com/grayzu/dreamcarve/issues/283
+[#305]: https://github.com/grayzu/dreamcarve/issues/305
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#312]: https://github.com/grayzu/dreamcarve/issues/312
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
@@ -402,3 +416,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
+[#306]: https://github.com/grayzu/dreamcarve/issues/306
+[#308]: https://github.com/grayzu/dreamcarve/issues/308

@@ -7283,26 +7283,25 @@ fn heights_plaque_one_program() {
     );
 }
 
-/// Acceptance 45, the errors: on LinuxCNC, whose documents were not
-/// checked for `G53`, the machine Z is an error naming the setting at its
-/// place in the file; a clearance below an enabled operation's safe Z (15
-/// on the plaque) is an error naming the operation. With all three unset
-/// the version 11 plaque exports the programs it did before #283.
+/// Acceptance 45, the errors: on Mach3, whose manual does not establish
+/// what its `G53` does with a tool length offset (#306), the machine Z is
+/// an error naming the setting at its place in the file; a clearance
+/// below an enabled operation's safe Z (15 on the plaque) is an error
+/// naming the operation. With all three unset the version 11 plaque
+/// exports the programs it did before #283.
 #[test]
 fn heights_errors_and_unset_heights() {
     let dir = work_dir("heights_errors_and_unset_heights");
     let dcv = plaque_with_heights(&dir, acceptance_45_heights());
     let mut project = load_file(&dcv).project;
     project.post_processor =
-        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+        dc_project::PostProcessorRef::latest("mach3").expect("mach3 is bundled");
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     let out = run(&dir, &["check", "plaque.dcv"]);
     assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
     let text = format!("{}{}", stdout(&out), stderr(&out));
     assert!(
-        text.contains(
-            "error: heights.tool_change_machine_z_mm is set, but post-processor `linuxcnc`"
-        ),
+        text.contains("error: heights.tool_change_machine_z_mm is set, but post-processor `mach3`"),
         "{text}"
     );
     assert!(text.contains("plaque.dcv:"), "located: {text}");
@@ -7336,6 +7335,66 @@ fn heights_errors_and_unset_heights() {
     assert_corpus_programs(&dir, "plaque", "heights unset");
     assert!(
         !stdout(&out).contains("home the machine"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// #306: acceptance 45's heights on LinuxCNC. `check` accepts the
+/// machine Z, and `export` writes one program per tool run (LinuxCNC has
+/// no `M6`), each ending with the rise to the clearance height, the park
+/// rapid, `G53 G0 Z-5.000`, then the footer `M5`, `M2`, and says to home
+/// the machine.
+#[test]
+fn heights_on_linuxcnc() {
+    let dir = work_dir("heights_on_linuxcnc");
+    let dcv = plaque_with_heights(&dir, acceptance_45_heights());
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut programs: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("dir readable")
+        .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "ngc"))
+        .collect();
+    programs.sort();
+    assert_eq!(programs.len(), 2, "{programs:?}");
+    for path in &programs {
+        let program = std::fs::read_to_string(path).expect("program written");
+        let code: Vec<String> = code_by_operation(&program)
+            .into_iter()
+            .map(|(_, _, c)| c)
+            .collect();
+        let n = code.len();
+        assert_eq!(
+            code[n - 5..],
+            ["Z20.000", "X0.000 Y0.000", "G53 G0 Z-5.000", "M5", "M2"],
+            "{program}"
+        );
+        assert_eq!(
+            code.iter().filter(|c| c.contains("G53")).count(),
+            1,
+            "{program}"
+        );
+    }
+    assert_eq!(
+        stdout(&out)
+            .matches(
+                "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53)."
+            )
+            .count(),
+        1,
         "{}",
         stdout(&out)
     );
@@ -7392,6 +7451,82 @@ fn export_prints_home_note() {
         "{}",
         stdout(&out)
     );
+}
+
+/// #308 on LinuxCNC (#306): `$20` is GRBL's, so the export note names
+/// LinuxCNC's condition: its soft limits apply only once the machine is
+/// homed, which it enforces unless `[TRAJ] NO_FORCE_HOMING` is set
+/// (definitions README, "Machine-coordinate moves").
+#[test]
+fn export_machine_z_note_on_linuxcnc() {
+    let dir = work_dir("export_machine_z_note_on_linuxcnc");
+    let dcv = plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    let note = "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53). \
+                LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.";
+    assert_eq!(text.lines().filter(|l| *l == note).count(), 1, "{text}");
+    assert!(!text.contains("$20"), "{text}");
+}
+
+/// #308: on a machine that homes Z downward every negative machine Z is
+/// below the travel (GRBL `system.c` 340-344, grblHAL `machine_limits.c`
+/// 129-131), and only soft limits stop the lift from driving Z down, so
+/// the export note names them, `$20=1`, for one program and for a run per
+/// tool. Unset, it says nothing about them.
+#[test]
+fn export_machine_z_note_names_soft_limits() {
+    let dir = work_dir("export_machine_z_note_names_soft_limits");
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    for (args, note) in [
+        (
+            &["export", "plaque.dcv", "--date", FIXED_DATE][..],
+            "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53). \
+             Z must home upward, or soft limits must be on ($20=1).",
+        ),
+        (
+            &[
+                "export",
+                "plaque.dcv",
+                "--one-program",
+                "--date",
+                FIXED_DATE,
+            ][..],
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). \
+             Z must home upward, or soft limits must be on ($20=1).",
+        ),
+    ] {
+        let out = run(&dir, args);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let text = stdout(&out);
+        assert_eq!(
+            text.lines().filter(|l| *l == note).count(),
+            1,
+            "{args:?}\n{text}"
+        );
+        assert_eq!(text.matches("$20=1").count(), 1, "{args:?}\n{text}");
+    }
+    plaque_with_heights(&dir, dc_project::Heights::unset());
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("$20"), "{}", stdout(&out));
 }
 
 /// #283: the repository's corpus of version 11 projects, saved with
