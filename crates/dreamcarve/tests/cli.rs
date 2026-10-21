@@ -1322,8 +1322,10 @@ fn profile_lead_exports_and_passes_safety() {
 
 /// Slice 7 (#138), acceptance test 23 on the CLI: the coaster with an
 /// 8 mm hole at its centre, drilled through in 4 mm pecks with a full
-/// retract and a 0.25 s dwell, checks clean and exports. The program dwells
-/// at the bottom of each of the three pecks, reaches the coaster's depth at
+/// retract and a 0.25 s dwell, checks clean and exports. The pecks count
+/// from the retract height 1 mm above the 11.8 mm stock (#153): to 8.8,
+/// 4.8, 0.8 and −0.2 mm. The program dwells
+/// at the bottom of each of the four pecks, reaches the coaster's depth at
 /// the hole, and moves in XY only at its highest Z (S2); the safety pass,
 /// S6 and S15 included, accepted it.
 #[test]
@@ -1371,7 +1373,7 @@ fn drill_exports_and_passes_safety() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
     let dwells = program.lines().filter(|l| l.trim() == "G4 P0.250").count();
-    assert_eq!(dwells, 3, "one dwell per peck:\n{program}");
+    assert_eq!(dwells, 4, "one dwell per peck:\n{program}");
 
     let moves = dc_gcode::parse_motion(&program).expect("program parses");
     let z = |m: &MachineMove| m.to.z.expect("Z is known");
@@ -1396,7 +1398,7 @@ fn drill_exports_and_passes_safety() {
         .filter(|m| m.kind.is_cut() && m.to.x == at_dwell.to.x && m.to.y == at_dwell.to.y)
         .map(z)
         .collect();
-    assert_eq!(hole_cuts.len(), 3, "three pecks at the hole: {hole_cuts:?}");
+    assert_eq!(hole_cuts.len(), 4, "four pecks at the hole: {hole_cuts:?}");
     assert_approx_eq!(
         hole_cuts.iter().copied().fold(f64::MAX, f64::min),
         deepest,

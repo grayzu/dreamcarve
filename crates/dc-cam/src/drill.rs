@@ -672,10 +672,14 @@ mod tests {
             &[
                 ('R', SAFE_Z_MM),
                 ('R', RETRACT_Z_MM),
-                ('L', 6.0),
-                ('D', 6.0),
+                ('L', 7.0),
+                ('D', 7.0),
                 ('R', RETRACT_Z_MM),
-                ('R', 6.0 + PECK_REENTRY_MM),
+                ('R', 7.0 + PECK_REENTRY_MM),
+                ('L', 1.0),
+                ('D', 1.0),
+                ('R', RETRACT_Z_MM),
+                ('R', 1.0 + PECK_REENTRY_MM),
                 ('L', 0.0),
                 ('D', 0.0),
                 ('R', SAFE_Z_MM),
@@ -685,9 +689,9 @@ mod tests {
 
     /// Port of `camOperationSmoke.test.ts` "drilling peck: multiple plunges
     /// with full retracts", with acceptance 23's numbers: 12 mm in 4 mm
-    /// pecks is three plunges, each but the last retracting to the retract
-    /// plane above the hole top and re-entering 0.5 mm above the depth
-    /// reached.
+    /// pecks from the retract plane 1 mm above the hole top is four
+    /// plunges (to 9, 5, 1 and 0; #153), each but the last retracting to
+    /// the retract plane and re-entering 0.5 mm above the depth reached.
     #[test]
     fn peck_full_retracts_above_hole_top() {
         let p = circles(&[(50.0, 50.0)]);
@@ -699,12 +703,15 @@ mod tests {
             &[
                 ('R', SAFE_Z_MM),
                 ('R', RETRACT_Z_MM),
-                ('L', 8.0),
+                ('L', 9.0),
                 ('R', RETRACT_Z_MM),
-                ('R', 8.5),
-                ('L', 4.0),
+                ('R', 9.5),
+                ('L', 5.0),
                 ('R', RETRACT_Z_MM),
-                ('R', 4.5),
+                ('R', 5.5),
+                ('L', 1.0),
+                ('R', RETRACT_Z_MM),
+                ('R', 1.5),
                 ('L', 0.0),
                 ('R', SAFE_Z_MM),
             ],
@@ -726,10 +733,12 @@ mod tests {
             &[
                 ('R', SAFE_Z_MM),
                 ('R', RETRACT_Z_MM),
-                ('L', 8.0),
-                ('R', 8.3),
-                ('L', 4.0),
-                ('R', 4.3),
+                ('L', 9.0),
+                ('R', 9.3),
+                ('L', 5.0),
+                ('R', 5.3),
+                ('L', 1.0),
+                ('R', 1.3),
                 ('L', 0.0),
                 ('R', SAFE_Z_MM),
             ],
@@ -745,7 +754,7 @@ mod tests {
         op.cycle = peck(None, PeckRetract::Full);
         let (drilled, _) = generate(&p, &op);
         let zs: Vec<f64> = plunges(&drilled.toolpath).iter().map(|m| m.to.z).collect();
-        assert_xs(&zs, &[8.0, 4.0, 0.0]);
+        assert_xs(&zs, &[9.0, 5.0, 1.0, 0.0]);
 
         p.tools[0].step_down_mm = None;
         let err = generate_drill(&p, &op).unwrap_err();
@@ -755,11 +764,13 @@ mod tests {
         );
     }
 
-    /// 12 mm in 5 mm pecks: 5, 5, then 2. Only the last peck is short.
+    /// 12 mm in 5 mm pecks from the stock top (retract 0): 5, 5, then 2.
+    /// With the retract plane on the top, only the last peck is short.
     #[test]
     fn last_peck_is_shallower_never_deeper() {
         let p = circles(&[(50.0, 50.0)]);
         let mut op = drill_op(&p);
+        op.retract_mm = 0.0;
         op.cycle = peck(Some(5.0), PeckRetract::ChipBreak { gap_mm: 0.5 });
         let (drilled, _) = generate(&p, &op);
         let zs: Vec<f64> = plunges(&drilled.toolpath).iter().map(|m| m.to.z).collect();

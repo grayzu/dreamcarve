@@ -4219,17 +4219,16 @@ mod tests {
     }
 
     /// Port of `testCannedPeckG83`: a peck with a full retract writes `G83`
-    /// with the peck as `Q`. The controller pecks from `R`, so the program
-    /// is written as cycles only when `R` is the stock top (retract 0);
-    /// with the retract plane above it, the pecks would differ from the
-    /// toolpath's, and the Drill is written as moves, with the reason.
+    /// with the peck as `Q`, here with `R` on the stock top (retract 0).
+    /// [`g83_written_with_nonzero_retract_when_definition_has_it`] covers
+    /// a retract plane above it (#153).
     #[test]
     fn peck_writes_g83_with_q() {
         let peck = dc_project::DrillCycle::Peck {
             peck_depth_mm: Some(2.0),
             retract: dc_project::PeckRetract::Full,
         };
-        let (project, op) = drill_project(peck.clone(), 0.0, 0.0);
+        let (project, op) = drill_project(peck, 0.0, 0.0);
         let ops = drill_entry(&project, &op);
         let order = cut_order(&ops[0]);
         let (program, warnings) = emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
@@ -4241,18 +4240,6 @@ mod tests {
             format!("G83 X{x:.3} Y{y:.3} Z-5.000 R0.000 Q2.000 F300.000")
         );
         assert_eq!(lines.len(), HOLES.len());
-
-        let (project, op) = drill_project(peck, 0.0, 1.0);
-        let ops = drill_entry(&project, &op);
-        let (program, warnings) = emit_with(&project, &canned_post(&project), &ops, DATE).unwrap();
-        assert!(!has_cycle_word(&program.text), "{}", program.text);
-        assert_eq!(
-            warnings,
-            [ExportWarning::CannedCycleExpanded {
-                op: op.id.clone(),
-                reason: CannedExpansion::MotionDiffers,
-            }]
-        );
     }
 
     /// #153: the Drill toolpath pecks from the retract plane, as the
