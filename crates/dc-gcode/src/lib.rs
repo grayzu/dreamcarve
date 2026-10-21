@@ -14,6 +14,7 @@ pub mod arcfit;
 pub mod canned;
 pub mod emit;
 mod error;
+pub mod estimate;
 pub mod format;
 mod material;
 pub mod parse;
@@ -28,5 +29,6 @@ pub use emit::{
     emit_programs,
 };
 pub use error::ExportError;
+pub use estimate::{Estimate, estimate};
 pub use parse::{CycleModel, MachineMove, parse_motion, parse_motion_with};
 pub use safety::{AxisRange, Extents, MAX_LINE_CHARS};
