@@ -183,7 +183,7 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             Ok(((toolpath, holes), warnings)) => {
                 findings.warnings.extend(warnings.iter().map(|w| {
                     Finding::coded(
-                        w.code.as_str(),
+                        w.code().as_str(),
                         format!("operation `{}`: {w}", operation.id()),
                     )
                 }));
@@ -206,11 +206,11 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
     findings
         .warnings
         .extend(order::check(project, &generated).iter().map(|w| {
-            let message = match w.param("op") {
+            let message = match w.op() {
                 Some(op) => format!("operation `{op}`: {w}"),
                 None => w.to_string(),
             };
-            Finding::coded(w.code.as_str(), message)
+            Finding::coded(w.code().as_str(), message)
         }));
     if !findings.errors.is_empty() {
         return Built {

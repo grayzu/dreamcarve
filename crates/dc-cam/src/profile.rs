@@ -32,7 +32,7 @@ use crate::tabs::{
     LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::{OpenPathReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
     distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset,
@@ -156,10 +156,10 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// With `op.tabs`, every pass below the tab top rises over each tab span
 /// (`width + diameter` along the tool-centre contour); overlapping spans
-/// merge with [`WarningCode::TabsOverlap`], spans covering more than half a
-/// contour give [`WarningCode::TabsCoverMostOfContour`] (the tabs are still
+/// merge with [`Warning::TabsOverlap`], spans covering more than half a
+/// contour give [`Warning::TabsCoverMostOfContour`] (the tabs are still
 /// cut as set), and a tab top no pass reaches,
-/// or one above the stock top, gives [`WarningCode::TabsOutsideCutRange`].
+/// or one above the stock top, gives [`Warning::TabsOutsideCutRange`].
 ///
 /// With `op.entry` a ramp or helix (design spec, "Algorithms → Entry"),
 /// each pass reaches its depth at the contour start without a plunge:
@@ -174,7 +174,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// between tabs where it does not (#176), on every pass; the tabs stay at
 /// their distances from the original start. An entry that does not fit
 /// falls back to a ramp, then a plunge, with
-/// [`WarningCode::EntryFallback`]; so does a contour whose start no
+/// [`Warning::EntryFallback`]; so does a contour whose start no
 /// stretch frees.
 ///
 /// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
@@ -184,9 +184,9 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// the lap from the arrival, the overcut and the exit arc at the feed
 /// rate, and retracts. Below the tab top the arcs keep off the tabs, and
 /// the tabs stay where they were along the outline. A lead that fits only
-/// smaller warns [`WarningCode::LeadShrunk`]; one that does not fit, an
+/// smaller warns [`Warning::LeadShrunk`]; one that does not fit, an
 /// exit that does not fit, and any lead on an On line Profile warn
-/// [`WarningCode::LeadDropped`].
+/// [`Warning::LeadDropped`].
 ///
 /// With `op.corner_relief`, a dogbone or T-bone notch is cut in each
 /// corner the round tool cannot reach (Inside: the hole's corners;
@@ -195,21 +195,21 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// opened the column it plunges in and none after the pass that frees the
 /// shape, whose levels are cut from inside its lap (the `relief` module,
 /// #189, #193); On line warns
-/// [`WarningCode::ReliefSkipped`].
+/// [`Warning::ReliefSkipped`].
 ///
 /// An On line Profile also cuts open paths (#175, as VCarve's Profile
 /// "On" an open vector): each pass runs the path from its first vertex to
 /// its last (conventional) or from its last to its first (climb, #242), with
 /// the ramp along it and its tabs placed from its first vertex as drawn,
 /// then retracts; it has no lead, no relief and frees nothing. Inside and
-/// Outside skip open paths ([`WarningCode::OpenPathSkipped`]), as they
+/// Outside skip open paths ([`Warning::OpenPathSkipped`]), as they
 /// have no side.
 ///
 /// Open paths Inside and Outside, shapes the tool cannot fit, and
 /// duplicate shapes (closed, or open paths drawn twice either way, #221)
 /// are skipped with a [`Warning`]. Shapes in different
 /// regions whose tool paths cut into each other give
-/// [`WarningCode::ToolpathsOverlap`], in cut order; an open path cut On
+/// [`Warning::ToolpathsOverlap`], in cut order; an open path cut On
 /// line is a shape of its own unless it lies in a region's material
 /// (#206, [`crate::overlap`]). Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
@@ -220,7 +220,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// when an Inside path would come closer than the tool radius, or an On
 /// line path closer than its diameter, to another line of its region, a
 /// band narrower than the tool ([`CamError::BandNarrowerThanTool`], #192,
-/// #199; a contour with no path at all is [`WarningCode::ToolTooLarge`]
+/// #199; a contour with no path at all is [`Warning::ToolTooLarge`]
 /// and skipped; an open path a region holds is compared with that
 /// region's lines and its other open paths away from where they meet,
 /// #210; an On line line is also compared with its own stretches far
@@ -320,11 +320,10 @@ pub fn generate_profile(
         } = warning;
         if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
         {
-            warnings.push(
-                shape_warning(WarningCode::DuplicateShapeDropped, dropped)
-                    .with("duplicate_of_instance", &kept.instance)
-                    .with("duplicate_of_profile", kept.profile),
-            );
+            warnings.push(Warning::DuplicateShapeDropped {
+                shape: dropped.clone(),
+                duplicate_of: kept.clone(),
+            });
         }
     }
     // #221: an open path drawn twice is cut once, as a closed shape is.
@@ -346,11 +345,12 @@ pub fn generate_profile(
                 Offset::None => vec![contour.clone()],
             };
             if centres.is_empty() {
-                warnings.push(
-                    shape_warning(WarningCode::ToolTooLarge, shape)
-                        .with("tool", &tool.name)
-                        .with("diameter_mm", tool.diameter_mm),
-                );
+                warnings.push(Warning::ToolTooLarge {
+                    shape: shape.clone(),
+                    tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
+                    diameter_mm: tool.diameter_mm,
+                });
                 continue;
             }
             check_band(
@@ -731,7 +731,7 @@ pub fn generate_profile(
 ///
 /// [`CamError::BandNarrowerThanTool`] names the two shapes, the one drawn
 /// first first. Paths in different regions are D6's
-/// [`WarningCode::ToolpathsOverlap`]; under Inside never closer than `r`
+/// [`Warning::ToolpathsOverlap`]; under Inside never closer than `r`
 /// once this check passes.
 #[allow(
     clippy::too_many_arguments,
@@ -845,7 +845,7 @@ fn check_self_band(
 
 /// #221: `open` without the paths that repeat an earlier one exactly,
 /// the same vertices in the same or the reverse direction, each dropped
-/// with [`WarningCode::DuplicateShapeDropped`] naming the one kept, as
+/// with [`Warning::DuplicateShapeDropped`] naming the one kept, as
 /// `nest` drops a closed shape drawn twice.
 fn drop_duplicate_paths(
     open: Vec<(ShapeRef, Polyline)>,
@@ -855,11 +855,10 @@ fn drop_duplicate_paths(
     for (shape, path) in open {
         let reversed = path.reversed();
         match kept.iter().find(|(_, k)| *k == path || *k == reversed) {
-            Some((original, _)) => warnings.push(
-                shape_warning(WarningCode::DuplicateShapeDropped, &shape)
-                    .with("duplicate_of_instance", &original.instance)
-                    .with("duplicate_of_profile", original.profile),
-            ),
+            Some((original, _)) => warnings.push(Warning::DuplicateShapeDropped {
+                shape,
+                duplicate_of: original.clone(),
+            }),
             None => kept.push((shape, path)),
         }
     }
@@ -1305,7 +1304,7 @@ pub(crate) fn resolve_targets(
 /// [`resolve_targets`], with the open paths placed into `open` instead
 /// when it is given (#175: an On line Profile cuts them). An open path
 /// with no length has nothing to cut and is skipped with
-/// [`WarningCode::OpenPathSkipped`] (`reason: no_length`).
+/// [`Warning::OpenPathSkipped`] ([`OpenPathReason::NoLength`]).
 fn resolve_shapes(
     project: &Project,
     op: &OperationId,
@@ -1338,7 +1337,10 @@ fn resolve_shapes(
             };
             if !polyline.is_closed() {
                 let Some(open) = open.as_deref_mut() else {
-                    warnings.push(shape_warning(WarningCode::OpenPathSkipped, &shape));
+                    warnings.push(Warning::OpenPathSkipped {
+                        shape,
+                        reason: OpenPathReason::NoSide,
+                    });
                     continue;
                 };
                 let placed = instance
@@ -1349,10 +1351,10 @@ fn resolve_shapes(
                         source,
                     })?;
                 if placed.length_mm() <= EPS_MM {
-                    warnings.push(
-                        shape_warning(WarningCode::OpenPathSkipped, &shape)
-                            .with("reason", "no_length"),
-                    );
+                    warnings.push(Warning::OpenPathSkipped {
+                        shape,
+                        reason: OpenPathReason::NoLength,
+                    });
                     continue;
                 }
                 open.push((shape, placed));
@@ -1384,15 +1386,6 @@ pub(crate) fn crossing_error(error: GeometryError, shapes: &[(ShapeRef, Contour)
         };
     }
     CamError::Geometry(error)
-}
-
-/// A warning about `shape`, with its `instance`, `instance_name`, and
-/// `profile` params set.
-pub(crate) fn shape_warning(code: WarningCode, shape: &ShapeRef) -> Warning {
-    Warning::new(code)
-        .with("instance", &shape.instance)
-        .with("instance_name", &shape.instance_name)
-        .with("profile", shape.profile)
 }
 
 /// True when `nested` is `input` as `nest` returns it: unchanged, or
@@ -1604,7 +1597,7 @@ mod tests {
     }
 
     fn codes(warnings: &[Warning]) -> Vec<WarningCode> {
-        warnings.iter().map(|w| w.code).collect()
+        warnings.iter().map(|w| w.code()).collect()
     }
 
     #[test]
@@ -1932,8 +1925,11 @@ mod tests {
         let p = project(vec![rect_100x50(), open], &[("i1", at_20_20())]);
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
-        assert_eq!(warnings[0].param("instance"), Some("i1"));
-        assert_eq!(warnings[0].param("profile"), Some("1"));
+        let Warning::OpenPathSkipped { shape, reason } = &warnings[0] else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!((shape.instance.as_str(), shape.profile), ("i1", 1));
+        assert_eq!(*reason, OpenPathReason::NoSide);
         // #175: the message says what does cut it.
         let message = warnings[0].to_string();
         assert!(
@@ -1952,9 +1948,11 @@ mod tests {
         let p = ring_project(2.0);
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::ToolTooLarge]);
-        assert_eq!(warnings[0].param("instance"), Some("i1"));
-        assert_eq!(warnings[0].param("profile"), Some("1"));
-        assert_eq!(warnings[0].param("tool"), Some("6.35 mm upcut"));
+        let Warning::ToolTooLarge { shape, tool, .. } = &warnings[0] else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!((shape.instance.as_str(), shape.profile), ("i1", 1));
+        assert_eq!(tool, "6.35 mm upcut");
         for z in PASS_Z_MM {
             let laps = laps_at(&tp, z);
             assert_eq!(laps.len(), 1, "only the outer at Z {z}");
@@ -2222,8 +2220,15 @@ mod tests {
         );
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::DuplicateShapeDropped]);
-        assert_eq!(warnings[0].param("instance"), Some("i2"));
-        assert_eq!(warnings[0].param("duplicate_of_instance"), Some("i1"));
+        let Warning::DuplicateShapeDropped {
+            shape,
+            duplicate_of,
+        } = &warnings[0]
+        else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!(shape.instance.as_str(), "i2");
+        assert_eq!(duplicate_of.instance.as_str(), "i1");
         for z in PASS_Z_MM {
             assert_eq!(laps_at(&tp, z).len(), 1, "one contour at Z {z}");
         }
@@ -2589,7 +2594,7 @@ mod tests {
         }
     }
 
-    /// A tab warning's `contour` param counts contours in cut order, which
+    /// A tab warning's `contour` counts contours in cut order, which
     /// nearest neighbour sets: the square at X = 30 (instance `i3`) is cut
     /// second, so it is contour 1.
     #[test]
@@ -2605,19 +2610,18 @@ mod tests {
             shape: TabShape::Rect,
         });
         let (_, warnings) = generate(&p, &op);
-        let covered: Vec<(Option<&str>, Option<&str>)> = warnings
+        let covered: Vec<(usize, &str)> = warnings
             .iter()
-            .filter(|w| w.code == WarningCode::TabsCoverMostOfContour)
-            .map(|w| (w.param("contour"), w.param("instance")))
+            .filter_map(|w| match w {
+                Warning::TabsCoverMostOfContour {
+                    contour,
+                    shape: Some(shape),
+                    ..
+                } => Some((*contour, shape.instance.as_str())),
+                _ => None,
+            })
             .collect();
-        assert_eq!(
-            covered,
-            [
-                (Some("0"), Some("i1")),
-                (Some("1"), Some("i3")),
-                (Some("2"), Some("i2")),
-            ]
-        );
+        assert_eq!(covered, [(0, "i1"), (1, "i3"), (2, "i2")]);
     }
 
     // ── #176: the start moves off a tab ──
@@ -2847,15 +2851,18 @@ mod tests {
     }
 
     /// #175: an open path with no length has nothing to cut On line; it
-    /// is skipped with `open_path_skipped` (`reason: no_length`).
+    /// is skipped with `open_path_skipped` ([`OpenPathReason::NoLength`]).
     #[test]
     fn on_line_open_path_with_no_length_is_skipped() {
         let dot = Polyline::new(vec![Vertex::line(5.0, 5.0), Vertex::line(5.0, 5.0)], false);
         let p = project(vec![rect_100x50(), dot], &[("i1", at_20_20())]);
         let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
         assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
-        assert_eq!(warnings[0].param("reason"), Some("no_length"));
-        assert_eq!(warnings[0].param("profile"), Some("1"));
+        let Warning::OpenPathSkipped { shape, reason } = &warnings[0] else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_eq!(*reason, OpenPathReason::NoLength);
+        assert_eq!(shape.profile, 1);
         assert!(warnings[0].to_string().contains("no length"));
         assert_eq!(laps(&tp).len(), PASS_Z_MM.len(), "only the rect is cut");
     }
@@ -3447,10 +3454,19 @@ mod tests {
                 WarningCode::DuplicateShapeDropped
             ]
         );
-        for (warning, profile) in warnings.iter().zip(["2", "3"]) {
-            assert_eq!(warning.param("profile"), Some(profile));
-            assert_eq!(warning.param("duplicate_of_instance"), Some("i1"));
-            assert_eq!(warning.param("duplicate_of_profile"), Some("1"));
+        for (warning, profile) in warnings.iter().zip([2, 3]) {
+            let Warning::DuplicateShapeDropped {
+                shape,
+                duplicate_of,
+            } = warning
+            else {
+                panic!("{warning:?}");
+            };
+            assert_eq!(shape.profile, profile);
+            assert_eq!(
+                (duplicate_of.instance.as_str(), duplicate_of.profile),
+                ("i1", 1)
+            );
         }
         assert_eq!(
             laps(&tp).len(),

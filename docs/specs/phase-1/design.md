@@ -333,7 +333,9 @@ pub enum MoveKind { Rapid, Linear, ArcCw { centre: Point }, ArcCcw { centre: Poi
 pub struct Move { pub kind: MoveKind, pub to: Point3, pub feed_mm_min: Option<f64> }
 // Rapids carry no feed. Every Linear/Arc carries Some(feed).
 
-pub struct Warning { pub code: WarningCode, pub params: BTreeMap<String, String> }
+// #248: one variant per WarningCode, with typed fields; `code()` gives the
+// stable snake_case code and `Display` the message.
+pub enum Warning { OpenPathSkipped { shape: ShapeRef, reason: OpenPathReason }, /* … */ }
 
 pub fn generate_profile(project: &Project, op: &ProfileOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 

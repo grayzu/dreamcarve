@@ -33,9 +33,8 @@
 //! [`MAX_CLEARANCE_CELLS`].
 
 use crate::error::ShapeRef;
-use crate::profile::shape_warning;
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::Warning;
 use dc_geometry::{EPS_MM, Point, Point3, Region, Vec2};
 use dc_project::{CutDirection, Entry, OperationId};
 use std::cell::OnceCell;
@@ -1378,19 +1377,22 @@ impl EntryWarnings {
         let fallbacks = self
             .fallbacks
             .into_iter()
-            .map(|(shape, requested, used, reason)| {
-                shape_warning(WarningCode::EntryFallback, &shape)
-                    .with("op", op)
-                    .with("requested", requested.as_str())
-                    .with("used", used.as_str())
-                    .with("reason", reason.as_str())
+            .map(|(shape, requested, used, reason)| Warning::EntryFallback {
+                op: op.clone(),
+                shape,
+                requested,
+                used,
+                reason,
             });
-        let reduced = self.reduced.into_iter().map(|(shape, d)| {
-            shape_warning(WarningCode::HelixDiameterReduced, &shape)
-                .with("op", op)
-                .with("requested_mm", d.requested_mm)
-                .with("used_mm", d.used_mm)
-        });
+        let reduced = self
+            .reduced
+            .into_iter()
+            .map(|(shape, d)| Warning::HelixDiameterReduced {
+                op: op.clone(),
+                shape,
+                requested_mm: d.requested_mm,
+                used_mm: d.used_mm,
+            });
         fallbacks.chain(reduced).collect()
     }
 }

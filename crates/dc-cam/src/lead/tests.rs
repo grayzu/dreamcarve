@@ -327,8 +327,10 @@ fn domain_rejection_leaves_no_lead_and_warns() {
     let (tp, warnings) = generate(&p, &inside(&p, Some(lead_of(3.0))));
     let dropped = codes(&warnings, WarningCode::LeadDropped);
     assert_eq!(dropped.len(), 1, "{warnings:?}");
-    assert_eq!(dropped[0].param("reason"), Some("no_room"));
-    assert_eq!(dropped[0].param("instance"), Some("slot"));
+    assert_eq!(
+        dropped_of(dropped[0]),
+        (LeadDroppedReason::NoRoom, Some("slot"))
+    );
     assert!(arcs(&tp).is_empty(), "no lead arc is cut");
 }
 
@@ -524,7 +526,38 @@ fn generate(p: &Project, o: &ProfileOp) -> (Toolpath, Vec<Warning>) {
 }
 
 fn codes(warnings: &[Warning], code: WarningCode) -> Vec<&Warning> {
-    warnings.iter().filter(|w| w.code == code).collect()
+    warnings.iter().filter(|w| w.code() == code).collect()
+}
+
+/// The reason of a `lead_dropped` warning, and the instance it names.
+fn dropped_of(warning: &Warning) -> (LeadDroppedReason, Option<&str>) {
+    let Warning::LeadDropped { shape, reason, .. } = warning else {
+        panic!("{warning:?}");
+    };
+    (*reason, shape.as_ref().map(|s| s.instance.as_str()))
+}
+
+/// The instance a `lead_shrunk` warning names, and its radii and sweeps
+/// asked for and cut.
+fn shrunk_of(warning: &Warning) -> (&str, f64, f64, f64, f64) {
+    let Warning::LeadShrunk {
+        shape,
+        requested_mm,
+        used_mm,
+        requested_sweep_deg,
+        used_sweep_deg,
+        ..
+    } = warning
+    else {
+        panic!("{warning:?}");
+    };
+    (
+        shape.instance.as_str(),
+        *requested_mm,
+        *used_mm,
+        *requested_sweep_deg,
+        *used_sweep_deg,
+    )
 }
 
 /// Every arc move with the point it starts from.
@@ -707,8 +740,9 @@ fn thirty_mm_radius_is_shrunk() {
     let (tp, warnings) = generate(&p, &inside(&p, Some(lead_of(30.0))));
     let shrunk = codes(&warnings, WarningCode::LeadShrunk);
     assert_eq!(shrunk.len(), 1, "{warnings:?}");
-    assert_eq!(shrunk[0].param("requested_mm"), Some("30"));
-    assert_eq!(shrunk[0].param("instance"), Some("hole"));
+    let (instance, requested_mm, ..) = shrunk_of(shrunk[0]);
+    assert_approx_eq!(requested_mm, 30.0, EPS_MM);
+    assert_eq!(instance, "hole");
     let (ins, _) = leads_on_rect(&tp, min, max);
     assert_eq!(ins.len(), PASS_Z_MM.len(), "a lead is still cut");
 }
@@ -723,7 +757,7 @@ fn seven_mm_hole_drops_the_lead() {
     let (tp, warnings) = generate(&p, &inside(&p, Some(lead_of(3.0))));
     let dropped = codes(&warnings, WarningCode::LeadDropped);
     assert_eq!(dropped.len(), 1, "{warnings:?}");
-    assert_eq!(dropped[0].param("reason"), Some("no_room"));
+    assert_eq!(dropped_of(dropped[0]).0, LeadDroppedReason::NoRoom);
     for (_, mv) in arcs(&tp) {
         assert!(centre_of(&mv).distance_to(centre) < 1e-6, "{mv:?}");
     }
@@ -772,8 +806,8 @@ fn on_line_drops_the_lead_and_warns() {
     let (tp, warnings) = generate(&p, &profile(&p, Side::OnLine, Some(lead_of(3.0))));
     let dropped = codes(&warnings, WarningCode::LeadDropped);
     assert_eq!(dropped.len(), 1, "{warnings:?}");
-    assert_eq!(dropped[0].param("reason"), Some("on_line"));
-    assert_eq!(dropped[0].param("op"), Some("o1"));
+    assert_eq!(dropped_of(dropped[0]), (LeadDroppedReason::OnLine, None));
+    assert_eq!(dropped[0].op().map(OperationId::as_str), Some("o1"));
     assert!(arcs(&tp).is_empty());
 }
 
@@ -867,14 +901,13 @@ fn lead_shrunk_warns_with_both_radii() {
     let (_, warnings) = generate(&p, &inside(&p, Some(lead_of(10.0))));
     let shrunk = codes(&warnings, WarningCode::LeadShrunk);
     assert_eq!(shrunk.len(), 1, "{warnings:?}");
-    assert_eq!(shrunk[0].param("requested_mm"), Some("10"));
-    let used: f64 = shrunk[0].param("used_mm").unwrap().parse().unwrap();
+    let (_, requested_mm, used, requested_sweep_deg, used_sweep_deg) = shrunk_of(shrunk[0]);
+    assert_approx_eq!(requested_mm, 10.0, EPS_MM);
     assert!(
         [7.5, 5.0, 2.5].iter().any(|r| (used - r).abs() < 1e-9),
         "a rung of the ladder: {used}"
     );
-    assert!(shrunk[0].param("requested_sweep_deg").is_some());
-    assert!(shrunk[0].param("used_sweep_deg").is_some());
+    assert!(requested_sweep_deg.is_finite() && used_sweep_deg.is_finite());
 }
 
 /// Samples of an arc move, every 1°.

@@ -3524,6 +3524,118 @@ fn one_program_and_programs_per_tool_flags() {
     );
 }
 
+/// The index of every line of `program` that cuts: a line with an axis
+/// word while the modal motion is `G1`, `G2` or `G3`.
+fn cutting_lines(program: &str) -> Vec<usize> {
+    let mut cutting = false;
+    let mut out = Vec::new();
+    for (i, line) in program.lines().enumerate() {
+        let words = code_words(line);
+        for w in &words {
+            match w.as_str() {
+                "G0" | "G00" => cutting = false,
+                "G1" | "G01" | "G2" | "G02" | "G3" | "G03" => cutting = true,
+                _ => {}
+            }
+        }
+        let moves = words.iter().any(|w| w.starts_with(['X', 'Y', 'Z']));
+        if cutting && moves {
+            out.push(i);
+        }
+    }
+    out
+}
+
+/// Acceptance 33 (#252): the plaque (operations Pocket, Pocket, Drill,
+/// Profile "Cut out" with T1, then Engrave with T2) exported with
+/// `--one-program --post grblhal` is one program with exactly one
+/// `T2 M6`, after the Profile's last cutting move and before the
+/// Engrave's first. The project file is unchanged (it is saved first in
+/// the canonical layout, which `--post` writes back: the committed
+/// fixture is hand-formatted).
+#[test]
+fn plaque_one_program_changes_tool_before_the_engrave() {
+    let dir = work_dir("plaque_one_program_changes_tool_before_the_engrave");
+    let dcv = copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
+    let project = load_file(&dcv).project;
+    let names: Vec<&str> = project.operations.iter().map(Operation::name).collect();
+    assert_eq!(
+        names,
+        [
+            "Panel",
+            "Square recess",
+            "Screw holes",
+            "Cut out",
+            "Border and squiggle"
+        ]
+    );
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plaque.dcv",
+            "--one-program",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let programs: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "nc"))
+        .collect();
+    assert_eq!(
+        programs,
+        [dir.join("plaque.nc")],
+        "exactly one program: {programs:?}"
+    );
+    let program = std::fs::read_to_string(dir.join("plaque.nc")).expect("plaque.nc written");
+    let lines: Vec<&str> = program.lines().collect();
+    let changes: Vec<usize> = (0..lines.len())
+        .filter(|&i| code_words(lines[i]).starts_with(&["T2".to_owned(), "M6".to_owned()]))
+        .collect();
+    assert_eq!(changes.len(), 1, "one T2 M6: {changes:?}\n{program}");
+    let change = changes[0];
+    let header = |name: &str| {
+        lines
+            .iter()
+            .position(|l| l.starts_with("( Operation ") && l.ends_with(&format!(": {name} )")))
+            .unwrap_or_else(|| panic!("no operation comment for {name}:\n{program}"))
+    };
+    let (profile, engrave) = (header("Cut out"), header("Border and squiggle"));
+    assert!(profile < engrave, "the Profile comes before the Engrave");
+    let cuts = cutting_lines(&program);
+    let last_profile_cut = cuts
+        .iter()
+        .copied()
+        .filter(|&i| profile < i && i < engrave)
+        .max()
+        .unwrap_or_else(|| panic!("the Profile cuts:\n{program}"));
+    let first_engrave_cut = cuts
+        .iter()
+        .copied()
+        .find(|&i| i > engrave)
+        .unwrap_or_else(|| panic!("the Engrave cuts:\n{program}"));
+    assert!(
+        last_profile_cut < change && change < first_engrave_cut,
+        "T2 M6 at line {} lies between the Profile's last cut (line {}) and the Engrave's first (line {})",
+        change + 1,
+        last_profile_cut + 1,
+        first_engrave_cut + 1
+    );
+    assert_eq!(
+        std::fs::read(&dcv).expect("dcv readable"),
+        before,
+        "the project file is unchanged"
+    );
+}
+
 /// `config path` prints the config directory, the config file and the
 /// tool library file, each with whether it exists, so a user can find
 /// them (design, "Tool library CLI").
