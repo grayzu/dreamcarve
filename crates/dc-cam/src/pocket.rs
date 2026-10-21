@@ -170,6 +170,7 @@ pub fn generate_pocket(
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             cutter: tool.cutter.describe(),
         });
     }
@@ -177,6 +178,7 @@ pub fn generate_pocket(
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -203,6 +205,7 @@ pub fn generate_pocket(
             .ok_or_else(|| CamError::MissingStepDown {
                 op: op.id.clone(),
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             })?;
     let thickness_mm = project
         .stock
@@ -225,6 +228,7 @@ pub fn generate_pocket(
         .ok_or_else(|| CamError::MissingStepOver {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
         })?;
     let invalid_step_over = || CamError::InvalidStepOver {
         op: op.id.clone(),
@@ -554,6 +558,7 @@ fn reference_of(project: &Project, op: &PocketOp) -> Result<Option<rest::Referen
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -1573,6 +1578,7 @@ mod tests {
             CamError::MissingStepDown {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
 
@@ -1601,6 +1607,7 @@ mod tests {
             CamError::MissingStepOver {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
         op.step_over_fraction = Some(1.5);

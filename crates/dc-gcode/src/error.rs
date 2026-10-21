@@ -56,6 +56,8 @@ pub enum ExportError {
     MissingFeed {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// Which rate is missing.
         field: FeedField,
     },
@@ -69,6 +71,8 @@ pub enum ExportError {
     MissingRpm {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
     },
     /// One program was asked for operations that use more than one tool,
     /// but the post-processor's tool-change mode is not `"m6"`, or its tool

@@ -1208,6 +1208,7 @@ impl Rates {
             if !rate.is_some_and(|r| r.is_finite() && r > 0.0) {
                 return Err(ExportError::MissingFeed {
                     tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
                     field,
                 });
             }
@@ -1216,6 +1217,7 @@ impl Rates {
         if rpm.is_none() && control == SpindleControl::Automatic {
             return Err(ExportError::MissingRpm {
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             });
         }
         Ok(Self { rpm })
@@ -2369,7 +2371,7 @@ mod tests {
         ops[0].tool.feed_mm_min = None;
         let err = emit(&project, &ops, DATE).unwrap_err();
         assert!(
-            matches!(&err, ExportError::MissingFeed { tool, field: FeedField::Feed } if tool == "6.35 mm upcut"),
+            matches!(&err, ExportError::MissingFeed { tool, field: FeedField::Feed, .. } if tool == "6.35 mm upcut"),
             "{err:?}"
         );
         let message = err.to_string();
@@ -2421,10 +2423,32 @@ mod tests {
             ops[0].tool.rpm = rpm;
             let err = emit(&project, &ops, DATE).unwrap_err();
             assert!(
-                matches!(&err, ExportError::MissingRpm { tool } if tool == "6.35 mm upcut"),
+                matches!(&err, ExportError::MissingRpm { tool, .. } if tool == "6.35 mm upcut"),
                 "{err:?}"
             );
         }
+    }
+
+    /// #71: two tools may share a name, so an error about a tool's rates
+    /// carries its id as well as the name it prints.
+    #[test]
+    fn tool_errors_carry_the_tool_id() {
+        let project = sample_project();
+        let t1 = ToolId::new("t1");
+        let mut ops = ops_for(&project);
+        ops[0].tool.feed_mm_min = None;
+        let err = emit(&project, &ops, DATE).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::MissingFeed { tool_id, .. } if *tool_id == t1),
+            "{err:?}"
+        );
+        let mut ops = ops_for(&project);
+        ops[0].tool.rpm = None;
+        let err = emit(&project, &ops, DATE).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::MissingRpm { tool_id, .. } if *tool_id == t1),
+            "{err:?}"
+        );
     }
 
     #[test]

@@ -129,6 +129,7 @@ fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
 pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
     let missing = |field| CamError::MissingFeed {
         tool: tool.name.clone(),
+        tool_id: tool.id.clone(),
         field,
     };
     Ok(LapRates {
@@ -249,6 +250,7 @@ pub fn generate_profile(
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             cutter: tool.cutter.describe(),
         });
     }
@@ -256,6 +258,7 @@ pub fn generate_profile(
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -275,6 +278,7 @@ pub fn generate_profile(
             .ok_or_else(|| CamError::MissingStepDown {
                 op: op.id.clone(),
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             })?;
     let thickness_mm = project
         .stock
@@ -2234,6 +2238,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Feed
             }
         );
@@ -2244,6 +2249,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Plunge
             }
         );
@@ -2254,6 +2260,36 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed { .. }
         ));
+    }
+
+    /// #71: two tools may share a name, so an error about a tool carries
+    /// its id as well as the name it prints.
+    #[test]
+    fn tool_errors_carry_the_tool_id() {
+        let tool_id = |err: CamError| match err {
+            CamError::MissingFeed { tool_id, .. }
+            | CamError::CutterNotFlat { tool_id, .. }
+            | CamError::MissingStepDown { tool_id, .. }
+            | CamError::InvalidToolDiameter { tool_id, .. } => tool_id,
+            other => panic!("a tool error, not {other:?}"),
+        };
+        let t1 = ToolId::new("t1");
+        let op = profile_op(&rect_project(), Side::Outside, CutDirection::Climb);
+        let fails = |change: &dyn Fn(&mut Project)| {
+            let mut p = rect_project();
+            change(&mut p);
+            assert_eq!(p.tools[0].id, t1);
+            generate_profile(&p, &op).unwrap_err()
+        };
+        let errors = [
+            fails(&|p| p.tools[0].feed_mm_min = None),
+            fails(&|p| p.tools[0].cutter = dc_project::ToolKind::BallNose),
+            fails(&|p| p.tools[0].diameter_mm = 0.0),
+            fails(&|p| p.tools[0].step_down_mm = None),
+        ];
+        for err in errors {
+            assert_eq!(tool_id(err.clone()), t1, "{err:?}");
+        }
     }
 
     /// #67: Profile offsets by half the diameter, right only for a flat end
@@ -2271,6 +2307,7 @@ mod tests {
             CamError::CutterNotFlat {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 cutter: "a V-bit",
             }
         );
@@ -2318,6 +2355,7 @@ mod tests {
             CamError::MissingStepDown {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
     }
