@@ -21,9 +21,9 @@ Captured from PureCutCNC commit `2ebab10e5e17c48281ff96805d5e936af135cb58` with
 - Intentional difference: as `pocket-raster-0deg` (#146, decision 5). Here
   PureCutCNC also links two lines across a corner where DreamCarve links
   along the wall; links are not compared.
-- Known bug: #195, as `pocket-raster-0deg`. The lines are offset by
-  0.77 mm across their direction. The test is ignored until that is
-  fixed; with the scan started from the top, it passes.
+- The scan starts from the top of the rotated region, as
+  `pocket-raster-0deg` (#195). Before that fix the lines were offset by
+  0.77 mm across their direction.
 
 Files: `program.nc` is the emitted G-code; `toolpath.json` is the
 key-sorted toolpath per operation in PureCutCNC's internal (Y-down) frame.

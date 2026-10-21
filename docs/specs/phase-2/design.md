@@ -508,26 +508,49 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    tool-centre region and the tool stays in the pocket. The link from a
    ring to the next one outward still stays down under the `sequence`
    link rule; a link to a ring of another root region, or across an
-   island, retracts. Each ring's start vertex is the vertex nearest the
-   previous ring's end (`rotateContourToNearestEntry`), computed once
-   from pass 0's walk and reused for every pass. (changed in slice 4,
-   #137: grown by `r`, a link could reach `r` past the wall of a concave
-   pocket.)
+   island, retracts. Each ring starts at its point nearest the previous
+   ring's end (`rotateContourToNearestEntry`) among its vertices and
+   along its arcs, the arc split there, computed once from pass 0's walk
+   and reused for every pass; a straight edge offers only its corners.
+   (changed in slice 4, #137: grown by `r`, a link could reach `r` past
+   the wall of a concave pocket.) (changed in #196: upstream takes the
+   nearest vertex of a Clipper polygon, whose arcs are sampled densely, so
+   on an arc that is in effect the nearest point; DreamCarve keeps arcs,
+   a circle has two vertices, and the link onto the first ring round the
+   island of `pocket-offset-island` was 7.6 mm where upstream's is
+   2.54 mm.)
 7. **Raster strategy.** Rotate the tool-centre region by `−angle_deg`
    about the origin (so lines at `angle` become horizontal), scan
-   horizontal lines from `min_y + s/2` to `max_y − s/2` in steps of `s`
-   (PureCutCNC's scan; one line in a region narrower than `s`; one more
-   line at `max_y − s/2` when the scan stops more than `s` short of the
-   far edge, where upstream's last line can sit up to `1.5·s` away),
-   intersect
+   horizontal lines from `max_y − s/2` down to `min_y + s/2` in steps of
+   `s` (PureCutCNC's scan from its Y-down `minY`, which is the top in
+   Y-up; one line in a region narrower than `s`; one more line at
+   `min_y + s/2` when the scan stops more than `s` short of the far edge,
+   where upstream's last line can sit up to `1.5·s` away), intersect
    each with the region (even-odd over outer and islands; horizontal
    edges ignored, crossing rule `a.y ≤ y < b.y` or `b.y ≤ y < a.y`),
-   rotate the segments back by `+angle_deg`. Lines alternate direction;
-   each segment of a split line (around an island) is its own block.
-   Links: a segment's block follows the previous one; `sequence` stays
-   down when the straight link between them lies inside the tool-centre
-   region (no island between) and is shorter than one diameter plus `s`,
-   else retracts. The wall pass rings (root rings of step 6 with no
+   rotate the segments back by `+angle_deg`. Lines alternate direction
+   in scan order; each segment of a split line (around an island) is its
+   own block. (changed in #195: the scan ran from `min_y + s/2`, upstream's
+   expression kept in the Y-up frame, so it started at the bottom and its
+   lines sat up to `s/2` from upstream's.) Order: the segments of one
+   tool-centre region are cut nearest-first (upstream
+   `orderOpenSegmentsGreedy`), from the end of the previous path: the
+   next segment is the nearest one a stay-down link reaches (the link
+   rule below), entered at its nearer end, so a segment may run either
+   way; when none is, the tool lifts, to the nearest end that no
+   stay-down link reaches from a segment still to cut (a dead end), else
+   to the nearest end. Ties go by scan order, start before end. When scan
+   order would lift fewer times, it is kept. (changed in #150: scan order
+   lifted once per line an island splits, 11 times per pass on the
+   island test pocket; nearest-first zigzags down one side of the island
+   before it crosses, 4 lifts per pass round a 20 mm square island.
+   Upstream stays down on any link up to a diameter long, even one that
+   cuts into an island; DreamCarve keeps its link rule, so next to a
+   curved island side, where every straight link between line ends
+   enters the island, each such end is a dead end and no order lifts
+   less than scan order.) Links: `sequence` stays down when the straight
+   link between two blocks lies inside the tool-centre region (no island
+   between) and is shorter than one diameter plus `s`, else retracts. The wall pass rings (root rings of step 6 with no
    children) are emitted last (or first) per pass. PureCutCNC cuts the
    boundary first on raster; VCarve's default is unstated; DreamCarve
    defaults to last (interim notes). **Y-up note:** PureCutCNC rotates by
@@ -1437,6 +1460,9 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::island_splits_region_into_two_tool_centre_regions`.
 - `pocket::pocket_inside_island_is_cut_after_island`.
 - `pocket::raster_lines_at_zero_degrees_are_horizontal_and_spaced`, `pocket::raster_lines_at_45_degrees`, `pocket::raster_lines_alternate_direction`, `pocket::raster_link_stays_down_inside_region`, `pocket::raster_retracts_across_island`, `pocket::raster_segments_split_around_island`, `pocket::raster_ignores_direction_wall_pass_honours_it`.
+- `pocket::raster::scan_starts_half_a_step_below_the_top`, `pocket::raster::closing_line_when_the_scan_stops_short` (#195).
+- `pocket::rings::ring_starts_at_nearest_point_of_an_arc`, `pocket::ring_starts_at_nearest_point_not_nearest_vertex` (#196).
+- `pocket::raster_lifts_around_island_are_minimised`, `pocket::raster::pieces_round_a_square_island_are_cut_nearest_first`, `pocket::raster::scan_order_is_kept_round_a_circle` (#150).
 - `pocket::allowance_leaves_material_on_walls` — footprint stays `allowance` from the wall.
 - `pocket::rest_region_is_corners_and_wall_band`, `pocket::rest_coverage_with_rough_reaches_small_tool_inset` (acceptance 22), `pocket::rest_of_that_clears_nothing_warns`, `pocket::rest_footprint_stays_inside_region` (S14).
 - `pocket::step_down_from_tool_when_operation_unset`, `pocket::depth_below_bottom_is_error`.

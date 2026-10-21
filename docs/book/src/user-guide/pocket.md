@@ -79,8 +79,9 @@ cut last, with the least load on the bit (PureCutCNC's "inner first").
 
 Between two rings of one pass the bit stays down and cuts straight across
 when the move stays inside the tool-centre area; otherwise it lifts to
-safe Z. Each ring starts at its corner nearest where the previous one
-ended, so those links are short. Between passes, and between separate
+safe Z. Each ring starts at its point nearest where the previous one
+ended: a corner, or on a curve the nearest point of the curve, so those
+links are short. Between passes, and between separate
 pockets, the bit lifts to safe Z and comes back down by the operation's
 [entry](#entry): a plunge at the plunge rate, a ramp or a helix.
 
@@ -115,12 +116,13 @@ and to the left. 0 to 180 covers every direction a line can have, so
 DreamCarve's 135°.
 
 **The lines** start half a stepover in from the edge of the tool-centre
-area and step across it by the stepover. Where the area is narrower than
-one stepover, there is one line down its middle. If the last line would
-end up more than a stepover from the far edge, one more line goes half a
-stepover from it, so no strip is left between the lines and the wall
-ring. Lines run in alternate directions, a zigzag. An island cuts a line
-into pieces, one on each side of it.
+area and step across it by the stepover. At 0° the first line is half a
+stepover below the top edge, as in PureCutCNC. Where the area is
+narrower than one stepover, there is one line down its middle. If the
+last line would end up more than a stepover from the far edge, one more
+line goes half a stepover from it, so no strip is left between the lines
+and the wall ring. Lines run in alternate directions, a zigzag. An
+island cuts a line into pieces, one on each side of it.
 
 **Between lines** the bit stays down and cuts straight across to the
 start of the next line when that move is shorter than the bit's diameter
@@ -128,6 +130,14 @@ plus the stepover and stays inside the tool-centre area, through
 material the two lines have just cut. Otherwise, as across an island, it
 lifts to safe Z and plunges again. A rectangle at 0° is cut in one
 zigzag per pass with no lift.
+
+**Round an island** the pieces are cut nearest first: from the end of
+one piece the bit goes to the nearest piece it can reach without
+lifting, so it zigzags down one side of the island, along the island's
+edge, before it lifts once to cross to the other side. Next to a round
+island no straight move from one line's end to the next stays clear of
+the island, so the bit lifts at about every line that the island
+splits, whatever the order; there the lines keep their scan order.
 
 **Scallops.** Each line leaves a shallow ridge on the floor between it and
 the next, and the zigzag cuts alternately climb and conventional, so a
