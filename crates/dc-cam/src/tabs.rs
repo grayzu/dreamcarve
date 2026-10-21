@@ -969,9 +969,18 @@ mod tests {
         }
     }
 
+    /// O9: tabs survive reordering, so the check runs under both machining
+    /// orders.
     #[test]
     fn final_pass_has_exactly_four_raised_segments_at_tab_z() {
-        let (p, op) = coaster(Some(four_rect_tabs()));
+        for order in [MachiningOrder::FullDepthFirst, MachiningOrder::PassFirst] {
+            assert_four_raised_segments_at_tab_z(order);
+        }
+    }
+
+    fn assert_four_raised_segments_at_tab_z(order: MachiningOrder) {
+        let (p, mut op) = coaster(Some(four_rect_tabs()));
+        op.machining_order = order;
         let (tp, warnings) = generate(&p, &op);
         assert!(warnings.is_empty(), "{warnings:?}");
         let lap = final_lap(&tp);

@@ -426,7 +426,7 @@ mod tests {
     use dc_project::test_support::sample_project;
     use dc_project::{
         CornerRelief, DefinitionId, Entry, FeatureDefinition, FeatureInstance, InstanceId,
-        MachiningOrder, OperationId, Side, Stock, ToolId,
+        MachiningOrder, OperationId, Side, Stock, TabPlacement, TabShape, TabSpec, ToolId,
     };
     use std::collections::BTreeMap;
     use std::f64::consts::{PI, TAU};
@@ -1253,6 +1253,170 @@ mod tests {
         assert_eq!(
             generate_profile(&p, &op).unwrap(),
             generate_profile(&p, &op).unwrap()
+        );
+    }
+
+    /// O6 (acceptance test 31): a one-shape operation is the phase 1
+    /// recipe move for move, whatever the machining order: a rapid to the
+    /// start at safe Z, then per pass a plunge at the plunge rate and one
+    /// lap at the feed rate, then a rapid up. The expected lap is built here
+    /// from the offset contour directly, not through the sequencer.
+    #[test]
+    fn one_shape_golden_is_byte_identical_after_sequence() {
+        let p = rect_project();
+        let mut op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        let (full, _) = generate(&p, &op);
+        op.machining_order = MachiningOrder::PassFirst;
+        let (pass, _) = generate(&p, &op);
+        assert_eq!(full, pass);
+
+        let placed = at_20_20().apply_polyline(&rect_100x50()).unwrap();
+        let centre = offset(&Contour::new(placed).unwrap(), 3.175).remove(0);
+        // Outside, climb: clockwise.
+        let path = if centre.is_ccw() {
+            centre.reversed().into_polyline()
+        } else {
+            centre.into_polyline()
+        };
+        let start = path.vertices()[0].point();
+        let mut expected = vec![Move::rapid(Point3::new(start.x, start.y, SAFE_Z_MM))];
+        for z in PASS_Z_MM {
+            expected.push(Move::linear(
+                Point3::new(start.x, start.y, z),
+                PLUNGE_MM_MIN,
+            ));
+            for segment in path.segments() {
+                let kind = match segment.arc() {
+                    Some(arc) if arc.sweep_rad > 0.0 => MoveKind::ArcCcw { centre: arc.centre },
+                    Some(arc) => MoveKind::ArcCw { centre: arc.centre },
+                    None => MoveKind::Linear,
+                };
+                expected.push(Move {
+                    kind,
+                    to: Point3::new(segment.end.x, segment.end.y, z),
+                    feed_mm_min: Some(FEED_MM_MIN),
+                });
+            }
+        }
+        expected.push(Move::rapid(Point3::new(start.x, start.y, SAFE_Z_MM)));
+        assert_eq!(full.moves, expected);
+    }
+
+    /// Three 20 mm squares drawn at X = 10, 50, 30, placed by three
+    /// instances.
+    fn three_squares_project() -> Project {
+        project(
+            vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 20.0)],
+            &[
+                ("i1", Transform::translate(10.0, 20.0)),
+                ("i2", Transform::translate(50.0, 20.0)),
+                ("i3", Transform::translate(30.0, 20.0)),
+            ],
+        )
+    }
+
+    /// The lowest X of each lap, in cut order.
+    fn lap_min_x(toolpath: &Toolpath) -> Vec<f64> {
+        laps(toolpath)
+            .iter()
+            .map(|lap| lap.points.iter().map(|p| p.x).fold(f64::MAX, f64::min))
+            .collect()
+    }
+
+    /// Acceptance test 31 (D5): squares drawn at X = 10, 50, 30 are cut at
+    /// 10, 30, 50 under full depth first. Under pass first each layer's
+    /// walk starts where the previous one ended, so the second layer runs
+    /// back 50, 30, 10.
+    #[test]
+    fn nearest_neighbour_visits_the_closest_part_next() {
+        let p = three_squares_project();
+        let mut op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        let r = 3.175;
+        let at = |xs: &[f64]| -> Vec<f64> { xs.iter().map(|x| x - r).collect() };
+
+        let (tp, _) = generate(&p, &op);
+        let expected = at(&[10.0, 10.0, 10.0, 30.0, 30.0, 30.0, 50.0, 50.0, 50.0]);
+        let got = lap_min_x(&tp);
+        assert_eq!(got.len(), expected.len(), "{got:?}");
+        for (g, e) in got.iter().zip(&expected) {
+            assert_approx_eq!(*g, *e, TOL);
+        }
+
+        op.machining_order = MachiningOrder::PassFirst;
+        let (tp, _) = generate(&p, &op);
+        let expected = at(&[10.0, 30.0, 50.0, 50.0, 30.0, 10.0, 10.0, 30.0, 50.0]);
+        let got = lap_min_x(&tp);
+        assert_eq!(got.len(), expected.len(), "{got:?}");
+        for (g, e) in got.iter().zip(&expected) {
+            assert_approx_eq!(*g, *e, TOL);
+        }
+    }
+
+    /// Acceptance test 30: three squares 6 mm deep in 2 mm passes. Under
+    /// pass first the Z of successive plunges is 4, 4, 4, 2, 2, 2, 0, 0, 0;
+    /// under full depth first it is 4, 2, 0 three times.
+    #[test]
+    fn pass_first_plunges_every_shape_before_stepping_down() {
+        let p = three_squares_project();
+        let plunge_zs = |tp: &Toolpath| -> Vec<f64> {
+            tp.moves
+                .windows(2)
+                .filter(|pair| {
+                    let (prev, mv) = (pair[0], pair[1]);
+                    !mv.is_rapid()
+                        && mv.to.z < prev.to.z - EPS_MM
+                        && prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM
+                })
+                .map(|pair| pair[1].to.z)
+                .collect()
+        };
+        let mut op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        let (tp, _) = generate(&p, &op);
+        let got = plunge_zs(&tp);
+        let expected = [4.0, 2.0, 0.0, 4.0, 2.0, 0.0, 4.0, 2.0, 0.0];
+        assert_eq!(got.len(), expected.len(), "{got:?}");
+        for (g, e) in got.iter().zip(expected) {
+            assert_approx_eq!(*g, e, TOL);
+        }
+
+        op.machining_order = MachiningOrder::PassFirst;
+        let (tp, _) = generate(&p, &op);
+        let got = plunge_zs(&tp);
+        let expected = [4.0, 4.0, 4.0, 2.0, 2.0, 2.0, 0.0, 0.0, 0.0];
+        assert_eq!(got.len(), expected.len(), "{got:?}");
+        for (g, e) in got.iter().zip(expected) {
+            assert_approx_eq!(*g, e, TOL);
+        }
+    }
+
+    /// A tab warning's `contour` param counts contours in cut order, which
+    /// nearest neighbour sets: the square at X = 30 (instance `i3`) is cut
+    /// second, so it is contour 1.
+    #[test]
+    fn tab_warnings_index_contours_in_cut_order() {
+        let p = three_squares_project();
+        let mut op = profile_op(&p, Side::Outside, CutDirection::Climb);
+        // Four 10 mm tabs plus the 6.35 mm diameter cover 65 mm of a
+        // 100 mm path: more than half, so every square warns.
+        op.tabs = Some(TabSpec {
+            placement: TabPlacement::Count { count: 4 },
+            width_mm: 10.0,
+            height_mm: 3.0,
+            shape: TabShape::Rect,
+        });
+        let (_, warnings) = generate(&p, &op);
+        let covered: Vec<(Option<&str>, Option<&str>)> = warnings
+            .iter()
+            .filter(|w| w.code == WarningCode::TabsCoverMostOfContour)
+            .map(|w| (w.param("contour"), w.param("instance")))
+            .collect();
+        assert_eq!(
+            covered,
+            [
+                (Some("0"), Some("i1")),
+                (Some("1"), Some("i3")),
+                (Some("2"), Some("i2")),
+            ]
         );
     }
 }
