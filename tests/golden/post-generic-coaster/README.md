@@ -7,6 +7,10 @@ stock, 11.8 mm thick, cut through in 4 mm passes at feed 1500, plunge 500,
 - Recaptured in slice 10 (#165) when `init` began writing a 15° ramp
   entry (#119): each pass now starts with the ramp, the laps are
   unchanged.
+- Recaptured in #70 when `init` began importing the `<circle>` as two
+  exact half-circle arcs instead of 160 flattened edges: each untabbed
+  lap is two arcs on the true tool-centre circle (radius 48.175 mm), not
+  seven fitted ones, and the cut starts at the circle's +X point.
 - Captured from DreamCarve itself (slice 17, #164), with
   `dreamcarve export coaster.dcv --post generic --date 2026-10-15`, after
   `generic/v1.json` was checked line by line against the NIST RS274/NGC
@@ -16,7 +20,7 @@ stock, 11.8 mm thick, cut through in 4 mm passes at feed 1500, plunge 500,
   compares these cases with the verified definitions, because DreamCarve
   changed PureCutCNC's generic definition (`G94`, `M5` before `M30`, the
   dwell, a tool change that is never written).
-- Numbers have no trailing zeros (`Z5`, `J-1.87`), as acceptance 36 asks.
+- Numbers have no trailing zeros (`Z5`, `Y55`, `J0`), as acceptance 36 asks.
 - Test: `golden::post_generic_coaster` in `crates/dreamcarve/tests/cli.rs`.
   The export must equal `program.nc` byte for byte, and its motion, read
   back, must equal the grblHAL coaster's

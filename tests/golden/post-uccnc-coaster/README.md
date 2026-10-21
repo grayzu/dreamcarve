@@ -7,6 +7,10 @@ stock, 11.8 mm thick, cut through in 4 mm passes at feed 1500, plunge 500,
 - Recaptured in slice 10 (#165) when `init` began writing a 15° ramp
   entry (#119): each pass now starts with the ramp, the laps are
   unchanged.
+- Recaptured in #70 when `init` began importing the `<circle>` as two
+  exact half-circle arcs instead of 160 flattened edges: each untabbed
+  lap is two arcs on the true tool-centre circle (radius 48.175 mm), not
+  seven fitted ones, and the cut starts at the circle's +X point.
 - Captured from DreamCarve itself (slice 17, #164), with
   `dreamcarve export coaster.dcv --post uccnc --date 2026-10-15`, after
   `uccnc/v1.json` was checked line by line against the UCCNC user's manual
