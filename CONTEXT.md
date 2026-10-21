@@ -184,6 +184,18 @@ _Avoid_: Entry (that is the descent), approach, lead line (straight leads
 are out of scope)
 _PureCutCNC_: xyLead
 
+**Start Point**:
+Where a Profile's cut starts on each closed outline (`start`): `auto`, or
+the point of the bit's path nearest the outline's first vertex as drawn
+(`first_vertex`) or nearest a project point (`near`). An explicit start
+point wins: a Tab Request's distances count from it, a Lead arrives there
+or is dropped, and an Entry with no room there falls back rather than
+moving it. VCarve's "Use vector start point" and "Start At"; Fusion's
+"Entry Positions".
+_Avoid_: Seam (the internal point a path is re-seamed at), entry point
+(the Entry ends there, it is not the Entry)
+_PureCutCNC_: none
+
 **Tab**:
 A short bridge of material left uncut on a Profile so the part stays attached
 to the stock.
@@ -200,7 +212,9 @@ _PureCutCNC_: Tab
 A Profile's tab setting (count or distances, size, shape, holes or not):
 tabs the operation asks for, which are placed on its targets' outlines
 with the layout rules before anything is cut, or written as placed tabs by
-`dreamcarve tabs`. It is not cut data.
+`dreamcarve tabs`. It is not cut data. With `avoid_corners` each tab it
+lays on a **corner**, where the bit's path turns 30° or more within one
+bit diameter of the tab's stretch, slides off it.
 _Avoid_: Tab spec, tab setting (in prose), auto tabs
 
 **Tool**:

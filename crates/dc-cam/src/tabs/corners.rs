@@ -478,11 +478,12 @@ mod tests {
         // Its neighbour at 40 keeps it from going back, so it goes ahead.
         let (moved, _) = avoid(&[40.0, 49.0, 80.0], &corners, STRETCH_MM);
         assert_approx_eq!(moved[1], 50.0 + off, 1e-4);
-        assert_eq!((moved[0], moved[2]), (40.0, 80.0));
+        assert_approx_eq!(moved[0], 40.0, 1e-12);
+        assert_approx_eq!(moved[2], 80.0, 1e-12);
         // Neighbours too close both ways: it stays.
         let (moved, blocked) = avoid(&[40.0, 49.0, 60.0], &corners, STRETCH_MM);
         assert_eq!(blocked, vec![1]);
-        assert_eq!(moved[1], 49.0);
+        assert_approx_eq!(moved[1], 49.0, 1e-12);
         // Two overlapping tabs on one corner part, one each way.
         let (moved, blocked) = avoid(&[46.0, 54.0], &corners, STRETCH_MM);
         assert!(blocked.is_empty(), "{moved:?}");
@@ -504,6 +505,6 @@ mod tests {
         let corners = Corners::of(&square(), D, STRETCH_MM);
         let (moved, _) = avoid(&[150.0, 25.0], &corners, STRETCH_MM);
         assert_approx_eq!(moved[0], 150.0 + off, 1e-4);
-        assert_eq!(moved[1], 25.0);
+        assert_approx_eq!(moved[1], 25.0, 1e-12);
     }
 }

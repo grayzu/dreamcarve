@@ -1707,7 +1707,7 @@ mod tests {
         let tabs = operations[0]["tabs"].as_object().unwrap();
         assert_eq!(tabs["avoid_corners"], json!(false));
         assert_eq!(
-            tabs.keys().last().map(String::as_str),
+            tabs.keys().next_back().map(String::as_str),
             Some("avoid_corners")
         );
         assert_eq!(operations[1]["tabs"], Value::Null, "no request, no key");

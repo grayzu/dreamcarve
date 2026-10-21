@@ -3312,7 +3312,16 @@ open path it never passes an end. None: it stays, with `Warning::TabOnCorner
 over the path's corner intervals, not sampled: the allowed set is the
 path minus each corner window grown by the half-stretch, and the move is
 to its nearest end. A circle of radius `R` turns `D/R` radians per window,
-under 30° for `R > 1.91 D`, so the coaster's tabs never move.
+under 30° for `R > 1.91 D`, so the coaster's tabs never move. (changed in
+#285: in `dc-cam::tabs::corners`. The half gap is to the neighbours'
+positions before any tab moved; the no-overlap rule uses positions as
+placed. A moved tab sits 1e-5 mm past the edge it stops at, so its span
+does not touch the corner or a neighbour's span. On a closed path whose
+length is at most `D`, every position is a corner. It runs inside
+`Request::fit` before the #109 rule, on the kept tabs again when that
+rule re-spaces or drops some, and so in `op_tabs`, which `tabs place`
+uses: a request placed there writes the moved points. `tabs place
+--count` sets `avoid_corners` unless `--allow-corners`.)
 
 **Start** (`dc-cam::profile`, the seam step that #176 and leads use).
 `FirstVertex` and `Near` set each closed outline's seam to the distance
@@ -3323,7 +3332,13 @@ count from it and `count` spaces from it; #176's move is skipped (an
 entry that does not fit falls back ramp → plunge, warned); a lead is
 planned at that one arrival (its radius and sweep ladders still apply)
 or dropped with `LeadDropped (no_room)`. `Auto` is the code path of
-today. Open paths ignore it.
+today. Open paths ignore it. (changed in #285: in
+`dc-cam::profile::start`, after `centre_paths` in both `generate_profile`
+and `op_tabs`. The nearest point is `nearest_point`'s: first along the
+path on a tie, except the middle of an arc centred on the target. The
+allowance twin (#284) is re-seamed nearest the same target before
+`twin_tabs` carries the tabs onto it, and a reversed last pass keeps its
+start. The lead is `lead::plan_lead_in_at_start`.)
 
 Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 `tabs::rotated_square_tabs_leave_corners` (acceptance 47),
