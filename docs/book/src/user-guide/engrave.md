@@ -104,7 +104,9 @@ lettering does, is a V-Carve, not an Engrave.
 | `engrave_deeper_than_cone` | The V-bit's cone is shorter than `depth_mm`. Use a shallower depth or a wider bit. |
 
 An open path targeted by an Engrave is not reported as `open_profile`:
-Engrave cuts it.
+Engrave cuts it. An `on_line` [Profile](profile.md#open-paths) cuts open
+paths too, with a ramp entry and tabs; Engrave plunges and has no tabs,
+but can cut successive passes back and forth (`alternate_direction`).
 
 The errors are those of every operation: a missing feed, plunge rate or
 step-down, a depth below the stock bottom plus the allowance, and a cut

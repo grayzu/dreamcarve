@@ -42,8 +42,12 @@ use dc_project::{
 };
 use entries::{
     EntrySetup, PassEntry, PathDomain, Space, Targets, off_material, path_entries, plunged,
-    wall_domains,
+    tab_seams, wall_domains,
 };
+
+/// One path's tab layout, and whether its spans overlapped; `None`
+/// without tabs.
+type PathLayout = Option<(PathTabs, bool)>;
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,10 +166,14 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// region's kerf and, below the tab top, less the tabs; On line ramps back
 /// and forth along the path itself ([`entry::along_path`]). The first pass
 /// descends from safe Z, later ones from the previous pass Z at the
-/// contour start, where the previous lap ended. An entry that does not
-/// fit falls back to a ramp, then a plunge, with
-/// [`WarningCode::EntryFallback`]; so does a contour whose start is under
-/// a tab.
+/// contour start, where the previous lap ended. A contour without a lead
+/// whose entry would plunge below the tab top at its start, under or
+/// beside a tab, starts instead in the middle of the longest stretch
+/// between tabs where it does not (#176), on every pass; the tabs stay at
+/// their distances from the original start. An entry that does not fit
+/// falls back to a ramp, then a plunge, with
+/// [`WarningCode::EntryFallback`]; so does a contour whose start no
+/// stretch frees.
 ///
 /// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
 /// Inside and Outside contours are re-seamed where an arc tangent to them
@@ -187,8 +195,16 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// #189, #193); On line warns
 /// [`WarningCode::ReliefSkipped`].
 ///
-/// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
-/// with a [`Warning`]. Shapes in different regions whose tool paths cut
+/// An On line Profile also cuts open paths (#175, as VCarve's Profile
+/// "On" an open vector): each pass runs the path from its first vertex to
+/// its last (climb) or from its last to its first (conventional), with
+/// the ramp along it and its tabs placed from its first vertex as drawn,
+/// then retracts; it has no lead, no relief and frees nothing. Inside and
+/// Outside skip open paths ([`WarningCode::OpenPathSkipped`]), as they
+/// have no side.
+///
+/// Open paths Inside and Outside, shapes the tool cannot fit, and
+/// duplicate shapes are skipped with a [`Warning`]. Shapes in different regions whose tool paths cut
 /// into each other give [`WarningCode::ToolpathsOverlap`], in cut order. Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
 /// allowance, when targets cross, when an id does not resolve, when the
@@ -276,7 +292,10 @@ pub fn generate_profile(
     if let Some(tabs) = &tabs {
         warnings.extend(cut_range_warnings(&op.id, tabs, &pass_z, thickness_mm));
     }
-    let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
+    // #175: On line cuts open paths too; Inside and Outside skip them.
+    let mut open_paths = Vec::new();
+    let keep_open = (op.side == Side::OnLine).then_some(&mut open_paths);
+    let shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, &mut warnings)?;
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
     for warning in nest_warnings {
@@ -336,17 +355,45 @@ pub fn generate_profile(
             }));
         }
     }
-    // Drawing order is the order the targets were resolved in; stable, so
-    // the loops of one shape keep their offset order.
-    let drawing_index = |shape: &ShapeRef| shapes.iter().position(|(s, _)| s == shape);
+    // #175: an open path is cut On line as drawn, from its first vertex
+    // under climb and from its last under conventional (VCarve's rule:
+    // the direction picks the end). It has no region, so no band check,
+    // no containment, and no waste domain; its wall is never asked.
+    let reversed_open = op.direction == CutDirection::Conventional;
+    for (shape, path) in &open_paths {
+        let path = if reversed_open {
+            path.reversed()
+        } else {
+            path.clone()
+        };
+        placed.push((path, shape, Wall::Outside, regions.len()));
+    }
+    // Drawing order is the order the targets were resolved in: target,
+    // then profile. Stable, so the loops of one shape keep their offset
+    // order.
+    let drawing_index = |shape: &ShapeRef| {
+        (
+            op.targets.iter().position(|t| *t == shape.instance),
+            shape.profile,
+        )
+    };
     placed.sort_by_key(|(_, shape, _, _)| drawing_index(shape));
     let walls: Vec<(Wall, usize)> = placed.iter().map(|(_, _, w, r)| (*w, *r)).collect();
     let paths: Vec<(Polyline, &ShapeRef)> = placed.into_iter().map(|(p, s, _, _)| (p, s)).collect();
 
-    // Tab layout per path, and one block per path per pass.
-    let layouts: Vec<Option<(PathTabs, bool)>> = paths
+    // Tab layout per path, and one block per path per pass. An open
+    // path's tabs are measured from its first vertex as drawn.
+    let layouts: Vec<PathLayout> = paths
         .iter()
-        .map(|(path, _)| tabs.as_ref().map(|tabs| tabs.layout(path.length_mm())))
+        .map(|(path, _)| {
+            tabs.as_ref().map(|tabs| {
+                if path.is_closed() {
+                    tabs.layout(path.length_mm())
+                } else {
+                    tabs.layout_open(path.length_mm(), reversed_open)
+                }
+            })
+        })
         .collect();
     let entry_tool = |wall: Wall| EntryTool {
         diameter_mm: tool.diameter_mm,
@@ -367,6 +414,7 @@ pub fn generate_profile(
         layouts: &layouts,
         tabs: tabs.as_ref(),
         pass_z: &pass_z,
+        safe_z_mm,
         entry_tool: &entry_tool,
         tolerance_mm: project.flatten_tolerance_mm,
     };
@@ -400,6 +448,30 @@ pub fn generate_profile(
             &mut lead_warnings,
         )?,
         None => paths.iter().map(|_| None).collect(),
+    };
+    // #176: a path whose entry has no room at its start for the tabs
+    // starts where it has, on every pass; its tabs stay put. A path with a
+    // lead keeps the lead's seam. The domains are the same either way.
+    let led: Vec<bool> = leads.iter().map(Option::is_some).collect();
+    let seams = tab_seams(&setup, &domains, &led);
+    let (paths, layouts): (Vec<(Polyline, &ShapeRef)>, Vec<PathLayout>) = paths
+        .iter()
+        .zip(&layouts)
+        .zip(&seams)
+        .map(|(((path, shape), layout), seam)| match seam {
+            Some(seam_mm) => (
+                (lead::reseam(path, *seam_mm), *shape),
+                layout
+                    .as_ref()
+                    .map(|(l, overlapped)| (l.reseamed(*seam_mm), *overlapped)),
+            ),
+            None => ((path.clone(), *shape), layout.clone()),
+        })
+        .unzip();
+    let setup = EntrySetup {
+        paths: &paths,
+        layouts: &layouts,
+        ..setup
     };
     let targets: Vec<Targets> = paths
         .iter()
@@ -460,6 +532,8 @@ pub fn generate_profile(
                     (block, on_tab || entry_target_lost, lap_start_z_mm)
                 }
             };
+            // An open path cuts a slot; it frees nothing.
+            block.frees &= path.is_closed();
             if let Some(entry) = entries.get(i).and_then(Option::as_ref) {
                 let pass_entry = PassEntry {
                     path,
@@ -972,6 +1046,20 @@ pub(crate) fn resolve_targets(
     targets: &[InstanceId],
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<(ShapeRef, Contour)>, CamError> {
+    resolve_shapes(project, op, targets, None, warnings)
+}
+
+/// [`resolve_targets`], with the open paths placed into `open` instead
+/// when it is given (#175: an On line Profile cuts them). An open path
+/// with no length has nothing to cut and is skipped with
+/// [`WarningCode::OpenPathSkipped`] (`reason: no_length`).
+fn resolve_shapes(
+    project: &Project,
+    op: &OperationId,
+    targets: &[InstanceId],
+    mut open: Option<&mut Vec<(ShapeRef, Polyline)>>,
+    warnings: &mut Vec<Warning>,
+) -> Result<Vec<(ShapeRef, Contour)>, CamError> {
     let mut shapes = Vec::new();
     for instance_id in targets {
         let instance = project
@@ -996,7 +1084,25 @@ pub(crate) fn resolve_targets(
                 profile,
             };
             if !polyline.is_closed() {
-                warnings.push(shape_warning(WarningCode::OpenPathSkipped, &shape));
+                let Some(open) = open.as_deref_mut() else {
+                    warnings.push(shape_warning(WarningCode::OpenPathSkipped, &shape));
+                    continue;
+                };
+                let placed = instance
+                    .transform
+                    .apply_polyline(polyline)
+                    .map_err(|source| CamError::InvalidTarget {
+                        shape: shape.clone(),
+                        source,
+                    })?;
+                if placed.length_mm() <= EPS_MM {
+                    warnings.push(
+                        shape_warning(WarningCode::OpenPathSkipped, &shape)
+                            .with("reason", "no_length"),
+                    );
+                    continue;
+                }
+                open.push((shape, placed));
                 continue;
             }
             let contour = instance
@@ -2234,19 +2340,33 @@ mod tests {
             .expect("the toolpath ramps")
     }
 
-    /// The level cutting moves at the tab top, as `(from, to)` in XY.
-    fn held_at_tab_top(tp: &Toolpath) -> Vec<(Point, Point)> {
-        tp.moves
-            .windows(2)
-            .filter(|w| {
-                let (from, mv) = (w[0].to, w[1]);
-                !mv.is_rapid()
-                    && (from.z - TAB_TOP_MM).abs() <= EPS_MM
-                    && (mv.to.z - TAB_TOP_MM).abs() <= EPS_MM
-                    && from.xy().distance_to(mv.to.xy()) > EPS_MM
-            })
-            .map(|w| (w[0].to.xy(), w[1].to.xy()))
-            .collect()
+    /// The level cutting moves at the tab top, as `(from, to)` in XY, and
+    /// their length along the path (arcs as arcs).
+    fn held_at_tab_top(tp: &Toolpath) -> (Vec<(Point, Point)>, f64) {
+        let mut held = Vec::new();
+        let mut length_mm = 0.0;
+        for w in tp.moves.windows(2) {
+            let (from, mv) = (w[0].to, w[1]);
+            if mv.is_rapid()
+                || (from.z - TAB_TOP_MM).abs() > EPS_MM
+                || (mv.to.z - TAB_TOP_MM).abs() > EPS_MM
+                || from.xy().distance_to(mv.to.xy()) <= EPS_MM
+            {
+                continue;
+            }
+            let (a, b) = (from.xy(), mv.to.xy());
+            length_mm += match mv.kind {
+                MoveKind::ArcCcw { centre } => {
+                    a.distance_to(centre) * sweep_rad(a, b, centre, true)
+                }
+                MoveKind::ArcCw { centre } => {
+                    -a.distance_to(centre) * sweep_rad(a, b, centre, false)
+                }
+                _ => a.distance_to(b),
+            };
+            held.push((a, b));
+        }
+        (held, length_mm)
     }
 
     /// #176: with a tab centred on the path's start, a ramp below the tab
@@ -2320,13 +2440,11 @@ mod tests {
                 ramped.moves[0].to.xy().distance_to(centre) > TAB_SPAN_MM / 2.0,
                 "{side:?}: the seam moved off the tab"
             );
-            let length = |held: &[(Point, Point)]| -> f64 {
-                held.iter().map(|(a, b)| a.distance_to(*b)).sum()
-            };
-            let (before, after) = (held_at_tab_top(&plunged), held_at_tab_top(&ramped));
+            let ((_, before_mm), (after, after_mm)) =
+                (held_at_tab_top(&plunged), held_at_tab_top(&ramped));
             // Two passes (Z 2 and 0) below the tab top, one span each.
-            assert_approx_eq!(length(&before), 2.0 * TAB_SPAN_MM, 1e-6);
-            assert_approx_eq!(length(&after), length(&before), 1e-6);
+            assert_approx_eq!(before_mm, 2.0 * TAB_SPAN_MM, 1e-6);
+            assert_approx_eq!(after_mm, before_mm, 1e-6);
             for (a, b) in after {
                 for q in [a, b] {
                     assert!(
@@ -2388,6 +2506,20 @@ mod tests {
             assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
             assert!(tp.moves.is_empty(), "{side:?}: nothing is cut");
         }
+    }
+
+    /// #175: an open path with no length has nothing to cut On line; it
+    /// is skipped with `open_path_skipped` (`reason: no_length`).
+    #[test]
+    fn on_line_open_path_with_no_length_is_skipped() {
+        let dot = Polyline::new(vec![Vertex::line(5.0, 5.0), Vertex::line(5.0, 5.0)], false);
+        let p = project(vec![rect_100x50(), dot], &[("i1", at_20_20())]);
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
+        assert_eq!(codes(&warnings), vec![WarningCode::OpenPathSkipped]);
+        assert_eq!(warnings[0].param("reason"), Some("no_length"));
+        assert_eq!(warnings[0].param("profile"), Some("1"));
+        assert!(warnings[0].to_string().contains("no length"));
+        assert_eq!(laps(&tp).len(), PASS_Z_MM.len(), "only the rect is cut");
     }
 
     /// #175: the direction picks the end an open path's cut starts at, as
@@ -2479,9 +2611,8 @@ mod tests {
             op.tabs = Some(tab_at(30.0, TabShape::Rect));
             let (tp, warnings) = generate(&p, &op);
             assert!(warnings.is_empty(), "{direction:?}: {warnings:?}");
-            let held = held_at_tab_top(&tp);
-            let length: f64 = held.iter().map(|(a, b)| a.distance_to(*b)).sum();
-            assert_approx_eq!(length, 2.0 * TAB_SPAN_MM, 1e-6);
+            let (held, length_mm) = held_at_tab_top(&tp);
+            assert_approx_eq!(length_mm, 2.0 * TAB_SPAN_MM, 1e-6);
             for (a, b) in held {
                 for q in [a, b] {
                     assert!(

@@ -3777,8 +3777,8 @@ mod tests {
         let beside = "G21 G90\nG54\nG0 Z5\nX10 Y62\nG1 Z-1 F300\nX70 F1000\nG0 Z5\n";
         let err = check_material_text(beside, &project, &op).unwrap_err();
         assert!(
-            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
-            "{err:?}"
+            matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+            "the plunge beside the line: {err:?}"
         );
     }
 

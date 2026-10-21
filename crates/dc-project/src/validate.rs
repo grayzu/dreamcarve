@@ -171,9 +171,10 @@ pub enum Problem {
         /// The allowed range, in words.
         expected: &'static str,
     },
-    /// A definition's profile is open. Profile cuts only closed shapes, so
-    /// it is never cut (functional spec, capability 8). Not reported for a
-    /// definition an enabled Engrave targets, since Engrave cuts it.
+    /// A definition's profile is open. Pocket and Inside and Outside
+    /// Profile cut only closed shapes, so it is never cut (functional
+    /// spec, capability 8). Not reported for a definition an enabled
+    /// Engrave or On line Profile targets, since those cut it (#175).
     OpenProfile {
         /// The definition.
         definition: DefinitionId,
@@ -614,7 +615,7 @@ impl fmt::Display for Problem {
                 profile,
             } => write!(
                 f,
-                "`{name}` (definition `{definition}`, profile {profile}) is an open path; Profile cuts only closed shapes, so it is not cut"
+                "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line Profile or an Engrave cuts an open path"
             ),
             Self::UnsafeFileExtension { extension } => write!(
                 f,
@@ -979,13 +980,17 @@ impl Validator {
         // Definitions with a coordinate out of range; their instances are
         // not checked again, so each mistake is reported once.
         let mut out_of_range = BTreeSet::new();
-        // Engrave cuts open paths, so a definition an enabled Engrave
-        // targets is not reported as having paths that are never cut.
+        // Engrave and On line Profile cut open paths (#175), so a
+        // definition an enabled one targets is not reported as having
+        // paths that are never cut.
         let engraved: BTreeSet<&DefinitionId> = p
             .operations
             .iter()
             .filter_map(|op| match op {
                 Operation::Engrave(op) if op.enabled => Some(&op.targets),
+                Operation::Profile(op) if op.enabled && op.side == Side::OnLine => {
+                    Some(&op.targets)
+                }
                 _ => None,
             })
             .flatten()

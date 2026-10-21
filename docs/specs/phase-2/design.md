@@ -729,8 +729,22 @@ cut direction and cut side.
   each later pass starts its zigzag where the previous lap ended. A
   helix after the first pass rejoins the bore the previous pass's helix
   cut (target → helix end → helix start, flat), or descends from safe Z
-  if that pass cut none. A contour whose start lies under a tab span
-  plunges there (`EntryFallback`, `no_room`).
+  if that pass cut none. A contour cut without a lead whose passes below
+  the tab top would plunge at its start (the start under a tab span, or
+  so near one that the entry has no room in the domain less the tab
+  keep-outs, or, On line, before the first tab) is re-seamed: the
+  candidates are the middles of the stretches between tab spans
+  (`PathTabs::gaps_mm`), longest first, then nearest the start, and the
+  first where no pass below the tab top plunges wins; the original start
+  is kept when it already fits and when no candidate does (then those
+  passes plunge with `EntryFallback`, `no_room`). The seam is chosen once
+  per path and serves every pass; the tab layout moves with it
+  (`PathTabs::reseamed`), so tabs stay at their distances from the
+  original start. A path with a lead keeps the lead's seam. (changed in
+  #176: a start under or just before a tab plunged on every pass below
+  the tab top, as phase 1, though most of the contour had room for the
+  entry. The middle of a gap, not its start, so a wall entry has the
+  same room either way along the contour.)
 - **On line ramp:** an On line Profile removes only its own kerf, so the
   ramp runs along the cut path itself: from the start vertex, forward
   along the path for `run = min(3·D, L)` and back, descending at `angle`
@@ -740,6 +754,30 @@ cut direction and cut side.
   the ramped stretch is cut again at full depth (VCarve's Zig Zag ramp).
   On an open path shorter than one leg the ramp reverses at the path
   end. The feed scale of S10 applies to every leg.
+- **On line Profile of an open path** (#175): Profile step 1 keeps open
+  paths for `Side::OnLine` (Inside and Outside still skip them with
+  `OpenPathSkipped`, an open path having no side; one of no length
+  skips with `reason: no_length`). The path is not nested: no band
+  check, no containment pair, no waste domain. Climb cuts it from the
+  first vertex to the last, conventional from the last to the first
+  (VCarve: the direction picks the end). Each pass is one block from the
+  start to the far end at pass Z, `frees` false; its descent starts at
+  the previous pass Z, so the sequencer retracts, rapids back, and
+  plunges down the slot to it before the ramp (`along_path`, which
+  reverses at the far end of a short path). Tabs: `Tabs::layout_open`,
+  centres from the first vertex as drawn whichever end the cut starts
+  at, spans cut short at the ends instead of wrapping; a tab over the
+  start of the cut plunges with `EntryFallback` (the start of an open
+  path cannot move). Leads and corner relief: none, as every On line
+  Profile (`LeadDropped (on_line)`, `ReliefSkipped`). S9 holds a cut on
+  an open target to that path, as an Engrave's. Validation's
+  `OpenProfile` is not reported for a definition an enabled On line
+  Profile targets. (changed in #175: Profile skipped every open path, so
+  acceptance 26's 100 mm line could not be cut On line. VCarve's Profile
+  cuts open vectors On, with ramps and tabs and without leads, and an
+  On line cut has the same meaning on an open path as on a closed one.
+  Engrave keeps open paths cut without an entry or tabs, and
+  `alternate_direction`.)
 - **Fallback chain:** helix → ramp → plunge, each step warning
   `EntryFallback` with `requested` and `used`. A plunge is always
   possible. `ramp` is the default for new projects (`init`, the chapter
@@ -1515,6 +1553,8 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 
 **dc-cam — profile**
 - `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199).
+- `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
+- `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.

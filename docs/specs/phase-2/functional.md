@@ -319,6 +319,9 @@ passes; the rectangle's passes run the same way both times.
     stock top. An On line Profile of a 100 mm line ramps back and forth
     along the line itself. An inside Profile of a 7 mm hole with a
     6.35 mm tool has no room, plunges, and warns `entry_fallback`.
+    (changed in #175: the 100 mm line is an open path, which an On line
+    Profile now cuts, as VCarve's Profile "On" does; Inside and Outside
+    still skip open paths.)
 27. **Helix entry.** A Pocket with `entry: helix` at 80 %: the descent is
 a helix of diameter 5.08 mm (for a 6.35 mm tool) whose footprint lies
 inside the region, followed by one flat revolution at the pass depth;
