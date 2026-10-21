@@ -358,6 +358,13 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
 
 ### Fixed
 
+- A Profile whose cut starts under a tab no longer plunges into the tab on
+  later passes. The move between passes came down to the previous pass's
+  depth at the start, inside the tab, leaving it up to one step-down
+  thinner, or more with a last pass. It happened with `start: auto` and a
+  plunge entry, and with an explicit start with every entry. Each pass now starts on the tab at its height and gets
+  down past the tab's end, and the safety pass's S9 refuses a plunge into a
+  tab ([#337]).
 - The CLI no longer panics when its output pipe closes, as in
   `dreamcarve check part.dcv | head`; it finishes its work and exits with its
   own status ([#216]).
@@ -499,6 +506,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#284]: https://github.com/grayzu/dreamcarve/issues/284
 [#285]: https://github.com/grayzu/dreamcarve/issues/285
 [#324]: https://github.com/grayzu/dreamcarve/issues/324
+[#337]: https://github.com/grayzu/dreamcarve/issues/337
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306

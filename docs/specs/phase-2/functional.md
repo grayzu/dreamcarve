@@ -963,8 +963,13 @@ built (design addendum, "Order and format versions").
     #285: "nearest" is `nearest_point`'s, which takes the middle of an arc
     centred on the target, so `first_vertex` on a convex corner cut
     outside starts mid-arc round it; a last pass's allowance passes start
-    at their own path's point nearest the same target; a start under a
-    tab comes down onto the tab top there, warned `entry_fallback`.)
+    at their own path's point nearest the same target. Changed again in
+    #337: on a start under a tab, the first pass below the tab top plunges
+    only to the tab top there, warned `entry_fallback`; each later pass
+    starts on the tab where the one before ended, never lower, and every
+    pass comes down to its depth past the tab's end, as a lap leaves any
+    tab: a rect tab's step, a smooth tab's slope. This holds for `auto`
+    too, where a plunge entry keeps its start.)
 
 ### Acceptance tests (addendum)
 

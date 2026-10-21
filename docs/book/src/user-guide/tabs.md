@@ -323,7 +323,7 @@ round.
 A tab on a corner moves to the nearest place, along the path, that is off
 every corner, forward along the cut if both ways are as near. It moves at
 most half the gap to the next tab each way, and never onto another tab's
-stretch; on an open path it never passes an end. Four evenly spaced tabs
+stretch; on an open path its whole stretch stays within the path's ends. Four evenly spaced tabs
 on a 50 mm square turned 45°, whose cut starts in the middle of a side,
 land in the middle of the arcs round its corners; with `avoid_corners`
 each one slides about 11 mm onto the next side, and every tab stretch is
@@ -331,13 +331,14 @@ on a straight side, its width and height unchanged.
 
 A tab that has nowhere to go stays where it is, and `check`, `export` and
 `tabs place` warn `tab_on_corner` with how far along the bit's path it
-is: its neighbours are too close, or the outline is so small that it is
-a corner everywhere. No tab is dropped for being on a corner: a part keeps
+is: its neighbours, another tab or an open path's end are in the way, or
+the outline is so small for the bit that it is a corner everywhere, which
+the warning says. No tab is dropped for being on a corner: a part keeps
 the tabs the [rules for short outlines](#outlines-too-short-for-the-tabs)
 leave it.
 
 ```text
-warning: tab_on_corner: operation `op1`: the tab 49 mm along the bit's path round `Square` (instance `i1`, profile 0) is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab or onto it, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)
+warning: tab_on_corner: operation `op1`: the tab 49 mm along the bit's path round `Square` (instance `i1`, profile 0) is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab, onto another tab or past the path's end, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)
 ```
 
 Tabs you place with `--at` or by their point stay where you put them;

@@ -50,7 +50,7 @@ pub use corners::TAB_CORNER_TURN_DEG;
 use crate::entry::plunge_limited_feed_mm_min;
 use crate::error::{CamError, ShapeRef};
 use crate::toolpath::{Move, MoveKind};
-use crate::warning::{TabsRangeReason, Warning};
+use crate::warning::{TabOnCornerReason, TabsRangeReason, Warning};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Polyline, Segment};
 use dc_project::{OperationId, TabPlacement, TabShape, TabSpec};
 
@@ -147,8 +147,8 @@ pub(crate) struct Fit {
     /// half of it.
     pub reduced: Option<Reduced>,
     /// Where each tab left on a corner is centred (#285), mm along the
-    /// path as tabs are measured on it.
-    pub on_corners: Vec<f64>,
+    /// path as tabs are measured on it, and why it stays.
+    pub on_corners_mm: Vec<(f64, TabOnCornerReason)>,
 }
 
 /// Which way a path runs, for laying tabs on it.
@@ -415,7 +415,7 @@ impl Request {
     /// The tabs this request puts on `path`, laid out by `tabs`
     /// ([`Tabs::layout`]). With `avoid_corners` each one on a corner moves
     /// off it first, where it can ([`corners`], #285); one that cannot
-    /// stays, and is in [`Fit::on_corners`]. When their spans would cover
+    /// stays, and is in [`Fit::on_corners_mm`]. When their spans would cover
     /// more than half the path, so the part or hole would not cut free,
     /// the path gets the most tabs that cover at most half (#109), but
     /// never fewer than `least` allows: `count` tabs re-spaced evenly, or
@@ -435,13 +435,13 @@ impl Request {
             };
             corners::Corners::of(&drawn, self.diameter_mm, self.span_mm)
         });
-        let lay = |centres: Vec<f64>| -> (Vec<TabCut>, Vec<f64>) {
+        let lay = |centres: Vec<f64>| -> (Vec<TabCut>, Vec<(f64, TabOnCornerReason)>) {
             let (centres, on_corners) = match &corners {
                 Some(corners) => {
                     let (moved, blocked) = corners::avoid(&centres, corners, self.span_mm);
-                    let on: Vec<f64> = blocked
+                    let on: Vec<(f64, TabOnCornerReason)> = blocked
                         .iter()
-                        .filter_map(|&i| moved.get(i).copied())
+                        .filter_map(|&(i, why)| moved.get(i).map(|&c| (c, why)))
                         .collect();
                     (moved, on)
                 }
@@ -460,7 +460,7 @@ impl Request {
             return Fit {
                 cuts: all,
                 reduced: None,
-                on_corners,
+                on_corners_mm: on_corners,
             };
         }
         // `asked` is at least 1 here: no tabs cover nothing.
@@ -495,7 +495,7 @@ impl Request {
                 cut,
                 placed: false,
             }),
-            on_corners,
+            on_corners_mm: on_corners,
         }
     }
 }
@@ -2686,6 +2686,16 @@ mod tests {
         let (p, op) = circle_job(DIAMETER_MM, Side::Outside, Some(spec));
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(on_corner(&warnings).len(), 1, "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| matches!(
+                w,
+                Warning::TabOnCorner {
+                    reason: crate::warning::TabOnCornerReason::Everywhere,
+                    ..
+                }
+            )),
+            "{warnings:?}"
+        );
         assert_eq!(raised_runs(&final_lap(&tp)).len(), 1);
     }
 
@@ -2770,6 +2780,7 @@ mod tests {
             .map(ToString::to_string)
             .unwrap_or_default();
         assert!(text.contains("49 mm along"), "{text}");
+        assert!(text.contains("half way to the next tab"), "{text}");
         let lap = final_lap(&tp);
         let centres = run_centres(&lap);
         assert_eq!(centres.len(), 3, "{centres:?}");

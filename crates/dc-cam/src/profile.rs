@@ -36,7 +36,7 @@ use crate::tabs::{
     coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{OpenPathReason, Warning};
+use crate::warning::{OpenPathReason, TabOnCornerReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
     distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point, nest,
@@ -414,7 +414,7 @@ pub fn generate_profile(
         reductions,
         tops_z_mm,
         on_holes,
-        on_corners,
+        on_corners_mm,
         ..
     } = plan_tabs(
         project,
@@ -439,12 +439,16 @@ pub fn generate_profile(
         });
     }
     // #285: a requested tab with nowhere off its corner is cut there.
-    for ((_, shape), on) in paths.iter().zip(&on_corners) {
-        warnings.extend(on.iter().map(|&distance_mm| Warning::TabOnCorner {
-            op: op.id.clone(),
-            shape: (*shape).clone(),
-            distance_mm,
-        }));
+    for ((_, shape), on) in paths.iter().zip(&on_corners_mm) {
+        warnings.extend(
+            on.iter()
+                .map(|&(distance_mm, reason)| Warning::TabOnCorner {
+                    op: op.id.clone(),
+                    shape: (*shape).clone(),
+                    distance_mm,
+                    reason,
+                }),
+        );
     }
     // #284: the part's `n` paths, then each one's allowance twin, which
     // the passes before the last cut; `twin_of` finds it. A twin's tabs
@@ -683,7 +687,9 @@ pub fn generate_profile(
                 };
                 if on_tab {
                     // The start sits under a tab span: the lap starts on
-                    // the tab, and the block plunges onto it, as phase 1.
+                    // the tab, and the block comes down onto it, never
+                    // into it (#337); only the first pass that reaches the
+                    // tab top there plunges, warned.
                     if block.descent_from_z_mm - lap_start_z_mm > EPS_MM {
                         entry_warnings.record(
                             shape,
@@ -1081,8 +1087,8 @@ pub(crate) struct TabPlan {
     /// Per path, what the request asked and cut when it cut some down.
     pub request_reductions: Vec<Option<(Reduced, Vec<f64>)>>,
     /// Per path, where each tab the request leaves on a corner is
-    /// centred, mm along it as tabs are measured on it (#285).
-    pub on_corners: Vec<Vec<f64>>,
+    /// centred, mm along it as tabs are measured on it, and why (#285).
+    pub on_corners_mm: Vec<Vec<(f64, TabOnCornerReason)>>,
 }
 
 /// Plans the tabs of `op` on `paths` (each with the shape it cuts; `holes`
@@ -1142,7 +1148,7 @@ fn plan_tabs(
         let fit = request.fit(&fitter, path, ends_of(path), least);
         requested.push(fit.cuts);
         reductions.push(fit.reduced.map(|r| (r, vec![request.width_mm(); r.asked])));
-        on_corners.push(fit.on_corners);
+        on_corners.push(fit.on_corners_mm);
     }
     let request_reductions = reductions.clone();
 
@@ -1260,7 +1266,7 @@ fn plan_tabs(
         crossed,
         requested,
         request_reductions,
-        on_corners,
+        on_corners_mm: on_corners,
     })
 }
 
@@ -1669,7 +1675,9 @@ fn check_open_bands(
 /// The block that cuts one lap of a tool-centre contour at pass `pass`:
 /// a straight plunge to `start` (into the lap's start Z, which a tab span
 /// over the path start raises above `z_mm`), then the lap. The descent
-/// starts at safe Z on the first pass and at the previous pass Z after.
+/// starts at safe Z on the first pass and after it at the previous pass Z
+/// or the lap's start Z, whichever is higher (#337: on a tab, never below
+/// its height).
 /// It frees material on the final pass when that reaches the stock bottom.
 #[allow(
     clippy::too_many_arguments,
@@ -1694,10 +1702,15 @@ fn contour_block(
         Vec::new()
     };
     let exit = lap.moves.last().map_or(start, |m| m.to.xy());
+    // #337: a lap that starts on a tab starts at the tab's height. The
+    // pass before left the tab there, and a lap that also started on it
+    // ended there, so the descent never goes below that height at the
+    // start: it would plunge into the tab. The lap comes down off the tab
+    // at the tab's end, as every lap does.
     let descent_from_z_mm = pass
         .checked_sub(1)
         .and_then(|k| pass_z.get(k).copied())
-        .unwrap_or(safe_z_mm);
+        .map_or(safe_z_mm, |above| above.max(lap.start_z_mm));
     CutBlock {
         shape: shape.clone(),
         pass,

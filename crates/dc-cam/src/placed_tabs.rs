@@ -101,14 +101,18 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
                 .push(overlap_warning(op, j, Some(shape), length_mm));
         }
         // #285: a tab left on a corner is placed there, warned.
-        if let Some(on) = cut.plan.on_corners.get(j) {
+        if let Some(on) = cut.plan.on_corners_mm.get(j) {
             placement
                 .warnings
-                .extend(on.iter().map(|&distance_mm| Warning::TabOnCorner {
-                    op: op.clone(),
-                    shape: shape.clone(),
-                    distance_mm,
-                }));
+                .extend(
+                    on.iter()
+                        .map(|&(distance_mm, reason)| Warning::TabOnCorner {
+                            op: op.clone(),
+                            shape: shape.clone(),
+                            distance_mm,
+                            reason,
+                        }),
+                );
         }
         for tab_cut in asked {
             // Centres on an open path are measured from its first vertex

@@ -52,5 +52,5 @@ pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};
 pub use toolpath::{Move, MoveKind, Toolpath};
 pub use warning::{
     IslandNeighbour, LeadDroppedReason, OpenPathReason, ReliefCornerReason, ReliefSkippedReason,
-    TabsRangeReason, Warning, WarningCode,
+    TabOnCornerReason, TabsRangeReason, Warning, WarningCode,
 };

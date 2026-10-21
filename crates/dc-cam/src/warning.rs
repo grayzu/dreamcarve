@@ -195,6 +195,18 @@ pub enum OpenPathReason {
     NoLength,
 }
 
+/// Why a tab stays on a corner ([`Warning::TabOnCorner`], #285).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabOnCornerReason {
+    /// The bit's path is a corner wherever the tab could go: it turns 30°
+    /// or more within one bit diameter all along it, as round a circle
+    /// smaller than about two bit diameters.
+    Everywhere,
+    /// The places off the corner are more than half way to a neighbouring
+    /// tab, on another tab, or past an open path's end.
+    NoRoom,
+}
+
 /// Where the tab top lies outside the cut ([`Warning::TabsOutsideCutRange`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabsRangeReason {
@@ -385,6 +397,8 @@ pub enum Warning {
         /// Where the tab is centred, mm along the bit's path from its
         /// start (from its first vertex as drawn on an open path).
         distance_mm: f64,
+        /// Why it could not move off.
+        reason: TabOnCornerReason,
     },
     /// [`WarningCode::ToolpathsOverlap`].
     ToolpathsOverlap {
@@ -934,10 +948,23 @@ impl fmt::Display for Warning {
                 mm(*limit_mm)
             ),
             Self::TabOnCorner {
-                shape, distance_mm, ..
+                shape,
+                distance_mm,
+                reason: TabOnCornerReason::NoRoom,
+                ..
             } => write!(
                 f,
-                "the tab {} mm along the bit's path round {shape} is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab or onto it, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
+                "the tab {} mm along the bit's path round {shape} is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab, onto another tab or past the path's end, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
+                mm(*distance_mm)
+            ),
+            Self::TabOnCorner {
+                shape,
+                distance_mm,
+                reason: TabOnCornerReason::Everywhere,
+                ..
+            } => write!(
+                f,
+                "the tab {} mm along the bit's path round {shape} is on a corner, and so is every place it could go: the path turns 30° or more within one bit diameter all along it, as round a part small for the bit, so it is cut where it is; use a smaller bit, or place it by hand (`dreamcarve tabs place --at`)",
                 mm(*distance_mm)
             ),
             Self::ToolpathsOverlap {
@@ -1251,8 +1278,18 @@ mod tests {
                     op: op(),
                     shape: shape(),
                     distance_mm: 54.600_002_2,
+                    reason: TabOnCornerReason::NoRoom,
                 },
-                "the tab 54.6 mm along the bit's path round `Shape` (instance `i1`, profile 2) is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab or onto it, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
+                "the tab 54.6 mm along the bit's path round `Shape` (instance `i1`, profile 2) is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab, onto another tab or past the path's end, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
+            ),
+            (
+                Warning::TabOnCorner {
+                    op: op(),
+                    shape: shape(),
+                    distance_mm: 9.999_999_9,
+                    reason: TabOnCornerReason::Everywhere,
+                },
+                "the tab 10 mm along the bit's path round `Shape` (instance `i1`, profile 2) is on a corner, and so is every place it could go: the path turns 30° or more within one bit diameter all along it, as round a part small for the bit, so it is cut where it is; use a smaller bit, or place it by hand (`dreamcarve tabs place --at`)",
             ),
             (
                 Warning::TabsCoverMostOfContour {

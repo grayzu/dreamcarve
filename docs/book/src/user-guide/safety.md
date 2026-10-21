@@ -158,6 +158,11 @@ written. There are no safety warnings, only errors.
       its own shape, such as an island in a band narrower than the bit;
       DreamCarve refuses that cut before export (see
       [Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)).
+      A Profile also leaves its [tabs](tabs.md) standing: a straight plunge
+      on the bit's path, below a tab's top, within the stretch a pass rises
+      over for that tab (its width plus the bit's diameter, along the path;
+      under a smooth tab's slope, below the slope), stops the export. The
+      tabs are the project's placed tabs and those a tab request places.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus

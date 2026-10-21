@@ -48,7 +48,7 @@ use dc_project::{
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
 use crate::emit::{changes_tools_in_program, code_words, controller_sets_units};
-use crate::material::{self, Material};
+use crate::material::{self, Material, TabSpine};
 use crate::parse::{
     Block, CycleModel, MachineMove, MachinePosition, MotionKind, Word, is_code, parse_program_with,
 };
@@ -69,6 +69,9 @@ pub(crate) struct OpSpan<'a> {
     pub toolpath: &'a Toolpath,
     /// The material it may cut, from the project (S9).
     pub material: &'a Material,
+    /// The middles of the tabs it must leave standing, from the project
+    /// (S9, #337).
+    pub tabs: &'a [TabSpine],
     /// 1-based program lines, end exclusive, from the operation's first
     /// motion line to its last.
     pub lines: Range<usize>,
@@ -2316,6 +2319,7 @@ mod tests {
             tool: &tool,
             toolpath: &toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: 1..lines,
         }];
         check_rules(
@@ -2473,6 +2477,7 @@ mod tests {
                 tool: &tool,
                 toolpath: &toolpath,
                 material: &Material::Unchecked,
+                tabs: &[],
                 lines: 1..10,
             },
             OpSpan {
@@ -2480,6 +2485,7 @@ mod tests {
                 tool: &tool,
                 toolpath: &toolpath,
                 material: &Material::Unchecked,
+                tabs: &[],
                 lines: 10..text.lines().count() + 1,
             },
         ];
@@ -3439,6 +3445,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -3469,6 +3476,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -3735,6 +3743,7 @@ mod tests {
                     tool: &tool,
                     toolpath: &a,
                     material: &Material::Unchecked,
+                    tabs: &[],
                     lines: 6..10,
                 },
                 OpSpan {
@@ -3742,6 +3751,7 @@ mod tests {
                     tool: &tool,
                     toolpath: &b,
                     material: &Material::Unchecked,
+                    tabs: &[],
                     lines: 10..text.lines().count() + 1,
                 },
             ];
@@ -4103,6 +4113,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -4287,6 +4298,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -4949,12 +4961,14 @@ mod tests {
         let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
         let tool = project.tools[0].clone();
         let material = Material::of(project, op);
+        let tabs = material::tab_spines(project, op);
         let toolpath = Toolpath::default();
         let span = OpSpan {
             op,
             tool: &tool,
             toolpath: &toolpath,
             material: &material,
+            tabs: &tabs,
             lines: 1..text.lines().count() + 1,
         };
         let tolerances = Tolerances {
@@ -5822,6 +5836,41 @@ mod tests {
         .map(|(p, _)| p.text)
     }
 
+    /// #337: the sample's Profile starting under a 3 mm tall tab (its cut
+    /// starts nearest (35, 0), mid-way along the bottom edge, where a tab
+    /// at 0 mm sits) exports with every entry and both tab shapes: the
+    /// passes below the tab top come down onto it, not into it, which
+    /// S9's tab rule would refuse.
+    #[test]
+    fn start_under_a_tab_passes_s9() {
+        for entry in [
+            dc_project::Entry::Plunge,
+            dc_project::Entry::Ramp { angle_deg: 15.0 },
+            dc_project::Entry::Helix {
+                diameter_fraction: 0.8,
+                angle_deg: 5.0,
+            },
+        ] {
+            for shape in [dc_project::TabShape::Rect, dc_project::TabShape::Smooth] {
+                emit_profile(|op| {
+                    op.entry = entry.clone();
+                    op.start = dc_project::StartAt::Near {
+                        x_mm: 35.0,
+                        y_mm: 0.0,
+                    };
+                    if let Some(tabs) = &mut op.tabs {
+                        tabs.placement = dc_project::TabPlacement::AtDistances {
+                            distances_mm: vec![0.0],
+                        };
+                        tabs.height_mm = 3.0;
+                        tabs.shape = shape;
+                    }
+                })
+                .unwrap_or_else(|e| panic!("{entry:?} {shape:?}: {e}"));
+            }
+        }
+    }
+
     /// S9 for Profile (#177) on generated programs: the sample's tabbed
     /// outside Profile, with a ramp, a helix and a lead in and out, and
     /// inside and on the line, all pass the safety pass.
@@ -6598,6 +6647,7 @@ mod tests {
             tool: &tool,
             toolpath: &toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: op_lines,
         }];
         check_rules(

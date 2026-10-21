@@ -674,10 +674,11 @@ fn material_heights(tp: &Toolpath, radius_mm: f64, points: &[Point]) -> Vec<f64>
 /// middle of the bottom edge with every entry (plunge, ramp, helix, lead),
 /// and from the `auto` start with a plunge (which #176 leaves where it
 /// is); rect and smooth; with and without a last pass (allowance 0.5,
-/// thickness 1); in both orders. The stock the program leaves over the
-/// tab's middle 4 mm (0.4 mm where the `auto` start's tab wraps a corner),
-/// across the whole kerf, stands at the tab top: no pass came down into
-/// it.
+/// thickness 1); in both orders. No plunge ends inside the tab, and the
+/// stock the program leaves across the whole kerf stands at the tab top
+/// over a rect tab's middle 4 mm (0.4 mm where the `auto` start's tab
+/// wraps a corner) and across a smooth tab's centre, where the triangle
+/// peaks: no pass came down into it.
 #[test]
 fn start_under_a_tab_never_plunges_into_it() {
     let p = project(
@@ -736,6 +737,23 @@ fn start_under_a_tab_never_plunges_into_it() {
                         ..tab_at(vec![0.0, 100.0], shape)
                     });
                     let (tp, _) = generate(&p, &op);
+                    // No straight plunge ends inside a tab: every one at
+                    // or above the tab top, or on the pass floor of a lap
+                    // that starts off the tabs.
+                    for end in plunge_ends(&tp) {
+                        let on_floor = PASS_Z_MM
+                            .iter()
+                            .chain([&1.0])
+                            .any(|z| (end.z - z).abs() <= TOL);
+                        assert!(end.z >= TAB_TOP_MM - TOL || on_floor, "{case}: {end:?}");
+                    }
+                    // A smooth tab is a triangle, at its top only along
+                    // its centre; where the `auto` start's wraps the
+                    // corner, its slopes run round the corner arc and
+                    // leave lower stock near it, as they should.
+                    if matches!(start, StartAt::Auto) && shape == TabShape::Smooth {
+                        continue;
+                    }
                     // The tab's centre on the part's path: the `near`
                     // start, or where the `auto` plunge first comes down.
                     let centre = match start {
@@ -754,10 +772,12 @@ fn start_under_a_tab_never_plunges_into_it() {
                     // The `auto` start is where the left edge leaves the
                     // corner arc, so its tab wraps the corner: only the
                     // stretch across its centre is straight.
-                    let half = if matches!(start, StartAt::Auto) {
-                        2
-                    } else {
-                        20
+                    // A smooth tab stands at its top only across its
+                    // centre.
+                    let half = match (start, shape) {
+                        (_, TabShape::Smooth) => 0,
+                        (StartAt::Auto, TabShape::Rect) => 2,
+                        _ => 20,
                     };
                     let mut points = Vec::new();
                     for i in -half..=half {

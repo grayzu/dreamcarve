@@ -624,8 +624,11 @@ conveniences `"auto"` allows:
   moved to where it would fit.
 - A ramp or helix [entry](#entry) that has no room at the start falls
   back to a ramp, then a plunge, with `entry_fallback`, instead of the
-  start moving. On a start under a tab the passes below the tab top come
-  down onto the tab's top there.
+  start moving. On a start under a tab, the first pass below the tab top
+  plunges only to the tab's top there, and later passes start on the tab
+  where the one before ended. Each pass gets down to its depth past the
+  tab's end, as it leaves every tab (a rect tab's step down, a smooth
+  tab's slope), so no pass cuts into the tab.
 - A [last pass](#last-pass)'s earlier passes start at their own path's
   point nearest the same place, and a reversed last pass starts where the
   others do.
