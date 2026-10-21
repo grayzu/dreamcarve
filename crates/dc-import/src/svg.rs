@@ -17,10 +17,21 @@
 //! follow PureCutCNC. Re-derived for Y-up (ADR-0001): PureCutCNC keeps SVG's
 //! Y-down coordinates; here every point is flipped once, `y' = height_mm −
 //! y`, so the page's bottom-left corner is the origin.
+//!
+//! Circular arcs stay arcs (#70, not in PureCutCNC, which flattens every
+//! curve): usvg's Bézier pieces of circles, equal-radius ellipses,
+//! rounded-rect corners and `A` commands are recognised exactly ([`arc`])
+//! and become bulges, so generators offset true arcs and Drill sees exact
+//! circles. Every other curve is flattened. The sweep is measured after
+//! the flip, so a reflection reverses an arc's bulge by construction.
+
+mod arc;
 
 use crate::{ImportError, ImportWarning};
+use arc::ArcPiece;
 use dc_geometry::{
-    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Polyline, Rect, Transform, flatten,
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Point, Polyline, Rect, Transform,
+    Vertex,
 };
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId};
 use kurbo::{Affine, BezPath, PathEl};
@@ -140,8 +151,12 @@ pub struct SvgImport {
 ///
 /// Every `<path>`, `<rect>`, `<circle>`, `<ellipse>`, `<line>`,
 /// `<polyline>` and `<polygon>` becomes one feature definition whose
-/// profiles are its subpaths flattened to `options.flatten_tolerance_mm`.
-/// Closed subpaths (ending in `Z`, or returning to their start point) become
+/// profiles are its subpaths, in mm, Y-up. Circular arcs (circles,
+/// ellipses with rx = ry, rounded-rect corners with rx = ry, and `A`
+/// commands with rx = ry, under a transform that keeps circles circular)
+/// are bulge arcs of up to 180°, and a closed subpath that is one whole
+/// circle is two half-circle arcs; every other curve is flattened to
+/// `options.flatten_tolerance_mm`. Closed subpaths (ending in `Z`, or returning to their start point) become
 /// closed polylines; others stay open. Closed polylines with no area are
 /// dropped with a warning. Text, images, gradients, clip paths, and masks
 /// are skipped or ignored with a warning; paint never affects geometry.
@@ -383,7 +398,8 @@ impl Walker {
         }
 
         let to_mm = self.px_to_mm * affine(path.abs_transform());
-        let bez = to_bez_path(path.data(), to_mm);
+        let mm_path = to_mm_path(path.data(), to_mm);
+        let bez = &mm_path.bez;
         if !bez.elements().iter().all(element_is_finite) {
             return Err(ImportError::NonFinite { path: name });
         }
@@ -396,13 +412,13 @@ impl Walker {
             });
         }
         // Refuse before flattening, so a runaway path is never allocated.
-        let estimate = estimated_vertices(&bez, self.tolerance_mm);
+        let estimate = estimated_vertices(bez, self.tolerance_mm);
         if self.vertex_count.saturating_add(estimate) > self.max_vertices {
             return Err(ImportError::TooManyVertices {
                 limit: self.max_vertices,
             });
         }
-        let flattened = flatten(&bez, self.tolerance_mm);
+        let flattened = build_profiles(&mm_path, self.tolerance_mm);
         // The estimate is conservative; the exact count is what accumulates.
         for polyline in &flattened {
             self.vertex_count = self.vertex_count.saturating_add(polyline.vertices().len());
@@ -462,41 +478,96 @@ fn affine(t: usvg::Transform) -> Affine {
     Affine::new([t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from))
 }
 
-/// Converts a usvg path to a kurbo path through `to_mm`. A subpath that
-/// ends within [`SUBPATH_CLOSE_TOLERANCE_MM`] of its start without `Z` is
+/// A path in millimetres, Y-up, and which of its elements are pieces of a
+/// circular arc.
+struct MmPath {
+    bez: BezPath,
+    /// One per element of `bez`: `Some` for the Bézier piece of a circular
+    /// arc, which becomes a bulge instead of being flattened.
+    arcs: Vec<Option<ArcHint>>,
+}
+
+/// What [`build_profiles`] needs to turn a recognised Bézier piece back
+/// into its arc.
+#[derive(Debug, Clone, Copy)]
+struct ArcHint {
+    /// Signed sweep in millimetre space (after the Y flip); positive is
+    /// counter-clockwise.
+    sweep_rad: f64,
+    /// How far, mm, f32 rounding may have moved the piece's points.
+    tolerance_mm: f64,
+}
+
+/// Converts a usvg path to a kurbo path through `to_mm`, marking the cubics
+/// that are pieces of a circular arc (see [`arc`]). A subpath that ends
+/// within [`SUBPATH_CLOSE_TOLERANCE_MM`] of its start without `Z` is
 /// closed, its last point snapped onto the start, as PureCutCNC's
 /// `parsePathProfiles` does.
-fn to_bez_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> BezPath {
+fn to_mm_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> MmPath {
     let pt =
         |p: usvg::tiny_skia_path::Point| to_mm * kurbo::Point::new(f64::from(p.x), f64::from(p.y));
-    let mut out = BezPath::new();
+    // Only a similarity keeps a circle a circle; under anything else every
+    // curve is flattened.
+    let scale = arc::similarity_scale(to_mm);
+    let mut out = MmPath {
+        bez: BezPath::new(),
+        arcs: Vec::new(),
+    };
     let mut start = kurbo::Point::ZERO;
+    let mut local_start = usvg::tiny_skia_path::Point::zero();
+    let mut local_last = local_start;
     let mut open = false;
     for segment in data.segments() {
-        match segment {
+        let arc = match segment {
             PathSegment::MoveTo(p) => {
                 close_if_returned(&mut out, start, open);
                 start = pt(p);
-                out.move_to(start);
+                out.bez.move_to(start);
+                (local_start, local_last) = (p, p);
                 open = false;
+                None
             }
             PathSegment::LineTo(p) => {
-                out.line_to(pt(p));
+                out.bez.line_to(pt(p));
+                local_last = p;
                 open = true;
+                None
             }
             PathSegment::QuadTo(c, p) => {
-                out.quad_to(pt(c), pt(p));
+                out.bez.quad_to(pt(c), pt(p));
+                local_last = p;
                 open = true;
+                None
             }
             PathSegment::CubicTo(c1, c2, p) => {
-                out.curve_to(pt(c1), pt(c2), pt(p));
+                let local = [local_last, c1, c2, p];
+                let [p0, c1, c2, p3] = local.map(pt);
+                out.bez.curve_to(c1, c2, p3);
+                local_last = p;
                 open = true;
+                scale.and_then(|scale| {
+                    // f32 rounding is relative to the stored coordinates.
+                    let largest = local
+                        .iter()
+                        .map(|q| f64::from(q.x.abs().max(q.y.abs())))
+                        .fold(0.0, f64::max);
+                    let tolerance_mm = arc::recognition_tolerance_mm(largest, scale);
+                    arc::cubic_arc_sweep_rad(p0, c1, c2, p3, tolerance_mm).map(|sweep_rad| {
+                        ArcHint {
+                            sweep_rad,
+                            tolerance_mm,
+                        }
+                    })
+                })
             }
             PathSegment::Close => {
-                out.close_path();
+                out.bez.close_path();
+                local_last = local_start;
                 open = false;
+                None
             }
-        }
+        };
+        out.arcs.push(arc);
     }
     close_if_returned(&mut out, start, open);
     out
@@ -504,20 +575,158 @@ fn to_bez_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> BezPath {
 
 /// Closes the open subpath at the end of `out` when its last point is back
 /// at `start`.
-fn close_if_returned(out: &mut BezPath, start: kurbo::Point, open: bool) {
+fn close_if_returned(out: &mut MmPath, start: kurbo::Point, open: bool) {
     if !open {
         return;
     }
     let near = |p: &kurbo::Point| p.distance(start) <= SUBPATH_CLOSE_TOLERANCE_MM;
-    let snapped = match out.elements().last() {
+    let snapped = match out.bez.elements().last() {
         Some(PathEl::LineTo(p)) if near(p) => PathEl::LineTo(start),
         Some(PathEl::QuadTo(c, p)) if near(p) => PathEl::QuadTo(*c, start),
         Some(PathEl::CurveTo(c1, c2, p)) if near(p) => PathEl::CurveTo(*c1, *c2, start),
         _ => return,
     };
-    out.pop();
-    out.push(snapped);
-    out.close_path();
+    // The snapped element keeps its arc mark: its sweep is unchanged.
+    out.bez.pop();
+    out.bez.push(snapped);
+    out.bez.close_path();
+    out.arcs.push(None);
+}
+
+/// One polyline per subpath of `path`: lines stay lines, arc pieces become
+/// bulges, joined into arcs of up to 180°, and every other curve is
+/// flattened to `tolerance_mm`. Otherwise the rule is
+/// [`dc_geometry::flatten`]'s, which a path with no arcs gives exactly: a
+/// subpath ending in `ClosePath` is closed, a point within [`EPS_MM`] of
+/// the one before is dropped, and so is a subpath of fewer than two points.
+fn build_profiles(path: &MmPath, tolerance_mm: f64) -> Vec<Polyline> {
+    let mut out = Vec::new();
+    let mut profile = ProfileBuilder::default();
+    let mut current = kurbo::Point::ZERO;
+    let mut subpath_start = current;
+    for (el, arc) in path.bez.elements().iter().zip(&path.arcs) {
+        match (*el, arc) {
+            (PathEl::MoveTo(p), _) => {
+                out.extend(std::mem::take(&mut profile).finish(false));
+                profile.push(point(p), None);
+                subpath_start = p;
+            }
+            (PathEl::LineTo(p), _) => profile.push(point(p), None),
+            (PathEl::CurveTo(_, _, p), Some(hint)) => profile.arc_to(point(p), *hint),
+            (PathEl::QuadTo(..) | PathEl::CurveTo(..), _) => {
+                let mut curve = BezPath::new();
+                curve.move_to(current);
+                curve.push(*el);
+                kurbo::flatten(&curve, tolerance_mm, |flat| {
+                    if let PathEl::LineTo(p) = flat {
+                        profile.push(point(p), None);
+                    }
+                });
+            }
+            (PathEl::ClosePath, _) => {
+                out.extend(std::mem::take(&mut profile).finish(true));
+            }
+        }
+        current = el.end_point().unwrap_or(subpath_start);
+    }
+    out.extend(profile.finish(false));
+    out
+}
+
+fn point(p: kurbo::Point) -> Point {
+    Point::new(p.x, p.y)
+}
+
+/// The points of one subpath so far and the segments between them.
+#[derive(Default)]
+struct ProfileBuilder {
+    points: Vec<Point>,
+    /// `arcs[i]` is the segment from `points[i]` to the next point: `None`
+    /// for a line. One shorter than `points` until the profile is closed.
+    arcs: Vec<Option<ArcPiece>>,
+}
+
+impl ProfileBuilder {
+    /// Adds a segment to `end`, a line or `arc`, unless `end` is within
+    /// [`EPS_MM`] of the last point. An arc that continues the previous one
+    /// on the same circle is joined to it while the two sweep at most 180°.
+    fn push(&mut self, end: Point, arc: Option<ArcPiece>) {
+        let Some(last) = self.points.last_mut() else {
+            self.points.push(end);
+            return;
+        };
+        if last.distance_to(end) <= EPS_MM {
+            return;
+        }
+        if let (Some(piece), Some(Some(previous))) = (arc, self.arcs.last_mut())
+            && let Some(joined) = previous.joined(&piece)
+        {
+            *previous = joined;
+            *last = end;
+            return;
+        }
+        self.arcs.push(arc);
+        self.points.push(end);
+    }
+
+    fn arc_to(&mut self, end: Point, hint: ArcHint) {
+        let arc = self.points.last().map(|&start| ArcPiece {
+            start,
+            end,
+            sweep_rad: hint.sweep_rad,
+            tolerance_mm: hint.tolerance_mm,
+        });
+        self.push(end, arc);
+    }
+
+    /// The finished polyline, or `None` with fewer than two points. A
+    /// closed subpath that goes once round one circle is the two
+    /// half-circle arcs from its start, as `Polyline::circle` makes.
+    fn finish(mut self, closed: bool) -> Option<Polyline> {
+        if closed {
+            match (self.points.first(), self.points.last()) {
+                (Some(first), Some(last))
+                    if self.points.len() > 1 && first.distance_to(*last) <= EPS_MM =>
+                {
+                    // The last segment now ends at the first point.
+                    self.points.pop();
+                }
+                _ => self.arcs.push(None),
+            }
+        }
+        let first = *self.points.first()?;
+        if self.points.len() < 2 {
+            return None;
+        }
+        if closed
+            && let Some(pieces) = self.arcs.iter().copied().collect::<Option<Vec<_>>>()
+            && let Some((centre, direction)) = arc::full_circle(&pieces)
+        {
+            let opposite = Point::new(2.0 * centre.x - first.x, 2.0 * centre.y - first.y);
+            return Some(Polyline::new(
+                vec![
+                    Vertex::new(first.x, first.y, direction),
+                    Vertex::new(opposite.x, opposite.y, direction),
+                ],
+                true,
+            ));
+        }
+        let vertices = self
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let bulge = self
+                    .arcs
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map_or(0.0, |arc| arc.bulge());
+                Vertex::new(p.x, p.y, bulge)
+            })
+            .collect();
+        Some(Polyline::new(vertices, closed))
+    }
 }
 
 /// Whether every point of `el` lies within [`MAX_COORDINATE_MM`] of the
@@ -988,6 +1197,42 @@ mod tests {
         let profile = only_profile(&result);
         assert!(profile.vertices().len() > 4);
         assert_all_lines(profile);
+    }
+
+    /// A path with no circular arc imports exactly as before #70, when
+    /// `dc_geometry::flatten` flattened the whole path: per-curve
+    /// flattening gives the same vertices. Lines, quadratics, free cubics,
+    /// an ellipse, a stretched circle and a gap-closed subpath.
+    #[test]
+    fn paths_without_arcs_flatten_as_before() {
+        let shapes = [
+            r#"<path d="M 95,88 C 105,65 120,100 130,75 L 140,10 Q 120,5 100,20 Z M 5,5 L 20,5 L 5,20 L 5,5"/>"#,
+            r#"<ellipse cx="50" cy="50" rx="40" ry="20"/>"#,
+            r#"<circle cx="20" cy="50" r="10" transform="scale(2 1)"/>"#,
+        ];
+        for shape in shapes {
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="150mm" height="100mm" viewBox="0 0 150 100">{shape}</svg>"#
+            );
+            let tree = usvg::Tree::from_str(&svg, &usvg_options()).expect("parses");
+            fn first_path(group: &usvg::Group) -> Option<&usvg::Path> {
+                group.children().iter().find_map(|node| match node {
+                    usvg::Node::Path(p) => Some(p.as_ref()),
+                    usvg::Node::Group(g) => first_path(g),
+                    _ => None,
+                })
+            }
+            let path = first_path(tree.root()).expect("a path");
+            let px_to_mm = Affine::new([MM_PER_PX, 0.0, 0.0, -MM_PER_PX, 0.0, 100.0]);
+            let mm_path = to_mm_path(path.data(), px_to_mm * affine(path.abs_transform()));
+            assert!(mm_path.arcs.iter().all(Option::is_none), "{shape}");
+            let tolerance_mm = FLATTEN_TOLERANCE_DEFAULT_MM;
+            assert_eq!(
+                build_profiles(&mm_path, tolerance_mm),
+                dc_geometry::flatten(&mm_path.bez, tolerance_mm),
+                "{shape}"
+            );
+        }
     }
 
     #[test]
