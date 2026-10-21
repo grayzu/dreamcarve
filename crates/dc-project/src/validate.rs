@@ -1014,6 +1014,12 @@ impl Validator {
                 }
                 let mut ok = true;
                 for (j, vertex) in profile.vertices().iter().enumerate() {
+                    // Every load and save checks every vertex: name the
+                    // fields only for one that fails (#71).
+                    let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORDINATE_MM;
+                    if in_range(vertex.x) && in_range(vertex.y) && vertex.bulge.is_finite() {
+                        continue;
+                    }
                     let at = format!("definitions[{key}].profiles[{i}].vertices[{j}]");
                     ok &= self.coordinate(&format!("{at}.x"), vertex.x);
                     ok &= self.coordinate(&format!("{at}.y"), vertex.y);
