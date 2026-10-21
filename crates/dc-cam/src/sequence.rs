@@ -1670,4 +1670,32 @@ mod tests {
         let input = input(blocks, MachiningOrder::PassFirst, &[]);
         assert_eq!(plan(&input).unwrap(), [0, 4, 2, 3, 5, 1]);
     }
+
+    /// #232: a link between two points on a cleared area's boundary that
+    /// bridges a dent of the material into it, shorter than the old
+    /// 0.5 mm sample step. A 20 mm square with a diamond hole whose two
+    /// tips (10, 10.15) and (10, 9.85) are 0.3 mm apart: the straight link
+    /// between them runs through the diamond, crossing none of its edges
+    /// properly (it touches them only at its ends), and no sample point
+    /// was tested. It is refused; a link of the same length beside the
+    /// diamond, in the material, is still inside.
+    #[test]
+    fn short_chord_between_boundary_points_is_not_inside() {
+        let outer = Contour::new(Polyline::rect(Point::new(0.0, 0.0), 20.0, 20.0)).unwrap();
+        let diamond = Contour::new(Polyline::new(
+            [(10.0, 10.15), (9.0, 10.0), (10.0, 9.85), (10.05, 10.0)]
+                .into_iter()
+                .map(|(x, y)| dc_geometry::Vertex::line(x, y))
+                .collect(),
+            true,
+        ))
+        .unwrap();
+        let cleared = nest(vec![outer, diamond]).unwrap().0.remove(0);
+        assert_eq!(cleared.holes().len(), 1);
+        let (top, bottom) = (Point::new(10.0, 10.15), Point::new(10.0, 9.85));
+        assert!(!link_inside_cleared(&cleared, &cleared, top, bottom));
+        assert!(!link_inside_cleared(&cleared, &cleared, bottom, top));
+        let (a, b) = (Point::new(12.0, 10.15), Point::new(12.0, 9.85));
+        assert!(link_inside_cleared(&cleared, &cleared, a, b));
+    }
 }

@@ -579,4 +579,34 @@ mod tests {
             .is_none()
         );
     }
+
+    /// #235 (found by the dc-gcode property test): the nested circular
+    /// pocket's tool-centre region, a circle of radius 1.4994 mm, at the
+    /// property case's 0.2998 mm step-over is 5.0006 step-overs across its
+    /// radius, so a sixth ring of radius 0.0002 mm was kept: three arcs
+    /// whose ends round to one point in the program (S6). A ring under
+    /// twice the tolerance across is noise by the rule rest machining
+    /// uses (area under the tolerance times the perimeter), and nothing
+    /// the tool does not already reach from the ring before it: five
+    /// rings, none under 0.02 mm across.
+    #[test]
+    fn no_ring_smaller_than_the_tolerance() {
+        let tool_radius_mm = 1.715_671_296_509_893_3 / 2.0;
+        let centre_radius_mm = 2.906_933_833_965_864_4 - tool_radius_mm - 0.549_697_563_087_318_1;
+        let stepover_mm = 1.715_671_296_509_893_3 * 0.174_767_951_923_974_57;
+        let root = region(vec![Polyline::circle(
+            Point::new(120.0, 80.0),
+            centre_radius_mm,
+        )]);
+        let tree = RingTree::build(root, stepover_mm, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        assert_eq!(tree.nodes.len(), 5, "{:?}", tree.nodes);
+        for (i, node) in tree.nodes.iter().enumerate() {
+            let bounds = node.region.outer().polyline().bounds().unwrap();
+            let across_mm = bounds.width_mm().min(bounds.height_mm());
+            assert!(
+                across_mm >= 2.0 * FLATTEN_TOLERANCE_DEFAULT_MM,
+                "ring {i} is {across_mm} mm across"
+            );
+        }
+    }
 }

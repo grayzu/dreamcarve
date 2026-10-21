@@ -24,6 +24,7 @@
     reason = "test code reports failure by panicking"
 )]
 
+mod cases;
 mod projects;
 
 use dc_cam::test_support::assert_safe;

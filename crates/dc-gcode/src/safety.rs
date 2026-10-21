@@ -3893,6 +3893,44 @@ mod tests {
         assert!(matches!(err, ExportError::OffMaterial { .. }), "{err:?}");
     }
 
+    /// #231: the sample's outside Profile with T-bones of a 60 × 40 mm
+    /// frame at (90, 60) with a 30 × 20 mm hole at (105, 70). The T-bone
+    /// in the hole's corner (105, 70) runs from the miter point
+    /// (108.175, 73.175) to (108.175, 70) on the hole's long wall. Its
+    /// return leg, written from a start the rounding moved 0.0005 mm into
+    /// the part, passes; one starting 0.1 mm inside the part fails: the
+    /// slack S9 judges the side with does not open the part. The tool
+    /// gets to each start by rapids, which S9 does not hold to the
+    /// material, so only the return leg is judged.
+    #[test]
+    fn outside_cut_starting_inside_the_part_is_rejected() {
+        let mut project = sample_project();
+        project.stock = dc_project::Stock {
+            width_mm: 240.0,
+            height_mm: 160.0,
+            thickness_mm: Some(6.0),
+        };
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles = vec![
+                dc_geometry::Polyline::rect(Point::new(0.0, 0.0), 60.0, 40.0),
+                dc_geometry::Polyline::rect(Point::new(15.0, 10.0), 30.0, 20.0),
+            ];
+        }
+        project.instances[0].transform = dc_geometry::Transform::translate(90.0, 60.0);
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.tabs = None;
+        op.corner_relief = dc_project::CornerRelief::TBone;
+        let op = Operation::Profile(op.clone());
+        let program =
+            |y: &str| format!("G21 G90\nG54\nG0 Z5\nX108.175 Y{y}\nZ-1\nG1 Y73.175 F1000\nG0 Z5\n");
+        check_material_text(&program("69.9995"), &project, &op).unwrap();
+        let err = check_material_text(&program("69.9"), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+            "{err:?}"
+        );
+    }
+
     /// S9 for an inside Profile (#177): the tool centre stays inside the
     /// hole, a radius from its walls, as a Pocket's; a cut that crosses
     /// out of the hole fails.

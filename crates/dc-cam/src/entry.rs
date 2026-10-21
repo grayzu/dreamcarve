@@ -1784,6 +1784,73 @@ mod tests {
         assert_ends_at_target(&d, (100.0, 100.0), -2.0);
     }
 
+    /// The drop of every descending move of `d` from `start_z`.
+    fn drops(d: &Descent, start_z: f64) -> Vec<f64> {
+        steps(d, start_z)
+            .into_iter()
+            .filter(|(from, mv)| descends(*from, mv))
+            .map(|(from, mv)| from.z - mv.to.z)
+            .collect()
+    }
+
+    /// #234 (found by the dc-gcode property test): a ramp over 7.0018
+    /// legs' depth ended with an eighth leg dropping 0.18 % of a full one,
+    /// a few micrometres, which the program writes level at the ramp's
+    /// plunge-limited feed (S3). The depth is spread evenly over the legs:
+    /// none drops less than half a full leg (the 12 mm run at 5°, so none
+    /// is steeper than asked), and the drops sum to the depth.
+    #[test]
+    fn ramp_has_no_fragment_leg() {
+        let ramp = Entry::Ramp { angle_deg: 5.0 };
+        let full_mm = 3.0 * D_MM * 5.0_f64.to_radians().tan();
+        let depth_mm = 7.0018 * full_mm;
+        let d = entry(
+            rectangle(200.0, 200.0),
+            &ramp,
+            (100.0, 100.0),
+            depth_mm,
+            0.0,
+        );
+        assert_eq!(d.used, EntryKind::Ramp);
+        let drops = drops(&d, depth_mm);
+        assert_eq!(drops.len(), 8, "{drops:?}");
+        for (i, drop) in drops.iter().enumerate() {
+            assert!(
+                *drop >= 0.5 * full_mm && *drop <= full_mm + 1e-9,
+                "leg {i} drops {drop} mm, a full leg {full_mm} mm"
+            );
+        }
+        assert_approx_eq!(drops.iter().sum::<f64>(), depth_mm, 1e-9);
+        assert_ends_at_target(&d, (100.0, 100.0), 0.0);
+    }
+
+    /// #234's helix half: its `ceil` count of chords splits the depth
+    /// evenly already (Z linear in the angle), so a depth a sliver over a
+    /// whole number of chords leaves no fragment either: every chord drops
+    /// the same, and the drops sum to the depth.
+    #[test]
+    fn helix_has_no_fragment_segment() {
+        let chord_mm = helix_pitch_mm(3.2, 5.0) / HELIX_SEGMENTS_PER_REV as f64;
+        let depth_mm = 100.0018 * chord_mm;
+        let d = entry(
+            rectangle(20.0, 20.0),
+            &upstream_helix(),
+            (10.0, 10.0),
+            depth_mm,
+            0.0,
+        );
+        assert_eq!(d.used, EntryKind::Helix);
+        let drops = drops(&d, depth_mm);
+        assert_eq!(drops.len(), 101, "{drops:?}");
+        for (i, drop) in drops.iter().enumerate() {
+            assert!(
+                (drop - depth_mm / 101.0).abs() <= 1e-9,
+                "chord {i} drops {drop} mm of {depth_mm} mm"
+            );
+        }
+        assert_approx_eq!(drops.iter().sum::<f64>(), depth_mm, 1e-9);
+    }
+
     /// Entry must not score the wall the finish pass leaves, so every ramp
     /// point stays a real standoff (0.1 · D) inside the boundary.
     #[test]
