@@ -18,6 +18,15 @@
 //! cutting close to them leaves a thin wall, not a gouge; On line, lines
 //! of one region closer than the tool's diameter would cut through the
 //! part between them, which `generate_profile` refuses (#199).
+//!
+//! An open path an On line Profile cuts (#175) is its own line and its own
+//! tool-centre path, compared by the same On line rule (#206). It belongs
+//! to the region whose material holds all of it, as a hole does, and is
+//! not compared with that region's lines: there it cuts into the part, not
+//! beside it. An open path held by no region (in the waste, in a hole's
+//! slug, or crossing a line) is a group of its own and is compared with
+//! every other shape. Engrave takes no part: it cuts every line as drawn,
+//! so lines that cross or meet are the design, not shapes too close.
 
 use crate::error::ShapeRef;
 use crate::warning::{Warning, WarningCode};
@@ -31,29 +40,41 @@ pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 /// regions, where either one's tool path comes closer than the tool radius
 /// to the other's line. `paths` are in cut order; so are the warnings, by
 /// the first path of each pair and then the second, and the shape cut
-/// first is named first. `shapes` are the resolved targets and `regions`
-/// what `nest` made of them.
+/// first is named first. `shapes` are the resolved closed targets,
+/// `regions` what `nest` made of them, and `open` the open paths cut On
+/// line, as drawn (#206).
 #[must_use]
 pub(crate) fn overlap_warnings(
     paths: &[CutPath<'_>],
     shapes: &[(ShapeRef, Contour)],
+    open: &[(ShapeRef, Polyline)],
     regions: &[Region],
     side: Side,
     tool: &Tool,
 ) -> Vec<Warning> {
     let radius_mm = tool.diameter_mm / 2.0;
-    // Each path that has a known shape, with that shape's line and region.
-    let placed: Vec<(&Polyline, &ShapeRef, &Contour, usize)> = paths
+    // Each path that has a known shape, with that shape's line and the
+    // group it is never compared within: a closed shape's region; for an
+    // open path the region whose material holds it, or else a group of
+    // its own past the regions.
+    let placed: Vec<(&Polyline, &ShapeRef, &Polyline, usize)> = paths
         .iter()
         .filter_map(|(path, shape)| {
             let shape = (*shape)?;
-            let (_, contour) = shapes.iter().find(|(s, _)| s == shape)?;
-            let region = regions.iter().position(|r| {
-                std::iter::once(r.outer())
-                    .chain(r.holes())
-                    .any(|c| c == contour || *c == contour.reversed())
-            })?;
-            Some((*path, shape, contour, region))
+            if let Some((_, contour)) = shapes.iter().find(|(s, _)| s == shape) {
+                let region = regions.iter().position(|r| {
+                    std::iter::once(r.outer())
+                        .chain(r.holes())
+                        .any(|c| c == contour || *c == contour.reversed())
+                })?;
+                return Some((*path, shape, contour.polyline(), region));
+            }
+            let (index, (_, line)) = open.iter().enumerate().find(|(_, (s, _))| s == shape)?;
+            let group = regions
+                .iter()
+                .position(|r| region_holds_path(r, line))
+                .unwrap_or(regions.len() + index);
+            Some((*path, shape, line, group))
         })
         .collect();
 
@@ -68,9 +89,7 @@ pub(crate) fn overlap_warnings(
             {
                 continue;
             }
-            if !(within(path_a, line_b.polyline(), radius_mm)
-                || within(path_b, line_a.polyline(), radius_mm))
-            {
+            if !(within(path_a, line_b, radius_mm) || within(path_b, line_a, radius_mm)) {
                 continue;
             }
             warned.push((shape_a, shape_b));
@@ -82,7 +101,7 @@ pub(crate) fn overlap_warnings(
                     .with("other_instance", &shape_b.instance)
                     .with("other_instance_name", &shape_b.instance_name)
                     .with("other_profile", shape_b.profile)
-                    .with("gap_mm", distance_mm(line_a.polyline(), line_b.polyline()))
+                    .with("gap_mm", distance_mm(line_a, line_b))
                     .with("tool", &tool.name)
                     .with("diameter_mm", tool.diameter_mm)
                     .with("needed_mm", needed_gap_mm(side, tool.diameter_mm)),
@@ -101,6 +120,21 @@ pub(crate) fn within(path: &Polyline, line: &Polyline, radius_mm: f64) -> bool {
         _ => false,
     };
     near && distance_mm(path, line) < reach_mm
+}
+
+/// True when every point of the open path `path` lies in `region`'s
+/// material or on its lines (#206): each vertex and the middle of each
+/// segment, so a line or arc that runs out of the region between two
+/// vertices inside it does not count.
+pub(crate) fn region_holds_path(region: &Region, path: &Polyline) -> bool {
+    let middles = path
+        .segments()
+        .filter_map(|s| s.point_at(s.length_mm() / 2.0).map(|(p, _)| p));
+    path.vertices()
+        .iter()
+        .map(|v| v.point())
+        .chain(middles)
+        .all(|p| region.contains_point(p))
 }
 
 /// True when boxes `a` and `b` are less than `reach_mm` apart on each axis.

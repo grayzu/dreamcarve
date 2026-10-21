@@ -12,11 +12,12 @@
 //! the flip.
 
 use crate::error::ShapeRef;
+use crate::overlap::region_holds_path;
 use crate::profile::same_contour;
 use crate::toolpath::Toolpath;
 use crate::warning::{Warning, WarningCode};
-use dc_geometry::{Contour, EPS_MM, GeometryWarning, nest};
-use dc_project::{Operation, OperationId, Project, ToolId};
+use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
+use dc_project::{Operation, OperationId, Project, Side, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -25,18 +26,19 @@ use dc_project::{Operation, OperationId, Project, ToolId};
 ///
 /// Returns, in a deterministic order:
 ///
-/// - [`WarningCode::CutInsideFreedPart`] for every closed target of a
-///   later operation that lies inside an outline an earlier Profile cut
-///   through the stock, by operation order, then target order, then the
-///   freeing operation's order;
+/// - [`WarningCode::CutInsideFreedPart`] for every target of a later
+///   operation that lies inside an outline an earlier Profile cut through
+///   the stock, by operation order, then target order, then the freeing
+///   operation's order. Targets are closed outlines, and the open paths
+///   an Engrave or an On line Profile cuts (#206);
 /// - [`WarningCode::ToolChangeAvoidable`] once per tool that the enabled
 ///   operations, in order, use again after a different tool, by the
 ///   tool's first use.
 #[must_use]
 pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
-    let targets: Vec<Vec<(ShapeRef, Contour)>> = generated
+    let targets: Vec<Vec<(ShapeRef, Target)>> = generated
         .iter()
-        .map(|(op, _)| closed_targets(project, op))
+        .map(|(op, _)| targets_of(project, op))
         .collect();
     let freeing: Vec<bool> = generated
         .iter()
@@ -48,14 +50,17 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
         let Some(shapes) = targets.get(j) else {
             continue;
         };
-        for (shape, contour) in shapes {
+        for (shape, target) in shapes {
             for (i, (earlier, _)) in generated.iter().enumerate().take(j) {
                 if !freeing.get(i).copied().unwrap_or(false) {
                     continue;
                 }
-                let freed = targets
-                    .get(i)
-                    .and_then(|outlines| outlines.iter().find(|(_, o)| lies_inside(contour, o)));
+                let freed = targets.get(i).and_then(|outlines| {
+                    outlines.iter().find(|(_, o)| match o {
+                        Target::Outline(outline) => target.lies_inside(outline),
+                        Target::Path(_) => false,
+                    })
+                });
                 if let Some((freed_shape, _)) = freed {
                     warnings.push(
                         Warning::new(WarningCode::CutInsideFreedPart)
@@ -95,6 +100,31 @@ fn frees_its_targets(op: &Operation, toolpath: &Toolpath) -> bool {
         .any(|m| !m.is_rapid() && m.to.z <= EPS_MM)
 }
 
+/// One target as [`check`] reads it.
+enum Target {
+    /// A closed profile: the outline a Profile frees, or a shape cut
+    /// inside one.
+    Outline(Contour),
+    /// An open path the operation cuts along (#206). It frees nothing.
+    Path(Polyline),
+}
+
+impl Target {
+    /// True when this target lies inside `outer`: an outline as
+    /// [`lies_inside`] says, an open path when all its points lie inside
+    /// or on `outer` ([`region_holds_path`]), so one that crosses it does
+    /// not count, as crossing outlines do not.
+    fn lies_inside(&self, outer: &Contour) -> bool {
+        match self {
+            Self::Outline(inner) => lies_inside(inner, outer),
+            Self::Path(path) => nest(vec![outer.clone()])
+                .ok()
+                .and_then(|(regions, _)| regions.into_iter().next())
+                .is_some_and(|region| region_holds_path(&region, path)),
+        }
+    }
+}
+
 /// True when `inner` lies within `outer` (edges may touch) or is the same
 /// outline, judged on the true curves as [`nest`] does; false when the
 /// two cross or are apart. Which is inside which is read from which one
@@ -116,11 +146,19 @@ fn lies_inside(inner: &Contour, outer: &Contour) -> bool {
     }
 }
 
-/// Every closed profile of every target instance of `op`, placed in
-/// project space, in target then profile order. Open paths, and anything
-/// validation already rejects (a missing instance or definition, a
-/// degenerate outline), are left out: this check only warns.
-fn closed_targets(project: &Project, op: &Operation) -> Vec<(ShapeRef, Contour)> {
+/// Every profile of every target instance of `op` that `op` cuts, placed
+/// in project space, in target then profile order: every closed profile,
+/// and the open paths an Engrave or an On line Profile cuts along (#175,
+/// #206). Other operations skip open paths, so they are left out, as are
+/// open paths with no length and anything validation already rejects (a
+/// missing instance or definition, a degenerate outline): this check only
+/// warns.
+fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
+    let cuts_open = match op {
+        Operation::Engrave(_) => true,
+        Operation::Profile(profile) => profile.side == Side::OnLine,
+        Operation::Pocket(_) | Operation::Drill(_) => false,
+    };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
         let Some(instance) = project.instances.iter().find(|i| &i.id == instance_id) else {
@@ -130,14 +168,24 @@ fn closed_targets(project: &Project, op: &Operation) -> Vec<(ShapeRef, Contour)>
             continue;
         };
         for (profile, polyline) in definition.profiles.iter().enumerate() {
-            if !polyline.is_closed() {
-                continue;
-            }
-            let Ok(contour) = instance
-                .transform
-                .apply_polyline(polyline)
-                .and_then(Contour::new)
-            else {
+            let target = if polyline.is_closed() {
+                instance
+                    .transform
+                    .apply_polyline(polyline)
+                    .and_then(Contour::new)
+                    .ok()
+                    .map(Target::Outline)
+            } else if cuts_open {
+                instance
+                    .transform
+                    .apply_polyline(polyline)
+                    .ok()
+                    .filter(|path| path.length_mm() > EPS_MM)
+                    .map(Target::Path)
+            } else {
+                None
+            };
+            let Some(target) = target else {
                 continue;
             };
             shapes.push((
@@ -146,7 +194,7 @@ fn closed_targets(project: &Project, op: &Operation) -> Vec<(ShapeRef, Contour)>
                     instance_name: instance.name.clone(),
                     profile,
                 },
-                contour,
+                target,
             ));
         }
     }
