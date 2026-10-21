@@ -134,8 +134,9 @@ Directions are seen from above, with Y pointing away from you. An outside
 Profile runs outside a part's outline and inside its holes. An `on_line`
 cut counts as outside on a part's outline and inside on a hole. An open
 path has no inside or outside, so the direction picks the end its cut
-starts at: climb from its first vertex, conventional from its last (as
-VCarve does).
+starts at: conventional from its first vertex, climb from its last (as
+VCarve does: "Conventional starts cutting at the Start point" and "Climb
+cutting starts cutting at the end point").
 
 ## Machining order
 
@@ -157,7 +158,8 @@ of an outline (VCarve's "Ramps"; Fusion's "Ramp Type"). `init` writes a
 15° ramp; a project upgraded from format version 7 keeps `"plunge"`, so it
 cuts exactly as before.
 
-- `"plunge"`: straight down at the tool's plunge rate. A bit that does
+- `"plunge"`: straight down at the tool's plunge rate, from 1 mm above the
+  stock or the floor already cut there (the bit rapids that far). A bit that does
   not cut well at its centre, as most do not, takes this hard, and it
   leaves a mark on the wall where it went in.
 - `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag, going down `angle_deg`
@@ -235,8 +237,8 @@ Profile "On" cuts an open vector: a slot one bit wide centred on the
 line.
 
 - Each pass runs the whole path at the pass depth, from its first vertex
-  to its last under climb, or from its last to its first under
-  conventional. Then the bit lifts to safe Z and goes back to the start
+  to its last under conventional, or from its last to its first under
+  climb. Then the bit lifts to safe Z and goes back to the start
   for the next pass.
 - A ramp runs back and forth along the path from the start, as on a
   closed outline, turning at the path's end when the path is shorter than
@@ -356,7 +358,10 @@ Each notch plunges where the outline's path turned that corner and steps
 down by the **tool's** `step_down_mm` to the operation's depth. The
 notches are cut among the outline's own passes, nearest corner first: a
 notch level comes right after the pass that cut down to it, so the bit
-plunges into the slot that pass opened. A corner under a [tab](tabs.md)
+plunges into the slot that pass opened. When that pass ended on the
+corner's plunge point, as it often does on a rectangle, the bit goes
+straight on into the notch from where it is, up or down in the slot it
+has just cut, without lifting to safe Z first. A corner under a [tab](tabs.md)
 is skipped with `relief_corner_not_cut`: the path rises over the tab
 there, so the notch would plunge into uncut material. Edges shorter than
 the bit is wide skip their corner with `relief_corner_too_tight`, and a
@@ -408,7 +413,8 @@ one drawn (see [Machining order](machining-order.md)). For each outline:
 
 Every move between shapes is at safe Z; the tool never travels through
 material from one shape to another. With [corner relief](#corner-relief)
-each pass is followed by its notches, each corner reached at safe Z; on
+each pass is followed by its notches, each corner reached at safe Z
+(except one where the pass ended, which is cut straight from there); on
 a through cut the notches of the last pass are cut from within it, at
 each corner as the lap gets there.
 

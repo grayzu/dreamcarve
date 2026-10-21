@@ -423,8 +423,8 @@ multi-part cases the order of shapes is compared too.
 ## Safety requirements
 
 S1–S8 from phase 1 apply to every operation and every post-processor,
-S2 as changed in #214: a rapid straight down from safe Z may stop over
-the start of a ramp or helix at or above the stock top plus the 1 mm
+S2 as changed in #214 and #227: a rapid straight down from safe Z may stop over
+the start of a ramp, helix or straight plunge at or above the stock top plus the 1 mm
 entry clearance, or at or above that clearance over the lowest Z a cut
 of the same operation has already reached through that XY. New in this
 phase:
@@ -448,16 +448,23 @@ toolpath move for move.
 - **S12 Arc fitting is a refinement, not a change.** A fitted run of arcs
 replaces only straight moves, and corner arcs shallower than the
 tolerance, whose vertices and shallow-arc midpoints all lie on the
-circle within the tolerance; it keeps the run's start and end points
+circle within the tolerance, and it lies within the tolerance of every
+move it replaces along the move's whole length (for a chord between
+points on the circle, its sagitta); it keeps the run's start and end points
 exactly, never sweeps more than 90° per arc, and is rejected (the
 original moves kept) when the controller's arc-radius check would fail
 after number rounding. S6 accepts, where the toolpath has those moves, a
 chain of consecutive `G2`/`G3` on one circle (each piece's centre within
 the tolerance plus one unit in the last place of the previous piece's),
 each at most 90°, starting and ending
-on toolpath vertices and covering at least three moves, and nothing else
+on toolpath vertices and covering at least three moves, that lies within
+the tolerance plus one unit in the last place of every move it covers
+along the move's whole length, and nothing else
 (changed in slice 14, #133: a run is split at points on the circle, so
-only its ends are vertices).
+only its ends are vertices; changed in #226, #229 and #233: only the
+vertices were checked, so a square's four corners, or a 40 mm wall side
+after a 0.006 mm fragment, made a circle that bowed 1.45 mm and 1.3 mm
+off the straight moves, which the fitter wrote and S6 accepted).
 - **S13 Order invariants** O1–O10 from `docs/research/toolpath-ordering.md`
 §6: containment order, permutation (the same cuts in every order),
 links at safe Z unless provably inside cleared material, pass monotony,

@@ -31,7 +31,8 @@ use crate::error::{CamError, ShapeRef};
 use crate::footprint::footprint_at;
 use crate::passes::pass_z_mm;
 use crate::profile::{
-    contour_contains, crossing_error, rates_of, resolve_targets, shape_of, shape_warning,
+    contour_contains, crossing_error, hole_shapes, outer_shape, rates_of, resolve_targets,
+    shape_warning,
 };
 use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, sequence};
@@ -169,6 +170,7 @@ pub fn generate_pocket(
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             cutter: tool.cutter.describe(),
         });
     }
@@ -176,6 +178,7 @@ pub fn generate_pocket(
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -202,6 +205,7 @@ pub fn generate_pocket(
             .ok_or_else(|| CamError::MissingStepDown {
                 op: op.id.clone(),
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             })?;
     let thickness_mm = project
         .stock
@@ -224,6 +228,7 @@ pub fn generate_pocket(
         .ok_or_else(|| CamError::MissingStepOver {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
         })?;
     let invalid_step_over = || CamError::InvalidStepOver {
         op: op.id.clone(),
@@ -296,9 +301,7 @@ pub fn generate_pocket(
     // Each region's cleared loops and tool-centre rings, for the relief.
     let mut sites: Vec<Site> = Vec::new();
     for region in &regions {
-        // `nest` keeps every contour or reverses it, so this always finds
-        // the shape.
-        let Some(shape) = shape_of(&shapes, region.outer()) else {
+        let Some(shape) = outer_shape(region, &shapes) else {
             continue;
         };
         warnings.extend(island_gap_warnings(op, tool, region, &shapes, shape));
@@ -465,6 +468,7 @@ pub fn generate_pocket(
         stepover_mm,
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
+        cut_before: &[],
     };
     let mut toolpath = sequence(&input)?;
     // Design step 10: the relief pass after all the passes; S9 allows each
@@ -554,6 +558,7 @@ fn reference_of(project: &Project, op: &PocketOp) -> Result<Option<rest::Referen
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -606,19 +611,13 @@ fn island_gap_warnings(
             .with("tool", &tool.name)
             .with("diameter_mm", tool.diameter_mm)
     };
-    let holes = region.holes();
-    for (i, hole) in holes.iter().enumerate() {
-        let Some(island) = shape_of(shapes, hole) else {
-            continue;
-        };
+    let holes: Vec<(&Contour, &ShapeRef)> = hole_shapes(region, shapes).collect();
+    for (i, &(hole, island)) in holes.iter().enumerate() {
         let gap_mm = distance_mm(hole.polyline(), region.outer().polyline());
         if gap_mm < needed_mm - EPS_MM {
             warnings.push(warn(island, "wall".into(), gap_mm));
         }
-        for other in holes.iter().skip(i + 1) {
-            let Some(other_shape) = shape_of(shapes, other) else {
-                continue;
-            };
+        for &(other, other_shape) in holes.iter().skip(i + 1) {
             let gap_mm = distance_mm(hole.polyline(), other.polyline());
             if gap_mm < needed_mm - EPS_MM {
                 warnings.push(warn(island, other_shape.profile.to_string(), gap_mm));
@@ -669,7 +668,7 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
             continue;
         };
         let (Some(inner), Some(probe)) = (
-            shape_of(shapes, region.outer()),
+            outer_shape(region, shapes),
             region.outer().polyline().vertices().first(),
         ) else {
             continue;
@@ -678,7 +677,7 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
             .iter()
             .filter(|r| r.depth() == parent_depth)
             .find(|r| r.holes().iter().any(|h| contour_contains(h, probe.point())));
-        if let Some(outer) = around.and_then(|r| shape_of(shapes, r.outer())) {
+        if let Some(outer) = around.and_then(|r| outer_shape(r, shapes)) {
             pairs.push((outer.clone(), inner.clone()));
         }
     }
@@ -731,7 +730,7 @@ fn check_in_material(
             .iter()
             .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
             .or_else(|| regions.first())
-            .and_then(|r| shape_of(shapes, r.outer()));
+            .and_then(|r| outer_shape(r, shapes));
         match named {
             Some(shape) => Err(CamError::OffMaterial {
                 op: op.id.clone(),
@@ -1579,6 +1578,7 @@ mod tests {
             CamError::MissingStepDown {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
 
@@ -1607,6 +1607,7 @@ mod tests {
             CamError::MissingStepOver {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
         op.step_over_fraction = Some(1.5);
@@ -1638,7 +1639,9 @@ mod tests {
     /// second pass is preceded by a vertical plunge at the plunge rate that
     /// ends where that cut starts, and the plunge comes down from a rapid
     /// at safe Z. Upstream's `-4` is the second pass Z of a 4 mm cut in 2
-    /// mm steps; here that is Z 2 above the bottom of 6 mm stock.
+    /// mm steps; here that is Z 2 above the bottom of 6 mm stock. (changed
+    /// in #227: the rapid from safe Z goes on straight down to 1 mm above
+    /// the first pass's floor, Z 5, and the plunge starts there.)
     #[test]
     fn levels_rapid_at_safe_z_before_plunging() {
         let p = rect_project();
@@ -1665,7 +1668,11 @@ mod tests {
         );
         assert_approx_eq!(plunge.to.z, PASS_Z_MM[1], TOL);
         assert!(before.is_rapid(), "{before:?}");
-        assert_approx_eq!(before.to.z, SAFE_Z_MM, TOL);
+        assert_approx_eq!(before.to.z, PASS_Z_MM[0] + 1.0, TOL);
+        let lifted = m[first_deep - 3];
+        assert!(lifted.is_rapid(), "{lifted:?}");
+        assert!(lifted.to.xy().distance_to(plunge.to.xy()) <= EPS_MM);
+        assert_approx_eq!(lifted.to.z, SAFE_Z_MM, TOL);
         // And the ring continues from the plunge at the feed rate.
         assert_approx_eq!(m[first_deep].feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
     }
@@ -3309,6 +3316,159 @@ mod tests {
             }
         }
         assert!(on_ring > 0, "no link followed the island's edge");
+    }
+
+    /// An L: the 100 × 50 rect less its top-right quarter, so its wall has
+    /// one reflex corner, at (50, 25), (70, 45) placed.
+    fn l_shape() -> Polyline {
+        Polyline::new(
+            [
+                (0.0, 0.0),
+                (100.0, 0.0),
+                (100.0, 25.0),
+                (50.0, 25.0),
+                (50.0, 50.0),
+                (0.0, 50.0),
+            ]
+            .into_iter()
+            .map(|(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        )
+    }
+
+    /// The 100 × 50 rect with a half-disc bay of radius 15 pushed into it
+    /// from the middle of its top wall, centre (50, 50), (70, 70) placed:
+    /// a wall that curves inward.
+    fn bay_shape() -> Polyline {
+        Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(100.0, 0.0),
+                Vertex::line(100.0, 50.0),
+                Vertex::new(65.0, 50.0, -1.0),
+                Vertex::line(35.0, 50.0),
+                Vertex::line(0.0, 50.0),
+            ],
+            true,
+        )
+    }
+
+    /// The concave-wall fixtures of #218: the outline, the centre of the
+    /// tool-centre arc a link along the wall follows (placed), that arc's
+    /// radius, and the lifts per pass at 0° without a wall pass and with
+    /// one (last or first).
+    fn concave_walls() -> [(&'static str, Polyline, Point, f64, [usize; 2]); 2] {
+        [
+            ("L", l_shape(), Point::new(70.0, 45.0), RADIUS_MM, [1, 0]),
+            (
+                "bay",
+                bay_shape(),
+                Point::new(70.0, 70.0),
+                15.0 + RADIUS_MM,
+                [6, 1],
+            ),
+        ]
+    }
+
+    /// #218: where the pocket wall curves inward, the tool-centre region's
+    /// outer ring is an arc bulging into it (radius `r` round the L's
+    /// reflex corner, 15 + `r` round the bay), and a straight link between
+    /// two line ends against it leaves the region. With a wall pass the
+    /// link follows that ring, as round an island (#202), at pass Z and the
+    /// cutting feed: on the L 0 lifts per pass from 1, on the bay 1 from 6.
+    /// Every point of every edge link lies on the arc, at most the
+    /// flattening tolerance off it. Without a wall pass the counts stay.
+    #[test]
+    fn raster_links_follow_a_concave_wall() {
+        for (name, outline, centre, radius_mm, [none, with_wall]) in concave_walls() {
+            let p = project(vec![outline.clone()], &[("i1", at_20_20())]);
+            let profiles = std::slice::from_ref(&outline);
+            for (wall_pass, want) in [
+                (WallPass::None, none),
+                (WallPass::Last, with_wall),
+                (WallPass::First, with_wall),
+            ] {
+                let op = raster_op(&p, CutDirection::Climb, 0.0, wall_pass);
+                let (tp, warnings) = generate(&p, &op);
+                assert!(warnings.is_empty(), "{name}: {warnings:?}");
+                for z in PASS_Z_MM {
+                    let (lifts, edges) = raster_lifts_at(&tp, z, profiles);
+                    assert_eq!(lifts, want, "{name}, {wall_pass:?} at Z {z}");
+                    if wall_pass == WallPass::None {
+                        assert!(edges.is_empty(), "{name}: {edges:?}");
+                        continue;
+                    }
+                    assert!(
+                        edges.len() >= none - with_wall,
+                        "{name} at Z {z}: {edges:?}"
+                    );
+                    for link in &edges {
+                        for (from, mv) in link {
+                            for q in samples_along(*from, mv) {
+                                let r = q.distance_to(centre);
+                                assert!(
+                                    (radius_mm - FLAT_TOL - EPS_MM..=radius_mm + FLAT_TOL + EPS_MM)
+                                        .contains(&r),
+                                    "{name}: edge link point {q:?} is {r} mm from {centre:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// #218, S9: no link between raster lines on the concave-wall
+    /// fixtures cuts into the wall, at several angles: the footprint of
+    /// every stay-down between two lines leaves the pocket by no more than
+    /// the flattening band along it, and its tool centre stays in the
+    /// tool-centre region or on its edge.
+    #[test]
+    fn edge_link_never_leaves_the_wall() {
+        for (name, outline, ..) in concave_walls() {
+            let p = project(vec![outline.clone()], &[("i1", at_20_20())]);
+            let pocket = region_of(std::slice::from_ref(&outline), at_20_20());
+            let tc = inset_region(&pocket, RADIUS_MM, FLAT_TOL);
+            assert_eq!(tc.len(), 1, "{name}");
+            let mut along = 0;
+            for angle_deg in [0.0, 30.0, 45.0, 90.0, 135.0] {
+                let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
+                let (tp, warnings) = generate(&p, &op);
+                assert!(warnings.is_empty(), "{name}: {warnings:?}");
+                for z in PASS_Z_MM {
+                    for link in raster_gaps_at(&tp, z, angle_deg, &tc[0])
+                        .into_iter()
+                        .flatten()
+                    {
+                        let start = link[0].0;
+                        let mut moves = vec![Move::rapid(Point3::new(start.x, start.y, z))];
+                        moves.extend(link.iter().map(|(_, mv)| *mv));
+                        let fp = footprint(&Toolpath { moves }, RADIUS_MM);
+                        let out = difference(&fp, std::slice::from_ref(&pocket), FLAT_TOL);
+                        assert!(
+                            area_mm2(&out) <= 2.0 * FLAT_TOL * link_length_mm(&link) + EPS_MM,
+                            "{name}, {angle_deg}° at Z {z}: link cuts {} mm² of the wall: {link:?}",
+                            area_mm2(&out)
+                        );
+                        for (from, mv) in &link {
+                            for q in samples_along(*from, mv) {
+                                assert!(
+                                    in_or_on(&tc[0], q),
+                                    "{name}, {angle_deg}°: link point {q:?} leaves the region"
+                                );
+                            }
+                        }
+                        if link.len() > 1 || link.iter().any(|(_, mv)| mv.kind != MoveKind::Linear)
+                        {
+                            along += 1;
+                        }
+                    }
+                }
+            }
+            assert!(along > 0, "{name}: no link followed the wall");
+        }
     }
 
     /// Design step 7: a line through the island's grown circle (radius

@@ -400,7 +400,7 @@ Post-processor grblhal.
 plaque-1-T1.nc (514 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
-plaque-2-T2.nc (40 lines):
+plaque-2-T2.nc (49 lines):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
 ```
@@ -518,6 +518,7 @@ G0 Z15.000
 M3 S18000
 G4 P3.000
 X20.000 Y105.000
+Z1.000
 G1 Z-1.000 F300.000
 X150.000 F1000.000
 G2 X155.000 Y100.000 I0.000 J-5.000
@@ -526,7 +527,9 @@ G2 X150.000 Y15.000 I-5.000 J0.000
 ```
 
 It has the same header and starts the spindle again: a program never
-assumes another ran before it.
+assumes another ran before it. The engraving plunges straight down, so
+the bit rapids to 1 mm above the plywood (`Z1.000`) and plunges at the
+plunge rate only from there, as it does before a ramp or helix.
 
 ## 9. Before you cut
 

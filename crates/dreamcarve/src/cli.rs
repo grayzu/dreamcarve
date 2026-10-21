@@ -19,6 +19,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use dc_gcode::ProgramSplit;
 use dc_project::{PostProcessorError, PostProcessorRef};
 
+use crate::output::{self, errln, outln};
 use crate::{check, clock, config, export, init, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
@@ -257,10 +258,12 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Command::Config(args) => config::run(&args.command),
         Command::Tools(args) => tools::run(&args.command),
     };
-    match result {
+    // The command's own exit code stands even when stdout was a pipe its
+    // reader closed (#216, `output`).
+    match result.and_then(|code| output::flush().map(|()| code)) {
         Ok(code) => code,
         Err(failure) => {
-            eprintln!("error: {}", failure.message);
+            errln!("error: {}", failure.message);
             ExitCode::from(failure.code)
         }
     }
@@ -272,11 +275,11 @@ fn posts() -> Result<ExitCode, Failure> {
     let posts = dc_project::latest_definitions().map_err(Failure::error)?;
     let width = posts.iter().map(|d| d.id.len()).max().unwrap_or(0);
     for definition in posts {
-        println!(
+        outln!(
             "{:width$}  {}",
             definition.id,
             definition.post_processor().name
-        );
+        )?;
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -383,6 +386,177 @@ impl StagedFile {
     }
 }
 
+/// Moves every staged file into place, in order, or none of them: export
+/// writes its programs and the project as one change (#71). Before each
+/// rename, whatever is at the destination is kept under a temporary name
+/// beside it, without reading or following it: a regular file by a second
+/// hard link, so it stays in place with its mode, or (where the file
+/// system has no hard links, and for a symlink) by moving it aside. A
+/// symlink at a destination is replaced by the new file, as a rename
+/// replaces it, and its target is never opened. If a rename fails, every
+/// destination already changed is put back as it was, or removed where
+/// there was nothing, before the error is returned.
+///
+/// Once every file is in place, each destination's directory is synced
+/// (Unix), so the renames survive a power cut. That is best effort: the
+/// files are already written, and failing then would say they were not.
+pub fn commit_all(staged: Vec<StagedFile>) -> Result<(), Failure> {
+    let mut moved: Vec<(PathBuf, Option<Backup>)> = Vec::with_capacity(staged.len());
+    for file in staged {
+        let dest = file.dest.clone();
+        let result = Backup::take(&dest).and_then(|backup| match file.commit() {
+            Ok(()) => Ok(backup),
+            Err(e) => {
+                if let Some(backup) = backup {
+                    backup.undo_unchanged();
+                }
+                Err(e)
+            }
+        });
+        match result {
+            Ok(backup) => moved.push((dest, backup)),
+            Err(e) => {
+                // Undoing is best effort; the error reported is the step
+                // that failed.
+                for (dest, backup) in moved.into_iter().rev() {
+                    match backup {
+                        Some(backup) => backup.restore(),
+                        None => {
+                            let _ = std::fs::remove_file(&dest);
+                        }
+                    }
+                }
+                return Err(e);
+            }
+        }
+    }
+    for (dest, backup) in moved {
+        sync_parent(&dest);
+        if let Some(backup) = backup {
+            backup.discard();
+        }
+    }
+    Ok(())
+}
+
+/// What was at an export destination before [`commit_all`] replaced it,
+/// kept under a temporary name in the same directory.
+struct Backup {
+    /// The temporary name.
+    path: PathBuf,
+    /// The destination it is put back to.
+    dest: PathBuf,
+    /// Whether it was moved away from the destination; otherwise it is a
+    /// second hard link and the destination is still there.
+    moved_aside: bool,
+}
+
+impl Backup {
+    /// Keeps what is at `dest`: `None` when there is nothing, or a
+    /// directory, which no file can replace, so the rename fails and
+    /// nothing needs keeping. Never reads `dest` or follows it.
+    fn take(dest: &Path) -> Result<Option<Self>, Failure> {
+        let fail =
+            |e: std::io::Error| Failure::error(format!("cannot write {}: {e}", dest.display()));
+        let meta = match std::fs::symlink_metadata(dest) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(fail(e)),
+        };
+        if meta.is_dir() {
+            return Ok(None);
+        }
+        let name = dest
+            .file_name()
+            .ok_or_else(|| Failure::error(format!("{} is not a file path", dest.display())))?;
+        let mut linkable = meta.file_type().is_file();
+        for _ in 0..TEMP_ATTEMPTS {
+            let mut backup_name = OsString::from(".");
+            backup_name.push(name);
+            backup_name.push(format!(".{:016x}.bak", random_u64()));
+            let path = dest.with_file_name(backup_name);
+            if linkable {
+                // A second name for the same file: `dest` stays in place,
+                // and the rename over it leaves this one as it was.
+                match std::fs::hard_link(dest, &path) {
+                    Ok(()) => {
+                        return Ok(Some(Self {
+                            path,
+                            dest: dest.to_path_buf(),
+                            moved_aside: false,
+                        }));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    // No hard links here: move it aside instead.
+                    Err(_) => linkable = false,
+                }
+            }
+            // Claim the name with `create_new`, which never follows a
+            // planted file or link, then move `dest` over our own file.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(fail(e)),
+            }
+            if let Err(e) = std::fs::rename(dest, &path) {
+                let _ = std::fs::remove_file(&path);
+                return Err(fail(e));
+            }
+            return Ok(Some(Self {
+                path,
+                dest: dest.to_path_buf(),
+                moved_aside: true,
+            }));
+        }
+        Err(Failure::error(format!(
+            "cannot write {}: no free temporary file name in its directory",
+            dest.display()
+        )))
+    }
+
+    /// Puts the kept file back at its destination. Best effort: if the
+    /// rename fails the file stays under its temporary name, not lost.
+    fn restore(self) {
+        let _ = std::fs::rename(&self.path, &self.dest);
+    }
+
+    /// Undoes [`Backup::take`] when the destination was never replaced. A
+    /// rename between two links of one file does nothing (POSIX
+    /// `rename`), so a linked copy is dropped instead.
+    fn undo_unchanged(self) {
+        if self.moved_aside {
+            self.restore();
+        } else {
+            self.discard();
+        }
+    }
+
+    /// Drops the kept file once the export is in place.
+    fn discard(self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Syncs the directory holding `path`, so a rename into it is on disk.
+fn sync_parent(path: &Path) {
+    #[cfg(unix)]
+    {
+        let dir = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir,
+            _ => Path::new("."),
+        };
+        if let Ok(dir) = std::fs::File::open(dir) {
+            let _ = dir.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 impl Drop for StagedFile {
     fn drop(&mut self) {
         // Removes the temporary file when the stage is abandoned.
@@ -480,6 +654,136 @@ mod tests {
             "link kept"
         );
         assert_eq!(std::fs::read(&dest).unwrap(), b"ours");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The names in `dir`, sorted.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// #71: export moves every staged file into place or none. When a
+    /// later rename fails (here its destination is a directory, which no
+    /// file can replace), the files already moved are put back as they
+    /// were, a file that did not exist is gone again, and no temporary
+    /// file is left behind.
+    #[test]
+    fn failed_second_rename_leaves_no_partial_export() {
+        let dir = scratch("all-or-none");
+        let replaced = dir.join("coaster.nc");
+        std::fs::write(&replaced, b"old program\n").unwrap();
+        let created = dir.join("coaster-2-T2.nc");
+        let blocked = dir.join("coaster.dcv");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("inside"), b"x").unwrap();
+        let staged = vec![
+            StagedFile::write(&replaced, b"new program\n").unwrap(),
+            StagedFile::write(&created, b"second program\n").unwrap(),
+            StagedFile::write(&blocked, b"project\n").unwrap(),
+        ];
+        assert!(commit_all(staged).is_err(), "the last rename must fail");
+        assert_eq!(std::fs::read(&replaced).unwrap(), b"old program\n");
+        assert!(!created.exists(), "a new file was left in place");
+        assert_eq!(names_in(&dir), ["coaster.dcv", "coaster.nc"]);
+
+        // Without the obstacle every file moves, and nothing else is left.
+        std::fs::remove_dir_all(&blocked).unwrap();
+        let staged = vec![
+            StagedFile::write(&replaced, b"new program\n").unwrap(),
+            StagedFile::write(&created, b"second program\n").unwrap(),
+            StagedFile::write(&blocked, b"project\n").unwrap(),
+        ];
+        commit_all(staged).unwrap();
+        assert_eq!(std::fs::read(&replaced).unwrap(), b"new program\n");
+        assert_eq!(std::fs::read(&created).unwrap(), b"second program\n");
+        assert_eq!(std::fs::read(&blocked).unwrap(), b"project\n");
+        assert_eq!(
+            names_in(&dir),
+            ["coaster-2-T2.nc", "coaster.dcv", "coaster.nc"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file put back after a failed export is the same file: its mode
+    /// is kept, not reset to a new file's default (#71).
+    #[cfg(unix)]
+    #[test]
+    fn failed_export_restores_the_original_file_and_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = scratch("restore-mode");
+        let replaced = dir.join("coaster.nc");
+        std::fs::write(&replaced, b"old program\n").unwrap();
+        std::fs::set_permissions(&replaced, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let blocked = dir.join("coaster.dcv");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("inside"), b"x").unwrap();
+        let staged = vec![
+            StagedFile::write(&replaced, b"new program\n").unwrap(),
+            StagedFile::write(&blocked, b"project\n").unwrap(),
+        ];
+        assert!(commit_all(staged).is_err());
+        assert_eq!(std::fs::read(&replaced).unwrap(), b"old program\n");
+        let mode = std::fs::metadata(&replaced).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640, "mode {mode:o}");
+        assert_eq!(names_in(&dir), ["coaster.dcv", "coaster.nc"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Security review of #71: a symlink at an output path is never
+    /// followed. Export replaces the link itself, as a rename does; a
+    /// failed export puts the link back. Either way the link's target is
+    /// not read, copied, or written, so its contents reach no new file.
+    /// Unix only, as creating a symlink on Windows needs a privilege.
+    #[cfg(unix)]
+    #[test]
+    fn export_does_not_follow_a_symlinked_destination() {
+        let dir = scratch("linked-dest");
+        let target = dir.join("secret");
+        std::fs::write(&target, b"secret\n").unwrap();
+        let link = dir.join("coaster.nc");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let blocked = dir.join("coaster.dcv");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("inside"), b"x").unwrap();
+        let no_copy_of_target = |dir: &Path| {
+            for name in names_in(dir).iter().filter(|n| *n != "secret") {
+                let path = dir.join(name);
+                if std::fs::symlink_metadata(&path).unwrap().is_file() {
+                    assert_ne!(std::fs::read(&path).unwrap(), b"secret\n", "{name}");
+                }
+            }
+        };
+
+        let staged = vec![
+            StagedFile::write(&link, b"new program\n").unwrap(),
+            StagedFile::write(&blocked, b"project\n").unwrap(),
+        ];
+        assert!(commit_all(staged).is_err());
+        assert!(
+            std::fs::symlink_metadata(&link).unwrap().is_symlink(),
+            "link put back"
+        );
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        assert_eq!(std::fs::read(&target).unwrap(), b"secret\n");
+        assert_eq!(names_in(&dir), ["coaster.dcv", "coaster.nc", "secret"]);
+        no_copy_of_target(&dir);
+
+        std::fs::remove_dir_all(&blocked).unwrap();
+        let staged = vec![StagedFile::write(&link, b"new program\n").unwrap()];
+        commit_all(staged).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link).unwrap().is_file(),
+            "link replaced"
+        );
+        assert_eq!(std::fs::read(&link).unwrap(), b"new program\n");
+        assert_eq!(std::fs::read(&target).unwrap(), b"secret\n");
+        assert_eq!(names_in(&dir), ["coaster.nc", "secret"]);
+        no_copy_of_target(&dir);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

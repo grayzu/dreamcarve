@@ -61,7 +61,8 @@ at Z 11.5 and 11 above the stock bottom.
 
 A closed path ends at its start, so the tool plunges straight to the next
 pass there. An open path ends at its far end. By default the tool then
-lifts to safe Z, rapids back to the start, and plunges, so every pass runs
+lifts to safe Z, rapids back to the start and down to 1 mm above the floor
+the pass before cut, and plunges from there, so every pass runs
 the same way.
 
 A closed path inside another closed path is cut first, as with Profile.

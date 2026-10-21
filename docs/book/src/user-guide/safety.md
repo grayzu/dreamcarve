@@ -20,10 +20,12 @@ written. There are no safety warnings, only errors.
 2. **Rapids only at safe Z.** Every rapid (`G0`) move is at or above safe Z.
    The first move of the program is a rapid straight up to safe Z. There
    are two exceptions, both straight down and only into air. Above a ramp
-   or helix [entry](pocket.md#entry), a rapid straight down from safe Z
-   stops 1 mm above the stock top, or 1 mm above the floor the same
-   operation has already cut at that point, where the ramp or helix
-   starts; the check refuses one that stops lower, or over a floor only
+   or helix [entry](pocket.md#entry), and above every straight plunge (a
+   `plunge` entry, an [Engrave](engrave.md) pass, a corner-relief notch),
+   a rapid straight down from safe Z stops 1 mm above the stock top, or
+   1 mm above the floor the same operation has already cut at that point;
+   the ramp, helix or plunge at the plunge rate starts there, not at safe
+   Z. The check refuses a rapid that stops lower, or over a floor only
    another operation cut. Inside a [Drill](drill.md), a rapid straight
    down may stop at the retract height above the stock, or inside the
    part of the hole already drilled, and never in uncut material.
@@ -77,8 +79,10 @@ written. There are no safety warnings, only errors.
    operation. An arc written in place of a run of straight moves
    ([Arc fitting](project-file.md#arc-fitting)) is accepted only if it
    starts and ends on the toolpath's corners, every corner between lies
-   on it within `arc_fit_tolerance_mm`, it sweeps at most 90°, and it
-   turns the way the corners do.
+   on it within `arc_fit_tolerance_mm`, it stays that close to every
+   straight move it replaces along the move's whole length (so the four
+   corners of a square, which lie on one circle, never become a circle),
+   it sweeps at most 90°, and it turns the way the corners do.
 9. **The cut stays on the stock.** Every cutting move, widened by the
    bit's radius, stays inside the stock's `width_mm` by `height_mm`
    rectangle; arcs count all the way round, not just at their ends. A shape

@@ -171,6 +171,13 @@ pub enum Difference {
     /// deeper pass), each pass as a set; DreamCarve's walk within a pass is
     /// checked against D5.
     PassOrderWithinLayer,
+    /// A Profile's relief notch whose descend point is where the lap ended
+    /// starts from there (#240): DreamCarve moves straight up, at the
+    /// plunge rate, in the column the lap just cut, to the notch's first
+    /// level, where PureCutCNC retracts to safe Z and plunges. DreamCarve's
+    /// lifts are not compared with PureCutCNC's (it has none); each must
+    /// run at the tool's plunge rate.
+    NotchRisesFromLapEnd,
 }
 
 /// The DreamCarve project of case `name`: `tests/golden/<name>/dreamcarve.dcv`.
@@ -696,6 +703,8 @@ impl Limits {
                 first.line
             ));
         }
+        // The cuts read so far, for the floors a rapid down may stop over.
+        let mut cuts: Vec<&Motion> = Vec::new();
         for mv in moves {
             let line = mv.line;
             if mv.machine_coordinates {
@@ -716,16 +725,26 @@ impl Limits {
             if mv.kind == MotionKind::Rapid {
                 // S2. A Drill rapids down to its retract plane, and between
                 // pecks inside its hole, in Z alone. Any operation rapids
-                // straight down from safe Z to the start of a ramp or helix
-                // the entry clearance above the stock top (#214); the
-                // corpus has no later pass that starts lower.
+                // straight down from safe Z to the start of a ramp, helix
+                // or plunge the entry clearance above the stock top (#214),
+                // or above the lowest floor a cut of the same operation
+                // reached through that XY (#227).
                 let low = |z: Option<f64>| z.is_none_or(|z| z < self.safe_z - SAME_MM);
                 let drill_plunge = self.drills && !mv.moves_xy;
-                let entry_approach = !mv.moves_xy
-                    && !low(mv.from_z)
-                    && mv
-                        .to_z
-                        .is_some_and(|z| z >= ENTRY_CLEARANCE_MM - Z_ROUNDING_MM);
+                let clear_of = |floor: f64| {
+                    mv.to_z
+                        .is_some_and(|z| z >= floor + ENTRY_CLEARANCE_MM - Z_ROUNDING_MM)
+                };
+                let over_cut = || {
+                    mv.to.is_some_and(|to| {
+                        cuts.iter()
+                            .filter(|c| c.op == mv.op)
+                            .filter_map(|c| floor_through(c, to))
+                            .any(clear_of)
+                    })
+                };
+                let entry_approach =
+                    !mv.moves_xy && !low(mv.from_z) && (clear_of(0.0) || over_cut());
                 if !drill_plunge
                     && !entry_approach
                     && (low(mv.to_z) || (mv.moves_xy && low(mv.from_z)))
@@ -746,10 +765,41 @@ impl Limits {
                         self.rates
                     ));
                 }
+                cuts.push(mv);
             }
         }
         Ok(())
     }
+}
+
+/// How far, mm, a cut may pass from a rapid's XY and still be the floor
+/// under it: `dc_cam`'s 0.01 mm reach plus the program's rounding.
+const FLOOR_REACH_MM: f64 = 0.02;
+
+/// The Z at which cut `cut` passes within [`FLOOR_REACH_MM`] of `at` in
+/// XY, if it does: a straight move's Z where it comes nearest; an arc's
+/// higher end Z, counted only near its ends (enough for the corpus, and
+/// never lower than the arc reached).
+fn floor_through(cut: &Motion, at: P3) -> Option<f64> {
+    let (a, b) = (cut.from?, cut.to?);
+    let near = |p: P3| (p.x - at.x).hypot(p.y - at.y) <= FLOOR_REACH_MM;
+    if cut.centre.is_some() {
+        return (near(a) || near(b)).then_some(a.z.max(b.z));
+    }
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let length_sq = dx * dx + dy * dy;
+    let t = if length_sq > SAME_MM * SAME_MM {
+        (((at.x - a.x) * dx + (at.y - a.y) * dy) / length_sq).clamp(0.0, 1.0)
+    } else {
+        // Straight down: the tool reached the lower end here.
+        return near(a).then_some(a.z.min(b.z));
+    };
+    let nearest = P3 {
+        x: a.x + dx * t,
+        y: a.y + dy * t,
+        z: a.z + (b.z - a.z) * t,
+    };
+    near(nearest).then_some(nearest.z)
 }
 
 // ---------------------------------------------------------------------------
@@ -1556,7 +1606,9 @@ fn check_lead_feeds(
 /// Feeds of the vertical moves: the same feeds appear in both programs.
 /// With [`Difference::RectTabStepsAtPlungeRate`], tab steps are taken out
 /// of that comparison and must instead run at the cutting feed in the
-/// golden program and at the plunge rate in DreamCarve's.
+/// golden program and at the plunge rate in DreamCarve's. With
+/// [`Difference::NotchRisesFromLapEnd`], DreamCarve's lifts are taken out
+/// and must run at the plunge rate.
 fn compare_verticals(
     golden: &Cuts,
     ours: &Cuts,
@@ -1597,10 +1649,33 @@ fn compare_verticals(
             }
         }
     }
+    let notch_rises = differences.contains(&Difference::NotchRisesFromLapEnd);
+    if notch_rises {
+        // The notch cases have one tool: its feed, then its plunge rate.
+        let [_, plunge] = limits.rates[..] else {
+            return Err("a notch case has one tool".into());
+        };
+        let rises: Vec<&Vertical> = ours
+            .verticals
+            .iter()
+            .filter(|v| v.to_z > v.from_z)
+            .collect();
+        if rises.is_empty() {
+            return Err("DreamCarve program has no notch rises".into());
+        }
+        if let Some(v) = rises.iter().find(|v| !approx_eq(v.feed, plunge, SAME_MM)) {
+            return Err(format!(
+                "DreamCarve line {}: rise at ({:.3}, {:.3}) feeds at {} mm/min, expected {plunge}",
+                v.line, v.at.x, v.at.y, v.feed
+            ));
+        }
+    }
     let feeds = |cuts: &Cuts, down: bool| {
+        let skip_lifts = notch_rises && std::ptr::eq(cuts, ours) && !down;
         let mut feeds: Vec<f64> = cuts
             .verticals
             .iter()
+            .filter(|_| !skip_lifts)
             .filter(|v| !is_tab_step(v) && (v.to_z < v.from_z) == down)
             .map(|v| v.feed)
             .collect();

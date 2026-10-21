@@ -18,9 +18,11 @@
 //! flip and no arc-direction flip (ADR-0001); `ELLIPSE` is read; the
 //! extrusion direction and MINSERT arrays are applied; the join tolerance
 //! defaults to 0.01 mm instead of 0.5 mm; every skipped entity is counted
-//! in a warning instead of dropped silently; and arcs stay arcs (bulges)
-//! instead of being sampled.
+//! in a warning instead of dropped silently; arcs stay arcs (bulges)
+//! instead of being sampled; and text before R2007 is read in the code
+//! page `$DWGCODEPAGE` names (`code_page`, #209).
 
+mod code_page;
 mod document;
 mod entities;
 mod groups;
@@ -34,6 +36,7 @@ use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Transform};
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, Units};
 
 use crate::svg::{MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM};
+use code_page::CodePage;
 use entities::{Shape, Walker};
 
 /// Why bytes are not a readable DXF file: a group that cannot be framed or
@@ -216,7 +219,9 @@ pub struct DxfImport {
 /// scaled to millimetres by `$INSUNITS` or `options.units`. Open segments
 /// on one layer are stitched within `options.join_tolerance_mm`, identical
 /// shapes on one layer deduped, and every other entity type counted in
-/// [`ImportWarning::DxfEntitiesSkipped`].
+/// [`ImportWarning::DxfEntitiesSkipped`]. Layer names are UTF-8, or before
+/// R2007 in the code page `$DWGCODEPAGE` names; one without a table is
+/// read as Windows-1252 with [`ImportWarning::DxfCodePageUnsupported`].
 ///
 /// # Errors
 ///
@@ -238,7 +243,7 @@ pub fn import_dxf(
         });
     }
 
-    let document = document::read(&groups::read(bytes)?);
+    let (document, mut warnings) = read_document(bytes)?;
 
     let declared = document.insunits.and_then(DxfUnits::from_insunits);
     let mm_per_unit = match (options.units, declared) {
@@ -262,7 +267,6 @@ pub fn import_dxf(
         walker.walk(entity, scale, None, 0)?;
     }
 
-    let mut warnings = Vec::new();
     let skipped = walker.skipped;
     if !skipped.is_empty() {
         warnings.push(ImportWarning::DxfEntitiesSkipped { counts: skipped });
@@ -353,6 +357,34 @@ pub fn import_dxf(
         },
         warnings,
     ))
+}
+
+/// The document in `bytes`, its text read as UTF-8, else, before R2007,
+/// in the code page `$DWGCODEPAGE` names (#209). The header is read in a
+/// first pass, with Windows-1252; the file is read again only when some
+/// text was not UTF-8 and the header names another code page. A code page
+/// without a table is warned about only then, so a file whose text is all
+/// ASCII gets no warning.
+fn read_document(bytes: &[u8]) -> Result<(document::Document, Vec<ImportWarning>), ImportError> {
+    let first = groups::read(bytes, CodePage::WINDOWS_1252)?;
+    let document = document::read(&first.groups);
+    if !first.not_utf8 || document.text_is_utf8() {
+        return Ok((document, Vec::new()));
+    }
+    let Some(name) = document.dwgcodepage.clone() else {
+        return Ok((document, Vec::new()));
+    };
+    match CodePage::from_dwgcodepage(&name) {
+        Some(CodePage::WINDOWS_1252) => Ok((document, Vec::new())),
+        Some(code_page) => {
+            let groups = groups::read(bytes, code_page)?;
+            Ok((document::read(&groups.groups), Vec::new()))
+        }
+        None => Ok((
+            document,
+            vec![ImportWarning::DxfCodePageUnsupported { code_page: name }],
+        )),
+    }
 }
 
 impl DxfUnits {
@@ -1492,13 +1524,14 @@ mod tests {
     /// escaping a 2-byte code) and its value (strings NUL-terminated,
     /// little-endian numbers, R13+ booleans as one byte, binary chunks as a
     /// length byte and the bytes).
+    /// String values are copied byte for byte, so they may be in any code
+    /// page.
     fn to_binary(ascii: &[u8], two_byte_codes: bool) -> Vec<u8> {
-        let text = std::str::from_utf8(ascii).unwrap();
         let mut out = b"AutoCAD Binary DXF\r\n\x1a\0".to_vec();
-        let mut lines = text.lines();
-        while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-            let code: i32 = code.trim().parse().unwrap();
-            let value = value.trim();
+        let mut lines = ascii.split(|&b| b == b'\n').map(<[u8]>::trim_ascii);
+        while let (Some(code), Some(value_bytes)) = (lines.next(), lines.next()) {
+            let code: i32 = std::str::from_utf8(code).unwrap().parse().unwrap();
+            let value = String::from_utf8_lossy(value_bytes);
             let code16 = u16::try_from(code).unwrap();
             if two_byte_codes {
                 out.extend_from_slice(&code16.to_le_bytes());
@@ -1510,7 +1543,7 @@ mod tests {
             }
             match binary_kind(code) {
                 's' => {
-                    out.extend_from_slice(value.as_bytes());
+                    out.extend_from_slice(value_bytes);
                     out.push(0);
                 }
                 'd' => out.extend_from_slice(&value.parse::<f64>().unwrap().to_le_bytes()),
@@ -1713,5 +1746,89 @@ mod tests {
         dxf.extend_from_slice(b"0\nENDSEC\n0\nEOF\n");
         let (result, _) = import(&dxf);
         assert_eq!(names(&result), ["caf\u{e9} \u{20ac}", "d\u{e9}cor"]);
+    }
+
+    /// A DXF with `$ACADVER` and `$DWGCODEPAGE` in its header and one LINE
+    /// on each layer, whose names are given as raw bytes.
+    fn dxf_in_code_page(acadver: &str, code_page: &str, layers: &[&[u8]]) -> Vec<u8> {
+        let mut dxf = format!(
+            "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\n{acadver}\n9\n$DWGCODEPAGE\n3\n{code_page}\n\
+            9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n"
+        )
+        .into_bytes();
+        for (k, layer) in layers.iter().enumerate() {
+            dxf.extend_from_slice(b"0\nLINE\n8\n");
+            dxf.extend_from_slice(layer);
+            dxf.extend_from_slice(format!("\n10\n0.0\n20\n{k}.0\n11\n1.0\n21\n{k}.0\n").as_bytes());
+        }
+        dxf.extend_from_slice(b"0\nENDSEC\n0\nEOF\n");
+        dxf
+    }
+
+    /// Whether a warning names the code page `name`.
+    fn warns_about_code_page(warnings: &[ImportWarning], name: &str) -> bool {
+        warnings.iter().any(|w| w.to_string().contains(name))
+    }
+
+    /// Issue #209: an R2000 file saved in Windows-1251 (`$DWGCODEPAGE
+    /// ANSI_1251`) has its layer names, and so its shape names, decoded in
+    /// that code page, in ASCII and binary DXF alike. "Стены" and "Ёлка"
+    /// in CP1251 bytes (Microsoft's `CP1251.TXT`).
+    #[test]
+    fn cp1251_layer_names_decode() {
+        let walls: &[u8] = &[0xD1, 0xF2, 0xE5, 0xED, 0xFB];
+        let tree: &[u8] = &[0xA8, 0xEB, 0xEA, 0xE0];
+        let dxf = dxf_in_code_page("AC1015", "ANSI_1251", &[walls, tree]);
+        for bytes in [dxf.clone(), to_binary(&dxf, true), to_binary(&dxf, false)] {
+            let (result, warnings) = import(&bytes);
+            assert_eq!(names(&result), ["Стены", "Ёлка"]);
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+    }
+
+    /// Issue #209: a code page DreamCarve has no table for (here the
+    /// multi-byte Shift-JIS, `ANSI_932`) is read as Windows-1252, as
+    /// before, with a warning that names it. A file in such a code page
+    /// whose text is all ASCII reads correctly and gets no warning.
+    #[test]
+    fn unknown_code_page_warns_and_falls_back() {
+        // "壁" (wall) in Shift-JIS; as Windows-1252 bytes it reads "•Ç".
+        let wall: &[u8] = &[0x95, 0xC7];
+        let dxf = dxf_in_code_page("AC1015", "ANSI_932", &[wall]);
+        let (result, warnings) = import(&dxf);
+        assert_eq!(names(&result), ["\u{2022}\u{c7}"]);
+        assert_eq!(
+            warnings,
+            [ImportWarning::DxfCodePageUnsupported {
+                code_page: "ANSI_932".into()
+            }]
+        );
+        assert!(warns_about_code_page(&warnings, "ANSI_932"), "{warnings:?}");
+        for bytes in [to_binary(&dxf, true), to_binary(&dxf, false)] {
+            assert_eq!(import(&bytes), (result.clone(), warnings.clone()));
+        }
+
+        let ascii = dxf_in_code_page("AC1015", "ANSI_932", &[b"walls"]);
+        let (result, warnings) = import(&ascii);
+        assert_eq!(names(&result), ["walls"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// Issue #209: from R2007 (`AC1021`) on, text is UTF-8 whatever
+    /// `$DWGCODEPAGE` says (a Russian AutoCAD writes `ANSI_1251` there), so
+    /// such a file reads as before: UTF-8, else Windows-1252.
+    #[test]
+    fn utf8_file_is_unchanged() {
+        let dxf = dxf_in_code_page("AC1027", "ANSI_1251", &["Стены".as_bytes()]);
+        let (result, warnings) = import(&dxf);
+        assert_eq!(names(&result), ["Стены"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // Not UTF-8: Windows-1252 as before, not the code page the header
+        // names (0xE9 is "й" in CP1251).
+        let dxf = dxf_in_code_page("AC1021", "ANSI_1251", &[b"caf\xE9"]);
+        let (result, warnings) = import(&dxf);
+        assert_eq!(names(&result), ["caf\u{e9}"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 }

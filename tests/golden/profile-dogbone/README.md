@@ -21,9 +21,12 @@ Captured from PureCutCNC commit `2ebab10e5e17c48281ff96805d5e936af135cb58` with
 - Both programs cut the four notches after the laps, along each corner's
   bisector to one tool radius past the corner (#181), at the tool's own
   step-down levels (4 mm: Z −4 and −6), not the operation's.
-- Intentional differences: none in the motion. The corners are visited in
-  a different order (DreamCarve nearest-first from the last exit), which
-  a set comparison does not see.
+- Intentional differences: the corners are visited in a different order
+  (DreamCarve nearest-first from the last exit), which a set comparison
+  does not see. The notch at the lap's start and end is reached from the
+  lap (#240): DreamCarve moves up from Z −6 to Z −4 at the plunge rate in
+  the column the lap cut, where PureCutCNC retracts to safe Z and plunges
+  (`NotchRisesFromLapEnd`).
 
 Files: `program.nc` is the emitted G-code; `toolpath.json` is the
 key-sorted toolpath per operation in PureCutCNC's internal (Y-down) frame.

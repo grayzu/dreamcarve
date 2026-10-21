@@ -86,6 +86,11 @@ pub struct SequenceInput<'a> {
     /// The tool's plunge rate, mm/min, for the straight plunges of blocks
     /// with an empty descent.
     pub plunge_mm_min: f64,
+    /// The operation's moves already written before these blocks (a
+    /// Pocket's main path before its relief pass), empty otherwise: a
+    /// rapid straight down may stop [`ENTRY_CLEARANCE_MM`] above the
+    /// floors they cut, as above the toolpath's own (S2, #227).
+    pub cut_before: &'a [Move],
 }
 
 /// Longest gap between sample points when checking that a stay-down link
@@ -404,6 +409,10 @@ fn validate_block(block: &CutBlock) -> Result<(), CamError> {
 enum Link {
     /// The next block's descent starts where the tool is.
     None,
+    /// The next block, of the same shape, opens with a straight plunge
+    /// where the tool is, in the column the previous block cut at least
+    /// that deep (#240): the plunge goes from where the tool is.
+    InColumn,
     /// A straight cut at feed through cleared material at the current Z.
     StayDown,
     /// Up to safe Z, across, and down.
@@ -425,6 +434,19 @@ impl<'a> Emitter<'a, '_> {
         match (self.previous, self.current) {
             (Some(previous), Some(current)) => match self.link(previous, block, current) {
                 Link::None => {}
+                Link::InColumn => {
+                    // Straight up or down at the descent's start, then the
+                    // rest of the descent as given.
+                    if block.descent.is_empty() {
+                        let entry = Point3::new(block.entry.x, block.entry.y, block.z_mm);
+                        self.push(Move::linear(entry, self.input.plunge_mm_min));
+                    }
+                    for mv in &block.descent {
+                        self.push(*mv);
+                    }
+                    self.cut(block);
+                    return;
+                }
                 Link::StayDown => {
                     // Already at the block's Z in cleared material: straight
                     // to its entry, and its descent is not cut.
@@ -468,6 +490,9 @@ impl<'a> Emitter<'a, '_> {
         if a.shape == b.shape && b.pass == a.pass + 1 {
             return if at_start { Link::None } else { Link::Retract };
         }
+        if a.shape == b.shape && at_start && cut_down_to_plunge(a, b) {
+            return Link::InColumn;
+        }
         if let (Some(cleared_a), Some(cleared_b)) = (&a.cleared, &b.cleared)
             && (a.z_mm - b.z_mm).abs() <= EPS_MM
             && (current.z - b.z_mm).abs() <= EPS_MM
@@ -499,25 +524,35 @@ impl<'a> Emitter<'a, '_> {
     /// plunge rate.
     fn descend(&mut self, block: &CutBlock) {
         if block.descent.is_empty() {
-            self.push(Move::linear(
-                Point3::new(block.entry.x, block.entry.y, block.z_mm),
-                self.input.plunge_mm_min,
-            ));
+            // #227: a straight plunge is reached by the same rapid down.
+            let entry = Point3::new(block.entry.x, block.entry.y, block.z_mm);
+            self.rapid_down(entry);
+            self.push(Move::linear(entry, self.input.plunge_mm_min));
             return;
         }
         let at = block.descent_from;
         let start = Point3::new(at.x, at.y, block.descent_from_z_mm);
+        // #227: a descent that opens with a straight plunge at its start
+        // (onto a tab, or a corner-relief notch) is reached by the rapid
+        // down as far as the plunge goes.
+        let plunge_to = block
+            .descent
+            .first()
+            .filter(|mv| {
+                mv.kind == MoveKind::Linear
+                    && mv.to.xy().distance_to(at) <= EPS_MM
+                    && mv.to.z < start.z - EPS_MM
+            })
+            .map(|mv| mv.to);
         if let Some(current) = self.current {
-            if current.z > start.z + EPS_MM {
-                // Only a rapid from safe Z goes straight down (S2).
-                if current.z >= self.input.safe_z_mm - EPS_MM {
-                    let rapid_z = self.rapid_floor_mm(at).max(start.z);
-                    if rapid_z < current.z - EPS_MM {
-                        self.push(Move::rapid(Point3::new(at.x, at.y, rapid_z)));
-                    }
-                }
+            if current.z < start.z - EPS_MM {
                 self.push(Move::linear(start, self.input.plunge_mm_min));
-            } else if current.z < start.z - EPS_MM {
+            } else if let Some(plunge_to) = plunge_to {
+                // The plunge goes on straight down from where the rapid
+                // stops, at or above its end.
+                self.rapid_down(plunge_to);
+            } else if current.z > start.z + EPS_MM {
+                self.rapid_down(start);
                 self.push(Move::linear(start, self.input.plunge_mm_min));
             }
         }
@@ -526,14 +561,34 @@ impl<'a> Emitter<'a, '_> {
         }
     }
 
+    /// From safe Z only (S2), a rapid straight down towards `to` that stops
+    /// in the air: at [`Self::rapid_floor_mm`] over `to`, never below `to`.
+    /// Nothing when the tool is below safe Z or already that low.
+    fn rapid_down(&mut self, to: Point3) {
+        let Some(current) = self.current else {
+            return;
+        };
+        if current.z < self.input.safe_z_mm - EPS_MM {
+            return;
+        }
+        let rapid_z = self.rapid_floor_mm(to.xy()).max(to.z);
+        if rapid_z < current.z - EPS_MM {
+            self.push(Move::rapid(Point3::new(to.x, to.y, rapid_z)));
+        }
+    }
+
     /// The lowest Z, mm, a rapid straight down at `at` may stop at (S2 as
     /// changed in #214): [`ENTRY_CLEARANCE_MM`] above the stock top, or
-    /// that far above the lowest Z a cut written so far passed through
+    /// that far above the lowest Z a cut of the operation written so far
+    /// ([`SequenceInput::cut_before`], then this toolpath) passed through
     /// `at` (within [`CLEARED_POINT_TOLERANCE_MM`]), whichever is lower.
     fn rapid_floor_mm(&self, at: Point) -> f64 {
         let above_stock = self.input.stock_top_mm + ENTRY_CLEARANCE_MM;
-        lowest_cut_through(&self.moves, at, CLEARED_POINT_TOLERANCE_MM)
-            .map_or(above_stock, |z| above_stock.min(z + ENTRY_CLEARANCE_MM))
+        let lowest = |moves: &[Move]| lowest_cut_through(moves, at, CLEARED_POINT_TOLERANCE_MM);
+        [lowest(self.input.cut_before), lowest(&self.moves)]
+            .into_iter()
+            .flatten()
+            .fold(above_stock, |floor, z| floor.min(z + ENTRY_CLEARANCE_MM))
     }
 
     /// Appends `mv` unless it ends where the tool already is.
@@ -560,6 +615,36 @@ impl<'a> Emitter<'a, '_> {
             )));
         }
     }
+}
+
+/// Link rule 1 for a block of the same shape (#240): true when `b`'s
+/// descent opens with a straight plunge at `descent_from` (an empty
+/// descent, or a first move straight up or down there) and `a`'s cuts
+/// passed through `descent_from` (within [`CLEARED_POINT_TOLERANCE_MM`]) at
+/// or below the Z that plunge ends at. With the tool at `descent_from`
+/// after `a`, the plunge then runs in the column `a` has just opened, so
+/// it is cut from where the tool is (a Profile's relief notch after a lap
+/// that ends on its descend point). Only same-shape blocks: links to
+/// another shape keep O3's retract.
+fn cut_down_to_plunge(a: &CutBlock, b: &CutBlock) -> bool {
+    let plunge_to_z_mm = match b.descent.first() {
+        None => b.z_mm,
+        Some(mv)
+            if mv.kind == MoveKind::Linear && mv.to.xy().distance_to(b.descent_from) <= EPS_MM =>
+        {
+            mv.to.z
+        }
+        Some(_) => return false,
+    };
+    let start = a
+        .descent
+        .last()
+        .map_or(Point3::new(a.entry.x, a.entry.y, a.z_mm), |m| m.to);
+    let moves: Vec<Move> = std::iter::once(Move::rapid(start))
+        .chain(a.cuts.iter().copied())
+        .collect();
+    lowest_cut_through(&moves, b.descent_from, CLEARED_POINT_TOLERANCE_MM)
+        .is_some_and(|z| z <= plunge_to_z_mm + EPS_MM)
 }
 
 /// The lowest Z, mm, at which a cutting move of `moves` passed within
@@ -783,6 +868,7 @@ mod tests {
             stepover_mm: 0.0,
             feed_mm_min: FEED_MM_MIN,
             plunge_mm_min: PLUNGE_MM_MIN,
+            cut_before: &[],
         }
     }
 
@@ -994,7 +1080,9 @@ mod tests {
     }
 
     /// O3: between two shapes the tool goes up to safe Z, across, and down
-    /// again: a vertical rapid, an XY rapid at safe Z, then the plunge.
+    /// again: a vertical rapid, an XY rapid at safe Z, a rapid straight
+    /// down to 1 mm above the stock, then the plunge. (changed in #227: the
+    /// plunge started at safe Z.)
     #[test]
     fn links_between_shapes_retract_to_safe_z() {
         let blocks = [
@@ -1003,7 +1091,7 @@ mod tests {
         ]
         .concat();
         let tp = run(&input(blocks, MachiningOrder::FullDepthFirst, &[]));
-        let last_cut_of_a = 1 + 4;
+        let last_cut_of_a = 2 + 4;
         let m = &tp.moves;
         assert_eq!(m[last_cut_of_a].to, Point3::new(0.0, 0.0, 4.0));
         assert_eq!(
@@ -1016,11 +1104,17 @@ mod tests {
         );
         assert_eq!(
             m[last_cut_of_a + 3],
+            Move::rapid(Point3::new(50.0, 0.0, THICKNESS_MM + 1.0))
+        );
+        assert_eq!(
+            m[last_cut_of_a + 4],
             Move::linear(Point3::new(50.0, 0.0, 4.0), PLUNGE_MM_MIN)
         );
-        assert_eq!(m.iter().filter(|m| m.is_rapid()).count(), 4);
-        for mv in m.iter().filter(|m| m.is_rapid()) {
-            assert!((mv.to.z - SAFE_Z_MM).abs() <= EPS_MM, "{mv:?}");
+        assert_eq!(m.iter().filter(|m| m.is_rapid()).count(), 6);
+        for (i, mv) in m.iter().enumerate().filter(|(_, m)| m.is_rapid()) {
+            let down = i > 0 && mv.to.z < m[i - 1].to.z - EPS_MM;
+            let z = if down { THICKNESS_MM + 1.0 } else { SAFE_Z_MM };
+            assert!((mv.to.z - z).abs() <= EPS_MM, "{mv:?}");
         }
     }
 
@@ -1038,9 +1132,10 @@ mod tests {
         vec![a, b]
     }
 
-    /// The move right after `a`'s last cut (index 5).
+    /// The move right after `a`'s last cut (index 6: a rapid in, a rapid
+    /// down, the plunge, four cuts).
     fn link_move(tp: &Toolpath) -> Move {
-        tp.moves[6]
+        tp.moves[7]
     }
 
     /// O3: a short link inside the union of two cleared areas stays down as
@@ -1059,13 +1154,13 @@ mod tests {
         );
         assert_eq!(
             tp.moves.iter().filter(|m| m.is_rapid()).count(),
-            2,
+            3,
             "{:?}",
             tp.moves
         );
         // The link is followed straight by b's cuts: no plunge at the same Z.
         assert_eq!(
-            tp.moves[7],
+            tp.moves[8],
             Move::linear(Point3::new(30.0, 5.0, 4.0), FEED_MM_MIN)
         );
 
@@ -1115,7 +1210,7 @@ mod tests {
             tp.moves
         );
         assert_eq!(
-            tp.moves[7],
+            tp.moves[8],
             Move::linear(Point3::new(30.0, 5.0, 4.0), FEED_MM_MIN),
             "b's cuts follow the link: {:?}",
             tp.moves
@@ -1344,14 +1439,18 @@ mod tests {
 
     /// O6: a one-shape operation is unchanged by the ordering setting, and
     /// is the phase 1 recipe: rapid in, per pass a plunge and the cuts,
-    /// rapid out.
+    /// rapid out. (changed in #227: a rapid straight down to 1 mm above
+    /// the stock comes before the first plunge.)
     #[test]
     fn single_shape_is_identical_in_both_orders() {
         let blocks = squares("only", 10.0, 10.0, 20.0, 3);
         let full = run(&input(blocks.clone(), MachiningOrder::FullDepthFirst, &[]));
         let pass = run(&input(blocks.clone(), MachiningOrder::PassFirst, &[]));
         assert_eq!(full, pass);
-        let mut expected = vec![Move::rapid(Point3::new(10.0, 10.0, SAFE_Z_MM))];
+        let mut expected = vec![
+            Move::rapid(Point3::new(10.0, 10.0, SAFE_Z_MM)),
+            Move::rapid(Point3::new(10.0, 10.0, THICKNESS_MM + 1.0)),
+        ];
         for block in &blocks {
             expected.push(Move::linear(
                 Point3::new(10.0, 10.0, block.z_mm),
@@ -1478,16 +1577,18 @@ mod tests {
             &[],
         ));
         let m = &tp.moves;
-        assert_eq!(m[5].to, Point3::new(0.0, 0.0, 4.0), "last cut of pass 0");
+        assert_eq!(m[6].to, Point3::new(0.0, 0.0, 4.0), "last cut of pass 0");
         assert_eq!(
-            m[6],
+            m[7],
             Move::linear(Point3::new(0.0, 0.0, 2.0), PLUNGE_MM_MIN)
         );
-        assert_eq!(m.len(), 1 + 2 * 5 + 1);
+        assert_eq!(m.len(), 2 + 2 * 5 + 1);
     }
 
     /// Link rule 2: a next pass whose descent starts elsewhere (a moved
-    /// seam) is reached by a retract to safe Z, an XY rapid and a plunge.
+    /// seam) is reached by a retract to safe Z, an XY rapid, a rapid down
+    /// to 1 mm above the floor pass 0 cut there, and a plunge (changed in
+    /// #227: the plunge started at safe Z).
     #[test]
     fn moved_entry_retracts_between_passes() {
         let mut blocks = squares("s", 0.0, 0.0, 20.0, 2);
@@ -1498,12 +1599,66 @@ mod tests {
         moved.cuts.rotate_left(1);
         let tp = run(&input(blocks, MachiningOrder::FullDepthFirst, &[]));
         let m = &tp.moves;
-        assert_eq!(m[6], Move::rapid(Point3::new(0.0, 0.0, SAFE_Z_MM)));
-        assert_eq!(m[7], Move::rapid(Point3::new(20.0, 0.0, SAFE_Z_MM)));
+        assert_eq!(m[7], Move::rapid(Point3::new(0.0, 0.0, SAFE_Z_MM)));
+        assert_eq!(m[8], Move::rapid(Point3::new(20.0, 0.0, SAFE_Z_MM)));
+        assert_eq!(m[9], Move::rapid(Point3::new(20.0, 0.0, 5.0)));
         assert_eq!(
-            m[8],
+            m[10],
             Move::linear(Point3::new(20.0, 0.0, 2.0), PLUNGE_MM_MIN)
         );
+    }
+
+    /// Link rule 1 (#240): a block of the same shape and pass whose
+    /// descent is a straight plunge starting where the tool is, inside the
+    /// column the previous block just cut to at least the plunge's end,
+    /// has no link. The plunge goes from where the tool is (dropped when
+    /// it is already there, a move up at the plunge rate when the block
+    /// starts higher), not via safe Z. A block of another shape, or one
+    /// that would plunge below what was cut there, still retracts.
+    #[test]
+    fn block_starting_where_the_tool_is_in_its_own_cut_does_not_lift() {
+        let square = square("s", 0.0, 0.0, 20.0, 0, 1);
+        let lap_end = Point3::new(0.0, 0.0, 4.0);
+        // A relief notch block as `relief` builds it: its descent is one
+        // plunge at the descend point from safe Z.
+        let relief_notch = |name: &str, z: f64| {
+            let mut block = notch(name, 0.0, 0.0, 0);
+            block.z_mm = z;
+            block.descent = vec![Move::linear(Point3::new(0.0, 0.0, z), PLUNGE_MM_MIN)];
+            for cut in &mut block.cuts {
+                cut.to.z = z;
+            }
+            block
+        };
+        let sequenced = |next: CutBlock| {
+            let first_cut = next.cuts[0];
+            let tp = run(&input(
+                vec![square.clone(), next],
+                MachiningOrder::FullDepthFirst,
+                &[],
+            ));
+            assert_eq!(tp.moves[6].to, lap_end, "the square's last cut");
+            let notch_at = tp.moves.iter().position(|m| *m == first_cut).unwrap();
+            tp.moves[7..notch_at].to_vec()
+        };
+
+        // At the lap's Z: nothing between the two blocks.
+        assert_eq!(sequenced(notch("s", 0.0, 0.0, 0)), vec![]);
+        assert_eq!(sequenced(relief_notch("s", 4.0)), vec![]);
+        // Above it: straight up in the open column.
+        assert_eq!(
+            sequenced(relief_notch("s", 5.0)),
+            vec![Move::linear(Point3::new(0.0, 0.0, 5.0), PLUNGE_MM_MIN)]
+        );
+        // Another shape, or below the cut: up to safe Z and back down.
+        for next in [relief_notch("t", 4.0), relief_notch("s", 2.0)] {
+            let link = sequenced(next);
+            assert_eq!(
+                link.first(),
+                Some(&Move::rapid(Point3::new(0.0, 0.0, SAFE_Z_MM))),
+                "{link:?}"
+            );
+        }
     }
 
     #[test]
@@ -1530,7 +1685,9 @@ mod tests {
 
     /// A block's own descent moves are written as given; a descent move
     /// that ends where the tool already is (the previous pass's exit) is
-    /// dropped rather than written as a zero-length move.
+    /// dropped rather than written as a zero-length move. A descent that
+    /// opens with a straight plunge from safe Z is reached by a rapid
+    /// straight down to 1 mm above the stock first (#227).
     #[test]
     fn generator_descent_is_used_and_zero_length_moves_are_dropped() {
         let mut blocks = squares("s", 5.0, 0.0, 20.0, 2);
@@ -1551,17 +1708,18 @@ mod tests {
         let tp = run(&input(blocks, MachiningOrder::FullDepthFirst, &[]));
         let m = &tp.moves;
         assert_eq!(m[0], Move::rapid(Point3::new(0.0, 0.0, SAFE_Z_MM)));
+        assert_eq!(m[1], Move::rapid(Point3::new(0.0, 0.0, THICKNESS_MM + 1.0)));
         assert_eq!(
-            m[1],
+            m[2],
             Move::linear(Point3::new(0.0, 0.0, THICKNESS_MM), PLUNGE_MM_MIN)
         );
-        assert_eq!(m[2], Move::linear(Point3::new(5.0, 0.0, 4.0), ramp_mm_min));
-        assert_eq!(m[6].to, Point3::new(5.0, 0.0, 4.0), "last cut of pass 0");
+        assert_eq!(m[3], Move::linear(Point3::new(5.0, 0.0, 4.0), ramp_mm_min));
+        assert_eq!(m[7].to, Point3::new(5.0, 0.0, 4.0), "last cut of pass 0");
         assert_eq!(
-            m[7],
+            m[8],
             Move::linear(Point3::new(5.0, 0.0, 2.0), PLUNGE_MM_MIN)
         );
-        assert_eq!(m.len(), 1 + 2 + 4 + 1 + 4 + 1);
+        assert_eq!(m.len(), 2 + 2 + 4 + 1 + 4 + 1);
     }
 
     /// A dwell ends where the tool already is, but it is a pause, not a

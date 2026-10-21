@@ -589,7 +589,8 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    enters the island, each such end is a dead end and no order lifts
    less than scan order.) Edge links: with a wall pass (`last` or
    `first`), two segment ends that no straight stay-down link joins but
-   that both lie on one island ring of the tool-centre region (within
+   that both lie on one ring of the tool-centre region, its outer or an
+   island's (within
    the flattening tolerance, as the segments end on its chords) are
    joined along that ring: to the ring, the shorter way round it with its
    arcs kept, and off it, at the pass Z and the feed, when that way is no
@@ -597,16 +598,24 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    stay-down link; the segments and their edge links are one block,
    whose `cleared` area is the segments' strips and the band the edge
    links sweep (grown by `r`, cut to the region), so `sequence` sees no
-   link inside it. The tool centre on the ring touches the island wall
-   exactly, so the block cuts only the band the island's wall ring cuts
-   anyway (or, for a ring a rest operation skips, cleared air), and S9
+   link inside it. The tool centre on the ring touches the wall or
+   island exactly, so the block cuts only the band that ring's wall pass
+   cuts anyway (or, for a ring a rest operation skips, cleared air), and S9
    holds by construction. Without a wall pass that band is not the
    operation's to cut, and no edge link is made. (changed in #202: round
    a curved island side every line end was a dead end, 11 lifts per pass
    on the 20 mm circle island test pocket; following the ring, 1 lift per
    pass with the wall pass last and 2 with it first, and round the 20 mm
    square island, whose ring has round corners, 2, from 4. Upstream's
-   straight link there gouges the island by up to 0.38 mm.) Links:
+   straight link there gouges the island by up to 0.38 mm.) (changed in
+   #218: only island rings were followed, but the outer ring bulges into
+   the region wherever the wall curves inward, round a reflex corner (an
+   arc of radius `r`) or along an inward arc, and a straight link there
+   leaves the region; with the outer ring offered too, 0 lifts per pass
+   from 1 on a 100 × 50 L, and 1 from 6 on the 100 × 50 rect with a
+   radius-15 half-disc bay in its top wall, wall pass last or first.
+   Straight links win wherever valid, so convex outlines and the
+   goldens do not change.) Links:
    `sequence` stays down when the straight
    link between two blocks lies inside the tool-centre region (no island
    between) and is shorter than one diameter plus `s`, else retracts. The wall pass rings (root rings of step 6 with no
@@ -723,7 +732,7 @@ tolerance.
    on the toolpath; the safety pass checks it inside a Drill span and
    fails with `ExportError::RapidIntoUncut`. Every other operation has
    S2, which since #214 also lets a rapid straight down from safe Z stop
-   over a ramp or helix's start.
+   over a ramp or helix's start, and since #227 over a straight plunge.
 
 ### Engrave (dc-cam::engrave)
 
@@ -773,7 +782,10 @@ cut direction and cut side.
   descent started at safe Z, so a 15° helix spiralled about 3.5 turns
   through the air at the feed rate before it reached the wood, half of
   the plaque's first program; VCarve and Fusion rapid down to a
-  clearance above the material first, as the Drill already did.)
+  clearance above the material first, as the Drill already did.) A
+  straight plunge (`entry: plunge`, a fallback plunge, an Engrave pass, a
+  corner-relief notch, a lap that starts on a tab) is reached by the same
+  rapid down and plunges at the plunge rate only from there (#227).
 - **Pitch** `π · d · tan(angle)` for path diameter `d`. **Feed scale**
   `min(1, plunge / (feed · sin(slope)))` on every descending move (S10).
 - **Helix placement:** largest clearance circle (pole of inaccessibility,
@@ -847,9 +859,13 @@ cut direction and cut side.
   paths for `Side::OnLine` (Inside and Outside still skip them with
   `OpenPathSkipped`, an open path having no side; one of no length
   skips with `reason: no_length`). The path is not nested: no band
-  check, no containment pair, no waste domain. Climb cuts it from the
-  first vertex to the last, conventional from the last to the first
-  (VCarve: the direction picks the end). Each pass is one block from the
+  check, no containment pair, no waste domain. Conventional cuts it
+  from the first vertex to the last, climb from the last to the first
+  (VCarve: "Conventional starts cutting at the Start point Climb cutting
+  starts cutting at the end point"). (changed in #242: #175 had climb
+  start at the first vertex, the opposite of VCarve's rule, which is the
+  reference for option behaviour; tabs stay measured from the first
+  vertex, so they do not move.) Each pass is one block from the
   start to the far end at pass Z, `frees` false; its descent starts at
   the previous pass Z, so the sequencer retracts, rapids back, and
   plunges down the slot to it before the ramp (`along_path`, which
@@ -1253,6 +1269,17 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
    - same shape, next pass, different start (lead-in moved the seam, or
      alternation): rapid up to safe Z, rapid to `b.descent_from`,
      descend;
+   - same shape, not the next pass, `b.descent_from` equals the tool's
+     position (within `EPS_MM`), `b.descent` opens with a straight plunge
+     there (empty, or a first `Linear` move straight up or down at
+     `b.descent_from`), and a cut of `a` passed through `b.descent_from`
+     (within `CLEARED_POINT_TOLERANCE_MM`) at or below the Z that plunge
+     ends at: no link; the plunge runs from where the tool is, straight up
+     or down at the plunge rate in the column `a` just cut, then the rest
+     of `b.descent`. A Profile's relief notch whose descend point is where
+     the lap ended is cut this way. Other shapes keep the retract (O3).
+     (changed in #240: the notch lifted to safe Z and came straight back
+     down at the same point);
    - `b.cleared` and `a.cleared` are both `Some` at `b.z_mm == a.z_mm`,
      and the link is no longer than the flatten tolerance, or the
      straight link lies inside `a.cleared ∪ b.cleared` and its length
@@ -1276,7 +1303,16 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
      whichever is lower but not below `descent_from_z_mm`, then a plunge
      at the plunge rate for the rest; then the descent. A tool below a
      descent's start (rule 1, a Pocket's later pass) rises to it at the
-     plunge rate. (changed in #214: the plunge ran from safe Z.)
+     plunge rate. (changed in #214: the plunge ran from safe Z.) A
+     straight plunge is reached the same way: an empty descent's plunge
+     to `b.entry` at `b.z_mm`, and a descent that opens with a straight
+     plunge at `b.descent_from` (a lap that starts on a tab, a Profile's
+     corner-relief notch). The rapid stops at the same floor, never below
+     the plunge's end, and the plunge covers the rest; the floors count
+     the cuts of `SequenceInput::cut_before` too, the main path a
+     Pocket's relief pass follows. (changed in #227: a straight plunge
+     fed from safe Z through the air; the plaque's 3.175 mm Engrave spent
+     3 s of each 3.2 s plunge in air.)
    The first block is reached by a rapid to safe Z then XY; the last is
    followed by a rapid to safe Z. Zero-length moves are never written
    (so a tab over the lap start stays byte-identical to phase 1); dwells
@@ -1289,7 +1325,8 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
 5. **Output:** one `Toolpath`. Every `Rapid` is at safe Z except a
    Drill's descent, one Z rapid down to its `retract_z`, the peck
    rapids inside its cuts, and the rapid straight down from safe Z to a
-   ramp or helix (step 4, S2 as changed in #214). The descents
+   ramp, helix or straight plunge (step 4, S2 as changed in #214 and
+   #227). The descents
    themselves are `Linear` at feed/plunge, never `Rapid`.
 6. **Invariants O1–O10** are the module's tests.
 
@@ -1358,7 +1395,20 @@ the fitted centre is transformed like a point).
    #213: a 0.006 mm stay-down link, a shallow corner arc and a 40 mm wall
    side lie on a 154.75 mm circle, and with only two chord steps the
    median let it through; the arc bowed 1.3 mm into the wall, which S9
-   refused.) Direction from
+   refused.) And the arc lies within `tolerance` of every move it
+   replaces along the move's whole length
+   (`arcfit::arc_chord_deviation_mm`: the farthest of the arc's ends, the
+   point farthest from the chord's line, and eight points between, from
+   the chord; for a chord between points on the circle, its sagitta
+   `r(1 − cos(step/2))`); a shallow corner arc counts as its chord.
+   (changed in #226, #229, #233: only the vertices were checked, and a
+   square's four corners lie on one circle, so a 7 mm square cut On line
+   became four 90° arcs bowing 1.45 mm off its sides and failed S9. A
+   polyline that stands for a curve has chords within the tolerance when
+   it is flattened at a tolerance no coarser than the arc-fit one, so the
+   fitter's unit tests fit those, not coarse polygons; a project whose
+   `flatten_tolerance_mm` is coarser than `arc_fit_tolerance_mm` fits
+   fewer runs.) Direction from
    the sign of the summed cross products (negative = clockwise = `G2`).
 3. Split each fitted run into arcs of ≤ 90° with intermediate endpoints on
    the circle and the last endpoint exactly the source point; `I`,`J` per
@@ -1395,12 +1445,18 @@ shallow arcs) when:
   three toolpath moves;
 - every vertex and shallow-arc midpoint between lies on its piece within
   that tolerance;
+- over every piece a move spans, the piece's farthest point from that
+  move's chord is within that tolerance (changed in #226: an arc whose
+  ends and vertices are all on the circle, over a 0.006 mm fragment, a
+  short chord and a 40 mm straight side, bowed 1.3 mm off the side and
+  S6 accepted it; S12 must not trust the fitter);
 - the direction matches the sign of the vertices' turn.
 
 A wrong arc in place of a deep toolpath arc stays `MotionMismatch`. A
 failure is `ExportError::ArcFitViolation`. `fitted_arcs_pass_s6`,
-`arc_off_the_vertices_fails_s6` and `arc_over_90_degrees_fails_s12` are
-the tests. (changed in slice 14, #128: one arc per run could not match a
+`arc_off_the_vertices_fails_s6`, `arc_over_90_degrees_fails_s12`,
+`arc_bowing_off_a_long_straight_move_fails_s12` (mm and inch) and
+`arc_within_tolerance_of_every_chord_passes` are the tests. (changed in slice 14, #128: one arc per run could not match a
 split run; slice 4, #137, chained each piece's centre to the previous
 piece's rather than the first, because snapped centres drift along a
 run.)
@@ -1808,6 +1864,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::rings::ring_starts_at_nearest_point_of_an_arc`, `pocket::ring_starts_at_nearest_point_not_nearest_vertex` (#196).
 - `pocket::raster_lifts_around_island_are_minimised`, `pocket::raster::pieces_round_a_square_island_are_cut_nearest_first`, `pocket::raster::scan_order_is_kept_round_a_circle` (#150).
 - `pocket::raster_links_follow_a_round_island_edge`, `pocket::edge_link_never_enters_the_island`, `pocket::raster::pieces_round_a_circle_link_along_its_edge`, `safety::raster_edge_links_round_an_island_pass_s9` (#202; `pocket::raster_lifts_around_island_are_minimised` updated).
+- `pocket::raster_links_follow_a_concave_wall`, `pocket::edge_link_never_leaves_the_wall`, `safety::raster_edge_links_along_a_concave_wall_pass_s9` (#218).
 - `pocket::allowance_leaves_material_on_walls` — footprint stays `allowance` from the wall.
 - `pocket::rest_region_is_corners_and_wall_band`, `pocket::rest_coverage_with_rough_reaches_small_tool_inset` (acceptance 22), `pocket::rest_of_that_clears_nothing_warns`, `pocket::rest_footprint_stays_inside_region` (S14).
 - `pocket::step_down_from_tool_when_operation_unset`, `pocket::depth_below_bottom_is_error`.
@@ -1886,6 +1943,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::plaque_dxf_matches_plaque_svg_within_0_01` (acceptance 34), `dxf::coordinate_limit_applies`.
 - `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
 - `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
+- `dxf::cp1251_layer_names_decode`, `dxf::unknown_code_page_warns_and_falls_back`, `dxf::utf8_file_is_unchanged` (#209).
 
 **dc-library**
 - `library::round_trip_is_byte_identical`, `library::add_detects_already_present`, `library::find_by_id_then_unique_name`, `library::ambiguous_name_is_error`, `library::validation_rules_from_upstream` (port of `parseToolLibraryFile` rules: positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)).
@@ -1898,6 +1956,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::config_tool_change_mode_seeds_init`, `cli::one_program_and_programs_per_tool_flags` (acceptance 33).
 - `cli::check_reports_order_warnings`, `cli::warnings_print_code_and_message`.
 - `cli::posts_lists_six`.
+- `cli::broken_pipe_does_not_panic`, `cli::stdout_write_error_fails_with_message` (Linux only; #216).
 - `cli::canned_cycles_linuxcnc_opt_in` (acceptance 24).
 
 **dc-gcode (integration, `tests/golden.rs`)**

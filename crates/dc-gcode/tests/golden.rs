@@ -410,9 +410,15 @@ fn profile_lead() {
 /// Inside Profile of a 40 × 30 mm rectangle at (55, 35), 6 mm deep in
 /// 3 mm passes, with dogbones: four notches along the corner bisectors,
 /// cut out and back at the tool's 4 mm step-down levels, Z −4 and −6.
+/// The notch at the lap's start and end rises from the lap at Z −6 to
+/// Z −4 rather than retracting ([`Difference::NotchRisesFromLapEnd`]).
 #[test]
 fn profile_dogbone() {
-    harness::check(&case("profile-dogbone", vec![], Order::Sets));
+    harness::check(&case(
+        "profile-dogbone",
+        vec![Difference::NotchRisesFromLapEnd],
+        Order::Sets,
+    ));
 }
 
 /// Three 30 × 30 mm parts at x 10, 60 and 110 (y 35), each with a 12 mm

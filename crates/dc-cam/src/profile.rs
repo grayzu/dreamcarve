@@ -129,6 +129,7 @@ fn usable_rate(rate_mm_min: Option<f64>) -> Option<f64> {
 pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
     let missing = |field| CamError::MissingFeed {
         tool: tool.name.clone(),
+        tool_id: tool.id.clone(),
         field,
     };
     Ok(LapRates {
@@ -198,7 +199,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// An On line Profile also cuts open paths (#175, as VCarve's Profile
 /// "On" an open vector): each pass runs the path from its first vertex to
-/// its last (climb) or from its last to its first (conventional), with
+/// its last (conventional) or from its last to its first (climb, #242), with
 /// the ramp along it and its tabs placed from its first vertex as drawn,
 /// then retracts; it has no lead, no relief and frees nothing. Inside and
 /// Outside skip open paths ([`WarningCode::OpenPathSkipped`]), as they
@@ -249,6 +250,7 @@ pub fn generate_profile(
         return Err(CamError::CutterNotFlat {
             op: op.id.clone(),
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             cutter: tool.cutter.describe(),
         });
     }
@@ -256,6 +258,7 @@ pub fn generate_profile(
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -275,6 +278,7 @@ pub fn generate_profile(
             .ok_or_else(|| CamError::MissingStepDown {
                 op: op.id.clone(),
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             })?;
     let thickness_mm = project
         .stock
@@ -331,22 +335,15 @@ pub fn generate_profile(
     // the index of its region, in drawing order.
     let mut placed: Vec<(Polyline, &ShapeRef, Wall, usize)> = Vec::new();
     for (region_index, region) in regions.iter().enumerate() {
-        let ordered = region
-            .holes()
-            .iter()
-            .map(|h| (h, Role::Hole))
-            .chain(std::iter::once((region.outer(), Role::Outer)));
-        for (contour, role) in ordered {
+        let ordered = hole_shapes(region, &shapes)
+            .map(|(h, shape)| (h, shape, Role::Hole))
+            .chain(outer_shape(region, &shapes).map(|shape| (region.outer(), shape, Role::Outer)));
+        for (contour, shape, role) in ordered {
             let (how, wall) = placement(op.side, role);
             let centres = match how {
                 Offset::Grow => offset(contour, radius_mm),
                 Offset::Shrink => offset(contour, -radius_mm),
                 Offset::None => vec![contour.clone()],
-            };
-            // `nest` keeps every contour or reverses it, so this always
-            // finds the shape.
-            let Some(shape) = shape_of(&shapes, contour) else {
-                continue;
             };
             if centres.is_empty() {
                 warnings.push(
@@ -361,7 +358,7 @@ pub fn generate_profile(
                 op.side,
                 tool,
                 region,
-                contour,
+                (contour, shape),
                 &centres,
                 &shapes,
                 project.flatten_tolerance_mm,
@@ -385,11 +382,12 @@ pub fn generate_profile(
         &open_paths,
         project.flatten_tolerance_mm,
     )?;
-    // #175: an open path is cut On line as drawn, from its first vertex
-    // under climb and from its last under conventional (VCarve's rule:
-    // the direction picks the end). It bounds no region, so no
+    // #175: an open path is cut On line as drawn. #242: from its first
+    // vertex under conventional and from its last under climb, as VCarve
+    // ("Conventional starts cutting at the Start point Climb cutting
+    // starts cutting at the end point"). It bounds no region, so no
     // containment and no waste domain; its wall is never asked.
-    let reversed_open = op.direction == CutDirection::Conventional;
+    let reversed_open = op.direction == CutDirection::Climb;
     for (shape, path) in &open_paths {
         let path = if reversed_open {
             path.reversed()
@@ -619,6 +617,7 @@ pub fn generate_profile(
         stepover_mm: 0.0,
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
+        cut_before: &[],
     };
 
     // Warnings name contours by their position in the cut order, which
@@ -743,7 +742,7 @@ fn check_band(
     side: Side,
     tool: &Tool,
     region: &Region,
-    contour: &Contour,
+    (contour, shape): (&Contour, &ShapeRef),
     centres: &[Contour],
     shapes: &[(ShapeRef, Contour)],
     tolerance_mm: f64,
@@ -753,17 +752,14 @@ fn check_band(
         Side::OnLine => tool.diameter_mm,
         Side::Outside => return Ok(()),
     };
-    let lines = std::iter::once(region.outer()).chain(region.holes());
-    for line in lines.filter(|l| *l != contour) {
+    for (line, b) in region_shapes(region, shapes).filter(|(l, _)| *l != contour) {
         if !centres
             .iter()
             .any(|c| within(c.polyline(), line.polyline(), reach_mm))
         {
             continue;
         }
-        let (Some(a), Some(b)) = (shape_of(shapes, contour), shape_of(shapes, line)) else {
-            continue;
-        };
+        let a = shape;
         let drawn = |s: &ShapeRef| shapes.iter().position(|(x, _)| x == s);
         let (shape, other) = if drawn(a) <= drawn(b) { (a, b) } else { (b, a) };
         return Err(CamError::BandNarrowerThanTool {
@@ -777,9 +773,6 @@ fn check_band(
     if side != Side::OnLine {
         return Ok(());
     }
-    let Some(shape) = shape_of(shapes, contour) else {
-        return Ok(());
-    };
     // #223: a part nowhere as wide as the bit is removed whole, however
     // short its outline (the self-band check below compares only
     // stretches `√2·d` apart along it, and a small circle has none).
@@ -916,9 +909,7 @@ fn check_open_bands(
         let Some(region) = region_index.and_then(|i| regions.get(i)) else {
             continue;
         };
-        let lines = std::iter::once(region.outer())
-            .chain(region.holes())
-            .filter_map(|c| Some((shape_of(shapes, c)?, c.polyline())));
+        let lines = region_shapes(region, shapes).map(|(c, shape)| (shape, c.polyline()));
         let later = open
             .iter()
             .zip(&held)
@@ -1223,13 +1214,11 @@ pub(crate) fn containment_pairs(
 ) -> Vec<(ShapeRef, ShapeRef)> {
     let mut pairs = Vec::new();
     for region in regions {
-        let Some(outer) = shape_of(shapes, region.outer()) else {
+        let Some(outer) = outer_shape(region, shapes) else {
             continue;
         };
-        for hole in region.holes() {
-            if let Some(hole) = shape_of(shapes, hole) {
-                pairs.push((hole.clone(), outer.clone()));
-            }
+        for (_, hole) in hole_shapes(region, shapes) {
+            pairs.push((hole.clone(), outer.clone()));
         }
         let Some(parent_depth) = region.depth().checked_sub(2) else {
             continue;
@@ -1240,9 +1229,9 @@ pub(crate) fn containment_pairs(
         let enclosing_hole = regions
             .iter()
             .filter(|r| r.depth() == parent_depth)
-            .flat_map(|r| r.holes())
-            .find(|hole| contour_contains(hole, probe.point()));
-        if let Some(hole) = enclosing_hole.and_then(|h| shape_of(shapes, h)) {
+            .flat_map(|r| hole_shapes(r, shapes))
+            .find(|(hole, _)| contour_contains(hole, probe.point()));
+        if let Some((_, hole)) = enclosing_hole {
             pairs.push((outer.clone(), hole.clone()));
         }
     }
@@ -1255,6 +1244,40 @@ pub(crate) fn contour_contains(contour: &Contour, p: Point) -> bool {
         .ok()
         .and_then(|(regions, _)| regions.into_iter().next())
         .is_some_and(|region| region.contains_point(p))
+}
+
+/// The shape `region`'s outer came from, `region` being one that `nest`
+/// returned for the contours of `shapes`, in order.
+pub(crate) fn outer_shape<'s>(
+    region: &Region,
+    shapes: &'s [(ShapeRef, Contour)],
+) -> Option<&'s ShapeRef> {
+    shapes.get(region.outer_index()).map(|(s, _)| s)
+}
+
+/// Each hole of `region` with the shape it came from, in hole order;
+/// `region` as for [`outer_shape`].
+pub(crate) fn hole_shapes<'r, 's>(
+    region: &'r Region,
+    shapes: &'s [(ShapeRef, Contour)],
+) -> impl Iterator<Item = (&'r Contour, &'s ShapeRef)> {
+    region
+        .holes()
+        .iter()
+        .zip(region.hole_indices())
+        .filter_map(|(hole, &i)| shapes.get(i).map(|(s, _)| (hole, s)))
+}
+
+/// The outer of `region` then its holes, each with the shape it came
+/// from; `region` as for [`outer_shape`].
+pub(crate) fn region_shapes<'r, 's>(
+    region: &'r Region,
+    shapes: &'s [(ShapeRef, Contour)],
+) -> impl Iterator<Item = (&'r Contour, &'s ShapeRef)> {
+    outer_shape(region, shapes)
+        .map(|s| (region.outer(), s))
+        .into_iter()
+        .chain(hole_shapes(region, shapes))
 }
 
 /// The shape `contour`, as `nest` returned it, came from.
@@ -1607,6 +1630,34 @@ mod tests {
             let min_x = lap.points.iter().map(|p| p.x).fold(f64::MAX, f64::min);
             assert_approx_eq!(min_x, 20.0 - 3.175, TOL);
         }
+    }
+
+    /// #227, S2: with `entry: plunge` the tool rapids straight down from
+    /// safe Z to 1 mm above the stock top and plunges at the plunge rate
+    /// from there, not from safe Z through the air. A later pass after a
+    /// lift (the rect's next pass follows at its start, so none here) would
+    /// stop 1 mm above the floor already cut.
+    #[test]
+    fn plunge_entry_rapids_to_just_above_the_stock() {
+        let p = rect_project();
+        let (tp, _) = generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+        let first = tp.moves[0];
+        assert!(first.is_rapid(), "{first:?}");
+        assert_approx_eq!(first.to.z, SAFE_Z_MM, TOL);
+        let (rapid, plunge) = (tp.moves[1], tp.moves[2]);
+        assert_eq!(
+            rapid,
+            Move::rapid(Point3::new(first.to.x, first.to.y, THICKNESS_MM + 1.0)),
+            "{:?}",
+            &tp.moves[..4]
+        );
+        assert_eq!(
+            plunge,
+            Move::linear(
+                Point3::new(first.to.x, first.to.y, PASS_Z_MM[0]),
+                PLUNGE_MM_MIN
+            )
+        );
     }
 
     #[test]
@@ -2085,7 +2136,12 @@ mod tests {
         let mut descents = 0;
         for pair in tp.moves.windows(2) {
             let (prev, mv) = (pair[0], pair[1]);
-            if mv.to.z < prev.to.z - EPS_MM {
+            if mv.is_rapid() && mv.to.z < prev.to.z - EPS_MM {
+                // #227: from safe Z straight down to 1 mm above the stock.
+                assert_approx_eq!(prev.to.z, SAFE_Z_MM, TOL);
+                assert_approx_eq!(mv.to.z, THICKNESS_MM + 1.0, TOL);
+                assert!(prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM, "vertical");
+            } else if mv.to.z < prev.to.z - EPS_MM {
                 descents += 1;
                 assert_eq!(mv.kind, MoveKind::Linear, "{mv:?}");
                 assert_approx_eq!(mv.feed_mm_min.unwrap(), PLUNGE_MM_MIN, EPS_MM);
@@ -2105,6 +2161,14 @@ mod tests {
             if !mv.is_rapid() {
                 continue;
             }
+            if mv.to.z < prev.to.z - EPS_MM {
+                // #227: down from safe Z to 1 mm above the stock, in Z
+                // alone, before a plunge.
+                assert_approx_eq!(prev.to.z, SAFE_Z_MM, TOL);
+                assert_approx_eq!(mv.to.z, THICKNESS_MM + 1.0, TOL);
+                assert!(prev.to.xy().distance_to(mv.to.xy()) <= EPS_MM);
+                continue;
+            }
             assert_approx_eq!(mv.to.z, SAFE_Z_MM, TOL);
             if prev.to.z < SAFE_Z_MM - EPS_MM {
                 retracts += 1;
@@ -2117,9 +2181,10 @@ mod tests {
             }
         }
         assert_eq!(retracts, 2, "one retract after each contour");
-        // Hole done, retract, rapid across at safe Z, outer starts.
+        // Hole done, retract, rapid across at safe Z, outer starts; and a
+        // rapid down before each contour's first plunge (#227).
         let rapids: Vec<&Move> = tp.moves.iter().filter(|m| m.is_rapid()).collect();
-        assert_eq!(rapids.len(), 4);
+        assert_eq!(rapids.len(), 4 + 2);
     }
 
     #[test]
@@ -2173,6 +2238,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Feed
             }
         );
@@ -2183,6 +2249,7 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed {
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 field: FeedField::Plunge
             }
         );
@@ -2193,6 +2260,36 @@ mod tests {
             generate_profile(&p, &op).unwrap_err(),
             CamError::MissingFeed { .. }
         ));
+    }
+
+    /// #71: two tools may share a name, so an error about a tool carries
+    /// its id as well as the name it prints.
+    #[test]
+    fn tool_errors_carry_the_tool_id() {
+        let tool_id = |err: CamError| match err {
+            CamError::MissingFeed { tool_id, .. }
+            | CamError::CutterNotFlat { tool_id, .. }
+            | CamError::MissingStepDown { tool_id, .. }
+            | CamError::InvalidToolDiameter { tool_id, .. } => tool_id,
+            other => panic!("a tool error, not {other:?}"),
+        };
+        let t1 = ToolId::new("t1");
+        let op = profile_op(&rect_project(), Side::Outside, CutDirection::Climb);
+        let fails = |change: &dyn Fn(&mut Project)| {
+            let mut p = rect_project();
+            change(&mut p);
+            assert_eq!(p.tools[0].id, t1);
+            generate_profile(&p, &op).unwrap_err()
+        };
+        let errors = [
+            fails(&|p| p.tools[0].feed_mm_min = None),
+            fails(&|p| p.tools[0].cutter = dc_project::ToolKind::BallNose),
+            fails(&|p| p.tools[0].diameter_mm = 0.0),
+            fails(&|p| p.tools[0].step_down_mm = None),
+        ];
+        for err in errors {
+            assert_eq!(tool_id(err.clone()), t1, "{err:?}");
+        }
     }
 
     /// #67: Profile offsets by half the diameter, right only for a flat end
@@ -2210,6 +2307,7 @@ mod tests {
             CamError::CutterNotFlat {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
                 cutter: "a V-bit",
             }
         );
@@ -2257,6 +2355,7 @@ mod tests {
             CamError::MissingStepDown {
                 op: OperationId::new("o1"),
                 tool: "6.35 mm upcut".into(),
+                tool_id: ToolId::new("t1"),
             }
         );
     }
@@ -2357,6 +2456,8 @@ mod tests {
     /// start at safe Z, then per pass a plunge at the plunge rate and one
     /// lap at the feed rate, then a rapid up. The expected lap is built here
     /// from the offset contour directly, not through the sequencer.
+    /// (changed in #227: the first plunge starts from a rapid straight down
+    /// to 1 mm above the stock, not from safe Z.)
     #[test]
     fn one_shape_golden_is_byte_identical_after_sequence() {
         let p = rect_project();
@@ -2375,7 +2476,10 @@ mod tests {
             centre.into_polyline()
         };
         let start = path.vertices()[0].point();
-        let mut expected = vec![Move::rapid(Point3::new(start.x, start.y, SAFE_Z_MM))];
+        let mut expected = vec![
+            Move::rapid(Point3::new(start.x, start.y, SAFE_Z_MM)),
+            Move::rapid(Point3::new(start.x, start.y, THICKNESS_MM + 1.0)),
+        ];
         for z in PASS_Z_MM {
             expected.push(Move::linear(
                 Point3::new(start.x, start.y, z),
@@ -2710,12 +2814,16 @@ mod tests {
 
     /// #175: an On line Profile cuts an open path, as VCarve's Profile
     /// "On" cuts an open vector. Each pass runs the line from its first
-    /// vertex to its last at the pass Z, then the tool retracts and comes
-    /// back to the first vertex for the next.
+    /// vertex to its last at the pass Z (conventional), then the tool
+    /// retracts and comes back to the first vertex for the next. (changed
+    /// in #242: climb ran first to last; VCarve starts conventional there.)
     #[test]
     fn on_line_cuts_an_open_path() {
         let p = line_project();
-        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
+        let (tp, warnings) = generate(
+            &p,
+            &profile_op(&p, Side::OnLine, CutDirection::Conventional),
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
         let laps = laps(&tp);
         assert_eq!(laps.len(), PASS_Z_MM.len(), "{laps:?}");
@@ -2752,24 +2860,73 @@ mod tests {
         assert_eq!(laps(&tp).len(), PASS_Z_MM.len(), "only the rect is cut");
     }
 
-    /// #175: the direction picks the end an open path's cut starts at, as
-    /// VCarve's does: climb from its first vertex, conventional from its
-    /// last.
-    #[test]
-    fn open_path_direction_picks_the_end_it_starts_at() {
+    /// The direction picks the end an open path's cut starts at, as
+    /// VCarve's does ("Conventional starts cutting at the Start point
+    /// Climb cutting starts cutting at the end point"). Checks that every
+    /// pass of the line, cut `direction`, descends at `start` (the line's
+    /// X there), runs straight to `end` and ends there.
+    fn assert_open_line_runs(direction: CutDirection, start: f64, end: f64) {
         let p = line_project();
-        for (direction, start, end) in [
-            (CutDirection::Climb, 20.0, 120.0),
-            (CutDirection::Conventional, 120.0, 20.0),
-        ] {
-            let (tp, _) = generate(&p, &profile_op(&p, Side::OnLine, direction));
-            let laps = laps(&tp);
-            assert_eq!(laps.len(), PASS_Z_MM.len(), "{direction:?}");
-            for lap in laps {
-                assert_approx_eq!(lap.points[0].x, start, TOL);
-                assert_approx_eq!(lap.points[lap.points.len() - 1].x, end, TOL);
-            }
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, direction));
+        assert!(warnings.is_empty(), "{direction:?}: {warnings:?}");
+        let laps = laps(&tp);
+        assert_eq!(laps.len(), PASS_Z_MM.len(), "{direction:?}: {laps:?}");
+        for (lap, z) in laps.iter().zip(PASS_Z_MM) {
+            assert_approx_eq!(lap.z_mm, z, TOL);
+            assert!(lap.points[0].distance_to(Point::new(start, 20.0)) <= TOL);
+            let last = lap.points[lap.points.len() - 1];
+            assert!(last.distance_to(Point::new(end, 20.0)) <= TOL, "{last:?}");
         }
+        let toward = (end - start).signum();
+        for (from, mv) in xy_cuts(&tp) {
+            assert!((mv.to.x - from.x) * toward > 0.0, "{direction:?}: {mv:?}");
+        }
+        let plunges = plunges_below_top(&tp);
+        assert!(!plunges.is_empty());
+        for (from, _) in plunges {
+            assert!(from.xy().distance_to(Point::new(start, 20.0)) <= TOL);
+        }
+    }
+
+    /// #242: conventional cuts an open path from its first vertex to its
+    /// last, as VCarve's "Conventional starts cutting at the Start point".
+    /// (Replaces #175's `open_path_direction_picks_the_end_it_starts_at`,
+    /// which pinned the opposite ends.)
+    #[test]
+    fn open_on_line_conventional_starts_at_first_vertex() {
+        assert_open_line_runs(CutDirection::Conventional, 20.0, 120.0);
+    }
+
+    /// #242: climb cuts an open path from its last vertex to its first,
+    /// as VCarve's "Climb cutting starts cutting at the end point". A tab
+    /// at a distance stays at the same XY whichever end the cut starts at.
+    #[test]
+    fn open_on_line_climb_starts_at_last_vertex() {
+        assert_open_line_runs(CutDirection::Climb, 120.0, 20.0);
+        let p = line_project();
+        let held_xs = |direction| {
+            let mut op = profile_op(&p, Side::OnLine, direction);
+            op.tabs = Some(tab_at(30.0, TabShape::Rect));
+            let (tp, _) = generate(&p, &op);
+            let mut xs: Vec<f64> = held_at_tab_top(&tp)
+                .0
+                .into_iter()
+                .flat_map(|(a, b)| [a.x.min(b.x), a.x.max(b.x)])
+                .collect();
+            xs.sort_by(f64::total_cmp);
+            xs
+        };
+        let (climb, conventional) = (
+            held_xs(CutDirection::Climb),
+            held_xs(CutDirection::Conventional),
+        );
+        assert!(!climb.is_empty());
+        assert_eq!(climb.len(), conventional.len());
+        for (a, b) in climb.iter().zip(&conventional) {
+            assert_approx_eq!(*a, *b, TOL);
+        }
+        assert_approx_eq!(climb[0], 50.0 - TAB_SPAN_MM / 2.0, TOL);
+        assert_approx_eq!(climb[climb.len() - 1], 50.0 + TAB_SPAN_MM / 2.0, TOL);
     }
 
     /// Acceptance 26 (#175): an On line Profile of a 100 mm line ramps
@@ -2779,11 +2936,12 @@ mod tests {
     /// pass's Z, before it ramps. At 5° a leg falls 1.67 mm, less than
     /// every pass's descent, so each turns back. (changed in #214: at 15°
     /// the first pass, from safe Z, turned back; from 1 mm above the stock
-    /// one leg reaches it.)
+    /// one leg reaches it. changed in #242: cut climb, which now starts at
+    /// the last vertex; conventional starts at the first, as VCarve.)
     #[test]
     fn on_line_open_path_ramps_back_and_forth_along_the_line() {
         let p = line_project();
-        let mut op = profile_op(&p, Side::OnLine, CutDirection::Climb);
+        let mut op = profile_op(&p, Side::OnLine, CutDirection::Conventional);
         op.entry = Entry::Ramp { angle_deg: 5.0 };
         let (tp, warnings) = generate(&p, &op);
         assert!(warnings.is_empty(), "{warnings:?}");

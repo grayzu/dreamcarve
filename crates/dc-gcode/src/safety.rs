@@ -36,7 +36,7 @@ use dc_project::{
 };
 
 use crate::ExportError;
-use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
+use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
 use crate::emit::{changes_tools_in_program, controller_sets_units};
 use crate::format::decimal_places;
 use crate::material::{self, Material};
@@ -83,6 +83,7 @@ pub(crate) struct Tolerances {
 /// # Errors
 ///
 /// The first violation found, as the matching [`ExportError`].
+#[cfg(test)]
 pub(crate) fn check(
     text: &str,
     post: &PostProcessor,
@@ -92,6 +93,29 @@ pub(crate) fn check(
     tolerances: Tolerances,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
+    check_parsed(
+        text,
+        post,
+        transform,
+        stock,
+        stock_thickness_mm,
+        tolerances,
+        spans,
+    )
+    .map(|(extents, _)| extents)
+}
+
+/// [`check`], also returning the blocks the program parsed into, so the
+/// emitter reads its pauses without parsing the program again (#71).
+pub(crate) fn check_parsed(
+    text: &str,
+    post: &PostProcessor,
+    transform: &MachineTransform,
+    stock: &Stock,
+    stock_thickness_mm: f64,
+    tolerances: Tolerances,
+    spans: &[OpSpan<'_>],
+) -> Result<(Extents, Vec<Block>), ExportError> {
     let blocks = check_rules(text, post, transform, stock_thickness_mm, tolerances, spans)?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
@@ -103,7 +127,7 @@ pub(crate) fn check(
     for span in spans {
         material::check(&blocks, post, transform, tolerances, span)?;
     }
-    Ok(extents(&blocks, transform.output_units()))
+    Ok((extents(&blocks, transform.output_units()), blocks))
 }
 
 /// The lowest and highest value a program reaches on one machine axis,
@@ -423,7 +447,7 @@ fn check_rules(
                     return Err(ExportError::SpindleNotUpToSpeed { line });
                 }
             }
-            check_feed(mv, &limits, 2.0 * tolerance_mm)?;
+            check_feed(mv, &limits, 2.0 * feed_quantum_mm_min(post, mv.units))?;
             check_descent_rate(mv, &limits, transform, tolerance_mm)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
@@ -635,6 +659,13 @@ fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// One output unit in the last written decimal place of a feed, in
+/// mm/min. A feed is written with the same number format as a length, so
+/// this is [`quantum_mm`]'s number in rate units.
+fn feed_quantum_mm_min(post: &PostProcessor, units: Units) -> f64 {
+    quantum_mm(post, units)
 }
 
 /// One output unit in the last written decimal place, in mm.
@@ -1440,7 +1471,10 @@ fn run_eligible(previous: Option<Point3>, mv: &Move, arc_fit_mm: f64) -> bool {
 /// corner arcs (sagitta within `arc_fit_mm`) at the run's Z. Every vertex
 /// between, and every shallow arc's midpoint, lies on the chain within
 /// `arc_fit_mm` plus the lines' rounding, and the vertices turn the
-/// chain's way about its centre. The chain may stop short of its last
+/// chain's way about its centre. The chain also lies within that of every
+/// move it covers along the move's whole length (#226): a straight move
+/// between two points on the circle is bowed off by the arc's sagitta over
+/// it, which the vertices alone never show. The chain may stop short of its last
 /// line where the toolpath goes on with a move a run cannot take, if the
 /// line before ends at the vertex there.
 fn match_fitted_arc(
@@ -1520,6 +1554,7 @@ fn match_fitted_arc(
             }
             MoveKind::Rapid | MoveKind::Linear | MoveKind::Dwell { .. } => None,
         };
+        let first_piece = piece;
         for p in midpoint.into_iter().chain([mv.to.xy()]) {
             // On the current piece, or past its end and on the next.
             loop {
@@ -1533,6 +1568,28 @@ fn match_fitted_arc(
                     return None;
                 }
                 piece += 1;
+            }
+        }
+        // #226: the chain stays within the allowance of the move along its
+        // whole length, not only at its ends: over every piece the move
+        // spans, the piece's farthest point from the move's chord (for a
+        // straight move between points on the circle, its sagitta).
+        for k in first_piece..=piece {
+            let current = pieces.get(k)?;
+            let from_rad = if k == first_piece {
+                current.clamped_turn(vertex.xy())
+            } else {
+                0.0
+            };
+            let to_rad = if k == piece {
+                current.clamped_turn(mv.to.xy())
+            } else {
+                current.sweep_rad
+            };
+            if to_rad > from_rad
+                && current.deviation_mm(from_rad, to_rad, vertex.xy(), mv.to.xy()) > allowed_mm
+            {
+                return None;
             }
         }
         cross += (vertex.xy() - centre).cross(mv.to.xy() - centre);
@@ -1629,9 +1686,13 @@ struct ToolpathArc {
     clockwise: bool,
 }
 
-/// An arc whose radius or sweep is below this is written as a straight
-/// move (`emit`, `ArcGeometry::new`).
+/// An arc whose sweep is below this is written as a straight move
+/// (`emit`, `ArcGeometry::new`).
 const MIN_ARC_SWEEP_RAD: f64 = 1e-9;
+
+/// An arc whose radius is below this is written as a straight move
+/// (`emit`, `ArcGeometry::new`).
+const MIN_ARC_RADIUS_MM: f64 = 1e-9;
 
 impl ToolpathArc {
     /// The arc from `start` to `end` about `centre`, or `None` if `emit`
@@ -1646,7 +1707,7 @@ impl ToolpathArc {
             end_rad - start_rad
         };
         let sweep_rad = turn.rem_euclid(TAU);
-        (radius_mm > MIN_ARC_SWEEP_RAD && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
+        (radius_mm > MIN_ARC_RADIUS_MM && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
             start,
             end,
             centre,
@@ -1682,6 +1743,40 @@ impl ToolpathArc {
             turn -= TAU;
         }
         (turn <= self.sweep_rad + slack_rad).then_some(turn)
+    }
+
+    /// How far along the arc the point of it nearest `p` in angle is, as
+    /// the angle turned from the start: the arc's start or end for `p`
+    /// beyond them.
+    fn clamped_turn(&self, p: Point) -> f64 {
+        let angle = (p.y - self.centre.y).atan2(p.x - self.centre.x);
+        let turn = if self.clockwise {
+            self.start_rad - angle
+        } else {
+            angle - self.start_rad
+        }
+        .rem_euclid(TAU);
+        if turn <= self.sweep_rad {
+            turn
+        } else if turn - self.sweep_rad < TAU - turn {
+            self.sweep_rad
+        } else {
+            0.0
+        }
+    }
+
+    /// The farthest, mm, the arc between turns `from_rad` and `to_rad`
+    /// lies from the straight move `a` to `b` (#226).
+    fn deviation_mm(&self, from_rad: f64, to_rad: f64, a: Point, b: Point) -> f64 {
+        let sign = if self.clockwise { -1.0 } else { 1.0 };
+        arc_chord_deviation_mm(
+            self.centre,
+            self.radius_mm,
+            self.start_rad + sign * from_rad,
+            sign * (to_rad - from_rad),
+            a,
+            b,
+        )
     }
 }
 
@@ -2068,6 +2163,38 @@ mod tests {
             matches!(err, ExportError::RapidBelowSafeZ { line: 12, .. }),
             "{err:?}"
         );
+    }
+
+    /// Straight plunges at (20, 20) on the fixture's stock: rapid straight
+    /// down to machine Z `first`, plunge to Z −1, cut to X 30 and back,
+    /// lift, rapid straight down to `second`, plunge to Z −2, cut, out.
+    fn plunge_program(first: &str, second: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX20 Y20\nZ{first}\nG1 Z-1 F300\nX30 F1000\nX20\nG0 Z5\nZ{second}\nG1 Z-2 F300\nX30 F1000\nG0 Z5\nM5\n"
+        )
+    }
+
+    /// S2 as changed in #214 and #227: a straight plunge (`entry:
+    /// plunge`, an Engrave pass, a corner-relief notch) is reached by the
+    /// same rapid straight down from safe Z as a ramp or helix, stopping
+    /// 1 mm above the stock top or above the floor the operation cut
+    /// there; one that stops lower is still refused.
+    #[test]
+    fn rapid_down_to_a_plunge_below_the_clearance_fails() {
+        check_text(&plunge_program("1", "0")).unwrap();
+        let below_at = |text: &str, at: usize| {
+            let err = check_text(text).unwrap_err();
+            assert!(
+                matches!(err, ExportError::RapidBelowSafeZ { line, .. } if line == at),
+                "line {at}: {err:?}"
+            );
+        };
+        // Into the stock top's clearance where nothing was cut.
+        below_at(&plunge_program("0.9", "0"), 7);
+        below_at(&plunge_program("0", "0"), 7);
+        // Less than 1 mm above the Z −1 the first pass cut at (20, 20).
+        below_at(&plunge_program("1", "-0.1"), 12);
+        below_at(&plunge_program("1", "-1"), 12);
     }
 
     #[test]
@@ -2715,7 +2842,18 @@ mod tests {
         toolpath: &Toolpath,
         arc_fit_mm: Option<f64>,
     ) -> Result<(), ExportError> {
-        let (project, op, tool) = fixture();
+        check_against_in(text, toolpath, arc_fit_mm, Units::Mm)
+    }
+
+    /// [`check_against_with`] for a program in `units`.
+    fn check_against_in(
+        text: &str,
+        toolpath: &Toolpath,
+        arc_fit_mm: Option<f64>,
+        units: Units,
+    ) -> Result<(), ExportError> {
+        let (mut project, op, tool) = fixture();
+        project.display_units = units;
         let post = project.post_processor.resolve().unwrap();
         let transform = MachineTransform::new(&project, &post).unwrap();
         let op = Operation::Profile(op);
@@ -3033,13 +3171,14 @@ mod tests {
         format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX60 Y50\nG1 Z-1 F300\n{arc}G0 Z5\nM5\n")
     }
 
-    /// S12: one `G3` in place of eight chords of a quarter circle passes
+    /// S12: one `G3` in place of 32 chords of a quarter circle passes
     /// S6 when arc fitting is on; with the tolerance `null` the program
-    /// must have the chords.
+    /// must have the chords. (changed in #226: of eight chords, which bow
+    /// 0.048 mm from the arc, more than the tolerance allows.)
     #[test]
     fn fitted_arcs_pass_s6() {
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
-        let toolpath = chord_run(8, FRAC_PI_2, None);
+        let toolpath = chord_run(32, FRAC_PI_2, None);
         check_against_with(&text, &toolpath, Some(0.01)).unwrap();
         let result = check_against_with(&text, &toolpath, None);
         assert!(is_mismatch_at(&result, 2), "{result:?}");
@@ -3049,18 +3188,18 @@ mod tests {
     }
 
     /// S12: a vertex between the arc's ends that is off the arc by more
-    /// than the tolerance fails.
+    /// than the tolerance fails. (changed in #226: of eight chords.)
     #[test]
     fn arc_off_the_vertices_fails_s6() {
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
-        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, Some(4)), Some(0.01));
+        let result = check_against_with(&text, &chord_run(32, FRAC_PI_2, Some(16)), Some(0.01));
         assert!(
             matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
             "{result:?}"
         );
         // An arc that ends between vertices fails too.
-        let text = chord_run_text("G3 X50.5 Y59.987 I-10 J0 F1000\n");
-        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, None), Some(0.01));
+        let text = chord_run_text("G3 X50.262 Y59.997 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(32, FRAC_PI_2, None), Some(0.01));
         assert!(
             matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
             "{result:?}"
@@ -3068,18 +3207,126 @@ mod tests {
     }
 
     /// S12: one arc over 180° of chords is refused even though every vertex
-    /// is on it: a fitted arc sweeps at most 90°.
+    /// is on it: a fitted arc sweeps at most 90°. (changed in #226: of 16
+    /// chords, which bow 0.19 mm from the arc.)
     #[test]
     fn arc_over_90_degrees_fails_s12() {
         let text = chord_run_text("G3 X40 Y50 I-10 J0 F1000\n");
-        let result = check_against_with(&text, &chord_run(16, PI, None), Some(0.01));
+        let result = check_against_with(&text, &chord_run(64, PI, None), Some(0.01));
         assert!(
             matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
             "{result:?}"
         );
         // The same run as two 90° arcs passes.
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\n");
-        check_against_with(&text, &chord_run(16, PI, None), Some(0.01)).unwrap();
+        check_against_with(&text, &chord_run(64, PI, None), Some(0.01)).unwrap();
+    }
+
+    /// #226 (the #213 case): a 0.006 mm fragment, a short chord and a
+    /// 40 mm straight side, every vertex on one 154.75 mm circle, written
+    /// as one `G3`. The arc bows 1.3 mm off the side, so S12 refuses it,
+    /// though every vertex is on it. So does one `G3` for eight chords of
+    /// a 10 mm quarter circle, each bowing 0.048 mm, past the 0.01 mm
+    /// tolerance plus one unit in the last place.
+    #[test]
+    fn arc_bowing_off_a_long_straight_move_fails_s12() {
+        let r = 154.75;
+        let centre = Point::new(60.0 - r, 50.0);
+        let side_rad = 2.0 * (20.0 / r).asin();
+        let (fragment_rad, chord_rad) = (0.006 / r, 0.086 / r);
+        let on_circle =
+            |angle: f64| Point3::new(centre.x + r * angle.cos(), centre.y + r * angle.sin(), 5.0);
+        let angles = [
+            -side_rad / 2.0 - chord_rad - fragment_rad,
+            -side_rad / 2.0 - chord_rad,
+            -side_rad / 2.0,
+            side_rad / 2.0,
+        ];
+        let (start, end) = (on_circle(angles[0]), on_circle(angles[3]));
+        let mut moves = vec![
+            Move::rapid(Point3::new(start.x, start.y, 11.0)),
+            Move::linear(start, 300.0),
+        ];
+        moves.extend(
+            angles[1..]
+                .iter()
+                .map(|&a| Move::linear(on_circle(a), 1000.0)),
+        );
+        moves.push(Move::rapid(Point3::new(end.x, end.y, 11.0)));
+        let toolpath = Toolpath { moves };
+        let program = |cut: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX{:.3} Y{:.3}\nG1 Z-1 F300\n{cut}G0 Z5\nM5\n",
+                start.x, start.y,
+            )
+        };
+        let arc = format!(
+            "G3 X{:.3} Y{:.3} I{:.3} J{:.3} F1000\n",
+            end.x,
+            end.y,
+            centre.x - start.x,
+            centre.y - start.y,
+        );
+        let result = check_against_with(&program(&arc), &toolpath, Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        // Written as its straight moves, the same toolpath passes.
+        let lines: String = angles[1..]
+            .iter()
+            .map(|&a| on_circle(a))
+            .map(|p| format!("G1 X{:.3} Y{:.3} F1000\n", p.x, p.y))
+            .collect();
+        check_against_with(&program(&lines), &toolpath, Some(0.01)).unwrap();
+
+        // The same arc in inch (#233 failed S12 only in inch).
+        let inch = |mm: f64| mm / 25.4;
+        let text = format!(
+            "G20 G90\nG54\nG0 Z{:.4}\nM3 S18000\nG4 P3\nX{:.4} Y{:.4}\nG1 Z{:.4} F{:.4}\n\
+             G3 X{:.4} Y{:.4} I{:.4} J{:.4} F{:.4}\nG0 Z{:.4}\nM5\n",
+            inch(5.0),
+            inch(start.x),
+            inch(start.y),
+            inch(-1.0),
+            inch(300.0),
+            inch(end.x),
+            inch(end.y),
+            inch(centre.x - start.x),
+            inch(centre.y - start.y),
+            inch(1000.0),
+            inch(5.0),
+        );
+        let result = check_against_in(&text, &toolpath, Some(0.01), Units::Inch);
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "inch: {result:?}"
+        );
+
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, None), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+    }
+
+    /// #226: an arc within the tolerance of every chord it replaces, its
+    /// sagitta over each at most the tolerance plus one unit in the last
+    /// place, passes: 18 chords of a 10 mm quarter circle bow 0.0095 mm,
+    /// 32 chords 0.003 mm; as one arc and as two meeting at a vertex.
+    #[test]
+    fn arc_within_tolerance_of_every_chord_passes() {
+        for n in [18, 32] {
+            let toolpath = chord_run(n, FRAC_PI_2, None);
+            let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\n");
+            check_against_with(&text, &toolpath, Some(0.01))
+                .unwrap_or_else(|e| panic!("{n} chords: {e:?}"));
+            let text =
+                chord_run_text("G3 X57.071 Y57.071 I-10 J0 F1000\nX50 Y60 I-7.071 J-7.071\n");
+            check_against_with(&text, &toolpath, Some(0.01))
+                .unwrap_or_else(|e| panic!("{n} chords, two arcs: {e:?}"));
+        }
     }
 
     // S11: canned cycles (`docs/specs/phase-2/design.md`, "S11 expansion").
@@ -3613,6 +3860,65 @@ mod tests {
                         text.is_ok(),
                         "{allowance_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
                     );
+                }
+            }
+        }
+    }
+
+    /// S9 on a raster Pocket whose wall curves inward (#218): an L, whose
+    /// reflex corner rounds the tool-centre region by the tool radius, and
+    /// a rect with a half-disc bay of radius 15 pushed in from its top.
+    /// With a wall pass the links between line ends against those arcs
+    /// follow the tool-centre ring, and the program passes, with an
+    /// allowance too, at several angles.
+    #[test]
+    fn raster_edge_links_along_a_concave_wall_pass_s9() {
+        use dc_geometry::{Polyline, Vertex};
+        let l_shape = Polyline::new(
+            [
+                (0.0, 0.0),
+                (100.0, 0.0),
+                (100.0, 25.0),
+                (50.0, 25.0),
+                (50.0, 50.0),
+                (0.0, 50.0),
+            ]
+            .into_iter()
+            .map(|(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        );
+        let bay = Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(100.0, 0.0),
+                Vertex::line(100.0, 50.0),
+                Vertex::new(65.0, 50.0, -1.0),
+                Vertex::line(35.0, 50.0),
+                Vertex::line(0.0, 50.0),
+            ],
+            true,
+        );
+        for outline in [l_shape, bay] {
+            for allowance_mm in [0.0, 0.5] {
+                let (mut project, op) = island_pocket(dc_project::Entry::Plunge, allowance_mm);
+                if let Some(def) = project.definitions.values_mut().next() {
+                    def.profiles = vec![outline.clone()];
+                }
+                for angle_deg in [0.0, 45.0, 90.0] {
+                    for wall_pass in [dc_project::WallPass::Last, dc_project::WallPass::First] {
+                        let op = dc_project::PocketOp {
+                            strategy: dc_project::ClearanceStrategy::Raster { angle_deg },
+                            wall_pass,
+                            ..op.clone()
+                        };
+                        project.operations = vec![Operation::Pocket(op.clone())];
+                        let text = emit_pocket(&project, &op, None);
+                        assert!(
+                            text.is_ok(),
+                            "{allowance_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
+                        );
+                    }
                 }
             }
         }
@@ -4345,10 +4651,11 @@ mod tests {
             "the plunge on the 3 mm square: {err:?}"
         );
 
-        let (mut large, op) = square(7.0);
+        let (large, op) = square(7.0);
         check_material_text(&cut(7.0), &large, &Operation::Profile(op.clone())).unwrap();
-        // Arc fitting would write the square's lap as a circle (#229).
-        large.arc_fit_tolerance_mm = None;
+        // With arc fitting on, as the sample has it: the square's lap
+        // stays four lines (#229).
+        assert!(large.arc_fit_tolerance_mm.is_some());
         let (toolpath, _) = generate_profile(&large, &op).unwrap();
         emit(
             &large,
@@ -4681,11 +4988,12 @@ mod tests {
     /// out along their bisectors and differ by 0.012 mm on each axis once
     /// rounded, more than the arc-fit tolerance plus one unit in the last
     /// place (0.011 mm); each differs from its neighbour by under 0.008 mm.
-    /// The run's 51 chords put no vertex at the sub-arcs' ends, so the
-    /// chain must not break there.
+    /// The run's 102 chords put no vertex at the sub-arcs' ends, so the
+    /// chain must not break there. (changed in #226: 51 chords, which bow
+    /// 0.011 mm from the arc, past the tolerance.)
     #[test]
     fn fitted_run_with_drifting_snapped_centres_passes_s12() {
-        let toolpath = chord_run(51, 3.0 * FRAC_PI_2, None);
+        let toolpath = chord_run(102, 3.0 * FRAC_PI_2, None);
         let text = drifting_run_text([0.009, 0.0, 0.0, 0.009]);
         check_against_with(&text, &toolpath, Some(0.01)).unwrap();
     }
@@ -4695,13 +5003,14 @@ mod tests {
     /// (50, 60), then a quarter of the radius 15 circle about (50, 45) on
     /// to (35, 45): written as one arc each, about its own centre, the
     /// program passes; with the second arc written about the first
-    /// circle's centre, its vertices are off it and it fails.
+    /// circle's centre, its vertices are off it and it fails. (changed in
+    /// #226: of eight chords each, which bow more than the tolerance.)
     #[test]
     fn chain_does_not_join_two_different_circles() {
-        let mut toolpath = chord_run(8, FRAC_PI_2, None);
+        let mut toolpath = chord_run(32, FRAC_PI_2, None);
         let retract = toolpath.moves.pop().unwrap();
-        for k in 1..=8 {
-            let angle = FRAC_PI_2 + FRAC_PI_2 * f64::from(k) / 8.0;
+        for k in 1..=32 {
+            let angle = FRAC_PI_2 + FRAC_PI_2 * f64::from(k) / 32.0;
             toolpath.moves.push(Move::linear(
                 Point3::new(50.0 + 15.0 * angle.cos(), 45.0 + 15.0 * angle.sin(), 5.0),
                 1000.0,

@@ -17,7 +17,7 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use dc_geometry::{Point, Polyline, Rect, Transform, assert_approx_eq};
 
@@ -786,6 +786,103 @@ fn posts_lists_six() {
     }
 }
 
+/// Runs `dreamcarve` with `args` in `dir` with its stdout a pipe whose
+/// read end is closed before the binary starts, so its first write fails
+/// with a broken pipe (`EPIPE`; `ERROR_NO_DATA` on Windows), as when the
+/// reader of `dreamcarve … | head` has quit.
+fn run_into_closed_pipe(dir: &Path, args: &[&str]) -> Output {
+    let (reader, writer) = std::io::pipe().expect("pipe created");
+    drop(reader);
+    command(dir)
+        .args(args)
+        .stdout(writer)
+        .output()
+        .expect("binary runs")
+}
+
+/// Runs `dreamcarve` with `args` in `dir`, reads one line of its stdout
+/// and closes the pipe, as `dreamcarve … | head -1` does. Whether the
+/// binary has written the rest by then depends on timing.
+fn run_closed_after_one_line(dir: &Path, args: &[&str]) -> Output {
+    use std::io::BufRead as _;
+    let mut child = command(dir)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("binary runs");
+    let stdout = child.stdout.take().expect("stdout piped");
+    let mut line = String::new();
+    std::io::BufReader::new(stdout)
+        .read_line(&mut line)
+        .expect("one line read");
+    assert!(!line.is_empty(), "the command printed a line");
+    child.wait_with_output().expect("binary exits")
+}
+
+/// Asserts that a run whose stdout closed early did not panic and exited
+/// with `code`, the command's own exit code.
+fn assert_quiet_exit(out: &Output, code: i32, what: &str) {
+    let stderr = stderr(out);
+    assert!(!stderr.contains("panicked"), "{what}: {stderr}");
+    assert!(!stderr.contains("Broken pipe"), "{what}: {stderr}");
+    assert_eq!(out.status.code(), Some(code), "{what}: {stderr}");
+}
+
+/// #216: when the reader of stdout goes away (`dreamcarve … | head`), the
+/// binary stops printing, finishes the command, and exits with the
+/// command's own code: 0 for `posts`, 1 for `check` on a project with
+/// values to set, 0 once they are set. It neither panics (exit 101) nor
+/// prints anything about the pipe.
+#[test]
+fn broken_pipe_does_not_panic() {
+    let dir = work_dir("broken_pipe_does_not_panic");
+    let out = run_into_closed_pipe(&dir, &["posts"]);
+    assert_quiet_exit(&out, 0, "posts");
+    let out = run_closed_after_one_line(&dir, &["posts"]);
+    assert_quiet_exit(&out, 0, "posts | head -1");
+
+    let dcv = init_coaster(&dir);
+    let out = run_into_closed_pipe(&dir, &["check", "coaster.dcv"]);
+    assert_quiet_exit(&out, 1, "check with values to set");
+    let out = run_closed_after_one_line(&dir, &["check", "coaster.dcv"]);
+    assert_quiet_exit(&out, 1, "check with values to set | head -1");
+
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run_into_closed_pipe(&dir, &["check", "coaster.dcv"]);
+    assert_quiet_exit(&out, 0, "check of a complete project");
+
+    // Work done before or after the output is not cut short: the program
+    // is written although its summary cannot be printed.
+    let out = run_into_closed_pipe(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_quiet_exit(&out, 0, "export");
+    assert!(dir.join("coaster.nc").exists(), "program written");
+}
+
+/// #216: any other error writing stdout (here a full disk, `/dev/full`)
+/// fails the command with exit 1 and says so on stderr.
+#[cfg(target_os = "linux")]
+#[test]
+fn stdout_write_error_fails_with_message() {
+    let dir = work_dir("stdout_write_error_fails_with_message");
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full opens");
+    let out = command(&dir)
+        .arg("posts")
+        .stdout(full)
+        .output()
+        .expect("binary runs");
+    let stderr = stderr(&out);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.starts_with("error: cannot write to standard output: "),
+        "{stderr}"
+    );
+}
+
 /// The coaster with four 8 mm holes inside it, drilled through with the
 /// `simple` cycle, on post-processor `post`, with canned cycles
 /// `canned`. Returns the exported program.
@@ -1100,6 +1197,47 @@ fn pocket_exports_and_passes_safety() {
         program.lines().any(|l| l.contains("Z-3")),
         "the pocket reaches its depth"
     );
+}
+
+/// #229, S12: an On line Profile of a plain 7 mm or 20 mm square exports
+/// with arc fitting on (the default). The square's four corners lie on one
+/// circle, and its sides are far longer than the tolerance allows a chord
+/// to be, so the lap stays four straight moves; before, it was written as
+/// four 90° arcs bowing off the line and the export failed S9.
+#[test]
+fn on_line_square_exports_with_arc_fitting_on() {
+    for size_mm in [7.0, 20.0] {
+        let dir = work_dir(&format!(
+            "on_line_square_exports_with_arc_fitting_on_{size_mm}"
+        ));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let mut project = load_file(&dcv).project;
+        assert!(project.arc_fit_tolerance_mm.is_some(), "arc fitting is on");
+        for def in project.definitions.values_mut() {
+            def.profiles = vec![Polyline::rect(Point::new(20.0, 20.0), size_mm, size_mm)];
+        }
+        for op in project.operations.iter_mut().map(as_profile_mut) {
+            op.side = Side::OnLine;
+            op.tabs = None;
+            op.depth_mm = Some(1.0);
+        }
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{size_mm} mm square: {}",
+            stderr(&out)
+        );
+        let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+        let arcs: Vec<&str> = program
+            .lines()
+            .filter(|l| code_words(l).iter().any(|w| w == "G2" || w == "G3"))
+            .collect();
+        assert!(arcs.is_empty(), "{size_mm} mm square has arcs: {arcs:?}");
+    }
 }
 
 /// Slice 6 (#163), capabilities 12 and 13, S9 and S14 end to end: a 40 ×
@@ -2074,7 +2212,7 @@ fn project_file_chapter_names_current_version() {
 fn set_coaster_e(dcv: &Path, e_mm: f64) {
     let mut project = load_file(dcv).project;
     let instance = project.instances.first_mut().expect("the coaster");
-    let [a, b, c, d, _, f] = instance.transform.as_kurbo().as_coeffs();
+    let [a, b, c, d, _, f] = instance.transform.coeffs();
     instance.transform = [a, b, c, d, e_mm, f].into();
     std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
 }
@@ -2886,10 +3024,7 @@ fn instance_named<'a>(project: &'a Project, name: &str) -> &'a FeatureInstance {
 /// instance named `name`: (50, 50) moved by the instance's translation.
 /// `origin.xy` is `bottom_left`, so machine X and Y are project X and Y.
 fn hole_centre(project: &Project, name: &str) -> (f64, f64) {
-    let [_, _, _, _, e, f] = instance_named(project, name)
-        .transform
-        .as_kurbo()
-        .as_coeffs();
+    let [_, _, _, _, e, f] = instance_named(project, name).transform.coeffs();
     (50.0 + e, 50.0 + f)
 }
 
@@ -4202,8 +4337,10 @@ fn engrave_exports_and_passes_safety() {
         "the border's passes run the same way: {b1:?} then {b2:?}"
     );
 
-    // Safety: rapids at safe Z (5 mm above the stock top), nothing below
-    // the stock bottom.
+    // Safety: rapids at safe Z (5 mm above the stock top), except a rapid
+    // straight down from there to 1 mm above the stock top or above the
+    // pass before's floor, before a plunge (#227); nothing below the stock
+    // bottom.
     for (k, m) in moves.iter().enumerate() {
         let z = m.to.z.expect("Z is known after the first move");
         assert!(
@@ -4211,7 +4348,16 @@ fn engrave_exports_and_passes_safety() {
             "move {k} below the stock: {m:?}"
         );
         if !m.kind.is_cut() {
-            assert!(z >= 5.0 - 1e-6, "rapid {k} below safe Z: {m:?}");
+            let down = m.from.x == m.to.x && m.from.y == m.to.y && m.from.z >= Some(5.0 - 1e-6);
+            let floor = if down { -0.5 + 1.0 } else { 5.0 };
+            assert!(z >= floor - 1e-6, "rapid {k} below safe Z: {m:?}");
+            if down && z < 5.0 - 1e-6 {
+                let next = &moves[k + 1];
+                assert!(
+                    next.kind.is_cut() && next.to.z < Some(z),
+                    "a plunge follows rapid {k}: {next:?}"
+                );
+            }
         }
     }
 }

@@ -157,13 +157,17 @@ pub struct FeatureInstance {
     pub transform: Transform,
     /// Display name.
     pub name: String,
-    /// Shown in previews.
+    /// Shown in previews. Reserved for the GUI (phase 4): saved and
+    /// loaded, but nothing reads it yet, and export cuts a hidden instance
+    /// like any other (#71).
     pub visible: bool,
-    /// Protected from edits.
+    /// Protected from edits. Reserved for the GUI (phase 4), like
+    /// `visible`.
     pub locked: bool,
     /// Top of the feature, millimetres above the material bottom. `None`
-    /// until the user sets it; nothing in phase 1 reads it, so it is never
-    /// guessed (#99).
+    /// until the user sets it; nothing reads it yet, so it is never
+    /// guessed (#99). Reserved: validation checks only its range and that
+    /// it is not below `z_bottom_mm` (#71).
     #[serde(deserialize_with = "Option::deserialize")]
     pub z_top_mm: Option<f64>,
     /// Bottom of the feature, millimetres above the material bottom. `None`

@@ -9,7 +9,11 @@
 //!
 //! The binary owns argument parsing, file I/O, the clock, printing, and exit
 //! codes. Every decision about geometry, toolpaths, and G-code is made by
-//! the `dc-*` crates it calls.
+//! the `dc-*` crates it calls. All printing goes through [`output`], which
+//! handles a closed pipe (#216).
+
+// `println!` and `eprintln!` panic when the stream fails; use `output`.
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use std::process::ExitCode;
 
@@ -19,6 +23,7 @@ mod clock;
 mod config;
 mod export;
 mod init;
+mod output;
 mod tools;
 
 fn main() -> ExitCode {

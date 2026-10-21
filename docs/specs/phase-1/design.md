@@ -87,7 +87,9 @@ pub fn bounds(p: &Polyline) -> Rect;
 pub fn distance_mm(a: &Polyline, b: &Polyline) -> f64;          // shortest gap between lines, arcs exact; 0 when they touch
 ```
 
-Errors: `GeometryError::{Degenerate, SelfIntersecting, OffsetVanished, ArcUnderNonUniformTransform, ContoursCross}`.
+Errors: `GeometryError::{Degenerate, SelfIntersecting, ArcUnderNonUniformTransform, ContoursCross, CoordinateOutOfRange}`.
+An offset that consumes a contour is not an error: `offset` returns no
+contours, and the generator decides what that means (#71).
 Warnings: `GeometryWarning::DuplicateContourDropped`. The nesting rules, with
 figures, are in the user guide chapter "Shapes, holes, and islands".
 

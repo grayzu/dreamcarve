@@ -148,6 +148,15 @@ straight-only rule lifts at all 11 lines the island splits. With
 bit lifts at about every line that the island splits, whatever the
 order; there the lines keep their scan order.
 
+**Along a wall that curves inward** the same holds. Where the pocket's
+wall bulges into it, as at a rounded bay or the inside corner of an L,
+a straight move between two line ends would cut into the wall, so with
+a wall pass the bit follows the wall's curve instead, with its edge on
+the wall, as the wall ring will. On a 100 × 50 mm rectangle with a
+30 mm half-round bay pushed into one long side, that is 1 lift per pass
+where a straight-only rule lifts 6 times; on a 100 × 50 mm L, none
+where it lifts once. With `"none"` the bit lifts there, as before.
+
 **Scallops.** Each line leaves a shallow ridge on the floor between it and
 the next, and the zigzag cuts alternately climb and conventional, so a
 raster floor shows faint lines along the raster angle, more visibly in
@@ -204,7 +213,8 @@ arrives from safe Z (VCarve's "Ramps"; Fusion's "Ramp Type"). A ring or
 raster line reached by a stay-down link from the one before is already at
 depth, so it has no entry.
 
-- `"plunge"`: straight down at the tool's plunge rate. A bit that does
+- `"plunge"`: straight down at the tool's plunge rate, from 1 mm above the
+  stock or the floor already cut there (the bit rapids that far). A bit that does
   not cut well at its centre, as most do not, takes this hard.
 - `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag. The bit runs back and
   forth along a short straight line through the point where the ring or

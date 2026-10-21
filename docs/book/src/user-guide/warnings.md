@@ -98,6 +98,7 @@ naming what was skipped.
 | "`dxf_entities_skipped`: … entity(ies) DreamCarve does not read were skipped: TEXT: 1, …" | A DXF holds text, dimensions, hatches, meshes or other entities DreamCarve does not read. Explode text to outlines in the CAD program if you want to cut it ([Importing DXF](importing-dxf.md#what-is-read)). |
 | "block `…` is inserted more than 12 levels deep; the deeper levels were skipped" | A DXF block inserts itself, or nests too deep. Fix the block in the CAD program. |
 | "INSERT of undefined block `…` was skipped" | The DXF places a block it does not define. Re-export the drawing. |
+| "the drawing's text is in code page `…`, which DreamCarve cannot read; layer names were read as Windows-1252 and may show wrong characters" | A DXF from before AutoCAD 2007 is saved in a code page DreamCarve has no table for, such as a Japanese, Chinese or Korean one. The shapes are right; save the drawing as a 2007 or later DXF to fix the names ([Importing DXF](importing-dxf.md#limits)). |
 | "… text element(s) skipped; convert text to paths to import it" | An SVG holds text. Convert it to paths in Inkscape (Path → Object to Path). |
 | "… image(s) skipped" | An SVG holds pictures, which have no outlines to cut. |
 | "path `…` uses a gradient or pattern; its outline was imported" | Nothing to do: paint never changes the shape. |
