@@ -15,18 +15,22 @@
 //! a circle within the project's flatten tolerance
 //! ([`dc_geometry::as_circle`]), not a `circle` feature kind; the
 //! chip-break gap is the operation's `gap_mm`, not a constant in project
-//! units; a dwell is kept as a [`MoveKind::Dwell`] move when the cycle is
+//! units; a dwell is kept as a [`crate::MoveKind::Dwell`] move when the cycle is
 //! written as plain moves (upstream loses it); holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
 //! origin, by [`crate::sequence`]; there is no helical bore, countersink or
 //! clamp check. Nothing here depends on Y-up or Y-down: a drill moves only
 //! in Z at each centre, and distances are symmetric under the flip.
 
-use crate::error::CamError;
-use crate::toolpath::Toolpath;
-use crate::warning::Warning;
-use dc_geometry::Point;
-use dc_project::{DrillOp, Project};
+use crate::block::CutBlock;
+use crate::error::{CamError, FeedField, ShapeRef};
+use crate::passes::pass_z_mm;
+use crate::sequence::{SequenceInput, plan, sequence};
+use crate::stock::{stock_overhang, swept_bounds};
+use crate::toolpath::{Move, Toolpath};
+use crate::warning::{Warning, WarningCode};
+use dc_geometry::{EPS_MM, Point, Point3, as_circle};
+use dc_project::{DrillCycle, DrillOp, MachiningOrder, PeckRetract, Project, Tool};
 
 /// How far above the depth already drilled a full-retract peck re-enters
 /// the hole by rapid, mm. The tool re-enters only through air it has
@@ -80,14 +84,338 @@ pub struct DrillToolpath {
     pub holes: Vec<DrillHole>,
 }
 
-/// Generates the Drill toolpath for `op` in `project`.
+/// Generates the Drill toolpath for `op` in `project`, in project space
+/// (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness + op.safe_z_mm`).
+///
+/// Every closed profile of every target instance, placed by its
+/// transform, whose outline is a circle within the project's flatten
+/// tolerance is a hole; anything else warns
+/// [`WarningCode::DrillTargetNotCircle`] and is skipped, and a tool wider
+/// than a hole warns [`WarningCode::DrillToolWiderThanHole`]. Each hole is
+/// drilled from the stock top to `depth_mm` (S1 with the operation's
+/// through-cut allowance):
+///
+/// - the tool arrives at safe Z and rapids down to the retract plane
+///   `min(safe Z, top + retract_mm)` (a negative `retract_mm` is raised to
+///   the top with [`WarningCode::DrillRetractBelowStockTop`]);
+/// - it plunges at the tool's plunge rate, in one plunge for a simple
+///   cycle or in pecks of the peck depth (the operation's, else the tool's
+///   step-down; only the last is shorter), waiting `dwell_s` at the bottom
+///   of every plunge as a [`crate::MoveKind::Dwell`] move;
+/// - between pecks it rapids up to the retract plane and back down to
+///   [`PECK_REENTRY_MM`] above the depth reached (full retract), or up by
+///   the chip-break gap (capped at the retract plane), and feeds on from
+///   there; every rapid down ends in air already cut (S15);
+/// - it ends with a rapid to safe Z, where the `G98` return of a canned
+///   cycle puts it.
+///
+/// Holes are visited by [`crate::sequence`]: nearest neighbour from the
+/// first hole in drawing order, ties by drawing order, linked at safe Z.
+/// A peck at least as deep as the hole drills it in one plunge with
+/// [`WarningCode::DrillPeckDeeperThanHole`].
+///
+/// Fails without a toolpath when the plunge rate, the stock thickness, the
+/// depth, or a peck's step-down is missing; when the depth passes the
+/// stock bottom plus allowance; when the chip-break gap is not positive or
+/// the dwell is negative; when an id does not resolve or a target cannot
+/// be placed; or when the cutter would leave the stock
+/// ([`CamError::OffStock`]).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_drill(
     project: &Project,
     op: &DrillOp,
 ) -> Result<(DrillToolpath, Vec<Warning>), CamError> {
-    let _ = (project, op);
-    Ok((DrillToolpath::default(), Vec::new()))
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: op.id.clone(),
+            tool: op.tool.clone(),
+        })?;
+    let plunge_mm_min = tool
+        .plunge_mm_min
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .ok_or_else(|| CamError::MissingFeed {
+            tool: tool.name.clone(),
+            field: FeedField::Plunge,
+        })?;
+    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+        return Err(CamError::InvalidToolDiameter {
+            tool: tool.name.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
+    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
+        return Err(CamError::InvalidSafeZ {
+            op: op.id.clone(),
+            safe_z_mm: op.safe_z_mm,
+        });
+    }
+    if !(op.dwell_s.is_finite() && op.dwell_s >= 0.0) {
+        return Err(CamError::InvalidDrillSetting {
+            op: op.id.clone(),
+            field: "dwell_s",
+            value: op.dwell_s,
+        });
+    }
+    let thickness_mm = project
+        .stock
+        .thickness_mm
+        .ok_or(CamError::MissingThickness)?;
+    let depth_mm = op
+        .depth_mm
+        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
+    let cycle = Cycle::of(op, tool)?;
+    // Peck levels, shallowest first; a simple cycle is one level. The pass
+    // rule is the one every generator uses: only the last is shorter.
+    let step_mm = cycle.peck_mm.unwrap_or(depth_mm);
+    let levels = pass_z_mm(
+        &op.id,
+        thickness_mm,
+        depth_mm,
+        step_mm,
+        op.through_cut_allowance_mm,
+    )?;
+    let top_z_mm = thickness_mm;
+    let safe_z_mm = thickness_mm + op.safe_z_mm;
+    let mut warnings = Vec::new();
+    if op.retract_mm < 0.0 {
+        warnings.push(
+            Warning::new(WarningCode::DrillRetractBelowStockTop)
+                .with("op", &op.id)
+                .with("requested_mm", op.retract_mm)
+                .with("used_mm", 0.0),
+        );
+    }
+    let retract_z_mm = (top_z_mm + op.retract_mm.max(0.0)).min(safe_z_mm);
+    if let Some(peck_mm) = cycle.peck_mm
+        && peck_mm >= depth_mm - EPS_MM
+    {
+        warnings.push(
+            Warning::new(WarningCode::DrillPeckDeeperThanHole)
+                .with("op", &op.id)
+                .with("peck_mm", peck_mm)
+                .with("depth_mm", depth_mm),
+        );
+    }
+    let dwell_s = (op.dwell_s > 0.0).then_some(op.dwell_s);
+
+    let holes = resolve_holes(project, op, tool.diameter_mm, &mut warnings)?;
+    let blocks: Vec<CutBlock> = holes
+        .iter()
+        .map(|(shape, centre)| {
+            let at = |z: f64| Point3::new(centre.x, centre.y, z);
+            let mut cuts = Vec::with_capacity(levels.len() * 4);
+            for (k, &z) in levels.iter().enumerate() {
+                cuts.push(Move::linear(at(z), plunge_mm_min));
+                if let Some(seconds) = dwell_s {
+                    cuts.push(Move::dwell(at(z), seconds));
+                }
+                if k + 1 == levels.len() {
+                    break;
+                }
+                // The next level, if any, feeds on from where these leave
+                // the tool, always at or above `z`: air already cut.
+                match &cycle.retract {
+                    PeckRetract::Full => {
+                        cuts.push(Move::rapid(at(retract_z_mm)));
+                        cuts.push(Move::rapid(at((z + PECK_REENTRY_MM).min(retract_z_mm))));
+                    }
+                    PeckRetract::ChipBreak { gap_mm } => {
+                        cuts.push(Move::rapid(at((z + *gap_mm).min(retract_z_mm))));
+                    }
+                }
+            }
+            cuts.push(Move::rapid(at(safe_z_mm)));
+            CutBlock {
+                shape: shape.clone(),
+                pass: 0,
+                z_mm: levels.last().copied().unwrap_or(top_z_mm),
+                descent_from: *centre,
+                descent_from_z_mm: safe_z_mm,
+                // The rapid down to the retract plane, above the stock:
+                // the one rapid below safe Z the sequencer passes through
+                // (design spec, "Algorithms → Sequence", step 5).
+                descent: vec![Move::rapid(at(retract_z_mm))],
+                entry: *centre,
+                cuts,
+                exit: *centre,
+                frees: false,
+                cleared: None,
+                group: 0,
+            }
+        })
+        .collect();
+    let input = SequenceInput {
+        blocks,
+        order: MachiningOrder::FullDepthFirst,
+        containment: &[],
+        safe_z_mm,
+        tool_diameter_mm: tool.diameter_mm,
+        stepover_mm: 0.0,
+        // Holes have no cleared area, so no stay-down link is ever cut at
+        // this rate; the plunge rate is the only rate a Drill uses.
+        feed_mm_min: plunge_mm_min,
+        plunge_mm_min,
+    };
+    let records = plan(&input)?
+        .into_iter()
+        .filter_map(|i| input.blocks.get(i))
+        .map(|block| DrillHole {
+            centre: block.entry,
+            top_z_mm,
+            bottom_z_mm: block.z_mm,
+            retract_z_mm,
+            cycle: cycle.canned(dwell_s.is_some()),
+            peck_mm: cycle.peck_mm,
+            dwell_s,
+        })
+        .collect();
+    let toolpath = sequence(&input)?;
+    // #62: the cutter must stay on the stock.
+    if let Some(overhang) = swept_bounds(&toolpath, tool.diameter_mm / 2.0)
+        .and_then(|swept| stock_overhang(&project.stock, swept))
+    {
+        return Err(CamError::OffStock {
+            op: op.id.clone(),
+            overhang,
+        });
+    }
+    Ok((
+        DrillToolpath {
+            toolpath,
+            holes: records,
+        },
+        warnings,
+    ))
+}
+
+/// The operation's cycle, resolved: the peck depth in effect and how the
+/// tool retracts between pecks.
+#[derive(Debug, Clone)]
+struct Cycle {
+    /// `None` for a simple cycle.
+    peck_mm: Option<f64>,
+    /// How a peck retracts; unused for a simple cycle.
+    retract: PeckRetract,
+}
+
+impl Cycle {
+    fn of(op: &DrillOp, tool: &Tool) -> Result<Self, CamError> {
+        match &op.cycle {
+            DrillCycle::Simple => Ok(Self {
+                peck_mm: None,
+                retract: PeckRetract::Full,
+            }),
+            DrillCycle::Peck {
+                peck_depth_mm,
+                retract,
+            } => {
+                if let PeckRetract::ChipBreak { gap_mm } = retract
+                    && !(gap_mm.is_finite() && *gap_mm > 0.0)
+                {
+                    return Err(CamError::InvalidDrillSetting {
+                        op: op.id.clone(),
+                        field: "gap_mm",
+                        value: *gap_mm,
+                    });
+                }
+                let peck_mm = peck_depth_mm.or(tool.step_down_mm).ok_or_else(|| {
+                    CamError::MissingStepDown {
+                        op: op.id.clone(),
+                        tool: tool.name.clone(),
+                    }
+                })?;
+                Ok(Self {
+                    peck_mm: Some(peck_mm),
+                    retract: retract.clone(),
+                })
+            }
+        }
+    }
+
+    /// The canned cycle these moves are equivalent to (design spec,
+    /// "Algorithms → Drill", step 6).
+    fn canned(&self, dwells: bool) -> CannedKind {
+        match (self.peck_mm, &self.retract, dwells) {
+            (None, _, false) => CannedKind::G81,
+            (None, _, true) => CannedKind::G82,
+            (Some(_), PeckRetract::Full, false) => CannedKind::G83,
+            (Some(_), PeckRetract::ChipBreak { .. }, false) => CannedKind::G73,
+            (Some(_), _, true) => CannedKind::Expanded,
+        }
+    }
+}
+
+/// The holes of `op`, in drawing order (target order, then profile order):
+/// each circular closed profile, placed by its instance's transform, with
+/// its centre. Other profiles warn and are skipped; a tool wider than a
+/// hole warns.
+fn resolve_holes(
+    project: &Project,
+    op: &DrillOp,
+    tool_diameter_mm: f64,
+    warnings: &mut Vec<Warning>,
+) -> Result<Vec<(ShapeRef, Point)>, CamError> {
+    let mut holes = Vec::new();
+    for instance_id in &op.targets {
+        let instance = project
+            .instances
+            .iter()
+            .find(|i| &i.id == instance_id)
+            .ok_or_else(|| CamError::UnknownInstance {
+                op: op.id.clone(),
+                instance: instance_id.clone(),
+            })?;
+        let definition = project
+            .definitions
+            .get(&instance.definition)
+            .ok_or_else(|| CamError::UnknownDefinition {
+                instance: instance.id.clone(),
+                definition: instance.definition.clone(),
+            })?;
+        for (profile, polyline) in definition.profiles.iter().enumerate() {
+            let shape = ShapeRef {
+                instance: instance.id.clone(),
+                instance_name: instance.name.clone(),
+                profile,
+            };
+            let shape_warning = |code| {
+                Warning::new(code)
+                    .with("op", &op.id)
+                    .with("instance", &shape.instance)
+                    .with("instance_name", &shape.instance_name)
+                    .with("profile", shape.profile)
+            };
+            let circle = if polyline.is_closed() {
+                let placed = instance
+                    .transform
+                    .apply_polyline(polyline)
+                    .map_err(|source| CamError::InvalidTarget {
+                        shape: shape.clone(),
+                        source,
+                    })?;
+                as_circle(&placed, project.flatten_tolerance_mm)
+            } else {
+                None
+            };
+            let Some((centre, radius_mm)) = circle else {
+                warnings.push(shape_warning(WarningCode::DrillTargetNotCircle));
+                continue;
+            };
+            let hole_mm = 2.0 * radius_mm;
+            if tool_diameter_mm > hole_mm + EPS_MM {
+                warnings.push(
+                    shape_warning(WarningCode::DrillToolWiderThanHole)
+                        .with("hole_mm", hole_mm)
+                        .with("tool_mm", tool_diameter_mm),
+                );
+            }
+            holes.push((shape, centre));
+        }
+    }
+    Ok(holes)
 }
 
 #[cfg(test)]

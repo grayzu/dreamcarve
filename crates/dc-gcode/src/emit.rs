@@ -61,7 +61,7 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use dc_cam::{FeedField, Move, MoveKind, Toolpath};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
 use dc_project::{
-    ArcFormat, Operation, OperationId, PostProcessor, Project, SpindleControl, Tool,
+    ArcFormat, DwellUnits, Operation, OperationId, PostProcessor, Project, SpindleControl, Tool,
     ToolChangeMode, ToolId, Units, is_m6_line,
 };
 
@@ -546,8 +546,7 @@ fn emit_enabled(
             w.line(&format!("{} {}{rpm}", fs.spindle_on_cw, fs.rpm_command));
             w.spindle_rpm = Some(rpm);
             if dwell_s > 0.0 {
-                let seconds = format_fixed(dwell_s, DWELL_DECIMAL_PLACES, &post.number_format)?;
-                w.line(&fs.spindle_on_dwell.command.replace("{seconds}", &seconds));
+                w.line(&dwell_line(post, dwell_s)?);
             }
         }
 
@@ -645,6 +644,19 @@ pub const MAX_MESSAGE_CHARS: usize = 96;
 
 /// Dwell seconds are written to the millisecond.
 const DWELL_DECIMAL_PLACES: u8 = 3;
+
+/// The definition's dwell command for `seconds`: `{seconds}` filled with
+/// the number its `units` say `P` takes, seconds to the millisecond or
+/// whole milliseconds (Mach3; design spec, "Post-processor definitions").
+/// Used for the spindle spin-up and for a Drill's dwell alike.
+fn dwell_line(post: &PostProcessor, seconds: f64) -> Result<String, ExportError> {
+    let dwell = &post.feed_speed.spindle_on_dwell;
+    let value = match dwell.units {
+        DwellUnits::Seconds => format_fixed(seconds, DWELL_DECIMAL_PLACES, &post.number_format)?,
+        DwellUnits::Milliseconds => format_fixed(seconds * 1000.0, 0, &post.number_format)?,
+    };
+    Ok(dwell.command.replace("{seconds}", &value))
+}
 
 #[cfg(test)]
 thread_local! {
@@ -1171,7 +1183,9 @@ impl<'a> Writer<'a> {
         // Every cut carries a feed, checked before fitting so the error
         // names the move whatever the fitting does.
         for (index, mv) in toolpath.moves.iter().enumerate() {
-            if !mv.is_rapid() && !mv.feed_mm_min.is_some_and(|f| f.is_finite() && f > 0.0) {
+            if !mv.is_rapid()
+                && !mv.is_dwell()
+                && !mv.feed_mm_min.is_some_and(|f| f.is_finite() && f > 0.0) {
                 return Err(ExportError::MoveWithoutFeed {
                     op: op.clone(),
                     index,
@@ -1242,6 +1256,18 @@ impl<'a> Writer<'a> {
             self.rapid(mv.to)?;
             return Ok(0);
         }
+        if let MoveKind::Dwell { seconds } = mv.kind {
+            // The tool waits where it is: no motion, no feed.
+            if !(seconds.is_finite() && seconds > 0.0) {
+                return Err(ExportError::InvalidDwell {
+                    post: self.post.id.clone(),
+                    duration_s: seconds,
+                });
+            }
+            let line = dwell_line(self.post, seconds)?;
+            self.line(&line);
+            return Ok(0);
+        }
         let feed = mv
             .feed_mm_min
             .filter(|f| f.is_finite() && *f > 0.0)
@@ -1250,8 +1276,8 @@ impl<'a> Writer<'a> {
                 index,
             })?;
         let (centre, clockwise) = match mv.kind {
-            MoveKind::Dwell { .. } => return Ok(0),
-            MoveKind::Rapid | MoveKind::Linear => {
+            // Rapids and dwells are written above.
+            MoveKind::Rapid | MoveKind::Linear | MoveKind::Dwell { .. } => {
                 self.linear(mv.to, feed)?;
                 return Ok(0);
             }

@@ -456,6 +456,7 @@ impl<'a> Emitter<'a, '_> {
     /// Appends `mv` unless it ends where the tool already is.
     fn push(&mut self, mv: Move) {
         if let Some(current) = self.current
+            && !mv.is_dwell()
             && distance_3d(current, mv.to) <= EPS_MM
         {
             return;
