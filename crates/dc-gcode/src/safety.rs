@@ -3656,6 +3656,94 @@ mod tests {
         );
     }
 
+    /// S9's lap rule covers only what `toolpaths_overlap` warns about,
+    /// shapes in different regions (#192). An inside Profile of the sample
+    /// rectangle (X 10 to 60, Y 10 to 40) with a round island at (35, 25)
+    /// leaves a band of 15 mm less the island's radius above and below it.
+    /// With a radius-5 island (a 10 mm band) a lap round the island at the
+    /// tool radius passes; with a radius-13 island (2 mm, narrower than
+    /// the 6.35 mm bit) the same lap, at 16.175 mm from the centre, runs
+    /// past the rectangle's top edge and fails at its first arc, although
+    /// it runs along the island at the radius on its waste side.
+    #[test]
+    fn inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9() {
+        let ring = |island_mm: f64| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles.push(dc_geometry::Polyline::circle(
+                    Point::new(25.0, 15.0),
+                    island_mm,
+                ));
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = dc_project::Side::Inside;
+            op.tabs = None;
+            let op = Operation::Profile(op.clone());
+            (project, op)
+        };
+        let lap = |radius_mm: f64| {
+            let (east, west) = (35.0 + radius_mm, 35.0 - radius_mm);
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX{east} Y25\nG1 Z-1 F300\n\
+                 G3 X{west} Y25 I-{radius_mm} J0 F1000\nG3 X{east} Y25 I{radius_mm} J0\nG0 Z5\n"
+            )
+        };
+        let (wide, op) = ring(5.0);
+        check_material_text(&lap(8.175), &wide, &op).unwrap();
+        let (narrow, op) = ring(13.0);
+        let err = check_material_text(&lap(16.175), &narrow, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+            "{err:?}"
+        );
+    }
+
+    /// #199: S9 refuses what `generate_profile` refuses. An On line
+    /// Profile of the sample rectangle (X 10 to 60, Y 10 to 40) with a
+    /// round hole at (35, 25): a lap along the hole's line passes when the
+    /// ring around it is 10 mm wide, and fails at its first arc when it is
+    /// 5 mm (narrower than the 6.35 mm bit, wider than its radius) or
+    /// 2 mm, although it runs on a target line: the two lines' cuts would
+    /// cut through the ring. A cut along the left edge, 15 mm from the
+    /// 10 mm hole, still passes.
+    #[test]
+    fn on_line_profile_in_a_ring_narrower_than_the_tool_fails_s9() {
+        let ring = |hole_mm: f64| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles.push(dc_geometry::Polyline::circle(
+                    Point::new(25.0, 15.0),
+                    hole_mm,
+                ));
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = dc_project::Side::OnLine;
+            op.tabs = None;
+            let op = Operation::Profile(op.clone());
+            (project, op)
+        };
+        let lap = |radius_mm: f64| {
+            let (east, west) = (35.0 + radius_mm, 35.0 - radius_mm);
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX{east} Y25\nG1 Z-1 F300\n\
+                 G3 X{west} Y25 I-{radius_mm} J0 F1000\nG3 X{east} Y25 I{radius_mm} J0\nG0 Z5\n"
+            )
+        };
+        let (wide, op) = ring(5.0);
+        check_material_text(&lap(5.0), &wide, &op).unwrap();
+        for hole_mm in [10.0, 13.0] {
+            let (narrow, op) = ring(hole_mm);
+            let err = check_material_text(&lap(hole_mm), &narrow, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+                "hole {hole_mm}: {err:?}"
+            );
+        }
+        let (narrow, op) = ring(10.0);
+        let left_edge = "G21 G90\nG54\nG0 Z5\nX10 Y15\nG1 Z-1 F300\nY35 F1000\nG0 Z5\n";
+        check_material_text(left_edge, &narrow, &op).unwrap();
+    }
+
     /// The generated sample Profile with `edit` applied, emitted: tabs and
     /// whatever entry, lead and relief `edit` sets.
     fn emit_profile(edit: impl FnOnce(&mut dc_project::ProfileOp)) -> Result<String, ExportError> {

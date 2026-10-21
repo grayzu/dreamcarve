@@ -47,17 +47,28 @@
 //!     target region (the parts; a part's own holes are waste), at least
 //!     `r` from every outline, so a ramp, helix or lead arc enters neither
 //!     its own part nor a neighbour. The stock edge is S7's.
-//!   - **On line:** as an Engrave: the tool centre stays on a target's
-//!     line. The On line ramp runs along the line; there is no lead or
-//!     notch.
+//!   - **On line:** as an Engrave, the tool centre stays on a target's
+//!     line, and also at least the tool's diameter from every other line
+//!     of that line's region (the targets nested as for Inside): the bit
+//!     cuts `r` of the part beside each line, so two lines of one region
+//!     closer than the diameter would cut through the ring or web between
+//!     them, which dc-cam refuses (`CamError::BandNarrowerThanTool`,
+//!     #199). Lines of different regions are not looked at: a gouge there
+//!     is the overlap check's warning, as for a lap. The On line ramp runs
+//!     along the line; there is no lead or notch.
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
-//!     it on its waste side, passes even where another outline comes
-//!     nearer than the radius. That cut is the outline's offset, which S6
-//!     holds the program to, and the gouge into the other shape is the one
-//!     `dc_cam`'s overlap check warns about (`toolpaths_overlap`): the
-//!     project asked for two shapes closer than the bit, and phase 1 decided
-//!     to warn there, not to refuse. Entries, leads and notches never run
-//!     along an outline at the radius, so the lap rule never lets one
+//!     it on its waste side, passes even where an outline of another
+//!     region comes nearer than the radius. That cut is the outline's
+//!     offset, which S6 holds the program to, and the gouge into the other
+//!     shape is the one `dc_cam`'s overlap check warns about
+//!     (`toolpaths_overlap`): the project asked for two shapes closer than
+//!     the bit, and phase 1 decided to warn there, not to refuse. The lap
+//!     must still keep its clearance from every outline of its own region
+//!     (#192): within one region the overlap check never warns, and a lap
+//!     that comes nearer another line of it, an island's lap in a band
+//!     narrower than the bit, is a gouge dc-cam refuses
+//!     (`CamError::BandNarrowerThanTool`). Entries, leads and notches never
+//!     run along an outline at the radius, so the lap rule never lets one
 //!     through. dc-cam's waste domain also keeps entries out of other
 //!     shapes' kerfs; that is waste too, so S9 does not hold the program
 //!     to it.
@@ -125,7 +136,15 @@ pub(crate) enum Material {
         /// Each hole.
         holes: Vec<(Point, f64)>,
     },
-    /// An Engrave's target paths, or an On line Profile's, as segments.
+    /// An On line Profile's regions: the tool centre stays on one of
+    /// their lines, at least the tool's diameter from the region's other
+    /// lines (#199).
+    OnLineProfile {
+        /// The regions, outer and holes, from the targets' closed
+        /// profiles.
+        areas: Vec<Area>,
+    },
+    /// An Engrave's target paths, as segments.
     OnLine {
         /// Every segment of every path.
         edges: Vec<Edge>,
@@ -381,13 +400,9 @@ impl Material {
             Operation::Profile(profile) => {
                 let relief = profile.corner_relief != CornerRelief::None;
                 match profile.side {
-                    Side::OnLine => match placed(project, &profile.targets) {
-                        Some(paths) => Self::OnLine {
-                            edges: paths
-                                .iter()
-                                .filter(|p| p.is_closed())
-                                .flat_map(edges_of)
-                                .collect(),
+                    Side::OnLine => match regions_of(project, &profile.targets) {
+                        Some(regions) => Self::OnLineProfile {
+                            areas: areas_of(regions, true),
                         },
                         None => Self::Unresolved,
                     },
@@ -525,6 +540,9 @@ pub(crate) fn check(
                     .iter()
                     .any(|(centre, r)| p.distance_to(*centre) <= r + slack_mm)
             }),
+            Material::OnLineProfile { areas } => {
+                on_own_line(areas, path, 2.0 * radius_mm - slack_mm, slack_mm)
+            }
             Material::OnLine { edges } => {
                 points_of(path).iter().all(|&p| on_line(edges, p, slack_mm))
             }
@@ -604,9 +622,10 @@ fn outside_regions(areas: &[Area], path: Segment, clearance_mm: f64, notch: Opti
 }
 
 /// The lap rule (module docs): whether tool-centre path `path` runs along
-/// one loop of `areas`, its ends and middle within `reach_mm` of it and
-/// clear of it (or a notch at one of its corners), on its waste side. Other
-/// outlines are not looked at.
+/// one loop of `areas`, its ends and middle within `reach_mm` of it, on
+/// its waste side, and clear of every loop of that loop's own area (or a
+/// notch at one of their corners). Other areas' outlines are not looked
+/// at; the loop's own area's always are (#192).
 fn is_lap(
     areas: &[Area],
     path: Segment,
@@ -630,7 +649,31 @@ fn is_lap(
                     .alone
                     .as_ref()
                     .is_some_and(|r| r.contains_point(path.start) == l.waste_inside)
-                    && walls_allow(area, &l.edges, path, clearance_mm, notch)
+                    && walls_allow(area, &(0..area.edges.len()), path, clearance_mm, notch)
+            })
+        })
+}
+
+/// The On line Profile rule (module docs): whether tool-centre path
+/// `path` lies on one loop of `areas`, its ends and middle within
+/// `slack_mm` of it, and at least `band_mm` from every other loop of that
+/// loop's area (#199). Other areas' loops are not looked at.
+fn on_own_line(areas: &[Area], path: Segment, band_mm: f64, slack_mm: f64) -> bool {
+    let bounds = bounds_of(path);
+    let points = points_of(path);
+    areas
+        .iter()
+        .filter(|a| near(bounds, a.bounds, slack_mm))
+        .any(|area| {
+            area.loops.iter().any(|l| {
+                let edges = area.edges.get(l.edges.clone()).unwrap_or_default();
+                points.iter().all(|&p| on_line(edges, p, slack_mm))
+                    && area
+                        .edges
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, e)| !l.edges.contains(i) && near(bounds, e.bounds, band_mm))
+                        .all(|(_, e)| segment_distance_mm(path, e.segment) >= band_mm)
             })
         })
 }

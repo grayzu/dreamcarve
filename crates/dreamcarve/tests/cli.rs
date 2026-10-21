@@ -1272,10 +1272,11 @@ fn pocket_dogbone_exports_and_passes_safety() {
         );
     }
 
-    // #189: the hole's notches reach the bottom, and every one of them is
-    // cut before the lap that frees the slug: after the last notch the
-    // program still cuts a full lap of the 33.65 × 23.65 mm tool-centre
-    // rectangle at the bottom.
+    // #189, #193: the hole's notches reach the bottom, and every one of
+    // them is cut before the lap that frees the slug closes: the bottom
+    // level from within that lap, a full lap of the 33.65 × 23.65 mm
+    // tool-centre rectangle at the bottom, part of which follows the last
+    // notch.
     let bottom_z = -(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
     let at_bottom = |m: &MachineMove| {
         m.from
@@ -1288,39 +1289,63 @@ fn pocket_dogbone_exports_and_passes_safety() {
             .zip(m.to.y)
             .is_some_and(|(x, y)| (30.0..=70.0).contains(&x) && (35.0..=65.0).contains(&y))
     };
-    let mut last_notch = 0;
-    for (cx, cy, sx, sy) in [
+    let ends: Vec<Point> = [
         (30.0, 35.0, 1.0, 1.0),
         (70.0, 35.0, -1.0, 1.0),
         (70.0, 65.0, -1.0, -1.0),
         (30.0, 65.0, 1.0, -1.0),
-    ] {
-        let end = Point::new(cx + sx * r, cy + sy * r);
+    ]
+    .into_iter()
+    .map(|(cx, cy, sx, sy)| Point::new(cx + sx * r, cy + sy * r))
+    .collect();
+    let at_end = |x: Option<f64>, y: Option<f64>| {
+        x.zip(y)
+            .is_some_and(|(x, y)| ends.iter().any(|e| Point::new(x, y).distance_to(*e) < 1e-3))
+    };
+    let mut last_notch = 0;
+    for end in &ends {
         let notch = moves.iter().rposition(|m| {
             m.kind.is_cut()
                 && at_bottom(m)
                 && m.to
                     .x
                     .zip(m.to.y)
-                    .is_some_and(|(x, y)| Point::new(x, y).distance_to(end) < 1e-3)
+                    .is_some_and(|(x, y)| Point::new(x, y).distance_to(*end) < 1e-3)
         });
         let notch = notch.unwrap_or_else(|| panic!("no notch at the bottom ends at {end:?}"));
         last_notch = last_notch.max(notch);
     }
-    let after: f64 = moves
+    // The freeing lap's own moves: at the bottom in the panel, off every
+    // notch.
+    let lap_moves: Vec<(usize, f64)> = moves
         .iter()
-        .skip(last_notch + 1)
-        .filter(|m| m.kind.is_cut() && at_bottom(m) && in_panel(m))
-        .filter_map(|m| {
+        .enumerate()
+        .filter(|(_, m)| {
+            m.kind.is_cut()
+                && at_bottom(m)
+                && in_panel(m)
+                && !at_end(m.from.x, m.from.y)
+                && !at_end(m.to.x, m.to.y)
+        })
+        .filter_map(|(i, m)| {
             let (x0, y0) = m.from.x.zip(m.from.y)?;
             let (x1, y1) = m.to.x.zip(m.to.y)?;
-            Some(Point::new(x0, y0).distance_to(Point::new(x1, y1)))
+            Some((i, Point::new(x0, y0).distance_to(Point::new(x1, y1))))
         })
-        .sum();
+        .filter(|(_, length)| *length > 1e-6)
+        .collect();
     let lap = 2.0 * ((40.0 - 6.35) + (30.0 - 6.35));
+    let total: f64 = lap_moves.iter().map(|(_, length)| length).sum();
+    // The ramp's last leg, back to the lap's start, runs at the bottom
+    // too.
     assert!(
-        after >= lap - 1e-2,
-        "only {after:.3} mm of the {lap:.3} mm freeing lap follows the last notch:\n{program}"
+        total >= lap - 1e-2,
+        "only {total:.3} mm of the {lap:.3} mm freeing lap is cut:\n{program}"
+    );
+    assert!(
+        lap_moves.iter().any(|(i, _)| *i > last_notch),
+        "the freeing lap closes before the last notch at line {}:\n{program}",
+        moves[last_notch].line
     );
 }
 
