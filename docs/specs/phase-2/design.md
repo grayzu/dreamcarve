@@ -309,8 +309,10 @@ instance, x_mm, y_mm)`, `ReliefCornerNotCut (…)`, `ReliefSkipped (op,
 reason)`, `PocketNoRoom (op, instance, instance_name, profile, tool,
 diameter_mm)` (tool wider than the region; the tool-centre region does
 not depend on the pass, so there is no `pass`), `PocketIslandTooClose
-(op, instance, island, other, gap_mm, tool, diameter_mm)` (once per
-island-wall or island-island pair; `other` is `wall` or a profile index),
+(op, instance, island, other, gap_mm, needed_mm, allowance_mm, tool,
+diameter_mm)` (once per island-wall or island-island pair closer than
+`needed_mm = diameter + 2 × allowance_mm`; `other` is `wall` or a profile
+index; changed in #168: the allowance was ignored),
 `DrillTargetNotCircle (op, instance, profile)`, `DrillToolWiderThanHole
 (op, instance, hole_mm, tool_mm)`, `DrillPeckDeeperThanHole (op, peck_mm,
 depth_mm)` (once per operation: every hole has the same depth),
@@ -483,7 +485,13 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    allowance 0.5 leaves a 0.5 mm band the rest pass removes. A chain
    (rest of a rest) needs no special case: the second rest's reference
    reaches exactly what its tool can, which is what the first two
-   operations cleared.
+   operations cleared. A root ring of the rest tool-centre region that
+   lies outside `left` and at least `r − tolerance` from it (the band's
+   inner edge, which is `left` grown by `r`) sweeps only cleared area and
+   is not cut, in the offset walk and in the raster wall pass; the region
+   itself, its entry domain and every ring's `cleared` area are
+   unchanged. (changed in #167: that ring was cut in air, 276 mm a pass
+   on acceptance 22.)
 4. **Passes.** As Profile step 5 (`passes::depths`), with `step =
    op.step_down_mm.or(tool.step_down_mm)` and S1.
 5. **Stepover** `s = diameter × step_over_fraction` (operation, else tool;
