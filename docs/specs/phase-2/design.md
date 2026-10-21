@@ -1268,7 +1268,10 @@ Option<Vec<String>> }`.
    warning), arcs under a non-uniform scale flattened (as SVG), under a
    mirror their bulges negated; a MINSERT (INSERT with 70/71 column and
    row counts, 44/45 spacings) once per cell, the cell offset rotated with
-   the insert and not scaled; `$MODEL_SPACE`, `$PAPER_SPACE`, names
+   the insert and not scaled (all expansion together places at most
+   `max_vertices / 10` block entities, skipped ones included, else
+   `ImportError::TooMuchWork`, so nested arrays of blocks that yield no
+   vertices cannot run unbounded); `$MODEL_SPACE`, `$PAPER_SPACE`, names
    starting `_`, and layers `ASHADE`/`HATCH` skipped silently as upstream.
    **Extrusion (210/220/230):** CIRCLE, ARC, LWPOLYLINE, 2D POLYLINE and
    INSERT coordinates are in the entity's OCS (arbitrary axis algorithm):
@@ -1597,7 +1600,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::layer_names_become_shape_names`, `dxf::layer_filter_keeps_only_named_layers`, `dxf::block_entities_on_layer_0_inherit_insert_layer`.
 - `dxf::four_lines_stitch_into_closed_shape`, `dxf::gap_beyond_tolerance_stays_open`, `dxf::stitching_does_not_cross_layers`, `dxf::identical_shapes_are_deduped`.
 - `dxf::plaque_dxf_matches_plaque_svg_within_0_01` (acceptance 34), `dxf::coordinate_limit_applies`.
-- `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
+- `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
 - `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
 
 **dc-library**

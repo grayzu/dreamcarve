@@ -72,6 +72,16 @@ pub enum ImportError {
         /// The vertex cap that was exceeded.
         limit: usize,
     },
+    /// Expanding the drawing's block inserts and arrays (INSERT, MINSERT)
+    /// would visit more than `limit` entities, almost always nested arrays
+    /// of blocks that hold little or nothing.
+    #[error(
+        "the drawing's block inserts and arrays expand to more than {limit} entities; explode or simplify them"
+    )]
+    TooMuchWork {
+        /// The entity-visit cap that was exceeded.
+        limit: usize,
+    },
     /// The page size is NaN, infinite, not positive, or larger than
     /// [`dc_geometry::MAX_COORDINATE_MM`] on a side.
     #[error(

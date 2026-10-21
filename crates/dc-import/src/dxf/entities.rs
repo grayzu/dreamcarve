@@ -79,12 +79,26 @@ const VERTEX_SPLINE_FRAME: i64 = 16;
 /// no point within the coordinate limit measurably.
 const PLANAR_NORMAL_EPS: f64 = 1e-6;
 
+/// The block-entity placement limit is the vertex limit divided by this:
+/// a placed entity is budgeted as ten vertices, generous for the circles,
+/// arcs and short polylines that arrays repeat.
+const MAX_VERTICES_PER_PLACEMENT: usize = 10;
+
 /// Collects the shapes of a drawing, in document order.
 pub(super) struct Walker<'a> {
     blocks: BTreeMap<&'a str, &'a Block>,
     tolerance_mm: f64,
     max_vertices: usize,
     vertex_count: usize,
+    /// Block entities placed so far by INSERT and MINSERT expansion, once
+    /// per placement, skipped entities included. Top-level entities are not
+    /// counted: their number is bounded by the file's size.
+    visits: usize,
+    /// Most block-entity placements the import may make, a tenth of the
+    /// vertex limit (500 000 by default). Nested arrays multiply: three
+    /// nested 100 × 100 MINSERTs are 10¹² placements, and of a block that
+    /// yields no vertices the vertex limit never stops them.
+    max_visits: usize,
     pub shapes: Vec<Shape>,
     /// Skipped entities per type name.
     pub skipped: BTreeMap<String, usize>,
@@ -101,6 +115,8 @@ impl<'a> Walker<'a> {
             tolerance_mm,
             max_vertices,
             vertex_count: 0,
+            visits: 0,
+            max_visits: max_vertices / MAX_VERTICES_PER_PLACEMENT,
             shapes: Vec::new(),
             skipped: BTreeMap::new(),
             too_deep: Vec::new(),
@@ -127,6 +143,14 @@ impl<'a> Walker<'a> {
         inherited: Option<&str>,
         depth: usize,
     ) -> Result<(), ImportError> {
+        if depth > 0 {
+            self.visits = self.visits.saturating_add(1);
+            if self.visits > self.max_visits {
+                return Err(ImportError::TooMuchWork {
+                    limit: self.max_visits,
+                });
+            }
+        }
         let layer = resolve_layer(entity.layer(), inherited);
         let kind = entity.kind.as_str();
         match kind {
@@ -374,13 +398,14 @@ impl<'a> Walker<'a> {
         // Counts below 1 are the default single placement.
         let columns = entity.int(70).clamp(1, i64::from(i16::MAX));
         let rows = entity.int(71).clamp(1, i64::from(i16::MAX));
-        // Every placed cell adds at least one shape of two vertices or
-        // nothing at all; an array of more cells than the vertex limit is
-        // refused before it is walked.
-        let cells = usize::try_from(columns * rows).unwrap_or(usize::MAX);
-        if columns * rows > 1 && cells > self.max_vertices {
-            return Err(ImportError::TooManyVertices {
-                limit: self.max_vertices,
+        // An array whose cells alone would pass the work limit is refused
+        // before any cell is walked; nested arrays are caught by the
+        // per-visit count in `walk`.
+        let cells = usize::try_from(columns.saturating_mul(rows)).unwrap_or(usize::MAX);
+        let visits = cells.saturating_mul(block.entities.len());
+        if self.visits.saturating_add(visits) > self.max_visits {
+            return Err(ImportError::TooMuchWork {
+                limit: self.max_visits,
             });
         }
         let scale =

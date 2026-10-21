@@ -132,7 +132,10 @@ A drawing is refused when any shape reaches more than 6000 mm (6 m) from
 the origin after conversion to millimetres, when a coordinate is not a
 number, or when a block is inserted into itself without end (the first 12
 levels are read and a warning names the block). An insert of a block the
-file does not define is skipped with a warning. A file that is cut off or
+file does not define is skipped with a warning. Inserts and arrays may
+place at most 500 000 block entities in all; a drawing of arrays nested
+in arrays that places more is refused (explode the arrays in the CAD
+program, or simplify them). A file that is cut off or
 garbled, so that its codes and values no longer pair up, is refused with
 the line (or, in a binary DXF, the byte) where it goes wrong.
 

@@ -1605,6 +1605,73 @@ mod tests {
         reject(&unknown, "unknown binary code");
     }
 
+    // ── work limit ───────────────────────────────────────────────────────
+
+    /// A DXF whose blocks are `blocks` (name, body entities) and whose
+    /// ENTITIES section is `entities`.
+    fn dxf_with_blocks(blocks: &[(&str, &str)], entities: &str) -> String {
+        let mut dxf = String::from(
+            "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nBLOCKS\n",
+        );
+        for (name, body) in blocks {
+            dxf.push_str(&format!(
+                "0\nBLOCK\n8\n0\n2\n{name}\n70\n0\n10\n0.0\n20\n0.0\n{body}0\nENDBLK\n"
+            ));
+        }
+        dxf.push_str(&format!(
+            "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n{entities}0\nENDSEC\n0\nEOF\n"
+        ));
+        dxf
+    }
+
+    /// A MINSERT of `block`, `n` × `n` cells 1 apart.
+    fn minsert(block: &str, n: usize) -> String {
+        format!(
+            "0\nINSERT\n8\narray\n2\n{block}\n10\n0.0\n20\n0.0\n70\n{n}\n71\n{n}\n44\n1.0\n45\n1.0\n"
+        )
+    }
+
+    /// A zero-length LINE: read, but it yields no vertices.
+    const DOT: &str = "0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n";
+
+    fn assert_fails_fast(dxf: &str) {
+        let start = std::time::Instant::now();
+        let result = import_dxf(dxf.as_bytes(), &DxfImportOptions::new());
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(result, Err(ImportError::TooMuchWork { limit }) if limit == MAX_IMPORT_VERTICES / 10),
+            "{result:?}"
+        );
+        assert!(elapsed.as_secs_f64() < 2.0, "took {elapsed:?}");
+    }
+
+    /// A 1000 × 1000 MINSERT of a block that yields no vertices would walk
+    /// a million cells while the vertex limit never trips; it is refused
+    /// before the first cell. A block with nothing readable at all is
+    /// never expanded (upstream's rule), so it costs nothing.
+    #[test]
+    fn huge_minsert_of_empty_block_fails_fast() {
+        assert_fails_fast(&dxf_with_blocks(&[("DOT", DOT)], &minsert("DOT", 1000)));
+        let empty = dxf_with_blocks(&[("EMPTY", "")], &minsert("EMPTY", 1000));
+        let start = std::time::Instant::now();
+        let (result, _) = import(empty.as_bytes());
+        assert!(result.definitions.is_empty());
+        assert!(start.elapsed().as_secs_f64() < 1.0);
+    }
+
+    /// Three nested 100 × 100 MINSERTs are 10¹² visits of the innermost
+    /// block; the per-visit count stops the walk at the limit.
+    #[test]
+    fn nested_minserts_fail_fast() {
+        let inner = minsert("C", 100);
+        let middle = minsert("B", 100);
+        let dxf = dxf_with_blocks(
+            &[("C", DOT), ("B", &inner), ("A", &middle)],
+            &minsert("A", 100),
+        );
+        assert_fails_fast(&dxf);
+    }
+
     /// An INSERT's attributes (ATTRIB, after `66 = 1`, up to SEQEND) are
     /// text and are counted, not dropped silently; the block is still
     /// placed.
