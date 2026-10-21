@@ -215,9 +215,30 @@ One operation is never part cycles and part moves. This happens when:
 - the post-processor has no command for the cycle, or does not state how
   far its `G83` or `G73` backs off between pecks.
 - the project sets a [clearance height](post-processors.md#heights-clearance-tool-change-and-park)
-  and the holes are separate parts: the Drill crosses between them at the
-  clearance height, while `G98` goes back only to the height of the first
-  hole (#283). Holes of one part are still crossed at safe Z.
+  and the Drill has both separate parts and parts with several holes: it
+  crosses between parts at the clearance height and between the holes of
+  one part at safe Z, while `G98` goes back to one height after every hole.
+
+**With a clearance height.** When every hole is a part of its own, as for
+circles drawn one by one or imported from SVG or DXF, the Drill crosses
+between them at the clearance height. The cycles then start from it: the
+rapid over the first hole is at the clearance height, and `G98` brings the
+bit back up to it after every hole. With a clearance height of 20 mm:
+
+```text
+G0 Z20.000
+X20.000 Y20.000
+G98
+G81 X20.000 Y20.000 Z-5.000 R1.000 F300.000
+X50.000 Y70.000 Z-5.000 R1.000
+X80.000 Y30.000 Z-5.000 R1.000
+G80
+```
+
+The bit goes straight from the clearance height down to `R` and straight
+back up, where the plain moves stop at safe Z on the way. The holes are
+the same. When all the holes are of one part, the cycles start from safe
+Z, as without a clearance height.
 
 A post-processor that has `G83` and `G73` writes them with any retract
 height: DreamCarve counts the pecks from the retract height `R`, as the

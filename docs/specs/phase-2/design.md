@@ -2009,7 +2009,9 @@ command the definition has (`G81 → drill_command`, `G82 →
 drill_with_dwell_command`, `G83 → peck_drill_command`, `G73 →
 chip_break_drill_command`): rapid to the first hole's XY at safe Z (Z
 first, then XY, as phase 1 rapids), write `retract_mode` (`G98`: return to
-the initial Z, which is safe Z) once, then one line per hole: the command
+the initial Z, which is safe Z) once (changed in #305: at the clearance
+height, when the project sets one and every link between holes is at it;
+see "As built (#283)"), then one line per hole: the command
 word (modal), `X Y`, `Z` (bottom, machine coordinates), `R` (retract
 plane), `Q` (peck for `G83`/`G73`), `P` (dwell seconds for `G82`), `F`
 (plunge rate, once). Every line carries its own `Z`, `R` and `Q`/`P`,
@@ -2060,6 +2062,12 @@ toolpath move for move (S6), a Z-only rapid inside a hole matching
 within the re-entry gap stated in the definition
 (`canned_cycles.reentry_gap_mm`, a new definition field, `null` where no
 fixed gap is documented); S1 and S15 still check where that rapid ends.
+In a Drill written as cycles, a toolpath rapid in Z alone may also end
+partway along one rapid of the controller's in Z alone at its XY, when
+the toolpath goes on the same way along that line by a rapid in Z alone,
+or ends there going up (changed in #305: cycles from the clearance height
+go straight from it to `R` and from the bottom back to it, where the
+toolpath stops at safe Z).
 Only controllers whose documentation states these semantics get
 canned-cycle commands in their definition.
 
@@ -3006,6 +3014,39 @@ above:
   the clearance height, which `G98` cannot follow, so with a clearance
   height above safe Z it is written as moves with
   `CannedExpansion::ClearanceHeight`. Holes of one instance keep cycles.
+  (Changed in #305: such a Drill is written as cycles from the clearance
+  height; see the next item. Only a Drill whose links are at both
+  heights is still written as moves with that reason.)
+- Canned cycles from the clearance height (#305). `G98` returns each hole
+  to the Z before the first cycle of the series (LinuxCNC 2.9
+  `interp_cycles.cc` 926-931 and 976, the initial level `cycle_il`, reset
+  by any motion that is not a cycle, `interp_convert.cc` 3818-3819; [G]
+  `#gcode:g98-g99`; Mach3Mill 10.7.29, whose "just before the canned
+  cycle started" gives the same height in a `G98` series, since each line
+  starts where the one before returned). So when the project sets a
+  clearance height and every link between holes is at it (holes that are
+  separate parts, or one hole), `canned_plan` takes it as the initial Z:
+  the rapid over the first hole is at the clearance height, where the
+  operation starts, and `G98` brings every hole back to it. Links at safe
+  Z keep safe Z as the initial Z, as before; links at both fail the
+  comparison (`ClearanceHeight`). The controller then rapids from the
+  clearance height straight to `R` (preliminary motion, [G]
+  `#gcode:preliminary-motion`, Mach3Mill 10.7.24.1) and from the bottom
+  straight back up, where the toolpath stops at safe Z both ways. The
+  toolpath is unchanged; `expansion_is_toolpath` and S6 instead take
+  rapids along one vertical line in one direction as one rapid
+  (`join_rapids`; `safety::match_rapid_on_the_way`), only for a Drill
+  written as cycles, so plain programs are held to every move as before.
+  Tests: `emit::canned_cycles_at_the_clearance_height` (the plaque on
+  LinuxCNC, `G81` and `G82`),
+  `emit::canned_motion_from_the_clearance_height_equals_plain_program`
+  (`G81`, `G82`, `G83`, `G73` on the test definition, the same pecks),
+  `emit::canned_cycles_with_the_clearance_height_at_safe_z`,
+  `emit::canned_cycles_from_the_clearance_height_with_the_lift_on_linuxcnc`
+  (with #306's `G53` lift: `G80`, the park, the lift, the footer),
+  `emit::clearance_height_expands_canned_cycles` (links at both heights),
+  `safety::canned_cycles_from_clearance_match_the_toolpath`,
+  `safety::vertical_rapids_join_only_along_a_cycle_rapid`.
 - Corner relief. A Pocket's notches, sequenced one corner at a time after
   its main path, are reached at the clearance height when the corner is of
   another instance than the one before, and the first one always (where
