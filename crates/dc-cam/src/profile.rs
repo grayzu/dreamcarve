@@ -2603,7 +2603,7 @@ mod tests {
         }
     }
 
-    /// A tab warning's `contour` param counts contours in cut order, which
+    /// A tab warning's `contour` counts contours in cut order, which
     /// nearest neighbour sets: the square at X = 30 (instance `i3`) is cut
     /// second, so it is contour 1.
     #[test]
@@ -2619,19 +2619,18 @@ mod tests {
             shape: TabShape::Rect,
         });
         let (_, warnings) = generate(&p, &op);
-        let covered: Vec<(Option<&str>, Option<&str>)> = warnings
+        let covered: Vec<(usize, &str)> = warnings
             .iter()
-            .filter(|w| w.code() == WarningCode::TabsCoverMostOfContour)
-            .map(|w| (w.param("contour"), w.param("instance")))
+            .filter_map(|w| match w {
+                Warning::TabsCoverMostOfContour {
+                    contour,
+                    shape: Some(shape),
+                    ..
+                } => Some((*contour, shape.instance.as_str())),
+                _ => None,
+            })
             .collect();
-        assert_eq!(
-            covered,
-            [
-                (Some("0"), Some("i1")),
-                (Some("1"), Some("i3")),
-                (Some("2"), Some("i2")),
-            ]
-        );
+        assert_eq!(covered, [(0, "i1"), (1, "i3"), (2, "i2")]);
     }
 
     // ── #176: the start moves off a tab ──

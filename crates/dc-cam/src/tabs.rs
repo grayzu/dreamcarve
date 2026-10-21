@@ -26,7 +26,7 @@
 use crate::entry::plunge_limited_feed_mm_min;
 use crate::error::{CamError, ShapeRef};
 use crate::toolpath::{Move, MoveKind};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::{TabsRangeReason, Warning};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Polyline, Segment};
 use dc_project::{OperationId, TabPlacement, TabShape, TabSpec};
 
@@ -447,7 +447,7 @@ impl PathTabs {
 }
 
 /// The warnings about where the tab top lies relative to the cut
-/// (PureCutCNC `applyTabWarnings`): [`WarningCode::TabsOutsideCutRange`]
+/// (PureCutCNC `applyTabWarnings`): [`Warning::TabsOutsideCutRange`]
 /// when no pass of `pass_z_mm` lies below the tab top, so the tabs change
 /// nothing, or when the tab top is above the stock top `thickness_mm`.
 pub(crate) fn cut_range_warnings(
@@ -459,40 +459,21 @@ pub(crate) fn cut_range_warnings(
     let Some(deepest_z_mm) = pass_z_mm.iter().copied().reduce(f64::min) else {
         return Vec::new();
     };
-    let warning = |reason: &str| {
-        Warning::new(WarningCode::TabsOutsideCutRange)
-            .with("op", op)
-            .with("reason", reason)
-            .with("tab_top_mm", tabs.top_z_mm)
-            .with("deepest_pass_z_mm", deepest_z_mm)
-            .with("stock_top_mm", thickness_mm)
+    let warning = |reason| Warning::TabsOutsideCutRange {
+        op: op.clone(),
+        reason,
+        tab_top_mm: tabs.top_z_mm,
+        deepest_pass_z_mm: deepest_z_mm,
+        stock_top_mm: thickness_mm,
     };
     let mut warnings = Vec::new();
     if tabs.top_z_mm > thickness_mm + EPS_MM {
-        warnings.push(warning("above_stock_top"));
+        warnings.push(warning(TabsRangeReason::AboveStockTop));
     }
     if deepest_z_mm >= tabs.top_z_mm - EPS_MM {
-        warnings.push(warning("cut_stops_above_tab"));
+        warnings.push(warning(TabsRangeReason::CutStopsAboveTab));
     }
     warnings
-}
-
-/// A warning about the tabs on contour `contour` (0-based, in cut order)
-/// of operation `op`, cut for `shape` when it is known.
-fn contour_warning(
-    code: WarningCode,
-    op: &OperationId,
-    contour: usize,
-    shape: Option<&ShapeRef>,
-) -> Warning {
-    let warning = Warning::new(code).with("op", op).with("contour", contour);
-    match shape {
-        Some(shape) => warning
-            .with("instance", &shape.instance)
-            .with("instance_name", &shape.instance_name)
-            .with("profile", shape.profile),
-        None => warning,
-    }
 }
 
 /// The warning that tab spans on contour `contour` (0-based, in cut order)
@@ -503,11 +484,15 @@ pub(crate) fn overlap_warning(
     shape: Option<&ShapeRef>,
     path_length_mm: f64,
 ) -> Warning {
-    contour_warning(WarningCode::TabsOverlap, op, contour, shape)
-        .with("path_length_mm", path_length_mm)
+    Warning::TabsOverlap {
+        op: op.clone(),
+        contour,
+        shape: shape.cloned(),
+        path_length_mm,
+    }
 }
 
-/// [`WarningCode::TabsCoverMostOfContour`] when the merged spans of
+/// [`Warning::TabsCoverMostOfContour`] when the merged spans of
 /// `layout` cover more than half of contour `contour` (0-based, in cut
 /// order), so the part or hole may not cut free. The tabs are not changed:
 /// the user may want them, and they never make motion unsafe.
@@ -532,20 +517,21 @@ pub(crate) fn coverage_warning(
     let count_f: f64 = centres.iter().map(|_| 1.0).sum();
     // Evenly spaced tabs that fit in half the path never overlap.
     let max_count = ((half_mm + EPS_MM) / tabs.span_mm).floor();
-    let mut warning = contour_warning(WarningCode::TabsCoverMostOfContour, op, contour, shape)
-        .with("path_length_mm", l)
-        .with("tab_count", centres.len())
-        .with("tab_width_mm", tabs.width_mm)
-        .with("diameter_mm", tabs.diameter_mm)
-        .with("tab_span_mm", tabs.span_mm)
-        .with("tab_total_mm", tabs.span_mm * count_f)
-        .with("max_count", max_count);
     // Rounded down to 0.01 mm so the suggested width does fit.
     let max_width_mm = ((half_mm / count_f - tabs.diameter_mm) * 100.0).floor() / 100.0;
-    if max_width_mm > 0.0 {
-        warning = warning.with("max_width_mm", max_width_mm);
-    }
-    Some(warning)
+    Some(Warning::TabsCoverMostOfContour {
+        op: op.clone(),
+        contour,
+        shape: shape.cloned(),
+        path_length_mm: l,
+        tab_count: centres.len(),
+        tab_width_mm: tabs.width_mm,
+        diameter_mm: tabs.diameter_mm,
+        tab_span_mm: tabs.span_mm,
+        tab_total_mm: tabs.span_mm * count_f,
+        max_count,
+        max_width_mm: (max_width_mm > 0.0).then_some(max_width_mm),
+    })
 }
 
 /// One move of a lap, before the vertical step that may precede it.
@@ -1237,7 +1223,7 @@ mod tests {
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(codes(&warnings), vec![WarningCode::TabsOverlap]);
-        assert_eq!(warnings[0].param("op"), Some("o1"));
+        assert_eq!(warnings[0].op().map(OperationId::as_str), Some("o1"));
         let raised = raised_runs(&final_lap(&tp));
         assert_eq!(raised.len(), 1, "merged: {raised:?}");
         assert_approx_eq!(raised[0].length_mm, 8.0 + TAB_WIDTH_MM + DIAMETER_MM, TOL);
@@ -1349,14 +1335,6 @@ mod tests {
             .collect()
     }
 
-    fn param_mm(warning: &Warning, key: &str) -> f64 {
-        warning
-            .param(key)
-            .unwrap_or_else(|| panic!("{key} is set: {warning:?}"))
-            .parse()
-            .unwrap()
-    }
-
     #[test]
     fn tabs_covering_most_of_contour_warn() {
         // Default tabs (4 × 8 mm, 6.35 mm bit) on a 20 mm square hole:
@@ -1366,21 +1344,36 @@ mod tests {
         let cover = coverage_warnings(&warnings);
         assert_eq!(cover.len(), 1, "only the hole: {warnings:?}");
         let w = cover[0];
-        assert_eq!(w.param("op"), Some("o1"));
-        assert_eq!(w.param("contour"), Some("0"), "the hole is cut first");
-        assert_eq!(w.param("instance"), Some("i1"));
-        assert_eq!(w.param("instance_name"), Some("Square 1"));
-        assert_eq!(w.param("profile"), Some("1"));
-        assert_eq!(w.param("tab_count"), Some("4"));
+        let Warning::TabsCoverMostOfContour {
+            op,
+            contour,
+            shape: Some(shape),
+            path_length_mm,
+            tab_count,
+            tab_span_mm,
+            tab_total_mm,
+            max_count,
+            max_width_mm: Some(max_width_mm),
+            ..
+        } = w
+        else {
+            panic!("{w:?}");
+        };
+        assert_eq!(op.as_str(), "o1");
+        assert_eq!(*contour, 0, "the hole is cut first");
+        assert_eq!(shape.instance.as_str(), "i1");
+        assert_eq!(shape.instance_name, "Square 1");
+        assert_eq!(shape.profile, 1);
+        assert_eq!(*tab_count, 4);
         let path_mm = 4.0 * (20.0 - DIAMETER_MM);
         let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
-        assert_approx_eq!(param_mm(w, "path_length_mm"), path_mm, TOL);
-        assert_approx_eq!(param_mm(w, "tab_span_mm"), span_mm, TOL);
-        assert_approx_eq!(param_mm(w, "tab_total_mm"), 4.0 * span_mm, TOL);
+        assert_approx_eq!(*path_length_mm, path_mm, TOL);
+        assert_approx_eq!(*tab_span_mm, span_mm, TOL);
+        assert_approx_eq!(*tab_total_mm, 4.0 * span_mm, TOL);
         // One 14.35 mm tab covers at most half of 54.6 mm; four tabs fit
         // in half only if each is at most 27.3 / 4 − 6.35 = 0.475 mm wide.
-        assert_eq!(w.param("max_count"), Some("1"));
-        assert!(param_mm(w, "max_width_mm") <= path_mm / 2.0 / 4.0 - DIAMETER_MM);
+        assert_approx_eq!(*max_count, 1.0, TOL);
+        assert!(*max_width_mm <= path_mm / 2.0 / 4.0 - DIAMETER_MM);
 
         // The text names the shape, the path, the tab total and the share,
         // says what may happen, and suggests changes, in rounded values.
@@ -1424,11 +1417,22 @@ mod tests {
     #[test]
     fn coverage_warning_carries_tab_width_and_diameter() {
         let w = small_bit_coverage_warning();
-        assert_approx_eq!(param_mm(&w, "tab_width_mm"), 3.0, TOL);
-        assert_approx_eq!(param_mm(&w, "diameter_mm"), 3.175, TOL);
-        assert_approx_eq!(param_mm(&w, "tab_span_mm"), 6.175, TOL);
-        assert_approx_eq!(param_mm(&w, "tab_total_mm"), 4.0 * 6.175, TOL);
-        assert_approx_eq!(param_mm(&w, "path_length_mm"), 40.0, TOL);
+        let Warning::TabsCoverMostOfContour {
+            tab_width_mm,
+            diameter_mm,
+            tab_span_mm,
+            tab_total_mm,
+            path_length_mm,
+            ..
+        } = w
+        else {
+            panic!("{w:?}");
+        };
+        assert_approx_eq!(tab_width_mm, 3.0, TOL);
+        assert_approx_eq!(diameter_mm, 3.175, TOL);
+        assert_approx_eq!(tab_span_mm, 6.175, TOL);
+        assert_approx_eq!(tab_total_mm, 4.0 * 6.175, TOL);
+        assert_approx_eq!(path_length_mm, 40.0, TOL);
     }
 
     #[test]
@@ -1532,11 +1536,11 @@ mod tests {
                 if lap.iter().any(|m| m.at_z(0.0)) {
                     continue;
                 }
-                let index = i.to_string();
                 assert!(
-                    coverage_warnings(&warnings)
-                        .iter()
-                        .any(|w| w.param("contour") == Some(index.as_str())),
+                    coverage_warnings(&warnings).iter().any(|w| matches!(
+                        w,
+                        Warning::TabsCoverMostOfContour { contour, .. } if *contour == i
+                    )),
                     "contour {i} never reaches depth and nothing says so: {warnings:?}"
                 );
             }
@@ -1742,8 +1746,17 @@ mod tests {
         op.depth_mm = Some(6.0);
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(codes(&warnings), vec![WarningCode::TabsOutsideCutRange]);
-        assert_eq!(warnings[0].param("op"), Some("o1"));
-        assert_eq!(warnings[0].param("reason"), Some("cut_stops_above_tab"));
+        assert_eq!(warnings[0].op().map(OperationId::as_str), Some("o1"));
+        assert!(
+            matches!(
+                warnings[0],
+                Warning::TabsOutsideCutRange {
+                    reason: TabsRangeReason::CutStopsAboveTab,
+                    ..
+                }
+            ),
+            "{warnings:?}"
+        );
         let (plain, _) = generate(&p, &ProfileOp { tabs: None, ..op });
         assert_eq!(tp, plain, "tabs out of reach change nothing");
 
@@ -1754,7 +1767,16 @@ mod tests {
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(codes(&warnings), vec![WarningCode::TabsOutsideCutRange]);
-        assert_eq!(warnings[0].param("reason"), Some("above_stock_top"));
+        assert!(
+            matches!(
+                warnings[0],
+                Warning::TabsOutsideCutRange {
+                    reason: TabsRangeReason::AboveStockTop,
+                    ..
+                }
+            ),
+            "{warnings:?}"
+        );
         let raised = runs(&xy_moves(&tp), |m| m.at_z(THICKNESS_MM + 2.0));
         assert_eq!(raised.len(), 4 * PASS_Z_MM.len());
 

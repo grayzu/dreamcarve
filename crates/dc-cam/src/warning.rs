@@ -592,6 +592,38 @@ impl Warning {
         }
     }
 
+    /// The operation the warning is about, for the warnings that name one.
+    #[must_use]
+    pub const fn op(&self) -> Option<&OperationId> {
+        match self {
+            Self::TabsOverlap { op, .. }
+            | Self::TabsOutsideCutRange { op, .. }
+            | Self::TabsCoverMostOfContour { op, .. }
+            | Self::PocketNoRoom { op, .. }
+            | Self::PocketIslandTooClose { op, .. }
+            | Self::EntryFallback { op, .. }
+            | Self::HelixDiameterReduced { op, .. }
+            | Self::LeadShrunk { op, .. }
+            | Self::LeadDropped { op, .. }
+            | Self::ReliefSkipped { op, .. }
+            | Self::ReliefCornerTooTight { op, .. }
+            | Self::ReliefCornerNotCut { op, .. }
+            | Self::EngravePathDegenerate { op, .. }
+            | Self::CutInsideFreedPart { op, .. }
+            | Self::DrillTargetNotCircle { op, .. }
+            | Self::DrillToolWiderThanHole { op, .. }
+            | Self::DrillPeckDeeperThanHole { op, .. }
+            | Self::DrillRetractBelowStockTop { op, .. }
+            | Self::RestOfClearsNothing { op, .. } => Some(op),
+            Self::OpenPathSkipped { .. }
+            | Self::ToolTooLarge { .. }
+            | Self::DuplicateShapeDropped { .. }
+            | Self::ToolpathsOverlap { .. }
+            | Self::ToolChangeAvoidable { .. }
+            | Self::Params(_) => None,
+        }
+    }
+
     /// A warning with no params.
     #[must_use]
     pub fn new(code: WarningCode) -> Self {
@@ -1817,6 +1849,18 @@ mod tests {
                 fixtures.iter().any(|(w, _)| w.code() == c),
                 "no variant has code `{c}`"
             );
+            // The warnings that had an `op` param name it still.
+            let names_op = !matches!(
+                c,
+                WarningCode::OpenPathSkipped
+                    | WarningCode::ToolTooLarge
+                    | WarningCode::DuplicateShapeDropped
+                    | WarningCode::ToolpathsOverlap
+                    | WarningCode::ToolChangeAvoidable
+            );
+            for (w, _) in fixtures.iter().filter(|(w, _)| w.code() == c) {
+                assert_eq!(w.op().is_some(), names_op, "{w:?}");
+            }
             assert!(
                 chapter.contains(&format!("| `{c}` |")),
                 "the Warnings chapter does not list `{c}`"
