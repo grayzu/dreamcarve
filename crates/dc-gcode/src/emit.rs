@@ -5320,17 +5320,24 @@ mod tests {
         );
     }
 
-    /// #304 review: with a tool-change machine Z, the header says the
-    /// program uses machine coordinates and needs a homed machine, in a
-    /// comment; without one the header is as before (the goldens and the
-    /// heights-migration corpus prove the bytes).
+    /// #304 review, #308: with a tool-change machine Z, the header says
+    /// the program uses machine coordinates and needs a homed machine, and
+    /// names what keeps the lift from driving Z down on a machine that
+    /// homes Z downward: soft limits (`$20=1`), which alarm before the move
+    /// (GRBL `motion_control.c` 34-38, grblHAL `motion_control.c` 96-99;
+    /// definitions README, "Machine-coordinate moves"). In the definition's
+    /// comment syntax: `( )` on grblHAL, `;` on GRBL v3. Without the height
+    /// the header is as before (the goldens and the heights-migration
+    /// corpus prove the bytes).
     #[test]
     fn machine_z_header_comment() {
         let mut project = project_with("grblhal");
-        let comment = "( Lifts to machine Z with G53: home the machine before running )";
+        let comment = "( Lifts to machine Z with G53: home the machine before running. \
+                       Needs Z to home upward, or soft limits on with $20=1 )";
         let text = emit_text(&project);
         assert!(!text.contains("G53"), "{text}");
         assert!(!text.contains("home the machine"), "{text}");
+        assert!(!text.contains("soft limits"), "{text}");
         project.heights.tool_change_machine_z_mm = Some(-5.0);
         let text = emit_text(&project);
         let lines: Vec<&str> = text.lines().collect();
@@ -5340,8 +5347,17 @@ mod tests {
             .unwrap_or_else(|| panic!("{text}"));
         let first_motion = lines.iter().position(|l| l.starts_with("G0")).unwrap();
         assert!(at < first_motion, "in the header\n{text}");
-        // In inches, on GRBL, and in every program of a run per tool.
-        for (post, units) in [("grbl", Units::Inch), ("grblhal", Units::Mm)] {
+        // In inches on GRBL v3, in mm on grblHAL, and in every program of a
+        // run per tool.
+        for (post, units, expected) in [
+            (
+                "grbl",
+                Units::Inch,
+                "; Lifts to machine Z with G53: home the machine before running. \
+                 Needs Z to home upward, or soft limits on with $20=1",
+            ),
+            ("grblhal", Units::Mm, comment),
+        ] {
             let mut project = project_with(post);
             project.display_units = units;
             let ops = two_tool_ops(&mut project);
@@ -5350,16 +5366,17 @@ mod tests {
                 emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE).unwrap();
             assert_eq!(programs.len(), 2);
             for program in &programs {
-                let definition = post_of(&project);
-                let expected = format!(
-                    "{} {MACHINE_LIFT_COMMENT} {}",
-                    definition.program.comment_prefix, definition.program.comment_suffix
-                );
                 assert!(
-                    program.text.lines().any(|l| l == expected.trim_end()),
+                    program.text.lines().any(|l| l == expected),
                     "{post} {units:?}\n{}",
                     program.text
                 );
+                let named = program
+                    .text
+                    .lines()
+                    .filter(|l| l.contains("soft limits") && l.contains("$20=1"))
+                    .count();
+                assert_eq!(named, 1, "{post} {units:?}\n{}", program.text);
             }
         }
         // The clearance height and the park point need no homing.
