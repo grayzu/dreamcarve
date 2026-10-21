@@ -29,7 +29,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dc_cam::{Toolpath, generate_engrave, generate_profile, order};
+use dc_cam::{Toolpath, generate_engrave, generate_pocket, generate_profile, order};
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{AxisRange, ExportWarning, Program, ProgramSplit, emit_programs};
@@ -166,11 +166,12 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         };
         let generated = match operation {
             Operation::Profile(op) => generate_profile(project, op),
+            Operation::Pocket(op) => generate_pocket(project, op),
             Operation::Engrave(op) => generate_engrave(project, op),
-            // Pocket and Drill load and validate from format version 8 on;
-            // their generators land in their own slices (#117). Until then
-            // an enabled one is refused, never skipped.
-            Operation::Pocket(_) | Operation::Drill(_) => {
+            // Drill loads and validates from format version 8 on; its
+            // generator lands in its own slice (#117). Until then an
+            // enabled one is refused, never skipped.
+            Operation::Drill(_) => {
                 findings.errors.push(Finding::plain(format!(
                     "operation `{}` (`{}`) is a {} operation, which is not supported by this \
                      build yet; disable it to export the rest",

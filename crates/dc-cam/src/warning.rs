@@ -52,6 +52,27 @@ pub enum WarningCode {
     /// `needed_mm` (the gap this side needs: the diameter for Outside, the
     /// radius for On line). The shapes are cut as drawn.
     ToolpathsOverlap,
+    /// The tool is wider than a pocket region somewhere it must pass: the
+    /// tool-centre region of that shape is empty, so the shape is not cut.
+    /// Params: `op`, `instance`, `instance_name`, `profile`, `tool`,
+    /// `diameter_mm`.
+    PocketNoRoom,
+    /// Two of a pocket's boundaries, an island and the wall or two
+    /// islands, are closer than the tool is wide, so the material between
+    /// them stays. Params: `op`, `instance`, `instance_name`, `profile`
+    /// (the pocket's outline), `island` (the island's profile index),
+    /// `other` (`wall`, or the other island's profile index), `gap_mm`,
+    /// `tool`, `diameter_mm`.
+    PocketIslandTooClose,
+    /// The operation's entry could not be used and a plunge was cut
+    /// instead. Params: `op`, `requested` (`ramp` or `helix`), `used`
+    /// (`plunge`), `reason` (`not_supported_yet` until the entry slices
+    /// land).
+    EntryFallback,
+    /// The operation's corner relief was not cut. Params: `op`,
+    /// `requested` (`dogbone` or `t_bone`), `reason` (`not_supported_yet`
+    /// until the relief slice lands).
+    ReliefSkipped,
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped. Params: `op`, `instance`,
     /// `instance_name`, `profile`.
@@ -83,6 +104,10 @@ impl WarningCode {
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
             Self::ToolpathsOverlap => "toolpaths_overlap",
+            Self::PocketNoRoom => "pocket_no_room",
+            Self::PocketIslandTooClose => "pocket_island_too_close",
+            Self::EntryFallback => "entry_fallback",
+            Self::ReliefSkipped => "relief_skipped",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
@@ -221,7 +246,7 @@ impl fmt::Display for Warning {
         match self.code {
             WarningCode::OpenPathSkipped => write!(
                 f,
-                "{} is an open path; Profile cuts only closed shapes, so it is not cut",
+                "{} is an open path; Profile and Pocket cut only closed shapes, so it is not cut",
                 self.shape()
             ),
             WarningCode::ToolTooLarge => write!(
@@ -268,6 +293,39 @@ impl fmt::Display for Warning {
                 self.text("tool"),
                 self.mm("diameter_mm"),
                 self.mm("needed_mm")
+            ),
+            WarningCode::PocketNoRoom => write!(
+                f,
+                "tool `{}` ({} mm) is wider than the pocket of {} somewhere it must pass, so that shape is not cut; use a smaller bit",
+                self.text("tool"),
+                self.number("diameter_mm", DIAMETER_DECIMALS),
+                self.shape()
+            ),
+            WarningCode::PocketIslandTooClose => {
+                let other = match self.param("other") {
+                    Some("wall") => "the pocket wall".to_owned(),
+                    Some(index) => format!("island profile {index}"),
+                    None => "another boundary".to_owned(),
+                };
+                write!(
+                    f,
+                    "in the pocket of {}, island profile {} is {} mm from {other}, closer than the {} mm tool `{}` is wide, so the material between them is left uncut",
+                    self.shape(),
+                    self.text("island"),
+                    self.mm("gap_mm"),
+                    self.number("diameter_mm", DIAMETER_DECIMALS),
+                    self.text("tool")
+                )
+            }
+            WarningCode::EntryFallback => write!(
+                f,
+                "entry `{}` is not supported by this build yet, so the operation plunges straight down instead",
+                self.text("requested")
+            ),
+            WarningCode::ReliefSkipped => write!(
+                f,
+                "corner relief `{}` is not supported by this build yet, so no corners were relieved",
+                self.text("requested")
             ),
             WarningCode::EngravePathDegenerate => write!(
                 f,

@@ -1045,7 +1045,11 @@ fn match_fitted_arc(
         // Each sub-arc's I and J are snapped within a few quanta to agree
         // with its own rounded ends, so the pieces' centres differ by
         // more than one unit in the last place, within the allowance.
-        let same_circle = pieces.first().is_none_or(|p: &ToolpathArc| {
+        // Compared with the piece before, not the first: over a long run
+        // the snaps add up past the allowance (a 31.7 mm pocket ring
+        // drifted 0.012 mm in five pieces, #137). Every vertex is still
+        // checked against its own piece below.
+        let same_circle = pieces.last().is_none_or(|p: &ToolpathArc| {
             p.clockwise == clockwise
                 && approx_eq(p.centre.x, centre.x, allowed_mm)
                 && approx_eq(p.centre.y, centre.y, allowed_mm)

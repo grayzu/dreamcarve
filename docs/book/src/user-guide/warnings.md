@@ -34,7 +34,11 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 
 | Code | Message says | What to do |
 | --- | --- | --- |
-| `open_path_skipped` | "… is an open path; Profile cuts only closed shapes, so it is not cut" | A target is not a closed outline. Close it in the drawing, or leave it untargeted. |
+| `open_path_skipped` | "… is an open path; Profile and Pocket cut only closed shapes, so it is not cut" | A target is not a closed outline. Close it in the drawing, or leave it untargeted. |
+| `pocket_no_room` | "tool … is wider than the pocket of … somewhere it must pass, so that shape is not cut" | The bit does not fit in the pocket at all. Use a smaller bit or widen the shape ([Pocket](pocket.md#warnings)). |
+| `pocket_island_too_close` | "in the pocket of …, island profile … is … mm from …, closer than the … mm tool … is wide, so the material between them is left uncut" | An island is nearer the pocket wall or another island than the bit is wide. Use a smaller bit or move the island ([Pocket](pocket.md#warnings)). |
+| `entry_fallback` | "entry `…` is not supported by this build yet, so the operation plunges straight down instead" | The Pocket asks for a ramp or helix entry, which a later release adds. The pass is entered with a plunge at the plunge rate ([Pocket](pocket.md#not-yet-in-this-build)). |
+| `relief_skipped` | "corner relief `…` is not supported by this build yet, so no corners were relieved" | The Pocket asks for dogbone or T-bone corners, which a later release adds. The corners keep the bit's radius ([Pocket](pocket.md#not-yet-in-this-build)). |
 | `tool_too_large` | "tool … does not fit …, so that shape is not cut" | The bit does not fit inside the shape (an Inside cut, or a hole of an Outside cut). Use a smaller bit or enlarge the shape. |
 | `duplicate_shape_dropped` | "… is the same outline in the same place as …, so it is cut only once" | Two targets are the same outline in the same place. Remove one. |
 | `tabs_overlap` | "tabs on … touch or overlap on its … mm tool path, so they were joined into longer tabs" | Too many or too wide tabs for the outline. Use fewer or narrower tabs ([Tabs](tabs.md#warnings)). |

@@ -16,6 +16,7 @@
 - [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
 - [Profile operation](user-guide/profile.md)
 - [Tabs](user-guide/tabs.md)
+- [Pocket operation](user-guide/pocket.md)
 - [Engrave operation](user-guide/engrave.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)
