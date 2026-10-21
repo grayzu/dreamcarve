@@ -386,6 +386,76 @@ impl StagedFile {
     }
 }
 
+/// Moves every staged file into place, in order, or none of them: export
+/// writes its programs and the project as one change (#71). A copy of each
+/// destination that is already a file is staged first, so a failure there
+/// changes nothing. If a rename fails, the files already moved are put
+/// back as they were, or removed where there was none, before the error
+/// is returned. A destination reached through a symlink is put back as a
+/// plain file with the old contents.
+///
+/// Once every file is in place, each destination's directory is synced
+/// (Unix), so the renames survive a power cut. That is best effort: the
+/// files are already written, and failing then would say they were not.
+pub fn commit_all(staged: Vec<StagedFile>) -> Result<(), Failure> {
+    let backups = staged
+        .iter()
+        .map(|file| backup_of(&file.dest))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut moved: Vec<(PathBuf, Option<StagedFile>)> = Vec::with_capacity(staged.len());
+    for (file, backup) in staged.into_iter().zip(backups) {
+        let dest = file.dest.clone();
+        if let Err(e) = file.commit() {
+            for (dest, backup) in moved.into_iter().rev() {
+                // Undoing is best effort too; the error reported is the
+                // rename that failed.
+                match backup {
+                    Some(old) => {
+                        let _ = old.commit();
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(&dest);
+                    }
+                }
+            }
+            return Err(e);
+        }
+        moved.push((dest, backup));
+    }
+    for (dest, _) in &moved {
+        sync_parent(dest);
+    }
+    // Dropping `moved` removes the backups.
+    Ok(())
+}
+
+/// A staged copy of `dest`'s current contents when it is a file, to put
+/// back if the export fails; `None` when there is no file there.
+fn backup_of(dest: &Path) -> Result<Option<StagedFile>, Failure> {
+    if !std::fs::metadata(dest).is_ok_and(|m| m.is_file()) {
+        return Ok(None);
+    }
+    let old = std::fs::read(dest)
+        .map_err(|e| Failure::error(format!("cannot read {}: {e}", dest.display())))?;
+    StagedFile::write(dest, &old).map(Some)
+}
+
+/// Syncs the directory holding `path`, so a rename into it is on disk.
+fn sync_parent(path: &Path) {
+    #[cfg(unix)]
+    {
+        let dir = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir,
+            _ => Path::new("."),
+        };
+        if let Ok(dir) = std::fs::File::open(dir) {
+            let _ = dir.sync_all();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 impl Drop for StagedFile {
     fn drop(&mut self) {
         // Removes the temporary file when the stage is abandoned.
