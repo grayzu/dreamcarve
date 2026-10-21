@@ -3311,6 +3311,159 @@ mod tests {
         assert!(on_ring > 0, "no link followed the island's edge");
     }
 
+    /// An L: the 100 × 50 rect less its top-right quarter, so its wall has
+    /// one reflex corner, at (50, 25), (70, 45) placed.
+    fn l_shape() -> Polyline {
+        Polyline::new(
+            [
+                (0.0, 0.0),
+                (100.0, 0.0),
+                (100.0, 25.0),
+                (50.0, 25.0),
+                (50.0, 50.0),
+                (0.0, 50.0),
+            ]
+            .into_iter()
+            .map(|(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        )
+    }
+
+    /// The 100 × 50 rect with a half-disc bay of radius 15 pushed into it
+    /// from the middle of its top wall, centre (50, 50), (70, 70) placed:
+    /// a wall that curves inward.
+    fn bay_shape() -> Polyline {
+        Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(100.0, 0.0),
+                Vertex::line(100.0, 50.0),
+                Vertex::new(65.0, 50.0, -1.0),
+                Vertex::line(35.0, 50.0),
+                Vertex::line(0.0, 50.0),
+            ],
+            true,
+        )
+    }
+
+    /// The concave-wall fixtures of #218: the outline, the centre of the
+    /// tool-centre arc a link along the wall follows (placed), that arc's
+    /// radius, and the lifts per pass at 0° without a wall pass and with
+    /// one (last or first).
+    fn concave_walls() -> [(&'static str, Polyline, Point, f64, [usize; 2]); 2] {
+        [
+            ("L", l_shape(), Point::new(70.0, 45.0), RADIUS_MM, [1, 0]),
+            (
+                "bay",
+                bay_shape(),
+                Point::new(70.0, 70.0),
+                15.0 + RADIUS_MM,
+                [6, 1],
+            ),
+        ]
+    }
+
+    /// #218: where the pocket wall curves inward, the tool-centre region's
+    /// outer ring is an arc bulging into it (radius `r` round the L's
+    /// reflex corner, 15 + `r` round the bay), and a straight link between
+    /// two line ends against it leaves the region. With a wall pass the
+    /// link follows that ring, as round an island (#202), at pass Z and the
+    /// cutting feed: on the L 0 lifts per pass from 1, on the bay 1 from 6.
+    /// Every point of every edge link lies on the arc, at most the
+    /// flattening tolerance off it. Without a wall pass the counts stay.
+    #[test]
+    fn raster_links_follow_a_concave_wall() {
+        for (name, outline, centre, radius_mm, [none, with_wall]) in concave_walls() {
+            let p = project(vec![outline.clone()], &[("i1", at_20_20())]);
+            let profiles = std::slice::from_ref(&outline);
+            for (wall_pass, want) in [
+                (WallPass::None, none),
+                (WallPass::Last, with_wall),
+                (WallPass::First, with_wall),
+            ] {
+                let op = raster_op(&p, CutDirection::Climb, 0.0, wall_pass);
+                let (tp, warnings) = generate(&p, &op);
+                assert!(warnings.is_empty(), "{name}: {warnings:?}");
+                for z in PASS_Z_MM {
+                    let (lifts, edges) = raster_lifts_at(&tp, z, profiles);
+                    assert_eq!(lifts, want, "{name}, {wall_pass:?} at Z {z}");
+                    if wall_pass == WallPass::None {
+                        assert!(edges.is_empty(), "{name}: {edges:?}");
+                        continue;
+                    }
+                    assert!(
+                        edges.len() >= none - with_wall,
+                        "{name} at Z {z}: {edges:?}"
+                    );
+                    for link in &edges {
+                        for (from, mv) in link {
+                            for q in samples_along(*from, mv) {
+                                let r = q.distance_to(centre);
+                                assert!(
+                                    (radius_mm - FLAT_TOL - EPS_MM..=radius_mm + FLAT_TOL + EPS_MM)
+                                        .contains(&r),
+                                    "{name}: edge link point {q:?} is {r} mm from {centre:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// #218, S9: no link between raster lines on the concave-wall
+    /// fixtures cuts into the wall, at several angles: the footprint of
+    /// every stay-down between two lines leaves the pocket by no more than
+    /// the flattening band along it, and its tool centre stays in the
+    /// tool-centre region or on its edge.
+    #[test]
+    fn edge_link_never_leaves_the_wall() {
+        for (name, outline, ..) in concave_walls() {
+            let p = project(vec![outline.clone()], &[("i1", at_20_20())]);
+            let pocket = region_of(std::slice::from_ref(&outline), at_20_20());
+            let tc = inset_region(&pocket, RADIUS_MM, FLAT_TOL);
+            assert_eq!(tc.len(), 1, "{name}");
+            let mut along = 0;
+            for angle_deg in [0.0, 30.0, 45.0, 90.0, 135.0] {
+                let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
+                let (tp, warnings) = generate(&p, &op);
+                assert!(warnings.is_empty(), "{name}: {warnings:?}");
+                for z in PASS_Z_MM {
+                    for link in raster_gaps_at(&tp, z, angle_deg, &tc[0])
+                        .into_iter()
+                        .flatten()
+                    {
+                        let start = link[0].0;
+                        let mut moves = vec![Move::rapid(Point3::new(start.x, start.y, z))];
+                        moves.extend(link.iter().map(|(_, mv)| *mv));
+                        let fp = footprint(&Toolpath { moves }, RADIUS_MM);
+                        let out = difference(&fp, std::slice::from_ref(&pocket), FLAT_TOL);
+                        assert!(
+                            area_mm2(&out) <= 2.0 * FLAT_TOL * link_length_mm(&link) + EPS_MM,
+                            "{name}, {angle_deg}° at Z {z}: link cuts {} mm² of the wall: {link:?}",
+                            area_mm2(&out)
+                        );
+                        for (from, mv) in &link {
+                            for q in samples_along(*from, mv) {
+                                assert!(
+                                    in_or_on(&tc[0], q),
+                                    "{name}, {angle_deg}°: link point {q:?} leaves the region"
+                                );
+                            }
+                        }
+                        if link.len() > 1 || link.iter().any(|(_, mv)| mv.kind != MoveKind::Linear)
+                        {
+                            along += 1;
+                        }
+                    }
+                }
+            }
+            assert!(along > 0, "{name}: no link followed the wall");
+        }
+    }
+
     /// Design step 7: a line through the island's grown circle (radius
     /// 13.175 about (70, 45)) is two segments, ending and starting on that
     /// circle; a line clear of it is one segment across the rect.
