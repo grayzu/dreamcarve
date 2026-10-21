@@ -837,9 +837,13 @@ cut direction and cut side.
   paths for `Side::OnLine` (Inside and Outside still skip them with
   `OpenPathSkipped`, an open path having no side; one of no length
   skips with `reason: no_length`). The path is not nested: no band
-  check, no containment pair, no waste domain. Climb cuts it from the
-  first vertex to the last, conventional from the last to the first
-  (VCarve: the direction picks the end). Each pass is one block from the
+  check, no containment pair, no waste domain. Conventional cuts it
+  from the first vertex to the last, climb from the last to the first
+  (VCarve: "Conventional starts cutting at the Start point Climb cutting
+  starts cutting at the end point"). (changed in #242: #175 had climb
+  start at the first vertex, the opposite of VCarve's rule, which is the
+  reference for option behaviour; tabs stay measured from the first
+  vertex, so they do not move.) Each pass is one block from the
   start to the far end at pass Z, `frees` false; its descent starts at
   the previous pass Z, so the sequencer retracts, rapids back, and
   plunges down the slot to it before the ramp (`along_path`, which
@@ -1243,6 +1247,17 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
    - same shape, next pass, different start (lead-in moved the seam, or
      alternation): rapid up to safe Z, rapid to `b.descent_from`,
      descend;
+   - same shape, not the next pass, `b.descent_from` equals the tool's
+     position (within `EPS_MM`), `b.descent` opens with a straight plunge
+     there (empty, or a first `Linear` move straight up or down at
+     `b.descent_from`), and a cut of `a` passed through `b.descent_from`
+     (within `CLEARED_POINT_TOLERANCE_MM`) at or below the Z that plunge
+     ends at: no link; the plunge runs from where the tool is, straight up
+     or down at the plunge rate in the column `a` just cut, then the rest
+     of `b.descent`. A Profile's relief notch whose descend point is where
+     the lap ended is cut this way. Other shapes keep the retract (O3).
+     (changed in #240: the notch lifted to safe Z and came straight back
+     down at the same point);
    - `b.cleared` and `a.cleared` are both `Some` at `b.z_mm == a.z_mm`,
      and the link is no longer than the flatten tolerance, or the
      straight link lies inside `a.cleared ∪ b.cleared` and its length

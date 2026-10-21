@@ -171,6 +171,13 @@ pub enum Difference {
     /// deeper pass), each pass as a set; DreamCarve's walk within a pass is
     /// checked against D5.
     PassOrderWithinLayer,
+    /// A Profile's relief notch whose descend point is where the lap ended
+    /// starts from there (#240): DreamCarve moves straight up, at the
+    /// plunge rate, in the column the lap just cut, to the notch's first
+    /// level, where PureCutCNC retracts to safe Z and plunges. DreamCarve's
+    /// lifts are not compared with PureCutCNC's (it has none); each must
+    /// run at the tool's plunge rate.
+    NotchRisesFromLapEnd,
 }
 
 /// The DreamCarve project of case `name`: `tests/golden/<name>/dreamcarve.dcv`.
@@ -1599,7 +1606,9 @@ fn check_lead_feeds(
 /// Feeds of the vertical moves: the same feeds appear in both programs.
 /// With [`Difference::RectTabStepsAtPlungeRate`], tab steps are taken out
 /// of that comparison and must instead run at the cutting feed in the
-/// golden program and at the plunge rate in DreamCarve's.
+/// golden program and at the plunge rate in DreamCarve's. With
+/// [`Difference::NotchRisesFromLapEnd`], DreamCarve's lifts are taken out
+/// and must run at the plunge rate.
 fn compare_verticals(
     golden: &Cuts,
     ours: &Cuts,
@@ -1640,10 +1649,33 @@ fn compare_verticals(
             }
         }
     }
+    let notch_rises = differences.contains(&Difference::NotchRisesFromLapEnd);
+    if notch_rises {
+        // The notch cases have one tool: its feed, then its plunge rate.
+        let [_, plunge] = limits.rates[..] else {
+            return Err("a notch case has one tool".into());
+        };
+        let rises: Vec<&Vertical> = ours
+            .verticals
+            .iter()
+            .filter(|v| v.to_z > v.from_z)
+            .collect();
+        if rises.is_empty() {
+            return Err("DreamCarve program has no notch rises".into());
+        }
+        if let Some(v) = rises.iter().find(|v| !approx_eq(v.feed, plunge, SAME_MM)) {
+            return Err(format!(
+                "DreamCarve line {}: rise at ({:.3}, {:.3}) feeds at {} mm/min, expected {plunge}",
+                v.line, v.at.x, v.at.y, v.feed
+            ));
+        }
+    }
     let feeds = |cuts: &Cuts, down: bool| {
+        let skip_lifts = notch_rises && std::ptr::eq(cuts, ours) && !down;
         let mut feeds: Vec<f64> = cuts
             .verticals
             .iter()
+            .filter(|_| !skip_lifts)
             .filter(|v| !is_tab_step(v) && (v.to_z < v.from_z) == down)
             .map(|v| v.feed)
             .collect();
