@@ -89,8 +89,13 @@ pub struct PostProcessor {
     pub feed_speed: FeedSpeed,
     /// Tool-change block.
     pub tool_change: ToolChange,
+    /// Whether Drill writes canned cycles (`G81`–`G83`, `G73`) where
+    /// `canned_cycles` has them, or plain moves everywhere (functional
+    /// spec, capability 14). A project setting
+    /// ([`PostProcessorRef::use_canned_cycles`]); off by default on every
+    /// controller.
+    pub use_canned_cycles: bool,
     /// Drilling canned cycles, or `None` if the controller has none.
-    /// Parsed but unused until phase 2.
     #[serde(deserialize_with = "Option::deserialize")]
     pub canned_cycles: Option<CannedCycles>,
     /// Coolant commands, or `None` if the controller has none.
@@ -319,16 +324,31 @@ pub enum SpindleControl {
     Manual,
 }
 
-/// A dwell after the spindle starts.
+/// A dwell after the spindle starts, and the dwell word a Drill's `dwell_s`
+/// is written with.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpindleDwell {
     /// Template for the dwell line; `{seconds}` is replaced by
-    /// `duration_s`. `G4 P{seconds}` on GRBL and grblHAL, where P is in
-    /// seconds.
+    /// `duration_s` converted to `units`. `G4 P{seconds}` on GRBL and
+    /// grblHAL, where P is in seconds.
     pub command: String,
     /// How long to wait, seconds. `0` emits no dwell.
     pub duration_s: f64,
+    /// The unit of the number written into `command`: seconds on GRBL,
+    /// grblHAL and LinuxCNC, milliseconds on Mach3 (design spec,
+    /// "Post-processor definitions").
+    pub units: DwellUnits,
+}
+
+/// The unit a controller's dwell word takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DwellUnits {
+    /// `P` is seconds.
+    Seconds,
+    /// `P` is milliseconds.
+    Milliseconds,
 }
 
 /// Tool-change block.
@@ -404,8 +424,9 @@ pub enum RetractMode {
     G99,
 }
 
-/// Drilling canned cycles. Parsed but unused until phase 2.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Drilling canned cycles (design spec, "Canned cycles"). Written only
+/// when the project's [`PostProcessor::use_canned_cycles`] is on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CannedCycles {
     /// Plain drill cycle, for example `G81`.
@@ -427,6 +448,12 @@ pub struct CannedCycles {
     pub retract_mode: Option<RetractMode>,
     /// Cycle cancel, for example `G80`.
     pub cancel_command: String,
+    /// How far above the previous depth the controller re-enters after a
+    /// full peck retract (`G83`), millimetres, as its documentation
+    /// states; `None` where it retracts fully. The safety pass compares
+    /// the cycle's expansion with the Drill toolpath to this tolerance.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub reentry_gap_mm: Option<f64>,
 }
 
 /// Coolant commands. Parsed but unused until phase 2.
@@ -479,6 +506,10 @@ pub struct PostProcessorRef {
     pub tool_change_mode: ToolChangeMode,
     /// Decimal places per output unit.
     pub decimal_places: DecimalPlaces,
+    /// Whether Drill writes canned cycles where the definition has them
+    /// (functional spec, capability 14). Off by default; an error when on
+    /// for a definition without them. Added in `.dcv` version 8.
+    pub use_canned_cycles: bool,
 }
 
 impl PostProcessorRef {
@@ -514,6 +545,7 @@ impl PostProcessorRef {
         post.feed_speed.spindle_on_dwell.duration_s = self.spindle_on_dwell_s;
         post.tool_change.mode = self.tool_change_mode;
         post.number_format.decimal_places = self.decimal_places;
+        post.use_canned_cycles = self.use_canned_cycles;
         Ok(post)
     }
 }
@@ -521,9 +553,10 @@ impl PostProcessorRef {
 /// Where each setting of a [`PostProcessorRef`] sits in a full
 /// [`PostProcessor`]: its key in the reference and in a definition's
 /// `default_settings`, and its path in the full definition. Up to `.dcv`
-/// version 6 a project held its whole definition, with the settings at
-/// these paths.
-pub(crate) const SETTING_PATHS: [(&str, &[&str]); 5] = [
+/// version 6 a project held its whole definition, with the first
+/// [`V6_SETTING_COUNT`] settings at these paths; `use_canned_cycles`
+/// came with version 8 (#117).
+pub(crate) const SETTING_PATHS: [(&str, &[&str]); 6] = [
     ("file_extension", &["file_extension"]),
     ("spindle_control", &["feed_speed", "spindle_control"]),
     (
@@ -532,7 +565,11 @@ pub(crate) const SETTING_PATHS: [(&str, &[&str]); 5] = [
     ),
     ("tool_change_mode", &["tool_change", "mode"]),
     ("decimal_places", &["number_format", "decimal_places"]),
+    ("use_canned_cycles", &["use_canned_cycles"]),
 ];
+
+/// How many of [`SETTING_PATHS`] a version 6 file's embedded copy holds.
+pub(crate) const V6_SETTING_COUNT: usize = 5;
 
 /// Why a post-processor reference names no bundled definition.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -636,6 +673,7 @@ impl BundledDefinition {
             spindle_on_dwell_s: post.feed_speed.spindle_on_dwell.duration_s,
             tool_change_mode: post.tool_change.mode,
             decimal_places: post.number_format.decimal_places,
+            use_canned_cycles: post.use_canned_cycles,
         }
     }
 
@@ -872,6 +910,7 @@ mod tests {
                 spindle_on_dwell: SpindleDwell {
                     command: "G4 P{seconds}".into(),
                     duration_s: 3.0,
+                    units: DwellUnits::Seconds,
                 },
                 spindle_control: SpindleControl::Automatic,
             },
@@ -882,6 +921,7 @@ mod tests {
                 pause_command: "M0".into(),
                 mode: ToolChangeMode::M6,
             },
+            use_canned_cycles: false,
             canned_cycles: Some(CannedCycles {
                 drill_command: Some("G81".into()),
                 drill_with_dwell_command: None,
@@ -890,6 +930,7 @@ mod tests {
                 peck_step_word: "Q".into(),
                 retract_mode: Some(RetractMode::G98),
                 cancel_command: "G80".into(),
+                reentry_gap_mm: None,
             }),
             coolant: Some(Coolant {
                 flood_on_command: "M8".into(),
@@ -908,10 +949,85 @@ mod tests {
         let json = serde_json::to_value(&post).unwrap();
         assert_eq!(
             json["feed_speed"]["spindle_on_dwell"],
-            serde_json::json!({ "command": "G4 P{seconds}", "duration_s": 3.0 })
+            serde_json::json!({ "command": "G4 P{seconds}", "duration_s": 3.0, "units": "seconds" })
         );
         let back: PostProcessor = serde_json::from_value(json).unwrap();
         assert_eq!(back, post);
+    }
+
+    /// #117, design spec "Post-processor definitions": the dwell's `P`
+    /// word is seconds on GRBL, grblHAL and LinuxCNC and milliseconds on
+    /// Mach3, so the definition says which. A definition without it is
+    /// rejected like any missing field (#65).
+    #[test]
+    fn dwell_units_round_trip_as_snake_case() {
+        let mut post = sample();
+        for (units, text) in [
+            (DwellUnits::Seconds, "seconds"),
+            (DwellUnits::Milliseconds, "milliseconds"),
+        ] {
+            post.feed_speed.spindle_on_dwell.units = units;
+            let json = serde_json::to_value(&post).unwrap();
+            assert_eq!(
+                json["feed_speed"]["spindle_on_dwell"]["units"], text,
+                "{units:?}"
+            );
+            let back: PostProcessor = serde_json::from_value(json).unwrap();
+            assert_eq!(back, post, "{units:?}");
+        }
+        let mut value = serde_json::to_value(&post).unwrap();
+        value["feed_speed"]["spindle_on_dwell"]
+            .as_object_mut()
+            .unwrap()
+            .remove("units");
+        let err = serde_json::from_value::<PostProcessor>(value).unwrap_err();
+        assert!(err.to_string().contains("units"), "{err}");
+    }
+
+    /// #117, design spec "Canned cycles": the re-entry gap of a chip-break
+    /// cycle is a definition fact, `null` where the controller retracts
+    /// fully, and required like every `Option` field.
+    #[test]
+    fn reentry_gap_is_required_and_null_when_unset() {
+        let post = sample();
+        let json = serde_json::to_value(&post).unwrap();
+        assert!(json["canned_cycles"]["reentry_gap_mm"].is_null());
+        let mut value = json.clone();
+        value["canned_cycles"]["reentry_gap_mm"] = serde_json::json!(0.5);
+        let back: PostProcessor = serde_json::from_value(value).unwrap();
+        assert!(
+            matches!(back.canned_cycles, Some(CannedCycles { reentry_gap_mm: Some(gap), .. })
+                if (gap - 0.5).abs() < 1e-12)
+        );
+        let mut value = json;
+        value["canned_cycles"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reentry_gap_mm");
+        let err = serde_json::from_value::<PostProcessor>(value).unwrap_err();
+        assert!(err.to_string().contains("reentry_gap_mm"), "{err}");
+    }
+
+    /// #117: whether Drill writes canned cycles is the user's choice per
+    /// project (functional spec, open question 2: off everywhere), so it
+    /// is a setting in the reference block and in `default_settings`, and
+    /// `resolve` carries it onto the definition.
+    #[test]
+    fn use_canned_cycles_is_a_project_setting() {
+        for definition in bundled_definitions().unwrap() {
+            let mut reference = definition.default_ref();
+            assert!(!reference.use_canned_cycles, "{}", definition.path);
+            assert!(!definition.post_processor().use_canned_cycles);
+            reference.use_canned_cycles = true;
+            assert!(reference.resolve().unwrap().use_canned_cycles);
+            let json = serde_json::to_value(&reference).unwrap();
+            assert_eq!(json["use_canned_cycles"], serde_json::json!(true));
+        }
+        let (_, dialect) = parse_definition(include_str!("definitions/grblhal/v1.json")).unwrap();
+        assert!(
+            dialect.get("use_canned_cycles").is_none(),
+            "a setting is not part of the dialect"
+        );
     }
 
     #[test]
@@ -1016,9 +1132,9 @@ mod tests {
     // #106: a project stores a reference to a bundled definition version
     // and the user's settings, not the definition.
 
-    /// A version 7 project whose `post_processor` is the GRBL reference
-    /// with the default settings.
-    const V7_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v7/sample.dcv");
+    /// A current-version project whose `post_processor` is the GRBL
+    /// reference with the default settings.
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v8/sample.dcv");
 
     /// The reference block as the project writes it, keys in order.
     const REFERENCE_BLOCK: &str = r#"{
@@ -1031,26 +1147,27 @@ mod tests {
   "decimal_places": {
     "mm": 3,
     "inch": 4
-  }
+  },
+  "use_canned_cycles": false
 }"#;
 
     #[test]
     fn project_post_processor_round_trips() {
-        let loaded = crate::load(V7_FIXTURE.as_bytes()).unwrap();
+        let loaded = crate::load(CURRENT_FIXTURE.as_bytes()).unwrap();
         let block = serde_json::to_string_pretty(&loaded.project.post_processor).unwrap();
         assert_eq!(block, REFERENCE_BLOCK);
-        assert_eq!(crate::save(&loaded.project).unwrap(), V7_FIXTURE);
+        assert_eq!(crate::save(&loaded.project).unwrap(), CURRENT_FIXTURE);
     }
 
-    /// `V7_FIXTURE` with `from` replaced by `to`, loaded.
+    /// `CURRENT_FIXTURE` with `from` replaced by `to`, loaded.
     fn load_edited(from: &str, to: &str) -> Result<crate::Loaded, crate::LoadError> {
-        assert!(V7_FIXTURE.contains(from), "the fixture has `{from}`");
-        crate::load(V7_FIXTURE.replacen(from, to, 1).as_bytes())
+        assert!(CURRENT_FIXTURE.contains(from), "the fixture has `{from}`");
+        crate::load(CURRENT_FIXTURE.replacen(from, to, 1).as_bytes())
     }
 
-    /// The line and column of the first `needle` in `V7_FIXTURE`.
+    /// The line and column of the first `needle` in `CURRENT_FIXTURE`.
     fn position_of(needle: &str) -> crate::TextPosition {
-        let (line, text) = V7_FIXTURE
+        let (line, text) = CURRENT_FIXTURE
             .lines()
             .enumerate()
             .find(|(_, text)| text.contains(needle))
@@ -1106,14 +1223,22 @@ mod tests {
     }
 
     /// The definition that `id`.json on main parsed to, before #106, kept as
-    /// a fixture.
+    /// a fixture, plus the fields the schema has gained since with the
+    /// values the migration gives a file of that time (#117): the dwell
+    /// in seconds, canned cycles off, no re-entry gap.
     fn old_embedded(id: &str) -> PostProcessor {
         let text = match id {
             "grblhal" => include_str!("../tests/fixtures/post/grblhal.json"),
             "grbl" => include_str!("../tests/fixtures/post/grbl.json"),
             _ => panic!("no fixture for {id}"),
         };
-        serde_json::from_str(text).unwrap()
+        let mut value: Value = serde_json::from_str(text).unwrap();
+        value["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
+        value["use_canned_cycles"] = Value::from(false);
+        if let Some(cycles) = value["canned_cycles"].as_object_mut() {
+            cycles.insert("reentry_gap_mm".into(), Value::Null);
+        }
+        serde_json::from_value(value).unwrap()
     }
 
     /// Version 1 of each definition is today's file with the settings moved
@@ -1184,9 +1309,12 @@ mod tests {
     /// "Versions"); pin it here when it is added.
     #[test]
     fn released_definition_versions_are_unchanged() {
+        // Re-pinned in #117 when `spindle_on_dwell.units` and
+        // `default_settings.use_canned_cycles` reached every version (a
+        // schema-wide field; see `definitions/README.md`, "Versions").
         const PINNED: [(&str, u64); 2] = [
-            ("grblhal/v1.json", 0xb466_2fca_9b77_df77),
-            ("grbl/v1.json", 0xe5dc_88e6_fd09_a5a9),
+            ("grblhal/v1.json", 0xac47_0795_847b_c94d),
+            ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
         ];
         let bundled = bundled_definitions().unwrap();
         let paths: Vec<&str> = bundled.iter().map(|d| d.path).collect();

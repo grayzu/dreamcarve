@@ -124,11 +124,24 @@ pub fn build(project: &Project, date: &str) -> Built {
     }
 
     let mut ops = Vec::new();
-    for Operation::Profile(op) in &project.operations {
+    for operation in &project.operations {
         // Disabled operations are already reported by validation.
-        if !op.enabled {
+        if !operation.enabled() {
             continue;
         }
+        // Pocket, Drill and Engrave load and validate from format version
+        // 8 on; their generators land in their own slices (#117). Until
+        // then an enabled one is refused, never skipped.
+        let Operation::Profile(op) = operation else {
+            findings.errors.push(Finding::plain(format!(
+                "operation `{}` (`{}`) is a {} operation, which is not supported by this build \
+                 yet; disable it to export the rest",
+                operation.id(),
+                operation.name(),
+                operation.kind()
+            )));
+            continue;
+        };
         let Some(tool) = project.tools.iter().find(|t| t.id == op.tool) else {
             findings.errors.push(Finding::plain(format!(
                 "operation `{}` uses tool `{}`, which is not in the project",
@@ -410,22 +423,22 @@ fn report_post_and_operations(
             old.definition_version
         );
     }
-    for Operation::Profile(op) in project.operations.iter().filter(|op| op.enabled()) {
+    for op in project.operations.iter().filter(|op| op.enabled()) {
         let tool = project
             .tools
             .iter()
-            .find(|t| t.id == op.tool)
+            .find(|t| &t.id == op.tool())
             .map_or("?", |t| t.name.as_str());
         // Validation refuses an unset depth, so an exported one is set.
         let depth = op
-            .depth_mm
+            .depth_mm()
             .map_or_else(|| "?".to_owned(), |d| d.to_string());
         println!(
             "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} mm deep",
-            op.id,
-            op.name,
-            op.tool,
-            op.targets.len(),
+            op.id(),
+            op.name(),
+            op.tool(),
+            op.targets().len(),
         );
     }
 }

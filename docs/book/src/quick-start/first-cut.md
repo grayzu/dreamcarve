@@ -45,19 +45,19 @@ dreamcarve init coaster.svg
 Imported 1 shape(s) from coaster.svg: page units mm, 1 user unit = 1.0000 mm.
 Wrote coaster.dcv: stock 110.00 × 110.00 mm, post-processor grblhal, 1 shape(s) targeted by Profile.
 Values to set; export refuses until every one is set:
-coaster.dcv:9:21: stock.thickness_mm is not set (mm)
-coaster.dcv:22:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:23:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:24:14: tools[t1].rpm is not set (RPM) for tool `Set me`
-coaster.dcv:25:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-coaster.dcv:40:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
+coaster.dcv:10:21: stock.thickness_mm is not set (mm)
+coaster.dcv:24:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:25:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:26:14: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:27:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
+coaster.dcv:42:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
 Next: edit coaster.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check coaster.dcv`.
 ```
 
-Each `coaster.dcv:9:21:` is a file, a line and a column: here line 9,
+Each `coaster.dcv:10:21:` is a file, a line and a column: here line 10,
 column 21, where the value to replace starts. Many editors and terminals
 open the file at that spot when you click it, or with a command such as
-`code -g coaster.dcv:9:21`.
+`code -g coaster.dcv:10:21`.
 
 The project holds everything about the job: the shapes, the **stock** (the
 block of material you cut from), the tool, the operation, and the
@@ -87,12 +87,12 @@ dreamcarve export coaster.dcv
 This fails, on purpose:
 
 ```text
-coaster.dcv:9:21: error: stock.thickness_mm is not set (mm)
-coaster.dcv:22:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:23:24: error: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:24:14: error: tools[t1].rpm is not set (RPM) for tool `Set me`
-coaster.dcv:25:23: error: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-coaster.dcv:40:19: error: operations[op1].depth_mm is not set (mm) for operation `Profile`
+coaster.dcv:10:21: error: stock.thickness_mm is not set (mm)
+coaster.dcv:24:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:25:24: error: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:26:14: error: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:27:23: error: tools[t1].step_down_mm is not set (mm) for tool `Set me`
+coaster.dcv:42:19: error: operations[op1].depth_mm is not set (mm) for operation `Profile`
 error: export of coaster.dcv failed; nothing was written
 ```
 
@@ -110,10 +110,11 @@ set is near the top, before the shapes. The file starts like this:
 <!-- doc-test: excerpt coaster.dcv -->
 ```json
 {
-  "version": 7,
+  "version": 8,
   "name": "coaster",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
   "stock": {
     "width_mm": 110.0,
     "height_mm": 110.0,
@@ -127,6 +128,7 @@ set is near the top, before the shapes. The file starts like this:
     {
       "id": "t1",
       "name": "Set me",
+      "number": null,
       "cutter": "end_mill",
       "diameter_mm": 6.35,
       "flutes": 2,

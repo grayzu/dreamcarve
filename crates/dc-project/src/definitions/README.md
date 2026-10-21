@@ -25,15 +25,25 @@ any upgrade.
 - Every file is pinned by hash in
   `post_processor::tests::released_definition_versions_are_unchanged`, so an
   edit in place fails CI. Pin a new version when it is added.
+- The one edit made in place is a schema-wide field: every field of a
+  definition is required, so when `PostProcessor` gains one, every released
+  version gets it with the value that reproduces what it did before, and
+  is re-pinned in the same change. Emitted bytes must not change, which
+  `resolve_matches_old_embedded_definition` and the golden corpus check.
+  #117 added `feed_speed.spindle_on_dwell.units` (`"seconds"` on both),
+  `canned_cycles.reentry_gap_mm` (`null`; both have `canned_cycles: null`
+  anyway) and the `default_settings.use_canned_cycles` setting (`false`)
+  this way.
 - The checks in `dc-gcode`'s `post` tests (the controller facts below) run
   over every version of every definition.
 
-A file is a `dc_project::PostProcessor` without the five fields a project
+A file is a `dc_project::PostProcessor` without the six fields a project
 holds (`file_extension`, `feed_speed.spindle_control`,
 `feed_speed.spindle_on_dwell.duration_s`, `tool_change.mode`,
-`number_format.decimal_places`), plus a `default_settings` object with those
-five, under the names a project uses (`file_extension`, `spindle_control`,
-`spindle_on_dwell_s`, `tool_change_mode`, `decimal_places`). A new project
+`number_format.decimal_places`, `use_canned_cycles`), plus a
+`default_settings` object with those six, under the names a project uses
+(`file_extension`, `spindle_control`, `spindle_on_dwell_s`,
+`tool_change_mode`, `decimal_places`, `use_canned_cycles`). A new project
 starts from them. The test `bundled_definitions_validate` checks that every
 file parses and has its id.
 
