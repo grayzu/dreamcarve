@@ -54,7 +54,7 @@ slice 2, #117: #106 took version 7 first.)
 | --- | --- | --- |
 | `dc-cam::pocket` | `src/engine/toolpaths/pocket.ts` (`buildInsetRegions`, `buildOffsetRegionTree`, `cutOffsetRegionNode` inner-first, `buildPocketParallelSegments`, `transitionToCutEntry`, `generateStepLevels`, `orderClosedContoursGreedy`, `rotateContourToNearestEntry`), `pocketPatterns.ts` (`OPERATION_PATTERN_SUPPORT`, `areaCoverage`) | Only `offset` and `parallel` (named `raster`). No seeded offset, trochoidal, slot feed, engagement feed, corner rounding, wall cleanup, model sections, clamps. Clipper integer paths become `dc-geometry` offsets with cavalier_contours and booleans with i_overlay. Direction rule re-derived (see Pocket algorithm). `pocketAngle` sign re-derived. Islands come from `nest`, not the band resolver. |
 | `dc-cam::pocket::rest` | `src/engine/toolpaths/restRegions.ts`, `finishFloorCoverage.ts` (`regionAreaPaths`, `floorCoverage`, `restrictFloorRoot` noise rule) | Rest region = region minus the earlier tool's reachable area. The coverage test is ported; the island-face floor restriction is not (no multi-depth instances in phase 2). |
-| `dc-cam::drill` | `src/engine/toolpaths/drilling.ts` (`generateDrillingToolpath`, `emitDrillCycle`, `sortTargetsByNearestNeighbor`, `DrillCycle`), `drillingRetract.test.ts`, `camOperationSmoke.test.ts` drill cases, `toolpaths.test.ts` drill ordering | Circle detection on polylines, not a `circle` feature kind. Chip-break gap is a mm field, not a constant in project units. Dwell is emitted as `G4` when expanded (upstream loses it). No helical bore, no countersink (phase 3), no clamps. Nearest neighbour starts from the first target in drawing order (D5), not the origin. |
+| `dc-cam::drill` | `src/engine/toolpaths/drilling.ts` (`generateDrillingToolpath`, `emitDrillCycle`, `sortTargetsByNearestNeighbor`, `DrillCycle`), `drillingRetract.test.ts`, `camOperationSmoke.test.ts` drill cases, `toolpaths.test.ts` drill ordering | Circle detection on polylines, not a `circle` feature kind. Chip-break gap is a mm field, not a constant in project units. Dwell is emitted as `G4` when expanded (upstream loses it). Pecks count from the retract plane `R`, as controllers count `G83`/`G73`, not from the stock top (#153). No helical bore, no countersink (phase 3), no clamps. Nearest neighbour starts from the first target in drawing order (D5), not the origin. |
 | `dc-cam::engrave` | `src/engine/toolpaths/carving.ts` (`generateFollowLineToolpath`, `buildCarveLevels`), `carving.test.ts` direct-mode cases | Direct mode only; no trochoidal carve, no region masks. Depth is from the stock top and clamped by S1, not to absolute 0. Direction alternation added (D9). |
 | `dc-cam::entry` | `src/engine/toolpaths/entry.ts` (`synthesizeEntry`, `findHelixPlacement`, `findLargestClearanceCircle`, `findRampPlacement`, `emitHelix`, `emitRamp`, `pitchFromRampAngle`, `plungeLimitedFeedScale`, `helixAngularDirection`), `entry.test.ts` | Helix sense re-derived for Y-up. Search caps kept (`MAX_HELIX_RADIUS_ATTEMPTS`, 72 angles, 12 endpoint candidates, 20 000 cells). Profile ramp (along the path) is DreamCarve's; PureCutCNC's zigzag ramp serves Pocket. |
 | `dc-cam::lead` | `src/engine/toolpaths/xyLead.ts` (`planXyLeadIn`, `planXyLeadOut`, `contourArrivals` corner scoring, `validateLead`, radius and sweep ladders), `xyLead.test.ts`, `xyLeadEdge.test.ts` | The user sets the radius (VCarve); the ladder shrinks from it. Sweep ladder kept. Overcut is DreamCarve's (VCarve). Feed is the cut feed, not the plunge-scaled feed, because the descent is finished before the lead. |
@@ -580,8 +580,9 @@ tolerance.
    `retract_mm` warns `DrillRetractBelowStockTop`; validation already
    rejects it, but the generator does not trust that), `peck =
    peck_depth_mm.or(tool.step_down_mm)` (validation guarantees one),
-   `chip gap` from `retract`. Peck levels come from `passes::pass_z_mm`,
-   so only the last peck is shorter; a peck at least the hole depth warns
+   `chip gap` from `retract`. Peck levels come from `passes::pass_z_mm`
+   measured from `retract_z` rather than the top (see step 4); a peck
+   that reaches `bottom` from `retract_z` in one plunge warns
    `DrillPeckDeeperThanHole` once per operation. A non-positive gap or a
    negative dwell is `CamError::InvalidDrillSetting`. Only the plunge rate
    is required by the generator.
@@ -591,7 +592,10 @@ tolerance.
    `retract_z` (above the stock), and whose `cuts` are:
    - Simple: `Linear` down to `bottom` at plunge; (dwell) `Dwell(s)`
      pseudo-move; `Rapid` up to safe Z.
-   - Peck, full retract: for `z_k = max(bottom, top − k·peck)`: `Linear`
+   - Peck, full retract: for `z_k = max(bottom, retract_z − k·peck)`
+     (from `R`, as a controller's `G83`/`G73` counts; the first peck
+     removes `peck − (retract_z − top)` of material, never more than a
+     peck; changed in #153, was `top − k·peck`): `Linear`
      down to `z_k` at plunge, (dwell), `Rapid` up to `retract_z`, then
      `Rapid` down to `min(z_k + PECK_REENTRY_MM, retract_z)`
      (`PECK_REENTRY_MM` = 0.5 mm, a named constant: the tool re-enters
@@ -1001,10 +1005,10 @@ it writes them. Any hole whose cycle is `Expanded`, a missing command, a
 non-standard definition field, a missing `reentry_gap_mm` for `G83`/`G73`,
 or a difference in motion makes the whole operation expand (one warning
 `canned_cycle_expanded (op, reason)`), so a program never mixes cycles and
-moves for one operation. `G83` and `G73` are written only when `R` is the
-stock top (`retract_mm: 0`): controllers measure pecks from `R`, and the
-Drill toolpath measures them from the stock top, as PureCutCNC does
-(#153). (changed in slice 15, #148.)
+moves for one operation. The Drill toolpath measures pecks from `R`, as
+controllers do, so `G83` and `G73` are written with any retract height.
+(changed in slice 15, #148, which wrote them only at `retract_mm: 0`; and
+in #153, which moved the toolpath's peck levels to `R`.)
 
 **Chip-break re-entry.** No bundled definition writes `G83` or `G73`, so
 peck and chip-break Drills are always plain moves (changed in slice 17,
@@ -1073,7 +1077,8 @@ Rules for all four (README, "Rules for the slice 17 definitions"):
   not write; the user sets Z zero per tool, as on grblHAL.
 - **User text never opens a comment.** LinuxCNC acts on comments that
   start with a keyword (`(LOGOPEN,file)` truncates a file), so the first
-  header comment is `( Project: {programName} )`.
+  header comment is `( Project: {programName} )`. grblHAL and GRBL got the
+  same header in version 2 of each (#171).
 - **Header modal codes.** `G40`, `G49`, `G80` and `G91.1` are accepted
   in any program and written again after every pause; `G90.1` is
   refused (#154).

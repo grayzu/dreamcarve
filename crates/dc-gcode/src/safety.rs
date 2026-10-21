@@ -2993,6 +2993,64 @@ mod tests {
         );
     }
 
+    /// #153: the Drill toolpath [`dc_cam::generate_drill`] makes for a
+    /// 2 mm peck, 3 mm deep, with the retract plane 1 mm above the 6 mm
+    /// stock, at (50, 50): pecks from `R` (Z 7) to 5, then to 3.
+    fn generated_peck(retract: dc_project::PeckRetract) -> Toolpath {
+        let (mut project, _, _) = fixture();
+        let hole = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("hole"),
+            name: "Hole".into(),
+            profiles: vec![dc_geometry::Polyline::circle(Point::new(50.0, 50.0), 4.0)],
+        };
+        project.instances.push(dc_project::FeatureInstance {
+            id: dc_project::InstanceId::new("h1"),
+            definition: hole.id.clone(),
+            transform: dc_geometry::Transform::translate(0.0, 0.0),
+            name: "Hole".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        project.definitions.insert(hole.id.clone(), hole);
+        let op = dc_project::DrillOp {
+            targets: vec![dc_project::InstanceId::new("h1")],
+            cycle: dc_project::DrillCycle::Peck {
+                peck_depth_mm: Some(2.0),
+                retract,
+            },
+            depth_mm: Some(3.0),
+            retract_mm: 1.0,
+            ..dc_project::test_support::sample_drill()
+        };
+        dc_cam::generate_drill(&project, &op).unwrap().0.toolpath
+    }
+
+    /// #153, S11: with the retract plane 1 mm above the stock, the
+    /// controller's `G83`/`G73` pecks from `R1` (2 mm, then to the
+    /// bottom) are the generated Drill toolpath's, move for move, so the
+    /// written cycle passes the safety pass; a `Q` that pecks otherwise
+    /// does not.
+    #[test]
+    fn g83_expansion_matches_drill_toolpath_with_retract() {
+        let post = canned(Some(0.5));
+        for (retract, word) in [
+            (dc_project::PeckRetract::Full, "G83"),
+            (dc_project::PeckRetract::ChipBreak { gap_mm: 0.5 }, "G73"),
+        ] {
+            let toolpath = generated_peck(retract);
+            let text = |q: &str| cycle_program(&format!("{word} X50 Y50 Z-3 R1 Q{q} F300\n"));
+            check_drill_on(&text("2"), &toolpath, &post)
+                .unwrap_or_else(|e| panic!("{word} Q2: {e:?}"));
+            let result = check_drill_on(&text("3"), &toolpath, &post);
+            assert!(
+                matches!(result, Err(ExportError::MotionMismatch { .. })),
+                "{word} Q3: {result:?}"
+            );
+        }
+    }
+
     /// S1 on the expansion: a `G81` whose bottom is below the stock bottom
     /// (Z −6.5 on the 6 mm stock, no allowance) fails on its line.
     #[test]

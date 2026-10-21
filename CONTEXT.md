@@ -197,7 +197,8 @@ _PureCutCNC_: retractHeight
 **Peck**:
 One plunge of a Drill that stops short of the hole's depth, followed by a
 lift to clear chips: to the Retract Height (full) or by a small gap (chip
-break).
+break). Peck depths count from the Retract Height, as a canned cycle's
+from `R`: peck k ends `k × peck_depth_mm` below it, or at the hole's depth.
 _Avoid_: Step, pass (a pass is a depth level of a cutting operation)
 
 **Dwell**:

@@ -338,7 +338,7 @@ Which bundled post-processor the project uses, and your settings for it:
 ```json
 "post_processor": {
   "id": "grblhal",
-  "definition_version": 1,
+  "definition_version": 2,
   "file_extension": "nc",
   "spindle_control": "automatic",
   "spindle_on_dwell_s": 3.0,

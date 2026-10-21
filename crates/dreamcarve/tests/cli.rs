@@ -1458,8 +1458,10 @@ fn profile_lead_exports_and_passes_safety() {
 
 /// Slice 7 (#138), acceptance test 23 on the CLI: the coaster with an
 /// 8 mm hole at its centre, drilled through in 4 mm pecks with a full
-/// retract and a 0.25 s dwell, checks clean and exports. The program dwells
-/// at the bottom of each of the three pecks, reaches the coaster's depth at
+/// retract and a 0.25 s dwell, checks clean and exports. The pecks count
+/// from the retract height 1 mm above the 11.8 mm stock (#153): to 8.8,
+/// 4.8, 0.8 and −0.2 mm. The program dwells
+/// at the bottom of each of the four pecks, reaches the coaster's depth at
 /// the hole, and moves in XY only at its highest Z (S2); the safety pass,
 /// S6 and S15 included, accepted it.
 #[test]
@@ -1507,7 +1509,7 @@ fn drill_exports_and_passes_safety() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
     let dwells = program.lines().filter(|l| l.trim() == "G4 P0.250").count();
-    assert_eq!(dwells, 3, "one dwell per peck:\n{program}");
+    assert_eq!(dwells, 4, "one dwell per peck:\n{program}");
 
     let moves = dc_gcode::parse_motion(&program).expect("program parses");
     let z = |m: &MachineMove| m.to.z.expect("Z is known");
@@ -1532,7 +1534,7 @@ fn drill_exports_and_passes_safety() {
         .filter(|m| m.kind.is_cut() && m.to.x == at_dwell.to.x && m.to.y == at_dwell.to.y)
         .map(z)
         .collect();
-    assert_eq!(hole_cuts.len(), 3, "three pecks at the hole: {hole_cuts:?}");
+    assert_eq!(hole_cuts.len(), 4, "four pecks at the hole: {hole_cuts:?}");
     assert_approx_eq!(
         hole_cuts.iter().copied().fold(f64::MAX, f64::min),
         deepest,
@@ -2592,6 +2594,65 @@ fn init_writes_post_processor_reference() {
             "use_canned_cycles": false
         })
     );
+}
+
+/// #171: `init` writes grblHAL version 2, whose program opens with fixed
+/// text, so the project name never starts a comment.
+#[test]
+fn init_writes_grblhal_v2() {
+    let dir = work_dir("init_writes_grblhal_v2");
+    let dcv = init_coaster(&dir);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert_eq!(program.lines().next(), Some("( Project: coaster )"));
+}
+
+/// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
+/// exports the bytes it did before version 2 existed
+/// (`tests/expected/coaster-<id>-v1.nc`, committed before #171) until the
+/// user runs `export --post <id>`. That upgrades it to version 2, says so,
+/// and changes only the program's first line.
+#[test]
+fn v1_project_exports_v1_bytes_until_upgraded() {
+    for (id, expected, first) in [
+        ("grblhal", "coaster-grblhal-v1.nc", "( Project: coaster )"),
+        ("grbl", "coaster-grbl-v1.nc", "; Project: coaster"),
+    ] {
+        let dir = work_dir(&format!("v1_project_exports_v1_bytes_{id}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let mut project = load_file(&dcv).project;
+        project.post_processor = dc_project::bundled_definition(id, 1)
+            .expect("version 1 is bundled")
+            .default_ref();
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
+        let v1 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v1 → v2,")),
+            "{report}"
+        );
+        let block = post_processor_block(&dcv);
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+        assert_eq!(v2.lines().next(), Some(first), "{id}");
+        assert!(
+            v2.lines().skip(1).eq(v1.lines().skip(1)),
+            "{id}: only the first line changes\nv1:\n{v1}\nv2:\n{v2}"
+        );
+    }
 }
 
 /// The motion of `program`: every move, as where it goes, at what feed,
