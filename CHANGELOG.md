@@ -167,6 +167,24 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   millimetres exactly when the file is read, so the program is the one the
   millimetre numbers give; a bad unit is an error at its line and column. A
   command that saves the file writes millimetre numbers back ([#282]).
+- **Profile last pass allowance; project format version 13.** A Profile's
+  `last_pass` (`allowance_mm`, `thickness_mm`, `reverse`) is VCarve's "Last
+  Pass Allowance": every pass but the last runs `allowance_mm` farther from
+  the part, and the last pass cuts on the part's path at full depth, so it
+  takes an even skin off the whole wall and leaves no step marks
+  ([#284]). `thickness_mm` sets how deep that last pass is; `reverse` cuts it
+  the other way round. Tabs, leads, ramps, helixes and corner relief work with
+  it: the earlier passes rise over a slightly longer stretch round each tab,
+  and the notches are cut from the last pass. The allowance must be more than
+  0 and at most a third of the bit's diameter, on an Inside or Outside
+  Profile, and `thickness_mm` at most the step-down. The last pass takes
+  off at most the allowance (√2 times it in a square corner): a drawing the
+  earlier passes cannot follow (a band, neck, slot, notch or hole that fits
+  the bit but not the bit plus the allowance, a corner sharper than 90°, or
+  a part that close to another) is refused, naming the shapes. A one-pass
+  cut warns `last_pass_unused`. `last_pass` is `null` in
+  `init` and in upgraded projects, which cut exactly as before. Older
+  DreamCarve versions cannot read version 13 files.
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -435,6 +453,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
+[#284]: https://github.com/grayzu/dreamcarve/issues/284
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306

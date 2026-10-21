@@ -512,6 +512,7 @@ fn profile(p: &Project, side: Side, lead: Option<Lead>) -> ProfileOp {
         entry: Entry::Plunge,
         lead,
         corner_relief: CornerRelief::None,
+        last_pass: None,
     }
 }
 

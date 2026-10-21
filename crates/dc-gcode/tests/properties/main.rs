@@ -70,6 +70,8 @@ fn rejects_drawing(error: &CamError) -> bool {
             | CamError::BandNarrowerThanTool { .. }
             | CamError::PartNarrowerThanTool { .. }
             | CamError::CutsIntoKeptSide { .. }
+            | CamError::BandNarrowerThanAllowance { .. }
+            | CamError::ShapeNarrowerThanAllowance { .. }
     )
 }
 
