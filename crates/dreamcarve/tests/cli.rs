@@ -6138,6 +6138,110 @@ fn tabs_clear_op_removes_only_the_tabs_it_cuts_round() {
     );
 }
 
+/// The tab points of the project at `dcv`, by id.
+fn tab_points(dcv: &Path) -> Vec<(String, Point)> {
+    load_file(dcv)
+        .project
+        .tabs
+        .iter()
+        .map(|t| (t.id.to_string(), Point::new(t.x_mm, t.y_mm)))
+        .collect()
+}
+
+/// #293, the issue's first test: `tabs place --replace` swaps the tabs
+/// the operation cuts round (the set `tabs clear <dcv> <op>` removes) for
+/// the new ones in one save, and prints both. Four tabs on the coaster,
+/// then six with `--replace`: the file holds the six, at none of the first
+/// four's points and with fresh ids, so an id read off an earlier `tabs
+/// list` names no new tab. The part keeps tabs, so there is no note that
+/// it comes loose. `--replace` with nothing to place is a usage error.
+#[test]
+fn tabs_place_replace_swaps_the_operations_tabs() {
+    let dir = work_dir("tabs_place_replace_swaps_the_operations_tabs");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = tab_points(&dcv);
+    assert_eq!(first.len(), 4, "{first:?}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "6",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert_eq!(printed.matches("Removed `tab").count(), 4, "{printed}");
+    assert_eq!(printed.matches("Placed `tab").count(), 6, "{printed}");
+    assert!(
+        printed.contains("4 tab(s) removed and 6 placed; coaster.dcv saved with 6 tab(s)."),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let second = tab_points(&dcv);
+    assert_eq!(second.len(), 6, "{second:?}");
+    for (id, point) in &second {
+        assert!(
+            first.iter().all(|(old, _)| old != id),
+            "new tab reuses id {id}: {second:?}"
+        );
+        assert!(
+            first.iter().all(|(_, old)| old.distance_to(*point) > 1e-6),
+            "new tab {id} at an old tab's point: {second:?}"
+        );
+    }
+
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1", "--replace"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("--replace needs --count or --at"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+}
+
+/// #293, the issue's second test: without `--replace`, `tabs place` keeps
+/// adding: four tabs then six leave ten on the coaster (none of the six
+/// lands on one of the four), and it notes that the outline already had
+/// tabs and how to swap them instead.
+#[test]
+fn tabs_place_without_replace_notes_existing_tabs() {
+    let dir = work_dir("tabs_place_without_replace_notes_existing_tabs");
+    init_coaster(&dir);
+    let dcv = dir.join("coaster.dcv");
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "6"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(load_file(&dcv).project.tabs.len(), 10);
+    let printed = stdout(&out);
+    assert!(
+        printed.contains(
+            "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s); the 6 new ones are added to them. To swap them instead, give --replace."
+        ),
+        "{printed}"
+    );
+}
+
 /// One open, straight line 98 mm long.
 const ESTIMATE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="40mm" viewBox="0 0 120 40">
   <path id="line" d="M 10 20 L 108 20"/>
