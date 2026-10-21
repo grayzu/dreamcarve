@@ -3362,6 +3362,31 @@ mod tests {
         );
     }
 
+    /// S9 on a raster Pocket round the 20 mm circle island (#202): with a
+    /// wall pass the links between line ends against the island follow
+    /// its tool-centre ring, and the program passes, with an allowance
+    /// too, at angles that meet the island's curve everywhere.
+    #[test]
+    fn raster_edge_links_round_an_island_pass_s9() {
+        for allowance_mm in [0.0, 0.5] {
+            let (project, op) = island_pocket(dc_project::Entry::Plunge, allowance_mm);
+            for angle_deg in [0.0, 45.0, 90.0] {
+                for wall_pass in [dc_project::WallPass::Last, dc_project::WallPass::First] {
+                    let op = dc_project::PocketOp {
+                        strategy: dc_project::ClearanceStrategy::Raster { angle_deg },
+                        wall_pass,
+                        ..op.clone()
+                    };
+                    let text = emit_pocket(&project, &op, None);
+                    assert!(
+                        text.is_ok(),
+                        "{allowance_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// S9 alone on hand-written `text`, as operation `op` of `project` with
     /// the project's tool.
     fn check_material_text(
