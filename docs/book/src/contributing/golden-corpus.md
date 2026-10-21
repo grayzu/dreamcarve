@@ -1,8 +1,8 @@
 # Golden corpus
 
-The golden corpus is PureCutCNC's own output for a set of small jobs,
+The golden corpus is PureCutCNC's own output for a set of small projects,
 committed to this repository. `cargo test` compares DreamCarve's program for
-the same job against it. It is how a port proves it matches PureCutCNC, and
+the same project against it. It is how a port proves it matches PureCutCNC, and
 how a Y-up mistake is caught (see [Porting](porting.md)).
 
 Node is needed only to capture a case. Running the comparison needs Rust
@@ -66,7 +66,7 @@ controller would and compares them in the machine frame they share:
 1. **Safety** on both programs: no Z below the stock bottom minus the
    allowance, and every cut at one of the project's tool rates. A rapid
    that moves in XY must be at or above safe Z. A Drill may also rapid
-   straight down to its retract plane, and inside its hole between pecks.
+   straight down to its retract height, and inside its hole between pecks.
 2. **Levels.** The Z values of the cutting passes are the same.
 3. **Moves per level, after start alignment.** Each run of horizontal
    cuts is split into three kinds of move. *Loops* end where they began: a
@@ -111,6 +111,41 @@ different set of operations for the same cuts, the notes say so: it
 routes an outside edge only round `add` features and an inside edge only
 round `subtract` ones.
 
+To write a multi-operation case:
+
+1. **List the operations in one order in both projects.** DreamCarve runs
+   them in list order and never regroups them by tool, so the `.camj`'s
+   operations come in the order the `.dcv` lists them. Where PureCutCNC
+   needs two operations for one of DreamCarve's (a part and its holes),
+   put them next to each other and say so in the notes.
+2. **Set the machining order on both sides.** PureCutCNC's
+   `machiningOrder: feature_first` is DreamCarve's `full_depth_first`, and
+   `level_first` is `pass_first`. Set it explicitly in both files, so a
+   changed default cannot change the case.
+3. **Make the tools match.** The harness emits every case as one
+   program, with a tool change before each tool after the first
+   (`ProgramSplit::OneProgram`, as `dreamcarve export --one-program`),
+   whatever the project's `tool_change_mode` says. Tool-change lines are
+   not compared, but each cut is checked against its own tool's rates,
+   so the `.dcv`'s tools carry the `.camj`'s diameters and feeds, in the
+   same order. Number them (`"number": 1`, `2`, …) and use grblHAL with
+   `"tool_change_mode": "m6"`, as `pocket-rough-then-rest` does, so the
+   `.dcv` exports the same single program from the command line.
+4. **Expect no warnings.** `harness::check` fails when any operation, or
+   the emitter, warns. A case that needs a warning to be right is a
+   `cli.rs` test instead.
+5. **Pick the comparison.** `Order::Sets` for a case about what is cut;
+   `Order::InOrder` when the order of shapes or passes is what the case
+   covers. An in-order case needs every intentional difference in order
+   to be a `Difference` with a check of its own, as
+   `PassOrderWithinLayer` checks DreamCarve's walk against D5.
+6. **Say which operation a difference concerns.** A `Difference` is
+   listed per case, but the harness tags every move with its operation's
+   index, counted from the `( Operation k: … )` comments, so a
+   difference's own check can be limited to the operation it concerns
+   (`RestMachiningAgainstFinishPass` compares only the rough). The notes
+   name that operation.
+
 ## Intentional differences
 
 Where DreamCarve deliberately differs from PureCutCNC, the harness checks
@@ -141,7 +176,7 @@ Never widen the tolerance to make a case pass.
 
 ## Add a case
 
-1. In PureCutCNC, build the job and save it as
+1. In PureCutCNC, build the project and save it as
    `tools/parity/cases/<case>.camj`. Keep it small. Freeze `meta.created`
    and `meta.modified` so a re-capture is byte-identical.
 2. Write `tools/parity/cases/<case>.notes.md`: the equivalent DreamCarve
