@@ -1594,21 +1594,18 @@ fn match_fitted_arc(
             }
         }
         // #226: the chain stays within the allowance of the move along its
-        // whole length, not only at its ends: over every piece the move
-        // spans, the piece's farthest point from the move's chord (for a
-        // straight move between points on the circle, its sagitta).
+        // whole length, not only at its ends: over the part of every piece
+        // between the move's ends, the farthest point from the move's
+        // chord (for a straight move between points on the circle, its
+        // sagitta). Each end is placed on each piece, not assumed to lie
+        // before or past it (#262): a vertex up to the angle slack past a
+        // piece's end counts as on that piece, and on a circle so small
+        // that the slack is a whole chord it lies inside the next piece,
+        // whose part before it the move does not span.
         for k in first_piece..=piece {
             let current = pieces.get(k)?;
-            let from_rad = if k == first_piece {
-                current.clamped_turn(vertex.xy())
-            } else {
-                0.0
-            };
-            let to_rad = if k == piece {
-                current.clamped_turn(mv.to.xy())
-            } else {
-                current.sweep_rad
-            };
+            let from_rad = current.clamped_turn(vertex.xy());
+            let to_rad = current.clamped_turn(mv.to.xy());
             if to_rad > from_rad
                 && current.deviation_mm(from_rad, to_rad, vertex.xy(), mv.to.xy()) > allowed_mm
             {
