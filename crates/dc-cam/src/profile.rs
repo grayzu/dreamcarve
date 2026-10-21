@@ -2631,4 +2631,196 @@ mod tests {
             }
         }
     }
+
+    // ── #210: an open path in a part, beside the part's own lines ──
+
+    /// An open polyline through `points`.
+    fn open(points: &[(f64, f64)]) -> Polyline {
+        Polyline::new(
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+            false,
+        )
+    }
+
+    /// The 100 × 50 rect at (20, 20) with `extra` profiles drawn in it,
+    /// in the rect's own coordinates.
+    fn part_with(extra: Vec<Polyline>) -> Project {
+        let mut profiles = vec![rect_100x50()];
+        profiles.extend(extra);
+        project(profiles, &[("i1", at_20_20())])
+    }
+
+    /// Generates an On line Profile of `p` and checks every line is cut
+    /// at every pass, with no finding.
+    fn every_line_cut(case: &str, p: &Project) {
+        let lines = p
+            .definitions
+            .values()
+            .map(|d| d.profiles.len())
+            .sum::<usize>();
+        let (tp, warnings) = generate(p, &profile_op(p, Side::OnLine, CutDirection::Climb));
+        assert!(warnings.is_empty(), "{case}: {warnings:?}");
+        assert_eq!(
+            laps(&tp).len(),
+            lines * PASS_Z_MM.len(),
+            "{case}: every line at every pass"
+        );
+    }
+
+    /// #210: an open path that runs alongside a line of its own part,
+    /// closer than the 6.35 mm bit, cuts through the wall between them
+    /// together with that line's cut, as #199's narrow ring: refused with
+    /// `BandNarrowerThanTool`, the two shapes in drawing order and the band
+    /// the narrowest gap away from where the lines meet. Meeting the
+    /// outline excuses only the stretch near the meeting point (within
+    /// `√2·d` of it, so a slot meeting the outline at 45° or more is
+    /// cut): a slot from the bottom edge that runs 2 mm beside the left
+    /// edge, or turns to run 2 mm above the bottom edge, or leaves it at
+    /// 10°, still cuts through a wall.
+    #[test]
+    fn open_path_alongside_its_part_wall_is_refused() {
+        let shallow_rad = 10_f64.to_radians();
+        let reach_mm = std::f64::consts::SQRT_2 * 6.35;
+        let cases: Vec<(&str, Vec<Polyline>, (usize, usize), f64)> = vec![
+            (
+                "1 mm inside the left edge",
+                vec![open(&[(1.0, 10.0), (1.0, 40.0)])],
+                (0, 1),
+                1.0,
+            ),
+            (
+                "from the bottom edge, 2 mm beside the left edge",
+                vec![open(&[(2.0, 0.0), (2.0, 30.0)])],
+                (0, 1),
+                2.0,
+            ),
+            (
+                "from the bottom edge, then along it",
+                vec![open(&[(50.0, 0.0), (50.0, 2.0), (90.0, 2.0)])],
+                (0, 1),
+                2.0,
+            ),
+            (
+                "from the bottom edge at 10°",
+                vec![open(&[
+                    (50.0, 0.0),
+                    (50.0 + 40.0 * shallow_rad.cos(), 40.0 * shallow_rad.sin()),
+                ])],
+                (0, 1),
+                reach_mm * shallow_rad.sin(),
+            ),
+            (
+                "3 mm from a hole",
+                vec![
+                    Polyline::circle(Point::new(50.0, 25.0), 10.0),
+                    open(&[(63.0, 15.0), (63.0, 35.0)]),
+                ],
+                (1, 2),
+                3.0,
+            ),
+            (
+                "2 mm from another line",
+                vec![
+                    open(&[(30.0, 10.0), (30.0, 40.0)]),
+                    open(&[(32.0, 10.0), (32.0, 40.0)]),
+                ],
+                (1, 2),
+                2.0,
+            ),
+        ];
+        for (case, extra, pair, band_mm) in cases {
+            let p = part_with(extra);
+            let err = generate_profile(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb))
+                .expect_err(case);
+            let CamError::BandNarrowerThanTool {
+                shape,
+                other,
+                band_mm: band,
+                diameter_mm,
+                ..
+            } = &err
+            else {
+                panic!("{case}: expected BandNarrowerThanTool, got {err:?}");
+            };
+            assert_eq!((shape.profile, other.profile), pair, "{case}");
+            assert_approx_eq!(*diameter_mm, 6.35, TOL);
+            assert!((band - band_mm).abs() <= TOL, "{case}: band {band}");
+        }
+    }
+
+    /// #210: an open path that meets a line of its part, a kerf slot from
+    /// the edge or a saw cut across the part, opens into that line's cut
+    /// as the user drew it: cut, with no finding. So are a slot meeting
+    /// the edge at 60°, two slots joined at a corner, two lines crossing,
+    /// and a slot from a hole's edge.
+    #[test]
+    fn open_slot_from_the_edge_is_cut() {
+        let steep_rad = 60_f64.to_radians();
+        let cases: Vec<(&str, Vec<Polyline>)> = vec![
+            (
+                "square to the edge",
+                vec![open(&[(50.0, 0.0), (50.0, 20.0)])],
+            ),
+            (
+                "a saw cut edge to edge",
+                vec![open(&[(50.0, 0.0), (50.0, 50.0)])],
+            ),
+            (
+                "at 60° to the edge",
+                vec![open(&[
+                    (50.0, 0.0),
+                    (50.0 + 20.0 * steep_rad.cos(), 20.0 * steep_rad.sin()),
+                ])],
+            ),
+            (
+                "two slots joined at a corner",
+                vec![
+                    open(&[(50.0, 0.0), (50.0, 20.0)]),
+                    open(&[(50.0, 20.0), (70.0, 20.0)]),
+                ],
+            ),
+            (
+                "two lines crossing",
+                vec![
+                    open(&[(30.0, 25.0), (70.0, 25.0)]),
+                    open(&[(50.0, 10.0), (50.0, 40.0)]),
+                ],
+            ),
+            (
+                "from a hole's edge",
+                vec![
+                    Polyline::circle(Point::new(50.0, 25.0), 10.0),
+                    open(&[(60.0, 25.0), (80.0, 25.0)]),
+                ],
+            ),
+        ];
+        for (case, extra) in cases {
+            every_line_cut(case, &part_with(extra));
+        }
+    }
+
+    /// #210: an open path at least the bit's diameter from every other
+    /// line of its part is cut; a band exactly `d` wide is cut, as #199's
+    /// ring is.
+    #[test]
+    fn open_path_far_from_walls_is_cut() {
+        let cases: Vec<(&str, Vec<Polyline>)> = vec![
+            ("in the middle", vec![open(&[(20.0, 25.0), (80.0, 25.0)])]),
+            (
+                "a tool width inside the left edge",
+                vec![open(&[(6.35, 10.0), (6.35, 40.0)])],
+            ),
+            (
+                "a tool width from a hole and from another line",
+                vec![
+                    Polyline::circle(Point::new(50.0, 25.0), 10.0),
+                    open(&[(66.35, 15.0), (66.35, 35.0)]),
+                    open(&[(72.7, 15.0), (72.7, 35.0)]),
+                ],
+            ),
+        ];
+        for (case, extra) in cases {
+            every_line_cut(case, &part_with(extra));
+        }
+    }
 }

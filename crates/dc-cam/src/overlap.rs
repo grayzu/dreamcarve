@@ -494,11 +494,13 @@ mod tests {
 
     /// #206: a line in a part's material belongs to that part's region,
     /// as a hole does, so it is not compared with the part's own lines
-    /// (a cut into the part, not a second shape beside it).
+    /// (a cut into the part, not a second shape beside it). A slot from
+    /// the square's left edge touches it, which D6 would warn about with
+    /// a gap of 0; a line alongside a wall is #210's band check.
     #[test]
     fn open_path_in_a_part_is_not_compared_with_its_lines() {
-        // 1 mm inside the square's left edge (x = 20).
-        let p = square_and_lines(&[("l", line((21.0, 25.0), (21.0, 35.0)))]);
+        // From the square's left edge (x = 20) into its middle.
+        let p = square_and_lines(&[("l", line((20.0, 30.0), (30.0, 30.0)))]);
         let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
         assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
     }

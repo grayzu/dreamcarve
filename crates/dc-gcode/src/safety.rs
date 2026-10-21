@@ -3782,6 +3782,74 @@ mod tests {
         );
     }
 
+    /// #210: S9 refuses what `generate_profile` refuses. An On line
+    /// Profile of the sample rectangle (X 10 to 60, Y 10 to 40) with an
+    /// open line 2 mm above its bottom edge: the generator refuses it
+    /// (`BandNarrowerThanTool`), and a hand-written cut along the line
+    /// fails at its plunge, although it is on a target line: with the
+    /// outline's cut it would cut through the wall between them. The same
+    /// line a tool width (6.35 mm) above the edge passes, and so does a
+    /// slot drawn from the bottom edge into the part, the generated
+    /// program included: there the cut opens into the outline's.
+    #[test]
+    fn on_line_open_path_cutting_through_a_wall_fails_s9() {
+        let with_line = |from: (f64, f64), to: (f64, f64)| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles.push(dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(from.0, from.1),
+                        dc_geometry::Vertex::line(to.0, to.1),
+                    ],
+                    false,
+                ));
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = dc_project::Side::OnLine;
+            op.tabs = None;
+            let op = op.clone();
+            (project, op)
+        };
+        // The rectangle sits at (10, 10): project = drawn + 10.
+        let cut = |from: (f64, f64), to: (f64, f64)| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX{} Y{}\nG1 Z-1 F300\nX{} Y{} F1000\nG0 Z5\n",
+                from.0 + 10.0,
+                from.1 + 10.0,
+                to.0 + 10.0,
+                to.1 + 10.0
+            )
+        };
+
+        let (near, op) = with_line((10.0, 2.0), (40.0, 2.0));
+        let refused = generate_profile(&near, &op);
+        assert!(
+            matches!(refused, Err(dc_cam::CamError::BandNarrowerThanTool { .. })),
+            "{refused:?}"
+        );
+        let op = Operation::Profile(op);
+        let err = check_material_text(&cut((10.0, 2.0), (40.0, 2.0)), &near, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+            "the plunge 2 mm from the edge: {err:?}"
+        );
+
+        let (clear, op) = with_line((10.0, 6.35), (40.0, 6.35));
+        let op = Operation::Profile(op);
+        check_material_text(&cut((10.0, 6.35), (40.0, 6.35)), &clear, &op).unwrap();
+
+        let (slot, op) = with_line((25.0, 0.0), (25.0, 15.0));
+        let (toolpath, _) = generate_profile(&slot, &op).unwrap();
+        let op = Operation::Profile(op);
+        emit(
+            &slot,
+            &[(op.clone(), slot.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
+        check_material_text(&cut((25.0, 0.0), (25.0, 15.0)), &slot, &op).unwrap();
+    }
+
     /// The generated sample Profile with `edit` applied, emitted: tabs and
     /// whatever entry, lead and relief `edit` sets.
     fn emit_profile(edit: impl FnOnce(&mut dc_project::ProfileOp)) -> Result<String, ExportError> {
