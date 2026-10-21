@@ -1445,6 +1445,7 @@ mod tests {
             lead: None,
             corner_relief: relief,
             last_pass: None,
+            start: dc_project::StartAt::Auto,
         }
     }
 
@@ -2339,6 +2340,7 @@ mod tests {
                 height_mm: 5.0,
                 shape: TabShape::Rect,
                 on_holes: false,
+                avoid_corners: false,
             }),
             ..plain.clone()
         };

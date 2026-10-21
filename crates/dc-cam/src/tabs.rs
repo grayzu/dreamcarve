@@ -1361,6 +1361,7 @@ mod tests {
             lead: None,
             corner_relief: CornerRelief::None,
             last_pass: None,
+            start: dc_project::StartAt::Auto,
         };
         p.operations = vec![Operation::Profile(op.clone())];
         (p, op)
@@ -1373,6 +1374,7 @@ mod tests {
             height_mm: TAB_Z_MM,
             shape,
             on_holes: false,
+            avoid_corners: false,
         }
     }
 
@@ -1562,6 +1564,7 @@ mod tests {
                     height_mm: TAB_Z_MM,
                     shape: TabShape::Rect,
                     on_holes: false,
+                    avoid_corners: false,
                 }),
             )
         };
@@ -2477,5 +2480,342 @@ mod tests {
         )));
         let err = generate_profile(&p, &op).unwrap_err();
         assert!(matches!(err, CamError::InvalidTab { .. }), "{err:?}");
+    }
+
+    // ── #285: tabs off corners ──
+
+    /// A request for rect tabs `width_mm` wide at `placement`, off corners
+    /// when `avoid_corners`.
+    fn corner_spec(placement: TabPlacement, width_mm: f64, avoid_corners: bool) -> TabSpec {
+        TabSpec {
+            width_mm,
+            avoid_corners,
+            ..tab_spec(placement, TabShape::Rect)
+        }
+    }
+
+    /// Acceptance 47's part: a 50 mm square rotated 45° about its centre
+    /// at (60, 60), cut outside.
+    fn rotated_square(tabs: Option<TabSpec>) -> (Project, ProfileOp) {
+        let (mut p, op) = job(
+            "Square",
+            vec![Polyline::rect(Point::new(-25.0, -25.0), 50.0, 50.0)],
+            Side::Outside,
+            tabs,
+        );
+        p.instances[0].transform =
+            Transform::rotate(std::f64::consts::FRAC_PI_4).then(Transform::translate(60.0, 60.0));
+        (p, op)
+    }
+
+    /// A 50 mm square cut on the line, so its tool path has four sharp
+    /// 90° corners 50 mm apart.
+    fn on_line_square(tabs: Option<TabSpec>) -> (Project, ProfileOp) {
+        job(
+            "Square",
+            vec![Polyline::rect(Point::new(-25.0, -25.0), 50.0, 50.0)],
+            Side::OnLine,
+            tabs,
+        )
+    }
+
+    /// Where each raised run of `lap` is centred, mm along it, in order.
+    fn run_centres(lap: &[XyMove]) -> Vec<f64> {
+        let l: f64 = lap.iter().map(|m| m.length_mm).sum();
+        let mut centres: Vec<f64> = raised_runs(lap)
+            .iter()
+            .map(|r| (r.start_mm + r.length_mm / 2.0).rem_euclid(l))
+            .collect();
+        centres.sort_by(f64::total_cmp);
+        centres
+    }
+
+    /// Where `lap`, made of straight moves, turns: the distance along it
+    /// of each move's start whose direction differs from the move
+    /// before's (the lap's start counts when it turns there).
+    fn turns_at(lap: &[XyMove]) -> Vec<f64> {
+        let dir = |m: &XyMove| (m.mv.to.xy() - m.from.xy()).normalized().unwrap();
+        let mut at = Vec::new();
+        let mut walked = 0.0;
+        for (k, m) in lap.iter().enumerate() {
+            let before = &lap[(k + lap.len() - 1) % lap.len()];
+            if dir(before).cross(dir(m)).abs() > 1e-9 {
+                at.push(walked);
+            }
+            walked += m.length_mm;
+        }
+        at
+    }
+
+    /// The `tab_on_corner` warnings, as `(instance name, distance)`.
+    fn on_corner(warnings: &[Warning]) -> Vec<(String, f64)> {
+        warnings
+            .iter()
+            .filter_map(|w| match w {
+                Warning::TabOnCorner {
+                    shape, distance_mm, ..
+                } => Some((shape.instance_name.clone(), *distance_mm)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Acceptance 47 (#285): a 50 mm square rotated 45°, cut outside with
+    /// four evenly spaced rect tabs, its cut starting nearest the origin
+    /// (mid-side, so each tab is centred 27.5 mm along, in the middle of
+    /// the arc round the next corner). Without `avoid_corners` the tabs sit
+    /// on those arcs. With it, every tab stretch lies on a straight side:
+    /// no move at the tab top is an arc, and each of the four stretches is
+    /// still its tab's width plus the bit's diameter, at the tab's height,
+    /// with the cut at full depth between them. Three tabs from the
+    /// path's own start put one on a corner too, and it moves off.
+    #[test]
+    fn rotated_square_tabs_leave_corners() {
+        let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
+        let near_origin = dc_project::StartAt::Near {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        };
+        for (count, start) in [(4, near_origin), (3, dc_project::StartAt::Auto)] {
+            let placement = || TabPlacement::Count { count };
+            let (p, mut op) = rotated_square(Some(corner_spec(placement(), TAB_WIDTH_MM, false)));
+            op.start = start;
+            let (before, _) = generate(&p, &op);
+            let lap = final_lap(&before);
+            assert!(
+                lap.iter()
+                    .any(|m| m.at_z(TAB_Z_MM) && !matches!(m.mv.kind, MoveKind::Linear)),
+                "{count}: without avoid_corners a tab sits on a corner arc: {lap:?}"
+            );
+
+            let (p, mut op) = rotated_square(Some(corner_spec(placement(), TAB_WIDTH_MM, true)));
+            op.start = start;
+            let (tp, warnings) = generate(&p, &op);
+            assert!(on_corner(&warnings).is_empty(), "{count}: {warnings:?}");
+            let lap = final_lap(&tp);
+            for m in lap.iter().filter(|m| m.at_z(TAB_Z_MM)) {
+                assert!(
+                    matches!(m.mv.kind, MoveKind::Linear),
+                    "{count}: on a corner: {m:?}"
+                );
+            }
+            let raised = raised_runs(&lap);
+            assert_eq!(raised.len(), usize::from(count), "{raised:?}");
+            for run in &raised {
+                assert_approx_eq!(run.length_mm, span_mm, TOL);
+            }
+            // Between the tabs the last pass cuts at full depth, every arc
+            // round a corner among it.
+            let arcs: Vec<&XyMove> = lap
+                .iter()
+                .filter(|m| !matches!(m.mv.kind, MoveKind::Linear))
+                .collect();
+            assert!(arcs.len() >= 4, "{count}: {arcs:?}");
+            assert!(arcs.iter().all(|m| m.at_z(0.0)), "{count}: {arcs:?}");
+            assert!(lap.iter().all(|m| m.at_z(0.0) || m.at_z(TAB_Z_MM)));
+        }
+    }
+
+    /// #285: a circle turns `D / R` per bit diameter, under 30° for a
+    /// radius above 1.91 D, so the coaster's tabs never move: its
+    /// toolpath is the same with `avoid_corners` on and off, with no
+    /// `tab_on_corner`. A circle whose path radius is 1.5 D turns 38° per
+    /// diameter, a corner everywhere: its one tab stays, and warns.
+    #[test]
+    fn circle_tabs_never_move() {
+        let toolpath = |avoid: bool| {
+            let spec = corner_spec(TabPlacement::Count { count: 4 }, TAB_WIDTH_MM, avoid);
+            let (p, op) = coaster(Some(spec));
+            generate(&p, &op)
+        };
+        let ((off, _), (on, warnings)) = (toolpath(false), toolpath(true));
+        assert_eq!(on, off);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let spec = corner_spec(TabPlacement::Count { count: 1 }, 2.0, true);
+        let (p, op) = circle_job(DIAMETER_MM, Side::Outside, Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!(on_corner(&warnings).len(), 1, "{warnings:?}");
+        assert_eq!(raised_runs(&final_lap(&tp)).len(), 1);
+    }
+
+    /// #285: a tab on a corner moves at most half the gap to each of its
+    /// neighbours. On the line, a 50 mm square's path turns 90° at each
+    /// corner; a 2 mm tab's stretch, 8.35 mm with the 6.35 mm bit, is off
+    /// the corner at 50 mm once its centre is 7.35 mm or more away. A tab
+    /// at 49 mm would come off it soonest going back, to 42.65 mm, but its
+    /// neighbour at 40 mm lets it go back only 4.5 mm, so it goes forward
+    /// to 57.35 mm, within half its 31 mm gap to the tab at 80. Those two
+    /// stay. The cut keeps every tab's width and height.
+    #[test]
+    fn tab_never_moves_past_half_gap() {
+        let at = |avoid: bool| {
+            let spec = corner_spec(
+                TabPlacement::AtDistances {
+                    distances_mm: vec![40.0, 49.0, 80.0],
+                },
+                2.0,
+                avoid,
+            );
+            let (p, op) = on_line_square(Some(spec));
+            let (tp, warnings) = generate(&p, &op);
+            (final_lap(&tp), warnings)
+        };
+        let (lap, _) = at(false);
+        assert_eq!(turns_at(&lap), vec![0.0, 50.0, 100.0, 150.0]);
+        let before = run_centres(&lap);
+        let (lap, warnings) = at(true);
+        assert!(on_corner(&warnings).is_empty(), "{warnings:?}");
+        let after = run_centres(&lap);
+        assert_eq!(before.len(), 3, "{before:?}");
+        assert_eq!(after.len(), 3, "{after:?}");
+        for (c, e) in before.iter().zip([40.0, 49.0, 80.0]) {
+            assert_approx_eq!(*c, e, TOL);
+        }
+        for (c, e) in after.iter().zip([40.0, 57.35, 80.0]) {
+            assert_approx_eq!(*c, e, 1e-3);
+        }
+        // Half the gap to each neighbour, both ways round.
+        let l = 200.0;
+        for (k, (b, a)) in before.iter().zip(&after).enumerate() {
+            let prev = before[(k + 2) % 3];
+            let next = before[(k + 1) % 3];
+            let back = (b - prev).rem_euclid(l) / 2.0;
+            let ahead = (next - b).rem_euclid(l) / 2.0;
+            let moved = a - b;
+            assert!(
+                moved <= ahead + TOL && -moved <= back + TOL,
+                "{k}: {b} → {a}"
+            );
+        }
+        for run in raised_runs(&lap) {
+            assert_approx_eq!(run.length_mm, 2.0 + DIAMETER_MM, TOL);
+        }
+    }
+
+    /// #285: a tab on a corner with nowhere to go, its neighbours too
+    /// close both ways, stays where it is with `tab_on_corner` naming the
+    /// outline and its distance along the path, and is cut at its full
+    /// width and height. The #109 floor holds too: an 8 mm square cut
+    /// outside, too short for its four tabs and a corner everywhere,
+    /// keeps the one tab #109 leaves it, warned both ways.
+    #[test]
+    fn blocked_tab_warns_tab_on_corner() {
+        let spec = corner_spec(
+            TabPlacement::AtDistances {
+                distances_mm: vec![40.0, 49.0, 60.0],
+            },
+            2.0,
+            true,
+        );
+        let (p, op) = on_line_square(Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        let blocked = on_corner(&warnings);
+        assert_eq!(blocked.len(), 1, "{warnings:?}");
+        assert_eq!(blocked[0].0, "Square 1");
+        assert_approx_eq!(blocked[0].1, 49.0, TOL);
+        let text = warnings
+            .iter()
+            .find(|w| w.code() == WarningCode::TabOnCorner)
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(text.contains("49 mm along"), "{text}");
+        let lap = final_lap(&tp);
+        let centres = run_centres(&lap);
+        assert_eq!(centres.len(), 3, "{centres:?}");
+        for (c, e) in centres.iter().zip([40.0, 49.0, 60.0]) {
+            assert_approx_eq!(*c, e, TOL);
+        }
+        for run in raised_runs(&lap) {
+            assert_approx_eq!(run.length_mm, 2.0 + DIAMETER_MM, TOL);
+        }
+
+        let spec = corner_spec(TabPlacement::Count { count: 4 }, TAB_WIDTH_MM, true);
+        let (p, op) = job(
+            "Small",
+            vec![Polyline::rect(Point::new(-4.0, -4.0), 8.0, 8.0)],
+            Side::Outside,
+            Some(spec),
+        );
+        let (tp, warnings) = generate(&p, &op);
+        let (asked, cut, _) = cover_of(&warnings);
+        assert_eq!((asked, cut), (4, 1));
+        assert_eq!(on_corner(&warnings).len(), 1, "{warnings:?}");
+        let raised = raised_runs(&final_lap(&tp));
+        assert_eq!(raised.len(), 1, "the part keeps its tab: {raised:?}");
+        assert_approx_eq!(raised[0].length_mm, TAB_WIDTH_MM + DIAMETER_MM, TOL);
+    }
+
+    /// #285: on an open path a tab never moves past an end. A line 50 mm
+    /// along, then 6 mm up, cut on the line: a 2 mm tab at 53 mm is on the
+    /// corner at 50. Off it ahead would be 57.35 mm, past the 56 mm end,
+    /// so it goes back to 42.65 mm, whichever end the cut starts at.
+    #[test]
+    fn open_path_tab_stops_at_end() {
+        for direction in [CutDirection::Conventional, CutDirection::Climb] {
+            let spec = corner_spec(
+                TabPlacement::AtDistances {
+                    distances_mm: vec![53.0],
+                },
+                2.0,
+                true,
+            );
+            let (p, mut op) = job(
+                "Hook",
+                vec![Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(-25.0, 0.0),
+                        dc_geometry::Vertex::line(25.0, 0.0),
+                        dc_geometry::Vertex::line(25.0, 6.0),
+                    ],
+                    false,
+                )],
+                Side::OnLine,
+                Some(spec),
+            );
+            op.direction = direction;
+            let (tp, warnings) = generate(&p, &op);
+            assert!(
+                on_corner(&warnings).is_empty(),
+                "{direction:?}: {warnings:?}"
+            );
+            // The tab top is held 4.175 mm either side of 42.65 mm along
+            // the line as drawn, which starts at x = 35.
+            let held: Vec<Point3> = final_lap(&tp)
+                .iter()
+                .filter(|m| m.at_z(TAB_Z_MM))
+                .flat_map(|m| [m.from, m.mv.to])
+                .collect();
+            assert!(!held.is_empty(), "{direction:?}");
+            assert!(held.iter().all(|q| (q.y - 60.0).abs() <= TOL), "{held:?}");
+            let lo = held.iter().map(|q| q.x).fold(f64::MAX, f64::min);
+            let hi = held.iter().map(|q| q.x).fold(f64::MIN, f64::max);
+            let half_mm = (2.0 + DIAMETER_MM) / 2.0;
+            assert_approx_eq!(lo, 35.0 + 42.65 - half_mm, 1e-3);
+            assert_approx_eq!(hi, 35.0 + 42.65 + half_mm, 1e-3);
+        }
+    }
+
+    /// #285: `avoid_corners: false` lays the tabs as before: on the
+    /// rotated square, four tabs centred an eighth, three eighths, five
+    /// eighths and seven eighths of the way along the path from its
+    /// start, whatever the corners.
+    #[test]
+    fn avoid_corners_false_is_byte_identical() {
+        let (p, op) = rotated_square(Some(corner_spec(
+            TabPlacement::Count { count: 4 },
+            TAB_WIDTH_MM,
+            false,
+        )));
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lap = final_lap(&tp);
+        let l: f64 = lap.iter().map(|m| m.length_mm).sum();
+        assert_approx_eq!(l, 200.0 + TAU * DIAMETER_MM / 2.0, 1e-6);
+        let centres = run_centres(&lap);
+        assert_eq!(centres.len(), 4);
+        for (k, c) in centres.iter().enumerate() {
+            assert_approx_eq!(*c, l * (2.0 * k as f64 + 1.0) / 8.0, TOL);
+        }
     }
 }

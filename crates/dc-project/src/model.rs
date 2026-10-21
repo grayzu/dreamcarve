@@ -568,6 +568,39 @@ pub struct ProfileOp {
     /// size. Inside and Outside only. `init` and migration: none.
     #[serde(deserialize_with = "Option::deserialize")]
     pub last_pass: Option<LastPass>,
+    /// Where each closed outline's cut starts (#285, functional spec
+    /// capability 36). `init` and migration: [`StartAt::Auto`], as
+    /// before.
+    pub start: StartAt,
+}
+
+/// Where a Profile's cut starts on each closed outline (#285; VCarve's 2D
+/// Profile "Use vector start point" and "Start At", Fusion's "Entry
+/// Positions"). Saved as `"auto"`, `"first_vertex"`, or `{ "near": {
+/// "x_mm": 0.0, "y_mm": 0.0 } }`. With an explicit start the tabs a
+/// request places are measured from it, a lead arrives there or is
+/// dropped, and an entry with no room there falls back instead of moving.
+/// Open paths ignore it: their start is the end the cut direction sets
+/// (#242).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum StartAt {
+    /// As before: the start follows from the drawing's first vertex, and
+    /// a lead, or an entry with no room beside a tab, may move it.
+    Auto,
+    /// At the point of the bit's path nearest the outline's first vertex
+    /// as drawn, as VCarve's "Use vector start point" plunges at the
+    /// shape's first point.
+    FirstVertex,
+    /// At the point of the bit's path nearest this project point, Y-up.
+    Near {
+        /// X, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        x_mm: f64,
+        /// Y, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        y_mm: f64,
+    },
 }
 
 /// A Profile's last pass allowance (#284, functional spec capability 34;
@@ -882,6 +915,12 @@ pub struct TabSpec {
     /// its slug is waste (#109). `init` writes `false`; the version 9
     /// migration writes `true`, as every outline had tabs before.
     pub on_holes: bool,
+    /// Tabs slide off corners (#285, functional spec capability 35): a
+    /// tab whose stretch would lie where the bit's path turns 30° or more
+    /// within one bit diameter moves along the path to the nearest place
+    /// where it does not. `init` writes `true`; the version 14 migration
+    /// writes `false`, so older projects cut as before.
+    pub avoid_corners: bool,
 }
 
 /// Where a [`TabSpec`] puts tabs along each tool-centre path.

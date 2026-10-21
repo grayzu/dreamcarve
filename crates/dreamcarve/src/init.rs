@@ -295,6 +295,7 @@ fn default_project(
             shape: TabShape::Rect,
             // #109: a hole's slug is waste.
             on_holes: false,
+            avoid_corners: false,
         }),
         machining_order: MachiningOrder::FullDepthFirst,
         entry: Entry::Ramp {
@@ -303,6 +304,7 @@ fn default_project(
         lead: None,
         corner_relief: CornerRelief::None,
         last_pass: None,
+        start: dc_project::StartAt::Auto,
     };
     Project {
         version: CURRENT_VERSION,

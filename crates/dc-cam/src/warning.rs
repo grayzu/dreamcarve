@@ -55,6 +55,11 @@ pub enum WarningCode {
     /// outline's nearest point, which may not be where the user meant
     /// (#300).
     TabOffOutline,
+    /// A tab of a request with `avoid_corners` lies on a corner, where
+    /// the bit's path turns 30° or more within one bit diameter, and has
+    /// nowhere off it within half the gap to its neighbours that is not
+    /// on another tab, so it is cut where it is (#285).
+    TabOnCorner,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
     ToolpathsOverlap,
@@ -149,6 +154,7 @@ impl WarningCode {
             Self::TabOnHole => "tab_on_hole",
             Self::TabNotCrossed => "tab_not_crossed",
             Self::TabOffOutline => "tab_off_outline",
+            Self::TabOnCorner => "tab_on_corner",
             Self::ToolpathsOverlap => "toolpaths_overlap",
             Self::PocketNoRoom => "pocket_no_room",
             Self::PocketIslandTooClose => "pocket_island_too_close",
@@ -365,6 +371,16 @@ pub enum Warning {
         /// The distance past which it warns, mm: the tab's width plus the
         /// widest bit of the Profiles that cross it.
         limit_mm: f64,
+    },
+    /// [`WarningCode::TabOnCorner`].
+    TabOnCorner {
+        /// The operation.
+        op: OperationId,
+        /// The outline the tab is on.
+        shape: ShapeRef,
+        /// Where the tab is centred, mm along the bit's path from its
+        /// start (from its first vertex as drawn on an open path).
+        distance_mm: f64,
     },
     /// [`WarningCode::ToolpathsOverlap`].
     ToolpathsOverlap {
@@ -610,6 +626,7 @@ impl Warning {
             Self::TabOnHole { .. } => WarningCode::TabOnHole,
             Self::TabNotCrossed { .. } => WarningCode::TabNotCrossed,
             Self::TabOffOutline { .. } => WarningCode::TabOffOutline,
+            Self::TabOnCorner { .. } => WarningCode::TabOnCorner,
             Self::ToolpathsOverlap { .. } => WarningCode::ToolpathsOverlap,
             Self::PocketNoRoom { .. } => WarningCode::PocketNoRoom,
             Self::PocketIslandTooClose { .. } => WarningCode::PocketIslandTooClose,
@@ -641,6 +658,7 @@ impl Warning {
             | Self::TabsOutsideCutRange { op, .. }
             | Self::TabsCoverMostOfContour { op, .. }
             | Self::TabOnHole { op, .. }
+            | Self::TabOnCorner { op, .. }
             | Self::PocketNoRoom { op, .. }
             | Self::PocketIslandTooClose { op, .. }
             | Self::EntryFallback { op, .. }
@@ -910,6 +928,13 @@ impl fmt::Display for Warning {
                 "tab `{tab}` on {shape} is {} mm from that outline, more than its width plus the widest bit that cuts round it ({} mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`",
                 mm(*off_mm),
                 mm(*limit_mm)
+            ),
+            Self::TabOnCorner {
+                shape, distance_mm, ..
+            } => write!(
+                f,
+                "the tab {} mm along the bit's path round {shape} is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab or onto it, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
+                mm(*distance_mm)
             ),
             Self::ToolpathsOverlap {
                 shape,
@@ -1213,6 +1238,14 @@ mod tests {
                     limit_mm: 12.350_000_000_1,
                 },
                 "tab `tab3` on `Shape` (instance `i1`, profile 2) is 20 mm from that outline, more than its width plus the widest bit that cuts round it (12.35 mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`",
+            ),
+            (
+                Warning::TabOnCorner {
+                    op: op(),
+                    shape: shape(),
+                    distance_mm: 54.600_002_2,
+                },
+                "the tab 54.6 mm along the bit's path round `Shape` (instance `i1`, profile 2) is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab or onto it, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1710,7 +1743,8 @@ mod tests {
             C::TabsCoverMostOfContour => C::TabOnHole,
             C::TabOnHole => C::TabNotCrossed,
             C::TabNotCrossed => C::TabOffOutline,
-            C::TabOffOutline => C::ToolpathsOverlap,
+            C::TabOffOutline => C::TabOnCorner,
+            C::TabOnCorner => C::ToolpathsOverlap,
             C::ToolpathsOverlap => C::PocketNoRoom,
             C::PocketNoRoom => C::PocketIslandTooClose,
             C::PocketIslandTooClose => C::EntryFallback,
@@ -1767,7 +1801,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 30);
+        assert_eq!(count, 31);
     }
 
     #[test]

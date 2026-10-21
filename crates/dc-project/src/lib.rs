@@ -29,7 +29,7 @@ pub use model::{
     ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
     FeatureDefinition, FeatureInstance, Heights, LastPass, Lead, MachineOrigin, MachiningOrder,
     Operation, OriginXy, OriginZ, ParkXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project,
-    Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
+    Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,

@@ -16,6 +16,8 @@
 
 mod entries;
 mod last_pass;
+#[cfg(test)]
+mod start_tests;
 mod waste;
 
 use crate::block::CutBlock;
@@ -2220,6 +2222,7 @@ mod tests {
             lead: None,
             corner_relief: CornerRelief::None,
             last_pass: None,
+            start: dc_project::StartAt::Auto,
         }
     }
 
@@ -3334,6 +3337,7 @@ mod tests {
             height_mm: 3.0,
             shape: TabShape::Rect,
             on_holes: false,
+            avoid_corners: false,
         });
         let (_, warnings) = generate(&p, &op);
         let covered: Vec<(usize, &str)> = warnings
@@ -3429,6 +3433,7 @@ mod tests {
                 height_mm: 3.0,
                 shape: TabShape::Smooth,
                 on_holes: false,
+                avoid_corners: false,
             }),
             ..profile_op(&p, Side::Outside, CutDirection::Climb)
         };
@@ -3608,6 +3613,7 @@ mod tests {
             height_mm: TAB_TOP_MM,
             shape,
             on_holes: false,
+            avoid_corners: false,
         }
     }
 
@@ -5332,6 +5338,7 @@ mod tests {
                         height_mm: TOP_MM,
                         shape,
                         on_holes: false,
+                        avoid_corners: false,
                     }),
                     last_pass: Some(LastPass {
                         thickness_mm,
@@ -5560,6 +5567,7 @@ mod tests {
                         height_mm: 6.0,
                         shape,
                         on_holes: false,
+                        avoid_corners: false,
                     }),
                     ..last_pass_op(&p, side)
                 };

@@ -513,6 +513,7 @@ fn profile(p: &Project, side: Side, lead: Option<Lead>) -> ProfileOp {
         lead,
         corner_relief: CornerRelief::None,
         last_pass: None,
+        start: dc_project::StartAt::Auto,
     }
 }
 
@@ -1012,6 +1013,7 @@ fn tabs_apply_to_contour_not_lead() {
         height_mm: 3.0,
         shape: TabShape::Rect,
         on_holes: false,
+        avoid_corners: false,
     };
     let base = ProfileOp {
         tabs: Some(tabs),

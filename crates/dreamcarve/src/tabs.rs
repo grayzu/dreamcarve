@@ -146,6 +146,7 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
                     height_mm: size.height_mm,
                     shape: size.shape,
                     on_holes: args.on_holes,
+                    avoid_corners: false,
                 },
             ),
         }

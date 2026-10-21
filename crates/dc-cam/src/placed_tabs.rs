@@ -569,7 +569,8 @@ mod tests {
     use dc_geometry::{Point3, Transform, assert_approx_eq};
     use dc_project::test_support::{profile_mut, sample_pocket, sample_project, sample_tab};
     use dc_project::{
-        CutDirection, DefinitionId, Entry, FeatureDefinition, InstanceId, Lead, Side, TabPlacement,
+        CutDirection, DefinitionId, Entry, FeatureDefinition, InstanceId, Lead, Side, StartAt,
+        TabPlacement,
     };
 
     const TOL: f64 = 1e-9;
@@ -691,6 +692,7 @@ mod tests {
             height_mm: TAB_TOP_MM,
             shape: TabShape::Smooth,
             on_holes: false,
+            avoid_corners: false,
         };
         let cases: Vec<(&str, Edit)> = vec![
             ("outside climb", Box::new(|_| {})),
@@ -894,6 +896,7 @@ mod tests {
             height_mm: TAB_TOP_MM,
             shape: TabShape::Rect,
             on_holes,
+            avoid_corners: false,
         }
     }
 
@@ -1263,5 +1266,77 @@ mod tests {
         assert!(placed.tabs.iter().all(|t| t.shape == TabShape::Smooth));
         let err = place_on_outlines(&p, &OperationId::new("o1"), &[-1.0], size, false).unwrap_err();
         assert!(matches!(err, CamError::InvalidTab { .. }), "{err:?}");
+    }
+
+    /// #285 (#296's note): `tabs.avoid_corners` and `start` act when a
+    /// request is placed as when it is cut. Placing a request that keeps
+    /// off corners, counted from the start it sets, writes tabs that cut
+    /// exactly what the request cuts, none of them on an arc round a
+    /// corner (without `avoid_corners` some are). A tab left on a corner
+    /// warns `tab_on_corner` when placed, as when cut, and is placed.
+    #[test]
+    fn placing_keeps_tabs_off_corners_and_counts_from_the_start() {
+        let request = |count: u8, avoid_corners: bool| TabSpec {
+            placement: TabPlacement::Count { count },
+            avoid_corners,
+            ..four_tabs(false)
+        };
+        let on_arc = |tp: &Toolpath| {
+            held_runs(tp, TAB_TOP_MM)
+                .iter()
+                .flatten()
+                .any(|(_, mv)| !matches!(mv.kind, MoveKind::Linear))
+        };
+        let cases = [
+            (
+                4,
+                StartAt::Near {
+                    x_mm: 0.0,
+                    y_mm: 0.0,
+                },
+            ),
+            (5, StartAt::Auto),
+            (7, StartAt::FirstVertex),
+        ];
+        let mut any_on_arc = false;
+        for (count, start) in cases {
+            let case = format!("{count} from {start:?}");
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.start = start;
+            op.tabs = Some(request(count, false));
+            any_on_arc |= on_arc(&generate(&p).0);
+            profile_mut(&mut p).tabs = Some(request(count, true));
+            let (asked, warnings) = generate(&p);
+            assert!(
+                !codes(&warnings).contains(&WarningCode::TabOnCorner),
+                "{case}: {warnings:?}"
+            );
+            assert!(!on_arc(&asked), "{case}");
+            let (placed, warnings) = place_requests(&p).unwrap();
+            assert!(
+                !codes(&warnings).contains(&WarningCode::TabOnCorner),
+                "{case}: {warnings:?}"
+            );
+            assert_eq!(placed.tabs.len(), usize::from(count), "{case}");
+            let (cut, _) = generate(&placed);
+            assert_same_motion(&asked, &cut, &case);
+        }
+        assert!(any_on_arc, "without avoid_corners some tab is on a corner");
+
+        // An 8 mm square is a corner everywhere: its tab stays, warned.
+        let small = with_profiles(vec![Polyline::rect(Point::new(21.0, 11.0), 8.0, 8.0)]);
+        let spec = TabSpec {
+            width_mm: 2.0,
+            ..request(1, true)
+        };
+        let placed = place(&small, &OperationId::new("o1"), &spec).unwrap();
+        assert_eq!(placed.tabs.len(), 1, "{placed:?}");
+        assert_eq!(
+            codes(&placed.warnings),
+            vec![WarningCode::TabOnCorner],
+            "{:?}",
+            placed.warnings
+        );
     }
 }
