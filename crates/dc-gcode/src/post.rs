@@ -667,9 +667,7 @@ fn grbl_v2_project_comment_opens_with_fixed_text() {
         ("grblhal", "( Project: {programName} )"),
         ("grbl", "; Project: {programName}"),
     ] {
-        let latest = latest_definition(id).unwrap();
-        assert_eq!(latest.version, 2, "{id}");
-        let v2 = latest.post_processor();
+        let v2 = bundled_definition(id, 2).unwrap().post_processor();
         assert_eq!(
             v2.program.header.first().map(String::as_str),
             Some(first),
@@ -679,6 +677,58 @@ fn grbl_v2_project_comment_opens_with_fixed_text() {
         v1.program.header[0] = first.to_owned();
         assert_eq!(&v1, v2, "{id}: only the first header line changes");
     }
+}
+
+/// #279 (functional capability 29, design addendum A3): version 3 of
+/// grblHAL and GRBL is version 2 with `G80` (cancel canned-cycle motion)
+/// and then `G40` (cancel cutter compensation) right after `G94`, and
+/// nothing else changed. `G80` comes first: on grblHAL with cutter
+/// compensation compiled in, `G40` fails while a canned cycle is active
+/// (`definitions/README.md`, "Header modal state").
+#[test]
+fn grbl_v3_header_cancels_modes() {
+    for id in ["grblhal", "grbl"] {
+        let latest = latest_definition(id).unwrap();
+        assert_eq!(latest.version, 3, "{id}");
+        let v3 = latest.post_processor();
+        let mut v2 = bundled_definition(id, 2).unwrap().post_processor().clone();
+        let g94 = v2
+            .program
+            .header
+            .iter()
+            .position(|l| l == "G94")
+            .unwrap_or_else(|| panic!("{id} v2 has a G94 line"));
+        v2.program
+            .header
+            .splice(g94 + 1..g94 + 1, ["G80".to_owned(), "G40".to_owned()]);
+        assert_eq!(&v2, v3, "{id}: v3 is v2 with G80, G40 after G94");
+    }
+}
+
+/// #279: no version of grblHAL or GRBL changes the tool length offset.
+/// Both fold the active offset into the work zero the user sets
+/// (`G10 L20`), so a `G49` after the user zeroes Z would move every Z by
+/// the offset (`definitions/README.md`, "Header modal state"). `G43` and
+/// `G43.2` need a tool table, and `G43.1` sets an offset.
+#[test]
+fn no_header_cancels_tool_length_offset() {
+    let mut checked = 0;
+    for definition in bundled_definitions().unwrap() {
+        if !["grblhal", "grbl"].contains(&definition.id) {
+            continue;
+        }
+        checked += 1;
+        for line in every_line(definition.post_processor()) {
+            for word in words(&line) {
+                assert!(
+                    !(word == "G49" || word.starts_with("G43")),
+                    "{}: {line}",
+                    definition.path
+                );
+            }
+        }
+    }
+    assert!(checked >= 6, "grblHAL and GRBL, v1 to v3");
 }
 
 /// Design spec, "Canned cycles": a definition has a cycle's command only

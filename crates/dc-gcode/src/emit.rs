@@ -3488,6 +3488,72 @@ mod tests {
         assert!(checked > 0);
     }
 
+    /// #279, acceptance 41: grblHAL v3 and GRBL v3 cancel canned-cycle
+    /// motion and cutter compensation again in the setup written after
+    /// every stop, `G80` before `G40` as in the header, after an `M6` and
+    /// after a manual-spindle `M0`.
+    #[test]
+    fn setup_after_stop_repeats_g80_g40() {
+        let (mut after_m6, mut after_m0) = (0, 0);
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            for (line, between) in after_pauses(&text) {
+                if has_word(lines[line - 1], "M6") {
+                    after_m6 += 1;
+                } else {
+                    after_m0 += 1;
+                }
+                let at = |word: &str| between.iter().position(|l| has_word(l, word));
+                let (g80, g40) = (at("G80"), at("G40"));
+                assert!(
+                    g80.is_some() && g40.is_some(),
+                    "{case}: no G80 or G40 after the stop on line {line}: {between:?}"
+                );
+                assert!(
+                    g80 < g40,
+                    "{case}: G40 before G80 after the stop on line {line}: {between:?}"
+                );
+            }
+        }
+        assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
+    }
+
+    /// #279: in `G80` mode a line with axis words and no motion word is an
+    /// error on grblHAL and GRBL (`definitions/README.md`, "Header modal
+    /// state"). So the first line that moves after the header's `G80`, and
+    /// after each `G80` of a setup written again after a stop, carries
+    /// `G0` or `G1`.
+    #[test]
+    fn first_motion_after_g80_has_motion_word() {
+        for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let moves = |l: &str| {
+                let c = code(l);
+                c.contains('X') || c.contains('Y') || c.contains('Z')
+            };
+            let cancels: Vec<usize> = (0..lines.len())
+                .filter(|&i| has_word(lines[i], "G80"))
+                .collect();
+            let first_move = first_index(&lines, moves).unwrap();
+            assert!(
+                cancels.first().is_some_and(|&i| i < first_move),
+                "{case}: no G80 before the first move: {text}"
+            );
+            let stops = after_pauses(&text).len();
+            assert_eq!(cancels.len(), 1 + stops, "{case}: {text}");
+            for i in cancels {
+                let next = (i + 1..lines.len()).find(|&k| moves(lines[k])).unwrap();
+                assert!(
+                    has_word(lines[next], "G0") || has_word(lines[next], "G1"),
+                    "{case}: line {} moves after the G80 on line {} without G0 or G1: {}",
+                    next + 1,
+                    i + 1,
+                    lines[next]
+                );
+            }
+        }
+    }
+
     /// #55: an inch project sets inches again after a pause, never
     /// millimetres.
     #[test]
