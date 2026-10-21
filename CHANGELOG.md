@@ -26,7 +26,10 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   peck with a full retract, peck with chip breaking, and dwell. Shapes that are
   not circles are skipped with a warning. On LinuxCNC and Mach3 you can turn on
   canned cycles (`use_canned_cycles`, off by default) to get `G81` and `G82`
-  lines; every other case writes the same holes as plain moves.
+  lines; every other case writes the same holes as plain moves. With a
+  clearance height, a Drill of separately drawn circles is written as cycles
+  from it, which `G98` returns each hole to; one that crosses at both the
+  clearance height and safe Z is written as plain moves ([#305]).
 - **Engrave operation.** Cuts along open and closed lines with the bit centred
   on the line, at a fixed depth, in passes. `alternate_direction` cuts an open
   line back and forth instead of retracting between passes.
@@ -136,10 +139,7 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   the machine when a program lifts with `G53`. The definitions gain
   `work_coordinates.machine_command` (`"G53"` on every grblHAL and GRBL
   version, `null` on the others), added in place: no program's bytes change.
-  Older DreamCarve versions cannot read version 12 files. With canned cycles
-  on, a Drill of separately drawn circles is written as cycles from the
-  clearance height, which `G98` returns each hole to; a Drill that crosses at
-  both the clearance height and safe Z is written as plain moves ([#305]).
+  Older DreamCarve versions cannot read version 12 files.
 - **Structured warnings.** Every warning from `check` and `export` has a stable
   code and names the operation and shape, printed as `code: message`. The
   Warnings chapter lists them all.
@@ -391,10 +391,10 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#280]: https://github.com/grayzu/dreamcarve/issues/280
 [#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#283]: https://github.com/grayzu/dreamcarve/issues/283
+[#305]: https://github.com/grayzu/dreamcarve/issues/305
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
-[#305]: https://github.com/grayzu/dreamcarve/issues/305
