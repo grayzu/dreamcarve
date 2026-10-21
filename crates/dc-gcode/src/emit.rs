@@ -2233,7 +2233,7 @@ impl<'a> Writer<'a> {
                 let word = format!("{}{text}", fs.feed_command);
                 if fs.inline_with_motion {
                     words.push(word);
-                } else if changed {
+                } else {
                     self.line(&word);
                 }
                 self.feed = Some(text);
