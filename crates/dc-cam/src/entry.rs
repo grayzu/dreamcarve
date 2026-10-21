@@ -43,6 +43,14 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::{PI, TAU};
 
+mod wall;
+pub use wall::{along_path, plan_at_wall};
+
+/// The ramp angle a new project's Profile gets, degrees: `init` writes
+/// `entry: { "ramp": { "angle_deg": 15.0 } }` (functional spec, capability
+/// 16 and open question 6).
+pub const INIT_RAMP_ANGLE_DEG: f64 = 15.0;
+
 /// Upstream's default descent angle, degrees (`DEFAULT_ENTRY_RAMP_ANGLE`),
 /// which DreamCarve keeps as a new helix's angle; a new ramp's is 15°
 /// (functional spec, capability 16).
@@ -1746,3 +1754,15 @@ mod tests {
         assert_eq!(a, b);
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "tests"
+)]
+mod profile_tests;

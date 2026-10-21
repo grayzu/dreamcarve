@@ -756,7 +756,6 @@ fn init_writes_phase_2_defaults() {
     assert!(text.contains("\"version\": 8,"), "{text}");
     assert!(text.contains("\"arc_fit_tolerance_mm\": 0.01,"), "{text}");
     assert!(text.contains("\"number\": null,"), "{text}");
-    assert!(text.contains("\"entry\": \"plunge\","), "{text}");
     assert!(text.contains("\"lead\": null,"), "{text}");
     assert!(text.contains("\"use_canned_cycles\": false"), "{text}");
     let project = load_file(&dcv).project;
@@ -767,7 +766,6 @@ fn init_writes_phase_2_defaults() {
     );
     for op in project.operations.iter().map(as_profile) {
         assert_eq!(op.machining_order, MachiningOrder::FullDepthFirst);
-        assert_eq!(op.entry, Entry::Plunge);
         assert_eq!(op.lead, None);
         assert_eq!(op.corner_relief, CornerRelief::None);
     }
@@ -779,6 +777,28 @@ fn init_writes_phase_2_defaults() {
     for word in ["entry", "number", "canned", "arc_fit"] {
         assert!(!report.contains(word), "{word} in {report}");
     }
+}
+
+/// #119: a new project's Profile ramps in at 15° (functional spec,
+/// capability 16, open question 6), written as the one-key object, and
+/// `check` has nothing to say about it.
+#[test]
+fn init_writes_ramp_entry() {
+    let dir = work_dir("init_writes_ramp_entry");
+    let dcv = init_coaster(&dir);
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let compact: String = text.split_whitespace().collect();
+    assert!(
+        compact.contains("\"entry\":{\"ramp\":{\"angle_deg\":15.0}}"),
+        "{text}"
+    );
+    let project = load_file(&dcv).project;
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.entry, Entry::Ramp { angle_deg: 15.0 });
+    }
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert!(!report.contains("entry"), "{report}");
 }
 
 /// The spec's `v6_fixture_exports_phase_1_bytes_with_fitting_off`, for
