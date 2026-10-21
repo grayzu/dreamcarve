@@ -11,9 +11,11 @@
 //! closer than `r` to that shape's line: next to the line, its kept side is
 //! the material of the region it bounds (the part, or for a hole the frame
 //! around it). Under Inside every path stays inside its own region, at
-//! least `r` from every other region's line, so only Outside and On line
-//! cuts can warn. A part and its own holes are one region and are never
-//! compared: cutting close to them leaves a thin wall, not a gouge.
+//! least `r` from every line of it (`generate_profile` refuses a band
+//! narrower than the tool, #192), so at least `r` from every other
+//! region's line too, and only Outside and On line cuts can warn. A part
+//! and its own holes are one region and are never compared here: Outside,
+//! cutting close to them leaves a thin wall, not a gouge.
 
 use crate::error::ShapeRef;
 use crate::warning::{Warning, WarningCode};
@@ -90,7 +92,7 @@ pub(crate) fn overlap_warnings(
 
 /// True when `path` comes closer than `radius_mm` to `line`, by more than
 /// [`EPS_MM`]: shapes exactly a tool's reach apart are fine.
-fn within(path: &Polyline, line: &Polyline, radius_mm: f64) -> bool {
+pub(crate) fn within(path: &Polyline, line: &Polyline, radius_mm: f64) -> bool {
     let reach_mm = radius_mm - EPS_MM;
     let near = match (path.bounds(), line.bounds()) {
         (Some(a), Some(b)) => boxes_within(a, b, reach_mm),

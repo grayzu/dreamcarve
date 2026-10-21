@@ -51,13 +51,18 @@
 //!     line. The On line ramp runs along the line; there is no lead or
 //!     notch.
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
-//!     it on its waste side, passes even where another outline comes
-//!     nearer than the radius. That cut is the outline's offset, which S6
-//!     holds the program to, and the gouge into the other shape is the one
-//!     `dc_cam`'s overlap check warns about (`toolpaths_overlap`): the
-//!     project asked for two shapes closer than the bit, and phase 1 decided
-//!     to warn there, not to refuse. Entries, leads and notches never run
-//!     along an outline at the radius, so the lap rule never lets one
+//!     it on its waste side, passes even where an outline of another
+//!     region comes nearer than the radius. That cut is the outline's
+//!     offset, which S6 holds the program to, and the gouge into the other
+//!     shape is the one `dc_cam`'s overlap check warns about
+//!     (`toolpaths_overlap`): the project asked for two shapes closer than
+//!     the bit, and phase 1 decided to warn there, not to refuse. The lap
+//!     must still keep its clearance from every outline of its own region
+//!     (#192): within one region the overlap check never warns, and a lap
+//!     that comes nearer another line of it, an island's lap in a band
+//!     narrower than the bit, is a gouge dc-cam refuses
+//!     (`CamError::BandNarrowerThanTool`). Entries, leads and notches never
+//!     run along an outline at the radius, so the lap rule never lets one
 //!     through. dc-cam's waste domain also keeps entries out of other
 //!     shapes' kerfs; that is waste too, so S9 does not hold the program
 //!     to it.
@@ -604,9 +609,10 @@ fn outside_regions(areas: &[Area], path: Segment, clearance_mm: f64, notch: Opti
 }
 
 /// The lap rule (module docs): whether tool-centre path `path` runs along
-/// one loop of `areas`, its ends and middle within `reach_mm` of it and
-/// clear of it (or a notch at one of its corners), on its waste side. Other
-/// outlines are not looked at.
+/// one loop of `areas`, its ends and middle within `reach_mm` of it, on
+/// its waste side, and clear of every loop of that loop's own area (or a
+/// notch at one of their corners). Other areas' outlines are not looked
+/// at; the loop's own area's always are (#192).
 fn is_lap(
     areas: &[Area],
     path: Segment,
@@ -630,7 +636,7 @@ fn is_lap(
                     .alone
                     .as_ref()
                     .is_some_and(|r| r.contains_point(path.start) == l.waste_inside)
-                    && walls_allow(area, &l.edges, path, clearance_mm, notch)
+                    && walls_allow(area, &(0..area.edges.len()), path, clearance_mm, notch)
             })
         })
 }

@@ -363,8 +363,13 @@ it stays outside every target region, `r` from every outline. On line,
 it stays on a target's line. The notch rule applies Inside and Outside,
 so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
-outline on its waste side. It passes even where another outline comes
-nearer, because that gouge is the one `ToolpathsOverlap` warns of. dc-cam's
+outline on its waste side. It passes even where an outline of another
+region comes nearer, because that gouge is the one `ToolpathsOverlap`
+warns of. It still keeps `r` from every outline of its own region.
+(changed in #192: the exception covered every other outline, so an
+Inside island's lap in a band narrower than the tool passed although
+`ToolpathsOverlap` never compares one region's lines; dc-cam now refuses
+that band, see "Profile bands".) dc-cam's
 domain also keeps entries out of other shapes' kerfs. That is waste too,
 so S9 does not check it. (changed in #177: Profile was left to S6 and
 dc-cam.) `ExportWarning` adds `ArcFitFallback { op, runs }`,
@@ -776,6 +781,39 @@ Slice 11 (#180) decisions:
   up to that far outside them. A lead arc whose samples leave its domain
   is `CamError::OffMaterial` (S9), as a descent's.
 
+### Profile bands (dc-cam::profile)
+
+Phase 1's Profile step 3 offsets each contour on its own. Under Inside
+the band between a region's outline and its islands, or between two
+islands, is waste, and the material beyond every one of those lines is
+kept. A tool-centre path of one line that comes closer than `r` (less
+`EPS_MM`) to another line of its own region would cut into that kept
+material: in a band narrower than the tool, an island's lap runs past the
+outline into the part. `generate_profile` refuses it with
+`CamError::BandNarrowerThanTool { op, shape, other, band_mm, diameter_mm
+}`, the two shapes in drawing order and `band_mm` the narrowest distance
+between their lines. The rule with `ToolTooLarge`:
+
+- A contour with no tool-centre path at all (the tool fits nowhere along
+  it) warns `ToolTooLarge` and is skipped, as in phase 1: nothing is cut
+  there, so nothing is gouged.
+- A path that exists and comes within `r` of another line of its region
+  is an error, never a skip. That includes an island whose outline was
+  skipped as `ToolTooLarge`: the island's lap would still run outside the
+  outline.
+- Outside never meets the rule: the outline's path runs outside the
+  region and every hole's inside its hole, so each is `r` from every
+  other line of the region. A hole close to its outline is a thin wall,
+  not a gouge. Paths in different regions stay D6's `ToolpathsOverlap`
+  warning; under Inside, once this check passes, they never come within
+  `r` of another region's line.
+
+(changed in #192: an Inside band narrower than the tool gouged the part
+with no warning, because the overlap check never compares one region's
+lines and S9's lap rule passed the lap. A cut that gouges kept material
+is an error, not a warning: D6 warns only where two separate shapes were
+drawn too close, which the user can see and accept.)
+
 ### Corner relief (dc-cam::relief)
 
 Ported from `cornerRelief.ts`.
@@ -805,17 +843,27 @@ Ported from `cornerRelief.ts`.
      frees it. A corner counts as cut when its own shape's path cuts its
      descend point at the deepest level. Each level goes in the unit of
      the shape's first pass at or below it, which has opened the column at
-     the descend point by then. Consecutive levels of one corner in one
-     unit are one block that steps down at the descend point. A shape's
-     corners are ordered nearest-neighbour from the end of its first
-     block. The sequencer cuts a unit's freeing blocks last (Sequence,
-     step 2), so the levels of a freeing pass run just before its final
-     lap. They plunge through the skin that lap is about to cut, while the
-     skin still holds the part or slug. (changed in #189: a through-cut
-     Profile with no tabs freed its part or slug with its last lap, and
-     every notch after that cut beside a piece that could shift. The
-     price is a plunge into material, up to one tool step-down, at each
-     notch of the freeing pass, whatever the Profile's entry.)
+     the descend point by then, and runs after that pass's lap.
+     Consecutive levels of one corner in one unit are one block that steps
+     down at the descend point. A shape's corners are ordered
+     nearest-neighbour from the end of its first block. The levels of a
+     freeing pass are cut from inside its lap instead: where the lap
+     (re-seamed by a lead, raised by tabs) first reaches the descend point
+     at depth, the tool rises in the column the lap has just opened to the
+     first level, cuts out and back at each level, steps down at the
+     descend point between them, returns to the lap's Z and carries on. A
+     lap move that passes the descend point in its middle is split there;
+     at the lap's start the notch runs right after the descent. The rest
+     of the lap still holds the part or slug, and nothing of the shape is
+     cut after the lap closes. A freeing lap that never reaches the
+     descend point at depth (none in practice: the guard needs it) keeps
+     the separate block, which the sequencer puts before the lap (Sequence,
+     step 2). (changed in #189: a through-cut Profile with no tabs freed
+     its part or slug with its last lap, and every notch after that cut
+     beside a piece that could shift. Changed in #193: the freeing pass's
+     levels ran as blocks before its lap and plunged through the skin, up
+     to one step-down, whatever the Profile's entry; cut from the lap,
+     every Z change at a descend point is in an open column.)
 
 ### Sequence (dc-cam::sequence)
 
@@ -840,7 +888,8 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
    pass by pass, under both orders (phase 1 cut each loop to full depth
    on its own). (decided in slice 1, #127. Changed in #189: freeing blocks
    last, so a Profile's relief notches at its freeing pass precede the
-   lap that frees it.)
+   lap that frees it. Since #193 those notches are cut from inside the
+   freeing lap, so this only orders the fallback block.)
 3. **Order:**
    - `FullDepthFirst`: order shapes by a greedy walk: start from the
      first shape in drawing order; from the current shape's exit, pick the
@@ -1401,7 +1450,11 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `relief::pocket_square_clears_all_four_corners_eight_cuts` (port), `relief::island_reflex_corners_relieved_convex_not` (port), `relief::arcs_and_fillets_produce_no_relief` (port), `relief::steps_down_at_tool_step_down` (port), `relief::no_step_down_skips_with_warning` (port), `relief::allowance_sizes_relief_to_the_wall_left` (port), `relief::rough_with_allowance_then_rest_with_relief_clears_corner` (port).
 - `relief::inside_profile_relieves_hole_corners` (port), `relief::outside_profile_relieves_concave_part_corners` (port), `relief::corner_under_tab_is_skipped` (port).
 - `relief::footprint_of_notch_stays_in_removed_material` (S9).
-- `relief::profile_notches_precede_the_freeing_pass` (#189: inside and outside, both orders), `cli::pocket_dogbone_exports_and_passes_safety` (an inside Profile through the stock: a full lap follows the last notch).
+- `relief::profile_notches_precede_the_freeing_pass` (#189: inside and outside, both orders; the bottom level within the freeing lap since #193), `cli::pocket_dogbone_exports_and_passes_safety` (an inside Profile through the stock: a full lap at the bottom, closing after the last notch).
+- `relief::bottom_level_notches_do_not_plunge` (#193: ramp entry, both orders, one and two levels in the freeing pass, with a lead: no straight plunge below what is already cut at a descend point; every bottom notch within the final lap).
+
+**dc-cam — profile**
+- `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192).
 
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.
@@ -1416,7 +1469,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::canned_cycle_expansion_matches_drill_toolpath` (S11), `safety::canned_cycle_below_floor_fails_s1`, `safety::canned_cycle_rapid_into_uncut_fails`.
 - `safety::ramp_steeper_than_plunge_fails_s10`, `safety::helix_feed_scaled_passes_s10`.
 - `safety::pocket_cut_outside_region_fails_s9` (on the toolpath via `footprint`).
-- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177).
+- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177), `safety::inside_profile_lap_in_a_band_narrower_than_the_tool_fails_s9` (#192).
 - `post::six_definitions_validate`, `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect` (acceptance 36), `post::mach3_numbers_every_line`, `post::uccnc_writes_no_line_numbers_percent_or_units_word`, `post::generic_strips_trailing_zeros`, `post::generic_refuses_m6_mode`, `post::linuxcnc_mach3_uccnc_refuse_m6_mode`, `post::canned_cycles_only_where_documented`, `post::no_definition_has_g43`, `post::every_definition_line_is_cited_in_readme` (a test that scans the README for each non-placeholder header/footer/tool-change line).
 - `emit::one_program_flag_writes_m6_on_grblhal`, `emit::one_program_flag_on_grbl_is_error`, `emit::programs_per_tool_flag_overrides_m6_mode_without_saving`.
 
