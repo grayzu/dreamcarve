@@ -20,7 +20,11 @@ use std::f64::consts::{PI, TAU};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Region {
     outer: Contour,
+    /// The input position of `outer`.
+    outer_index: usize,
     holes: Vec<Contour>,
+    /// The input position of each hole, in step with `holes`.
+    hole_indices: Vec<usize>,
     depth: usize,
 }
 
@@ -31,11 +35,26 @@ impl Region {
         &self.outer
     }
 
+    /// The position in [`nest`]'s input of the contour that became
+    /// [`Region::outer`], so a caller can find what it came from without
+    /// comparing contours (#71).
+    #[must_use]
+    pub fn outer_index(&self) -> usize {
+        self.outer_index
+    }
+
     /// The holes, in the input order given to [`nest`]; each is clockwise
     /// and lies inside [`Region::outer`].
     #[must_use]
     pub fn holes(&self) -> &[Contour] {
         &self.holes
+    }
+
+    /// The position in [`nest`]'s input of each of [`Region::holes`], in
+    /// the same order.
+    #[must_use]
+    pub fn hole_indices(&self) -> &[usize] {
+        &self.hole_indices
     }
 
     /// How many input contours enclose [`Region::outer`]: 0 for a part
@@ -125,12 +144,13 @@ pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>
             Overlap::Apart | Overlap::Nested => {}
         }
     }
-    let kept = contours
+    let (kept, sources) = contours
         .into_iter()
         .zip(keep)
-        .filter_map(|(contour, kept)| kept.then_some(contour))
-        .collect();
-    Ok((nest_unchecked(kept), warnings))
+        .enumerate()
+        .filter_map(|(index, (contour, kept))| kept.then_some((contour, index)))
+        .unzip();
+    Ok((nest_from(kept, sources), warnings))
 }
 
 /// Every pair `(i, j)`, `i < j`, of `boxes` whose rectangles overlap or
@@ -227,7 +247,15 @@ fn shared_area_mm2(a: &Contour, b: &Contour) -> f64 {
 }
 
 /// Nesting proper, for contours already known not to cross or repeat.
+/// The regions' indices are positions in `contours`.
 pub(crate) fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
+    let sources = (0..contours.len()).collect();
+    nest_from(contours, sources)
+}
+
+/// [`nest_unchecked`] where `sources[k]` is the input position the
+/// regions report for `contours[k]`.
+fn nest_from(contours: Vec<Contour>, sources: Vec<usize>) -> Vec<Region> {
     let areas_mm2: Vec<f64> = contours.iter().map(|c| c.signed_area_mm2().abs()).collect();
     let sized: Vec<(&Contour, f64)> = contours.iter().zip(areas_mm2.iter().copied()).collect();
 
@@ -277,26 +305,31 @@ pub(crate) fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
         .collect();
 
     let mut regions: Vec<(usize, Region)> = Vec::new();
-    let mut holes: Vec<(usize, Contour)> = Vec::new();
-    for ((index, contour), role) in contours.into_iter().enumerate().zip(roles) {
+    let mut holes: Vec<(usize, Contour, usize)> = Vec::new();
+    for (((index, contour), role), source) in
+        contours.into_iter().enumerate().zip(roles).zip(sources)
+    {
         match role {
             Role::Outer => regions.push((
                 index,
                 Region {
                     outer: with_ccw(contour, true),
+                    outer_index: source,
                     holes: Vec::new(),
+                    hole_indices: Vec::new(),
                     depth: depths.get(index).copied().unwrap_or(0),
                 },
             )),
-            Role::HoleOf(parent) => holes.push((parent, with_ccw(contour, false))),
+            Role::HoleOf(parent) => holes.push((parent, with_ccw(contour, false), source)),
         }
     }
     // `regions` is in input order, so sorted by index.
-    for (parent, hole) in holes {
+    for (parent, hole, source) in holes {
         if let Ok(k) = regions.binary_search_by_key(&parent, |(index, _)| *index)
             && let Some((_, region)) = regions.get_mut(k)
         {
             region.holes.push(hole);
+            region.hole_indices.push(source);
         }
     }
     regions.into_iter().map(|(_, region)| region).collect()
@@ -718,6 +751,27 @@ mod tests {
         .unwrap();
         assert_eq!(regions.len(), 1);
         assert_eq!(warnings.len(), 1);
+    }
+
+    /// #71: a region names the input positions of its contours, counting
+    /// a dropped duplicate, so a caller can map it back to its shapes.
+    #[test]
+    fn regions_carry_input_indices() {
+        let (regions, warnings) = nest(vec![
+            circle(50.0, 0.0, 3.0),
+            circle(0.0, 0.0, 4.0),
+            circle(0.0, 0.0, 4.0),
+            circle(0.0, 0.0, 10.0),
+            circle(0.0, 0.0, 2.0),
+            circle(0.0, 6.0, 1.0),
+        ])
+        .unwrap();
+        assert_eq!(warnings.len(), 1);
+        let indices: Vec<(usize, &[usize])> = regions
+            .iter()
+            .map(|r| (r.outer_index(), r.hole_indices()))
+            .collect();
+        assert_eq!(indices, [(0, &[][..]), (3, &[1, 5][..]), (4, &[][..])]);
     }
 
     #[test]
