@@ -18,6 +18,12 @@
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
 //! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
 //! the motion the machine makes.
+//!
+//! S10 (`docs/specs/phase-2/functional.md`): every descending cut falls no
+//! faster than its tool's plunge rate, its slope recomputed from the
+//! written numbers ([`check_descent_rate`]). S9: every cut stays in its
+//! operation's own material, worked out from the project
+//! ([`crate::material`]).
 
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
@@ -32,6 +38,7 @@ use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
 use crate::emit::{changes_tools_in_program, controller_sets_units};
 use crate::format::decimal_places;
+use crate::material::{self, Material};
 use crate::parse::{
     Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
 };
@@ -50,6 +57,8 @@ pub(crate) struct OpSpan<'a> {
     pub tool: &'a Tool,
     /// Its toolpath, in project space.
     pub toolpath: &'a Toolpath,
+    /// The material it may cut, from the project (S9).
+    pub material: &'a Material,
     /// 1-based program lines, end exclusive, from the operation's first
     /// motion line to its last.
     pub lines: Range<usize>,
@@ -67,7 +76,8 @@ pub(crate) struct Tolerances {
 }
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S7 and S12, and returns the program's extents.
+/// in `spans`, against S1–S7, S9, S10 and S12, and returns the program's
+/// extents.
 ///
 /// # Errors
 ///
@@ -88,6 +98,10 @@ pub(crate) fn check(
     }
     // S7: every cut stays on the stock.
     check_on_stock(&blocks, post, transform, stock, stock_thickness_mm, spans)?;
+    // S9: every cut stays in its operation's own material.
+    for span in spans {
+        material::check(&blocks, post, transform, tolerances, span)?;
+    }
     Ok(extents(&blocks, transform.output_units()))
 }
 
@@ -188,7 +202,7 @@ fn arc_extremes(mv: &MachineMove) -> Vec<Point> {
 /// (`sx`, `sy`) to (`ex`, `ey`) (`gcode.c`, radius format): on the right
 /// of the chord for G2 and the left for G3, the other side for a negative
 /// R.
-fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: bool) -> Point {
+pub(crate) fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: bool) -> Point {
     let (dx, dy) = (ex - sx, ey - sy);
     let chord = dx.hypot(dy);
     if chord <= 0.0 {
@@ -247,7 +261,7 @@ fn check_on_stock(
     Ok(())
 }
 
-/// Checks `text` against S1–S5 and returns its blocks.
+/// Checks `text` against S1–S5 and S10 and returns its blocks.
 fn check_rules(
     text: &str,
     post: &PostProcessor,
@@ -405,6 +419,7 @@ fn check_rules(
                 }
             }
             check_feed(mv, &limits, 2.0 * tolerance_mm)?;
+            check_descent_rate(mv, &limits, transform, tolerance_mm)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
             if let (Some(x), Some(y), Some((z_mm, _))) = (mv.to.x, mv.to.y, z_after) {
@@ -617,7 +632,7 @@ fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(),
 }
 
 /// One output unit in the last written decimal place, in mm.
-fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
+pub(crate) fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
     let places = decimal_places(&post.number_format, units);
     10f64.powi(-i32::from(places)) * mm_per_unit(units)
 }
@@ -780,7 +795,8 @@ fn differs(a: Option<f64>, b: Option<f64>) -> bool {
 /// may also run anywhere between the tool's plunge rate and its feed: its
 /// feed is the cutting feed scaled so its vertical rate stays under the
 /// plunge rate (S10's feed scale, `dc_cam::entry`), which lands between
-/// the two. Whether that vertical rate is right is S10's check (slice 16).
+/// the two. Whether that vertical rate is right is S10's check
+/// ([`check_descent_rate`]).
 fn check_feed(
     mv: &MachineMove,
     limits: &Limits<'_>,
@@ -822,6 +838,64 @@ fn is_descent(mv: &MachineMove) -> bool {
         return false;
     };
     mv.kind == MotionKind::Linear && tz < fz && (tx - fx).hypot(ty - fy) > 0.0
+}
+
+/// S10: a cutting move that descends falls no faster than its tool's
+/// plunge rate: feed × sin(slope) ≤ plunge, with the slope recomputed from
+/// the written numbers (`docs/specs/phase-2/functional.md`, S10). Every
+/// descending cut is held to it, whatever made it: an entry ramp or helix,
+/// a smooth tab's down slope (#157), a straight plunge (slope 90°, so its
+/// feed must be at most the plunge rate) or an arc that descends. The
+/// written move may differ from the toolpath's by the rounding of its
+/// numbers, `quantum_mm` (one unit in the last written place, the same
+/// for lengths and feeds): a feed scaled to the plunge rate exactly must
+/// pass, so the check takes the slowest vertical rate those numbers allow,
+/// the feed one unit lower, the drop one unit shorter and the length two
+/// longer. A move whose start is not known is skipped; S2 and S4 keep a
+/// program from cutting from an unknown position.
+fn check_descent_rate(
+    mv: &MachineMove,
+    limits: &Limits<'_>,
+    transform: &MachineTransform,
+    quantum_mm: f64,
+) -> Result<(), ExportError> {
+    let (Some(op), Some(tool)) = (limits.op, limits.tool) else {
+        return Ok(());
+    };
+    let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+        (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
+    else {
+        return Ok(());
+    };
+    let drop_mm = transform.project_z(fz, mv.units) - transform.project_z(tz, mv.units);
+    if drop_mm <= 0.0 {
+        return Ok(());
+    }
+    let scale = mm_per_unit(mv.units);
+    let run_mm = match mv.kind {
+        MotionKind::Rapid => return Ok(()),
+        MotionKind::Linear => (tx - fx).hypot(ty - fy) * scale,
+        MotionKind::ArcCw | MotionKind::ArcCcw => {
+            let machine_cw = mv.kind == MotionKind::ArcCw;
+            let centre = match mv.arc.r {
+                Some(r) => r_centre(fx, fy, tx, ty, r, machine_cw),
+                None => Point::new(fx + mv.arc.i.unwrap_or(0.0), fy + mv.arc.j.unwrap_or(0.0)),
+            };
+            let arc = Arc::from_ends(Point::new(fx, fy), Point::new(tx, ty), centre, !machine_cw);
+            arc.radius_mm * arc.sweep_rad.abs() * scale
+        }
+    };
+    let feed_mm_min = mv.feed.unwrap_or(0.0) * scale;
+    let slowest_mm_min = (feed_mm_min - quantum_mm).max(0.0) * (drop_mm - quantum_mm).max(0.0)
+        / (run_mm.hypot(drop_mm) + 2.0 * quantum_mm);
+    let plunge_mm_min = tool.plunge_mm_min.unwrap_or(0.0);
+    if slowest_mm_min > plunge_mm_min + EPS_MM {
+        return Err(ExportError::EntryTooSteep {
+            op: op.id().clone(),
+            line: mv.line,
+        });
+    }
+    Ok(())
 }
 
 /// An arc move whose end is its start within half a unit in the last
@@ -1683,6 +1757,7 @@ mod tests {
             op: &op,
             tool: &tool,
             toolpath: &toolpath,
+            material: &Material::Profile,
             lines: 1..lines,
         }];
         check_rules(
@@ -2384,6 +2459,7 @@ mod tests {
             op: &op,
             tool: &tool,
             toolpath,
+            material: &Material::Profile,
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -2407,10 +2483,12 @@ mod tests {
         let (project, _, tool) = fixture();
         let post = project.post_processor.resolve().unwrap();
         let transform = MachineTransform::new(&project, &post).unwrap();
+        let material = holes_under(toolpath);
         let spans = [OpSpan {
             op,
             tool: &tool,
             toolpath,
+            material: &material,
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -2430,6 +2508,20 @@ mod tests {
 
     fn drill() -> Operation {
         Operation::Drill(dc_project::test_support::sample_drill())
+    }
+
+    /// For the hand-written Drill programs, whose hole positions the
+    /// fixture's rectangle does not draw: a 1 mm hole under every cutting
+    /// move of `toolpath`, so S9 holds the program to the toolpath's holes.
+    fn holes_under(toolpath: &Toolpath) -> Material {
+        let mut holes: Vec<(Point, f64)> = Vec::new();
+        for mv in toolpath.moves.iter().filter(|m| !m.is_rapid()) {
+            let at = mv.to.xy();
+            if !holes.iter().any(|(c, _)| c.distance_to(at) <= EPS_MM) {
+                holes.push((at, 0.5));
+            }
+        }
+        Material::Drill { holes }
     }
 
     /// A peck at (50, 50) on the 6 mm stock (stock-top origin, safe Z 5):
@@ -2754,10 +2846,12 @@ mod tests {
         let (project, _, tool) = fixture();
         let transform = MachineTransform::new(&project, post).unwrap();
         let op = drill();
+        let material = holes_under(toolpath);
         let spans = [OpSpan {
             op: &op,
             tool: &tool,
             toolpath,
+            material: &material,
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -2895,5 +2989,529 @@ mod tests {
             matches!(result, Err(ExportError::RapidBelowSafeZ { line: 10, .. })),
             "{result:?}"
         );
+    }
+
+    // S9 and S10 (slice 16; `docs/specs/phase-2/design.md`, "Test plan").
+
+    /// The 1-based line of `text` with a word that starts `word`.
+    fn line_with(text: &str, word: &str) -> usize {
+        text.lines()
+            .position(|l| l.split_whitespace().any(|w| w.starts_with(word)))
+            .map(|i| i + 1)
+            .unwrap_or_else(|| panic!("no {word} in\n{text}"))
+    }
+
+    /// The vertical rate, mm/min, of every `G1` in `text` (a millimetre
+    /// program) that falls while it moves in XY.
+    fn descent_rates(text: &str) -> Vec<f64> {
+        crate::parse::parse_motion(text)
+            .unwrap()
+            .iter()
+            .filter(|m| m.kind == MotionKind::Linear)
+            .filter_map(|m| {
+                let (fx, fy, fz) = (m.from.x?, m.from.y?, m.from.z?);
+                let (tx, ty, tz) = (m.to.x?, m.to.y?, m.to.z?);
+                let (drop, run) = (fz - tz, (tx - fx).hypot(ty - fy));
+                (drop > 0.0 && run > 0.0).then(|| m.feed.unwrap_or(0.0) * drop / run.hypot(drop))
+            })
+            .collect()
+    }
+
+    /// Rapid over (10, 10), plunge to Z 6 (the stock top), ramp to
+    /// (14, 10) at Z 4 at `ramp_feed`, cut on to (30, 10), retract. The
+    /// ramp drops 2 mm over 4 mm, sin = 2/√20: at the 1000 feed it falls at
+    /// 447 mm/min, past the 300 plunge; at 300 × √20 / 2 = 670.8 mm/min it
+    /// falls at the plunge rate.
+    fn ramp(ramp_feed: f64) -> Toolpath {
+        Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(10.0, 10.0, 11.0)),
+                Move::linear(Point3::new(10.0, 10.0, 6.0), 300.0),
+                Move::linear(Point3::new(14.0, 10.0, 4.0), ramp_feed),
+                Move::linear(Point3::new(30.0, 10.0, 4.0), 1000.0),
+                Move::rapid(Point3::new(30.0, 10.0, 11.0)),
+            ],
+        }
+    }
+
+    /// S10: a ramp at the cutting feed that falls faster than the plunge
+    /// rate fails, naming the operation and the line; at the scaled feed
+    /// it passes. The same on a hand-written program.
+    #[test]
+    fn ramp_steeper_than_plunge_fails_s10() {
+        let (project, op, tool) = fixture();
+        let scaled = 300.0 * 20f64.sqrt() / 2.0;
+        let text = emit_one(&project, &op, &tool, ramp(scaled)).unwrap();
+        let ramp_line = line_with(&text, "X14");
+        let err = emit_one(&project, &op, &tool, ramp(1000.0)).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::EntryTooSteep { op: at, line }
+                if at == &op.id && *line == ramp_line),
+            "{err:?}"
+        );
+
+        let text = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z0 F300\nX4 Z-2 F{f}\nX10 F1000\nG0 Z5\nM5\n"
+            )
+        };
+        check_text(&text("670.82")).unwrap();
+        let err = check_text(&text("1000")).unwrap_err();
+        assert!(
+            matches!(err, ExportError::EntryTooSteep { line: 8, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S10 on a straight plunge: its slope is 90°, so its feed is its
+    /// vertical rate and must not pass the plunge rate.
+    #[test]
+    fn vertical_plunge_at_cutting_feed_fails_s10() {
+        let plunge = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F{f}\nX10 F1000\nG0 Z5\nM5\n"
+            )
+        };
+        check_text(&plunge("300")).unwrap();
+        let err = check_text(&plunge("1000")).unwrap_err();
+        assert!(
+            matches!(err, ExportError::EntryTooSteep { line: 7, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// A lap at Z 3 along Y 10 with a tab: up 2 mm over 3 mm at the
+    /// cutting feed, a hold, then down 2 mm over 3 mm at `down_feed`. At
+    /// the 1000 feed the down slope falls at 1000 × 2/√13 = 555 mm/min,
+    /// past the 300 plunge; at 300 × √13 / 2 = 540.8 it falls at 300.
+    fn tab_lap(down_feed: f64) -> Toolpath {
+        Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(10.0, 10.0, 11.0)),
+                Move::linear(Point3::new(10.0, 10.0, 3.0), 300.0),
+                Move::linear(Point3::new(20.0, 10.0, 3.0), 1000.0),
+                Move::linear(Point3::new(23.0, 10.0, 5.0), 1000.0),
+                Move::linear(Point3::new(26.0, 10.0, 5.0), 1000.0),
+                Move::linear(Point3::new(29.0, 10.0, 3.0), down_feed),
+                Move::linear(Point3::new(40.0, 10.0, 3.0), 1000.0),
+                Move::rapid(Point3::new(40.0, 10.0, 11.0)),
+            ],
+        }
+    }
+
+    /// S10 holds on every descending move, a tab's down slope included
+    /// (#157): one at the cutting feed that falls faster than the plunge
+    /// rate fails; scaled, it passes. The up slope is not a descent.
+    #[test]
+    fn tab_slope_steeper_than_plunge_fails_s10() {
+        let (project, op, tool) = fixture();
+        let scaled = 300.0 * 13f64.sqrt() / 2.0;
+        let text = emit_one(&project, &op, &tool, tab_lap(scaled)).unwrap();
+        let down_line = line_with(&text, "X29");
+        let err = emit_one(&project, &op, &tool, tab_lap(1000.0)).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::EntryTooSteep { op: at, line }
+                if at == &op.id && *line == down_line),
+            "{err:?}"
+        );
+    }
+
+    /// #157: the sample Profile with smooth tabs, generated, exports: each
+    /// down slope (2 mm over 3 mm) runs at its plunge-limited feed.
+    #[test]
+    fn smooth_tab_profile_passes_s10() {
+        let mut project = sample_project();
+        let op = dc_project::test_support::profile_mut(&mut project);
+        if let Some(tabs) = op.tabs.as_mut() {
+            tabs.shape = dc_project::TabShape::Smooth;
+        }
+        let op = op.clone();
+        let tool = project.tools[0].clone();
+        let (toolpath, _) = generate_profile(&project, &op).unwrap();
+        let text = emit_one(&project, &op, &tool, toolpath).unwrap();
+        let rates = descent_rates(&text);
+        assert!(!rates.is_empty(), "the tabs' down slopes descend");
+        for rate in rates {
+            assert!(rate <= 300.0 * 1.01, "a down slope falls at {rate} mm/min");
+        }
+    }
+
+    /// The slice 9 island Pocket (`dc_cam::pocket` tests): 300 × 200 × 6 mm
+    /// stock, a 100 × 50 mm rectangle at (20, 20) with a 20 mm circle
+    /// island at its centre (70, 45), an offset Pocket 4 mm deep in the
+    /// 6.35 mm tool's 2 mm steps, 40 % step-over, entering by `entry`, with
+    /// `allowance_mm`.
+    fn island_pocket(
+        entry: dc_project::Entry,
+        allowance_mm: f64,
+    ) -> (Project, dc_project::PocketOp) {
+        let mut project = sample_project();
+        project.stock = dc_project::Stock {
+            width_mm: 300.0,
+            height_mm: 200.0,
+            thickness_mm: Some(6.0),
+        };
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles = vec![
+                dc_geometry::Polyline::rect(Point::new(0.0, 0.0), 100.0, 50.0),
+                dc_geometry::Polyline::circle(Point::new(50.0, 25.0), 10.0),
+            ];
+        }
+        project.instances[0].transform = dc_geometry::Transform::translate(20.0, 20.0);
+        let op = dc_project::PocketOp {
+            depth_mm: Some(4.0),
+            step_over_fraction: Some(0.4),
+            entry,
+            allowance_mm,
+            ..dc_project::test_support::sample_pocket()
+        };
+        project.operations = vec![Operation::Pocket(op.clone())];
+        (project, op)
+    }
+
+    fn helix() -> dc_project::Entry {
+        dc_project::Entry::Helix {
+            diameter_fraction: 0.8,
+            angle_deg: 5.0,
+        }
+    }
+
+    /// Emits Pocket `op` of `project` with `toolpath`, or its generated
+    /// toolpath when `None`.
+    fn emit_pocket(
+        project: &Project,
+        op: &dc_project::PocketOp,
+        toolpath: Option<Toolpath>,
+    ) -> Result<String, ExportError> {
+        let toolpath = toolpath.unwrap_or_else(|| dc_cam::generate_pocket(project, op).unwrap().0);
+        emit(
+            project,
+            &[(
+                Operation::Pocket(op.clone()),
+                project.tools[0].clone(),
+                toolpath,
+            )
+                .into()],
+            "2026-10-21",
+        )
+        .map(|(p, _)| p.text)
+    }
+
+    /// S10 on a generated helix: every chord's feed is scaled so it falls
+    /// no faster than the plunge rate, and the program passes.
+    #[test]
+    fn helix_feed_scaled_passes_s10() {
+        let (project, op) = island_pocket(helix(), 0.0);
+        let text = emit_pocket(&project, &op, None).unwrap();
+        let rates = descent_rates(&text);
+        assert!(rates.len() > 100, "helices are cut: {}", rates.len());
+        // Within the rounding of 0.3 mm chords to three decimals.
+        for rate in rates {
+            assert!(rate <= 300.0 * 1.01, "a helix chord falls at {rate} mm/min");
+        }
+    }
+
+    /// Rapid over (`x0`, `y`), plunge to Z 3, one cut to (`x1`, `y`) at the
+    /// feed, retract.
+    fn one_pass(x0: f64, x1: f64, y: f64) -> Toolpath {
+        Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(x0, y, 11.0)),
+                Move::linear(Point3::new(x0, y, 3.0), 300.0),
+                Move::linear(Point3::new(x1, y, 3.0), 1000.0),
+                Move::rapid(Point3::new(x1, y, 11.0)),
+            ],
+        }
+    }
+
+    /// S9: a Pocket cut that brings the 6.35 mm tool past the region's
+    /// wall, into its allowance, or onto an island fails with
+    /// `OffMaterial` at that line; the generated Pocket passes. The sample
+    /// rectangle spans X 10 to 60, so a tool centre at X 56.8 is 0.025 mm
+    /// inside the wall and one at 58 is 1.175 mm past it.
+    #[test]
+    fn pocket_cut_outside_region_fails_s9() {
+        let mut project = sample_project();
+        let op = dc_project::test_support::sample_pocket();
+        project.operations = vec![Operation::Pocket(op.clone())];
+        emit_pocket(&project, &op, None).unwrap();
+        let text = emit_pocket(&project, &op, Some(one_pass(20.0, 56.8, 25.0))).unwrap();
+        let cut_line = line_with(&text, "X56.8");
+        let err = emit_pocket(&project, &op, Some(one_pass(20.0, 58.0, 25.0))).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line }
+                if at == &op.id && *line == cut_line),
+            "{err:?}"
+        );
+
+        // A 0.5 mm allowance keeps the tool 0.5 mm off the wall.
+        let left = dc_project::PocketOp {
+            allowance_mm: 0.5,
+            ..op.clone()
+        };
+        let err = emit_pocket(&project, &left, Some(one_pass(20.0, 56.8, 25.0))).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line, .. } if line == cut_line),
+            "{err:?}"
+        );
+        emit_pocket(&project, &left, Some(one_pass(20.0, 56.3, 25.0))).unwrap();
+
+        // The island's edge is at X 60 on Y 45: the tool may come to 56.8.
+        let (project, op) = island_pocket(dc_project::Entry::Plunge, 0.0);
+        emit_pocket(&project, &op, None).unwrap();
+        emit_pocket(&project, &op, Some(one_pass(30.0, 56.8, 45.0))).unwrap();
+        let err = emit_pocket(&project, &op, Some(one_pass(30.0, 58.0, 45.0))).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line, .. } if line == cut_line),
+            "{err:?}"
+        );
+    }
+
+    /// S9 alone on hand-written `text`, as operation `op` of `project` with
+    /// the project's tool.
+    fn check_material_text(
+        text: &str,
+        project: &Project,
+        op: &Operation,
+    ) -> Result<(), ExportError> {
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(project, &post).unwrap();
+        let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
+        let tool = project.tools[0].clone();
+        let material = Material::of(project, op);
+        let toolpath = Toolpath::default();
+        let span = OpSpan {
+            op,
+            tool: &tool,
+            toolpath: &toolpath,
+            material: &material,
+            lines: 1..text.lines().count() + 1,
+        };
+        let tolerances = Tolerances {
+            flatten_mm: project.flatten_tolerance_mm,
+            arc_fit_mm: project.arc_fit_tolerance_mm,
+        };
+        material::check(&blocks, &post, &transform, tolerances, &span)
+    }
+
+    /// S9 on a hand-written program for the sample rectangle's Pocket
+    /// (X 10 to 60, Y 10 to 40, stock-top origin): a cut past the wall
+    /// fails, so does an arc whose ends are inside but whose bulge takes
+    /// the tool past it, and so does a plunge outside the region.
+    #[test]
+    fn hand_written_pocket_cut_off_material_fails_s9() {
+        let project = sample_project();
+        let op = Operation::Pocket(dc_project::test_support::sample_pocket());
+        let program =
+            |cuts: &str| format!("G21 G90\nG54\nG0 Z5\nX20 Y25\nG1 Z-3 F300\n{cuts}G0 Z5\n");
+        let ok = program("X56.8 F1000\nG3 X43.2 Y25 I-6.8 J0\n");
+        check_material_text(&ok, &project, &op).unwrap();
+        let past_wall = program("X58 F1000\n");
+        let err = check_material_text(&past_wall, &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+        // Centre (56.8, 30), radius 5, from the bottom round through X 61.8.
+        let bulge = program("X56.8 F1000\nG3 X56.8 Y35 I0 J5\n");
+        let err = check_material_text(&bulge, &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 7, .. }),
+            "{err:?}"
+        );
+        let outside = "G21 G90\nG54\nG0 Z5\nX5 Y25\nG1 Z-3 F300\nG0 Z5\n";
+        let err = check_material_text(outside, &project, &op).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 5, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// #158: S9 on the helix Pocket checks each of its more than a
+    /// thousand descent chords as a segment against the region's outlines,
+    /// not as the union of swept capsules (6.7 s in a debug build in slice
+    /// 9), so it stays fast in a debug build.
+    #[test]
+    fn s9_check_is_fast_on_helix_pocket() {
+        let (project, op) = island_pocket(helix(), 0.0);
+        let text = emit_pocket(&project, &op, None).unwrap();
+        let descents = descent_rates(&text).len();
+        assert!(descents > 1000, "{descents} descent chords");
+        let op = Operation::Pocket(op);
+        let start = std::time::Instant::now();
+        check_material_text(&text, &project, &op).unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "S9 took {elapsed:?} on {descents} descent chords"
+        );
+    }
+
+    /// The sample project with a Drill of one 8 mm hole at (50, 50).
+    fn drill_hole_project() -> (Project, dc_project::DrillOp) {
+        let mut project = sample_project();
+        let hole = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d2"),
+            name: "Hole".into(),
+            profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0)],
+        };
+        project.definitions.insert(hole.id.clone(), hole);
+        let mut instance = project.instances[0].clone();
+        instance.id = dc_project::InstanceId::new("h1");
+        instance.definition = dc_project::DefinitionId::new("d2");
+        instance.transform = dc_geometry::Transform::translate(50.0, 50.0);
+        project.instances.push(instance);
+        let op = dc_project::DrillOp {
+            targets: vec![dc_project::InstanceId::new("h1")],
+            ..dc_project::test_support::sample_drill()
+        };
+        project.operations = vec![Operation::Drill(op.clone())];
+        (project, op)
+    }
+
+    /// A simple hole at (`x`, 50): to the retract plane, plunge to Z 3,
+    /// out.
+    fn hole_at(x: f64) -> Toolpath {
+        Toolpath {
+            moves: vec![
+                Move::rapid(Point3::new(x, 50.0, 11.0)),
+                Move::rapid(Point3::new(x, 50.0, 7.0)),
+                Move::linear(Point3::new(x, 50.0, 3.0), 300.0),
+                Move::rapid(Point3::new(x, 50.0, 11.0)),
+            ],
+        }
+    }
+
+    /// S9 for a Drill: every cut stays inside one of its holes. A plunge
+    /// 5 mm from the 4 mm hole's centre is off it.
+    #[test]
+    fn drill_off_its_hole_fails_s9() {
+        let (project, op) = drill_hole_project();
+        let emit_drill = |tp: Toolpath| {
+            emit(
+                &project,
+                &[(Operation::Drill(op.clone()), project.tools[0].clone(), tp).into()],
+                "2026-10-21",
+            )
+            .map(|(p, _)| p.text)
+        };
+        let text = emit_drill(hole_at(50.0)).unwrap();
+        let plunge_line = line_with(&text, "Z-3");
+        let err = emit_drill(hole_at(55.0)).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line }
+                if at == &op.id && *line == plunge_line),
+            "{err:?}"
+        );
+    }
+
+    /// S9 for an Engrave: every cut stays on its lines. The sample
+    /// rectangle's bottom and right edges pass; an end 2 mm off the corner
+    /// fails, and so does a diagonal between two corners, whose ends are on
+    /// the line but whose middle is not.
+    #[test]
+    fn engrave_off_its_line_fails_s9() {
+        let project = sample_project();
+        let op = dc_project::test_support::sample_engrave();
+        let path = |points: &[(f64, f64)]| {
+            let mut moves = vec![
+                Move::rapid(Point3::new(10.0, 10.0, 11.0)),
+                Move::linear(Point3::new(10.0, 10.0, 5.0), 300.0),
+            ];
+            for &(x, y) in points {
+                moves.push(Move::linear(Point3::new(x, y, 5.0), 1000.0));
+            }
+            let last = moves.last().unwrap().to;
+            moves.push(Move::rapid(Point3::new(last.x, last.y, 11.0)));
+            Toolpath { moves }
+        };
+        let emit_engrave = |tp: Toolpath| {
+            emit(
+                &project,
+                &[(Operation::Engrave(op.clone()), project.tools[0].clone(), tp).into()],
+                "2026-10-21",
+            )
+            .map(|(p, _)| p.text)
+        };
+        let text = emit_engrave(path(&[(60.0, 10.0), (60.0, 40.0)])).unwrap();
+        let corner_line = line_with(&text, "X60");
+        let err = emit_engrave(path(&[(60.0, 12.0), (60.0, 40.0)])).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line }
+                if at == &op.id && *line == corner_line),
+            "{err:?}"
+        );
+        let err = emit_engrave(path(&[(60.0, 40.0)])).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line, .. } if line == corner_line),
+            "{err:?}"
+        );
+    }
+
+    /// The program for a [`chord_run`] over 270° written as four sub-arcs
+    /// of 67.5°, sub-arc `k`'s centre moved `shift[k]` mm along its
+    /// chord's perpendicular bisector (which keeps its start and end radii
+    /// equal), I and J rounded to three decimals from the written start, as
+    /// the emitter's I/J snapping moves a centre.
+    fn drifting_run_text(shift: [f64; 4]) -> String {
+        let round = |v: f64| (v * 1000.0).round() / 1000.0;
+        let on = |a: f64| Point::new(round(50.0 + 10.0 * a.cos()), round(50.0 + 10.0 * a.sin()));
+        let mut arcs = String::new();
+        for (k, delta) in shift.into_iter().enumerate() {
+            let a0 = 3.0 * PI / 8.0 * f64::from(u8::try_from(k).unwrap());
+            let a1 = a0 + 3.0 * PI / 8.0;
+            let (start, end) = (on(a0), on(a1));
+            let mid = (a0 + a1) / 2.0;
+            let centre = Point::new(50.0 + delta * mid.cos(), 50.0 + delta * mid.sin());
+            let (i, j) = (round(centre.x - start.x), round(centre.y - start.y));
+            let feed = if k == 0 { " F1000" } else { "" };
+            arcs.push_str(&format!(
+                "G3 X{:.3} Y{:.3} I{i:.3} J{j:.3}{feed}\n",
+                end.x, end.y
+            ));
+        }
+        chord_run_text(&arcs)
+    }
+
+    /// #142, #137: a long fitted run whose sub-arc centres drift by I/J
+    /// snapping passes S12. The first and last of four centres sit 0.009 mm
+    /// out along their bisectors and differ by 0.012 mm on each axis once
+    /// rounded, more than the arc-fit tolerance plus one unit in the last
+    /// place (0.011 mm); each differs from its neighbour by under 0.008 mm.
+    /// The run's 51 chords put no vertex at the sub-arcs' ends, so the
+    /// chain must not break there.
+    #[test]
+    fn fitted_run_with_drifting_snapped_centres_passes_s12() {
+        let toolpath = chord_run(51, 3.0 * FRAC_PI_2, None);
+        let text = drifting_run_text([0.009, 0.0, 0.0, 0.009]);
+        check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+    }
+
+    /// #142: two abutting runs on different circles stay separate chains.
+    /// A quarter of the radius 10 circle about (50, 50) from +X to
+    /// (50, 60), then a quarter of the radius 15 circle about (50, 45) on
+    /// to (35, 45): written as one arc each, about its own centre, the
+    /// program passes; with the second arc written about the first
+    /// circle's centre, its vertices are off it and it fails.
+    #[test]
+    fn chain_does_not_join_two_different_circles() {
+        let mut toolpath = chord_run(8, FRAC_PI_2, None);
+        let retract = toolpath.moves.pop().unwrap();
+        for k in 1..=8 {
+            let angle = FRAC_PI_2 + FRAC_PI_2 * f64::from(k) / 8.0;
+            toolpath.moves.push(Move::linear(
+                Point3::new(50.0 + 15.0 * angle.cos(), 45.0 + 15.0 * angle.sin(), 5.0),
+                1000.0,
+            ));
+        }
+        let last = toolpath.moves.last().unwrap().to;
+        toolpath
+            .moves
+            .push(Move::rapid(Point3::new(last.x, last.y, retract.to.z)));
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX35 Y45 I0 J-15\n");
+        check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\n");
+        let result = check_against_with(&text, &toolpath, Some(0.01));
+        assert!(result.is_err(), "{result:?}");
     }
 }

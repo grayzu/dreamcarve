@@ -343,6 +343,27 @@ pub enum ExportError {
         /// 1-based line number in the program.
         line: usize,
     },
+    /// S10: a cutting move descends faster than its tool's plunge rate:
+    /// its feed times the sine of its slope is above the plunge rate. A
+    /// ramp, a helix, a tab's down slope and a straight plunge are all
+    /// held to it.
+    #[error("emitted line {line} of operation `{op}` descends faster than its tool's plunge rate")]
+    EntryTooSteep {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+    },
+    /// S9: a cutting move takes the tool out of the material its operation
+    /// may cut: past a Pocket's wall, its allowance, or into an island; off
+    /// a Drill's holes; or off an Engrave's lines.
+    #[error("emitted line {line} takes operation `{op}`'s tool outside the material it may cut")]
+    OffMaterial {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+    },
     /// S6: reading the program back does not reproduce the toolpath: a
     /// move is missing, ends elsewhere, is the wrong kind, turns the wrong
     /// way, has the wrong centre, or has moves the toolpath does not.

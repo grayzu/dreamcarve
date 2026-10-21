@@ -583,18 +583,30 @@ pub fn plunge_limited_feed_scale(feed_mm_min: f64, plunge_mm_min: f64, angle_deg
     (plunge_mm_min / (feed_mm_min * vertical)).min(1.0)
 }
 
-/// The feed, mm/min, of a straight move `from → to` for `tool`: the
-/// cutting feed, scaled down on a descending move so its vertical
-/// component is at most the plunge rate, `min(feed, plunge × length /
-/// drop)` (upstream `plungeLimitedMoveFeedScale`, applied per move because
-/// a chord of a helix is a little steeper than the helix).
+/// The feed, mm/min, of a straight move `from → to` for `tool`
+/// ([`plunge_limited_feed_mm_min`]).
 fn move_feed_mm_min(tool: &EntryTool, from: Point3, to: Point3) -> f64 {
+    plunge_limited_feed_mm_min(tool.feed_mm_min, tool.plunge_mm_min, from, to)
+}
+
+/// The feed, mm/min, of a straight move `from → to`: the cutting feed
+/// `feed_mm_min`, scaled down on a descending move so its vertical
+/// component is at most `plunge_mm_min`, `min(feed, plunge × length /
+/// drop)` (S10; upstream `plungeLimitedMoveFeedScale`, applied per move
+/// because a chord of a helix is a little steeper than the helix). Entry
+/// descents and smooth tabs' down slopes both use it (#157).
+pub(crate) fn plunge_limited_feed_mm_min(
+    feed_mm_min: f64,
+    plunge_mm_min: f64,
+    from: Point3,
+    to: Point3,
+) -> f64 {
     let (dx, dy, dz) = (to.x - from.x, to.y - from.y, from.z - to.z);
     let length = (dx * dx + dy * dy + dz * dz).sqrt();
     if !(length > ENTRY_EPS && dz > ENTRY_EPS) {
-        return tool.feed_mm_min;
+        return feed_mm_min;
     }
-    tool.feed_mm_min.min(tool.plunge_mm_min * length / dz)
+    feed_mm_min.min(plunge_mm_min * length / dz)
 }
 
 /// True when a helix for `direction` on `side` turns counter-clockwise
