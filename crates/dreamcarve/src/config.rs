@@ -5,13 +5,14 @@
 //! "User config (CLI only)") and `dreamcarve config path`.
 //!
 //! `<config dir>/config.toml` holds the defaults a user sets once:
-//! `[export] tool_change_mode`, which `init` and `export --post` write
-//! into a new post-processor reference (functional spec, capability 19),
-//! and `[estimate]`, the machine's rapid rate and a scale factor for the
-//! cycle-time estimate `export` and `check` print (capability 30). No
-//! program depends on the file: a plain `export` reads only `[estimate]`,
-//! for the printed estimate, so a project exports the same bytes on every
-//! machine.
+//! `[export] tool_change_mode`, which `init` and `export --post
+//! --reset-settings` write into a new post-processor reference (functional
+//! spec, capability 19), and a plain `export --post` only where it resets
+//! the project's mode (capability 27, #277); and `[estimate]`, the
+//! machine's rapid rate and a scale factor for the cycle-time estimate
+//! `export` and `check` print (capability 30). No program depends on the
+//! file: a plain `export` reads only `[estimate]`, for the printed
+//! estimate, so a project exports the same bytes on every machine.
 //! `<config dir>/tools.json` is the tool library (slice 20). `<config dir>`
 //! is `DREAMCARVE_CONFIG_DIR` when that is set; otherwise the platform's
 //! usual place, read from the environment with std alone (no crate for

@@ -59,12 +59,13 @@ scale_factor = 1.0
 
 | Setting | Meaning |
 | --- | --- |
-| `export.tool_change_mode` | The `tool_change_mode` that `init` and `export --post` write into a new project's `post_processor` block: `"separate_programs"` (the default, one program per tool run) or `"m6"` (one program with `T<n> M6` tool changes, grblHAL only). See [Projects with more than one tool](post-processors.md#projects-with-more-than-one-tool). |
+| `export.tool_change_mode` | The `tool_change_mode` that `init` and `export --post --reset-settings` write into a new project's `post_processor` block, and that `export --post` writes when it resets the project's mode ([Switching keeps your settings](post-processors.md#switching-keeps-your-settings)): `"separate_programs"` (the default, one program per tool run) or `"m6"` (one program with `T<n> M6` tool changes, grblHAL only). See [Projects with more than one tool](post-processors.md#projects-with-more-than-one-tool). |
 | `estimate.rapid_mm_min` | Your machine's rapid rate, in mm/min, for the [estimated run time](#estimated-run-time) that `export` and `check` print. A number above 0. Unset (the default), the estimate gives the rapids' distance and leaves their time out, rather than guess a rate. |
 | `estimate.scale_factor` | What every time in the estimate is multiplied by. A number above 0; 1 by default. |
 
 `init` and `export --post` read `[export]`, when they create a new
-`post_processor` block. A default the chosen post-processor cannot honour (`"m6"` with any
+`post_processor` block. A plain `export --post` keeps the project's own
+mode unless the new post-processor cannot use it. A default the chosen post-processor cannot honour (`"m6"` with any
 post-processor but grblHAL, the only one with `M6`) stops the command with an error naming the config file,
 so a project that `check` would reject is never written.
 
