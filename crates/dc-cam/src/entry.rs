@@ -187,15 +187,20 @@ pub enum FallbackReason {
     /// It fits, but at its angle the depth would take more than
     /// [`MAX_DESCENT_MOVES`] moves.
     TooManyMoves,
+    /// A helix whose descending moves the program cannot write: each
+    /// would fall less than one unit in its last place, or run less than
+    /// √2 units in XY, so its ends round to one Z or one XY (#265).
+    TooSmall,
 }
 
 impl FallbackReason {
-    /// The name warnings use: `no_room`, `too_many_moves`.
+    /// The name warnings use: `no_room`, `too_many_moves`, `too_small`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoRoom => "no_room",
             Self::TooManyMoves => "too_many_moves",
+            Self::TooSmall => "too_small",
         }
     }
 }
@@ -276,6 +281,12 @@ pub struct EntryTool {
     pub direction: CutDirection,
     /// Inside a wall or outside a boss, for the helix sense.
     pub side: CutSide,
+    /// One unit in the last place the program writes, mm (the project's
+    /// decimal places in its display units,
+    /// `DecimalPlaces::quantum_mm`). A helix whose descending moves would
+    /// fall less than this, or run less than √2 of it in XY, is not cut
+    /// (#265).
+    pub quantum_mm: f64,
 }
 
 /// Requested and used helix diameters, mm (the diameter of the path the
@@ -424,8 +435,10 @@ impl EntryPlan {
     /// the target if the helix does not end on it), else the ramp (zigzag,
     /// the last run cut short at `z_mm`, then the handoff), else a plunge.
     /// A placed helix or ramp that would need more than
-    /// [`MAX_DESCENT_MOVES`] descending moves falls through too. With no
-    /// depth to descend the descent is empty.
+    /// [`MAX_DESCENT_MOVES`] descending moves falls through too, and so
+    /// does a helix whose chords the program cannot write
+    /// ([`FallbackReason::TooSmall`]). With no depth to descend the
+    /// descent is empty.
     #[must_use]
     pub fn descend(&self, start_z_mm: f64, z_mm: f64) -> Descent {
         self.descend_with(start_z_mm, z_mm, None)
@@ -458,6 +471,17 @@ impl EntryPlan {
         } else if self.requested == EntryKind::Helix {
             match self.helix {
                 Some(h) => match helix_move_count(depth_mm, h.radius_mm, self.angle_deg) {
+                    Some(n)
+                        if !helix_writable(
+                            depth_mm,
+                            h.radius_mm,
+                            self.angle_deg,
+                            n,
+                            self.tool.quantum_mm,
+                        ) =>
+                    {
+                        reason = Some(FallbackReason::TooSmall);
+                    }
                     Some(n) => {
                         let (from, moves) = self.emit_helix(&h, n, start_z_mm, z_mm);
                         descent.from = from;
@@ -692,6 +716,30 @@ fn helix_move_count(depth_mm: f64, radius_mm: f64, angle_deg: f64) -> Option<usi
         return None;
     }
     count_within_cap(depth_mm.max(0.0) / pitch_mm * HELIX_SEGMENTS_PER_REV as f64)
+}
+
+/// Whether a helix of `radius_mm` at `angle_deg` cut in `n` chords over
+/// `depth_mm` can be written by a program whose last place is
+/// `quantum_mm`: every chord falls at least one unit and runs at least
+/// √2 units in XY (#265). Two numbers a unit or more apart round apart, so
+/// each chord's ends are written at two Z values and two XY points, and
+/// the move keeps its slope: written level, it would run at the
+/// plunge-limited feed, which is neither of the tool's rates (S3);
+/// written straight down, faster than the plunge rate (S10). A helix that
+/// small removes nothing a ramp or plunge would not.
+fn helix_writable(
+    depth_mm: f64,
+    radius_mm: f64,
+    angle_deg: f64,
+    n: usize,
+    quantum_mm: f64,
+) -> bool {
+    let pitch_mm = helix_pitch_mm(2.0 * radius_mm, angle_deg);
+    let steps = n as f64;
+    let drop_mm = depth_mm / steps;
+    let turn_rad = depth_mm / pitch_mm * TAU / steps;
+    let run_mm = 2.0 * radius_mm * (turn_rad / 2.0).sin();
+    drop_mm >= quantum_mm && run_mm >= std::f64::consts::SQRT_2 * quantum_mm
 }
 
 /// Runs of the ramp `r` over `depth_mm`, or `None` over
@@ -1458,6 +1506,7 @@ mod tests {
             plunge_mm_min: PLUNGE,
             direction: CutDirection::Conventional,
             side: CutSide::Internal,
+            quantum_mm: 0.001,
         }
     }
 

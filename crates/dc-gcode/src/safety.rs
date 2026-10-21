@@ -38,7 +38,6 @@ use dc_project::{
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
 use crate::emit::{changes_tools_in_program, controller_sets_units};
-use crate::format::decimal_places;
 use crate::material::{self, Material};
 use crate::parse::{
     Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
@@ -668,10 +667,10 @@ fn feed_quantum_mm_min(post: &PostProcessor, units: Units) -> f64 {
     quantum_mm(post, units)
 }
 
-/// One output unit in the last written decimal place, in mm.
+/// One output unit in the last written decimal place, in mm: the one
+/// `dc_cam::entry` keeps a helix's moves above (#265).
 pub(crate) fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
-    let places = decimal_places(&post.number_format, units);
-    10f64.powi(-i32::from(places)) * mm_per_unit(units)
+    post.number_format.decimal_places.quantum_mm(units)
 }
 
 /// The rules in force on one line, project space, mm.

@@ -298,7 +298,8 @@ library crate never panics, so step 1 of "Sequence" returns an error.)
 New `WarningCode`s (params in parentheses; a shape is named by
 `instance`, `instance_name` and `profile`): `EntryFallback (op, instance,
 instance_name, profile, requested, used, reason)` (`reason`: `no_room` or
-`too_many_moves`; once per shape and entry used), `HelixDiameterReduced
+`too_many_moves` or `too_small`; once per shape and entry used; changed
+in #265: `too_small`), `HelixDiameterReduced
 (op, instance, requested_mm, used_mm)` (once per shape, the smallest
 diameter cut), `LeadShrunk (op, instance, requested_mm, used_mm,
 requested_sweep_deg, used_sweep_deg)` (once per shape, the smallest
@@ -885,7 +886,22 @@ cut direction and cut side.
   `alternate_direction`.)
 - **Fallback chain:** helix → ramp → plunge, each step warning
   `EntryFallback` with `requested` and `used`. A plunge is always
-  possible. `ramp` is the default for new projects (`init`, the chapter
+  possible. A placed helix whose chords the program cannot write is not
+  cut (`entry::helix_writable`, reason `too_small`): each of its
+  descending chords must fall at least one unit in the program's last
+  place (`EntryTool::quantum_mm`, from the project's decimal places in
+  its display units, `DecimalPlaces::quantum_mm`, the same unit the
+  safety pass compares within) and run at least √2 units in XY, so its
+  ends round to two Z values and two XY points. (changed in #265: a
+  0.05 helix of a 0.55 mm bit, 0.0275 mm across, had chords falling
+  0.00045 mm over 0.0018 mm, written level at the plunge-limited feed,
+  which S3 refuses. Fewer, longer chords per turn, as the issue
+  proposed, would have changed every helix of a small bit to keep a
+  fixed 0.05 mm least drop; a helix whose chords the program cannot
+  write is not a helix, and one that small removes nothing a ramp would
+  not. The rule needs the program's unit, which is why the entry reads
+  the post-processor's decimal places; a constant for the coarsest
+  program allowed, 0.0254 mm, would refuse a 2.5 mm helix at 5°.) `ramp` is the default for new projects (`init`, the chapter
   blocks), so a project whose shapes leave no room for a zigzag (a hole
   barely wider than the tool) will warn on every export until the user
   sets `plunge`; the warning says so.
@@ -1445,18 +1461,28 @@ shallow arcs) when:
   three toolpath moves;
 - every vertex and shallow-arc midpoint between lies on its piece within
   that tolerance;
-- over every piece a move spans, the piece's farthest point from that
-  move's chord is within that tolerance (changed in #226: an arc whose
-  ends and vertices are all on the circle, over a 0.006 mm fragment, a
-  short chord and a 40 mm straight side, bowed 1.3 mm off the side and
-  S6 accepted it; S12 must not trust the fitter);
+- over the part of every piece between a move's ends, the farthest point
+  from that move's chord is within that tolerance (changed in #226: an
+  arc whose ends and vertices are all on the circle, over a 0.006 mm
+  fragment, a short chord and a 40 mm straight side, bowed 1.3 mm off
+  the side and S6 accepted it; S12 must not trust the fitter). Each end
+  of the move is placed on each piece it spans (changed in #262: a
+  vertex within the angle slack, tolerance over radius, past a piece's
+  end counts as on that piece, and the next chord's part of the next
+  piece was taken from that piece's start; on a helix's flat revolution
+  0.17 mm across the slack is a whole 7.5° chord, so S12 measured arc
+  the chord does not span, 0.011023 mm off it against 0.011001 allowed,
+  and refused the fitter's correct arcs);
 - the direction matches the sign of the vertices' turn.
 
 A wrong arc in place of a deep toolpath arc stays `MotionMismatch`. A
 failure is `ExportError::ArcFitViolation`. `fitted_arcs_pass_s6`,
 `arc_off_the_vertices_fails_s6`, `arc_over_90_degrees_fails_s12`,
 `arc_bowing_off_a_long_straight_move_fails_s12` (mm and inch) and
-`arc_within_tolerance_of_every_chord_passes` are the tests. (changed in slice 14, #128: one arc per run could not match a
+`arc_within_tolerance_of_every_chord_passes`,
+`chord_across_a_piece_end_is_measured_on_both_pieces` and
+`arcfit::small_helix_flat_revolution_in_inches_exports` (#262) are the
+tests. (changed in slice 14, #128: one arc per run could not match a
 split run; slice 4, #137, chained each piece's centre to the previous
 piece's rather than the first, because snapped centres drift along a
 run.)

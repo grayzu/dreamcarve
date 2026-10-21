@@ -936,6 +936,7 @@ fn acceptance_26_on_line_ramps_along_a_100_mm_line() {
         plunge_mm_min: 500.0,
         direction: CutDirection::Climb,
         side: CutSide::Internal,
+        quantum_mm: 0.001,
     };
     let d = along_path(&line, 15.0, f64::INFINITY, 11.0, 4.0, &t, 0.01);
     assert_eq!(d.used, EntryKind::Ramp);
@@ -978,6 +979,7 @@ fn on_line_ramp_reverses_at_the_end_of_a_short_open_path() {
         plunge_mm_min: 500.0,
         direction: CutDirection::Climb,
         side: CutSide::Internal,
+        quantum_mm: 0.001,
     };
     // 10 mm at 2.14 mm a leg: five legs, four turns.
     let d = along_path(&line, 15.0, f64::INFINITY, 10.0, 0.0, &t, 0.01);

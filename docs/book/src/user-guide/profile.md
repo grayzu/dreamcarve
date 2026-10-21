@@ -224,9 +224,12 @@ is 388 mm/min); with a 100 mm/min plunge it runs at 386 mm/min.
 smaller, halving up to three times, and `helix_diameter_reduced` says how
 small. A helix that does not fit at all falls back to a ramp, and a ramp
 that does not fit, as in a hole barely wider than the bit (a 7 mm hole
-with a 6.35 mm bit), falls back to a plunge. Each fallback warns
-`entry_fallback`, naming the shape and both entries. A shape that can
-only be plunged warns on every export until its `entry` is `"plunge"`.
+with a 6.35 mm bit), falls back to a plunge. A helix too small for the
+program to write, whose moves would each fall less than the last decimal
+place or run less than about one and a half of it sideways, falls back
+to a ramp too. Each fallback warns `entry_fallback`, naming the shape
+and both entries. A shape that can only be plunged warns on every export
+until its `entry` is `"plunge"`.
 
 ## Open paths
 

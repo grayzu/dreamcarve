@@ -257,8 +257,12 @@ bit diameters wide, falls back to a ramp; a ramp that does not fit, in a
 hole barely wider than the bit, falls back to a plunge. Each fallback
 warns `entry_fallback`, naming the shape and both entries. A very shallow
 angle on a deep pass that would take more than 20 000 moves falls back
-the same way. A shape that can only be plunged warns on every export
-until its `entry` is `"plunge"`.
+the same way, and so does a helix too small for the program to write:
+one whose moves would each fall less than the last decimal place
+(by default 0.001 mm, or 0.0001 in in an inch program), or run less than about
+one and a half of it sideways, as a 5 % helix of a 0.5 mm bit does. A
+shape that can only be plunged warns on every export until its `entry`
+is `"plunge"`.
 
 The ramp or helix is inside the tool-centre area of the pass, and out of
 every island grown by the bit's radius, so the whole bit stays in the

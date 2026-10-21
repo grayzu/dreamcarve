@@ -32,6 +32,7 @@
 //! `Option` field is required too, `null` when unset (#65): serde would
 //! otherwise read a missing one as `None`.
 
+use crate::Units;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 use std::fmt;
@@ -162,6 +163,21 @@ pub struct DecimalPlaces {
     pub mm: u8,
     /// Decimal places when output is in inches.
     pub inch: u8,
+}
+
+impl DecimalPlaces {
+    /// One unit in the last place a program in `units` writes, mm:
+    /// `10^−places` mm, or `10^−places` in (25.4 times as many mm). The
+    /// safety pass compares written numbers within it, and an entry helix
+    /// whose moves are shorter is not cut (#265).
+    #[must_use]
+    pub fn quantum_mm(self, units: Units) -> f64 {
+        let (places, mm_per_unit) = match units {
+            Units::Mm => (self.mm, 1.0),
+            Units::Inch => (self.inch, 25.4),
+        };
+        10f64.powi(-i32::from(places)) * mm_per_unit
+    }
 }
 
 /// The object form of [`DecimalPlaces`], read strictly.
@@ -1174,6 +1190,15 @@ mod tests {
         assert_eq!(places, DecimalPlaces { mm: 3, inch: 3 });
         let text = serde_json::to_string(&places).unwrap();
         assert_eq!(text, r#"{"mm":3,"inch":3}"#);
+    }
+
+    /// One unit in the last place, mm: 0.001 mm at 3 places, 0.0001 in
+    /// (0.00254 mm) at 4.
+    #[test]
+    fn quantum_is_one_unit_in_the_last_place_in_mm() {
+        let places = DecimalPlaces { mm: 3, inch: 4 };
+        assert!((places.quantum_mm(Units::Mm) - 0.001).abs() < 1e-15);
+        assert!((places.quantum_mm(Units::Inch) - 0.002_54).abs() < 1e-15);
     }
 
     // #106: a project stores a reference to a bundled definition version
