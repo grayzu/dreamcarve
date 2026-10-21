@@ -83,6 +83,7 @@ pub(crate) struct Tolerances {
 /// # Errors
 ///
 /// The first violation found, as the matching [`ExportError`].
+#[cfg(test)]
 pub(crate) fn check(
     text: &str,
     post: &PostProcessor,
@@ -92,6 +93,29 @@ pub(crate) fn check(
     tolerances: Tolerances,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
+    check_parsed(
+        text,
+        post,
+        transform,
+        stock,
+        stock_thickness_mm,
+        tolerances,
+        spans,
+    )
+    .map(|(extents, _)| extents)
+}
+
+/// [`check`], also returning the blocks the program parsed into, so the
+/// emitter reads its pauses without parsing the program again (#71).
+pub(crate) fn check_parsed(
+    text: &str,
+    post: &PostProcessor,
+    transform: &MachineTransform,
+    stock: &Stock,
+    stock_thickness_mm: f64,
+    tolerances: Tolerances,
+    spans: &[OpSpan<'_>],
+) -> Result<(Extents, Vec<Block>), ExportError> {
     let blocks = check_rules(text, post, transform, stock_thickness_mm, tolerances, spans)?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
@@ -103,7 +127,7 @@ pub(crate) fn check(
     for span in spans {
         material::check(&blocks, post, transform, tolerances, span)?;
     }
-    Ok(extents(&blocks, transform.output_units()))
+    Ok((extents(&blocks, transform.output_units()), blocks))
 }
 
 /// The lowest and highest value a program reaches on one machine axis,
@@ -423,7 +447,7 @@ fn check_rules(
                     return Err(ExportError::SpindleNotUpToSpeed { line });
                 }
             }
-            check_feed(mv, &limits, 2.0 * tolerance_mm)?;
+            check_feed(mv, &limits, 2.0 * feed_quantum_mm_min(post, mv.units))?;
             check_descent_rate(mv, &limits, transform, tolerance_mm)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
@@ -635,6 +659,13 @@ fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// One output unit in the last written decimal place of a feed, in
+/// mm/min. A feed is written with the same number format as a length, so
+/// this is [`quantum_mm`]'s number in rate units.
+fn feed_quantum_mm_min(post: &PostProcessor, units: Units) -> f64 {
+    quantum_mm(post, units)
 }
 
 /// One output unit in the last written decimal place, in mm.
@@ -1655,9 +1686,13 @@ struct ToolpathArc {
     clockwise: bool,
 }
 
-/// An arc whose radius or sweep is below this is written as a straight
-/// move (`emit`, `ArcGeometry::new`).
+/// An arc whose sweep is below this is written as a straight move
+/// (`emit`, `ArcGeometry::new`).
 const MIN_ARC_SWEEP_RAD: f64 = 1e-9;
+
+/// An arc whose radius is below this is written as a straight move
+/// (`emit`, `ArcGeometry::new`).
+const MIN_ARC_RADIUS_MM: f64 = 1e-9;
 
 impl ToolpathArc {
     /// The arc from `start` to `end` about `centre`, or `None` if `emit`
@@ -1672,7 +1707,7 @@ impl ToolpathArc {
             end_rad - start_rad
         };
         let sweep_rad = turn.rem_euclid(TAU);
-        (radius_mm > MIN_ARC_SWEEP_RAD && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
+        (radius_mm > MIN_ARC_RADIUS_MM && sweep_rad > MIN_ARC_SWEEP_RAD).then_some(Self {
             start,
             end,
             centre,

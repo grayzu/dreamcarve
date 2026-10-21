@@ -122,6 +122,8 @@ pub enum CamError {
     MissingFeed {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// Which rate is missing.
         field: FeedField,
     },
@@ -137,6 +139,8 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// The cutter in words, such as `a V-bit`.
         cutter: &'static str,
     },
@@ -147,6 +151,8 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
     },
     /// Neither the Pocket nor its tool sets a step-over fraction.
     #[error("operation `{op}` has no step_over_fraction and tool `{tool}` sets none")]
@@ -155,6 +161,8 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
     },
     /// The step-over fraction in effect is not in (0, 1], or is so small
     /// that one pass would need more than [`crate::pocket::MAX_RINGS`]
@@ -309,6 +317,8 @@ pub enum CamError {
     InvalidToolDiameter {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// The diameter, mm.
         diameter_mm: f64,
     },

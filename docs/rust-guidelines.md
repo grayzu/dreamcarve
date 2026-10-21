@@ -64,6 +64,10 @@ nothing else.
   `eprintln!`, or logging macros in `dc-*`.
 - Nothing GUI-specific (egui, wgpu, winit types) appears in a `dc-*` crate.
   The GUI adapts engine types at its own edge.
+- `dc-geometry`'s API uses its own types. The one exception is
+  `flatten(&kurbo::BezPath, …)`, the importers' curve form: SVG and DXF
+  curves are kurbo paths until they are flattened. `kurbo` is a workspace
+  dependency, so both sides name one version (#71).
 
 ## Errors and warnings
 
