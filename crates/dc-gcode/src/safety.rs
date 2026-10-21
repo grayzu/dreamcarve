@@ -5682,7 +5682,8 @@ mod tests {
 
     /// S16: a `G53` is refused, as before #283, in a program whose project
     /// sets no tool-change machine Z, and on a definition that documents
-    /// no machine-coordinate move (LinuxCNC), whatever the project sets.
+    /// no machine-coordinate move (Mach3, UCCNC, generic; #306), whatever
+    /// the project sets.
     #[test]
     fn g53_refused_without_height() {
         let text = lift_program("G53 G0 Z-5\nM5\n");
@@ -5691,17 +5692,76 @@ mod tests {
             matches!(&err, ExportError::ForbiddenWord { line: 9, word } if word == "G53"),
             "{err:?}"
         );
-        let linuxcnc = dc_project::latest_definition("linuxcnc")
+        for id in ["mach3", "uccnc", "generic"] {
+            for definition in dc_project::bundled_definitions()
+                .unwrap()
+                .iter()
+                .filter(|d| d.id == id)
+            {
+                let post = definition.post_processor().clone();
+                assert!(
+                    post.work_coordinates.machine_command.is_none(),
+                    "{}",
+                    definition.path
+                );
+                let err = check_text_lifting(&text, post, SpindleControl::Automatic, Some(-5.0))
+                    .unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
+                    "{}: {err:?}",
+                    definition.path
+                );
+            }
+        }
+    }
+
+    /// #306, S16 on LinuxCNC, with the strictness of grblHAL and GRBL:
+    /// both versions accept the lift to the project's machine Z, and
+    /// refuse it without the project's height, to another Z, at or above
+    /// machine Z 0, below safe Z, and in any other form. (The inch lift
+    /// is checked through `emit::machine_lift_on_linuxcnc`, whose programs
+    /// pass this pass.)
+    #[test]
+    fn g53_on_linuxcnc() {
+        for definition in dc_project::bundled_definitions()
             .unwrap()
-            .post_processor()
-            .clone();
-        assert!(linuxcnc.work_coordinates.machine_command.is_none());
-        let err =
-            check_text_lifting(&text, linuxcnc, SpindleControl::Automatic, Some(-5.0)).unwrap_err();
-        assert!(
-            matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
-            "{err:?}"
-        );
+            .iter()
+            .filter(|d| d.id == "linuxcnc")
+        {
+            let post = || definition.post_processor().clone();
+            let check = |text: &str, lift: Option<f64>| {
+                check_text_lifting(text, post(), SpindleControl::Automatic, lift)
+            };
+            let path = definition.path;
+            check(&lift_program("G53 G0 Z-5\nM5\n"), Some(-5.0))
+                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let err = check(&lift_program("G53 G0 Z-5\nM5\n"), None).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
+                "{path}: {err:?}"
+            );
+            for (tail, lift) in [("G53 G0 Z-4\nM5\n", -5.0), ("G53 G0 Z0\nM5\n", 0.0)] {
+                let err = check(&lift_program(tail), Some(lift)).unwrap_err();
+                assert!(
+                    matches!(err, ExportError::MachineLiftWrongZ { .. }),
+                    "{path} {tail}: {err:?}"
+                );
+            }
+            let low = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\n\
+                       G53 G0 Z-5\nM5\n";
+            let err = check(low, Some(-5.0)).unwrap_err();
+            assert!(
+                matches!(err, ExportError::MachineLiftNotAtSafeZ { .. }),
+                "{path}: {err:?}"
+            );
+            for line in ["G53 G0 X0", "G53 G1 Z-5", "G53 Z-5", "G53 G0 Z-5 X0"] {
+                let err = check(&lift_program(&format!("{line}\nM5\n")), Some(-5.0)).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::Unparseable { reason, .. } if reason.contains("S16")),
+                    "{path} {line}: {err:?}"
+                );
+            }
+        }
     }
 
     /// #304 review, S16: with manual spindle control the user may jog at

@@ -162,7 +162,7 @@ written. There are no safety warnings, only errors.
 13. **Machine coordinates only for the tool-change lift.** A program
     writes `G53` only as `G53 G0 Z<v>`, alone on its line, where `<v>` is
     the project's `tool_change_machine_z_mm` (below 0), on a
-    post-processor that documents `G53` (grblHAL, GRBL), and only right
+    post-processor that documents `G53` (grblHAL, GRBL, LinuxCNC), and only right
     before a tool-change stop or the end of the program, from at or above
     safe Z, at the spot the bit is already over, or again right after a
     stop that followed a lift (the router-off pause, then the tool change)

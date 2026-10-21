@@ -1655,7 +1655,10 @@ mod tests {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
         // `default_settings.use_canned_cycles` reached every version, and
         // in #283 when `work_coordinates.machine_command` did (schema-wide
-        // fields; see `definitions/README.md`, "Versions").
+        // fields; see `definitions/README.md`, "Versions"). LinuxCNC's
+        // were re-pinned in #306, when its `machine_command` became
+        // `"G53"`: that writes nothing unless a project sets the machine
+        // Z, which both versions refused before.
         const PINNED: [(&str, u64); 13] = [
             ("grblhal/v1.json", 0x4069_e336_d88c_fe81),
             // #171: the project name no longer opens a comment.
@@ -1667,9 +1670,9 @@ mod tests {
             ("grbl/v2.json", 0x3970_4e64_8e3c_4d04),
             ("grbl/v3.json", 0x5696_f0ba_8779_d54e),
             // Slice 17 (#164).
-            ("linuxcnc/v1.json", 0xc43a_54b2_0f46_2fe9),
+            ("linuxcnc/v1.json", 0x155d_d13d_9406_23a9),
             // #286: no `G49` in the header.
-            ("linuxcnc/v2.json", 0x7608_f5d6_1b74_9cd7),
+            ("linuxcnc/v2.json", 0x0622_7196_706c_b93f),
             ("mach3/v1.json", 0xeff3_be07_97a2_28bf),
             ("mach3/v2.json", 0x7604_07ca_afcf_53d5),
             ("uccnc/v1.json", 0x1c80_d6fb_1d78_ab36),

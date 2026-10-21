@@ -53,6 +53,13 @@ any upgrade.
   anyway) and the `default_settings.use_canned_cycles` setting (`false`)
   this way, and #283 `work_coordinates.machine_command` (`"G53"` on
   grblHAL and GRBL, `null` on the others; see "Machine-coordinate moves").
+- #306 set LinuxCNC's `machine_command` to `"G53"` in place on both
+  versions, re-pinned, once its documents and source were checked. That
+  is allowed for the same reason: the field writes nothing unless a
+  project sets `heights.tool_change_machine_z_mm`, which both versions
+  refused before (`machine_z_needs_g53`), so no program either version
+  could export changes. `emit::machine_command_writes_nothing_without_the_height`
+  checks it on every version, and the goldens and corpus are unchanged.
 - The checks in `dc-gcode`'s `post` tests (the controller facts below) run
   over every version of every definition.
 
@@ -226,7 +233,7 @@ control, before the router-off pause), and again before the footer.
 in machine coordinates, `G53`, or `null` (#283). It is a schema-wide field,
 added in place to every released version and re-pinned ("Versions" above):
 nothing writes it unless a project sets `heights.tool_change_machine_z_mm`,
-so no version's bytes changed. A definition with `null` refuses that height
+so no version's bytes changed. #306 set it on LinuxCNC the same way. A definition with `null` refuses that height
 (validation's `machine_z_needs_g53`, and `emit`); the safety pass refuses
 every `G53` except S16's lift, and refuses that too unless the definition
 documents `G53` and the project sets the height.
@@ -234,7 +241,12 @@ documents `G53` and the project sets the height.
 Checked on 2026-10-21 against `grblHAL/core` at commit
 `4ec1ae44b857a70d2f9298344feac4b43ed0eb6b` (the commit "Tool changes"
 cites) and `gnea/grbl` at commit `bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e`
-(master that day, GRBL 1.1h):
+(master that day, GRBL 1.1h), and for LinuxCNC, Mach3, UCCNC and generic
+on 2026-10-21 (#306) against `LinuxCNC/linuxcnc` at
+`a33293f46575c809e082e0806e79ab996f982513` (branch `2.9`, the commit
+"Tool length offset at touch-off" cites) with the LinuxCNC 2.9 documents,
+and the Mach3, UCCNC and NIST documents of the slice 17 sections below
+([G], [MILL], [UM] and [NIST] are their references):
 
 | Definition | `machine_command` | Source |
 | --- | --- | --- |
@@ -244,12 +256,13 @@ cites) and `gnea/grbl` at commit `bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e`
 | `grbl/v1.json` | `G53` | GRBL `grbl/gcode.c` 154-156: `G53` is a non-modal command of modal group 0. 635-640: it needs `G0` or `G1` in force (`STATUS_GCODE_G53_INVALID_MOTION_MODE`). 592-597: its axis words get no work, `G92` or tool length offset. 474-478: in `G20` the axis words are inches, converted to mm. |
 | `grbl/v2.json` | `G53` | As `grbl/v1.json`. |
 | `grbl/v3.json` | `G53` | As `grbl/v1.json`. |
-| `linuxcnc/v1.json`, `linuxcnc/v2.json` | `null` | Not checked for `G53` in #283; a follow-up cites the section and sets it. |
-| `mach3/v1.json`, `mach3/v2.json` | `null` | As LinuxCNC. |
-| `uccnc/v1.json`, `uccnc/v2.json` | `null` | As LinuxCNC. |
-| `generic/v1.json` | `null` | As LinuxCNC. |
+| `linuxcnc/v1.json` | `G53` | #306. LinuxCNC `src/emc/rs274ngc/` at `a33293f`: `interp_array.cc` 109: `G53` is in modal group 0, non-modal ([G] `#gcode:g53`: "G53 is not modal and must be programmed on each line"). `interp_check.cc` 103-108: it needs `G0` or `G1` (`NCE_MUST_USE_G0_OR_G1_WITH_G53`) and absolute distance mode. `interp_convert.cc` 4855-4857: it fails with cutter compensation on. `interp_find.cc` 170-200: the end Z is the Z word less the G5x origin, the `G92`/`G52` axis offset and the tool length offset, which `get_abs_position` (`interp_convert.cc` 2441-2447) adds back, so the machine Z reached is the Z word with no offset applied. `interp_convert.cc` 2749-2830: `G20`/`G21` convert every offset to the program's units, so in `G20` the Z word is inches. |
+| `linuxcnc/v2.json` | `G53` | As `linuxcnc/v1.json`. Version 2 differs only in the header's `G49`, which does not touch `G53`. |
+| `mach3/v1.json`, `mach3/v2.json` | `null` | #306, refused. [MILL] 10.7.17 (p. 10-23) states the form and that `G53` is non-modal, but not which offsets it ignores, and 7.2.1 (p. 7-3) with 10.1.4 (p. 10-4) suggests the tool length offset applies. Machine Z after homing and soft limits are settings. See "Mach3, UCCNC and generic" below. |
+| `uccnc/v1.json`, `uccnc/v2.json` | `null` | #306, refused. [UM] 4.1.1 (p. 58-59) states the form and that `G53` is non-modal, but not what it does with the tool offset or `G51` scaling. The coordinate written at homing is a setting. See "Mach3, UCCNC and generic" below. |
+| `generic/v1.json` | `null` | #306, refused. [NIST] 3.5.12 defines `G53`, but an unknown controller's machine Z, homing and offsets cannot be checked. See "Mach3, UCCNC and generic" below. |
 
-Where machine Z is. Both controllers home Z to the top of its travel, at a
+Where machine Z is. grblHAL and GRBL home Z to the top of its travel, at a
 negative machine position, when Z homes upward (the default):
 
 - grblHAL `machine_limits.c` 116-140 (`limits_set_work_envelope`): the
@@ -276,6 +289,58 @@ included, goes through `limits_soft_check` (GRBL `motion_control.c`
 would drive Z down toward the bottom switch, so the post-processors
 chapter asks for soft limits on whenever a machine Z is set, and a
 machine that homes Z downward cannot use the setting.
+
+LinuxCNC (#306). Machine Z after homing is the configuration's `[JOINT_n]
+HOME`, "The position that the joint will go to upon completion of the
+homing sequence" (default 0), and the travel is `[AXIS_Z] MIN_LIMIT` to
+`MAX_LIMIT` (INI configuration document,
+<https://linuxcnc.org/docs/stable/html/config/ini-config.html>, sections
+`[AXIS_<letter>]` and `[JOINT_<num>]`). Neither has a fixed sign, so the
+check is of what LinuxCNC does with a value outside the travel, and of
+where its own configuration tools put Z:
+
+- **The configuration tools put Z 0 at the top.** Stepconf's defaults are
+  Z travel −100 to 0 mm, or −4 to 0 in (`src/emc/usr_intf/stepconf/stepconf.py`
+  474-476, 486-488), with home position 0 (388); pncconf's are the same
+  (`src/emc/usr_intf/pncconf/data.py` 653, 753-754, 774-775). There every
+  machine Z inside the travel is below 0, as on grblHAL and GRBL.
+- **Not every configuration does.** The bundled simulator
+  (`configs/sim/axis/axis_mm.ini` 152-156, 198-210) has Z travel −50.8 to
+  101.6 mm with home 0, so its machine Z 0 is not the top, and a negative
+  machine Z is a position inside the travel, possibly low. The chapter
+  says to read the value off the machine's own Z in machine coordinates.
+- **A program does not run on a machine that is not homed**, unless the
+  configuration sets `[TRAJ] NO_FORCE_HOMING = 1`: `no_force_homing`
+  defaults to 0 (`src/emc/task/emctaskmain.cc` 121), and running a
+  program then fails with "Can't run a program when not homed"
+  (2302-2303). The INI document: "The default behavior is for LinuxCNC
+  to force the user to home the machine before any MDI command or a
+  program is run."
+- **Once homed, the soft limits always apply**, with no setting to turn
+  them off ("The axis must be homed before MIN_LIMIT is in force", INI
+  document), and a line move whose end is outside them is refused before
+  it is queued: `EMCMOT_SET_LINE` (`src/emc/motion/command.c` 1011-1025)
+  calls `inRange`, which reports "%s move on line %d would exceed %c's %s
+  limit" (191-226), then aborts the trajectory and sets the motion
+  error. A `G53 G0` is such a move.
+
+So on LinuxCNC a machine Z outside the travel stops the program before
+the lift, on every configuration that forces homing, the default. A
+configuration whose Z travel is all at or above 0 cannot use the
+setting, since validation refuses every value inside it: that fails safe.
+Validation and S16 keep the rule of grblHAL and GRBL, below 0 as written,
+with no rule of their own for LinuxCNC.
+
+The modal state at a LinuxCNC lift. The header sets `G90`, `G40` and
+`G80`, and every pause sets them again (#55), so none of `G53`'s errors
+applies: not incremental (`interp_check.cc` 105-108), not with cutter
+compensation (`interp_convert.cc` 4855-4857), and the lift's own `G0`
+is the motion `G53` needs (`interp_check.cc` 104-105), after the `G80`
+that ends a series of canned cycles. `G20` and `G21` both work (the
+table above). LinuxCNC's definition has no `M6` ("LinuxCNC" below), so
+`"m6"` is refused there and the lift is written only before the footer
+`M5`, `M2`, or, with manual spindle control, before the router-off
+`M0`, which only pauses ([M] `#mcode:m0-m1`).
 
 So `tool_change_machine_z_mm` must be below 0 as the program writes it:
 validation refuses 0 or more, and a value that rounds to 0 in the
@@ -308,6 +373,75 @@ pause (S4). Any XY move (the park point) comes before the lift, at a work
 Z the safety pass checks, never after it. The footer stays without `G53`
 (see "Verification": `G0 G53 Z0` was removed from grblHAL's footer, since
 machine Z 0 is past the limit with soft limits on).
+
+### Mach3, UCCNC and generic: refused (#306)
+
+`G53` is enabled only where its documents prove all four points: it is
+non-modal and moves in machine coordinates with `G0`, ignoring the work,
+`G92` and tool length offsets (or naming the ones that apply); which
+machine Z values are valid after homing; that it is allowed in the
+program's modal state at that point; and how it meets the tool change.
+These three do not, so their `machine_command` stays `null`, and
+`check` and `export` refuse `tool_change_machine_z_mm` there
+(`machine_z_needs_g53`).
+
+- **Mach3** ([MILL], *Using Mach3Mill* 1.84, cited under "Mach3" below).
+  10.7.17 "Move in Absolute Coordinates - G53" (p. 10-23, 10-24) gives
+  `G0 G53 Z~`, "G53 is not modal", and the errors without `G0`/`G1` and
+  with cutter compensation; 10.4.3 (p. 10-9) and figure 10.3 put it in
+  group 0. But:
+  - Nothing says which offsets a `G53` move ignores. It moves "to a
+    point expressed in absolute coordinates", and the manual's absolute
+    coordinates are those "of the controlled point" (7.2.1, p. 7-3),
+    which "can be moved out along the spindle axis by specifying some
+    positive amount for the tool length offset" (10.1.4, p. 10-4). So a
+    `G53 Z` may place the bit's tip, with the offset, not the spindle:
+    with the Tool Offset On/Off toggle on (7.3.1, p. 7-5), the spindle
+    would stop the offset higher than the value, past the top of the
+    travel if the offset is larger than the gap, or lower with a negative
+    offset (10.7.14, p. 10-23, provides `G44` for negative table entries).
+    A forum report, not evidence, describes a `G53 Z` going higher with an
+    offset set (<https://www.machsupport.com/forum/index.php/topic,23124.10.html>).
+  - Machine Z after homing is a setting. 7.2.2 (p. 7-4): machine zero is
+    set to given values, "frequently 0.0", and "The Z home switch is
+    generally set at the highest Z position"; with Auto Zero the DRO is set
+    to the Home Off. value instead (5.6.1.2, p. 5-18).
+  - Soft limits apply "only when switched on using the Software Limits
+    toggle button" (5.6.1.3, p. 5-19), and nothing in the manual stops a
+    program on a machine that was not referenced.
+  - 10.1.10 (p. 10-6) warns to "check very carefully the system's
+    response to changing units while tool and fixture offsets are
+    loaded", and 10.7.10 (p. 10-20) keeps `G28`'s home "in unspecified
+    length units", so the inch lift is not proven either.
+
+  The Mach3 wiki returned HTTP 500 again on 2026-10-21.
+- **UCCNC** ([UM], manual 1.0047, cited under "UCCNC" below). 4.1.1 "Move
+  in Machine Coordinates : G53" (p. 58-59) gives `G1 G53 X… Y… Z…` "(or
+  use G0 instead of G1)", "G53 is not modal", and the error without
+  `G0`/`G1`; the modal group table (p. 50) puts it in group 0. But:
+  - Nothing says what a `G53` move does with the tool offset. 3.10
+    "Offsets" (p. 42-43) has "the Current coordinates which is the Machine
+    coordinates substracted with the Work offsets" and a separate "Tool
+    offset", and "Clearing the tool offset adds the tool offset to the
+    Current coordinates".
+  - Nor with scaling: `G51` scales "All motion commands including linear
+    and circular motion commands", and "In case of negative scale factors
+    the axis gets mirrored" (p. 58), while `G68` rotation says it rotates
+    "all of the motion commands ..., except the movements in the absolute
+    coordinate system (G53)" (p. 59). A `G51 Z` left set would scale, or
+    flip, the lift.
+  - Machine Z after homing is a setting: "Write offset on Homing ...
+    sets the coordinate to write to the axis position DRO when a homing
+    action is executed", and the homing direction is the "Direction
+    positive" checkbox (3.1, p. 17). There is no convention to check a
+    value against.
+  - Soft limits are optional ("Enable softlimits", 3.6, p. 35), and
+    when on the axis stops when "the softlimits coordinate is reached"
+    (p. 40), rather than the move being refused before it starts.
+- **Generic** ([NIST] 3.5.12 defines `G53`; 3.2.2 the absolute
+  coordinate system). The definition is for controllers that are not
+  listed, so there is no controller whose homing, machine Z or offsets
+  could be checked. It stays `null` for good.
 
 ## Manual spindle control
 
@@ -596,6 +730,7 @@ updated 2026-10-17) and the source on branch `2.9`, with `master` at
 | `G91.1` | [G] `#gcode:g90.1-g91.1`: "G91.1 Returns I, J & K to their default behavior"; [G] "Center Format Arcs": "Incremental Arc Distance Mode is default"; [SRC] 2.9 `rs274ngc_pre.cc` L1171 | DreamCarve writes `I`, `J` from the arc's start. `G90.1` is modal and not reset by `M2` ([M] `#mcode:m2-m30` lists what is), so a previous program could leave it on. |
 | `{unitsCommand}`: `G21`, `G20` | [G] `#gcode:g20-g21`: "a good idea to include units in the preamble" | Millimetre or inch program. |
 | `{wcsCommand}`: `G54` | [G] `#gcode:g54-g59.3`: "G54 - select coordinate system 1" | S5. |
+| `work_coordinates.machine_command`: `G53` | [G] `#gcode:g53`; [SRC] `interp_find.cc`, `interp_check.cc` (see "Machine-coordinate moves") | Written only as the tool-change lift, `G53 G0 Z<v>`, when the project sets `heights.tool_change_machine_z_mm` (#306). |
 | `( Operation {operationIndex}: {operationName} )`, `( Tool {toolNumber}: {toolName} )` | [O] `#gcode:comments` | Comments for the user; the name is not first in the comment. `{toolNumber}` is the tool's `number` when set, otherwise its place in the project's tool list, as on every definition (#120). |
 | `G0`, `G1`, `G2`, `G3` | [G] `#gcode:g0`, `#gcode:g1`, `#gcode:g2-g3` | Arcs in centre format; the radius check, "(.05 inch/.5 mm) OR ((.0005 inch/.005mm) AND .1% of radius)", is GRBL's, which the emitter already meets. |
 | `M3`, `S` | [M] `#mcode:m3-m4-m5`: "start the selected spindle clockwise at the S speed" | Spindle on (S4). Never `M4`. |
