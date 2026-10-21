@@ -5426,3 +5426,192 @@ fn left_profile_of_an_svg_line_exports_on_its_left() {
         "climb starts beside the first vertex: {first:?}"
     );
 }
+
+/// The text of every element of `svg` whose `class` is `class`, from its
+/// name to its closing `>`.
+fn svg_elements<'a>(svg: &'a str, class: &str) -> Vec<&'a str> {
+    let wanted = format!(" class=\"{class}\"");
+    svg.split('<').filter(|e| e.contains(&wanted)).collect()
+}
+
+/// The value of attribute `name` in `element`.
+fn svg_attr<'a>(element: &'a str, name: &str) -> &'a str {
+    let key = format!(" {name}=\"");
+    let (_, rest) = element.split_once(&key).expect("attribute present");
+    rest.split('"').next().expect("attribute closed")
+}
+
+/// The end point of each command of SVG path data `d` written as the
+/// preview writes it: `M x y`, `L x y`, `A rx ry rot large sweep x y`.
+fn svg_path_points(d: &str) -> Vec<(f64, f64)> {
+    let mut tokens = d.split_whitespace();
+    let mut points = Vec::new();
+    let number = |t: Option<&str>| -> f64 {
+        t.expect("a number follows")
+            .parse()
+            .expect("path numbers parse")
+    };
+    while let Some(command) = tokens.next() {
+        match command {
+            "M" | "L" => {}
+            "A" => {
+                for _ in 0..5 {
+                    tokens.next();
+                }
+            }
+            other => panic!("unexpected path command {other} in {d}"),
+        }
+        let x = number(tokens.next());
+        let y = number(tokens.next());
+        points.push((x, y));
+    }
+    points
+}
+
+/// Acceptance test 43: the coaster's preview is one SVG framed by the
+/// stock whose cut paths pass through every point of the toolpath, Y
+/// flipped, within 0.001 mm; one tab mark per tab on the one pass below
+/// the tab top, one start circle per pass, and the same bytes twice.
+#[test]
+fn export_preview_coaster() {
+    let dir = work_dir("export_preview_coaster");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let args = [
+        "export",
+        "coaster.dcv",
+        "--preview",
+        "coaster.svg",
+        "--date",
+        FIXED_DATE,
+    ];
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert!(stdout(&out).contains("coaster.svg"), "{}", stdout(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    assert!(program == include_str!("expected/coaster-grblhal.nc"));
+    let svg = std::fs::read_to_string(dir.join("coaster.svg")).expect("preview written");
+
+    let project = load_file(&dcv).project;
+    let (width, height) = (project.stock.width_mm, project.stock.height_mm);
+    assert!(
+        svg.contains(&format!(" viewBox=\"0 0 {width:.3} {height:.3}\"")),
+        "{svg}"
+    );
+    assert!(!svg.contains("transform"), "{svg}");
+
+    let drawn: Vec<(f64, f64)> = svg_elements(&svg, "cut")
+        .iter()
+        .flat_map(|cut| svg_path_points(svg_attr(cut, "d")))
+        .collect();
+    let (toolpath, _) =
+        dc_cam::generate_profile(&project, as_profile(&project.operations[0])).expect("generates");
+    let mut at: Option<(f64, f64)> = None;
+    let mut checked = 0;
+    for m in &toolpath.moves {
+        let to = (m.to.x, m.to.y);
+        let moved = at.is_some_and(|(x, y)| (to.0 - x).hypot(to.1 - y) > 1e-9);
+        if m.is_cut() && moved {
+            let flipped = (to.0, height - to.1);
+            assert!(
+                drawn
+                    .iter()
+                    .any(|p| (p.0 - flipped.0).abs() <= 1e-3 && (p.1 - flipped.1).abs() <= 1e-3),
+                "toolpath point {to:?} not drawn at {flipped:?}"
+            );
+            checked += 1;
+        }
+        at = Some(to);
+    }
+    assert!(checked > 10, "the coaster cuts: {checked}");
+    // The 12 mm cut in 4 mm passes rises over the 4 tabs on its last pass
+    // only: the tabs stand 3 mm, above the 8 mm pass's floor.
+    assert_eq!(svg_elements(&svg, "tab").len(), 4, "{svg}");
+    let starts = svg_elements(&svg, "start");
+    assert_eq!(starts.len(), 3, "one per pass: {svg}");
+    assert_eq!(svg_attr(starts[0], "r"), "3.175");
+
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let again = std::fs::read_to_string(dir.join("coaster.svg")).expect("preview written");
+    assert!(again == svg, "the preview changed between exports");
+}
+
+/// Addendum A5: `check --preview` writes the picture and no program.
+#[test]
+fn check_preview_writes_file() {
+    let dir = work_dir("check_preview_writes_file");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["check", "coaster.dcv", "--preview", "coaster.svg"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+    assert!(stdout(&out).contains("coaster.svg"), "{}", stdout(&out));
+    let svg = std::fs::read_to_string(dir.join("coaster.svg")).expect("preview written");
+    assert!(svg.starts_with("<?xml"), "{svg}");
+    assert_eq!(svg_elements(&svg, "tab").len(), 4, "{svg}");
+    assert!(!dir.join("coaster.nc").exists(), "check wrote a program");
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+
+    // An operation that cannot generate: no preview.
+    let fresh = work_dir("check_preview_writes_file_fresh");
+    init_coaster(&fresh);
+    let out = run(
+        &fresh,
+        &["check", "coaster.dcv", "--preview", "coaster.svg"],
+    );
+    assert_eq!(out.status.code(), Some(1), "check: {}", stdout(&out));
+    assert!(
+        !fresh.join("coaster.svg").exists(),
+        "preview of a project with errors"
+    );
+}
+
+/// Addendum A5: `--preview` naming the project or a program is refused,
+/// and nothing is written.
+#[test]
+fn export_preview_refuses_dcv_path() {
+    let dir = work_dir("export_preview_refuses_dcv_path");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let names_before = {
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    for (command, preview) in [
+        ("export", "coaster.dcv"),
+        ("export", "coaster.nc"),
+        ("export", "other.dcv"),
+        ("check", "coaster.dcv"),
+        ("check", "coaster.nc"),
+    ] {
+        let out = run(&dir, &[command, "coaster.dcv", "--preview", preview]);
+        assert_eq!(out.status.code(), Some(1), "{command} --preview {preview}");
+        let err = stderr(&out);
+        assert!(err.contains("--preview"), "{command} {preview}: {err}");
+        assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, names_before, "{command} --preview {preview} wrote");
+    }
+    // The program's own `-o` path is refused too.
+    let args = [
+        "export",
+        "coaster.dcv",
+        "-o",
+        "part.svg",
+        "--preview",
+        "part.svg",
+    ];
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!dir.join("part.svg").exists());
+}
