@@ -10,9 +10,9 @@
 
 use super::{DATE, generate};
 use dc_cam::entry::EntryKind;
-use dc_cam::{Warning, WarningCode, generate_profile};
+use dc_cam::{MoveKind, Warning, WarningCode, generate_profile};
 use dc_gcode::emit;
-use dc_geometry::{Point, Polyline, Transform, Vertex};
+use dc_geometry::{Point, Point3, Polyline, Transform, Vertex};
 use dc_project::test_support::{sample_pocket, sample_project};
 use dc_project::{
     ClearanceStrategy, CornerRelief, DefinitionId, Entry, FeatureDefinition, InstanceId,
@@ -475,4 +475,165 @@ fn on_line_ramp_on_a_circle_in_inch_exports() {
             "{units:?}: {warnings:?}"
         );
     }
+}
+
+/// #321 (the Profile property, `PROPTEST_RNG_SEED=72` on #284's
+/// strategy): an On line Profile of three circles (27.55, 20.12 and
+/// 12.42 mm) by a 3.455 mm tool, 3.45 mm deep in 0.845 mm steps, ramping
+/// at 43.4°, its chords fitted to arcs at 0.01 mm on GRBL. On the small
+/// circle the first pass's leg ended 0.00015 mm past a chord vertex, and
+/// the way back went to that vertex first: a move the program writes as
+/// nothing, which arc fitting counted as one of the three chords a fitted
+/// arc must cover and S12 did not, so S12 refused the arc. The way back
+/// now merges that move (`entry::wall::along_path`). The program exports
+/// with the ramps cut; every linear move stays on its circle within the
+/// flatten tolerance and a unit; no Z the program writes is below the
+/// final depth or the material bottom; and every feed is the tool's.
+#[test]
+fn on_line_steep_ramp_on_circles_exports() {
+    let project = steep_ramp_on_circles();
+    let warnings = exports(&project);
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| matches!(w, Warning::EntryFallback { .. })),
+        "{warnings:?}"
+    );
+    let circles: Vec<(Point, f64)> = project
+        .instances
+        .iter()
+        .map(|i| {
+            let r = project.definitions[&i.definition].profiles[0].vertices()[0].x;
+            (i.transform.apply(Point::new(0.0, 0.0)), r)
+        })
+        .collect();
+    let op = generate(&project).expect("generates");
+    let mut from: Option<Point3> = None;
+    for (k, mv) in op.toolpath.moves.iter().enumerate() {
+        if let (Some(a), MoveKind::Linear) = (from, mv.kind) {
+            let middle = a.xy() + (mv.to.xy() - a.xy()) * 0.5;
+            for p in [middle, mv.to.xy()] {
+                let off = circles
+                    .iter()
+                    .map(|(c, r)| (p.distance_to(*c) - r).abs())
+                    .fold(f64::INFINITY, f64::min);
+                assert!(off <= 0.01 + 0.001, "move {k} is {off} mm off its circle");
+            }
+        }
+        from = Some(mv.to);
+    }
+    let Operation::Profile(profile) = &project.operations[0] else {
+        unreachable!("the case is a Profile");
+    };
+    let thickness_mm = project.stock.thickness_mm.expect("the stock is sized");
+    let final_z_mm = thickness_mm - profile.depth_mm.expect("the depth is set");
+    let feed = format!("{:.3}", project.tools[0].feed_mm_min.expect("a feed"));
+    let (program, _) = emit(&project, &[op], DATE).expect("exports");
+    let word = |line: &str, letter: char| {
+        line.split_whitespace()
+            .find_map(|w| w.strip_prefix(letter))
+            .map(str::to_owned)
+    };
+    let mut feeds = 0;
+    for line in program.text.lines().filter(|l| !l.starts_with(';')) {
+        if let Some(z) = word(line, 'Z') {
+            let z: f64 = z.parse().expect("a number");
+            // Z origin at the stock bottom: the program's Z is the
+            // project's.
+            assert!(z >= 0.0, "{line}: below the material bottom");
+            assert!(z >= final_z_mm - 0.0005, "{line}: below the final depth");
+        }
+        if let Some(f) = word(line, 'F') {
+            assert_eq!(f, feed, "{line}");
+            feeds += 1;
+        }
+    }
+    assert!(feeds > 0, "the program cuts");
+    assert!(
+        program
+            .text
+            .lines()
+            .any(|l| l.starts_with("G2") || l.starts_with("G3")),
+        "arcs are written"
+    );
+}
+
+/// #321's project.
+fn steep_ramp_on_circles() -> Project {
+    let Operation::Profile(outside) = outside_profile(CornerRelief::None, 3.452_154_710_812_817_7)
+    else {
+        unreachable!("outside_profile is a Profile");
+    };
+    let op = Operation::Profile(ProfileOp {
+        side: Side::OnLine,
+        direction: dc_project::CutDirection::Climb,
+        lead: None,
+        step_down_mm: None,
+        safe_z_mm: 1.0,
+        entry: Entry::Ramp {
+            angle_deg: 43.395_007_100_651_696,
+        },
+        targets: vec![
+            InstanceId::new("i0"),
+            InstanceId::new("i5"),
+            InstanceId::new("i2"),
+        ],
+        ..outside
+    });
+    let thickness_mm = 9.999_327_355_218_911;
+    let mut project = case(Vec::new(), Transform::translate(0.0, 0.0), thickness_mm, op);
+    let template = project.instances[0].clone();
+    project.definitions.clear();
+    project.instances.clear();
+    let circles = [
+        (
+            "0",
+            27.545_650_047_230_467,
+            [-0.450_274_119_556_700_27, -0.892_890_372_474_380_7],
+            (40.0, 40.0),
+        ),
+        (
+            "5",
+            12.422_956_671_942_869,
+            [-0.869_530_608_207_535_9, -0.493_879_055_427_776_55],
+            (200.0, 120.0),
+        ),
+        (
+            "2",
+            20.119_655_775_889_72,
+            [-0.767_977_879_914_663_9, -0.640_476_366_434_998_2],
+            (200.0, 40.0),
+        ),
+    ];
+    for (n, r, [a, b], (x, y)) in circles {
+        let definition = FeatureDefinition {
+            id: DefinitionId::new(format!("d{n}")),
+            name: format!("Cell {n}"),
+            profiles: vec![Polyline::new(
+                vec![Vertex::new(r, 0.0, 1.0), Vertex::new(-r, 0.0, 1.0)],
+                true,
+            )],
+        };
+        let mut instance = template.clone();
+        instance.id = InstanceId::new(format!("i{n}"));
+        instance.definition = definition.id.clone();
+        instance.transform = Transform::from([a, b, -b, a, x, y]);
+        project.instances.push(instance);
+        project
+            .definitions
+            .insert(definition.id.clone(), definition);
+    }
+    project.origin = MachineOrigin {
+        xy: OriginXy::TopRight,
+        z: OriginZ::StockBottom,
+    };
+    project.arc_fit_tolerance_mm = Some(0.01);
+    project.post_processor = PostProcessorRef::latest("grbl").expect("GRBL is bundled");
+    let tool = &mut project.tools[0];
+    tool.diameter_mm = 3.454_973_032_185_739_3;
+    tool.feed_mm_min = Some(2_327.326_110_062_505);
+    tool.plunge_mm_min = Some(2_862.833_030_368_147);
+    tool.step_down_mm = Some(0.844_691_259_235_000_5);
+    tool.step_over_fraction = Some(0.248_493_065_736_951_43);
+    project
 }

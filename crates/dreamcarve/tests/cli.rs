@@ -1754,14 +1754,16 @@ fn pocket_helix_entry_exports_and_passes_safety() {
     );
     // 100 / sin 5° = 1147 mm/min, a little less on the chords. The
     // Profile's 15° ramp (init's entry) is plunge-limited too, at
-    // 100 / sin 15° = 386 mm/min.
+    // 100 / sin 15° = 386.37 mm/min, rounded down where the rounded
+    // coordinates make a move a little steeper (#325).
     assert!(
         scaled.iter().any(|f| (1100.0..1150.0).contains(f)),
         "the helix is cut: {scaled:?}"
     );
     for f in scaled {
         assert!(
-            (1100.0..1150.0).contains(&f) || (f - 100.0 / 15f64.to_radians().sin()).abs() < 0.01,
+            (1100.0..1150.0).contains(&f)
+                || (0.0..0.05).contains(&(100.0 / 15f64.to_radians().sin() - f)),
             "helix or ramp feed {f}"
         );
     }
@@ -6038,7 +6040,9 @@ fn assert_corpus_programs(dir: &Path, name: &str, case: &str) {
 /// file with tab settings exports byte-identical G-code, both as it is
 /// (its settings are tab requests, placed when it is cut) and after
 /// `tabs place` has written them as placed tabs and saved the file. The
-/// expected programs were exported by the build before #105.
+/// expected programs were exported by the build before #105, with the
+/// feeds of six of them since rounded down so no cut falls faster than the
+/// plunge rate as written (#325).
 #[test]
 fn version_9_tab_settings_export_byte_identical_programs() {
     let dir = work_dir("version_9_tab_settings_export_byte_identical_programs");
@@ -6091,7 +6095,8 @@ fn version_9_tab_settings_export_byte_identical_programs() {
 /// file, six golden Profile and Pocket projects, and the `dc-project`
 /// sample fixture) migrates to format 13 with `last_pass: null` on every
 /// Profile and exports byte for byte the programs the build before #284
-/// wrote, committed under `tests/expected/last-pass-migration/`.
+/// wrote, committed under `tests/expected/last-pass-migration/`, with the
+/// feeds #325 rounds down.
 #[test]
 fn version_12_projects_export_byte_identical_programs() {
     let dir = work_dir("version_12_projects_export_byte_identical_programs");

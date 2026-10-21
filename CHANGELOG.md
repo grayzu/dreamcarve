@@ -185,6 +185,12 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
   DreamCarve versions cannot read version 13 files.
+- **Post-processor end-to-end plan and motion check.** `docs/testing/post-processor-e2e.md`
+  says, for LinuxCNC, Mach3, UCCNC and generic, what is checked automatically,
+  what cannot be and why, and the manual and air-cut procedures for the rest.
+  `tools/rs274-motion` (dev only) runs those programs through LinuxCNC's
+  `rs274` interpreter and compares its moves, feeds, dwells, canned cycles and
+  `G53` lifts with DreamCarve's own reading, line by line ([#299]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -337,8 +343,17 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   own status ([#216]).
 - A smooth tab's down slope no longer descends faster than the plunge rate
   ([#157]).
+- A ramp, helix or smooth tab whose feed is lowered for the plunge rate no
+  longer goes down up to 0.3% faster than the plunge rate once its numbers are
+  rounded: its feed is rounded down until the move as written is at or under
+  the plunge rate. A straight plunge whose rate the written places cannot hold
+  is rounded down too ([#325]).
 - Open paths now take part in the `toolpaths_overlap` and
   `cut_inside_freed_part` warnings ([#206]).
+- An On line ramp whose leg ends a hair past a chord vertex no longer goes
+  back to that vertex with a move too short to write. With arc fitting on,
+  arc fitting counted that move as a chord the program does not write, and
+  export failed S12 ([#321]).
 
 ### Safety
 
@@ -349,6 +364,8 @@ it is written:
   inside its region and off its islands; an entry, lead or corner notch never
   enters the part.
 - **S10:** a ramp or helix never descends faster than the plunge rate.
+  Every descending cut is checked from the written numbers, with nothing
+  allowed for rounding ([#325]).
 - **S11:** a canned-cycle line is expanded into the moves the controller makes,
   and that expansion must match the Drill toolpath move for move. Rapids along
   one vertical line in one direction count as one move there, since cycles
@@ -450,6 +467,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#312]: https://github.com/grayzu/dreamcarve/issues/312
 [#316]: https://github.com/grayzu/dreamcarve/issues/316
 [#320]: https://github.com/grayzu/dreamcarve/issues/320
+[#325]: https://github.com/grayzu/dreamcarve/issues/325
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
@@ -458,3 +476,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306
 [#308]: https://github.com/grayzu/dreamcarve/issues/308
+[#299]: https://github.com/grayzu/dreamcarve/issues/299
+[#321]: https://github.com/grayzu/dreamcarve/issues/321

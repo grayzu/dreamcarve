@@ -30,7 +30,8 @@
 //!
 //! S10 (`docs/specs/phase-2/functional.md`): every descending cut falls no
 //! faster than its tool's plunge rate, its slope recomputed from the
-//! written numbers ([`check_descent_rate`]). S9: every cut stays in its
+//! written numbers, with nothing allowed for rounding
+//! ([`check_descent_rate`]). S9: every cut stays in its
 //! operation's own material, worked out from the project
 //! ([`crate::material`]).
 
@@ -553,7 +554,7 @@ fn check_rules(
                 }
             }
             check_feed(mv, &limits, 2.0 * feed_quantum_mm_min(post, mv.units))?;
-            check_descent_rate(mv, &limits, transform, tolerance_mm)?;
+            check_descent_rate(mv, &limits, transform)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
             floors.cut(mv, transform, router.z_mm, z_after);
@@ -1167,12 +1168,13 @@ fn differs(a: Option<f64>, b: Option<f64>) -> bool {
 }
 
 /// S3: a cut has a positive feed, and it is one of its tool's rates. A
-/// straight move that falls while it moves in XY (an entry ramp or helix)
-/// may also run anywhere between the tool's plunge rate and its feed: its
-/// feed is the cutting feed scaled so its vertical rate stays under the
-/// plunge rate (S10's feed scale, `dc_cam::entry`), which lands between
-/// the two. Whether that vertical rate is right is S10's check
-/// ([`check_descent_rate`]).
+/// move that falls while it moves in XY (an entry ramp or helix, a smooth
+/// tab's down slope, or an arc that falls) may also run anywhere between
+/// the tool's plunge rate and its feed: its feed is the cutting feed
+/// scaled so its vertical rate stays under the plunge rate (S10's feed
+/// scale, `dc_cam::entry`), or a tool rate the emitter rounded down for
+/// the same reason (#325), which lands between the two. Whether that
+/// vertical rate is right is S10's check ([`check_descent_rate`]).
 fn check_feed(
     mv: &MachineMove,
     limits: &Limits<'_>,
@@ -1204,8 +1206,8 @@ fn check_feed(
     Ok(())
 }
 
-/// True for a `G1` that falls while it moves in XY, every coordinate
-/// known.
+/// True for a `G1`, `G2` or `G3` that falls while it moves in XY, every
+/// coordinate known.
 fn is_descent(mv: &MachineMove) -> bool {
     let (from, to) = (mv.from, mv.to);
     let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
@@ -1213,7 +1215,7 @@ fn is_descent(mv: &MachineMove) -> bool {
     else {
         return false;
     };
-    mv.kind == MotionKind::Linear && tz < fz && (tx - fx).hypot(ty - fy) > 0.0
+    mv.kind.is_cut() && tz < fz && (tx - fx).hypot(ty - fy) > 0.0
 }
 
 /// S10: a cutting move that descends falls no faster than its tool's
@@ -1221,35 +1223,52 @@ fn is_descent(mv: &MachineMove) -> bool {
 /// the written numbers (`docs/specs/phase-2/functional.md`, S10). Every
 /// descending cut is held to it, whatever made it: an entry ramp or helix,
 /// a smooth tab's down slope (#157), a straight plunge (slope 90°, so its
-/// feed must be at most the plunge rate) or an arc that descends. The
-/// written move may differ from the toolpath's by the rounding of its
-/// numbers, `quantum_mm` (one unit in the last written place, the same
-/// for lengths and feeds): a feed scaled to the plunge rate exactly must
-/// pass, so the check takes the slowest vertical rate those numbers allow,
-/// the feed one unit lower, the drop one unit shorter and the length two
-/// longer. A move whose start is not known is skipped; S2 and S4 keep a
+/// feed must be at most the plunge rate) or an arc that descends. Nothing
+/// above the plunge rate is allowed for rounding (#325): the emitter
+/// writes every feed the toolpath holds to the plunge rate so that the
+/// rate [`descent_rate_mm_min`] reads from the written numbers stays at or
+/// under it. A move whose start is not known is skipped; S2 and S4 keep a
 /// program from cutting from an unknown position.
 fn check_descent_rate(
     mv: &MachineMove,
     limits: &Limits<'_>,
     transform: &MachineTransform,
-    quantum_mm: f64,
 ) -> Result<(), ExportError> {
     let (Some(op), Some(tool)) = (limits.op, limits.tool) else {
         return Ok(());
     };
+    let Some(rate_mm_min) = descent_rate_mm_min(mv, transform) else {
+        return Ok(());
+    };
+    if rate_mm_min > tool.plunge_mm_min.unwrap_or(0.0) {
+        return Err(ExportError::EntryTooSteep {
+            op: op.id().clone(),
+            line: mv.line,
+        });
+    }
+    Ok(())
+}
+
+/// The vertical rate, mm/min, at which the controller runs cutting move
+/// `mv`, from its written numbers alone: its feed times the sine of its
+/// slope, `feed × (drop / length)`, with an arc's length along the arc
+/// its centre words describe. A straight plunge's rate is its feed
+/// exactly. `None` for a rapid, a move that does not fall, or one whose
+/// start is not known. S10 judges every program by it, and the emitter
+/// writes feeds by it (#325).
+pub(crate) fn descent_rate_mm_min(mv: &MachineMove, transform: &MachineTransform) -> Option<f64> {
     let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
         (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
     else {
-        return Ok(());
+        return None;
     };
     let drop_mm = transform.project_z(fz, mv.units) - transform.project_z(tz, mv.units);
     if drop_mm <= 0.0 {
-        return Ok(());
+        return None;
     }
     let scale = mm_per_unit(mv.units);
     let run_mm = match mv.kind {
-        MotionKind::Rapid => return Ok(()),
+        MotionKind::Rapid => return None,
         MotionKind::Linear => (tx - fx).hypot(ty - fy) * scale,
         MotionKind::ArcCw | MotionKind::ArcCcw => {
             let machine_cw = mv.kind == MotionKind::ArcCw;
@@ -1262,16 +1281,8 @@ fn check_descent_rate(
         }
     };
     let feed_mm_min = mv.feed.unwrap_or(0.0) * scale;
-    let slowest_mm_min = (feed_mm_min - quantum_mm).max(0.0) * (drop_mm - quantum_mm).max(0.0)
-        / (run_mm.hypot(drop_mm) + 2.0 * quantum_mm);
-    let plunge_mm_min = tool.plunge_mm_min.unwrap_or(0.0);
-    if slowest_mm_min > plunge_mm_min + EPS_MM {
-        return Err(ExportError::EntryTooSteep {
-            op: op.id().clone(),
-            line: mv.line,
-        });
-    }
-    Ok(())
+    // `drop / length` first: exactly 1 on a straight plunge.
+    Some(feed_mm_min * (drop_mm / run_mm.hypot(drop_mm)))
 }
 
 /// An arc move whose end is its start within half a unit in the last
@@ -4601,6 +4612,27 @@ mod tests {
         );
     }
 
+    /// #325: S10 allows nothing above the plunge rate. A short ramp, 0.3 mm
+    /// down over 0.4 mm across (sin 0.6), at F501.5 falls at 300.9 mm/min
+    /// against the fixture's 300: refused, though a unit off each written
+    /// number would bring it under. Just under the plunge rate, at F499.999,
+    /// it passes, and so does line 7, a straight plunge at exactly F300.
+    #[test]
+    fn s10_refuses_vertical_rate_above_plunge() {
+        let ramp = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z0 F300\nX0.4 Z-0.3 F{f}\nX10 F1000\nG0 Z5\nM5\n"
+            )
+        };
+        let err = check_text(&ramp("501.5")).unwrap_err();
+        assert!(
+            matches!(err, ExportError::EntryTooSteep { line: 8, .. }),
+            "{err:?}"
+        );
+        check_text(&ramp("499.999")).unwrap();
+        check_text(&ramp("400")).unwrap();
+    }
+
     /// A lap at Z 3 along Y 10 with a tab: up 2 mm over 3 mm at the
     /// cutting feed, a hold, then down 2 mm over 3 mm at `down_feed`. At
     /// the 1000 feed the down slope falls at 1000 × 2/√13 = 555 mm/min,
@@ -4653,7 +4685,7 @@ mod tests {
         let rates = descent_rates(&text);
         assert!(!rates.is_empty(), "the tabs' down slopes descend");
         for rate in rates {
-            assert!(rate <= 300.0 * 1.01, "a down slope falls at {rate} mm/min");
+            assert!(rate <= 300.0, "a down slope falls at {rate} mm/min");
         }
     }
 
@@ -4728,7 +4760,7 @@ mod tests {
         assert!(rates.len() > 100, "helices are cut: {}", rates.len());
         // Within the rounding of 0.3 mm chords to three decimals.
         for rate in rates {
-            assert!(rate <= 300.0 * 1.01, "a helix chord falls at {rate} mm/min");
+            assert!(rate <= 300.0, "a helix chord falls at {rate} mm/min");
         }
     }
 

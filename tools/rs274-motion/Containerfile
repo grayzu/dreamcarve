@@ -1,0 +1,32 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# An image with LinuxCNC's standalone interpreter, rs274, for
+# `cargo run -p rs274-motion` and its test (issue #299):
+#
+#   podman build -t dreamcarve-rs274 tools/rs274-motion
+#   DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion
+#
+# `docker build` works the same way. rs274 ships in Debian's own
+# linuxcnc-uspace package (Debian 13 "trixie": 1:2.9.4-2+deb13u1, for
+# amd64 and arm64; https://packages.debian.org/trixie/linuxcnc-uspace),
+# signed by Debian's archive keys, so no third-party repository or key is
+# needed. LinuxCNC is GPL-2.0; it runs here as a separate program and
+# nothing of it enters DreamCarve.
+#
+# PR #264's CI job pins 1:2.9.10 from linuxcnc.org's bookworm repository
+# instead; to match it, use that job's install script on debian:bookworm.
+
+FROM docker.io/library/debian:trixie
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      linuxcnc-uspace \
+ && rm -r -f /var/lib/apt/lists/* \
+ && dpkg-query -W linuxcnc-uspace \
+ && command -v rs274
+
+# rs274 reads and writes only the mounted work directory.
+RUN useradd --create-home rs274
+USER rs274
+WORKDIR /work
