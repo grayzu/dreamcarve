@@ -177,10 +177,12 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// exit that does not fit, and any lead on an On line Profile warn
 /// [`WarningCode::LeadDropped`].
 ///
-/// With `op.corner_relief`, after the main passes a dogbone or T-bone
-/// notch is cut in each corner the round tool cannot reach (Inside: the
-/// hole's corners; Outside: the part's concave corners), stepping down at
-/// the tool's step-down (the `relief` module); On line warns
+/// With `op.corner_relief`, a dogbone or T-bone notch is cut in each
+/// corner the round tool cannot reach (Inside: the hole's corners;
+/// Outside: the part's concave corners), stepping down at the tool's
+/// step-down among the shape's own passes, each level after the pass that
+/// opened the column it plunges in and none after the pass that frees the
+/// shape (the `relief` module, #189); On line warns
 /// [`WarningCode::ReliefSkipped`].
 ///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
@@ -489,7 +491,7 @@ pub fn generate_profile(
         warnings.extend(lead_warnings.into_warnings(&op.id, lead));
     }
     let containment = containment_pairs(&regions, &shapes);
-    let input = SequenceInput {
+    let mut input = SequenceInput {
         blocks,
         order: op.machining_order,
         containment: &containment,
@@ -548,15 +550,18 @@ pub fn generate_profile(
         &cut_paths, &shapes, &regions, op.side, tool,
     ));
 
-    let mut toolpath = sequence(&input)?;
-    // Corner relief after the main passes (`crate::relief`).
+    // Corner relief among each shape's own passes, never after the pass
+    // that frees it (`crate::relief`, #189).
     let geometry = relief::ProfileGeometry {
         regions: &regions,
         shapes: &shapes,
         paths: &paths,
         walls: &walls,
     };
-    relief::profile(project, op, tool, &geometry, &mut toolpath, &mut warnings)?;
+    let notches =
+        relief::profile_notches(project, op, tool, &geometry, &input.blocks, &mut warnings)?;
+    input.blocks.extend(notches);
+    let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
     if let Some(overhang) =
         swept_bounds(&toolpath, radius_mm).and_then(|swept| stock_overhang(&project.stock, swept))

@@ -1220,7 +1220,17 @@ fn pocket_dogbone_exports_and_passes_safety() {
     pocket.tool = project.operations[0].tool().clone();
     pocket.step_over_fraction = Some(0.4);
     pocket.corner_relief = CornerRelief::Dogbone;
+    // #189, #177: then the same rectangle cut through inside, with no tabs,
+    // with dogbones too, before the coaster's own Profile.
+    let mut hole = as_profile(&project.operations[0]).clone();
+    hole.id = OperationId::new("panel_hole");
+    hole.name = "Panel hole".into();
+    hole.targets = vec![InstanceId::new("panel1")];
+    hole.side = Side::Inside;
+    hole.tabs = None;
+    hole.corner_relief = CornerRelief::Dogbone;
     project.operations.insert(0, Operation::Pocket(pocket));
+    project.operations.insert(1, Operation::Profile(hole));
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
     let check = run(&dir, &["check", "coaster.dcv"]);
@@ -1261,6 +1271,57 @@ fn pocket_dogbone_exports_and_passes_safety() {
             "no notch ends at {end:?}:\n{program}"
         );
     }
+
+    // #189: the hole's notches reach the bottom, and every one of them is
+    // cut before the lap that frees the slug: after the last notch the
+    // program still cuts a full lap of the 33.65 × 23.65 mm tool-centre
+    // rectangle at the bottom.
+    let bottom_z = -(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
+    let at_bottom = |m: &MachineMove| {
+        m.from
+            .z
+            .zip(m.to.z)
+            .is_some_and(|(a, b)| (a - bottom_z).abs() < 1e-3 && (b - bottom_z).abs() < 1e-3)
+    };
+    let in_panel = |m: &MachineMove| {
+        m.to.x
+            .zip(m.to.y)
+            .is_some_and(|(x, y)| (30.0..=70.0).contains(&x) && (35.0..=65.0).contains(&y))
+    };
+    let mut last_notch = 0;
+    for (cx, cy, sx, sy) in [
+        (30.0, 35.0, 1.0, 1.0),
+        (70.0, 35.0, -1.0, 1.0),
+        (70.0, 65.0, -1.0, -1.0),
+        (30.0, 65.0, 1.0, -1.0),
+    ] {
+        let end = Point::new(cx + sx * r, cy + sy * r);
+        let notch = moves.iter().rposition(|m| {
+            m.kind.is_cut()
+                && at_bottom(m)
+                && m.to
+                    .x
+                    .zip(m.to.y)
+                    .is_some_and(|(x, y)| Point::new(x, y).distance_to(end) < 1e-3)
+        });
+        let notch = notch.unwrap_or_else(|| panic!("no notch at the bottom ends at {end:?}"));
+        last_notch = last_notch.max(notch);
+    }
+    let after: f64 = moves
+        .iter()
+        .skip(last_notch + 1)
+        .filter(|m| m.kind.is_cut() && at_bottom(m) && in_panel(m))
+        .filter_map(|m| {
+            let (x0, y0) = m.from.x.zip(m.from.y)?;
+            let (x1, y1) = m.to.x.zip(m.to.y)?;
+            Some(Point::new(x0, y0).distance_to(Point::new(x1, y1)))
+        })
+        .sum();
+    let lap = 2.0 * ((40.0 - 6.35) + (30.0 - 6.35));
+    assert!(
+        after >= lap - 1e-2,
+        "only {after:.3} mm of the {lap:.3} mm freeing lap follows the last notch:\n{program}"
+    );
 }
 
 /// Slice 9 (#147), capability 16 and S10 end to end: the coaster's Pocket
@@ -2533,6 +2594,65 @@ fn init_writes_post_processor_reference() {
             "use_canned_cycles": false
         })
     );
+}
+
+/// #171: `init` writes grblHAL version 2, whose program opens with fixed
+/// text, so the project name never starts a comment.
+#[test]
+fn init_writes_grblhal_v2() {
+    let dir = work_dir("init_writes_grblhal_v2");
+    let dcv = init_coaster(&dir);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert_eq!(program.lines().next(), Some("( Project: coaster )"));
+}
+
+/// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
+/// exports the bytes it did before version 2 existed
+/// (`tests/expected/coaster-<id>-v1.nc`, committed before #171) until the
+/// user runs `export --post <id>`. That upgrades it to version 2, says so,
+/// and changes only the program's first line.
+#[test]
+fn v1_project_exports_v1_bytes_until_upgraded() {
+    for (id, expected, first) in [
+        ("grblhal", "coaster-grblhal-v1.nc", "( Project: coaster )"),
+        ("grbl", "coaster-grbl-v1.nc", "; Project: coaster"),
+    ] {
+        let dir = work_dir(&format!("v1_project_exports_v1_bytes_{id}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let mut project = load_file(&dcv).project;
+        project.post_processor = dc_project::bundled_definition(id, 1)
+            .expect("version 1 is bundled")
+            .default_ref();
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
+        let v1 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v1 → v2,")),
+            "{report}"
+        );
+        let block = post_processor_block(&dcv);
+        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+        assert_eq!(v2.lines().next(), Some(first), "{id}");
+        assert!(
+            v2.lines().skip(1).eq(v1.lines().skip(1)),
+            "{id}: only the first line changes\nv1:\n{v1}\nv2:\n{v2}"
+        );
+    }
 }
 
 /// The motion of `program`: every move, as where it goes, at what feed,

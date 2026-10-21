@@ -12,8 +12,8 @@
 //! `dc-project/src/definitions/README.md`, "Verification".
 
 use dc_project::{
-    BundledDefinition, PostProcessor, SpindleControl, ToolChangeMode, bundled_definitions,
-    is_safe_file_extension, latest_definition, latest_definitions,
+    BundledDefinition, PostProcessor, SpindleControl, ToolChangeMode, bundled_definition,
+    bundled_definitions, is_safe_file_extension, latest_definition, latest_definitions,
 };
 
 use crate::emit::{MIN_DECIMAL_PLACES_INCH, MIN_DECIMAL_PLACES_MM};
@@ -632,13 +632,16 @@ fn every_definition_line_is_cited_in_readme() {
 /// LinuxCNC acts on comments that start with a keyword: `(MSG,`,
 /// `(DEBUG,`, `(PRINT,`, `(LOG,`, `(LOGOPEN,file)`, which truncates the
 /// file, and `(PROBEOPEN file)` (LinuxCNC G-code overview, "Messages",
-/// "Logging", "Probe Logging"). A project, operation or tool name is the
-/// user's text, so no template of a new definition starts a comment with
-/// one.
+/// "Logging", "Probe Logging"). grblHAL acts on `(MSG,`, and with
+/// expressions enabled on `(DEBUG,`, `(PRINT,` and `(ABORT,`, which stops
+/// the program (`definitions/README.md`, "Comments on grblHAL and GRBL").
+/// A project, operation or tool name is the user's text, so no template of
+/// the latest version of any definition starts a comment with one (#171).
 #[test]
 fn user_text_never_starts_a_comment() {
-    for id in VERIFIED {
-        let post = latest(id);
+    for definition in latest_definitions().unwrap() {
+        let id = definition.path;
+        let post = definition.post_processor();
         let p = &post.program;
         let templates = p
             .header
@@ -652,6 +655,29 @@ fn user_text_never_starts_a_comment() {
                 assert!(!after.starts_with('{'), "{id}: {line}");
             }
         }
+    }
+}
+
+/// #171: version 2 of grblHAL and GRBL opens the program with fixed text
+/// before the project name, and differs from version 1 in nothing else, so
+/// a project that upgrades with `export --post <id>` changes one comment.
+#[test]
+fn grbl_v2_project_comment_opens_with_fixed_text() {
+    for (id, first) in [
+        ("grblhal", "( Project: {programName} )"),
+        ("grbl", "; Project: {programName}"),
+    ] {
+        let latest = latest_definition(id).unwrap();
+        assert_eq!(latest.version, 2, "{id}");
+        let v2 = latest.post_processor();
+        assert_eq!(
+            v2.program.header.first().map(String::as_str),
+            Some(first),
+            "{id}"
+        );
+        let mut v1 = bundled_definition(id, 1).unwrap().post_processor().clone();
+        v1.program.header[0] = first.to_owned();
+        assert_eq!(&v1, v2, "{id}: only the first header line changes");
     }
 }
 

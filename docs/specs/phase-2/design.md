@@ -350,7 +350,24 @@ slice 18, #126: `emit_programs` takes the program date.)
 `ExportError` adds `OneProgramNeedsM6 { post }`, `RapidIntoUncut { line,
 z_mm, cut_mm }` (S15 on the parsed program), `EntryTooSteep { op, line }` (S10), `OffMaterial {
 op, line }` (S9 on the parsed program), and `ArcFitViolation { op, line }`
-(S12). `ExportWarning` adds `ArcFitFallback { op, runs }`,
+(S12).
+
+S9 on the parsed program (`dc-gcode::material`) works out each
+operation's material from the project, never from the generator. A
+Pocket's tool centre stays in its regions, `r + allowance` from their
+walls. A Drill's stays in its holes, and an Engrave's on its lines. A
+Pocket's corner-relief notches may cut into their corners' relief zones.
+A Profile is held to its waste (#177). Inside, the tool centre stays in a
+target region, `r` from its walls, as a Pocket with no allowance. Outside,
+it stays outside every target region, `r` from every outline. On line,
+it stays on a target's line. The notch rule applies Inside and Outside,
+so every Profile cutting move is checked: laps, descents, lead arcs and
+notches. One exception is the lap of one outline, a cut at `r` from that
+outline on its waste side. It passes even where another outline comes
+nearer, because that gouge is the one `ToolpathsOverlap` warns of. dc-cam's
+domain also keeps entries out of other shapes' kerfs. That is waste too,
+so S9 does not check it. (changed in #177: Profile was left to S6 and
+dc-cam.) `ExportWarning` adds `ArcFitFallback { op, runs }`,
 `CannedCycleExpanded { op, reason }` (the emitter wrote a Drill as plain
 moves although `use_canned_cycles` is on) and `UnitsSetByController {
 post, units }` (a definition with no units words; the CLI prints it once
@@ -776,13 +793,29 @@ Ported from `cornerRelief.ts`.
 3. **End point:** dogbone `C + bisector·r`; T-bone `C + u·r` along the
    longer adjacent edge (tie: the more X-parallel edge, then `+x`). Notch
    depth past the wall: `r(1 − sin(θ/2))` dogbone, `r` T-bone (tests).
-4. **Pass:** after the main blocks, corners ordered nearest-neighbour from
-   the last exit; for each corner whose descend point the main path has
-   cut at the deepest level (else `ReliefCornerNotCut`), one block per
-   level of `generateStepLevels(top, bottom, tool.step_down)`: plunge at
-   the descend point, cut to the end, cut back. Blocks share one group;
+4. **Pass:** the levels are `generateStepLevels(top, bottom,
+   tool.step_down)`; per corner and level: plunge at the descend point,
+   cut to the end, cut back. Only corners whose descend point the main
+   path has cut at the deepest level are cut (else `ReliefCornerNotCut`);
    links between corners retract. A tool with no step-down skips the pass
    with `ReliefSkipped`.
+   - **Pocket:** after the main blocks, corners ordered nearest-neighbour
+     from the last exit, one block per level; the blocks share one group.
+   - **Profile:** among each shape's own passes, never after the pass that
+     frees it. A corner counts as cut when its own shape's path cuts its
+     descend point at the deepest level. Each level goes in the unit of
+     the shape's first pass at or below it, which has opened the column at
+     the descend point by then. Consecutive levels of one corner in one
+     unit are one block that steps down at the descend point. A shape's
+     corners are ordered nearest-neighbour from the end of its first
+     block. The sequencer cuts a unit's freeing blocks last (Sequence,
+     step 2), so the levels of a freeing pass run just before its final
+     lap. They plunge through the skin that lap is about to cut, while the
+     skin still holds the part or slug. (changed in #189: a through-cut
+     Profile with no tabs freed its part or slug with its last lap, and
+     every notch after that cut beside a piece that could shift. The
+     price is a plunge into material, up to one tool step-down, at each
+     notch of the freeing pass, whatever the Profile's entry.)
 
 ### Sequence (dc-cam::sequence)
 
@@ -800,10 +833,14 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
 2. **Units:** a *unit* is one shape's blocks at one pass (full depth
    first groups a shape's units into a *stack*; pass first groups all
    shapes' units of one pass into a *layer*). Blocks within a unit keep
-   generator order (`group`). A shape whose offset splits into several
+   generator order (`group`), except that the blocks that free material
+   come last, so nothing of a shape is cut after its freeing pass. A
+   shape whose offset splits into several
    tool-centre loops is one unit per pass: its loops are cut together,
    pass by pass, under both orders (phase 1 cut each loop to full depth
-   on its own). (decided in slice 1, #127.)
+   on its own). (decided in slice 1, #127. Changed in #189: freeing blocks
+   last, so a Profile's relief notches at its freeing pass precede the
+   lap that frees it.)
 3. **Order:**
    - `FullDepthFirst`: order shapes by a greedy walk: start from the
      first shape in drawing order; from the current shape's exit, pick the
@@ -1040,7 +1077,8 @@ Rules for all four (README, "Rules for the slice 17 definitions"):
   not write; the user sets Z zero per tool, as on grblHAL.
 - **User text never opens a comment.** LinuxCNC acts on comments that
   start with a keyword (`(LOGOPEN,file)` truncates a file), so the first
-  header comment is `( Project: {programName} )`.
+  header comment is `( Project: {programName} )`. grblHAL and GRBL got the
+  same header in version 2 of each (#171).
 - **Header modal codes.** `G40`, `G49`, `G80` and `G91.1` are accepted
   in any program and written again after every pause; `G90.1` is
   refused (#154).
@@ -1308,6 +1346,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `sequence::equidistant_shapes_keep_drawing_order`, `sequence::nearest_neighbour_orders_a_c_b_as_a_b_c` (port: `testPocketFeatureFirstNearestBlockOrder`), `sequence::same_input_twice_is_identical` (O5).
 - `sequence::single_shape_is_identical_in_both_orders` (O6).
 - `sequence::pass_first_waits_for_enclosed_shapes_freeing_pass`.
+- `sequence::nothing_is_cut_after_a_shapes_freeing_pass` (#189: freeing blocks last in their unit; O1 still holds).
 - `profile::one_shape_golden_is_byte_identical_after_sequence` (phase 1 goldens unchanged).
 - `tabs::final_pass_has_exactly_four_raised_segments_at_tab_z` extended to both orders (O9).
 
@@ -1362,6 +1401,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `relief::pocket_square_clears_all_four_corners_eight_cuts` (port), `relief::island_reflex_corners_relieved_convex_not` (port), `relief::arcs_and_fillets_produce_no_relief` (port), `relief::steps_down_at_tool_step_down` (port), `relief::no_step_down_skips_with_warning` (port), `relief::allowance_sizes_relief_to_the_wall_left` (port), `relief::rough_with_allowance_then_rest_with_relief_clears_corner` (port).
 - `relief::inside_profile_relieves_hole_corners` (port), `relief::outside_profile_relieves_concave_part_corners` (port), `relief::corner_under_tab_is_skipped` (port).
 - `relief::footprint_of_notch_stays_in_removed_material` (S9).
+- `relief::profile_notches_precede_the_freeing_pass` (#189: inside and outside, both orders), `cli::pocket_dogbone_exports_and_passes_safety` (an inside Profile through the stock: a full lap follows the last notch).
 
 **dc-cam — order**
 - `order::cut_inside_freed_part_warns` (O8), `order::inside_before_outside_is_quiet` (O8), `order::inside_profile_through_frees_its_slug`, `order::operations_keep_project_order`, `order::non_adjacent_same_tool_hints`, `order::adjacent_same_tool_is_quiet`.
@@ -1376,6 +1416,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `safety::canned_cycle_expansion_matches_drill_toolpath` (S11), `safety::canned_cycle_below_floor_fails_s1`, `safety::canned_cycle_rapid_into_uncut_fails`.
 - `safety::ramp_steeper_than_plunge_fails_s10`, `safety::helix_feed_scaled_passes_s10`.
 - `safety::pocket_cut_outside_region_fails_s9` (on the toolpath via `footprint`).
+- `safety::profile_ramp_into_part_fails_s9`, `safety::profile_lead_arc_into_neighbouring_part_fails_s9`, `safety::inside_profile_cut_outside_hole_fails_s9`, `safety::lap_beside_a_close_part_passes_s9_and_a_cut_off_it_fails`, `safety::outside_notch_passes_s9_only_with_relief`, `safety::generated_profiles_pass_s9`, `safety::s9_check_is_fast_on_twenty_profile_parts` (#177).
 - `post::six_definitions_validate`, `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect` (acceptance 36), `post::mach3_numbers_every_line`, `post::uccnc_writes_no_line_numbers_percent_or_units_word`, `post::generic_strips_trailing_zeros`, `post::generic_refuses_m6_mode`, `post::linuxcnc_mach3_uccnc_refuse_m6_mode`, `post::canned_cycles_only_where_documented`, `post::no_definition_has_g43`, `post::every_definition_line_is_cited_in_readme` (a test that scans the README for each non-placeholder header/footer/tool-change line).
 - `emit::one_program_flag_writes_m6_on_grblhal`, `emit::one_program_flag_on_grbl_is_error`, `emit::programs_per_tool_flag_overrides_m6_mode_without_saving`.
 

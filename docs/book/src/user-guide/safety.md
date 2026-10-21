@@ -114,9 +114,15 @@ written. There are no safety warnings, only errors.
     - a [Drill](drill.md): the bit stays inside one of the circles it
       drills.
     - an [Engrave](engrave.md): the centre of the bit stays on the line.
-    - a [Profile](profile.md): rules 8 and 9 already hold its cuts to its
-      shapes' outlines and to the stock, and toolpath generation keeps one
-      shape's cut out of another part.
+    - a [Profile](profile.md): the whole width of the bit stays in the
+      waste. Cut **outside**, that means outside every part, and cut
+      **inside**, inside the hole and off any island left in it. Cut **on
+      line**, the centre of the bit stays on the line. Laps, tab rises,
+      entry ramps and helixes, lead arcs and corner relief notches all
+      count, so a ramp or lead arc that swings into a part, its own or a
+      neighbour's, stops the export. A lap that runs along one outline at
+      the bit's radius passes even where another shape is closer than
+      the bit is wide: that gouge is the `toolpaths_overlap` warning.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus
