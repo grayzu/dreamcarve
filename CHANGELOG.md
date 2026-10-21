@@ -178,10 +178,14 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   and the notches are cut from the last pass. The allowance must be more than
   0 and at most a third of the bit's diameter, on an Inside or Outside
   Profile, and `thickness_mm` at most the step-down. The last pass takes
-  off at most the allowance (√2 times it in a square corner): a drawing the
-  earlier passes cannot follow (a band, neck, slot, notch or hole that fits
-  the bit but not the bit plus the allowance, a corner sharper than 90°, or
-  a part that close to another) is refused, naming the shapes. A one-pass
+  off at most the allowance (√2 times it in a square corner), except in a
+  sharp corner, where it takes the wedge the earlier passes stop short of,
+  up to a third of the bit ([#324]): triangles and stars cut inside, V
+  notches cut outside and letters such as A, V and W are cut, not refused.
+  A drawing the earlier passes cannot follow (a band, neck, slot, notch or
+  hole that fits the bit but not the bit plus the allowance, a tip whose
+  wedge is thicker than that, or a part that close to another) is refused,
+  naming the shapes. A one-pass
   cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
   DreamCarve versions cannot read version 13 files.
@@ -464,6 +468,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#284]: https://github.com/grayzu/dreamcarve/issues/284
+[#324]: https://github.com/grayzu/dreamcarve/issues/324
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306

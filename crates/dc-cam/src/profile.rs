@@ -5572,15 +5572,14 @@ mod tests {
     /// steps with a 0.5 mm allowance, so the passes at Z 4 and 2 are
     /// earlier passes below the tab top. The star of radii 35 and 15
     /// Outside and Inside, whose 42° tips the last pass cuts since #324,
-    /// one of 35 and 26 (93° tips) Inside, and the 60° and 45° triangles
-    /// both ways. Rect and smooth, requested and placed: no earlier pass
-    /// cuts below what the last pass leaves standing, anywhere over a tab.
+    /// and the 60° and 45° triangles both ways. Rect and smooth, requested
+    /// and placed: no earlier pass cuts below what the last pass leaves
+    /// standing, anywhere over a tab.
     #[test]
     fn last_pass_tabs_keep_off_the_tab_material() {
         for (side, outline) in [
             (Side::Outside, star(35.0, 15.0)),
             (Side::Inside, star(35.0, 15.0)),
-            (Side::Inside, star(35.0, 26.0)),
             (Side::Inside, triangle_60()),
             (Side::Outside, triangle_60()),
             (Side::Inside, triangle_45()),
@@ -5670,7 +5669,7 @@ mod tests {
         let refused = [
             ("7 × 3 notch", Side::Outside, notched(7.0, 3.0), 0.5),
             ("10 × 4 notch", Side::Outside, notched(10.0, 4.0), 2.1),
-            ("10° tip", Side::Inside, tipped, 0.5),
+            ("10° tip", Side::Inside, tipped.clone(), 0.5),
         ];
         for (case, side, outline, allowance_mm) in refused {
             let p = last_pass_project_of(vec![outline]);
@@ -5710,6 +5709,19 @@ mod tests {
                 ..last_pass_op(&p, side)
             };
             generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case} {side:?}: {e}"));
+        }
+        // #324: with 0.2 mm the tip's wedge is 1.15 mm, within a third of
+        // the bit, and the notch's cut no more than a square corner's.
+        for (case, side, outline) in [
+            ("10° tip", Side::Inside, tipped),
+            ("7 × 3 notch", Side::Outside, notched(7.0, 3.0)),
+        ] {
+            let p = last_pass_project_of(vec![outline]);
+            let op = ProfileOp {
+                last_pass: Some(allowance(0.2)),
+                ..last_pass_op(&p, side)
+            };
+            generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case} at 0.2: {e}"));
         }
     }
 

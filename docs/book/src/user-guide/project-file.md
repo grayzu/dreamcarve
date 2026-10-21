@@ -527,7 +527,7 @@ Errors stop export. Warnings do not.
 | A `step_over_fraction`, lead, entry, raster angle, dwell, retract, peck or chip-break value outside its range (see [`operations`](#operations)) | `corner_relief` on a tool with no `step_down_mm` (the relief is skipped) |
 | A helix `entry` on an On line, Left or Right Profile | An Engrave with a V-bit deeper than the bit's cone |
 | A `last_pass` on an On line, Left or Right Profile; a `last_pass.thickness_mm` that is 0 or less, deeper than `depth_mm` or (for an enabled Profile) thicker than its step-down; a `last_pass.allowance_mm` that is 0 or less or more than a third of the tool's diameter | |
-| A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the allowance on both sides, a corner sharper than 90°, or an allowance pass that would come within the bit's radius of another part or run inside it ([Last pass](profile.md#last-pass)) | |
+| A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the allowance on both sides, a tip so narrow that the last pass would take off more than a third of the bit, or an allowance pass that would come within the bit's radius of another part or run inside it ([Last pass](profile.md#last-pass)) | |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at
