@@ -2117,7 +2117,8 @@ Rules for all four (README, "Rules for the slice 17 definitions"):
   setup after a stop; anywhere else the export fails with
   `MisplacedSetupWord`. `G51` and `G68` are refused everywhere. LinuxCNC,
   GRBL and RS274/NGC have no such codes; grblHAL's `G50`/`G51` are
-  #316.)
+  #316.) (changed in #316: grblHAL v4's header has `G50`, so the same
+  rule accepts it there; grblHAL has no `G69`, which stays refused.)
 
 `SpindleDwell` gains `units: Seconds | Milliseconds` so a millisecond
 dwell (UCCNC) is written right; the bundled phase 1 definitions carry
@@ -2793,6 +2794,28 @@ grblHAL or GRBL version), `emit::setup_after_stop_repeats_g80_g40`,
 `post::released_definition_versions_are_unchanged` (v3 pinned),
 `cli::export_grblhal_prints_tool_length_note`,
 `cli::v2_project_exports_v2_bytes` (acceptance 41).
+
+(changed in #316: `grblhal/v4.json` is v3 with `G50` on its own line
+after `G40`, to cancel a `G51` scale, which program end does not reset
+(`gcode.c` 5021-5053). `G50` is in every build (1766-1770, 2739-2800,
+not behind an option; `MACH3_SCALING` only changes how `G51` reads its
+words). It moves nothing and changes no offset (220-239, 4695). It fails
+with cutter compensation on (2742-2745), so it comes after `G40`. It
+takes the block's axis-command slot (1767), so it is not put on a modal
+line. `init` and `export --post grblhal` take v4. v1–v3 are unchanged,
+and v3's coaster is kept as `tests/expected/coaster-grblhal-v3.nc`.
+`grbl` stays at v3: GRBL has no `G50`. grblHAL has no `G68`/`G69`
+(1781). At this commit `set_scaling` (226) reports a change only for X,
+so `G50` leaves a scale with X at 1 (`G51 Z-1`) in force (4475-4482). It
+is written anyway: it is harmless and clears every scale that touches X.
+The post-processors chapter tells the user to soft-reset (`gc_init`
+822) and check `$G`. README, "Scaling on grblHAL". Tests:
+`post::grblhal_v4_header_cancels_scaling`,
+`post::scaling_and_rotation_words_only_where_supported`,
+`emit::setup_after_stop_repeats_g50_g69`, `safety::g50_g69_accepted`,
+`safety::grblhal_v4_g50_only_where_emit_writes_it`,
+`cli::grblhal_v3_project_still_exports_byte_identically`,
+`cli::grblhal_v3_project_upgrades_to_v4`.)
 
 ### A4. Cycle-time estimate (dc-gcode::estimate)
 

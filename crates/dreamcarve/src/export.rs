@@ -40,7 +40,7 @@ use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{
     AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs,
-    machine_lift_limits_note,
+    machine_lift_limits_note, scaling_note,
 };
 use dc_project::{
     Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap, Tool,
@@ -723,6 +723,7 @@ fn report(
         )?;
     }
     report_tool_length_offset(project)?;
+    report_scaling(project)?;
     report_pauses(program, "")?;
     // #95: the user chose one program with M6, in the project or with
     // `--one-program`; it stops only if the sender lets M6 through or
@@ -787,6 +788,7 @@ fn report_runs(
         )?;
     }
     report_tool_length_offset(project)?;
+    report_scaling(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
     report_post_and_operations(project, args, switched)?;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
@@ -912,6 +914,23 @@ fn report_tool_length_offset(project: &Project) -> Result<(), Failure> {
         outln!(
             "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero."
         )?;
+    }
+    Ok(())
+}
+
+/// Prints, for a grblHAL program whose header cancels scaling with `G50`,
+/// that grblHAL's `G50` misses a scale that leaves X at 1, so to soft-reset
+/// after any `G51` and check `$G` (#320; [`scaling_note`]). It is printed,
+/// not written into the program.
+fn report_scaling(project: &Project) -> Result<(), Failure> {
+    // The project was exported with this post-processor, so it resolves.
+    let note = project
+        .post_processor
+        .resolve()
+        .ok()
+        .and_then(|post| scaling_note(&post));
+    if let Some(note) = note {
+        outln!("{note}")?;
     }
     Ok(())
 }

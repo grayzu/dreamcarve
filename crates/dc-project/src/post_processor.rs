@@ -642,7 +642,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 15] = [
+const SOURCES: [Source; 16] = [
     (
         "grblhal",
         1,
@@ -660,6 +660,12 @@ const SOURCES: [Source; 15] = [
         3,
         "grblhal/v3.json",
         include_str!("definitions/grblhal/v3.json"),
+    ),
+    (
+        "grblhal",
+        4,
+        "grblhal/v4.json",
+        include_str!("definitions/grblhal/v4.json"),
     ),
     (
         "grbl",
@@ -1671,13 +1677,15 @@ mod tests {
         // were re-pinned in #306, when its `machine_command` became
         // `"G53"`: that writes nothing unless a project sets the machine
         // Z, which both versions refused before.
-        const PINNED: [(&str, u64); 15] = [
+        const PINNED: [(&str, u64); 16] = [
             ("grblhal/v1.json", 0x4069_e336_d88c_fe81),
             // #171: the project name no longer opens a comment.
             ("grblhal/v2.json", 0xabe7_6c89_c5f8_6bf8),
             // #279: the header cancels canned-cycle motion and cutter
             // compensation (`G80`, `G40`).
             ("grblhal/v3.json", 0x341b_511e_68ea_cdde),
+            // #316: the header cancels scaling (`G50`).
+            ("grblhal/v4.json", 0xeb50_edfd_1a5d_8aa4),
             ("grbl/v1.json", 0xfa5f_26f9_ddd0_790f),
             ("grbl/v2.json", 0x3970_4e64_8e3c_4d04),
             ("grbl/v3.json", 0x5696_f0ba_8779_d54e),

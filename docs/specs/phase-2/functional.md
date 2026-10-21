@@ -771,7 +771,20 @@ built (design addendum, "Order and format versions").
     after every pause repeats them; the safety pass accepts them only
     there, alone on a line, and refuses `G51` and `G68` everywhere.
     LinuxCNC and generic have no such codes and do not write them. A v2
-    project keeps v2 until `export --post`.)
+    project keeps v2 until `export --post`.) (changed in #316: grblHAL
+    also keeps a `G51` scale past `M30`, so grblHAL v4 adds `G50` after
+    `G40`, again after every pause and tool change, under the same
+    safety rule. grblHAL has no rotation, so there is no `G69`. GRBL has
+    no scaling and stays at v3. New projects get grblHAL v4. A v3 project
+    keeps v3 until `export --post`. At the checked commit grblHAL's `G50`
+    leaves a scale whose X factor is 1, such as `G51 Z-1`, in force. The
+    post-processors chapter tells the user to soft-reset after any `G51`
+    and check `$G`.) (changed in #320: `export` says so too, once per
+    export, after the tool length note, for a grblHAL definition whose
+    header writes `G50`: "If you used G51 on this controller, soft-reset
+    it and check that $G shows G50 before you start: grblHAL's G50 does
+    not clear a scale that leaves X at 1, such as G51 Z-1." The note is
+    printed, not written into the program.)
 
 ### A4. Cycle-time estimate (#280)
 
