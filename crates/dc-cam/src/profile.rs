@@ -14,17 +14,19 @@
 //! contours are counter-clockwise, holes clockwise, a positive bulge is a
 //! counter-clockwise arc, and the direction rule is [`traversal_is_ccw`].
 
+use crate::block::CutBlock;
 use crate::error::{CamError, FeedField, ShapeRef};
-use crate::overlap::overlap_warnings;
+use crate::overlap::{CutPath, overlap_warnings};
 use crate::passes::pass_z_mm;
+use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
-    LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, emit_lap, overlap_warning,
+    LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
-    Contour, GeometryError, GeometryWarning, Point3, Polyline, Region, nest, offset,
+    Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, nest, offset,
 };
 use dc_project::{CutDirection, ProfileOp, Project, Side, Tool};
 
@@ -120,14 +122,16 @@ fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// Each target instance's closed profiles are placed by its transform,
 /// nested into parts and holes, offset by the tool radius per `op.side`, and
-/// oriented per [`traversal_is_ccw`]. Within each part its holes are cut
-/// before its outer contour, so the part is freed last, and a part inside
-/// another part's hole is cut before that hole, at every nesting depth;
-/// otherwise parts follow the drawing order. Each tool-centre contour is
-/// cut at every depth pass before the next: one rapid to its
-/// start at safe Z, then per pass a straight descent at the plunge rate and
-/// one lap at the feed rate ending at the start, then a rapid retract to
-/// safe Z. Arc segments stay arcs.
+/// oriented per [`traversal_is_ccw`]. Each tool-centre contour becomes one
+/// [`CutBlock`] per depth pass (a straight plunge at the plunge rate, then
+/// one lap at the feed rate ending at the start; arc segments stay arcs),
+/// and [`sequence`] orders and links the blocks by `op.machining_order`:
+/// shapes are visited nearest-neighbour from the first shape in drawing
+/// order, with every hole cut before its outer contour and every part
+/// inside another part's hole before that hole, at every nesting depth, so
+/// a part is freed only by its last contour. Between shapes the tool
+/// retracts to safe Z; between passes of one contour it plunges straight
+/// from the previous pass.
 ///
 /// With `op.tabs`, every pass below the tab top rises over each tab span
 /// (`width + diameter` along the tool-centre contour); overlapping spans
@@ -230,10 +234,9 @@ pub fn generate_profile(
     }
 
     let radius_mm = tool.diameter_mm / 2.0;
-    // Each tool-centre path with the shape it cuts, for warnings.
-    let mut paths: Vec<(Polyline, Option<&ShapeRef>)> = Vec::new();
-    for region in cut_order(&regions) {
-        // Holes first, so a through-cut part is freed only by its last contour.
+    // Each tool-centre path with the shape it cuts, in drawing order.
+    let mut paths: Vec<(Polyline, &ShapeRef)> = Vec::new();
+    for region in &regions {
         let ordered = region
             .holes()
             .iter()
@@ -246,18 +249,17 @@ pub fn generate_profile(
                 Offset::Shrink => offset(contour, -radius_mm),
                 Offset::None => vec![contour.clone()],
             };
-            let shape = shapes
-                .iter()
-                .find(|(_, c)| same_contour(c, contour))
-                .map(|(s, _)| s);
+            // `nest` keeps every contour or reverses it, so this always
+            // finds the shape.
+            let Some(shape) = shape_of(&shapes, contour) else {
+                continue;
+            };
             if centres.is_empty() {
-                if let Some(shape) = shape {
-                    warnings.push(
-                        shape_warning(WarningCode::ToolTooLarge, shape)
-                            .with("tool", &tool.name)
-                            .with("diameter_mm", tool.diameter_mm),
-                    );
-                }
+                warnings.push(
+                    shape_warning(WarningCode::ToolTooLarge, shape)
+                        .with("tool", &tool.name)
+                        .with("diameter_mm", tool.diameter_mm),
+                );
                 continue;
             }
             let ccw = traversal_is_ccw(wall, op.direction);
@@ -271,24 +273,105 @@ pub fn generate_profile(
             }));
         }
     }
+    // Drawing order is the order the targets were resolved in; stable, so
+    // the loops of one shape keep their offset order.
+    let drawing_index = |shape: &ShapeRef| shapes.iter().position(|(s, _)| s == shape);
+    paths.sort_by_key(|(_, shape)| drawing_index(shape));
 
-    // D6: paths are in cut order, so the warnings follow it.
-    warnings.extend(overlap_warnings(&paths, &shapes, &regions, op.side, tool));
-
-    let mut toolpath = Toolpath::default();
-    for (index, (path, shape)) in paths.iter().enumerate() {
-        let layout = tabs.as_ref().map(|tabs| {
-            let length_mm = path.length_mm();
-            let (layout, overlapped) = tabs.layout(length_mm);
-            if overlapped {
-                warnings.push(overlap_warning(&op.id, index, *shape, length_mm));
-            }
-            warnings.extend(coverage_warning(&op.id, index, *shape, tabs, &layout));
-            (tabs, layout)
-        });
-        let tabs = layout.as_ref().map(|(tabs, layout)| (*tabs, layout));
-        emit_contour(&mut toolpath.moves, path, &pass_z, safe_z_mm, rates, tabs);
+    // Tab layout per path, and one block per path per pass.
+    let layouts: Vec<Option<(PathTabs, bool)>> = paths
+        .iter()
+        .map(|(path, _)| tabs.as_ref().map(|tabs| tabs.layout(path.length_mm())))
+        .collect();
+    let mut blocks = Vec::with_capacity(paths.len() * pass_z.len());
+    for ((path, shape), layout) in paths.iter().zip(&layouts) {
+        let path_tabs = match (&tabs, layout) {
+            (Some(tabs), Some((layout, _))) => Some((tabs, layout)),
+            _ => None,
+        };
+        let Some(start) = path.vertices().first().map(|v| v.point()) else {
+            continue;
+        };
+        for (pass, &z_mm) in pass_z.iter().enumerate() {
+            let Some(lap) = lap_cuts(path, z_mm, path_tabs, rates) else {
+                continue;
+            };
+            blocks.push(contour_block(
+                shape, pass, z_mm, start, lap, &pass_z, safe_z_mm, rates,
+            ));
+        }
     }
+    let containment = containment_pairs(&regions, &shapes);
+    let input = SequenceInput {
+        blocks,
+        order: op.machining_order,
+        containment: &containment,
+        safe_z_mm,
+        tool_diameter_mm: tool.diameter_mm,
+        stepover_mm: 0.0,
+        feed_mm_min: rates.feed_mm_min,
+        plunge_mm_min: rates.plunge_mm_min,
+    };
+
+    // Warnings name contours by their position in the cut order, which
+    // the plan sets.
+    let cut_order = plan(&input)?;
+    let mut path_order: Vec<usize> = Vec::with_capacity(paths.len());
+    for index in cut_order {
+        if let Some(block) = input.blocks.get(index) {
+            let path_index = paths
+                .iter()
+                .position(|(path, shape)| {
+                    *shape == &block.shape
+                        && path
+                            .vertices()
+                            .first()
+                            .is_some_and(|v| v.point().distance_to(block.entry) <= EPS_MM)
+                })
+                .unwrap_or(0);
+            if !path_order.contains(&path_index) {
+                path_order.push(path_index);
+            }
+        }
+    }
+    // Paths the plan never reached (none in practice) keep their place.
+    for index in 0..paths.len() {
+        if !path_order.contains(&index) {
+            path_order.push(index);
+        }
+    }
+    for (cut_index, &path_index) in path_order.iter().enumerate() {
+        let (Some((path, shape)), Some(Some((layout, overlapped)))) =
+            (paths.get(path_index), layouts.get(path_index))
+        else {
+            continue;
+        };
+        let Some(tabs) = &tabs else {
+            continue;
+        };
+        let length_mm = path.length_mm();
+        if *overlapped {
+            warnings.push(overlap_warning(&op.id, cut_index, Some(shape), length_mm));
+        }
+        warnings.extend(coverage_warning(
+            &op.id,
+            cut_index,
+            Some(shape),
+            tabs,
+            layout,
+        ));
+    }
+    // D6: paths in cut order, so the warnings follow it.
+    let cut_paths: Vec<CutPath<'_>> = path_order
+        .iter()
+        .filter_map(|&i| paths.get(i))
+        .map(|(path, shape)| (path, Some(*shape)))
+        .collect();
+    warnings.extend(overlap_warnings(
+        &cut_paths, &shapes, &regions, op.side, tool,
+    ));
+
+    let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
     if let Some(overhang) =
         swept_bounds(&toolpath, radius_mm).and_then(|swept| stock_overhang(&project.stock, swept))
@@ -301,16 +384,105 @@ pub fn generate_profile(
     Ok((toolpath, warnings))
 }
 
-/// The order to cut `regions` in (invariant O1,
-/// `docs/research/toolpath-ordering.md`): deepest nest depth first, so a
-/// part inside another part's hole is cut out before that hole frees the
-/// waste it sits in, at every depth. Regions at the same depth keep
-/// `nest`'s drawing order, so the result depends only on the input.
-fn cut_order(regions: &[Region]) -> Vec<&Region> {
-    let mut ordered: Vec<&Region> = regions.iter().collect();
-    // Stable, so drawing order breaks ties.
-    ordered.sort_by_key(|region| std::cmp::Reverse(region.depth()));
-    ordered
+/// The block that cuts one lap of a tool-centre contour at pass `pass`:
+/// a straight plunge to `start` (into the lap's start Z, which a tab span
+/// over the path start raises above `z_mm`), then the lap. The descent
+/// starts at safe Z on the first pass and at the previous pass Z after.
+/// It frees material on the final pass when that reaches the stock bottom.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every argument is one fact about the lap; a struct would only rename them"
+)]
+fn contour_block(
+    shape: &ShapeRef,
+    pass: usize,
+    z_mm: f64,
+    start: Point,
+    lap: crate::tabs::LapCuts,
+    pass_z: &[f64],
+    safe_z_mm: f64,
+    rates: LapRates,
+) -> CutBlock {
+    let descent = if (lap.start_z_mm - z_mm).abs() > EPS_MM {
+        vec![Move::linear(
+            Point3::new(start.x, start.y, lap.start_z_mm),
+            rates.plunge_mm_min,
+        )]
+    } else {
+        Vec::new()
+    };
+    let exit = lap.moves.last().map_or(start, |m| m.to.xy());
+    let descent_from_z_mm = pass
+        .checked_sub(1)
+        .and_then(|k| pass_z.get(k).copied())
+        .unwrap_or(safe_z_mm);
+    CutBlock {
+        shape: shape.clone(),
+        pass,
+        z_mm,
+        descent_from: start,
+        descent_from_z_mm,
+        descent,
+        entry: start,
+        cuts: lap.moves,
+        exit,
+        frees: pass + 1 == pass_z.len() && z_mm <= EPS_MM,
+        cleared: None,
+        group: 0,
+    }
+}
+
+/// The `(inner, encloser)` pairs `sequence` needs (invariant O1,
+/// `docs/research/toolpath-ordering.md`): every hole before its region's
+/// outer, and every region of depth 2 or more before the hole it sits in,
+/// so a part inside another part's hole is cut out before that hole frees
+/// the waste around it.
+fn containment_pairs(
+    regions: &[Region],
+    shapes: &[(ShapeRef, Contour)],
+) -> Vec<(ShapeRef, ShapeRef)> {
+    let mut pairs = Vec::new();
+    for region in regions {
+        let Some(outer) = shape_of(shapes, region.outer()) else {
+            continue;
+        };
+        for hole in region.holes() {
+            if let Some(hole) = shape_of(shapes, hole) {
+                pairs.push((hole.clone(), outer.clone()));
+            }
+        }
+        let Some(parent_depth) = region.depth().checked_sub(2) else {
+            continue;
+        };
+        let Some(probe) = region.outer().polyline().vertices().first() else {
+            continue;
+        };
+        let enclosing_hole = regions
+            .iter()
+            .filter(|r| r.depth() == parent_depth)
+            .flat_map(|r| r.holes())
+            .find(|hole| contour_contains(hole, probe.point()));
+        if let Some(hole) = enclosing_hole.and_then(|h| shape_of(shapes, h)) {
+            pairs.push((outer.clone(), hole.clone()));
+        }
+    }
+    pairs
+}
+
+/// True when `p` lies inside or on `contour`, whichever way it winds.
+fn contour_contains(contour: &Contour, p: Point) -> bool {
+    nest(vec![contour.clone()])
+        .ok()
+        .and_then(|(regions, _)| regions.into_iter().next())
+        .is_some_and(|region| region.contains_point(p))
+}
+
+/// The shape `contour`, as `nest` returned it, came from.
+fn shape_of<'a>(shapes: &'a [(ShapeRef, Contour)], contour: &Contour) -> Option<&'a ShapeRef> {
+    shapes
+        .iter()
+        .find(|(_, c)| same_contour(c, contour))
+        .map(|(s, _)| s)
 }
 
 /// Places every profile of every target instance, in target then profile
@@ -389,30 +561,6 @@ fn shape_warning(code: WarningCode, shape: &ShapeRef) -> Warning {
 /// so exact equality is the right test.
 fn same_contour(input: &Contour, nested: &Contour) -> bool {
     input == nested || &input.reversed() == nested
-}
-
-/// Appends the moves that cut `path` at every pass Z (steps 6 and 7): a
-/// rapid to its start at safe Z, then per pass a vertical descent at the
-/// plunge rate and one lap at the feed rate back to the start, rising over
-/// `tabs` on passes below the tab top, then a vertical rapid retract to safe
-/// Z. Between passes the tool is already at the start, so it descends
-/// straight to the next pass without retracting.
-fn emit_contour(
-    moves: &mut Vec<Move>,
-    path: &Polyline,
-    pass_z: &[f64],
-    safe_z_mm: f64,
-    rates: LapRates,
-    tabs: Option<(&Tabs, &PathTabs)>,
-) {
-    let Some(start) = path.vertices().first().map(|v| v.point()) else {
-        return;
-    };
-    moves.push(Move::rapid(Point3::new(start.x, start.y, safe_z_mm)));
-    for &z_mm in pass_z {
-        emit_lap(moves, path, z_mm, tabs, rates);
-    }
-    moves.push(Move::rapid(Point3::new(start.x, start.y, safe_z_mm)));
 }
 
 #[cfg(test)]

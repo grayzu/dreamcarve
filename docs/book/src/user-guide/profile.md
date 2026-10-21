@@ -38,6 +38,7 @@ phase 1.
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. 0 by default. See [Cutting through](#cutting-through). |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
 | `tabs` | Holding tabs, or `null` for none. See [Tabs](tabs.md). |
+| `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](#machining-order). |
 
 ## Side
 
@@ -114,18 +115,50 @@ Directions are seen from above, with Y pointing away from you. An outside
 Profile runs outside a part's outline and inside its holes. An `on_line`
 cut counts as outside on a part's outline and inside on a hole.
 
+## Machining order
+
+`machining_order` says how the passes of several shapes are interleaved:
+
+- `"full_depth_first"` (the default, and how `init` writes it): each shape
+  is cut to its full depth before the tool moves to the next shape.
+- `"pass_first"`: the first pass is cut on every shape, then the second
+  pass on every shape, and so on to the final depth.
+
+Full depth first keeps the tool on one shape, so there are fewer moves
+between shapes. Pass first keeps every part held by full-thickness material
+until the final pass, which can matter for small parts or thin stock.
+Either way the same cuts are made at the same depths; only their order
+changes, and an operation with one shape cuts exactly the same under both.
+
+Within an operation the shapes are visited nearest first: the first shape
+in the drawing is cut first, then whichever uncut shape starts nearest to
+where the last cut ended, and so on. Under pass first each pass starts from
+where the previous pass ended, so successive passes tend to run in opposite
+directions. Two shapes equally near are taken in drawing order. One rule
+overrides nearness: a shape is always cut before any shape that encloses
+it (a hole before its outline, a part inside a hole before that hole), so a
+part is freed only by its last contour. See [Shapes and holes, rule
+6](shapes-and-holes.md#6-order-follows-the-drawing).
+
 ## What the program does
 
 For each part, the holes are cut first and the outline last, so a part cut
 through is freed only at the end. A part inside another part's hole is cut
 before that hole, however deep the nesting, so it is never cut out of loose
-waste. Otherwise parts are cut in drawing order. For each outline:
+waste. Otherwise shapes are visited nearest first, starting from the first
+one drawn (see [Machining order](#machining-order)). For each outline:
 
 1. Rapid to safe Z, then to the start of the outline.
 2. Plunge to the first pass at the plunge rate.
 3. Cut one full lap at the feed rate, ending where it began.
-4. Plunge to the next pass and cut another lap, until the last pass.
+4. Plunge to the next pass and cut another lap, until the last pass. Under
+   `"pass_first"` the tool instead rapids up to safe Z and goes on to the
+   next shape, coming back for the next pass once every shape has had this
+   one.
 5. Rapid back up to safe Z.
+
+Every move between shapes is at safe Z; the tool never travels through
+material from one shape to another.
 
 ## Warnings
 

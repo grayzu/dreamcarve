@@ -259,7 +259,7 @@ impl PathTabs {
     fn z_at(&self, tabs: &Tabs, distance_mm: f64, base_z_mm: f64) -> f64 {
         match self.zone(tabs, distance_mm) {
             Zone::Clear => base_z_mm,
-            // Laps at or above the tab top never get here (`emit_lap`).
+            // Laps at or above the tab top never get here (`lap_cuts`).
             Zone::Ramp(f) => base_z_mm + (tabs.top_z_mm - base_z_mm) * f,
             Zone::Hold => tabs.top_z_mm,
         }
@@ -400,39 +400,37 @@ struct Piece {
     to: Point3,
 }
 
-/// Appends one lap of `path` at `z_mm`: a vertical move from the tool's
-/// current position (above the path start) to the lap's start Z, then the
-/// lap back to the path start. Where `tabs` is given and `z_mm` lies below
-/// the tab top, the lap rises over each tab span: rect tabs with a vertical
-/// lift, a traverse at the tab top, and a vertical descent; smooth tabs
-/// along straight ramps either side of a hold at the tab top. Every vertical
-/// move is at the plunge rate; every
-/// move along the path, smooth ramps down included, is at the feed rate.
-pub(crate) fn emit_lap(
-    moves: &mut Vec<Move>,
+/// One lap of a path at one pass, as the cuts of a [`crate::CutBlock`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LapCuts {
+    /// The Z the lap starts at: the pass Z, or the tab top when a tab span
+    /// covers the path start.
+    pub start_z_mm: f64,
+    /// The lap's moves from the start point at `start_z_mm` back to the
+    /// start point.
+    pub moves: Vec<Move>,
+}
+
+/// One lap of `path` at `z_mm`, from the path start at
+/// [`LapCuts::start_z_mm`] back to the path start. Where `tabs` is given
+/// and `z_mm` lies below the tab top, the lap rises over each tab span:
+/// rect tabs with a vertical lift, a traverse at the tab top, and a
+/// vertical descent; smooth tabs along straight ramps either side of a hold
+/// at the tab top. Every vertical move is at the plunge rate; every move
+/// along the path, smooth ramps down included, is at the feed rate. `None`
+/// for a path with no vertices.
+pub(crate) fn lap_cuts(
     path: &Polyline,
     z_mm: f64,
     tabs: Option<(&Tabs, &PathTabs)>,
     rates: LapRates,
-) {
-    let Some(start) = path.vertices().first().map(|v| v.point()) else {
-        return;
-    };
+) -> Option<LapCuts> {
+    let start = path.vertices().first().map(|v| v.point())?;
     let tabs = tabs.filter(|(t, _)| z_mm < t.top_z_mm - EPS_MM);
     let pieces = lap_pieces(path, z_mm, tabs);
     let start_z_mm = pieces.first().map_or(z_mm, |p| p.from_z_mm);
-    let Some(mut current) = moves.last().map(|m| m.to) else {
-        // A lap always follows the rapid to its start; without one there
-        // is no safe way in.
-        return;
-    };
-    let vertical_to = |moves: &mut Vec<Move>, current: &mut Point3, z: f64| {
-        if (current.z - z).abs() > EPS_MM {
-            *current = Point3::new(start.x, start.y, z);
-            moves.push(Move::linear(*current, rates.plunge_mm_min));
-        }
-    };
-    vertical_to(moves, &mut current, start_z_mm);
+    let mut current = Point3::new(start.x, start.y, start_z_mm);
+    let mut moves = Vec::with_capacity(pieces.len());
     for piece in pieces {
         if (current.z - piece.from_z_mm).abs() > EPS_MM {
             current = Point3::new(current.x, current.y, piece.from_z_mm);
@@ -445,6 +443,7 @@ pub(crate) fn emit_lap(
         });
         current = piece.to;
     }
+    Some(LapCuts { start_z_mm, moves })
 }
 
 /// The moves of one lap at `z_mm`, split at tab breakpoints.

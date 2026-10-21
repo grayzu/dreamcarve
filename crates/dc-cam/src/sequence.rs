@@ -20,8 +20,9 @@
 //! upstream does not have.
 
 use crate::block::CutBlock;
-use crate::error::{CamError, ShapeRef};
-use crate::toolpath::Toolpath;
+use crate::error::{BlockProblem, CamError, ShapeRef};
+use crate::toolpath::{Move, Toolpath};
+use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Region, union};
 use dc_project::MachiningOrder;
 
 /// Everything [`sequence`] needs, in project space (mm, Y-up, Z-up).
@@ -50,6 +51,11 @@ pub struct SequenceInput<'a> {
     pub plunge_mm_min: f64,
 }
 
+/// Longest gap between sample points when checking that a stay-down link
+/// lies inside cleared material, mm. Links are at most a tool diameter plus
+/// a step-over long, so this is a handful of points.
+const LINK_SAMPLE_STEP_MM: f64 = 0.5;
+
 /// The order the blocks of `input` are cut in, as indices into
 /// `input.blocks` (spec steps 1–3): every unit (one shape at one pass) is
 /// a run of consecutive indices in generator order; units are walked by
@@ -61,8 +67,8 @@ pub struct SequenceInput<'a> {
 /// starts away from its entry, and with [`CamError::ContainmentCycle`]
 /// when the containment pairs leave no shape cuttable.
 pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
-    let _ = input;
-    Ok(Vec::new())
+    let shapes = Shapes::new(input)?;
+    shapes.walk(input.order)
 }
 
 /// Orders and links the blocks of `input` into one toolpath (spec steps
@@ -81,8 +87,456 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// Fails as [`plan`] does.
 #[must_use = "the toolpath is the whole point"]
 pub fn sequence(input: &SequenceInput<'_>) -> Result<Toolpath, CamError> {
-    let _ = plan(input)?;
-    Ok(Toolpath::default())
+    let order = plan(input)?;
+    let mut emitter = Emitter {
+        input,
+        moves: Vec::new(),
+        current: None,
+        previous: None,
+    };
+    for index in order {
+        if let Some(block) = input.blocks.get(index) {
+            emitter.emit(block);
+        }
+    }
+    emitter.finish();
+    Ok(Toolpath {
+        moves: emitter.moves,
+    })
+}
+
+/// One shape's blocks at one pass, in generator order.
+#[derive(Debug)]
+struct Unit {
+    /// Indices into `SequenceInput::blocks`.
+    blocks: Vec<usize>,
+    /// Where the unit's first descent begins.
+    start: Point,
+    /// Where the unit's last block ends.
+    exit: Point,
+    /// Some block of the unit frees material.
+    frees: bool,
+}
+
+/// One shape as the walk sees it.
+#[derive(Debug)]
+struct Shape {
+    reference: ShapeRef,
+    /// The shape's units, pass 0 first.
+    units: Vec<Unit>,
+    /// Indices of the shapes this one encloses.
+    enclosed: Vec<usize>,
+}
+
+/// The validated shapes of an input, in drawing order.
+struct Shapes {
+    shapes: Vec<Shape>,
+}
+
+impl Shapes {
+    /// Validates the blocks (spec step 1) and groups them into shapes and
+    /// units (step 2).
+    fn new(input: &SequenceInput<'_>) -> Result<Self, CamError> {
+        let mut shapes: Vec<Shape> = Vec::new();
+        // Blocks of each shape, by shape index, in generator order.
+        let mut members: Vec<Vec<usize>> = Vec::new();
+        for (index, block) in input.blocks.iter().enumerate() {
+            validate_block(block)?;
+            let position = shapes
+                .iter()
+                .position(|s| s.reference == block.shape)
+                .unwrap_or_else(|| {
+                    shapes.push(Shape {
+                        reference: block.shape.clone(),
+                        units: Vec::new(),
+                        enclosed: Vec::new(),
+                    });
+                    members.push(Vec::new());
+                    shapes.len() - 1
+                });
+            if let Some(list) = members.get_mut(position) {
+                list.push(index);
+            }
+        }
+
+        for (shape, member) in shapes.iter_mut().zip(&members) {
+            let mut passes: Vec<usize> = member
+                .iter()
+                .filter_map(|&i| input.blocks.get(i).map(|b| b.pass))
+                .collect();
+            passes.sort_unstable();
+            passes.dedup();
+            if passes.iter().enumerate().any(|(k, &pass)| k != pass) {
+                let first = member
+                    .first()
+                    .and_then(|&i| input.blocks.get(i))
+                    .map_or(0, |b| b.pass);
+                return Err(CamError::InvalidBlock {
+                    shape: shape.reference.clone(),
+                    pass: first,
+                    problem: BlockProblem::PassesNotConsecutive { passes },
+                });
+            }
+            for pass in passes {
+                let blocks: Vec<usize> = member
+                    .iter()
+                    .copied()
+                    .filter(|&i| input.blocks.get(i).is_some_and(|b| b.pass == pass))
+                    .collect();
+                let first = blocks.first().and_then(|&i| input.blocks.get(i));
+                let last = blocks.last().and_then(|&i| input.blocks.get(i));
+                shape.units.push(Unit {
+                    start: first.map_or(Point::new(0.0, 0.0), |b| b.descent_from),
+                    exit: last.map_or(Point::new(0.0, 0.0), |b| b.exit),
+                    frees: blocks
+                        .iter()
+                        .any(|&i| input.blocks.get(i).is_some_and(|b| b.frees)),
+                    blocks,
+                });
+            }
+        }
+
+        for (inner, encloser) in input.containment {
+            let inner = shapes.iter().position(|s| &s.reference == inner);
+            let encloser = shapes.iter().position(|s| &s.reference == encloser);
+            if let (Some(inner), Some(encloser)) = (inner, encloser)
+                && let Some(shape) = shapes.get_mut(encloser)
+                && !shape.enclosed.contains(&inner)
+            {
+                shape.enclosed.push(inner);
+            }
+        }
+        Ok(Self { shapes })
+    }
+
+    /// The greedy walk (spec step 3): from the current exit, the nearest
+    /// available unit or stack by `f64::total_cmp`, ties by drawing order.
+    /// `done[s]` counts the passes of shape `s` already emitted.
+    fn walk(&self, order: MachiningOrder) -> Result<Vec<usize>, CamError> {
+        let total: usize = self
+            .shapes
+            .iter()
+            .flat_map(|s| &s.units)
+            .map(|u| u.blocks.len())
+            .sum();
+        let mut out = Vec::with_capacity(total);
+        let mut done = vec![0usize; self.shapes.len()];
+        let Some(first) = self.shapes.first().and_then(|s| s.units.first()) else {
+            return Ok(out);
+        };
+        let mut current = first.start;
+        while out.len() < total {
+            let next = match order {
+                MachiningOrder::FullDepthFirst => self.nearest_stack(&done, current),
+                MachiningOrder::PassFirst => self.nearest_unit(&done, current),
+            };
+            let Some(index) = next else {
+                // Blocks remain, so some shape is unfinished; it is on
+                // the cycle or waits on one.
+                let Some(stuck) = self
+                    .shapes
+                    .iter()
+                    .zip(&done)
+                    .find(|(s, d)| **d < s.units.len())
+                    .map(|(s, _)| s.reference.clone())
+                else {
+                    break;
+                };
+                return Err(CamError::ContainmentCycle { shape: stuck });
+            };
+            let Some(shape) = self.shapes.get(index) else {
+                break;
+            };
+            let emitted = match order {
+                MachiningOrder::FullDepthFirst => shape.units.len(),
+                MachiningOrder::PassFirst => done.get(index).copied().unwrap_or(0) + 1,
+            };
+            let from = done.get(index).copied().unwrap_or(0);
+            for unit in shape.units.iter().take(emitted).skip(from) {
+                out.extend(unit.blocks.iter().copied());
+                current = unit.exit;
+            }
+            if let Some(d) = done.get_mut(index) {
+                *d = emitted;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Full depth first: the nearest unstarted shape whose enclosed shapes
+    /// are all finished.
+    fn nearest_stack(&self, done: &[usize], current: Point) -> Option<usize> {
+        self.shapes
+            .iter()
+            .enumerate()
+            .filter(|(s, shape)| {
+                done.get(*s).copied().unwrap_or(0) == 0
+                    && shape.enclosed.iter().all(|&e| self.finished(done, e))
+            })
+            .filter_map(|(s, shape)| shape.units.first().map(|u| (s, u.start)))
+            .min_by(|(sa, a), (sb, b)| {
+                current
+                    .distance_to(*a)
+                    .total_cmp(&current.distance_to(*b))
+                    .then(sa.cmp(sb))
+            })
+            .map(|(s, _)| s)
+    }
+
+    /// Pass first: among the available next units, the shallowest pass,
+    /// then the nearest. A unit at pass `k` is available when every
+    /// enclosed shape has finished pass `k` (or has no pass `k` and is
+    /// finished) and, when the unit frees, has finished entirely.
+    fn nearest_unit(&self, done: &[usize], current: Point) -> Option<usize> {
+        self.shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(s, shape)| {
+                let k = done.get(s).copied().unwrap_or(0);
+                let unit = shape.units.get(k)?;
+                let available = shape.enclosed.iter().all(|&e| {
+                    let required = self
+                        .shapes
+                        .get(e)
+                        .map_or(0, |enclosed| enclosed.units.len().min(k + 1));
+                    let done_e = done.get(e).copied().unwrap_or(0);
+                    done_e >= required && (!unit.frees || self.finished(done, e))
+                });
+                available.then_some((s, k, unit.start))
+            })
+            .min_by(|(sa, ka, a), (sb, kb, b)| {
+                ka.cmp(kb)
+                    .then(current.distance_to(*a).total_cmp(&current.distance_to(*b)))
+                    .then(sa.cmp(sb))
+            })
+            .map(|(s, _, _)| s)
+    }
+
+    fn finished(&self, done: &[usize], shape: usize) -> bool {
+        self.shapes
+            .get(shape)
+            .is_some_and(|s| done.get(shape).copied().unwrap_or(0) >= s.units.len())
+    }
+}
+
+/// Spec step 1: cuts and descent at or above the pass Z; a plunging block
+/// starts at its entry.
+fn validate_block(block: &CutBlock) -> Result<(), CamError> {
+    let lowest = block
+        .cuts
+        .iter()
+        .chain(&block.descent)
+        .map(|m| m.to.z)
+        .fold(f64::INFINITY, f64::min);
+    if lowest < block.z_mm - EPS_MM {
+        return Err(CamError::InvalidBlock {
+            shape: block.shape.clone(),
+            pass: block.pass,
+            problem: BlockProblem::MoveBelowPass {
+                z_mm: block.z_mm,
+                lowest_mm: lowest,
+            },
+        });
+    }
+    if block.descent.is_empty() && block.descent_from.distance_to(block.entry) > EPS_MM {
+        return Err(CamError::InvalidBlock {
+            shape: block.shape.clone(),
+            pass: block.pass,
+            problem: BlockProblem::PlungeAwayFromEntry,
+        });
+    }
+    Ok(())
+}
+
+/// How the tool gets from one block to the next (spec step 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Link {
+    /// The next block's descent starts where the tool is.
+    None,
+    /// A straight cut at feed through cleared material at the current Z.
+    StayDown,
+    /// Up to safe Z, across, and down.
+    Retract,
+}
+
+/// Writes the linked blocks.
+struct Emitter<'a, 'b> {
+    input: &'a SequenceInput<'b>,
+    moves: Vec<Move>,
+    /// Where the tool is, once the first block has started.
+    current: Option<Point3>,
+    previous: Option<&'a CutBlock>,
+}
+
+impl<'a> Emitter<'a, '_> {
+    fn emit(&mut self, block: &'a CutBlock) {
+        let safe_z = self.input.safe_z_mm;
+        match (self.previous, self.current) {
+            (Some(previous), Some(current)) => match self.link(previous, block, current) {
+                Link::None => {}
+                Link::StayDown => {
+                    let to = Point3::new(block.descent_from.x, block.descent_from.y, current.z);
+                    self.push(Move::linear(to, self.input.feed_mm_min));
+                }
+                Link::Retract => {
+                    self.push(Move::rapid(Point3::new(current.x, current.y, safe_z)));
+                    self.push(Move::rapid(Point3::new(
+                        block.descent_from.x,
+                        block.descent_from.y,
+                        safe_z,
+                    )));
+                }
+            },
+            _ => {
+                self.push(Move::rapid(Point3::new(
+                    block.descent_from.x,
+                    block.descent_from.y,
+                    safe_z,
+                )));
+            }
+        }
+        self.descend(block);
+        for cut in &block.cuts {
+            self.push(*cut);
+        }
+        self.previous = Some(block);
+    }
+
+    /// Spec step 4, rules 1–4, for `a → b` with the tool at `current`.
+    fn link(&self, a: &CutBlock, b: &CutBlock, current: Point3) -> Link {
+        let at_start = current.xy().distance_to(b.descent_from) <= EPS_MM;
+        if a.shape == b.shape && b.pass == a.pass + 1 {
+            return if at_start { Link::None } else { Link::Retract };
+        }
+        if let (Some(cleared_a), Some(cleared_b)) = (&a.cleared, &b.cleared)
+            && (a.z_mm - b.z_mm).abs() <= EPS_MM
+            && (current.z - b.z_mm).abs() <= EPS_MM
+        {
+            let length_mm = current.xy().distance_to(b.descent_from);
+            let limit_mm = self.input.tool_diameter_mm + self.input.stepover_mm;
+            if length_mm <= limit_mm + EPS_MM
+                && link_inside_cleared(cleared_a, cleared_b, current.xy(), b.descent_from)
+            {
+                return Link::StayDown;
+            }
+        }
+        Link::Retract
+    }
+
+    /// The descent into `block` from wherever the tool is: a straight
+    /// plunge at the plunge rate for an empty descent, else the block's
+    /// own moves after a plunge to `descent_from_z_mm` when the tool is
+    /// above it.
+    fn descend(&mut self, block: &CutBlock) {
+        if block.descent.is_empty() {
+            self.push(Move::linear(
+                Point3::new(block.entry.x, block.entry.y, block.z_mm),
+                self.input.plunge_mm_min,
+            ));
+            return;
+        }
+        if self
+            .current
+            .is_some_and(|c| c.z > block.descent_from_z_mm + EPS_MM)
+        {
+            self.push(Move::linear(
+                Point3::new(
+                    block.descent_from.x,
+                    block.descent_from.y,
+                    block.descent_from_z_mm,
+                ),
+                self.input.plunge_mm_min,
+            ));
+        }
+        for mv in &block.descent {
+            self.push(*mv);
+        }
+    }
+
+    /// Appends `mv` unless it ends where the tool already is.
+    fn push(&mut self, mv: Move) {
+        if let Some(current) = self.current
+            && distance_3d(current, mv.to) <= EPS_MM
+        {
+            return;
+        }
+        self.moves.push(mv);
+        self.current = Some(mv.to);
+    }
+
+    /// The rapid up to safe Z after the last block.
+    fn finish(&mut self) {
+        if let Some(current) = self.current
+            && current.z < self.input.safe_z_mm - EPS_MM
+        {
+            self.push(Move::rapid(Point3::new(
+                current.x,
+                current.y,
+                self.input.safe_z_mm,
+            )));
+        }
+    }
+}
+
+fn distance_3d(a: Point3, b: Point3) -> f64 {
+    let (dx, dy, dz) = (b.x - a.x, b.y - a.y, b.z - a.z);
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
+/// True when the straight link `from → to` lies inside the union of the
+/// two cleared areas: its ends are in one piece of the union, it crosses
+/// no boundary edge of that piece properly, and every sample point along
+/// it (at most [`LINK_SAMPLE_STEP_MM`] apart) is inside.
+fn link_inside_cleared(a: &Region, b: &Region, from: Point, to: Point) -> bool {
+    let pieces = union(
+        std::slice::from_ref(a),
+        std::slice::from_ref(b),
+        FLATTEN_TOLERANCE_DEFAULT_MM,
+    );
+    let Some(piece) = pieces.iter().find(|r| r.contains_point(from)) else {
+        return false;
+    };
+    if !piece.contains_point(to) {
+        return false;
+    }
+    let boundary = std::iter::once(piece.outer()).chain(piece.holes());
+    for contour in boundary {
+        let flat = contour
+            .polyline()
+            .with_arcs_flattened(FLATTEN_TOLERANCE_DEFAULT_MM);
+        if flat
+            .segments()
+            .any(|s| crosses_properly(from, to, s.start, s.end))
+        {
+            return false;
+        }
+    }
+    let length_mm = from.distance_to(to);
+    // Rounds up; the count is small, so the cast cannot truncate.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let steps = (length_mm / LINK_SAMPLE_STEP_MM).ceil().max(1.0) as usize;
+    (1..steps).all(|k| {
+        let t = k as f64 / steps as f64;
+        let p = Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+        piece.contains_point(p)
+    })
+}
+
+/// True when segments `p → q` and `r → s` cross at interior points of
+/// both, each end being more than [`EPS_MM`] off the other segment's line.
+/// Touching or collinear segments do not count.
+fn crosses_properly(p: Point, q: Point, r: Point, s: Point) -> bool {
+    let side = |a: Point, b: Point, c: Point| -> f64 {
+        // Signed distance of `c` from the line `a → b`, mm.
+        let d = b - a;
+        let len = d.length();
+        if len <= EPS_MM {
+            return 0.0;
+        }
+        d.cross(c - a) / len
+    };
+    let opposite = |x: f64, y: f64| (x > EPS_MM && y < -EPS_MM) || (x < -EPS_MM && y > EPS_MM);
+    opposite(side(p, q, r), side(p, q, s)) && opposite(side(r, s, p), side(r, s, q))
 }
 
 #[cfg(test)]
@@ -679,12 +1133,17 @@ mod tests {
             squares("b", 40.0, 0.0, 10.0, 2),
         ]
         .concat();
-        for order in BOTH {
+        // Full depth first ends at b; pass first walks back and ends at a.
+        for (order, last_xy) in [
+            (MachiningOrder::FullDepthFirst, Point::new(40.0, 0.0)),
+            (MachiningOrder::PassFirst, Point::new(5.0, 5.0)),
+        ] {
             let tp = run(&input(blocks.clone(), order, &[]));
             assert_eq!(tp.moves[0], Move::rapid(Point3::new(5.0, 5.0, SAFE_Z_MM)));
             assert_eq!(
                 *tp.moves.last().unwrap(),
-                Move::rapid(Point3::new(40.0, 0.0, SAFE_Z_MM))
+                Move::rapid(Point3::new(last_xy.x, last_xy.y, SAFE_Z_MM)),
+                "{order:?}"
             );
         }
     }
