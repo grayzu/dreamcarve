@@ -28,8 +28,8 @@ use dc_gcode::MachineMove;
 use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
     CornerRelief, DefinitionId, DrillCycle, EngraveOp, Entry, FeatureDefinition, FeatureInstance,
-    InstanceId, Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp, Project,
-    Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, ToolKind, load, save,
+    InstanceId, Lead, Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp,
+    Project, Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, ToolKind, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -1241,6 +1241,81 @@ fn pocket_helix_entry_exports_and_passes_safety() {
         assert!(
             (1100.0..1150.0).contains(&f) || (f - 100.0 / 15f64.to_radians().sin()).abs() < 0.01,
             "helix or ramp feed {f}"
+        );
+    }
+}
+
+/// The number of lines of `program` that move on an arc (`G2`/`G3`, as
+/// either `G2` or `G02`).
+fn arc_lines(program: &str) -> usize {
+    program
+        .lines()
+        .map(code_words)
+        .filter(|words| {
+            words
+                .iter()
+                .any(|w| matches!(w.as_str(), "G2" | "G3" | "G02" | "G03"))
+        })
+        .count()
+}
+
+/// Slice 11 (#180), capability 17 end to end: the coaster's Profile with
+/// a 2 mm lead-in, lead-out and 1 mm overcut checks with no lead warning
+/// and exports on grblHAL and on LinuxCNC; each program passed the
+/// emitter's safety pass (export refuses one that fails it) and has more
+/// arc moves than the same project without the lead: the lead arcs.
+#[test]
+fn profile_lead_exports_and_passes_safety() {
+    for post in ["grblhal", "linuxcnc"] {
+        let mut programs = Vec::new();
+        for with_lead in [false, true] {
+            let dir = work_dir(&format!("profile_lead_{post}_{with_lead}"));
+            let dcv = init_coaster(&dir);
+            fill_in(&dcv, 1500.0, 500.0, 18000);
+            let mut project = load_file(&dcv).project;
+            if with_lead {
+                for op in project.operations.iter_mut().map(as_profile_mut) {
+                    op.lead = Some(Lead {
+                        radius_mm: 2.0,
+                        sweep_deg: 90.0,
+                        lead_out: true,
+                        overcut_mm: 1.0,
+                    });
+                }
+            }
+            std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+            let check = run(&dir, &["check", "coaster.dcv"]);
+            let report = format!("{}{}", stdout(&check), stderr(&check));
+            assert_eq!(check.status.code(), Some(0), "{report}");
+            assert!(!report.contains("lead_"), "{post}: {report}");
+            let out = run(
+                &dir,
+                &[
+                    "export",
+                    "coaster.dcv",
+                    "--post",
+                    post,
+                    "--date",
+                    FIXED_DATE,
+                ],
+            );
+            assert_eq!(out.status.code(), Some(0), "{post}: {}", stderr(&out));
+            let program = std::fs::read_dir(&dir)
+                .expect("dir readable")
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .find(|p| {
+                    p.extension()
+                        .is_some_and(|x| x != "dcv" && x != "svg" && x != "toml")
+                })
+                .map(|p| std::fs::read_to_string(p).expect("program readable"))
+                .expect("program written");
+            programs.push(program);
+        }
+        assert!(
+            arc_lines(&programs[1]) > arc_lines(&programs[0]),
+            "{post}: the lead adds arcs:\n{}",
+            programs[1]
         );
     }
 }

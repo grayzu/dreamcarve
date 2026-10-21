@@ -18,8 +18,11 @@ mod entries;
 mod waste;
 
 use crate::block::CutBlock;
-use crate::entry::{self, CutSide, EntryKind, EntryTool, EntryWarnings, FallbackReason};
+use crate::entry::{
+    self, CutSide, EntryKind, EntryTool, EntryWarnings, FallbackReason, MIN_BOUNDARY_SAFETY_MM,
+};
 use crate::error::{CamError, FeedField, ShapeRef};
+use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
 use crate::overlap::{CutPath, overlap_warnings};
 use crate::passes::pass_z_mm;
 use crate::sequence::{SequenceInput, plan, sequence};
@@ -32,8 +35,13 @@ use crate::warning::{Warning, WarningCode};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, nest, offset,
 };
-use dc_project::{CutDirection, Entry, InstanceId, OperationId, ProfileOp, Project, Side, Tool};
-use entries::{EntrySetup, PassEntry, path_entries, plunged};
+use dc_project::{
+    CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
+};
+use entries::{
+    EntrySetup, PassEntry, PathDomain, Space, Targets, off_material, path_entries, plunged,
+    wall_domains,
+};
 
 /// Which side of the tool the uncut wall lies on, for direction purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +165,17 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// [`WarningCode::EntryFallback`]; so does a contour whose start is under
 /// a tab.
 ///
+/// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
+/// Inside and Outside contours are re-seamed where an arc tangent to them
+/// fits in the waste domain away from corners ([`crate::lead`]): each
+/// pass descends at the arc's far end, its staging point, cuts the arc,
+/// the lap from the arrival, the overcut and the exit arc at the feed
+/// rate, and retracts. Below the tab top the arcs keep off the tabs, and
+/// the tabs stay where they were along the outline. A lead that fits only
+/// smaller warns [`WarningCode::LeadShrunk`]; one that does not fit, an
+/// exit that does not fit, and any lead on an On line Profile warn
+/// [`WarningCode::LeadDropped`].
+///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped
 /// with a [`Warning`]. Shapes in different regions whose tool paths cut
 /// into each other give [`WarningCode::ToolpathsOverlap`], in cut order. Fails without a toolpath when a feed, plunge rate, or
@@ -164,9 +183,10 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// allowance, when targets cross, when an id does not resolve, when the
 /// cutter would leave the stock ([`CamError::OffStock`]), when an entry's
 /// angle or helix fraction is out of range ([`CamError::InvalidEntry`]),
+/// when a lead's radius, sweep or overcut is ([`CamError::InvalidLead`]),
 /// when an On line Profile asks for a helix
-/// ([`CamError::HelixNeedsWasteSide`]), or when a descent would leave its
-/// waste domain ([`CamError::OffMaterial`], a defect).
+/// ([`CamError::HelixNeedsWasteSide`]), or when a descent or lead arc
+/// would leave its waste domain ([`CamError::OffMaterial`], a defect).
 #[must_use = "the toolpath is the whole point"]
 pub fn generate_profile(
     project: &Project,
@@ -321,7 +341,7 @@ pub fn generate_profile(
             Wall::Outside => CutSide::External,
         },
     };
-    let entries = path_entries(&EntrySetup {
+    let setup = EntrySetup {
         op,
         stock: &project.stock,
         regions: &regions,
@@ -332,9 +352,61 @@ pub fn generate_profile(
         pass_z: &pass_z,
         entry_tool: &entry_tool,
         tolerance_mm: project.flatten_tolerance_mm,
-    });
+    };
+    let lead = op.lead.as_ref();
+    if let Some(lead) = lead {
+        lead::check(&op.id, lead)?;
+        if op.side == Side::OnLine {
+            warnings.push(lead::on_line_warning(&op.id));
+        }
+    }
+    // The waste domains, which the entries and the leads both use.
+    let domains = if lead.is_some() || !matches!(op.entry, Entry::Plunge) {
+        wall_domains(&setup)
+    } else {
+        Vec::new()
+    };
+    let below_tabs = |z_mm: f64| tabs.as_ref().is_some_and(|t| z_mm < t.top_z_mm() - EPS_MM);
+    let mut lead_warnings = LeadWarnings::default();
+    let leads = match lead {
+        Some(lead) => plan_leads(
+            &LeadSetup {
+                op,
+                lead,
+                paths: &paths,
+                domains: &domains,
+                diameter_mm: tool.diameter_mm,
+                tolerance_mm: project.flatten_tolerance_mm,
+                any_above_tabs: pass_z.iter().any(|z| !below_tabs(*z)),
+                any_below_tabs: pass_z.iter().any(|z| below_tabs(*z)),
+            },
+            &mut lead_warnings,
+        )?,
+        None => paths.iter().map(|_| None).collect(),
+    };
+    let targets: Vec<Targets> = paths
+        .iter()
+        .zip(&leads)
+        .map(|((path, _), led)| {
+            let start = path
+                .vertices()
+                .first()
+                .map_or(Point::new(0.0, 0.0), |v| v.point());
+            let staging = led.as_ref().map(|l| l.lead_in.staging());
+            Targets {
+                plain: staging.unwrap_or(start),
+                tabbed: led
+                    .as_ref()
+                    .filter(|l| l.below_tabs)
+                    .map_or(start, |l| l.lead_in.staging()),
+            }
+        })
+        .collect();
+    let entries = path_entries(&setup, &domains, &targets);
     let mut entry_warnings = EntryWarnings::default();
     let mut blocks = Vec::with_capacity(paths.len() * pass_z.len());
+    // The path each block cuts, for naming contours in cut order.
+    let mut block_paths = Vec::with_capacity(blocks.capacity());
     for (i, ((path, shape), layout)) in paths.iter().zip(&layouts).enumerate() {
         let path_tabs = match (&tabs, layout) {
             (Some(tabs), Some((layout, _))) => Some((tabs, layout)),
@@ -346,14 +418,32 @@ pub fn generate_profile(
         let wall = walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
         let mut previous: Option<(bool, EntryKind)> = None;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
-            let Some(lap) = lap_cuts(path, z_mm, path_tabs, rates) else {
-                continue;
+            let below_tabs = below_tabs(z_mm);
+            let led = leads
+                .get(i)
+                .and_then(Option::as_ref)
+                .filter(|l| l.below_tabs || !below_tabs);
+            let led_block = led.and_then(|l| {
+                led_block(shape, pass, z_mm, l, path_tabs, &pass_z, safe_z_mm, rates)
+            });
+            // A lead whose lap would start on a tab (never, since the
+            // arrival is kept off the tabs) is not cut, and nor is the
+            // entry planned for its staging point.
+            let entry_target_lost = led.is_some() && led_block.is_none();
+            let (mut block, on_tab, lap_start_z_mm) = match led_block {
+                Some(block) => (block, false, z_mm),
+                None => {
+                    let Some(lap) = lap_cuts(path, z_mm, path_tabs, rates) else {
+                        continue;
+                    };
+                    let on_tab = lap.start_z_mm > z_mm + EPS_MM;
+                    let lap_start_z_mm = lap.start_z_mm;
+                    let block =
+                        contour_block(shape, pass, z_mm, start, lap, &pass_z, safe_z_mm, rates);
+                    (block, on_tab || entry_target_lost, lap_start_z_mm)
+                }
             };
-            let on_tab = lap.start_z_mm > z_mm + EPS_MM;
-            let lap_start_z_mm = lap.start_z_mm;
-            let mut block = contour_block(shape, pass, z_mm, start, lap, &pass_z, safe_z_mm, rates);
             if let Some(entry) = entries.get(i).and_then(Option::as_ref) {
-                let below_tabs = tabs.as_ref().is_some_and(|t| z_mm < t.top_z_mm() - EPS_MM);
                 let pass_entry = PassEntry {
                     path,
                     pass,
@@ -377,16 +467,20 @@ pub fn generate_profile(
                     let (descent, from_z_mm) =
                         entry.descend(&pass_entry, block.descent_from_z_mm, &mut previous);
                     entry_warnings.record(shape, &descent);
-                    entry.check(op, shape, &pass_entry, &descent, from_z_mm)?;
+                    entry.check(op, shape, &pass_entry, &descent, from_z_mm, domains.get(i))?;
                     block.descent_from = descent.from;
                     block.descent_from_z_mm = from_z_mm;
                     block.descent = descent.moves;
                 }
             }
             blocks.push(block);
+            block_paths.push(i);
         }
     }
     warnings.extend(entry_warnings.into_warnings(&op.id));
+    if let Some(lead) = lead {
+        warnings.extend(lead_warnings.into_warnings(&op.id, lead));
+    }
     let containment = containment_pairs(&regions, &shapes);
     let input = SequenceInput {
         blocks,
@@ -404,20 +498,10 @@ pub fn generate_profile(
     let cut_order = plan(&input)?;
     let mut path_order: Vec<usize> = Vec::with_capacity(paths.len());
     for index in cut_order {
-        if let Some(block) = input.blocks.get(index) {
-            let path_index = paths
-                .iter()
-                .position(|(path, shape)| {
-                    *shape == &block.shape
-                        && path
-                            .vertices()
-                            .first()
-                            .is_some_and(|v| v.point().distance_to(block.entry) <= EPS_MM)
-                })
-                .unwrap_or(0);
-            if !path_order.contains(&path_index) {
-                path_order.push(path_index);
-            }
+        if let Some(&path_index) = block_paths.get(index)
+            && !path_order.contains(&path_index)
+        {
+            path_order.push(path_index);
         }
     }
     // Paths the plan never reached (none in practice) keep their place.
@@ -516,6 +600,216 @@ fn contour_block(
         cleared: None,
         group: 0,
     }
+}
+
+/// A path's lead (`docs/specs/phase-2/design.md`, "Algorithms → Lead-in
+/// and lead-out"): the arc in, the re-seamed contour, the overcut and the
+/// arc out, the same on every pass that cuts it.
+struct PathLead {
+    lead_in: LeadIn,
+    lead_out: LeadOut,
+    /// Planned in the domain less the tabs, so the passes below the tab
+    /// top cut it too; otherwise only the passes above.
+    below_tabs: bool,
+}
+
+/// What [`plan_leads`] needs from the generator.
+struct LeadSetup<'a, 'b> {
+    op: &'a ProfileOp,
+    lead: &'a Lead,
+    paths: &'a [(Polyline, &'b ShapeRef)],
+    /// Each path's waste domains; empty for On line, which has none.
+    domains: &'a [PathDomain],
+    diameter_mm: f64,
+    tolerance_mm: f64,
+    any_above_tabs: bool,
+    any_below_tabs: bool,
+}
+
+/// Each path's lead, in order, or `None` where none fits (or On line).
+/// A lead that fits the domain less the tabs fits the whole domain, since
+/// one holds the other, so it is planned there first and then serves
+/// every pass; failing that, a lead in the whole domain serves the passes
+/// above the tab top. Arrivals rank travel from the previous path's exit
+/// in drawing order (the sequencer orders blocks after they are built).
+/// Warns through `warnings`; fails with [`CamError::OffMaterial`] if a
+/// lead arc leaves its domain (a defect).
+fn plan_leads(
+    setup: &LeadSetup<'_, '_>,
+    warnings: &mut LeadWarnings,
+) -> Result<Vec<Option<PathLead>>, CamError> {
+    let mut out = Vec::with_capacity(setup.paths.len());
+    let mut from: Option<Point> = None;
+    for (i, (path, shape)) in setup.paths.iter().enumerate() {
+        let Some(domain) = setup.domains.get(i) else {
+            out.push(None);
+            continue;
+        };
+        let d = setup.diameter_mm;
+        let plan_in = |space: &Space| {
+            let leads = DomainSpace::new(&space.domain, d, setup.tolerance_mm);
+            lead::plan_lead_in(path, setup.lead, d, &leads, from).map(|lead_in| {
+                let lead_out = lead::plan_lead_out(&lead_in.seam, setup.lead, d, &leads);
+                (lead_in, lead_out)
+            })
+        };
+        let tabbed = domain
+            .tabbed
+            .as_ref()
+            .filter(|_| setup.any_below_tabs)
+            .map(|space| (space, plan_in(space)));
+        let planned = match tabbed {
+            Some((space, Some(plan))) => Some((space, plan, true)),
+            Some((_, None)) => {
+                warnings.record_dropped(shape, DropReason::NoRoom);
+                setup
+                    .any_above_tabs
+                    .then(|| plan_in(&domain.plain).map(|p| (&domain.plain, p, false)))
+                    .flatten()
+            }
+            None => {
+                let plan = plan_in(&domain.plain).map(|p| (&domain.plain, p, false));
+                if plan.is_none() {
+                    warnings.record_dropped(shape, DropReason::NoRoom);
+                }
+                plan
+            }
+        };
+        let start = path.vertices().first().map(|v| v.point());
+        let Some((space, (lead_in, lead_out), below_tabs)) = planned else {
+            from = start;
+            out.push(None);
+            continue;
+        };
+        for arc in std::iter::once(&lead_in.arc).chain(&lead_out.arc) {
+            warnings.record_arc(shape, setup.lead, arc);
+            check_lead_arc(setup.op, shape, arc, space, d / 2.0, setup.tolerance_mm)?;
+        }
+        if setup.lead.lead_out && lead_out.arc.is_none() {
+            warnings.record_dropped(shape, DropReason::Exit);
+        }
+        from = Some(match (&lead_out.arc, &lead_out.overcut) {
+            (Some(arc), _) => arc.to,
+            (None, Some(overcut)) => overcut
+                .vertices()
+                .last()
+                .map_or(lead_in.arrival(), |v| v.point()),
+            (None, None) => lead_in.arrival(),
+        });
+        out.push(Some(PathLead {
+            lead_in,
+            lead_out,
+            below_tabs,
+        }));
+    }
+    Ok(out)
+}
+
+/// S9 for a lead arc planned in `space`: every sample of its tool centre
+/// lies in the domain (within the flatten tolerance and the least
+/// boundary safety, as a descent's), or the generator has a defect and no
+/// toolpath is produced ([`CamError::OffMaterial`]).
+fn check_lead_arc(
+    op: &ProfileOp,
+    shape: &ShapeRef,
+    arc: &LeadArc,
+    space: &Space,
+    radius_mm: f64,
+    tolerance_mm: f64,
+) -> Result<(), CamError> {
+    let slack_mm = tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
+    if lead::lead_samples(arc)
+        .iter()
+        .all(|p| space.domain.clearance_mm(*p) >= -slack_mm)
+    {
+        return Ok(());
+    }
+    let mv = Move {
+        kind: arc.kind(),
+        to: Point3::new(arc.to.x, arc.to.y, 0.0),
+        feed_mm_min: Some(1.0),
+    };
+    let start = Point3::new(arc.from.x, arc.from.y, 0.0);
+    Err(off_material(
+        op,
+        shape,
+        start,
+        mv,
+        space,
+        radius_mm,
+        tolerance_mm,
+    ))
+}
+
+/// The block that cuts one pass of a path with its lead: the lead-in arc
+/// from the staging point (the block's entry, where its descent ends) to
+/// the arrival, the lap of the re-seamed contour, the overcut and the
+/// lead-out arc, all at the cutting feed. The tabs, measured from the
+/// path's own start, are moved with the seam so they stay where they are;
+/// they raise the lap and the overcut, never a lead arc. A lead-out after
+/// an overcut that ends raised (on a tab) is left off. `None` when the
+/// lap would start on a tab, or the path has no vertices.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every argument is one fact about the pass; a struct would only rename them"
+)]
+fn led_block(
+    shape: &ShapeRef,
+    pass: usize,
+    z_mm: f64,
+    led: &PathLead,
+    tabs: Option<(&Tabs, &PathTabs)>,
+    pass_z: &[f64],
+    safe_z_mm: f64,
+    rates: LapRates,
+) -> Option<CutBlock> {
+    let seam = &led.lead_in.seam;
+    let reseamed = tabs.map(|(t, layout)| (t, layout.reseamed(led.lead_in.arrival_mm)));
+    let tabs = reseamed.as_ref().map(|(t, layout)| (*t, layout));
+    let lap = lap_cuts(seam, z_mm, tabs, rates)?;
+    if (lap.start_z_mm - z_mm).abs() > EPS_MM {
+        return None;
+    }
+    let at = |p: Point, z: f64| Point3::new(p.x, p.y, z);
+    let arc_move = |arc: &LeadArc, z: f64| Move {
+        kind: arc.kind(),
+        to: at(arc.to, z),
+        feed_mm_min: Some(rates.feed_mm_min),
+    };
+    let mut cuts = Vec::with_capacity(lap.moves.len() + 4);
+    cuts.push(arc_move(&led.lead_in.arc, z_mm));
+    cuts.extend(lap.moves);
+    if let Some(overcut) = &led.lead_out.overcut
+        && let Some(more) = lap_cuts(overcut, z_mm, tabs, rates)
+    {
+        cuts.extend(more.moves);
+    }
+    let end_z_mm = cuts.last().map_or(z_mm, |m| m.to.z);
+    if let Some(arc) = &led.lead_out.arc
+        && (end_z_mm - z_mm).abs() <= EPS_MM
+    {
+        cuts.push(arc_move(arc, z_mm));
+    }
+    let staging = led.lead_in.staging();
+    let exit = cuts.last().map_or(staging, |m| m.to.xy());
+    let descent_from_z_mm = pass
+        .checked_sub(1)
+        .and_then(|k| pass_z.get(k).copied())
+        .unwrap_or(safe_z_mm);
+    Some(CutBlock {
+        shape: shape.clone(),
+        pass,
+        z_mm,
+        descent_from: staging,
+        descent_from_z_mm,
+        descent: Vec::new(),
+        entry: staging,
+        cuts,
+        exit,
+        frees: pass + 1 == pass_z.len() && z_mm <= EPS_MM,
+        cleared: None,
+        group: 0,
+    })
 }
 
 /// The `(inner, encloser)` pairs `sequence` needs (invariant O1,
