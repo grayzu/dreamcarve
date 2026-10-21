@@ -19,6 +19,9 @@ members = [
 [workspace.package]
 version = "0.1.1"
 edition = "2024"
+# The minimum supported Rust version, not the toolchain the gates run on.
+# rust-toolchain.toml pins that newer lint toolchain (issue #151); the MSRV
+# stays lower so a build from source works on an older stable.
 rust-version = "1.94"
 license = "Apache-2.0"
 repository = "https://github.com/grayzu/dreamcarve"
