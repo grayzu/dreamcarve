@@ -1117,8 +1117,61 @@ mod tests {
         };
         let (without, _) = generate_profile(project, &none).unwrap();
         assert_safe(&with, project, &Operation::Profile(op.clone()));
-        let relief = relief_cuts(&with, &without);
+        let relief = interleaved_relief(&with, &without)
+            .into_iter()
+            .map(|(_, cut)| cut)
+            .collect();
         (with, warnings, relief)
+    }
+
+    /// The XY cutting moves of `moves` from `start`, each with its index.
+    fn xy_cuts(start: Point3, moves: &[Move]) -> Vec<(usize, Cut)> {
+        let mut pos = start;
+        let mut out = Vec::new();
+        for (i, mv) in moves.iter().enumerate() {
+            if mv.is_cut() && pos.xy().distance_to(mv.to.xy()) > EPS_MM {
+                let segment = Segment {
+                    start: pos.xy(),
+                    end: mv.to.xy(),
+                    bulge: bulge_of(pos.xy(), mv),
+                };
+                out.push((i, (segment, pos.z, mv.to.z)));
+            }
+            pos = mv.to;
+        }
+        out
+    }
+
+    /// The XY cutting moves `with` (a Profile with relief) adds to
+    /// `without` (the same Profile without), each with its index in
+    /// `with`. A Profile's notches are cut among its passes (#189), so
+    /// every cut of `without` must appear in `with` in the same order, and
+    /// the rest are the notches.
+    fn interleaved_relief(with: &Toolpath, without: &Toolpath) -> Vec<(usize, Cut)> {
+        let first = |tp: &Toolpath| {
+            tp.moves
+                .first()
+                .map_or(Point3::new(0.0, 0.0, 0.0), |m| m.to)
+        };
+        let main: Vec<Cut> = xy_cuts(first(without), &without.moves)
+            .into_iter()
+            .map(|(_, cut)| cut)
+            .collect();
+        let mut matched = 0;
+        let mut relief = Vec::new();
+        for (i, cut) in xy_cuts(first(with), &with.moves) {
+            if main.get(matched) == Some(&cut) {
+                matched += 1;
+            } else {
+                relief.push((i, cut));
+            }
+        }
+        assert_eq!(
+            matched,
+            main.len(),
+            "relief must leave the main path's cuts in place and in order"
+        );
+        relief
     }
 
     /// The XY cutting moves `with` adds after `without`, which must be
@@ -1870,6 +1923,95 @@ mod tests {
         assert_eq!(relief_codes(&warnings), vec![WarningCode::ReliefSkipped]);
         assert_eq!(warnings[0].param("reason"), Some("on_line"));
         assert_eq!(warnings[0].param("requested"), Some("t_bone"));
+    }
+
+    /// #189: on a Profile through the stock with no tabs, every notch of a
+    /// shape, at every level down to the bottom, is cut before that
+    /// shape's freeing pass (the final lap at Z 0), and nothing of the
+    /// shape is cut after it: inside (two 40 mm square holes, four notches
+    /// each) and outside (two L parts, one notch each), under both
+    /// machining orders. Shapes lie apart in X, so a move's X names its
+    /// shape.
+    #[test]
+    fn profile_notches_precede_the_freeing_pass() {
+        let shifted = |points: &[(f64, f64)], dx: f64| -> Polyline {
+            let moved: Vec<(f64, f64)> = points.iter().map(|&(x, y)| (x + dx, y)).collect();
+            poly(&moved)
+        };
+        let square = [(0.0, 0.0), (40.0, 0.0), (40.0, 40.0), (0.0, 40.0)];
+        // (side, the two shapes, the X that parts them, notches per shape)
+        let cases = [
+            (
+                Side::Inside,
+                vec![shifted(&square, 0.0), shifted(&square, 60.0)],
+                O + 50.0,
+                4,
+            ),
+            (
+                Side::Outside,
+                vec![shifted(&L_PART, 0.0), shifted(&L_PART, 80.0)],
+                O + 70.0,
+                1,
+            ),
+        ];
+        for (side, profiles, parting_x, corners) in cases {
+            let p = one_tool(profiles);
+            for order in [MachiningOrder::FullDepthFirst, MachiningOrder::PassFirst] {
+                let op = ProfileOp {
+                    depth_mm: Some(THICKNESS_MM),
+                    machining_order: order,
+                    ..profile_op(side, CornerRelief::Dogbone)
+                };
+                let (with, warnings) = generate_profile(&p, &op).unwrap();
+                assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+                assert_safe(&with, &p, &Operation::Profile(op.clone()));
+                let none = ProfileOp {
+                    corner_relief: CornerRelief::None,
+                    ..op.clone()
+                };
+                let (without, _) = generate_profile(&p, &none).unwrap();
+                let relief = interleaved_relief(&with, &without);
+                let first = with.moves.first().map(|m| m.to).unwrap();
+                let all = xy_cuts(first, &with.moves);
+                let is_relief = |i: usize| relief.iter().any(|(k, _)| *k == i);
+                let at_bottom = |c: &Cut| c.1.abs() <= EPS_MM && c.2.abs() <= EPS_MM;
+                for left in [true, false] {
+                    let mine = |c: &Cut| (c.0.end.x < parting_x) == left;
+                    let notches: Vec<usize> = relief
+                        .iter()
+                        .filter(|(_, c)| mine(c))
+                        .map(|(i, _)| *i)
+                        .collect();
+                    // Three levels (Z 4, 2, 0), out and back at each corner.
+                    assert_eq!(notches.len(), 3 * 2 * corners, "{side:?} {order:?}");
+                    let bottom_notches = relief
+                        .iter()
+                        .filter(|(_, c)| mine(c) && at_bottom(c))
+                        .count();
+                    assert_eq!(bottom_notches, 2 * corners, "{side:?} {order:?}");
+                    let freeing: Vec<usize> = all
+                        .iter()
+                        .filter(|(i, c)| !is_relief(*i) && mine(c) && at_bottom(c))
+                        .map(|(i, _)| *i)
+                        .collect();
+                    let (Some(&lap_first), Some(&lap_last)) = (freeing.first(), freeing.last())
+                    else {
+                        panic!("{side:?} {order:?}: no freeing lap");
+                    };
+                    assert!(
+                        notches.iter().all(|&i| i < lap_first),
+                        "{side:?} {order:?}: a notch at {notches:?} follows the freeing \
+                         lap at {lap_first}"
+                    );
+                    assert!(
+                        all.iter()
+                            .filter(|(_, c)| mine(c))
+                            .all(|(i, _)| *i <= lap_last),
+                        "{side:?} {order:?}: a cut follows the freeing lap"
+                    );
+                }
+            }
+        }
     }
 
     // ── 7. Acceptance 29 and S9 ─────────────────────────────────────────

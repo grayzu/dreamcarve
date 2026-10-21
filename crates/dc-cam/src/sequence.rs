@@ -1157,6 +1157,86 @@ mod tests {
         assert_eq!(names(&visits(&tp, &blocks)), ["I", "I", "I", "E", "E"]);
     }
 
+    /// A relief-notch-like block of shape `name` at `pass`: a plunge at
+    /// (`x`, `y`) from safe Z, out 1 mm down and left, and back.
+    fn notch(name: &str, x: f64, y: f64, pass: usize) -> CutBlock {
+        let z = PASS_Z_MM[pass];
+        let at = Point::new(x, y);
+        CutBlock {
+            shape: shape(name),
+            pass,
+            z_mm: z,
+            descent_from: at,
+            descent_from_z_mm: SAFE_Z_MM,
+            descent: Vec::new(),
+            entry: at,
+            cuts: vec![
+                Move::linear(Point3::new(x - 1.0, y - 1.0, z), FEED_MM_MIN),
+                Move::linear(Point3::new(x, y, z), FEED_MM_MIN),
+            ],
+            exit: at,
+            frees: false,
+            cleared: None,
+            group: 0,
+        }
+    }
+
+    /// #189: nothing of a shape is cut after its freeing pass. Each pass of
+    /// an outline and of its hole is followed, in generator order, by a
+    /// notch block at that pass, as `relief::profile_notches` hands them
+    /// over. The sequencer cuts a unit's freeing blocks last, so the
+    /// notches at the last pass come before the lap that frees, under both
+    /// orders and both drawing orders, and O1 still holds: the hole is
+    /// finished before the outline's freeing lap.
+    #[test]
+    fn nothing_is_cut_after_a_shapes_freeing_pass() {
+        let with_notches = |name: &str, x: f64, y: f64, size: f64| -> Vec<CutBlock> {
+            let mut blocks = squares(name, x, y, size, 3);
+            blocks.extend((0..3).map(|pass| notch(name, x, y, pass)));
+            blocks
+        };
+        let outer = with_notches("outer", 0.0, 0.0, 100.0);
+        let hole = with_notches("hole", 40.0, 40.0, 20.0);
+        let pairs = pairs(&[("hole", "outer")]);
+        for order in BOTH {
+            for blocks in [
+                [outer.clone(), hole.clone()].concat(),
+                [hole.clone(), outer.clone()].concat(),
+            ] {
+                let tp = run(&input(blocks.clone(), order, &pairs));
+                // Where each block's first cut is in the toolpath.
+                let at: Vec<usize> = blocks
+                    .iter()
+                    .map(|b| {
+                        tp.moves
+                            .iter()
+                            .position(|m| *m == b.cuts[0])
+                            .unwrap_or_else(|| panic!("{:?} pass {} not cut", b.shape, b.pass))
+                    })
+                    .collect();
+                let freeing = |name: &str| {
+                    blocks
+                        .iter()
+                        .zip(&at)
+                        .find(|(b, _)| b.frees && b.shape.instance_name == name)
+                        .map(|(_, &i)| i)
+                        .unwrap()
+                };
+                for (b, &i) in blocks.iter().zip(&at) {
+                    let name = b.shape.instance_name.as_str();
+                    assert!(
+                        i <= freeing(name),
+                        "{order:?}: {name} pass {} is cut after its freeing pass",
+                        b.pass
+                    );
+                    if name == "hole" {
+                        assert!(i < freeing("outer"), "{order:?}: O1");
+                    }
+                }
+            }
+        }
+    }
+
     /// Link rule 1: consecutive passes of one shape whose descent starts
     /// where the last pass ended have no link; the plunge goes straight
     /// from the previous pass Z.
