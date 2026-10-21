@@ -242,19 +242,19 @@ dreamcarve export coaster.dcv
 ```
 
 ```text
-Wrote coaster.nc (995 lines, post-processor grblhal).
+Wrote coaster.nc (53 lines, post-processor grblhal).
   op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
-Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
-  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.817..103.178, Y 6.817..103.183, Z -12.000..5.000
+  The cutter's edge reaches X 3.642..106.353, Y 3.642..106.358; keep clamps outside that.
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
 `coaster.nc` is the G-code program. The **extents** are where it takes the
 bit, in the coordinates your controller shows once work zero is set: the
-centre of the bit stays between X 6.825 and 103.175 mm, and its edge, half
-the 6.35 mm diameter further out, between X 3.65 and 106.35 mm (Y the
-same). Z runs from −12, the deepest cut, up to 5, safe Z. You place clamps
-from these numbers in step 8.
+centre of the bit stays between X 6.817 and 103.178 mm, and its edge, half
+the 6.35 mm diameter further out, between X 3.64 and 106.36 mm (Y nearly
+the same). Z runs from −12, the deepest cut, up to 5, safe Z. You place
+clamps from these numbers in step 8.
 
 The program does not stop for its first bit: you fit it and set work zero
 with it before you start, as the last line says. A program that stops, for a second bit or for a router you
@@ -281,7 +281,7 @@ M3 S18000
 G4 P3.000
 X103.139 Y56.863
 G1 Z-4.000 F500.000
-X103.174 Y55.063 F1500.000
+G2 X86.245 Y18.324 I-48.139 J-1.870 F1500.000
 ```
 
 | Lines | What they do |
@@ -291,7 +291,13 @@ X103.174 Y55.063 F1500.000
 | `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `X103.139 Y56.863` | Rapid to the start of the cut, still at safe Z. |
 | `G1 Z-4.000 F500.000` | Plunge to the first pass, 4 mm deep, at the plunge rate. |
-| `X103.174 Y55.063 F1500.000` | Cut along the outline at the feed rate. |
+| `G2 X86.245 Y18.324 I-48.139 J-1.870 F1500.000` | Cut along the outline at the feed rate, as a clockwise arc (`G2`) whose centre is `I`, `J` from the start. |
+
+The drawing's circle was imported as 160 short straight edges, and the
+program would be a thousand lines of `G1` moves. Instead `export` writes
+each lap as a few arcs that pass within 0.01 mm of every corner of the
+outline ([Arc fitting](../user-guide/project-file.md#arc-fitting)); the
+cut is the same, only smoother.
 
 The circle is cut in three passes: Z −4, −8 and −12. The bottom of the
 plywood is at Z −11.8, so the last pass goes 0.2 mm into the spoilboard. On
@@ -305,8 +311,8 @@ job:
 
 1. **Fix the stock.** The program uses the 110 × 110 mm square that starts
    at your XY zero. Use the extents `export` printed (step 6) to place
-   clamps: the bit's edge reaches X 3.65 to 106.35 mm and Y 3.65 to
-   106.35 mm from your XY zero, so keep clamps and screws outside that area,
+   clamps: the bit's edge reaches X 3.64 to 106.36 mm and Y 3.64 to
+   106.36 mm from your XY zero, so keep clamps and screws outside that area,
    with room to spare for the collet nut. Your board can be bigger. If you
    change the project, export again and use the new extents.
 2. **Use a spoilboard.** The last pass goes 0.2 mm below the plywood,

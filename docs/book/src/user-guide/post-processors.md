@@ -385,7 +385,7 @@ turn it off. `export` lists each pause with its line number:
 Before you start: fit T1 Set me and set work zero with it.
 Pauses and tool changes; resume each with cycle start:
   line 11: Turn the router ON. Speed 18000 RPM. Resume to start cutting.
-  line 999: Turn the router OFF.
+  line 57: Turn the router OFF.
 ```
 
 ### What the controller does with the pause

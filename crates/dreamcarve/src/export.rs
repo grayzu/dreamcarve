@@ -195,6 +195,9 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
         ExportWarning::ArcsFlattened { op, count } => format!(
             "operation `{op}`: {count} arc(s) written as short straight moves because the controller would reject them once rounded"
         ),
+        ExportWarning::ArcFitFallback { op, runs } => format!(
+            "arc_fit_fallback: operation `{op}`: {runs} run(s) of straight moves kept as written because the controller would reject the arc fitted to them once rounded"
+        ),
     }
 }
 
