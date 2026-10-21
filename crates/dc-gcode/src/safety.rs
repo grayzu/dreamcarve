@@ -83,6 +83,7 @@ pub(crate) struct Tolerances {
 /// # Errors
 ///
 /// The first violation found, as the matching [`ExportError`].
+#[cfg(test)]
 pub(crate) fn check(
     text: &str,
     post: &PostProcessor,
@@ -92,6 +93,29 @@ pub(crate) fn check(
     tolerances: Tolerances,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
+    check_parsed(
+        text,
+        post,
+        transform,
+        stock,
+        stock_thickness_mm,
+        tolerances,
+        spans,
+    )
+    .map(|(extents, _)| extents)
+}
+
+/// [`check`], also returning the blocks the program parsed into, so the
+/// emitter reads its pauses without parsing the program again (#71).
+pub(crate) fn check_parsed(
+    text: &str,
+    post: &PostProcessor,
+    transform: &MachineTransform,
+    stock: &Stock,
+    stock_thickness_mm: f64,
+    tolerances: Tolerances,
+    spans: &[OpSpan<'_>],
+) -> Result<(Extents, Vec<Block>), ExportError> {
     let blocks = check_rules(text, post, transform, stock_thickness_mm, tolerances, spans)?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
@@ -103,7 +127,7 @@ pub(crate) fn check(
     for span in spans {
         material::check(&blocks, post, transform, tolerances, span)?;
     }
-    Ok(extents(&blocks, transform.output_units()))
+    Ok((extents(&blocks, transform.output_units()), blocks))
 }
 
 /// The lowest and highest value a program reaches on one machine axis,

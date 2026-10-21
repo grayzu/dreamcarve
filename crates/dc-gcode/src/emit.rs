@@ -76,7 +76,7 @@ use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
 use crate::material::Material;
-use crate::parse::{CycleModel, parse_program_with};
+use crate::parse::Block;
 use crate::safety::{self, DWELL_TOLERANCE_S, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
 
@@ -805,7 +805,7 @@ fn emit_enabled(
             lines,
         })
         .collect();
-    let extents = safety::check(
+    let (extents, blocks) = safety::check_parsed(
         &text,
         post,
         &transform,
@@ -814,7 +814,7 @@ fn emit_enabled(
         tolerances,
         &spans,
     )?;
-    let pauses = pauses(&text, post)?;
+    let pauses = pauses(&text, &blocks);
 
     Ok((
         Program {
@@ -1402,9 +1402,9 @@ fn comment_of(line: &str) -> String {
     text.trim().to_owned()
 }
 
-/// Every `M0` and `M6` line of `text`, with its message.
-fn pauses(text: &str, post: &PostProcessor) -> Result<Vec<Pause>, ExportError> {
-    let blocks = parse_program_with(text, &CycleModel::of(post))?;
+/// Every `M0` and `M6` line of `text`, with its message; `blocks` are
+/// those `text` parses into.
+fn pauses(text: &str, blocks: &[Block]) -> Vec<Pause> {
     let mut raw = text.lines().enumerate();
     let mut out = Vec::new();
     for block in blocks.iter().filter(|b| b.has('M', 0.0) || b.has('M', 6.0)) {
@@ -1417,7 +1417,7 @@ fn pauses(text: &str, post: &PostProcessor) -> Result<Vec<Pause>, ExportError> {
             message,
         });
     }
-    Ok(out)
+    out
 }
 
 /// A non-empty command from the post-processor, or the error naming it.
@@ -1704,9 +1704,11 @@ impl<'a> Writer<'a> {
         self.motion = None;
         self.feed = None;
         if moves_after {
-            for line in self.setup.clone() {
-                self.line(&line);
+            let setup = std::mem::take(&mut self.setup);
+            for line in &setup {
+                self.line(line);
             }
+            self.setup = setup;
         }
     }
 
@@ -1717,8 +1719,14 @@ impl<'a> Writer<'a> {
             Point3::new(p.x, p.y, p.z.max(safe_z_mm))
         });
         let z = self.transform.to_machine(to).z;
-        let command = self.post.motion.rapid_command.clone();
-        self.motion_line(&command, [None, None, Some(z)], &[], None, false)?;
+        let post = self.post;
+        self.motion_line(
+            &post.motion.rapid_command,
+            [None, None, Some(z)],
+            &[],
+            None,
+            false,
+        )?;
         if let Some(position) = &mut self.position {
             position.z = to.z;
         }
@@ -1961,7 +1969,7 @@ impl<'a> Writer<'a> {
         };
         let command = self.arc_command_for(arc.clockwise);
         self.motion_line(
-            &command,
+            command,
             [Some(end.x), Some(end.y), Some(end.z)],
             &extra,
             Some(feed_mm_min),
@@ -1975,7 +1983,8 @@ impl<'a> Writer<'a> {
     fn rapid(&mut self, to: Point3) -> Result<(), ExportError> {
         let m = self.transform.to_machine(to);
         let rising = self.position.is_none_or(|p| to.z >= p.z);
-        let command = self.post.motion.rapid_command.clone();
+        let post = self.post;
+        let command = post.motion.rapid_command.as_str();
         let z_only = [None, None, Some(m.z)];
         let xy_only = [Some(m.x), Some(m.y), None];
         let (first, second) = if rising {
@@ -1983,17 +1992,17 @@ impl<'a> Writer<'a> {
         } else {
             (xy_only, z_only)
         };
-        self.motion_line(&command, first, &[], None, false)?;
-        self.motion_line(&command, second, &[], None, false)?;
+        self.motion_line(command, first, &[], None, false)?;
+        self.motion_line(command, second, &[], None, false)?;
         self.position = Some(to);
         Ok(())
     }
 
     fn linear(&mut self, to: Point3, feed_mm_min: f64) -> Result<(), ExportError> {
         let m = self.transform.to_machine(to);
-        let command = self.post.motion.linear_command.clone();
+        let post = self.post;
         self.motion_line(
-            &command,
+            &post.motion.linear_command,
             [Some(m.x), Some(m.y), Some(m.z)],
             &[],
             Some(feed_mm_min),
@@ -2048,20 +2057,21 @@ impl<'a> Writer<'a> {
 
     /// The arc command for `arc` in machine space: a mirroring axis map
     /// turns clockwise into counter-clockwise.
-    fn arc_command(&self, arc: &ArcGeometry) -> String {
+    fn arc_command(&self, arc: &ArcGeometry) -> &'a str {
         self.arc_command_for(arc.clockwise)
     }
 
     /// The arc command for an arc that is `clockwise` in project space.
-    fn arc_command_for(&self, clockwise: bool) -> String {
-        let motion = &self.post.motion;
+    fn arc_command_for(&self, clockwise: bool) -> &'a str {
+        let post: &'a PostProcessor = self.post;
+        let motion = &post.motion;
         let clockwise = clockwise != self.transform.mirrors_xy();
         #[cfg(test)]
         let clockwise = clockwise != FLIP_ARCS.get();
         if clockwise {
-            motion.cw_arc_command.clone()
+            &motion.cw_arc_command
         } else {
-            motion.ccw_arc_command.clone()
+            &motion.ccw_arc_command
         }
     }
 
@@ -2116,7 +2126,7 @@ impl<'a> Writer<'a> {
         }
         let command = self.arc_command(arc);
         self.motion_line(
-            &command,
+            command,
             [Some(end.x), Some(end.y), Some(end.z)],
             &[format!("I{i_text}"), format!("J{j_text}")],
             Some(feed_mm_min),
@@ -2144,7 +2154,7 @@ impl<'a> Writer<'a> {
         }
         let command = self.arc_command(arc);
         self.motion_line(
-            &command,
+            command,
             [Some(end.x), Some(end.y), Some(end.z)],
             &[format!("R{r_text}")],
             Some(feed_mm_min),
@@ -2195,9 +2205,11 @@ impl<'a> Writer<'a> {
         let format = self.post.number_format;
         let units = self.transform.output_units();
         let mut axis_words = Vec::with_capacity(3);
-        let mut updated = self.axes.clone();
-        for (((slot, letter), value), force) in updated
+        // The axes this line changes; the rest keep what was written.
+        let mut changed_axes: [Option<Emitted>; 3] = [None, None, None];
+        for ((((slot, written), letter), value), force) in changed_axes
             .iter_mut()
+            .zip(&self.axes)
             .zip(['X', 'Y', 'Z'])
             .zip(axes)
             .zip([force_xy, force_xy, false])
@@ -2206,7 +2218,7 @@ impl<'a> Writer<'a> {
                 continue;
             };
             let text = format_number(value, &format, units)?;
-            if !force && slot.as_ref().is_some_and(|e| e.text == text) {
+            if !force && written.as_ref().is_some_and(|e| e.text == text) {
                 continue;
             }
             let read = read_back(&text).ok_or(ExportError::NonFiniteNumber { value })?;
@@ -2216,7 +2228,11 @@ impl<'a> Writer<'a> {
         if axis_words.is_empty() && extra.is_empty() {
             return Ok(());
         }
-        self.axes = updated;
+        for (slot, changed) in self.axes.iter_mut().zip(changed_axes) {
+            if changed.is_some() {
+                *slot = changed;
+            }
+        }
 
         let mut words = Vec::with_capacity(axis_words.len() + extra.len() + 2);
         if !self.post.motion.modal_motion || self.motion.as_deref() != Some(command) {
@@ -4527,7 +4543,7 @@ mod tests {
             let canned = emit_with(&project, &post, &ops, DATE).unwrap().0.text;
             assert!(canned.lines().any(|l| has_word(l, word)), "{canned}");
             let plain = emit(&project, &ops, DATE).unwrap().0.text;
-            let model = CycleModel::of(&post);
+            let model = crate::parse::CycleModel::of(&post);
             let expanded = crate::parse::parse_motion_with(&canned, &model).unwrap();
             let moves = parse_motion(&plain).unwrap();
             let shape = |m: &crate::MachineMove| {
