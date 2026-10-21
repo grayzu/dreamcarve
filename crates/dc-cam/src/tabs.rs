@@ -22,6 +22,14 @@
 //! PureCutCNC's raised cosine (`tabProfile.ts`) over the same span touches
 //! the tab top at a single point, which leaves only about 60% of the height
 //! under a 6.35 mm bit; it is not ported.
+//!
+//! Tabs are laid per tool-centre path ([`Tabs::fit`], #109): a hole gets
+//! none unless [`TabSpec::on_holes`], and a path whose spans would cover
+//! more than half of it gets the most that cover at most half, down to
+//! none, so a part or hole always cuts free between its tabs. PureCutCNC
+//! sizes tabs per feature in its auto-tab command (`autoTabs.ts`, a 15%
+//! free-path rule); that command writes placed tabs and arrives with them
+//! (#105). The half-path threshold here is the coverage warning's.
 
 use crate::entry::plunge_limited_feed_mm_min;
 use crate::error::{CamError, ShapeRef};
@@ -82,6 +90,33 @@ pub(crate) struct Tabs {
     /// Length of path one tab raises: tab width plus tool diameter.
     span_mm: f64,
     chord_tolerance_mm: f64,
+    /// Holes get tabs too (#109).
+    on_holes: bool,
+}
+
+/// Which way a path runs, for laying tabs on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathEnds {
+    /// A closed path: tabs are measured from its start, and a span may
+    /// run through it.
+    Closed,
+    /// An open path, tabs measured from its first vertex as drawn and
+    /// each span cut short at its ends (#175). `reversed`: it is cut from
+    /// its last vertex.
+    Open {
+        /// The path is cut from its last vertex.
+        reversed: bool,
+    },
+}
+
+/// The tabs one path asked for and the tabs cut on it, when it is too
+/// short for all of them ([`Tabs::fit`], #109).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Reduced {
+    /// How many tabs the placement puts on the path.
+    pub asked: usize,
+    /// How many are cut.
+    pub cut: usize,
 }
 
 impl Tabs {
@@ -128,26 +163,88 @@ impl Tabs {
             } else {
                 FLATTEN_TOLERANCE_DEFAULT_MM
             },
+            on_holes: spec.on_holes,
         })
     }
 
-    /// The raised spans on a closed path `path_length_mm` long, and whether
-    /// any of them overlapped (or touched, or one alone covers the whole
+    /// Whether holes get tabs too ([`TabSpec::on_holes`]).
+    pub(crate) fn on_holes(&self) -> bool {
+        self.on_holes
+    }
+
+    /// The layout of a path `path_length_mm` long that gets no tabs: a
+    /// hole without [`TabSpec::on_holes`]. Every pass cuts it at its own Z.
+    pub(crate) fn none(path_length_mm: f64, ends: PathEnds) -> PathTabs {
+        PathTabs {
+            length_mm: path_length_mm,
+            spans: Vec::new(),
+            full: false,
+            closed: ends == PathEnds::Closed,
+            tab_count: 0,
+        }
+    }
+
+    /// The tabs on a path `path_length_mm` long, as [`Tabs::layout`] or
+    /// [`Tabs::layout_open`] lays them, and whether their spans
+    /// overlapped. When the spans would cover more than half the path,
+    /// so the part or hole would not cut free, the path gets the most
+    /// tabs that cover at most half, down to none (#109): `count` tabs
+    /// re-spaced evenly, or the first of `at_distances` in their order,
+    /// with what was asked and what is cut in [`Reduced`].
+    pub(crate) fn fit(
+        &self,
+        path_length_mm: f64,
+        ends: PathEnds,
+    ) -> (PathTabs, bool, Option<Reduced>) {
+        let l = path_length_mm;
+        let half_mm = l / 2.0 + EPS_MM;
+        let lay = |centres: Vec<f64>| match ends {
+            PathEnds::Closed => self.layout(centres, l),
+            PathEnds::Open { reversed } => self.layout_open(centres, l, reversed),
+        };
+        let centres = tab_centres_mm(&self.placement, l);
+        let asked = centres.len();
+        let (layout, overlap) = lay(centres.clone());
+        if layout.covered_mm() <= half_mm {
+            return (layout, overlap, None);
+        }
+        let (layout, overlap) = match &self.placement {
+            // Evenly spaced spans that fit in half the path never overlap.
+            TabPlacement::Count { count } => {
+                let fits = (0..*count)
+                    .rev()
+                    .find(|&n| f64::from(n) * self.span_mm <= half_mm)
+                    .unwrap_or(0);
+                lay(tab_centres_mm(&TabPlacement::Count { count: fits }, l))
+            }
+            TabPlacement::AtDistances { .. } => (0..asked)
+                .rev()
+                .map(|k| lay(centres.iter().take(k).copied().collect()))
+                .find(|(layout, _)| layout.covered_mm() <= half_mm)
+                .unwrap_or_else(|| lay(Vec::new())),
+        };
+        let cut = layout.tab_count;
+        (layout, overlap, Some(Reduced { asked, cut }))
+    }
+
+    /// The raised spans of tabs centred at `centres` (each in `[0, L)`)
+    /// on a closed path `path_length_mm` long, and whether any of them
+    /// overlapped (or touched, or one alone covers the whole
     /// path), which merges them.
     ///
     /// Each tab raises `width + diameter` of path centred on its distance
     /// (PureCutCNC grows each tab footprint by the tool radius on every
     /// side; along the path that is the same length). Spans are circular:
     /// one may run through the path start.
-    pub(crate) fn layout(&self, path_length_mm: f64) -> (PathTabs, bool) {
+    fn layout(&self, centres: Vec<f64>, path_length_mm: f64) -> (PathTabs, bool) {
         let l = path_length_mm;
         let mut layout = PathTabs {
             length_mm: l,
             spans: Vec::new(),
             full: false,
             closed: true,
+            tab_count: centres.len(),
         };
-        let centres = tab_centres_mm(&self.placement, l);
         if centres.is_empty() {
             return (layout, false);
         }
@@ -194,20 +291,26 @@ impl Tabs {
     }
 
     /// [`Tabs::layout`] for an open path `path_length_mm` long (#175),
-    /// tabs centred at distances from the path's first vertex as drawn.
+    /// tabs centred at `centres` from the path's first vertex as drawn.
     /// Spans do not wrap: each is cut short at the path's ends. With
     /// `reversed`, the path is cut from its last vertex, and the spans are
     /// measured from there, so the tabs stay where they were drawn.
-    pub(crate) fn layout_open(&self, path_length_mm: f64, reversed: bool) -> (PathTabs, bool) {
+    fn layout_open(
+        &self,
+        centres: Vec<f64>,
+        path_length_mm: f64,
+        reversed: bool,
+    ) -> (PathTabs, bool) {
         let l = path_length_mm;
         let mut layout = PathTabs {
             length_mm: l,
             spans: Vec::new(),
             full: false,
             closed: false,
+            tab_count: centres.len(),
         };
         let half = self.span_mm / 2.0;
-        let mut ranges: Vec<(f64, f64)> = tab_centres_mm(&self.placement, l)
+        let mut ranges: Vec<(f64, f64)> = centres
             .into_iter()
             .map(|c| ((c - half).max(0.0), (c + half).min(l)))
             .collect();
@@ -270,6 +373,8 @@ pub(crate) struct PathTabs {
     /// The path is closed, so a span may run through its start. An open
     /// path's spans lie within it ([`Tabs::layout_open`]).
     closed: bool,
+    /// How many tabs the spans were laid for, before merging.
+    tab_count: usize,
 }
 
 /// Where a point along a tabbed path lies.
@@ -306,6 +411,25 @@ impl PathTabs {
                 .collect(),
             full: self.full,
             closed: self.closed,
+            tab_count: self.tab_count,
+        }
+    }
+
+    /// True when no tab stands on the path: its last pass cuts free.
+    pub(crate) fn is_untabbed(&self) -> bool {
+        self.spans.is_empty() && !self.full
+    }
+
+    /// How much of the path the spans raise, mm: at most its length.
+    fn covered_mm(&self) -> f64 {
+        if self.full {
+            self.length_mm
+        } else {
+            self.spans
+                .iter()
+                .map(|s| s.length_mm)
+                .sum::<f64>()
+                .min(self.length_mm)
         }
     }
 
@@ -492,46 +616,35 @@ pub(crate) fn overlap_warning(
     }
 }
 
-/// [`Warning::TabsCoverMostOfContour`] when the merged spans of
-/// `layout` cover more than half of contour `contour` (0-based, in cut
-/// order), so the part or hole may not cut free. The tabs are not changed:
-/// the user may want them, and they never make motion unsafe.
+/// [`Warning::TabsCoverMostOfContour`] for contour `contour` (0-based, in
+/// cut order), `path_length_mm` long, whose tabs [`Tabs::fit`] cut down
+/// to `reduced.cut` because all `reduced.asked` would have covered more
+/// than half of it, so the part or hole would not cut free (#109).
 pub(crate) fn coverage_warning(
     op: &OperationId,
     contour: usize,
     shape: Option<&ShapeRef>,
     tabs: &Tabs,
-    layout: &PathTabs,
-) -> Option<Warning> {
-    let l = layout.length_mm;
-    let covered_mm = if layout.full {
-        l
-    } else {
-        layout.spans.iter().map(|s| s.length_mm).sum::<f64>().min(l)
-    };
-    let half_mm = l / 2.0;
-    if covered_mm <= half_mm + EPS_MM {
-        return None;
-    }
-    let centres = tab_centres_mm(&tabs.placement, l);
-    let count_f: f64 = centres.iter().map(|_| 1.0).sum();
-    // Evenly spaced tabs that fit in half the path never overlap.
-    let max_count = ((half_mm + EPS_MM) / tabs.span_mm).floor();
+    path_length_mm: f64,
+    reduced: Reduced,
+) -> Warning {
+    let asked_f: f64 = (0..reduced.asked).map(|_| 1.0).sum();
     // Rounded down to 0.01 mm so the suggested width does fit.
-    let max_width_mm = ((half_mm / count_f - tabs.diameter_mm) * 100.0).floor() / 100.0;
-    Some(Warning::TabsCoverMostOfContour {
+    let max_width_mm =
+        ((path_length_mm / 2.0 / asked_f - tabs.diameter_mm) * 100.0).floor() / 100.0;
+    Warning::TabsCoverMostOfContour {
         op: op.clone(),
         contour,
         shape: shape.cloned(),
-        path_length_mm: l,
-        tab_count: centres.len(),
+        path_length_mm,
+        tab_count: reduced.asked,
         tab_width_mm: tabs.width_mm,
         diameter_mm: tabs.diameter_mm,
         tab_span_mm: tabs.span_mm,
-        tab_total_mm: tabs.span_mm * count_f,
-        max_count,
+        tab_total_mm: tabs.span_mm * asked_f,
+        cut_count: reduced.cut,
         max_width_mm: (max_width_mm > 0.0).then_some(max_width_mm),
-    })
+    }
 }
 
 /// One move of a lap, before the vertical step that may precede it.
@@ -1283,10 +1396,7 @@ mod tests {
         spec.width_mm = 80.0;
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
-        assert_eq!(
-            codes(&warnings),
-            vec![WarningCode::TabsCoverMostOfContour]
-        );
+        assert_eq!(codes(&warnings), vec![WarningCode::TabsCoverMostOfContour]);
         let raised = raised_runs(&final_lap(&tp));
         assert_eq!(raised.len(), 1, "{raised:?}");
         assert_approx_eq!(raised[0].length_mm, 80.0 + DIAMETER_MM, TOL);

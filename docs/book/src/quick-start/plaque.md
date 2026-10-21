@@ -296,7 +296,8 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
       "placement": { "kind": "count", "count": 4 },
       "width_mm": 8.0,
       "height_mm": 3.0,
-      "shape": "rect"
+      "shape": "rect",
+      "on_holes": false
     },
     "machining_order": "full_depth_first",
     "entry": { "ramp": { "angle_deg": 15.0 } },

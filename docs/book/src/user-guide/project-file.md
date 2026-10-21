@@ -89,7 +89,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `8`. |
+| `version` | Format version. This build writes `9`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -300,7 +300,8 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
     "placement": { "kind": "count", "count": 4 },
     "width_mm": 8.0,
     "height_mm": 3.0,
-    "shape": "rect"
+    "shape": "rect",
+    "on_holes": false
   },
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
@@ -310,7 +311,10 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
 ```
 
 Each field is explained in [Profile operation](profile.md), and `tabs` in
-[Tabs](tabs.md). `init` leaves `depth_mm` as `null`; export refuses until
+[Tabs](tabs.md). `tabs.on_holes` came with format version 9: `false`
+leaves the holes among the operation's outlines without tabs, which is
+what `init` writes; a project upgraded from version 8 gets `true`, so its
+holes keep their tabs. `init` leaves `depth_mm` as `null`; export refuses until
 you set it. It also leaves `step_down_mm` as `null`, so the operation uses
 the tool's depth per pass; set it only to override the tool's.
 
@@ -382,6 +386,7 @@ refused.
 | 6 | Lets each instance's `z_top_mm` and `z_bottom_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds, so a file `init` wrote before keeps its placeholder `z_top_mm` of 12.0 until you change it. Phase 1 ignores both. |
 | 7 | `post_processor` names a bundled post-processor and its version, and holds only your five settings, instead of a full copy of the definition. The upgrade keeps your settings, and works only when the rest of the copy is exactly version 1 of the bundled definition; otherwise the file is not loaded, and the message lists each difference and the block to paste instead. See [Post-processors](post-processors.md#files-from-before-version-7). |
 | 8 | Phase 2. Adds `arc_fit_tolerance_mm` (set to 0.01 on upgrade), each tool's `number` (`null`), each Profile's `machining_order` (`"full_depth_first"`), `entry` (`"plunge"`), `lead` (`null`) and `corner_relief` (`"none"`), and `post_processor.use_canned_cycles` (`false`): the values that make an upgraded project cut exactly as before. Adds the `"pocket"`, `"drill"` and `"engrave"` operation kinds. |
+| 9 | Adds `on_holes` to each Profile's `tabs`, set to `true` on upgrade (#109). A Profile now cuts its holes without tabs unless `on_holes` is `true`; before, every outline it cut had tabs, so the upgrade keeps them. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
 
 ## What `check` reports
 

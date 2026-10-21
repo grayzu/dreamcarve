@@ -483,14 +483,12 @@ pub fn profile_project() -> impl Strategy<Value = Project> {
                         direction,
                         through_cut_allowance_mm: depth.allowance_mm,
                         safe_z_mm,
-                        tabs: tabs.map(|(placement, width_mm, height, shape, on_holes)| {
-                            TabSpec {
-                                placement,
-                                width_mm,
-                                height_mm: height * s.thickness_mm,
-                                shape,
-                                on_holes,
-                            }
+                        tabs: tabs.map(|(placement, width_mm, height, shape, on_holes)| TabSpec {
+                            placement,
+                            width_mm,
+                            height_mm: height * s.thickness_mm,
+                            shape,
+                            on_holes,
                         }),
                         machining_order: order,
                         entry,

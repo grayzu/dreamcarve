@@ -33,9 +33,9 @@ pub enum WarningCode {
     /// goes below it (the tabs change nothing), or it is above the stock
     /// top (the tabs still apply).
     TabsOutsideCutRange,
-    /// The tab spans on one tool-centre contour cover more than half of its
-    /// length, so the part or hole may not cut free. The tabs are cut as
-    /// set.
+    /// The tab spans on one tool-centre contour would cover more than half
+    /// of its length, so the part or hole would not cut free. The contour
+    /// gets the most tabs that cover at most half, down to none (#109).
     TabsCoverMostOfContour,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
@@ -273,7 +273,7 @@ pub enum Warning {
         shape: Option<ShapeRef>,
         /// The contour's length.
         path_length_mm: f64,
-        /// How many tabs are on it.
+        /// How many tabs the placement asked for on it.
         tab_count: usize,
         /// The tab width as set.
         tab_width_mm: f64,
@@ -283,10 +283,10 @@ pub enum Warning {
         tab_span_mm: f64,
         /// `tab_count` times `tab_span_mm`.
         tab_total_mm: f64,
-        /// The most tabs of this width that cover at most half: a whole
-        /// number.
-        max_count: f64,
-        /// The widest tab at this count that covers at most half; `None`
+        /// How many tabs are cut on it: the most that cover at most half,
+        /// fewer than `tab_count`, possibly none.
+        cut_count: usize,
+        /// The widest tab at `tab_count` that covers at most half; `None`
         /// when none fits.
         max_width_mm: Option<f64>,
     },
@@ -611,25 +611,28 @@ const fn relief_name(relief: CornerRelief) -> &'static str {
     }
 }
 
-/// The suggestion for tabs that cover most of a contour: `tab_count` tabs,
-/// at most `max_count` of which cover at most half, or tabs at most
-/// `max_width_mm` wide.
-fn coverage_advice(tab_count: usize, max_count: f64, max_width_mm: Option<f64>) -> String {
-    let max_count = rounded(max_count, 0);
-    let fewer = if max_count == "0" {
-        "even one tab this wide covers more than half".to_owned()
-    } else {
-        format!("use at most {max_count} tab(s) this wide")
+/// What is cut instead of `tab_count` tabs that would cover most of a
+/// contour (`cut_count` of them), and the width at which all of them
+/// would fit, `max_width_mm`.
+fn coverage_advice(tab_count: usize, cut_count: usize, max_width_mm: Option<f64>) -> String {
+    let cut = match cut_count {
+        0 => "No tab is cut there".to_owned(),
+        1 => "Only 1 of them is cut there".to_owned(),
+        n => format!("Only {n} of them are cut there"),
     };
     match max_width_mm {
-        Some(width_mm) => format!(
-            "To let it cut free, {fewer}, or make the {tab_count} tab(s) at most {} mm wide.",
+        Some(width_mm) if tab_count == 1 => format!(
+            "{cut}. To keep it, make it at most {} mm wide.",
             mm(width_mm)
         ),
-        None if max_count == "0" => format!(
-            "To let it cut free, {fewer}: this outline is too short for tabs with this bit, so consider removing them."
+        Some(width_mm) => format!(
+            "{cut}. To keep all {tab_count}, make them at most {} mm wide.",
+            mm(width_mm)
         ),
-        None => format!("To let it cut free, {fewer}."),
+        None if cut_count == 0 => {
+            format!("{cut}: this outline is too short for tabs with this bit.")
+        }
+        None => format!("{cut}."),
     }
 }
 
@@ -711,7 +714,7 @@ impl fmt::Display for Warning {
                 diameter_mm,
                 tab_span_mm,
                 tab_total_mm,
-                max_count,
+                cut_count,
                 max_width_mm,
                 ..
             } => {
@@ -739,9 +742,9 @@ impl fmt::Display for Warning {
                 };
                 write!(
                     f,
-                    "tabs on {} cover more than half of its tool path: {tabs}, so the part or hole may not cut free. {} The tabs are cut as set.",
+                    "tabs on {} would cover more than half of its tool path: {tabs}, so the part or hole would not cut free. {}",
                     shape_or_contour(shape.as_ref(), *contour),
-                    coverage_advice(*tab_count, *max_count, *max_width_mm)
+                    coverage_advice(*tab_count, *cut_count, *max_width_mm)
                 )
             }
             Self::ToolpathsOverlap {
