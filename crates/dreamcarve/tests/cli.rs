@@ -848,6 +848,121 @@ fn pocket_exports_and_passes_safety() {
     );
 }
 
+/// Slice 6 (#163), capabilities 12 and 13, S9 and S14 end to end: a 40 ×
+/// 20 mm rectangle with a 6 × 6 mm notch inside the coaster, roughed with
+/// the coaster's 6.35 mm bit at a 0.5 mm allowance and then rest-machined
+/// with a 3.175 mm bit, checks with no error and exports one program per
+/// tool run, which the emitter's safety pass accepted. The rest program
+/// cuts only near the walls and in the notch, where the rough bit cannot
+/// go, never in the middle, and its tool centre stays a radius inside the
+/// shape.
+#[test]
+fn pocket_rough_then_rest_exports_and_passes_safety() {
+    const REST_RADIUS_MM: f64 = 3.175 / 2.0;
+    let dir = work_dir("pocket_rough_then_rest_exports_and_passes_safety");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let v = dc_geometry::Vertex::line;
+    let notched = FeatureDefinition {
+        id: DefinitionId::new("notched"),
+        name: "Notched".into(),
+        profiles: vec![Polyline::new(
+            vec![
+                v(30.0, 35.0),
+                v(70.0, 35.0),
+                v(70.0, 55.0),
+                v(53.0, 55.0),
+                v(53.0, 61.0),
+                v(47.0, 61.0),
+                v(47.0, 55.0),
+                v(30.0, 55.0),
+            ],
+            true,
+        )],
+    };
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("notched1"),
+        definition: notched.id.clone(),
+        transform: Transform::IDENTITY,
+        name: "Notched".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: Some(MEASURED_THICKNESS_MM),
+        z_bottom_mm: Some(0.0),
+    });
+    project.definitions.insert(notched.id.clone(), notched);
+    let mut small = project.tools[0].clone();
+    small.id = ToolId::new("t2");
+    small.name = "3mm finisher".into();
+    small.diameter_mm = 3.175;
+    small.step_down_mm = Some(3.0);
+    project.tools.push(small);
+    let mut rough = sample_pocket();
+    rough.id = OperationId::new("rough");
+    rough.name = "Rough".into();
+    rough.targets = vec![InstanceId::new("notched1")];
+    rough.tool = project.operations[0].tool().clone();
+    rough.step_over_fraction = Some(0.4);
+    rough.allowance_mm = 0.5;
+    let mut rest = rough.clone();
+    rest.id = OperationId::new("rest");
+    rest.name = "Rest".into();
+    rest.tool = ToolId::new("t2");
+    rest.allowance_mm = 0.0;
+    rest.rest_of = Some(rough.id.clone());
+    project.operations.insert(0, Operation::Pocket(rough));
+    project.operations.insert(1, Operation::Pocket(rest));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(" 0 error(s)"), "{report}");
+    assert!(!report.contains("rest_of_clears_nothing"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster-2-T2.nc")).expect("rest program");
+    assert!(program.contains("Rest"), "the rest operation is named");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let cuts: Vec<&MachineMove> = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && (m.from.x != m.to.x || m.from.y != m.to.y))
+        .collect();
+    assert!(!cuts.is_empty(), "the rest Pocket cuts:\n{program}");
+    let xy = |m: &MachineMove| Point::new(m.to.x.expect("X known"), m.to.y.expect("Y known"));
+    let shape = Rect {
+        min: Point::new(30.0 + REST_RADIUS_MM, 35.0 + REST_RADIUS_MM),
+        max: Point::new(70.0 - REST_RADIUS_MM, 61.0 - REST_RADIUS_MM),
+    };
+    let middle = Rect {
+        min: Point::new(33.5, 38.5),
+        max: Point::new(66.5, 51.5),
+    };
+    let inside = |r: Rect, p: Point| {
+        p.x >= r.min.x - 1e-3
+            && p.x <= r.max.x + 1e-3
+            && p.y >= r.min.y - 1e-3
+            && p.y <= r.max.y + 1e-3
+    };
+    for m in &cuts {
+        let p = xy(m);
+        assert!(inside(shape, p), "line {}: {p:?} off the shape", m.line);
+        assert!(
+            !(p.x > middle.min.x && p.x < middle.max.x && p.y > middle.min.y && p.y < middle.max.y),
+            "line {}: {p:?} recuts the middle the rough cleared",
+            m.line
+        );
+    }
+    assert!(
+        cuts.iter().any(|m| xy(m).y > 55.0 + REST_RADIUS_MM),
+        "the rest cuts into the notch"
+    );
+    let deepest = moves.iter().filter_map(|m| m.to.z).fold(f64::MAX, f64::min);
+    assert_approx_eq!(deepest, -3.0, 1e-3);
+}
+
 /// Slice 9 (#147), capability 16 and S10 end to end: the coaster's Pocket
 /// with a helix entry at 80 % and 5°, on a tool whose plunge rate (100)
 /// is under the helix's vertical rate at full feed (1500 × sin 5° = 131),
