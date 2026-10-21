@@ -384,7 +384,8 @@ pub enum Problem {
         /// The operation's `safe_z_mm`.
         safe_z_mm: f64,
     },
-    /// `heights.tool_change_machine_z_mm` is 0 or above (#283). grblHAL
+    /// `heights.tool_change_machine_z_mm` is 0 or above, or rounds to 0 in
+    /// the program's decimal places (#283). grblHAL
     /// and GRBL home Z to the top of its travel at a negative machine
     /// position (grblHAL `machine_limits.c`, GRBL `limits.c`), so a Z of 0
     /// or more is past the limit switch. An error.
@@ -836,7 +837,7 @@ impl fmt::Display for Problem {
             ),
             Self::MachineZNotBelowHome { machine_z_mm } => write!(
                 f,
-                "{MACHINE_Z} is {machine_z_mm} mm; grblHAL and GRBL home Z at the top of its travel, where machine Z is just below 0, so the lift must be below 0, at least the homing pull-off below it"
+                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL home Z at the top of its travel, where machine Z is just below 0, so the lift must be below 0, at least the homing pull-off below it"
             ),
             Self::MachineZNeedsG53 { post } => write!(
                 f,
@@ -1563,7 +1564,10 @@ impl Validator {
         if let Some(machine_z_mm) = heights.tool_change_machine_z_mm
             && self.coordinate(MACHINE_Z, machine_z_mm)
         {
-            if machine_z_mm >= 0.0 {
+            // Below 0 as the program writes it: not one that rounds to 0
+            // in its decimal places (#304 review).
+            let half_quantum_mm = p.post_processor.decimal_places.quantum_mm(p.display_units) / 2.0;
+            if machine_z_mm >= -half_quantum_mm * 0.0 {
                 self.problems
                     .push(Problem::MachineZNotBelowHome { machine_z_mm });
             }
@@ -3942,6 +3946,32 @@ mod tests {
         let mut p = sample_project();
         p.heights.tool_change_machine_z_mm = Some(-5.0);
         assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #304 review: the program writes the machine Z to its decimal places
+    /// (3 in mm, 4 in inches), so one that rounds to 0 there is the same
+    /// lift past the limit switch: −0.0004 mm is refused in a mm program,
+    /// −0.001 mm in an inch program (under half of 0.0001 in, 0.00127
+    /// mm), while −0.001 mm and −0.0013 mm write −0.001 and −0.0001.
+    #[test]
+    fn machine_z_rounding_to_zero_is_error() {
+        for (units, machine_z_mm, refused) in [
+            (crate::Units::Mm, -0.0004, true),
+            (crate::Units::Mm, -0.001, false),
+            (crate::Units::Inch, -0.001, true),
+            (crate::Units::Inch, -0.0013, false),
+        ] {
+            let mut p = sample_project();
+            p.display_units = units;
+            p.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+            let problems = validate(&p);
+            let expected = if refused {
+                vec![Problem::MachineZNotBelowHome { machine_z_mm }]
+            } else {
+                vec![]
+            };
+            assert_eq!(problems, expected, "{units:?} {machine_z_mm}");
+        }
     }
 
     /// Design addendum A7: the lift is `G53 G0 Z…`, which only a

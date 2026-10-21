@@ -441,6 +441,20 @@ pub enum ExportError {
         /// Y, mm.
         y_mm: f64,
     },
+    /// S2 as changed for #283: with a clearance height, an operation's
+    /// first move across the work, or one outside every operation such as
+    /// the move to the park point, runs below it.
+    #[error(
+        "emitted line {line} moves across the work below the clearance height ({clearance_z_mm} mm above the stock bottom)"
+    )]
+    RapidBelowClearance {
+        /// 1-based line number in the program.
+        line: usize,
+        /// The height above stock bottom, mm; `None` when not known.
+        z_mm: Option<f64>,
+        /// The clearance height above stock bottom, mm.
+        clearance_z_mm: f64,
+    },
     /// S16: a machine-coordinate lift (`G53 G0 Z`) comes with the tool not
     /// known to be at or above safe Z in work coordinates.
     #[error(

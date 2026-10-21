@@ -591,7 +591,13 @@ fn emit_enabled(
     }
     // #283: the clearance, tool-change and park heights, checked again
     // here whatever validation found.
-    let heights = Lifts::of(project, post, planned.iter().map(|p| p.0), thickness_mm)?;
+    let heights = Lifts::of(
+        project,
+        post,
+        planned.iter().map(|p| p.0),
+        thickness_mm,
+        transform.output_units(),
+    )?;
 
     let mut w = Writer::new(project, post, transform);
 
@@ -605,6 +611,15 @@ fn emit_enabled(
     ];
     for line in &post.program.header {
         w.template(line, &common);
+    }
+    // #283, #304 review: say in the program itself that it moves in
+    // machine coordinates, which need a homed machine. Only with the
+    // height set, so no other program's bytes change.
+    if heights.machine_z_mm.is_some() && heights.park.is_some() && heights.machine_z_mm.is_none() {
+        w.line(&format!(
+            "{} {MACHINE_LIFT_COMMENT} {}",
+            post.program.comment_prefix, post.program.comment_suffix
+        ));
     }
     let mut setup: Vec<String> = post
         .program
@@ -695,6 +710,12 @@ fn emit_enabled(
             if !w.lifted {
                 w.forget_position();
                 w.retract(rise_z_mm)?;
+            } else if w.stopped_since_lift && w.tool.is_none()
+                && let Some(machine_z_mm) = heights.machine_z_mm
+            {
+                // #304 review: the user may have jogged at the router-off
+                // pause after the lift, so lift again before the change.
+                w.machine_lift(machine_z_mm)?;
             }
             if post.tool_change.stop_spindle_first && w.spindle_rpm.is_some() {
                 w.line(spindle_off);
@@ -878,7 +899,10 @@ fn emit_enabled(
         &project.stock,
         thickness_mm,
         tolerances,
-        heights.machine_z_mm,
+        safety::ProgramHeights {
+            machine_lift_mm: heights.machine_z_mm,
+            clearance_z_mm: heights.clearance_z_mm,
+        },
         &spans,
     )?;
     let pauses = pauses(&text, &blocks);
@@ -929,6 +953,7 @@ impl Lifts {
         post: &PostProcessor,
         ops: impl Iterator<Item = &'a Operation> + Clone,
         thickness_mm: f64,
+        units: Units,
     ) -> Result<Self, ExportError> {
         let heights = &project.heights;
         let highest_safe_z_mm = ops
@@ -957,7 +982,10 @@ impl Lifts {
                     post: post.id.clone(),
                 });
             }
-            if !(machine_z_mm.is_finite() && machine_z_mm < 0.0) {
+            // Below 0 as written: not one that rounds to 0 in the
+            // program's decimal places (#304 review).
+            let half_quantum_mm = post.number_format.decimal_places.quantum_mm(units) / 2.0;
+            if !(machine_z_mm.is_finite() && machine_z_mm < -half_quantum_mm * 0.0) {
                 return Err(ExportError::MachineZNotBelowHome { machine_z_mm });
             }
         }
@@ -984,6 +1012,9 @@ impl Lifts {
         self.clearance_z_mm.unwrap_or(safe_z_mm)
     }
 }
+
+/// The header comment of a program that lifts with `G53` (#283).
+const MACHINE_LIFT_COMMENT: &str = "Lifts to machine Z with G53: home the machine before running";
 
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under
@@ -1787,7 +1818,10 @@ struct Writer<'a> {
     /// Z, project space, after a retract from an unknown position: XY is
     /// not known, but the next rapid moves in XY at this Z before it lowers
     /// (#283: from the clearance height to an operation's safe Z).
-    retracted_z: Option<f64>,
+    retracted_z_mm: Option<f64>,
+    /// A stop has come since the machine-coordinate lift (#283): the user
+    /// may have jogged, so a tool change lifts again.
+    stopped_since_lift: bool,
 }
 
 impl<'a> Writer<'a> {
@@ -1814,7 +1848,8 @@ impl<'a> Writer<'a> {
             tool: None,
             setup: Vec::new(),
             lifted: false,
-            retracted_z: None,
+            retracted_z_mm: None,
+            stopped_since_lift: false,
         }
     }
 
@@ -1890,6 +1925,7 @@ impl<'a> Writer<'a> {
     /// After a stop: the modal state the user may have changed is written
     /// again, and the setup lines too when the program `moves_after`.
     fn stopped(&mut self, moves_after: bool) {
+        self.stopped_since_lift = true;
         self.motion = None;
         self.feed = None;
         if moves_after {
@@ -1918,7 +1954,7 @@ impl<'a> Writer<'a> {
         )?;
         match &mut self.position {
             Some(position) => position.z = to.z,
-            None => self.retracted_z = Some(to.z),
+            None => self.retracted_z_mm = Some(to.z),
         }
         Ok(())
     }
@@ -1941,15 +1977,16 @@ impl<'a> Writer<'a> {
         self.line(&format!("{command} {rapid} Z{z}"));
         self.motion = Some(rapid.to_owned());
         self.position = None;
-        self.retracted_z = None;
+        self.retracted_z_mm = None;
         self.axes[2] = None;
         self.lifted = true;
+        self.stopped_since_lift = false;
         Ok(())
     }
 
     fn forget_position(&mut self) {
         self.position = None;
-        self.retracted_z = None;
+        self.retracted_z_mm = None;
         self.axes = [None, None, None];
     }
 
@@ -2198,7 +2235,7 @@ impl<'a> Writer<'a> {
     /// retract has set Z and `to` is lower.
     fn rapid(&mut self, to: Point3) -> Result<(), ExportError> {
         let m = self.transform.to_machine(to);
-        let from_z = self.position.map(|p| p.z).or(self.retracted_z);
+        let from_z = self.position.map(|p| p.z).or(self.retracted_z_mm);
         let rising = from_z.is_none_or(|z| to.z >= z);
         let post = self.post;
         let command = post.motion.rapid_command.as_str();
@@ -5065,9 +5102,11 @@ mod tests {
         let moves = parse_motion(&text).unwrap();
         let park = moves.last().unwrap();
         assert_eq!(park.kind, MotionKind::Rapid);
-        assert_eq!((park.to.x, park.to.y), (Some(0.0), Some(0.0)));
-        assert_eq!(park.from.z, Some(20.0), "at the clearance height");
-        assert_eq!(park.to.z, Some(20.0));
+        assert_approx_eq!(park.to.x.unwrap(), 0.0, 1e-9);
+        assert_approx_eq!(park.to.y.unwrap(), 0.0, 1e-9);
+        // At the clearance height.
+        assert_approx_eq!(park.from.z.unwrap(), 20.0, 1e-9);
+        assert_approx_eq!(park.to.z.unwrap(), 20.0, 1e-9);
     }
 
     /// Design addendum A7: the machine Z is written in the program's
@@ -5188,7 +5227,9 @@ mod tests {
 
     /// Design addendum A7 with manual spindle control: the lift comes
     /// before the router-off pause, with no retract in work coordinates
-    /// between them, and the change after it stops without another.
+    /// between them. The user may jog at that pause, so the program lifts
+    /// again, after the setup lines, right before `T2 M6` (#304 review);
+    /// at the end the one lift is before the last router-off pause.
     #[test]
     fn manual_router_off_pause_follows_the_lift() {
         let mut project = project_with("grblhal");
@@ -5201,12 +5242,17 @@ mod tests {
         let lifts: Vec<usize> = (0..lines.len())
             .filter(|&i| lines[i].starts_with("G53"))
             .collect();
-        assert_eq!(lifts.len(), 2, "{text}");
-        for &i in &lifts {
+        assert_eq!(lifts.len(), 3, "{text}");
+        for &i in [lifts[0], lifts[2]].iter() {
             assert_eq!(lines[i - 1], "Z10.000", "{text}");
             assert_eq!(lines[i + 1], "M0", "{text}");
         }
         let change = lines.iter().position(|l| l.starts_with("T2 M6")).unwrap();
+        assert_eq!(
+            lifts[1] + 1,
+            change,
+            "the second lift is right before the change\n{text}"
+        );
         assert!(
             lines[lifts[0]..change]
                 .iter()
@@ -5214,5 +5260,57 @@ mod tests {
                     || l.starts_with("G53")),
             "{text}"
         );
+    }
+
+    /// #304 review: with a tool-change machine Z, the header says the
+    /// program uses machine coordinates and needs a homed machine, in a
+    /// comment; without one the header is as before (the goldens and the
+    /// heights-migration corpus prove the bytes).
+    #[test]
+    fn machine_z_header_comment() {
+        let mut project = project_with("grblhal");
+        let comment = "( Lifts to machine Z with G53: home the machine before running )";
+        let text = emit_text(&project);
+        assert!(!text.contains("G53"), "{text}");
+        assert!(!text.contains("home the machine"), "{text}");
+        project.heights.tool_change_machine_z_mm = Some(-5.0);
+        let text = emit_text(&project);
+        let lines: Vec<&str> = text.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| *l == comment)
+            .unwrap_or_else(|| panic!("{text}"));
+        let first_motion = lines.iter().position(|l| l.starts_with("G0")).unwrap();
+        assert!(at < first_motion, "in the header\n{text}");
+        // The clearance height and the park point need no homing.
+        project.heights.tool_change_machine_z_mm = None;
+        project.heights.clearance_mm = Some(10.0);
+        assert!(!emit_text(&project).contains(comment));
+    }
+
+    /// #304 review: a Drill of separate holes, with canned cycles asked
+    /// for, is written as cycles without a clearance height and as moves,
+    /// with the `clearance_height` reason, with one: its holes are crossed
+    /// at the clearance height, which `G98` does not follow.
+    #[test]
+    fn clearance_height_expands_canned_cycles() {
+        let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        let post = canned_post(&project);
+        let (program, warnings) =
+            emit_with(&project, &post, &drill_entry(&project, &op), DATE).unwrap();
+        assert!(has_cycle_word(&program.text), "{}", program.text);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        project.heights.clearance_mm = Some(20.0);
+        let (program, warnings) =
+            emit_with(&project, &post, &drill_entry(&project, &op), DATE).unwrap();
+        assert!(!has_cycle_word(&program.text), "{}", program.text);
+        assert_eq!(
+            warnings,
+            [ExportWarning::CannedCycleExpanded {
+                op: op.id.clone(),
+                reason: CannedExpansion::ClearanceHeight,
+            }]
+        );
+        assert_eq!(CannedExpansion::ClearanceHeight.code(), "clearance_height");
     }
 }

@@ -71,6 +71,18 @@ pub(crate) struct OpSpan<'a> {
     pub lines: Range<usize>,
 }
 
+/// The project's heights the program was written for (#283).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct ProgramHeights {
+    /// `heights.tool_change_machine_z_mm`, the only machine Z a `G53` may
+    /// lift to (S16); `None` refuses every `G53`.
+    pub machine_lift_mm: Option<f64>,
+    /// The clearance height, absolute project Z, mm, when set: each
+    /// operation's first move across the work, every move across outside
+    /// the operations (the park move) and every stop are at or above it.
+    pub clearance_z_mm: Option<f64>,
+}
+
 /// How far the program may depart from the toolpath by design.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Tolerances {
@@ -84,9 +96,8 @@ pub(crate) struct Tolerances {
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
 /// in `spans`, against S1–S7, S9, S10, S12 and S16, and returns the
-/// program's extents. `machine_lift_mm` is the project's
-/// `heights.tool_change_machine_z_mm`, the only machine Z a `G53` may
-/// lift to (S16); `None` refuses every `G53`.
+/// program's extents. `heights` are the project's clearance height and
+/// tool-change machine Z (S2, S16).
 ///
 /// # Errors
 ///
@@ -103,7 +114,7 @@ pub(crate) fn check(
     stock: &Stock,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
-    machine_lift_mm: Option<f64>,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
     check_parsed(
@@ -113,7 +124,7 @@ pub(crate) fn check(
         stock,
         stock_thickness_mm,
         tolerances,
-        machine_lift_mm,
+        heights,
         spans,
     )
     .map(|(extents, _)| extents)
@@ -132,7 +143,7 @@ pub(crate) fn check_parsed(
     stock: &Stock,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
-    machine_lift_mm: Option<f64>,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<(Extents, Vec<Block>), ExportError> {
     let blocks = check_rules(
@@ -141,7 +152,7 @@ pub(crate) fn check_parsed(
         transform,
         stock_thickness_mm,
         tolerances,
-        machine_lift_mm,
+        heights,
         spans,
     )?;
     // S6: reading the program back reproduces each toolpath.
@@ -320,10 +331,15 @@ fn check_rules(
     transform: &MachineTransform,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
-    machine_lift_mm: Option<f64>,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
+    let machine_lift_mm = heights.machine_lift_mm;
+    let heights = ProgramHeights {
+        clearance_z_mm: None,
+        ..heights
+    };
     // S11: canned cycles are expanded into the moves the controller makes,
     // and every rule below checks those.
     // A controller without units words (UCCNC) reads the program in the
@@ -364,6 +380,9 @@ fn check_rules(
     // S16: the line of the last machine-coordinate lift, while no motion
     // has followed it, and whether a stop has come since.
     let mut lifted: Option<(usize, bool)> = None;
+    // S2 for #283: the span of the last move, and whether it has moved
+    // across the work yet.
+    let mut crossing: (Option<usize>, bool) = (None, false);
     for block in &blocks {
         let line = block.line;
         // S16 (#283): `G53 G0 Z<v>`, to the project's tool-change machine
@@ -384,9 +403,28 @@ fn check_rules(
                     expected_mm,
                 });
             }
+            // From a known Z at or above safe Z, or again right after a stop
+            // that followed a lift, with nothing moved since: the user may
+            // have jogged at that stop (manual spindle control: the
+            // router-off pause, then the tool change).
             let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
-            if !router.at_or_above(safe_z_mm) {
+            let relift = false;
+            if !(relift || router.at_or_above(safe_z_mm)) {
                 return Err(ExportError::MachineLiftNotAtSafeZ { line });
+            }
+            // S5: the Z word is in the units in force, which a user may
+            // have changed at a pause.
+            if !units_set {
+                return Err(match last_pause {
+                    Some(pause_line) => ExportError::MissingSetupAfterPause {
+                        line,
+                        pause_line,
+                        what: "units (G20 or G21)",
+                    },
+                    None => ExportError::MissingSetup {
+                        what: "units (G20 or G21)",
+                    },
+                });
             }
             router.z_mm = None;
             lifted = Some((line, false));
@@ -418,7 +456,10 @@ fn check_rules(
         // Afterwards Z is unknown: the user may have jogged or set Z zero.
         let changes_tool = block.has('M', 6.0);
         if block.has('M', 0.0) || block.has('M', 1.0) || changes_tool {
-            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
+            // #283: a stop is at the clearance height when it is set.
+            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm)
+                .safe_z_mm
+                .max(heights.clearance_z_mm.unwrap_or(f64::NEG_INFINITY));
             // S16: or at the machine-coordinate lift, which nothing has
             // moved from since.
             if let Some((_, stopped)) = &mut lifted {
@@ -536,6 +577,37 @@ fn check_rules(
             check_drill_rapid(mv, below_safe, stock_thickness_mm, cut_to)?;
         } else if !floors.allow_approach(mv, transform, router.z_mm, z_after, limits.safe_z_mm) {
             check_rapid(mv, &limits, router.z_mm, z_after)?;
+        }
+        // S2 as changed for #283: with a clearance height, an operation's
+        // first move across the work and every one outside the operations
+        // run at or above it. Links within an operation are held to the
+        // toolpath by S6, whose sequencer links parts at it.
+        let span = spans.iter().position(|s| s.lines.contains(&line));
+        if crossing.0 != span || span.is_none() {
+            crossing = (span, false);
+        }
+        let crosses = mv.kind == MotionKind::Rapid
+            && (differs(mv.from.x, mv.to.x) || differs(mv.from.y, mv.to.y));
+        if let Some(clearance_z_mm) = heights.clearance_z_mm
+            && crosses
+            && !crossing.1
+        {
+            let below = |z: Option<(f64, f64)>| match z {
+                Some((z_mm, tolerance_mm)) => {
+                    (z_mm < clearance_z_mm - tolerance_mm).then_some(Some(z_mm))
+                }
+                None => Some(None),
+            };
+            if let Some(z_mm) = below(router.z_mm).or_else(|| below(z_after)) {
+                return Err(ExportError::RapidBelowClearance {
+                    line,
+                    z_mm,
+                    clearance_z_mm,
+                });
+            }
+        }
+        if crosses && span.is_some() {
+            crossing.1 = true;
         }
         // S16: a lift comes only right before a stop or the end.
         if let Some((lift_line, stopped)) = lifted.take()
@@ -2112,7 +2184,10 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: project.arc_fit_tolerance_mm,
             },
-            machine_lift_mm,
+            ProgramHeights {
+                machine_lift_mm,
+                clearance_z_mm: None,
+            },
             &spans,
         )
         .map(|_| ())
@@ -2274,7 +2349,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: project.arc_fit_tolerance_mm,
             },
-            None,
+            ProgramHeights::default(),
             &spans,
         )
         .unwrap_err();
@@ -2993,7 +3068,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm,
             },
-            None,
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -3023,7 +3098,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: None,
             },
-            None,
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -3297,7 +3372,7 @@ mod tests {
                     flatten_mm: project.flatten_tolerance_mm,
                     arc_fit_mm: project.arc_fit_tolerance_mm,
                 },
-                None,
+                ProgramHeights::default(),
                 &spans,
             )
             .map(|_| ())
@@ -3657,7 +3732,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: None,
             },
-            None,
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -5631,5 +5706,110 @@ mod tests {
             matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
             "{err:?}"
         );
+    }
+
+    /// #304 review, S16: with manual spindle control the user may jog at
+    /// the router-off pause after a lift, so the program lifts again before
+    /// `T<n> M6`. A second lift is accepted right after a stop that came
+    /// after a lift, with nothing moved between, once the units are set
+    /// again; a lift after a stop with no lift before it is still refused,
+    /// since Z is unknown there.
+    #[test]
+    fn g53_again_after_a_stop() {
+        let again = lift_program("G53 G0 Z-5\nM5\nM0\nG21 G90 G54\nG53 G0 Z-5\nM0\n");
+        check_lift(&again, Some(-5.0)).unwrap();
+        let no_units = lift_program("G53 G0 Z-5\nM5\nM0\nG53 G0 Z-5\nM0\n");
+        let err = check_lift(&no_units, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MissingSetupAfterPause {
+                    line: 12,
+                    pause_line: 11,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let unlifted = lift_program("M5\nM0\nG21 G90 G54\nG53 G0 Z-5\nM0\n");
+        let err = check_lift(&unlifted, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftNotAtSafeZ { line: 12 }),
+            "{err:?}"
+        );
+    }
+
+    /// [`check_rules`] on the fixture's GRBL definition with `heights`, the
+    /// operation owning lines `op_lines` and every other line outside it.
+    fn check_heights(
+        text: &str,
+        op_lines: Range<usize>,
+        heights: ProgramHeights,
+    ) -> Result<(), ExportError> {
+        let (project, op, tool) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let toolpath = Toolpath::default();
+        let op = Operation::Profile(op);
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath: &toolpath,
+            material: &Material::Unchecked,
+            lines: op_lines,
+        }];
+        check_rules(
+            text,
+            &post,
+            &transform,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
+            heights,
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// #304 review, S2 and S6 as changed for #283: with a clearance height
+    /// (here work Z 20 over the fixture's 6 mm stock, absolute 26), an
+    /// operation's first move across the work, every move across outside
+    /// the operations (the park move), and every stop are at or above it;
+    /// moves across inside an operation after its first stay held to safe
+    /// Z (work Z 5). Without a clearance height the same low moves pass.
+    #[test]
+    fn rapids_held_to_the_clearance_height() {
+        let heights = ProgramHeights {
+            machine_lift_mm: None,
+            clearance_z_mm: Some(26.0),
+        };
+        let program = |entry_z: &str, park_z: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z20\nM3 S18000\nG4 P3\nZ{entry_z}\nX0 Y0\nZ5\nG1 Z-1 F300\nG0 Z5\nX10 Y0\nG1 Z-1\nG0 Z20\nZ{park_z}\nX50 Y50\nM5\n"
+            )
+        };
+        // The operation is lines 1 to 13; the park is lines 14 and 15.
+        check_heights(&program("20", "20"), 1..14, heights).unwrap();
+        let err = check_heights(&program("5", "20"), 1..14, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowClearance { line: 7, .. }),
+            "{err:?}"
+        );
+        let err = check_heights(&program("20", "10"), 1..14, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowClearance { line: 15, .. }),
+            "{err:?}"
+        );
+        check_heights(&program("5", "10"), 1..14, ProgramHeights::default()).unwrap();
+        // A stop below the clearance height.
+        let stop = "G21 G90\nG54\nG0 Z20\nM5\nZ5\nM0\n";
+        let err = check_heights(stop, 1..7, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::PauseNotAtSafeZ { line: 6 }),
+            "{err:?}"
+        );
+        check_heights(stop, 1..7, ProgramHeights::default()).unwrap();
     }
 }
