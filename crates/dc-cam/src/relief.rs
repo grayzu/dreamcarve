@@ -60,11 +60,11 @@ use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
 use crate::footprint::{capsule, move_bulge};
 use crate::passes::pass_z_mm;
-use crate::profile::{Wall, rates_of, shape_of, shape_warning};
+use crate::profile::{Wall, rates_of, shape_of};
 use crate::sequence::{SequenceInput, nearest_of, sequence};
 use crate::tabs::LapRates;
 use crate::toolpath::{Move, MoveKind, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::{ReliefCornerReason, ReliefSkippedReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, point_segment_distance_mm,
     union,
@@ -107,15 +107,6 @@ impl Style {
             CornerRelief::Dogbone => Some(Self::Dogbone),
             CornerRelief::TBone => Some(Self::TBone),
         }
-    }
-}
-
-/// The name `relief` has in the project file, for warnings.
-const fn relief_name(relief: CornerRelief) -> &'static str {
-    match relief {
-        CornerRelief::None => "none",
-        CornerRelief::Dogbone => "dogbone",
-        CornerRelief::TBone => "t_bone",
     }
 }
 
@@ -310,21 +301,18 @@ fn locate_descend(
     best.is_finite().then(|| g.corner + direction * best)
 }
 
-/// A warning about corner `g` of `shape`.
-fn corner_warning(
-    code: WarningCode,
-    op: &OperationId,
-    shape: &ShapeRef,
-    g: &CornerGeometry,
-) -> Warning {
-    shape_warning(code, shape)
-        .with("op", op)
-        .with("x_mm", g.corner.x)
-        .with("y_mm", g.corner.y)
+/// [`Warning::ReliefCornerNotCut`] for corner `g` of `shape`.
+fn not_cut_warning(op: &OperationId, shape: &ShapeRef, g: &CornerGeometry) -> Warning {
+    Warning::ReliefCornerNotCut {
+        op: op.clone(),
+        shape: shape.clone(),
+        x_mm: g.corner.x,
+        y_mm: g.corner.y,
+    }
 }
 
 /// Every corner of `site` that qualifies for relief, with its descend
-/// point and end point, and a [`WarningCode::ReliefCornerTooTight`] for
+/// point and end point, and a [`Warning::ReliefCornerTooTight`] for
 /// each corner rejected: an adjacent edge under `2r` (a T-bone's slot and
 /// its cutter need that much along the wall, and arc-like runs of short
 /// edges fail it), or no tool-centre ring crossing within reach. A relief
@@ -346,12 +334,15 @@ pub(crate) fn collect(
     let min_edge_mm = 2.0 * radius_mm - EPS_MM;
     for l in &site.loops {
         for g in corners_of(&canonical(l)) {
-            let too_tight = |reason: &str| {
-                corner_warning(WarningCode::ReliefCornerTooTight, op, &l.shape, &g)
-                    .with("reason", reason)
+            let too_tight = |reason| Warning::ReliefCornerTooTight {
+                op: op.clone(),
+                shape: l.shape.clone(),
+                x_mm: g.corner.x,
+                y_mm: g.corner.y,
+                reason,
             };
             if g.length_a_mm < min_edge_mm || g.length_b_mm < min_edge_mm {
-                warnings.push(too_tight("short_edge"));
+                warnings.push(too_tight(ReliefCornerReason::ShortEdge));
                 continue;
             }
             match locate_descend(&g, &segments, radius_mm) {
@@ -361,7 +352,7 @@ pub(crate) fn collect(
                     end: excursion_end(&g, style, radius_mm),
                     shape: l.shape.clone(),
                 }),
-                None => warnings.push(too_tight("no_wall_path")),
+                None => warnings.push(too_tight(ReliefCornerReason::NoWallPath)),
             }
         }
     }
@@ -494,7 +485,7 @@ impl Setup<'_> {
     /// levels step down at the tool's step-down, never the operation's
     /// (upstream: an operation's step-down may be a stale or coarse value
     /// for another purpose), to the operation's depth. A tool with no
-    /// step-down skips the pass with [`WarningCode::ReliefSkipped`]
+    /// step-down skips the pass with [`Warning::ReliefSkipped`]
     /// rather than cutting each notch in one full-depth slot.
     ///
     /// # Errors
@@ -505,7 +496,11 @@ impl Setup<'_> {
             return Ok(None);
         };
         let Some(step_down_mm) = self.tool.step_down_mm else {
-            warnings.push(skipped(self.op, self.relief, "no_step_down"));
+            warnings.push(skipped(
+                self.op,
+                self.relief,
+                ReliefSkippedReason::NoStepDown,
+            ));
             return Ok(None);
         };
         let levels = pass_z_mm(
@@ -558,7 +553,7 @@ impl Relief {
 
     /// The pass itself (upstream `generateCornerReliefPass`): each corner
     /// whose descend point the main path cut at the deepest level, else
-    /// [`WarningCode::ReliefCornerNotCut`]; nearest-neighbour from where
+    /// [`Warning::ReliefCornerNotCut`]; nearest-neighbour from where
     /// the main path ended; per corner one [`CutBlock`] per level (plunge
     /// at the descend point, cut to the end, cut back), sequenced as one
     /// shape so the levels follow each other without a retract, and a
@@ -580,12 +575,7 @@ impl Relief {
             if main_path_cuts_at(toolpath, corner.descend, deepest, guard_mm) {
                 cut.push(corner);
             } else {
-                warnings.push(corner_warning(
-                    WarningCode::ReliefCornerNotCut,
-                    &self.op,
-                    &corner.shape,
-                    &corner.geometry,
-                ));
+                warnings.push(not_cut_warning(&self.op, &corner.shape, &corner.geometry));
             }
         }
         let Some(start) = toolpath
@@ -653,7 +643,7 @@ impl Relief {
     /// A Profile's relief pass, cut among its shapes' own passes (#189):
     /// the notch blocks to hand to [`sequence`] with `blocks`, the main
     /// blocks. A corner is cut when its own shape's path cuts its descend
-    /// point at the deepest level (else [`WarningCode::ReliefCornerNotCut`]).
+    /// point at the deepest level (else [`Warning::ReliefCornerNotCut`]).
     /// Each level goes to the unit of the shape's first pass at or below
     /// it, which has opened the column at the descend point by then, and
     /// is cut after that pass's lap. The levels of a freeing pass are cut
@@ -693,12 +683,7 @@ impl Relief {
             if own_path_cuts {
                 cut.push(corner);
             } else {
-                warnings.push(corner_warning(
-                    WarningCode::ReliefCornerNotCut,
-                    &self.op,
-                    &corner.shape,
-                    &corner.geometry,
-                ));
+                warnings.push(not_cut_warning(&self.op, &corner.shape, &corner.geometry));
             }
         }
         // Each corner's levels, grouped by the pass whose unit cuts them.
@@ -1030,7 +1015,7 @@ fn profile_sites(side: Side, geometry: &ProfileGeometry<'_>) -> Vec<Site> {
 /// part's concave corners), as blocks to sequence with `blocks`, the
 /// Profile's main blocks, among the shapes' own passes (#189; see
 /// [`Relief::interleave`]). On line has no waste side for a notch:
-/// [`WarningCode::ReliefSkipped`].
+/// [`Warning::ReliefSkipped`].
 ///
 /// # Errors
 ///
@@ -1047,7 +1032,11 @@ pub(crate) fn profile_notches(
         return Ok(Vec::new());
     }
     if op.side == Side::OnLine {
-        warnings.push(skipped(&op.id, op.corner_relief, "on_line"));
+        warnings.push(skipped(
+            &op.id,
+            op.corner_relief,
+            ReliefSkippedReason::OnLine,
+        ));
         return Ok(Vec::new());
     }
     let (Some(thickness_mm), Some(depth_mm)) = (project.stock.thickness_mm, op.depth_mm) else {
@@ -1070,12 +1059,17 @@ pub(crate) fn profile_notches(
     })
 }
 
-/// A [`WarningCode::ReliefSkipped`] for `op`, which asked for `relief`.
-pub(crate) fn skipped(op: &OperationId, relief: CornerRelief, reason: &str) -> Warning {
-    Warning::new(WarningCode::ReliefSkipped)
-        .with("op", op)
-        .with("requested", relief_name(relief))
-        .with("reason", reason)
+/// A [`Warning::ReliefSkipped`] for `op`, which asked for `relief`.
+pub(crate) fn skipped(
+    op: &OperationId,
+    relief: CornerRelief,
+    reason: ReliefSkippedReason,
+) -> Warning {
+    Warning::ReliefSkipped {
+        op: op.clone(),
+        requested: relief,
+        reason,
+    }
 }
 
 #[cfg(test)]
@@ -1515,7 +1509,7 @@ mod tests {
     }
 
     fn codes(warnings: &[Warning]) -> Vec<WarningCode> {
-        warnings.iter().map(|w| w.code).collect()
+        warnings.iter().map(|w| w.code()).collect()
     }
 
     fn relief_codes(warnings: &[Warning]) -> Vec<WarningCode> {
@@ -1830,16 +1824,23 @@ mod tests {
         );
         let tight: Vec<&Warning> = warnings
             .iter()
-            .filter(|w| w.code == WarningCode::ReliefCornerTooTight)
+            .filter(|w| w.code() == WarningCode::ReliefCornerTooTight)
             .collect();
         assert!(!tight.is_empty());
         for w in tight {
-            assert!(
-                w.param("x_mm").is_some() && w.param("y_mm").is_some(),
-                "{w:?}"
-            );
-            assert_eq!(w.param("op"), Some("o1"));
-            assert_eq!(w.param("instance"), Some("i1"));
+            let Warning::ReliefCornerTooTight {
+                op,
+                shape,
+                x_mm,
+                y_mm,
+                ..
+            } = w
+            else {
+                panic!("{w:?}");
+            };
+            assert!(x_mm.is_finite() && y_mm.is_finite(), "{w:?}");
+            assert_eq!(op.as_str(), "o1");
+            assert_eq!(shape.instance.as_str(), "i1");
         }
     }
 
@@ -1938,7 +1939,10 @@ mod tests {
         assert!(cut.is_empty());
         assert!(toolpath.moves.is_empty());
         assert_eq!(codes(&warnings), vec![WarningCode::ReliefCornerNotCut; 4]);
-        assert!(warnings.iter().all(|w| w.param("x_mm").is_some()));
+        assert!(warnings.iter().all(|w| matches!(
+            w,
+            Warning::ReliefCornerNotCut { x_mm, .. } if x_mm.is_finite()
+        )));
     }
 
     // ── 5. Pocket ───────────────────────────────────────────────────────
@@ -2097,8 +2101,17 @@ mod tests {
         assert!(cut.is_empty());
         assert_eq!(relief_codes(&warnings), vec![WarningCode::ReliefSkipped]);
         let w = &warnings[0];
-        assert_eq!(w.param("reason"), Some("no_step_down"));
-        assert_eq!(w.param("requested"), Some("dogbone"));
+        assert!(
+            matches!(
+                w,
+                Warning::ReliefSkipped {
+                    requested: CornerRelief::Dogbone,
+                    reason: ReliefSkippedReason::NoStepDown,
+                    ..
+                }
+            ),
+            "{w:?}"
+        );
     }
 
     /// Upstream: "a pocket finish with finishWalls off skips every corner
@@ -2322,8 +2335,18 @@ mod tests {
         let (_, warnings, cut) = profile_run(&p, &profile_op(Side::OnLine, CornerRelief::TBone));
         assert!(cut.is_empty());
         assert_eq!(relief_codes(&warnings), vec![WarningCode::ReliefSkipped]);
-        assert_eq!(warnings[0].param("reason"), Some("on_line"));
-        assert_eq!(warnings[0].param("requested"), Some("t_bone"));
+        assert!(
+            matches!(
+                warnings[0],
+                Warning::ReliefSkipped {
+                    requested: CornerRelief::TBone,
+                    reason: ReliefSkippedReason::OnLine,
+                    ..
+                }
+            ),
+            "{:?}",
+            warnings[0]
+        );
     }
 
     /// #189: on a Profile through the stock with no tabs, every notch of a

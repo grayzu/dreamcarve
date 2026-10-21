@@ -41,9 +41,8 @@
 
 use crate::entry::{EntryDomain, boundary_safety_mm};
 use crate::error::{CamError, ShapeRef};
-use crate::profile::shape_warning;
 use crate::toolpath::MoveKind;
-use crate::warning::{Warning, WarningCode};
+use crate::warning::{LeadDroppedReason, Warning};
 use dc_geometry::{EPS_MM, Point, Polyline, Segment, Vec2, Vertex};
 use dc_project::{Lead, OperationId};
 use std::f64::consts::PI;
@@ -736,10 +735,10 @@ pub(crate) enum DropReason {
 }
 
 impl DropReason {
-    const fn as_str(self) -> &'static str {
+    const fn reason(self) -> LeadDroppedReason {
         match self {
-            Self::NoRoom => "no_room",
-            Self::Exit => "exit",
+            Self::NoRoom => LeadDroppedReason::NoRoom,
+            Self::Exit => LeadDroppedReason::Exit,
         }
     }
 }
@@ -782,28 +781,36 @@ impl LeadWarnings {
 
     /// The warnings, each naming `op`, for `lead`.
     pub(crate) fn into_warnings(self, op: &OperationId, lead: &Lead) -> Vec<Warning> {
-        let shrunk = self.shrunk.into_iter().map(|(shape, radius, sweep)| {
-            shape_warning(WarningCode::LeadShrunk, &shape)
-                .with("op", op)
-                .with("requested_mm", lead.radius_mm)
-                .with("used_mm", radius)
-                .with("requested_sweep_deg", lead.sweep_deg)
-                .with("used_sweep_deg", sweep)
-        });
-        let dropped = self.dropped.into_iter().map(|(shape, reason)| {
-            shape_warning(WarningCode::LeadDropped, &shape)
-                .with("op", op)
-                .with("reason", reason.as_str())
-        });
+        let shrunk = self
+            .shrunk
+            .into_iter()
+            .map(|(shape, radius, sweep)| Warning::LeadShrunk {
+                op: op.clone(),
+                shape,
+                requested_mm: lead.radius_mm,
+                used_mm: radius,
+                requested_sweep_deg: lead.sweep_deg,
+                used_sweep_deg: sweep,
+            });
+        let dropped = self
+            .dropped
+            .into_iter()
+            .map(|(shape, reason)| Warning::LeadDropped {
+                op: op.clone(),
+                shape: Some(shape),
+                reason: reason.reason(),
+            });
         shrunk.chain(dropped).collect()
     }
 }
 
 /// `lead_dropped` for an On line operation `op`, which has no waste side.
 pub(crate) fn on_line_warning(op: &OperationId) -> Warning {
-    Warning::new(WarningCode::LeadDropped)
-        .with("op", op)
-        .with("reason", "on_line")
+    Warning::LeadDropped {
+        op: op.clone(),
+        shape: None,
+        reason: LeadDroppedReason::OnLine,
+    }
 }
 
 #[cfg(test)]

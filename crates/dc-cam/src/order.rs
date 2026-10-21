@@ -15,7 +15,7 @@ use crate::error::ShapeRef;
 use crate::overlap::region_holds_path;
 use crate::profile::same_contour;
 use crate::toolpath::Toolpath;
-use crate::warning::{Warning, WarningCode};
+use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
 use dc_project::{Operation, OperationId, Project, Side, ToolId};
 
@@ -26,12 +26,12 @@ use dc_project::{Operation, OperationId, Project, Side, ToolId};
 ///
 /// Returns, in a deterministic order:
 ///
-/// - [`WarningCode::CutInsideFreedPart`] for every target of a later
+/// - [`Warning::CutInsideFreedPart`] for every target of a later
 ///   operation that lies inside an outline an earlier Profile cut through
 ///   the stock, by operation order, then target order, then the freeing
 ///   operation's order. Targets are closed outlines, and the open paths
 ///   an Engrave or an On line Profile cuts (#206);
-/// - [`WarningCode::ToolChangeAvoidable`] once per tool that the enabled
+/// - [`Warning::ToolChangeAvoidable`] once per tool that the enabled
 ///   operations, in order, use again after a different tool, by the
 ///   tool's first use.
 #[must_use]
@@ -62,17 +62,12 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
                     })
                 });
                 if let Some((freed_shape, _)) = freed {
-                    warnings.push(
-                        Warning::new(WarningCode::CutInsideFreedPart)
-                            .with("op", later.id())
-                            .with("earlier_op", earlier.id())
-                            .with("instance", &shape.instance)
-                            .with("instance_name", &shape.instance_name)
-                            .with("profile", shape.profile)
-                            .with("freed_instance", &freed_shape.instance)
-                            .with("freed_instance_name", &freed_shape.instance_name)
-                            .with("freed_profile", freed_shape.profile),
-                    );
+                    warnings.push(Warning::CutInsideFreedPart {
+                        op: later.id().clone(),
+                        earlier_op: earlier.id().clone(),
+                        shape: shape.clone(),
+                        freed: freed_shape.clone(),
+                    });
                 }
             }
         }
@@ -236,15 +231,11 @@ fn tool_change_hints(project: &Project) -> Vec<Warning> {
                 .iter()
                 .find(|t| &t.id == tool)
                 .map_or("?", |t| t.name.as_str());
-            let ops = ops
-                .iter()
-                .map(|id| format!("`{id}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            Warning::new(WarningCode::ToolChangeAvoidable)
-                .with("tool", tool)
-                .with("tool_name", name)
-                .with("ops", ops)
+            Warning::ToolChangeAvoidable {
+                tool_id: tool.clone(),
+                tool: name.to_owned(),
+                ops: ops.into_iter().cloned().collect(),
+            }
         })
         .collect()
 }
@@ -253,6 +244,7 @@ fn tool_change_hints(project: &Project) -> Vec<Warning> {
 mod tests {
     use super::*;
     use crate::engrave::generate_engrave;
+    use crate::error::ShapeRef;
     use crate::pocket::generate_pocket;
     use crate::profile::generate_profile;
     use crate::warning::WarningCode;
@@ -345,7 +337,29 @@ mod tests {
     }
 
     fn with_code(warnings: &[Warning], code: WarningCode) -> Vec<&Warning> {
-        warnings.iter().filter(|w| w.code == code).collect()
+        warnings.iter().filter(|w| w.code() == code).collect()
+    }
+
+    /// The operation, earlier operation, shape and freed outline of a
+    /// `cut_inside_freed_part` warning.
+    fn freed_of(w: &Warning) -> (&str, &str, &ShapeRef, &ShapeRef) {
+        let Warning::CutInsideFreedPart {
+            op,
+            earlier_op,
+            shape,
+            freed,
+        } = w
+        else {
+            panic!("{w:?}");
+        };
+        (op.as_str(), earlier_op.as_str(), shape, freed)
+    }
+
+    /// The operation and the earlier one of a `cut_inside_freed_part`
+    /// warning.
+    fn ops_of(w: &Warning) -> (&str, &str) {
+        let (op, earlier_op, _, _) = freed_of(w);
+        (op, earlier_op)
     }
 
     /// O8, acceptance test 32: an Outside Profile through the stock on
@@ -362,14 +376,24 @@ mod tests {
         let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
         assert_eq!(found.len(), 1, "one warning: {warnings:?}");
         let w = found[0];
-        assert_eq!(w.param("op"), Some("o2"));
-        assert_eq!(w.param("earlier_op"), Some("o1"));
-        assert_eq!(w.param("instance"), Some("i2"));
-        assert_eq!(w.param("instance_name"), Some("Hole"));
-        assert_eq!(w.param("profile"), Some("0"));
-        assert_eq!(w.param("freed_instance"), Some("i1"));
-        assert_eq!(w.param("freed_instance_name"), Some("Rectangle 1"));
-        assert_eq!(w.param("freed_profile"), Some("0"));
+        let (op, earlier_op, shape, freed) = freed_of(w);
+        assert_eq!((op, earlier_op), ("o2", "o1"));
+        assert_eq!(
+            (
+                shape.instance.as_str(),
+                shape.instance_name.as_str(),
+                shape.profile
+            ),
+            ("i2", "Hole", 0)
+        );
+        assert_eq!(
+            (
+                freed.instance.as_str(),
+                freed.instance_name.as_str(),
+                freed.profile
+            ),
+            ("i1", "Rectangle 1", 0)
+        );
         let text = w.to_string();
         assert!(text.contains("`o1`"), "names the earlier operation: {text}");
         assert!(text.contains("`Hole`"), "names the shape: {text}");
@@ -457,12 +481,16 @@ mod tests {
         let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
         assert_eq!(found.len(), 1, "one warning: {warnings:?}");
         let w = found[0];
-        assert_eq!(w.param("op"), Some("o2"));
-        assert_eq!(w.param("earlier_op"), Some("o1"));
-        assert_eq!(w.param("instance"), Some("i2"));
-        assert_eq!(w.param("instance_name"), Some("Recess"));
-        assert_eq!(w.param("freed_instance"), Some("i1"));
-        assert_eq!(w.param("freed_instance_name"), Some("Frame"));
+        let (op, earlier_op, shape, freed) = freed_of(w);
+        assert_eq!((op, earlier_op), ("o2", "o1"));
+        assert_eq!(
+            (shape.instance.as_str(), shape.instance_name.as_str()),
+            ("i2", "Recess")
+        );
+        assert_eq!(
+            (freed.instance.as_str(), freed.instance_name.as_str()),
+            ("i1", "Frame")
+        );
         // The warning belongs to the Pocket (`op`); its text names the
         // Profile that freed the frame.
         let text = w.to_string();
@@ -501,8 +529,7 @@ mod tests {
         let warnings = check_all(&project);
         let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
         assert_eq!(found.len(), 1, "one warning: {warnings:?}");
-        assert_eq!(found[0].param("op"), Some("o2"));
-        assert_eq!(found[0].param("earlier_op"), Some("o1"));
+        assert_eq!(ops_of(found[0]), ("o2", "o1"));
     }
 
     /// A Profile that stops above the stock bottom frees nothing.
@@ -552,12 +579,9 @@ mod tests {
         let warnings = check_all(&project);
         let ops: Vec<_> = with_code(&warnings, WarningCode::CutInsideFreedPart)
             .iter()
-            .map(|w| (w.param("op"), w.param("earlier_op")))
+            .map(|w| ops_of(w))
             .collect();
-        assert_eq!(
-            ops,
-            vec![(Some("o2"), Some("o1")), (Some("o3"), Some("o1"))]
-        );
+        assert_eq!(ops, vec![("o2", "o1"), ("o3", "o1")]);
         assert_eq!(warnings, check_all(&project), "deterministic");
     }
 
@@ -618,20 +642,19 @@ mod tests {
         ];
         let warnings = check_all(&project);
         let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
-        let ops: Vec<_> = found
-            .iter()
-            .map(|w| (w.param("op"), w.param("earlier_op")))
-            .collect();
-        assert_eq!(
-            ops,
-            vec![(Some("o2"), Some("o1")), (Some("o3"), Some("o1"))],
-            "{warnings:?}"
-        );
+        let ops: Vec<_> = found.iter().map(|w| ops_of(w)).collect();
+        assert_eq!(ops, vec![("o2", "o1"), ("o3", "o1")], "{warnings:?}");
         for w in found {
-            assert_eq!(w.param("instance"), Some("i3"));
-            assert_eq!(w.param("instance_name"), Some("Slot"));
-            assert_eq!(w.param("profile"), Some("0"));
-            assert_eq!(w.param("freed_instance"), Some("i1"));
+            let (_, _, shape, freed) = freed_of(w);
+            assert_eq!(
+                (
+                    shape.instance.as_str(),
+                    shape.instance_name.as_str(),
+                    shape.profile
+                ),
+                ("i3", "Slot", 0)
+            );
+            assert_eq!(freed.instance.as_str(), "i1");
             assert!(w.to_string().contains("`Slot`"), "{w}");
         }
     }
@@ -683,9 +706,12 @@ mod tests {
         let warnings = check(&project, &[]);
         let hints = with_code(&warnings, WarningCode::ToolChangeAvoidable);
         assert_eq!(hints.len(), 1, "one hint: {warnings:?}");
-        assert_eq!(hints[0].param("tool"), Some("t1"));
-        assert_eq!(hints[0].param("tool_name"), Some("6.35 mm upcut"));
-        assert_eq!(hints[0].param("ops"), Some("`o1`, `o3`"));
+        let Warning::ToolChangeAvoidable { tool_id, tool, ops } = hints[0] else {
+            panic!("{:?}", hints[0]);
+        };
+        assert_eq!(tool_id.as_str(), "t1");
+        assert_eq!(tool, "6.35 mm upcut");
+        assert_eq!(ops, &[OperationId::new("o1"), OperationId::new("o3")]);
         let text = hints[0].to_string();
         assert!(text.contains("`o1`") && text.contains("`o3`"), "{text}");
     }
