@@ -32,6 +32,7 @@ use dc_project::{PostProcessorRef, ToolChangeMode};
 use serde::Deserialize;
 
 use crate::cli::{ConfigCommand, Failure};
+use crate::output::outln;
 
 /// The environment variable that overrides the config directory.
 pub const CONFIG_DIR_VAR: &str = "DREAMCARVE_CONFIG_DIR";
@@ -217,7 +218,7 @@ fn path() -> Result<ExitCode, Failure> {
         ("Tool library:", &paths.library_file),
     ] {
         let state = if path.exists() { "exists" } else { "not found" };
-        println!("{label:<17} {} ({state})", path.display());
+        outln!("{label:<17} {} ({state})", path.display())?;
     }
     Ok(ExitCode::SUCCESS)
 }

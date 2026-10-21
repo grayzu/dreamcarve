@@ -19,6 +19,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use dc_gcode::ProgramSplit;
 use dc_project::{PostProcessorError, PostProcessorRef};
 
+use crate::output::{self, errln, outln};
 use crate::{check, clock, config, export, init, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
@@ -257,10 +258,12 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Command::Config(args) => config::run(&args.command),
         Command::Tools(args) => tools::run(&args.command),
     };
-    match result {
+    // The command's own exit code stands even when stdout was a pipe its
+    // reader closed (#216, `output`).
+    match result.and_then(|code| output::flush().map(|()| code)) {
         Ok(code) => code,
         Err(failure) => {
-            eprintln!("error: {}", failure.message);
+            errln!("error: {}", failure.message);
             ExitCode::from(failure.code)
         }
     }
@@ -272,11 +275,11 @@ fn posts() -> Result<ExitCode, Failure> {
     let posts = dc_project::latest_definitions().map_err(Failure::error)?;
     let width = posts.iter().map(|d| d.id.len()).max().unwrap_or(0);
     for definition in posts {
-        println!(
+        outln!(
             "{:width$}  {}",
             definition.id,
             definition.post_processor().name
-        );
+        )?;
     }
     Ok(ExitCode::SUCCESS)
 }

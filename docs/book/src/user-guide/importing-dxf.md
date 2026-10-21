@@ -139,9 +139,15 @@ program, or simplify them). A file that is cut off or
 garbled, so that its codes and values no longer pair up, is refused with
 the line (or, in a binary DXF, the byte) where it goes wrong.
 
-ASCII and binary DXF are both read, from every AutoCAD version. Names in
-files from before AutoCAD 2007 that are not UTF-8 are read in the Western
-European code page (Windows-1252); a file saved in another code page, such
-as a Cyrillic or Japanese one, may show wrong characters in its layer
-names. The geometry is not affected; save the file as a 2007 or later DXF
-to fix the names.
+ASCII and binary DXF are both read, from every AutoCAD version. Files
+from AutoCAD 2007 on are UTF-8. Earlier files are written in the code
+page their header names (`$DWGCODEPAGE`), and their layer names are read
+in it: Windows-1250 to 1258 (Central European, Cyrillic, Western, Greek,
+Turkish, Hebrew, Arabic, Baltic, Vietnamese) and 874 (Thai). Text that is
+already UTF-8, as some programs write it whatever the header says, is
+read as UTF-8, and a file that names no code page is read as Western
+European (Windows-1252). A file in another code page,
+such as the Japanese, Chinese or Korean ones (`ANSI_932`, `ANSI_936`,
+`ANSI_949`, `ANSI_950`), is read as Windows-1252 and its layer names may
+show wrong characters; a warning names the code page. The geometry is not
+affected; save the file as a 2007 or later DXF to fix the names.

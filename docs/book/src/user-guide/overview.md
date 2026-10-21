@@ -167,6 +167,14 @@ machine, and whether each exists ([Configuration](configuration.md)).
 | 1 | The project has an error, a file could not be read or written, or the drawing could not be imported. |
 | 2 | Bad arguments (including `--one-program` with `--programs-per-tool`), or an unknown post-processor id. |
 
+When the program reading the output stops early, as `head` does in
+`dreamcarve check big.dcv | head`, or when you quit `less`, DreamCarve
+stops printing, finishes the command (a file it writes is still written)
+and exits with the command's own code: `check` still exits 1 when the
+project has errors. Any other failure to print, such as a full disk when
+the output goes to a file, exits 1 with `error: cannot write to standard
+output: …`.
+
 ## Chapters
 
 - [The project file](project-file.md): every field of `.dcv`.

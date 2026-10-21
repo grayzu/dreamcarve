@@ -176,6 +176,15 @@ pub enum ImportWarning {
         /// The missing block's name.
         block: String,
     },
+    /// A DXF from before R2007 is written in a code page DreamCarve has
+    /// no table for, such as the multi-byte `ANSI_932` (Shift-JIS), and
+    /// some of its text is not ASCII. That text, such as layer names and
+    /// so shape names, was read as Windows-1252 and may show wrong
+    /// characters; the geometry is not affected.
+    DxfCodePageUnsupported {
+        /// The `$DWGCODEPAGE` value, as the file writes it.
+        code_page: String,
+    },
 }
 
 impl std::fmt::Display for ImportWarning {
@@ -230,6 +239,10 @@ impl std::fmt::Display for ImportWarning {
             Self::DxfBlockMissing { block } => {
                 write!(f, "INSERT of undefined block `{block}` was skipped")
             }
+            Self::DxfCodePageUnsupported { code_page } => write!(
+                f,
+                "the drawing's text is in code page `{code_page}`, which DreamCarve cannot read; layer names were read as Windows-1252 and may show wrong characters"
+            ),
         }
     }
 }

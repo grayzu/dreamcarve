@@ -18,6 +18,7 @@ use dc_gcode::ProgramSplit;
 
 use crate::cli::{CheckArgs, Failure};
 use crate::export;
+use crate::output::outln;
 
 /// The date filled into the discarded program. It never reaches a file.
 const CHECK_DATE: &str = "check";
@@ -30,33 +31,33 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
         export::build(&project, ProgramSplit::ProjectDefault, CHECK_DATE);
 
     for error in &findings.errors {
-        println!("{}", file.describe("error", error));
+        outln!("{}", file.describe("error", error))?;
     }
     for warning in &findings.warnings {
-        println!("{}", file.describe("warning", warning));
+        outln!("{}", file.describe("warning", warning))?;
     }
     // #62: where the program would take the tool, as `export` prints it;
     // for each program when there is one per tool run (#95).
     if let [program] = programs.as_slice() {
         let radius_mm = export::largest_tool_radius_mm(&project);
         for line in export::describe_extents(&project, program, radius_mm) {
-            println!("{line}");
+            outln!("{line}")?;
         }
     } else {
         for (k, program) in programs.iter().enumerate() {
-            println!("Program {} (T{}):", k + 1, program.first_tool.number);
+            outln!("Program {} (T{}):", k + 1, program.first_tool.number)?;
             let radius_mm = export::tool_radius_mm(&project, program);
             for line in export::describe_extents(&project, program, radius_mm) {
-                println!("  {line}");
+                outln!("  {line}")?;
             }
         }
     }
-    println!(
+    outln!(
         "{}: {} error(s), {} warning(s)",
         args.dcv.display(),
         findings.errors.len(),
         findings.warnings.len()
-    );
+    )?;
     Ok(if findings.errors.is_empty() {
         ExitCode::SUCCESS
     } else {
