@@ -40,10 +40,11 @@
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
-use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
+use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, Lead, Operation,
-    OriginXy, PeckRetract, PocketOp, ProfileOp, Project, Side, TabPlacement, Tool, ToolKind,
+    OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement, Tool,
+    ToolKind,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -107,6 +108,30 @@ pub enum Problem {
         operation: OperationId,
         /// The missing instance.
         instance: InstanceId,
+    },
+    /// Two placed tabs share an id (#105).
+    DuplicateTabId {
+        /// The repeated id.
+        id: TabId,
+    },
+    /// A placed tab is on an instance that does not exist (#105).
+    TabDanglingInstance {
+        /// The tab.
+        tab: TabId,
+        /// The missing instance.
+        instance: InstanceId,
+    },
+    /// A placed tab is on a profile its instance's definition does not
+    /// have (#105).
+    TabProfileMissing {
+        /// The tab.
+        tab: TabId,
+        /// The instance.
+        instance: InstanceId,
+        /// The profile index asked for.
+        profile: usize,
+        /// How many profiles the definition has.
+        count: usize,
     },
     /// A number is outside the range its field allows.
     OutOfRange {
@@ -380,6 +405,9 @@ impl Problem {
             Self::DanglingDefinition { .. } => "dangling_definition",
             Self::DanglingTool { .. } => "dangling_tool",
             Self::DanglingInstance { .. } => "dangling_instance",
+            Self::DuplicateTabId { .. } => "duplicate_tab_id",
+            Self::TabDanglingInstance { .. } => "tab_dangling_instance",
+            Self::TabProfileMissing { .. } => "tab_profile_missing",
             Self::OutOfRange { .. } => "out_of_range",
             Self::NonFinite { .. } => "non_finite",
             Self::OperationDisabled { .. } => "operation_disabled",
@@ -433,6 +461,9 @@ impl Problem {
             | Self::DanglingDefinition { .. }
             | Self::DanglingTool { .. }
             | Self::DanglingInstance { .. }
+            | Self::DuplicateTabId { .. }
+            | Self::TabDanglingInstance { .. }
+            | Self::TabProfileMissing { .. }
             | Self::OutOfRange { .. }
             | Self::NonFinite { .. }
             | Self::ToolValueUnset { .. }
@@ -478,6 +509,10 @@ impl Problem {
             Self::DanglingInstance { operation, .. } => {
                 Some(format!("operations[{operation}].targets"))
             }
+            Self::DuplicateTabId { .. } => None,
+            Self::TabDanglingInstance { tab, .. } => Some(format!("tabs[{tab}].instance")),
+            Self::TabProfileMissing { tab, .. } => Some(format!("tabs[{tab}].profile")),
+
             Self::OutOfRange { field, .. } | Self::NonFinite { field } => Some(field.clone()),
             Self::OperationDisabled { operation } => {
                 Some(format!("operations[{operation}].enabled"))
@@ -568,6 +603,21 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{operation}` targets instance `{instance}`, which does not exist"
             ),
+            Self::DuplicateTabId { id } => write!(f, "two tabs have the id `{id}`"),
+            Self::TabDanglingInstance { tab, instance } => write!(
+                f,
+                "tab `{tab}` is on instance `{instance}`, which does not exist"
+            ),
+            Self::TabProfileMissing {
+                tab,
+                instance,
+                profile,
+                count,
+            } => write!(
+                f,
+                "tab `{tab}` is on profile {profile} of instance `{instance}`, whose definition has {count} profile(s), numbered from 0"
+            ),
+
             Self::OutOfRange {
                 field,
                 value,
@@ -976,6 +1026,16 @@ impl Validator {
                 Operation::Drill(op) => self.drill(op, &at),
                 Operation::Engrave(op) => self.engrave(op, &at),
             }
+        }
+
+        // #105: placed tabs, after the operations as the file holds them.
+        let mut seen_tabs = BTreeSet::new();
+        for tab in &p.tabs {
+            if !seen_tabs.insert(&tab.id) {
+                self.problems
+                    .push(Problem::DuplicateTabId { id: tab.id.clone() });
+            }
+            self.placed_tab(p, tab);
         }
 
         // Definitions with a coordinate out of range; their instances are
@@ -1436,6 +1496,38 @@ impl Validator {
         if self.finite(field, value) && (value <= 0.0 || value > MAX_COORDINATE_MM) {
             self.out_of_range(field.to_owned(), value, STOCK_SIDE);
         }
+    }
+
+    /// A placed tab: on an instance and profile that exist, at a point
+    /// within the coordinate limit, with a positive width and height.
+    fn placed_tab(&mut self, p: &Project, tab: &PlacedTab) {
+        let at = format!("tabs[{}]", tab.id);
+        let instance = p.instances.iter().find(|i| i.id == tab.instance);
+        let profiles = instance
+            .and_then(|i| p.definitions.get(&i.definition))
+            .map(|d| d.profiles.as_slice());
+        match (instance, profiles) {
+            (None, _) => self.problems.push(Problem::TabDanglingInstance {
+                tab: tab.id.clone(),
+                instance: tab.instance.clone(),
+            }),
+            // A missing definition is reported for the instance.
+            (Some(_), None) => {}
+            (Some(_), Some(profiles)) => {
+                if profiles.get(tab.profile).is_none() {
+                    self.problems.push(Problem::TabProfileMissing {
+                        tab: tab.id.clone(),
+                        instance: tab.instance.clone(),
+                        profile: tab.profile,
+                        count: profiles.len(),
+                    });
+                }
+            }
+        }
+        self.coordinate(&format!("{at}.x_mm"), tab.x_mm);
+        self.coordinate(&format!("{at}.y_mm"), tab.y_mm);
+        self.positive(&format!("{at}.width_mm"), tab.width_mm);
+        self.positive(&format!("{at}.height_mm"), tab.height_mm);
     }
 
     fn positive(&mut self, field: &str, value: f64) {

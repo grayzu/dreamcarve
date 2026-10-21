@@ -29,18 +29,18 @@ use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::{
-    LapRates, Least, PathEnds, PathTabs, Reduced, Tabs, coverage_warning, cut_range_warnings,
-    lap_cuts, overlap_warning,
+    LapRates, Least, PathEnds, PathTabs, Reduced, Request, TabCut, Tabs, check_size,
+    coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{OpenPathReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
-    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset,
-    point_segment_distance_mm,
+    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point, nest,
+    offset, point_segment_distance_mm,
 };
 use dc_project::{
-    CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, Tool,
+    CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, TabId, Tool,
 };
 use entries::{
     EntrySetup, PassEntry, PathDomain, Space, Targets, off_material, path_entries, plunged,
@@ -155,14 +155,19 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// retracts to safe Z; between passes of one contour it plunges straight
 /// from the previous pass.
 ///
-/// With `op.tabs`, every pass below the tab top rises over each tab span
-/// (`width + diameter` along the tool-centre contour); overlapping spans
-/// merge with [`Warning::TabsOverlap`], and a tab top no pass reaches,
-/// or one above the stock top, gives [`Warning::TabsOutsideCutRange`].
-/// Tabs go on each contour separately (#109): a hole gets none unless
-/// `on_holes`, and a contour whose spans would cover more than half of it
-/// gets the most tabs that cover at most half (a part's outline at least
-/// one; a hole may get none), with [`Warning::TabsCoverMostOfContour`].
+/// Every placed tab of [`Project::tabs`] on an outline `op` cuts (#105,
+/// ADR-0005) is cut round: every pass below the tab's top rises over its
+/// span (`width + diameter` along the tool-centre contour, centred on the
+/// contour's point nearest the tab), and a placed tab on a hole warns
+/// [`Warning::TabOnHole`]. A tab request (`op.tabs`) is placed first, as
+/// `dreamcarve tabs place` places it (#109): per contour, none on a hole
+/// unless `on_holes`, and on a contour whose spans would cover more than
+/// half of it the most that cover at most half (a part's outline at
+/// least one; a hole may get none), with
+/// [`Warning::TabsCoverMostOfContour`]; placed tabs are cut as placed, and
+/// warn the same when they cover more than half. Overlapping spans merge
+/// with [`Warning::TabsOverlap`], and a tab top no pass reaches, or one
+/// above the stock top, gives [`Warning::TabsOutsideCutRange`].
 ///
 /// With `op.entry` a ramp or helix (design spec, "Algorithms → Entry"),
 /// each pass reaches its depth at the contour start without a plunge:
@@ -300,152 +305,64 @@ pub fn generate_profile(
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let start_z_mm = entry::descent_start_z_mm(thickness_mm, safe_z_mm);
 
-    let tabs = op
+    // A tab request is checked before the targets, as phase 2 checked
+    // its tab setting (#105: it is placed, then cut as placed tabs).
+    let request = op
         .tabs
         .as_ref()
-        .map(|spec| Tabs::new(&op.id, spec, tool.diameter_mm, project.flatten_tolerance_mm))
+        .map(|spec| Request::new(&op.id, spec, tool.diameter_mm))
         .transpose()?;
 
     let mut warnings = Vec::new();
-    if let Some(tabs) = &tabs {
-        warnings.extend(cut_range_warnings(&op.id, tabs, &pass_z, thickness_mm));
-    }
+    // The tab range warnings come first, where phase 2 gave them.
+    let range_at = warnings.len();
     // #175: On line cuts open paths too; Inside and Outside skip them.
-    let mut open_paths = Vec::new();
-    let keep_open = (op.side == Side::OnLine).then_some(&mut open_paths);
-    let shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, &mut warnings)?;
-    let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
-    let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
-    for warning in nest_warnings {
-        let GeometryWarning::DuplicateContourDropped {
-            index,
-            duplicate_of,
-        } = warning;
-        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
-        {
-            warnings.push(Warning::DuplicateShapeDropped {
-                shape: dropped.clone(),
-                duplicate_of: kept.clone(),
-            });
-        }
-    }
-    // #221: an open path drawn twice is cut once, as a closed shape is.
-    let open_paths = drop_duplicate_paths(open_paths, &mut warnings);
-
+    let (shapes, open_paths, regions) = target_geometry(project, op, &mut warnings)?;
     let radius_mm = tool.diameter_mm / 2.0;
-    // Each tool-centre path with the shape it cuts, the wall it cuts, the
-    // index of its region and whether the shape is a hole, in drawing
-    // order.
-    let mut placed: Vec<(Polyline, &ShapeRef, Wall, usize, bool)> = Vec::new();
-    for (region_index, region) in regions.iter().enumerate() {
-        let ordered = hole_shapes(region, &shapes)
-            .map(|(h, shape)| (h, shape, Role::Hole))
-            .chain(outer_shape(region, &shapes).map(|shape| (region.outer(), shape, Role::Outer)));
-        for (contour, shape, role) in ordered {
-            let (how, wall) = placement(op.side, role);
-            let centres = match how {
-                Offset::Grow => offset(contour, radius_mm),
-                Offset::Shrink => offset(contour, -radius_mm),
-                Offset::None => vec![contour.clone()],
-            };
-            if centres.is_empty() {
-                warnings.push(Warning::ToolTooLarge {
-                    shape: shape.clone(),
-                    tool: tool.name.clone(),
-                    tool_id: tool.id.clone(),
-                    diameter_mm: tool.diameter_mm,
-                });
-                continue;
-            }
-            check_band(
-                &op.id,
-                op.side,
-                tool,
-                region,
-                (contour, shape),
-                &centres,
-                &shapes,
-                project.flatten_tolerance_mm,
-            )?;
-            let ccw = traversal_is_ccw(wall, op.direction);
-            placed.extend(centres.into_iter().map(|c| {
-                let path = if c.is_ccw() == ccw {
-                    c.into_polyline()
-                } else {
-                    c.reversed().into_polyline()
-                };
-                (path, shape, wall, region_index, role == Role::Hole)
-            }));
-        }
-    }
-    check_open_bands(
+    let reversed_open = op.direction == CutDirection::Climb;
+    let placed = centre_paths(
         op,
         tool,
         &regions,
         &shapes,
         &open_paths,
         project.flatten_tolerance_mm,
+        &mut warnings,
     )?;
-    // #175: an open path is cut On line as drawn. #242: from its first
-    // vertex under conventional and from its last under climb, as VCarve
-    // ("Conventional starts cutting at the Start point Climb cutting
-    // starts cutting at the end point"). It bounds no region, so no
-    // containment and no waste domain; its wall is never asked.
-    let reversed_open = op.direction == CutDirection::Climb;
-    for (shape, path) in &open_paths {
-        let path = if reversed_open {
-            path.reversed()
-        } else {
-            path.clone()
-        };
-        placed.push((path, shape, Wall::Outside, regions.len(), false));
-    }
-    // Drawing order is the order the targets were resolved in: target,
-    // then profile. Stable, so the loops of one shape keep their offset
-    // order.
-    let drawing_index = |shape: &ShapeRef| {
-        (
-            op.targets.iter().position(|t| *t == shape.instance),
-            shape.profile,
-        )
-    };
-    placed.sort_by_key(|(_, shape, _, _, _)| drawing_index(shape));
     let walls: Vec<(Wall, usize)> = placed.iter().map(|(_, _, w, r, _)| (*w, *r)).collect();
     let holes: Vec<bool> = placed.iter().map(|(_, _, _, _, hole)| *hole).collect();
     let paths: Vec<(Polyline, &ShapeRef)> =
         placed.into_iter().map(|(p, s, _, _, _)| (p, s)).collect();
 
-    // Tab layout per path, and one block per path per pass. An open
-    // path's tabs are measured from its first vertex as drawn. #109: a
-    // hole gets none unless `on_holes`; a path too short for its tabs
-    // gets the most that fit.
-    let (layouts, reductions): (Vec<PathLayout>, Vec<Option<Reduced>>) = paths
-        .iter()
-        .zip(&holes)
-        .map(|((path, _), &hole)| {
-            let Some(tabs) = &tabs else {
-                return (None, None);
-            };
-            let ends = if path.is_closed() {
-                PathEnds::Closed
-            } else {
-                PathEnds::Open {
-                    reversed: reversed_open,
-                }
-            };
-            if hole && !tabs.on_holes() {
-                return (Some((Tabs::none(path.length_mm(), ends), false)), None);
-            }
-            // #109: a part keeps a tab; a hole or an open path may not.
-            let least = if hole || !path.is_closed() {
-                Least::Zero
-            } else {
-                Least::One
-            };
-            let (layout, overlapped, reduced) = tabs.fit(path.length_mm(), ends, least);
-            (Some((layout, overlapped)), reduced)
-        })
-        .unzip();
+    // Tab layout per path, and one block per path per pass (#105): the
+    // placed tabs on each path's outline, and the tabs a request asks for.
+    let TabPlan {
+        tabs,
+        layouts,
+        reductions,
+        tops_z_mm,
+        on_holes,
+        ..
+    } = plan_tabs(
+        project,
+        op,
+        request.as_ref(),
+        tool.diameter_mm,
+        &paths,
+        &holes,
+        reversed_open,
+    )?;
+    if tabs.is_some() {
+        let range = cut_range_warnings(&op.id, &tops_z_mm, &pass_z, thickness_mm);
+        warnings.splice(range_at..range_at, range);
+    }
+    for (tab, shape) in on_holes {
+        warnings.push(Warning::TabOnHole {
+            op: op.id.clone(),
+            tab,
+            shape,
+        });
+    }
     let quantum_mm = project
         .post_processor
         .decimal_places
@@ -671,19 +588,16 @@ pub fn generate_profile(
         else {
             continue;
         };
-        let Some(tabs) = &tabs else {
-            continue;
-        };
         let length_mm = path.length_mm();
         if *overlapped {
             warnings.push(overlap_warning(&op.id, cut_index, Some(shape), length_mm));
         }
-        if let Some(Some(reduced)) = reductions.get(path_index) {
+        if let Some(Some((reduced, widths_mm))) = reductions.get(path_index) {
             warnings.push(coverage_warning(
                 &op.id,
                 cut_index,
                 Some(shape),
-                tabs,
+                (tool.diameter_mm, widths_mm),
                 length_mm,
                 *reduced,
             ));
@@ -734,6 +648,397 @@ pub fn generate_profile(
         });
     }
     Ok((toolpath, warnings))
+}
+
+/// A Profile's targets placed in project space: its closed shapes, the
+/// open paths it cuts (On line only, #175), and the closed shapes nested
+/// into regions. Shapes drawn twice are dropped with a warning.
+type TargetGeometry = (
+    Vec<(ShapeRef, Contour)>,
+    Vec<(ShapeRef, Polyline)>,
+    Vec<Region>,
+);
+
+/// [`TargetGeometry`] of `op`, warning into `warnings`.
+fn target_geometry(
+    project: &Project,
+    op: &ProfileOp,
+    warnings: &mut Vec<Warning>,
+) -> Result<TargetGeometry, CamError> {
+    let mut open_paths = Vec::new();
+    let keep_open = (op.side == Side::OnLine).then_some(&mut open_paths);
+    let shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, warnings)?;
+    let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
+    let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
+    for warning in nest_warnings {
+        let GeometryWarning::DuplicateContourDropped {
+            index,
+            duplicate_of,
+        } = warning;
+        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
+        {
+            warnings.push(Warning::DuplicateShapeDropped {
+                shape: dropped.clone(),
+                duplicate_of: kept.clone(),
+            });
+        }
+    }
+    // #221: an open path drawn twice is cut once, as a closed shape is.
+    let open_paths = drop_duplicate_paths(open_paths, warnings);
+    Ok((shapes, open_paths, regions))
+}
+
+/// One tool-centre path: the path, the shape it cuts, the wall it cuts,
+/// the index of its region, and whether the shape is a hole.
+type CentrePath<'s> = (Polyline, &'s ShapeRef, Wall, usize, bool);
+
+/// Every tool-centre path of `op` cut with `tool`, in drawing order:
+/// each closed shape offset per `op.side` and oriented per
+/// [`traversal_is_ccw`], then each open path as drawn (reversed under
+/// climb, #242). Shapes the tool does not fit warn
+/// [`Warning::ToolTooLarge`]; bands narrower than the tool fail.
+fn centre_paths<'s>(
+    op: &ProfileOp,
+    tool: &Tool,
+    regions: &[Region],
+    shapes: &'s [(ShapeRef, Contour)],
+    open_paths: &'s [(ShapeRef, Polyline)],
+    tolerance_mm: f64,
+    warnings: &mut Vec<Warning>,
+) -> Result<Vec<CentrePath<'s>>, CamError> {
+    let radius_mm = tool.diameter_mm / 2.0;
+    let mut placed: Vec<CentrePath<'s>> = Vec::new();
+    for (region_index, region) in regions.iter().enumerate() {
+        let ordered = hole_shapes(region, shapes)
+            .map(|(h, shape)| (h, shape, Role::Hole))
+            .chain(outer_shape(region, shapes).map(|shape| (region.outer(), shape, Role::Outer)));
+        for (contour, shape, role) in ordered {
+            let (how, wall) = placement(op.side, role);
+            let centres = match how {
+                Offset::Grow => offset(contour, radius_mm),
+                Offset::Shrink => offset(contour, -radius_mm),
+                Offset::None => vec![contour.clone()],
+            };
+            if centres.is_empty() {
+                warnings.push(Warning::ToolTooLarge {
+                    shape: shape.clone(),
+                    tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
+                    diameter_mm: tool.diameter_mm,
+                });
+                continue;
+            }
+            check_band(
+                &op.id,
+                op.side,
+                tool,
+                region,
+                (contour, shape),
+                &centres,
+                shapes,
+                tolerance_mm,
+            )?;
+            let ccw = traversal_is_ccw(wall, op.direction);
+            placed.extend(centres.into_iter().map(|c| {
+                let path = if c.is_ccw() == ccw {
+                    c.into_polyline()
+                } else {
+                    c.reversed().into_polyline()
+                };
+                (path, shape, wall, region_index, role == Role::Hole)
+            }));
+        }
+    }
+    check_open_bands(op, tool, regions, shapes, open_paths, tolerance_mm)?;
+    // #175: an open path is cut On line as drawn. #242: from its first
+    // vertex under conventional and from its last under climb, as VCarve
+    // ("Conventional starts cutting at the Start point Climb cutting
+    // starts cutting at the end point"). It bounds no region, so no
+    // containment and no waste domain; its wall is never asked.
+    let reversed_open = op.direction == CutDirection::Climb;
+    for (shape, path) in open_paths {
+        let path = if reversed_open {
+            path.reversed()
+        } else {
+            path.clone()
+        };
+        placed.push((path, shape, Wall::Outside, regions.len(), false));
+    }
+    // Drawing order is the order the targets were resolved in: target,
+    // then profile. Stable, so the loops of one shape keep their offset
+    // order.
+    let drawing_index = |shape: &ShapeRef| {
+        (
+            op.targets.iter().position(|t| *t == shape.instance),
+            shape.profile,
+        )
+    };
+    placed.sort_by_key(|(_, shape, _, _, _)| drawing_index(shape));
+    Ok(placed)
+}
+
+/// The tabs a Profile cuts on each of its tool-centre paths (#105,
+/// ADR-0005), in path order.
+pub(crate) struct TabPlan {
+    /// What the tabs share; `None` when the operation crosses no placed
+    /// tab and requests none.
+    pub tabs: Option<Tabs>,
+    /// Each path's layout and whether its spans overlapped: `Some` for
+    /// every path when `tabs` is.
+    pub layouts: Vec<PathLayout>,
+    /// Per path, when its tabs would cover more than half of it, what
+    /// was asked and what is cut, with the width of each tab asked.
+    pub reductions: Vec<Option<(Reduced, Vec<f64>)>>,
+    /// The top of every tab cut, and the request's, for the cut range
+    /// warnings.
+    pub tops_z_mm: Vec<f64>,
+    /// The placed tabs cut on a path round a hole, with the hole.
+    pub on_holes: Vec<(TabId, ShapeRef)>,
+    /// Every placed tab the operation crosses, in project order.
+    pub crossed: Vec<TabId>,
+    /// Per path, the tabs the request puts on it.
+    pub requested: Vec<Vec<TabCut>>,
+    /// Per path, what the request asked and cut when it cut some down.
+    pub request_reductions: Vec<Option<(Reduced, Vec<f64>)>>,
+}
+
+/// Plans the tabs of `op` on `paths` (each with the shape it cuts; `holes`
+/// says which are holes; open paths are cut from their last vertex when
+/// `reversed_open`), cut with a tool `diameter_mm` wide.
+///
+/// A tab `request` is laid per path as phase 2 laid the tab setting
+/// ([`Request::fit`], #109). Each placed tab of [`Project::tabs`] on an
+/// outline `op` cuts goes on the path of that outline nearest it, centred
+/// at the path's point nearest the tab ([`nearest_point`]), when that
+/// path comes within the tool radius plus half the tab's width of where
+/// the tab meets the outline (its foot, [`crate::placed_tabs`]): closer,
+/// the cutter would cut into the tab. A tab farther from every path is
+/// not crossed. Fails with [`CamError::InvalidTab`] for a crossed tab whose
+/// width or height is not a positive number.
+fn plan_tabs(
+    project: &Project,
+    op: &ProfileOp,
+    request: Option<&Request>,
+    diameter_mm: f64,
+    paths: &[(Polyline, &ShapeRef)],
+    holes: &[bool],
+    reversed_open: bool,
+) -> Result<TabPlan, CamError> {
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let ends_of = |path: &Polyline| {
+        if path.is_closed() {
+            PathEnds::Closed
+        } else {
+            PathEnds::Open {
+                reversed: reversed_open,
+            }
+        }
+    };
+    let fitter = Tabs::new(
+        request.map_or(0.0, Request::top_z_mm),
+        diameter_mm,
+        tolerance_mm,
+    );
+    let mut requested = Vec::with_capacity(paths.len());
+    let mut reductions = Vec::with_capacity(paths.len());
+    for ((path, _), &hole) in paths.iter().zip(holes) {
+        let Some(request) = request.filter(|r| !hole || r.on_holes()) else {
+            requested.push(Vec::new());
+            reductions.push(None);
+            continue;
+        };
+        // #109: a part keeps a tab; a hole or an open path may not.
+        let least = if hole || !path.is_closed() {
+            Least::Zero
+        } else {
+            Least::One
+        };
+        let (cuts, reduced) = request.fit(&fitter, path.length_mm(), ends_of(path), least);
+        requested.push(cuts);
+        reductions.push(reduced.map(|r| (r, vec![request.width_mm(); r.asked])));
+    }
+    let request_reductions = reductions.clone();
+
+    let radius_mm = diameter_mm / 2.0;
+    let mut placed: Vec<Vec<TabCut>> = vec![Vec::new(); paths.len()];
+    let mut crossed = Vec::new();
+    let mut on_holes = Vec::new();
+    for tab in project
+        .tabs
+        .iter()
+        .filter(|t| op.targets.contains(&t.instance))
+    {
+        let Some(point) = crate::placed_tabs::tab_point(project, tab) else {
+            continue;
+        };
+        let nearest = paths
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, shape))| {
+                shape.instance == tab.instance && shape.profile == tab.profile
+            })
+            .filter_map(|(j, (path, shape))| {
+                nearest_point(path, point).map(|n| (j, path, *shape, n))
+            })
+            .min_by(|a, b| a.3.gap_mm.total_cmp(&b.3.gap_mm));
+        let Some((j, path, shape, near)) = nearest else {
+            continue;
+        };
+        // Crossed when the path runs within the tool radius plus half the
+        // tab of where the tab meets the outline: a tab placed from
+        // another Profile's path sits a tool radius off it.
+        let foot = crate::placed_tabs::outline_foot(project, tab).unwrap_or(point);
+        let reach_mm = nearest_point(path, foot).map_or(f64::INFINITY, |n| n.gap_mm);
+        if reach_mm > radius_mm + tab.width_mm / 2.0 + EPS_MM {
+            continue;
+        }
+        check_size(&op.id, &format!("`{}` width_mm", tab.id), tab.width_mm)?;
+        check_size(&op.id, &format!("`{}` height_mm", tab.id), tab.height_mm)?;
+        // An open path's tabs are measured from its first vertex as drawn.
+        let centre_mm = if path.is_closed() || !reversed_open {
+            near.along_mm
+        } else {
+            path.length_mm() - near.along_mm
+        };
+        if let Some(cuts) = placed.get_mut(j) {
+            cuts.push(TabCut {
+                centre_mm,
+                width_mm: tab.width_mm,
+                top_z_mm: tab.height_mm,
+                shape: tab.shape,
+            });
+        }
+        crossed.push(tab.id.clone());
+        if holes.get(j).copied().unwrap_or(false) {
+            on_holes.push((tab.id.clone(), shape.clone()));
+        }
+    }
+
+    let tops_z_mm: Vec<f64> = request
+        .map(Request::top_z_mm)
+        .into_iter()
+        .chain(placed.iter().flatten().map(|c| c.top_z_mm))
+        .collect();
+    let tabs = (request.is_some() || !crossed.is_empty()).then(|| {
+        let top_z_mm = tops_z_mm.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        Tabs::new(top_z_mm, diameter_mm, tolerance_mm)
+    });
+    let mut layouts = Vec::with_capacity(paths.len());
+    for (j, (path, _)) in paths.iter().enumerate() {
+        let Some(tabs) = &tabs else {
+            layouts.push(None);
+            continue;
+        };
+        let own = placed.get(j).map_or(&[][..], Vec::as_slice);
+        let mut cuts = requested.get(j).cloned().unwrap_or_default();
+        cuts.extend_from_slice(own);
+        let length_mm = path.length_mm();
+        let (layout, overlapped) = tabs.layout(&cuts, length_mm, ends_of(path));
+        // Placed tabs are cut as placed: a layout that covers more than
+        // half the path warns, with nothing cut down.
+        if let Some(slot) = reductions.get_mut(j)
+            && slot.is_none()
+            && !own.is_empty()
+            && layout.covered_mm() > length_mm / 2.0 + EPS_MM
+        {
+            let n = layout.tab_count();
+            *slot = Some((
+                Reduced { asked: n, cut: n },
+                cuts.iter().map(|c| c.width_mm).collect(),
+            ));
+        }
+        layouts.push(Some((layout, overlapped)));
+    }
+    Ok(TabPlan {
+        tabs,
+        layouts,
+        reductions,
+        tops_z_mm,
+        on_holes,
+        crossed,
+        requested,
+        request_reductions,
+    })
+}
+
+/// The tool-centre paths of a Profile with the shape each cuts, and its
+/// tab plan ([`plan_tabs`]), without its toolpath (#105).
+pub(crate) struct OpTabs {
+    /// Each tool-centre path with the shape it cuts, in drawing order.
+    pub paths: Vec<(Polyline, ShapeRef)>,
+    /// Whether each path is cut round a hole.
+    pub holes: Vec<bool>,
+    /// The operation cuts open paths from their last vertex (#242).
+    pub reversed_open: bool,
+    /// The tool's diameter, mm.
+    pub diameter_mm: f64,
+    /// The tabs on each path.
+    pub plan: TabPlan,
+}
+
+/// [`OpTabs`] of `op` in `project`. Fails as [`generate_profile`] does
+/// when the tool or the targets cannot be cut; feeds, depths and the
+/// stock need not be set.
+pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamError> {
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: op.id.clone(),
+            tool: op.tool.clone(),
+        })?;
+    if op.side != Side::OnLine && !tool.cutter.is_flat() {
+        return Err(CamError::CutterNotFlat {
+            op: op.id.clone(),
+            tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
+            cutter: tool.cutter.describe(),
+        });
+    }
+    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+        return Err(CamError::InvalidToolDiameter {
+            tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
+    let request = op
+        .tabs
+        .as_ref()
+        .map(|spec| Request::new(&op.id, spec, tool.diameter_mm))
+        .transpose()?;
+    let mut ignored = Vec::new();
+    let (shapes, open_paths, regions) = target_geometry(project, op, &mut ignored)?;
+    let centres = centre_paths(
+        op,
+        tool,
+        &regions,
+        &shapes,
+        &open_paths,
+        project.flatten_tolerance_mm,
+        &mut ignored,
+    )?;
+    let holes: Vec<bool> = centres.iter().map(|(_, _, _, _, hole)| *hole).collect();
+    let paths: Vec<(Polyline, &ShapeRef)> =
+        centres.into_iter().map(|(p, s, _, _, _)| (p, s)).collect();
+    let reversed_open = op.direction == CutDirection::Climb;
+    let plan = plan_tabs(
+        project,
+        op,
+        request.as_ref(),
+        tool.diameter_mm,
+        &paths,
+        &holes,
+        reversed_open,
+    )?;
+    Ok(OpTabs {
+        paths: paths.into_iter().map(|(p, s)| (p, s.clone())).collect(),
+        holes,
+        reversed_open,
+        diameter_mm: tool.diameter_mm,
+        plan,
+    })
 }
 
 /// #192, #199: the band between two lines of one region, its outline
@@ -1286,67 +1591,29 @@ pub(crate) enum Hold {
     Tabs,
 }
 
-/// Every closed target outline that the tabbed Profile `op` cuts, in
-/// drawing order, with how its tabs leave it: [`Hold::Free`] for those it
-/// cuts with no tab (#109), its holes unless `on_holes` and every hole
-/// whose tool-centre paths are too short for even one tab ([`Tabs::fit`];
-/// a part's outline always keeps one), and [`Hold::Tabs`] for the rest. A
-/// shape the tool does not fit is not cut, so it is left out. Empty when
-/// `op` has no tabs, and when its toolpath cannot be generated:
+/// Every closed target outline that the Profile `op` cuts, in drawing
+/// order, with how its tabs leave it: [`Hold::Free`] for those it cuts
+/// with no tab (#109), such as its holes when it places no tab on them,
+/// and [`Hold::Tabs`] for those with a tab on some path (#105). A shape
+/// the tool does not fit is not cut, so it is left out. `None` when `op`
+/// cuts no tab at all, and when its toolpath cannot be generated:
 /// [`crate::order::check`] only warns.
-pub(crate) fn cut_outlines(project: &Project, op: &ProfileOp) -> Vec<(ShapeRef, Hold)> {
-    let Some(spec) = &op.tabs else {
-        return Vec::new();
-    };
-    let Some(tool) = project.tools.iter().find(|t| t.id == op.tool) else {
-        return Vec::new();
-    };
-    let Ok(tabs) = Tabs::new(&op.id, spec, tool.diameter_mm, project.flatten_tolerance_mm) else {
-        return Vec::new();
-    };
-    let mut ignored = Vec::new();
-    let Ok(shapes) = resolve_shapes(project, &op.id, &op.targets, None, &mut ignored) else {
-        return Vec::new();
-    };
-    let Ok((regions, _)) = nest(shapes.iter().map(|(_, c)| c.clone()).collect()) else {
-        return Vec::new();
-    };
-    let radius_mm = tool.diameter_mm / 2.0;
-    let mut cut = Vec::new();
-    for region in &regions {
-        let ordered = hole_shapes(region, &shapes)
-            .map(|(h, shape)| (h, shape, Role::Hole))
-            .chain(outer_shape(region, &shapes).map(|shape| (region.outer(), shape, Role::Outer)));
-        for (contour, shape, role) in ordered {
-            let centres = match placement(op.side, role).0 {
-                Offset::Grow => offset(contour, radius_mm),
-                Offset::Shrink => offset(contour, -radius_mm),
-                Offset::None => vec![contour.clone()],
-            };
-            if centres.is_empty() {
-                continue;
-            }
-            let untabbed = (role == Role::Hole && !tabs.on_holes())
-                || centres.iter().all(|c| {
-                    let least = match role {
-                        Role::Hole => Least::Zero,
-                        Role::Outer => Least::One,
-                    };
-                    let (layout, _, _) =
-                        tabs.fit(c.polyline().length_mm(), PathEnds::Closed, least);
-                    layout.is_untabbed()
-                });
-            let hold = if untabbed { Hold::Free } else { Hold::Tabs };
-            cut.push((shape.clone(), hold));
+pub(crate) fn cut_outlines(project: &Project, op: &ProfileOp) -> Option<Vec<(ShapeRef, Hold)>> {
+    let OpTabs { paths, plan, .. } = op_tabs(project, op).ok()?;
+    plan.tabs.as_ref()?;
+    let mut cut: Vec<(ShapeRef, Hold)> = Vec::new();
+    for ((path, shape), layout) in paths.iter().zip(&plan.layouts) {
+        if !path.is_closed() {
+            continue;
+        }
+        let tabbed = layout.as_ref().is_some_and(|(l, _)| !l.is_untabbed());
+        match cut.iter_mut().find(|(s, _)| s == shape) {
+            Some((_, hold)) if tabbed => *hold = Hold::Tabs,
+            Some(_) => {}
+            None => cut.push((shape.clone(), if tabbed { Hold::Tabs } else { Hold::Free })),
         }
     }
-    cut.sort_by_key(|(shape, _)| {
-        (
-            op.targets.iter().position(|t| *t == shape.instance),
-            shape.profile,
-        )
-    });
-    cut
+    Some(cut)
 }
 
 /// The shape `region`'s outer came from, `region` being one that `nest`

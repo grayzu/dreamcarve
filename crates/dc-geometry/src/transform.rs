@@ -75,6 +75,15 @@ impl Transform {
         self.0.as_coeffs()
     }
 
+    /// The transform that undoes this one, or `None` when it is singular
+    /// (its determinant below the area of a square [`EPS_MM`] on a side).
+    #[must_use]
+    pub fn inverse(self) -> Option<Transform> {
+        let [a, b, c, d, _, _] = self.0.as_coeffs();
+        let det = a * d - b * c;
+        (det.is_finite() && det.abs() >= MIN_DETERMINANT).then(|| Self(self.0.inverse()))
+    }
+
     /// The transformed point.
     #[must_use]
     pub fn apply(self, p: Point) -> Point {

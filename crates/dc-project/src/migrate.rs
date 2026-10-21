@@ -53,6 +53,10 @@
 //! - **9**: adds `on_holes` to each Profile's `tabs`, set to `true` by the
 //!   migration (#109): a Profile now leaves its holes without tabs unless
 //!   `on_holes` is set, and every outline had tabs before.
+//! - **11**: adds the project's placed tabs, `tabs: []` after
+//!   `operations` (#105, ADR-0005). A Profile's `tabs` setting stays as a
+//!   tab request: placing it needs the Profile's tool paths, which only
+//!   `dc-cam` builds, so `dreamcarve` places it when it loads the file.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -63,7 +67,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 9;
+pub const CURRENT_VERSION: u32 = 11;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -81,6 +85,9 @@ fn step(from: u32) -> Option<Step> {
         6 => Some(v6_to_v7),
         7 => Some(v7_to_v8),
         8 => Some(v8_to_v9),
+        // TODO(#207): replaced by #207's step when it merges.
+        9 => Some(v9_to_v10_placeholder),
+        10 => Some(v10_to_v11),
         _ => None,
     }
 }
@@ -431,6 +438,37 @@ fn v8_to_v9(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
         tabs.insert("on_holes".into(), Value::from(true));
     }
     Ok(root)
+}
+
+/// Placeholder for #207's version 9 → 10 step, which lands first.
+#[allow(clippy::unnecessary_wraps, reason = "a migration step")]
+fn v9_to_v10_placeholder(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    Ok(root)
+}
+
+/// Version 10 → 11 (#105): `tabs: []` after `operations`, the project's
+/// placed tabs, none yet. Each Profile's `tabs` setting is left as it is:
+/// it is now a tab request, which `dreamcarve` places when it loads the
+/// project (ADR-0005). Fails if the project already has `tabs`: that is
+/// not a version 10 file.
+fn v10_to_v11(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    if root.contains_key("tabs") {
+        return Err("a version 10 file has no `tabs`, but this one does".into());
+    }
+    let mut out = Map::with_capacity(root.len() + 1);
+    let mut inserted = false;
+    for (key, value) in root {
+        let after_this = key == "operations";
+        out.insert(key, value);
+        if after_this {
+            out.insert("tabs".into(), Value::Array(Vec::new()));
+            inserted = true;
+        }
+    }
+    if !inserted {
+        out.insert("tabs".into(), Value::Array(Vec::new()));
+    }
+    Ok(out)
 }
 
 /// `map` with `key: value` inserted right after `after`, or at the end

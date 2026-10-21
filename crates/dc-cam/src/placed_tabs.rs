@@ -1,7 +1,401 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Placed tabs (#105): the tests, before the module.
+//! Placed tabs (#105, ADR-0005; `docs/specs/phase-2/design.md`, "Placed
+//! tabs"): placing them from a tab request with the phase 2 layout rules,
+//! and the project-level check that every tab is cut round.
+//!
+//! A placed tab is a point in the definition space of one instance, on
+//! one of its outlines. Placing from a request stores the centre the
+//! request lays on the tool path, taken back into definition space by the
+//! inverse of the instance's transform; placing at distances along the
+//! outline stores the outline's point there. Generation centres the tab
+//! at the point of each tool path of that outline nearest it
+//! ([`dc_geometry::nearest_point`]), so a tab placed from a request comes
+//! back exactly where the request put it, even on the arc a path turns
+//! round a corner, and a tab on the outline lands where the bit passes it.
+//! Nothing here depends on Y-up or Y-down: nearest points and distances
+//! along a line are the same under the flip.
+
+use std::collections::BTreeSet;
+
+use dc_geometry::{EPS_MM, Point, Polyline, approx_eq, nearest_point};
+use dc_project::{Operation, OperationId, PlacedTab, ProfileOp, Project, TabId, TabShape, TabSpec};
+
+use crate::error::{CamError, ShapeRef};
+use crate::profile::{OpTabs, op_tabs};
+use crate::tabs::{PathEnds, check_size, coverage_warning, overlap_warning};
+use crate::toolpath::Toolpath;
+use crate::warning::Warning;
+
+/// Tabs to add to a project, and what placing them found.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Placement {
+    /// The new tabs, with ids that follow the project's, none a copy of a
+    /// tab the project already has.
+    pub tabs: Vec<PlacedTab>,
+    /// What placing found: [`Warning::TabsCoverMostOfContour`] where an
+    /// outline got fewer tabs than asked, or tabs that cover most of it,
+    /// and [`Warning::TabsOverlap`] where tabs on one path touch.
+    pub warnings: Vec<Warning>,
+}
+
+/// The width, height and shape of tabs to place.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabSize {
+    /// Tab length along the outline, mm.
+    pub width_mm: f64,
+    /// Tab top above the stock bottom, mm.
+    pub height_mm: f64,
+    /// Tab cross-section.
+    pub shape: TabShape,
+}
+
+/// Places the tabs `spec` asks for on the outlines Profile `op` cuts, with
+/// the phase 2 layout rules (#109): per tool path, `count` tabs evenly
+/// spaced or tabs at `at_distances` along it from its start; none on a
+/// hole unless `on_holes`; and on a path too short for them, the most
+/// that cover at most half of it, but at least one on a part. Each tab is
+/// placed at the outline point nearest its centre on the path.
+///
+/// Fails with [`CamError::UnknownOperation`] or
+/// [`CamError::TabsNeedProfile`] when `op` is not a Profile of `project`,
+/// with [`CamError::InvalidTab`] for a size that is not a positive number
+/// or a distance that is not finite, and as [`crate::generate_profile`]
+/// does when the tool or the targets cannot be cut.
+pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Placement, CamError> {
+    let profile = profile_op(project, op)?;
+    let asking = ProfileOp {
+        tabs: Some(spec.clone()),
+        ..profile.clone()
+    };
+    let cut = op_tabs(project, &asking)?;
+    let mut placement = Placement::default();
+    let mut next = next_number(project);
+    for (j, (path, shape)) in cut.paths.iter().enumerate() {
+        let Some(asked) = cut.plan.requested.get(j) else {
+            continue;
+        };
+        let length_mm = path.length_mm();
+        if let Some(Some((reduced, widths_mm))) = cut.plan.request_reductions.get(j) {
+            placement.warnings.push(coverage_warning(
+                op,
+                j,
+                Some(shape),
+                (cut.diameter_mm, widths_mm),
+                length_mm,
+                *reduced,
+            ));
+        }
+        if let Some(tabs) = &cut.plan.tabs
+            && tabs.layout(asked, length_mm, ends(path, &cut)).1
+        {
+            placement
+                .warnings
+                .push(overlap_warning(op, j, Some(shape), length_mm));
+        }
+        for tab_cut in asked {
+            // Centres on an open path are measured from its first vertex
+            // as drawn.
+            let along_mm = if path.is_closed() || !cut.reversed_open {
+                tab_cut.centre_mm
+            } else {
+                length_mm - tab_cut.centre_mm
+            };
+            let Some((q, _)) = path.point_at(along_mm) else {
+                continue;
+            };
+            let Some(centre) = definition_point(project, shape, q) else {
+                continue;
+            };
+            let tab = PlacedTab {
+                id: TabId::new(format!("tab{next}")),
+                instance: shape.instance.clone(),
+                profile: shape.profile,
+                x_mm: centre.x,
+                y_mm: centre.y,
+                width_mm: tab_cut.width_mm,
+                height_mm: tab_cut.top_z_mm,
+                shape: tab_cut.shape,
+            };
+            if !has_copy(project, &placement.tabs, &tab) {
+                placement.tabs.push(tab);
+                next += 1;
+            }
+        }
+    }
+    Ok(placement)
+}
+
+/// Places a tab of `size` at each of `at_mm`, distances along the outline
+/// from its first vertex as drawn (mm, definition space), on every
+/// outline Profile `op` cuts: none on a hole unless `on_holes`. A closed
+/// outline takes each distance modulo its length; an open one clamps it
+/// to its ends. The tabs are cut as placed; the warnings say where they
+/// would overlap or cover more than half of a tool path.
+///
+/// Fails as [`place`] does, and with [`CamError::InvalidTab`] for a
+/// distance that is negative or not finite.
+pub fn place_on_outlines(
+    project: &Project,
+    op: &OperationId,
+    at_mm: &[f64],
+    size: TabSize,
+    on_holes: bool,
+) -> Result<Placement, CamError> {
+    let profile = profile_op(project, op)?;
+    check_size(op, "width_mm", size.width_mm)?;
+    check_size(op, "height_mm", size.height_mm)?;
+    if let Some((i, d)) = at_mm
+        .iter()
+        .enumerate()
+        .find(|(_, d)| !(d.is_finite() && **d >= 0.0))
+    {
+        return Err(CamError::InvalidTab {
+            op: op.clone(),
+            field: format!("at[{i}]"),
+            value_mm: *d,
+        });
+    }
+    let bare = ProfileOp {
+        tabs: None,
+        ..profile.clone()
+    };
+    let cut = op_tabs(project, &bare)?;
+    let mut placement = Placement::default();
+    let mut next = next_number(project);
+    let mut done: Vec<&ShapeRef> = Vec::new();
+    for ((_, shape), &hole) in cut.paths.iter().zip(&cut.holes) {
+        if (hole && !on_holes) || done.contains(&shape) {
+            continue;
+        }
+        done.push(shape);
+        let Some(outline) = definition_profile(project, shape) else {
+            continue;
+        };
+        let length_mm = outline.length_mm();
+        for d in at_mm {
+            let at_mm = if outline.is_closed() {
+                d.rem_euclid(length_mm)
+            } else {
+                d.clamp(0.0, length_mm)
+            };
+            let Some((centre, _)) = outline.point_at(at_mm) else {
+                continue;
+            };
+            let tab = PlacedTab {
+                id: TabId::new(format!("tab{next}")),
+                instance: shape.instance.clone(),
+                profile: shape.profile,
+                x_mm: centre.x,
+                y_mm: centre.y,
+                width_mm: size.width_mm,
+                height_mm: size.height_mm,
+                shape: size.shape,
+            };
+            if !has_copy(project, &placement.tabs, &tab) {
+                placement.tabs.push(tab);
+                next += 1;
+            }
+        }
+    }
+    // What the tabs will cut like, as generation lays them out.
+    let mut with = project.clone();
+    with.tabs.extend(placement.tabs.iter().cloned());
+    let laid = op_tabs(&with, &bare)?;
+    for (j, ((path, shape), layout)) in laid.paths.iter().zip(&laid.plan.layouts).enumerate() {
+        let length_mm = path.length_mm();
+        if layout.as_ref().is_some_and(|(_, overlapped)| *overlapped) {
+            placement
+                .warnings
+                .push(overlap_warning(op, j, Some(shape), length_mm));
+        }
+        if let Some(Some((reduced, widths_mm))) = laid.plan.reductions.get(j) {
+            placement.warnings.push(coverage_warning(
+                op,
+                j,
+                Some(shape),
+                (laid.diameter_mm, widths_mm),
+                length_mm,
+                *reduced,
+            ));
+        }
+    }
+    Ok(placement)
+}
+
+/// `project` with the tab request of every enabled Profile placed
+/// ([`place`]) and cleared, as `dreamcarve` saves a project (#105,
+/// ADR-0005), with what placing found. A disabled Profile keeps its
+/// request, so it cuts as it would have when it is enabled again.
+///
+/// Fails as [`place`] does for the first request that cannot be placed.
+pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamError> {
+    let mut out = project.clone();
+    let mut warnings = Vec::new();
+    for i in 0..out.operations.len() {
+        let Some(Operation::Profile(op)) = out.operations.get(i) else {
+            continue;
+        };
+        let (Some(spec), true) = (op.tabs.clone(), op.enabled) else {
+            continue;
+        };
+        let id = op.id.clone();
+        let placement = place(&out, &id, &spec)?;
+        out.tabs.extend(placement.tabs);
+        warnings.extend(placement.warnings);
+        if let Some(Operation::Profile(op)) = out.operations.get_mut(i) {
+            op.tabs = None;
+        }
+    }
+    Ok((out, warnings))
+}
+
+/// The placed tabs Profile `op` crosses, in project order: each tab on an
+/// outline it cuts whose nearest tool path runs within the tool radius
+/// plus half the tab's width. Fails as [`crate::generate_profile`] does
+/// when the tool or the targets cannot be cut.
+pub fn crossed_by(project: &Project, op: &ProfileOp) -> Result<Vec<TabId>, CamError> {
+    Ok(op_tabs(project, op)?.plan.crossed)
+}
+
+/// [`Warning::TabNotCrossed`] for every placed tab of `project` that no
+/// Profile of `generated` crosses ([`crossed_by`]), in project order.
+/// `generated` holds every enabled operation whose toolpath was
+/// generated, as for [`crate::order::check`].
+#[must_use]
+pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
+    let mut crossed: BTreeSet<TabId> = BTreeSet::new();
+    for (op, _) in generated {
+        if let Operation::Profile(profile) = op
+            && let Ok(ids) = crossed_by(project, profile)
+        {
+            crossed.extend(ids);
+        }
+    }
+    project
+        .tabs
+        .iter()
+        .filter(|tab| !crossed.contains(&tab.id))
+        .filter_map(|tab| {
+            let instance = project.instances.iter().find(|i| i.id == tab.instance)?;
+            Some(Warning::TabNotCrossed {
+                tab: tab.id.clone(),
+                shape: ShapeRef {
+                    instance: instance.id.clone(),
+                    instance_name: instance.name.clone(),
+                    profile: tab.profile,
+                },
+            })
+        })
+        .collect()
+}
+
+/// Where `tab`'s centre is in project space: its point placed by its
+/// instance's transform. `None` when its instance is not in the project.
+#[must_use]
+pub fn tab_point(project: &Project, tab: &PlacedTab) -> Option<Point> {
+    let instance = project.instances.iter().find(|i| i.id == tab.instance)?;
+    Some(instance.transform.apply(Point::new(tab.x_mm, tab.y_mm)))
+}
+
+/// Where `tab` meets its outline in project space: the outline's point
+/// nearest the tab's. A tab placed on the outline is its own foot; one
+/// placed from a request on an Inside or Outside path is a tool radius
+/// from it. `None` when its instance, definition or profile is not in the
+/// project, or cannot be placed.
+pub(crate) fn outline_foot(project: &Project, tab: &PlacedTab) -> Option<Point> {
+    let instance = project.instances.iter().find(|i| i.id == tab.instance)?;
+    let profile = project
+        .definitions
+        .get(&instance.definition)?
+        .profiles
+        .get(tab.profile)?;
+    let outline = instance.transform.apply_polyline(profile).ok()?;
+    Some(nearest_point(&outline, tab_point(project, tab)?)?.point)
+}
+
+/// How far along its profile from the first vertex as drawn `tab` is, mm
+/// in definition space: the distance of the profile's point nearest the
+/// tab, and how far the tab is from it. `None` when its instance,
+/// definition or profile is not in the project.
+#[must_use]
+pub fn along_outline_mm(project: &Project, tab: &PlacedTab) -> Option<(f64, f64)> {
+    let instance = project.instances.iter().find(|i| i.id == tab.instance)?;
+    let profile = project
+        .definitions
+        .get(&instance.definition)?
+        .profiles
+        .get(tab.profile)?;
+    let near = nearest_point(profile, Point::new(tab.x_mm, tab.y_mm))?;
+    Some((near.along_mm, near.gap_mm))
+}
+
+/// The Profile `op` of `project`.
+fn profile_op<'p>(project: &'p Project, op: &OperationId) -> Result<&'p ProfileOp, CamError> {
+    match project.operations.iter().find(|o| o.id() == op) {
+        Some(Operation::Profile(profile)) => Ok(profile),
+        Some(other) => Err(CamError::TabsNeedProfile {
+            op: op.clone(),
+            kind: other.kind(),
+        }),
+        None => Err(CamError::UnknownOperation { op: op.clone() }),
+    }
+}
+
+/// How `path` of `op_tabs` runs, for laying tabs on it.
+fn ends(path: &Polyline, op_tabs: &OpTabs) -> PathEnds {
+    if path.is_closed() {
+        PathEnds::Closed
+    } else {
+        PathEnds::Open {
+            reversed: op_tabs.reversed_open,
+        }
+    }
+}
+
+/// The definition-space profile `shape` is cut from.
+fn definition_profile<'p>(project: &'p Project, shape: &ShapeRef) -> Option<&'p Polyline> {
+    let instance = project.instances.iter().find(|i| i.id == shape.instance)?;
+    project
+        .definitions
+        .get(&instance.definition)?
+        .profiles
+        .get(shape.profile)
+}
+
+/// `q`, a point in project space, in the definition space of `shape`'s
+/// instance. `None` when the instance is not in the project or its
+/// transform is singular.
+fn definition_point(project: &Project, shape: &ShapeRef, q: Point) -> Option<Point> {
+    let instance = project.instances.iter().find(|i| i.id == shape.instance)?;
+    Some(instance.transform.inverse()?.apply(q))
+}
+
+/// The number after `tab` in the next free tab id: one more than the
+/// largest `tab<n>` in `project`.
+fn next_number(project: &Project) -> u64 {
+    project
+        .tabs
+        .iter()
+        .filter_map(|t| t.id.as_str().strip_prefix("tab")?.parse::<u64>().ok())
+        .max()
+        .map_or(1, |n| n.saturating_add(1))
+}
+
+/// Whether `project` or `placed` already has a tab like `tab`: on the
+/// same outline at the same point, with the same size and shape.
+fn has_copy(project: &Project, placed: &[PlacedTab], tab: &PlacedTab) -> bool {
+    project.tabs.iter().chain(placed).any(|t| {
+        t.instance == tab.instance
+            && t.profile == tab.profile
+            && t.shape == tab.shape
+            && approx_eq(t.x_mm, tab.x_mm, EPS_MM)
+            && approx_eq(t.y_mm, tab.y_mm, EPS_MM)
+            && approx_eq(t.width_mm, tab.width_mm, EPS_MM)
+            && approx_eq(t.height_mm, tab.height_mm, EPS_MM)
+    })
+}
 
 #[cfg(test)]
 mod tests {

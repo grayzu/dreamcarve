@@ -24,7 +24,8 @@
 //! link to that line and column (#76). Every warning carries its stable
 //! `snake_case` code and prints as `warning: <code>: <message>` (functional
 //! spec, capability 25); the Warnings chapter lists the codes. After
-//! generation, `dc_cam::order::check` adds the operation-order warnings.
+//! generation, `dc_cam::order::check` adds the operation-order warnings,
+//! and `dc_cam::placed_tabs::check` the tabs no Profile cuts round (#105).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,7 @@ use std::process::ExitCode;
 
 use dc_cam::{
     Toolpath, generate_drill, generate_engrave, generate_pocket, generate_profile, order,
+    placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
@@ -203,15 +205,17 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         .iter()
         .map(|entry| (&entry.op, &entry.toolpath))
         .collect();
-    findings
-        .warnings
-        .extend(order::check(project, &generated).iter().map(|w| {
-            let message = match w.op() {
-                Some(op) => format!("operation `{op}`: {w}"),
-                None => w.to_string(),
-            };
-            Finding::coded(w.code().as_str(), message)
-        }));
+    // #105: a placed tab no enabled Profile cuts round holds nothing.
+    let project_warnings = order::check(project, &generated)
+        .into_iter()
+        .chain(placed_tabs::check(project, &generated));
+    findings.warnings.extend(project_warnings.map(|w| {
+        let message = match w.op() {
+            Some(op) => format!("operation `{op}`: {w}"),
+            None => w.to_string(),
+        };
+        Finding::coded(w.code().as_str(), message)
+    }));
     if !findings.errors.is_empty() {
         return Built {
             programs: Vec::new(),

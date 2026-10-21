@@ -8,7 +8,7 @@
 use std::fmt;
 
 use dc_geometry::EPS_MM;
-use dc_project::{CornerRelief, OperationId, ToolId};
+use dc_project::{CornerRelief, OperationId, TabId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
 use crate::error::ShapeRef;
@@ -36,8 +36,16 @@ pub enum WarningCode {
     TabsOutsideCutRange,
     /// The tab spans on one tool-centre contour would cover more than half
     /// of its length, so the part or hole would not cut free. The contour
-    /// gets the most tabs that cover at most half, down to none (#109).
+    /// gets the most tabs that cover at most half, down to none (#109);
+    /// placed tabs are cut as placed (#105).
     TabsCoverMostOfContour,
+    /// A placed tab is on an outline this Profile cuts as a hole, so it
+    /// holds the hole's slug, which is usually waste (#105). It is cut.
+    TabOnHole,
+    /// No enabled Profile crosses a placed tab: none cuts its outline, or
+    /// every path that does runs too far from it, so it holds nothing
+    /// (#105).
+    TabNotCrossed,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
     ToolpathsOverlap,
@@ -125,6 +133,8 @@ impl WarningCode {
             Self::TabsOverlap => "tabs_overlap",
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
+            Self::TabOnHole => "tab_on_hole",
+            Self::TabNotCrossed => "tab_not_crossed",
             Self::ToolpathsOverlap => "toolpaths_overlap",
             Self::PocketNoRoom => "pocket_no_room",
             Self::PocketIslandTooClose => "pocket_island_too_close",
@@ -297,6 +307,22 @@ pub enum Warning {
         /// The widest tab at `tab_count` that covers at most half; `None`
         /// when none fits.
         max_width_mm: Option<f64>,
+    },
+    /// [`WarningCode::TabOnHole`].
+    TabOnHole {
+        /// The operation.
+        op: OperationId,
+        /// The tab.
+        tab: TabId,
+        /// The hole it is on.
+        shape: ShapeRef,
+    },
+    /// [`WarningCode::TabNotCrossed`].
+    TabNotCrossed {
+        /// The tab.
+        tab: TabId,
+        /// The outline it is placed on.
+        shape: ShapeRef,
     },
     /// [`WarningCode::ToolpathsOverlap`].
     ToolpathsOverlap {
@@ -533,6 +559,8 @@ impl Warning {
             Self::TabsOverlap { .. } => WarningCode::TabsOverlap,
             Self::TabsOutsideCutRange { .. } => WarningCode::TabsOutsideCutRange,
             Self::TabsCoverMostOfContour { .. } => WarningCode::TabsCoverMostOfContour,
+            Self::TabOnHole { .. } => WarningCode::TabOnHole,
+            Self::TabNotCrossed { .. } => WarningCode::TabNotCrossed,
             Self::ToolpathsOverlap { .. } => WarningCode::ToolpathsOverlap,
             Self::PocketNoRoom { .. } => WarningCode::PocketNoRoom,
             Self::PocketIslandTooClose { .. } => WarningCode::PocketIslandTooClose,
@@ -562,6 +590,7 @@ impl Warning {
             Self::TabsOverlap { op, .. }
             | Self::TabsOutsideCutRange { op, .. }
             | Self::TabsCoverMostOfContour { op, .. }
+            | Self::TabOnHole { op, .. }
             | Self::PocketNoRoom { op, .. }
             | Self::PocketIslandTooClose { op, .. }
             | Self::EntryFallback { op, .. }
@@ -582,6 +611,7 @@ impl Warning {
             Self::OpenPathSkipped { .. }
             | Self::ToolTooLarge { .. }
             | Self::DuplicateShapeDropped { .. }
+            | Self::TabNotCrossed { .. }
             | Self::ToolpathsOverlap { .. }
             | Self::ToolChangeAvoidable { .. } => None,
         }
@@ -645,6 +675,11 @@ fn coverage_advice(
 ) -> String {
     let cut = match (cut_count, kept_covers_most) {
         (0, _) => "No tab is cut there".to_owned(),
+        // #105: placed tabs are cut as placed.
+        (n, _) if n == tab_count && n > 1 => {
+            "All of them are cut, as placed, so the part or hole may need cutting free by hand"
+                .to_owned()
+        }
         (1, true) if tab_count == 1 => "Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
         (1, true) => "Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
         (1, false) => "Only 1 of them is cut there".to_owned(),
@@ -657,6 +692,10 @@ fn coverage_advice(
         ),
         Some(width_mm) if tab_count == 1 => format!(
             "{cut}. To keep it, make it at most {} mm wide.",
+            mm(width_mm)
+        ),
+        Some(width_mm) if cut_count == tab_count => format!(
+            "{cut}. To let it cut free, make them at most {} mm wide.",
             mm(width_mm)
         ),
         Some(width_mm) => format!(
@@ -786,6 +825,14 @@ impl fmt::Display for Warning {
                     )
                 )
             }
+            Self::TabOnHole { tab, shape, .. } => write!(
+                f,
+                "tab `{tab}` is on {shape}, which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear --tab {tab}`) unless you mean to keep the slug"
+            ),
+            Self::TabNotCrossed { tab, shape } => write!(
+                f,
+                "tab `{tab}` on {shape} is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear --tab {tab}`)"
+            ),
             Self::ToolpathsOverlap {
                 shape,
                 other,

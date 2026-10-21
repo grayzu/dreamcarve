@@ -6,7 +6,10 @@
 //! "CLI (dreamcarve)": stock = drawing bounds plus a 10 mm margin on each
 //! side; origin bottom-left at the stock top; one placeholder tool "Set me"
 //! (6.35 mm, 2 flutes, no feeds or step-down); one outside climb Profile of
-//! every closed shape, safe Z 5 mm, four 8 × 3 mm rectangular tabs. The
+//! every closed shape, safe Z 5 mm, asking for four 8 × 3 mm rectangular
+//! tabs on each part it cuts and none on its holes: a tab request, cut as
+//! the tabs it places, which `dreamcarve tabs` writes as placed tabs
+//! (#105, ADR-0005). The
 //! format is the file's extension; a DXF takes the DXF-only `--units`
 //! override, `--join-tolerance` and `--layer` (`docs/specs/phase-2/design.md`,
 //! "CLI additions").
@@ -319,6 +322,7 @@ fn default_project(
         instances,
         tools: vec![tool],
         operations: vec![Operation::Profile(profile)],
+        tabs: Vec::new(),
         post_processor,
     }
 }

@@ -416,6 +416,21 @@ pub enum CamError {
         /// The value, mm.
         value_mm: f64,
     },
+    /// Tabs were asked for an operation the project does not have (#105).
+    #[error("operation `{op}` is not in the project")]
+    UnknownOperation {
+        /// The operation asked for.
+        op: OperationId,
+    },
+    /// Tabs were asked for an operation that is not a Profile, which is
+    /// the only operation that cuts round tabs (#105).
+    #[error("operation `{op}` is a {kind} operation; only a Profile cuts tabs")]
+    TabsNeedProfile {
+        /// The operation.
+        op: OperationId,
+        /// Its kind, as the file tags it.
+        kind: &'static str,
+    },
     /// A Drill setting cannot be cut: a chip-break gap that is not a
     /// positive number, or a dwell that is negative or not finite.
     #[error("operation `{op}` has {field} {value}; it must be a non-negative number")]

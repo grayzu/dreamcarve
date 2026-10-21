@@ -166,10 +166,12 @@ fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
         .moves
         .iter()
         .any(|m| !m.is_rapid() && m.to.z <= EPS_MM);
-    match (through, &profile.tabs) {
-        (false, _) => Freed::Nothing,
-        (true, None) => Freed::All,
-        (true, Some(_)) => Freed::Tabbed(cut_outlines(project, profile)),
+    if !through {
+        return Freed::Nothing;
+    }
+    match cut_outlines(project, profile) {
+        None => Freed::All,
+        Some(outlines) => Freed::Tabbed(outlines),
     }
 }
 

@@ -67,6 +67,10 @@ id_type!(
     /// Identifies an [`crate::Operation`].
     OperationId
 );
+id_type!(
+    /// Identifies a [`crate::PlacedTab`] (#105).
+    TabId
+);
 
 #[cfg(test)]
 mod tests {
