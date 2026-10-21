@@ -62,10 +62,11 @@ impl Transform {
         Self(next.0 * self.0)
     }
 
-    /// The wrapped kurbo transform, for curve operations at crate edges.
+    /// The six coefficients `[a, b, c, d, e, f]`, as serialized: (x, y)
+    /// maps to (a·x + c·y + e, b·x + d·y + f), `e` and `f` in millimetres.
     #[must_use]
-    pub fn as_kurbo(self) -> kurbo::Affine {
-        self.0
+    pub fn coeffs(self) -> [f64; 6] {
+        self.0.as_coeffs()
     }
 
     /// The transformed point.
