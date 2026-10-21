@@ -1493,6 +1493,66 @@ mod tests {
         }
     }
 
+    /// #192: an Inside Profile of the 100 × 50 rect with a radius-22
+    /// island leaves a 3 mm band above and below the island, narrower than
+    /// the 6.35 mm bit. The island's lap would run 3.175 mm outside it, to
+    /// Y 19.825, past the rect's bottom edge at Y 20, and gouge the part
+    /// around the ring. No toolpath is produced: the error names the
+    /// operation, both shapes, the band and the tool.
+    #[test]
+    fn inside_cut_in_band_narrower_than_tool_is_refused() {
+        let p = ring_project(22.0);
+        let err = generate_profile(&p, &profile_op(&p, Side::Inside, CutDirection::Climb))
+            .expect_err("a band narrower than the bit is refused");
+        let text = err.to_string();
+        for needle in [
+            "`o1`",
+            "profile 0",
+            "profile 1",
+            "3.000 mm",
+            "6.35 mm upcut",
+            "6.35 mm",
+        ] {
+            assert!(text.contains(needle), "{needle:?} in {text}");
+        }
+    }
+
+    /// #192: a band exactly as wide as the bit is cut: each lap's cutter
+    /// just touches the other line. Outside, the same narrow ring is a
+    /// thin wall around the hole, not a gouge, and is cut too.
+    #[test]
+    fn inside_band_as_wide_as_the_tool_is_cut() {
+        let p = ring_project(25.0 - 6.35);
+        let (tp, _) = generate(&p, &profile_op(&p, Side::Inside, CutDirection::Climb));
+        for z in PASS_Z_MM {
+            assert_eq!(laps_at(&tp, z).len(), 2, "both contours at Z {z}");
+        }
+        let p = ring_project(22.0);
+        generate(&p, &profile_op(&p, Side::Outside, CutDirection::Climb));
+    }
+
+    /// #192 and `ToolTooLarge`: Inside, a 6 mm square outline is too small
+    /// for the 6.35 mm bit and is skipped, but the lap round the 2 mm
+    /// island in it would run outside the outline, into the part. That is
+    /// refused, not skipped: the island's path exists, and would gouge.
+    #[test]
+    fn inside_island_in_an_outline_too_small_for_the_tool_is_refused() {
+        let p = project(
+            vec![
+                Polyline::rect(Point::new(0.0, 0.0), 6.0, 6.0),
+                Polyline::rect(Point::new(2.0, 2.0), 2.0, 2.0),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let err = generate_profile(&p, &profile_op(&p, Side::Inside, CutDirection::Climb))
+            .expect_err("the island's lap would leave the outline");
+        let text = err.to_string();
+        assert!(
+            text.contains("profile 0") && text.contains("profile 1"),
+            "{text}"
+        );
+    }
+
     #[test]
     fn every_cut_move_has_feed_and_every_rapid_has_none() {
         let p = ring_project(10.0);

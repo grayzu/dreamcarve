@@ -2177,6 +2177,113 @@ mod tests {
         }
     }
 
+    /// #193: an inside 40 × 40 mm Profile through the stock with a ramp
+    /// entry, and no tabs, never plunges into uncut material at a descend
+    /// point: every straight plunge there ends at or above a Z some earlier
+    /// cut already reached at that point. The bottom-level notches
+    /// are cut from inside the final lap, after the lap reaches them at
+    /// depth and before it closes. Cases: the operation's step-down equal
+    /// to the tool's (one notch level per pass), and coarser, 3 mm against
+    /// the tool's 2 mm with a lead, so the freeing pass holds two levels
+    /// (Z 2 and 0) and the lap is re-seamed; both machining orders.
+    #[test]
+    fn bottom_level_notches_do_not_plunge() {
+        let p = one_tool(vec![rect(40.0, 40.0)]);
+        let descend_points = [at(2.0, 2.0), at(38.0, 2.0), at(38.0, 38.0), at(2.0, 38.0)];
+        let lead = dc_project::Lead {
+            radius_mm: 3.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 1.0,
+        };
+        for (step_down_mm, lead) in [(None, None), (Some(3.0), Some(lead))] {
+            for order in [MachiningOrder::FullDepthFirst, MachiningOrder::PassFirst] {
+                let op = ProfileOp {
+                    depth_mm: Some(THICKNESS_MM),
+                    step_down_mm,
+                    machining_order: order,
+                    entry: Entry::Ramp { angle_deg: 5.0 },
+                    lead: lead.clone(),
+                    ..profile_op(Side::Inside, CornerRelief::Dogbone)
+                };
+                let case = format!("{step_down_mm:?} {order:?}");
+                let (with, warnings) = generate_profile(&p, &op).unwrap();
+                assert!(relief_codes(&warnings).is_empty(), "{case}: {warnings:?}");
+                assert_safe(&with, &p, &Operation::Profile(op.clone()));
+
+                // Every descent at a descend point stays in the column
+                // already cut there.
+                let mut deepest_at = [f64::INFINITY; 4];
+                let mut pos = with.moves.first().map(|m| m.to).unwrap();
+                for (i, mv) in with.moves.iter().enumerate() {
+                    let flat = (pos.z - mv.to.z).abs() <= EPS_MM;
+                    let path = Segment {
+                        start: pos.xy(),
+                        end: mv.to.xy(),
+                        bulge: bulge_of(pos.xy(), mv),
+                    };
+                    for (k, &d) in descend_points.iter().enumerate() {
+                        let plunges = mv.to.z < pos.z - EPS_MM
+                            && pos.xy().distance_to(d) < 1e-6
+                            && mv.to.xy().distance_to(d) < 1e-6;
+                        if mv.is_cut() && plunges {
+                            assert!(
+                                mv.to.z >= deepest_at[k] - EPS_MM,
+                                "{case}: move {i} goes down to Z {} at {d:?}, below the \
+                                 Z {} cut there so far",
+                                mv.to.z,
+                                deepest_at[k]
+                            );
+                        }
+                        let reaches = mv.to.xy().distance_to(d) < 1e-6
+                            || (flat && point_segment_distance_mm(path, d) < 1e-6);
+                        if mv.is_cut() && reaches {
+                            deepest_at[k] = deepest_at[k].min(mv.to.z);
+                        }
+                    }
+                    pos = mv.to;
+                }
+
+                // Every bottom notch lies between the final lap's arrival
+                // at the bottom and its last move.
+                let none = ProfileOp {
+                    corner_relief: CornerRelief::None,
+                    ..op.clone()
+                };
+                let (without, _) = generate_profile(&p, &none).unwrap();
+                let relief = interleaved_relief(&with, &without);
+                let first = with.moves.first().map(|m| m.to).unwrap();
+                let all = xy_cuts(first, &with.moves);
+                let is_relief = |i: usize| relief.iter().any(|(k, _)| *k == i);
+                let at_bottom = |z: f64| z.abs() <= EPS_MM;
+                assert_eq!(relief.len(), 3 * 2 * 4, "{case}");
+                let bottom: Vec<usize> = relief
+                    .iter()
+                    .filter(|(_, c)| at_bottom(c.1) && at_bottom(c.2))
+                    .map(|(i, _)| *i)
+                    .collect();
+                assert_eq!(bottom.len(), 2 * 4, "{case}");
+                let lap_reaches_bottom = all
+                    .iter()
+                    .find(|(i, c)| !is_relief(*i) && at_bottom(c.2))
+                    .map(|(i, _)| *i)
+                    .unwrap();
+                let lap_last = all
+                    .iter()
+                    .rfind(|(i, c)| !is_relief(*i) && at_bottom(c.1) && at_bottom(c.2))
+                    .map(|(i, _)| *i)
+                    .unwrap();
+                assert!(
+                    bottom
+                        .iter()
+                        .all(|&i| lap_reaches_bottom < i && i < lap_last),
+                    "{case}: bottom notches {bottom:?} outside the final lap \
+                     {lap_reaches_bottom}..{lap_last}"
+                );
+            }
+        }
+    }
+
     // ── 7. Acceptance 29 and S9 ─────────────────────────────────────────
 
     /// The 40 × 30 rectangle's corners' dogbone ends: one radius past each
