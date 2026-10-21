@@ -34,7 +34,7 @@
 //!   over every region of the pocket at once; the regions keep their
 //!   order, each starting nearest the end of the one before (#150).
 
-use super::rings::{RingNode, RingTree, WallRings, inset_region};
+use super::rings::{Ring, RingNode, RingTree, WallRings, inset_region};
 use super::{MAX_RINGS, ring_path};
 use crate::footprint::capsule;
 use crate::sequence::link_inside_cleared;
@@ -362,6 +362,7 @@ pub(super) struct RasterSettings {
 /// nearest-first from where the tool is ([`order_nearest_first`]), then
 /// the wall rings for `WallRings::Last`, the rings first for
 /// `WallRings::First` (starting nearest the first scan line), or none.
+/// Wall rings `keep` refuses are not cut ([`RingTree::walk_keeping`]).
 /// `index` is the region's place among the pocket's tool-centre regions;
 /// an odd region's scan order starts with a reversed line, as upstream's
 /// does. `anchor` is the end of the previous path and is
@@ -382,6 +383,7 @@ pub(super) fn region_paths(
     root: &Region,
     index: usize,
     settings: &RasterSettings,
+    keep: &dyn Fn(&Ring) -> bool,
     anchor: &mut Option<Point>,
 ) -> Option<Vec<(Polyline, Option<Region>)>> {
     let lines = raster_lines(
@@ -398,7 +400,7 @@ pub(super) fn region_paths(
         *anchor = lines.first().map(|l| l.start).or(*anchor);
     }
     let first_rings = match settings.wall {
-        WallRings::First => wall_paths(root, settings.direction, anchor),
+        WallRings::First => wall_paths(root, settings.direction, keep, anchor),
         WallRings::Last | WallRings::Omitted => Vec::new(),
     };
     // Nearest-first from where the tool is (#150).
@@ -439,7 +441,7 @@ pub(super) fn region_paths(
         WallRings::Last => {
             out.extend(line_paths());
             *anchor = last_end.or(*anchor);
-            for (path, _) in wall_paths(root, settings.direction, anchor) {
+            for (path, _) in wall_paths(root, settings.direction, keep, anchor) {
                 out.push((path, Some(root.clone())));
             }
         }
@@ -451,12 +453,14 @@ pub(super) fn region_paths(
     Some(out)
 }
 
-/// The wall rings of `root` (its outer and its islands), nearest `anchor`
-/// first, each oriented by the direction rule and starting at its point
-/// nearest the previous ring's end; with each ring's start.
+/// The wall rings of `root` (its outer and its islands) that `keep`
+/// accepts, nearest `anchor` first, each oriented by the direction rule and
+/// starting at its point nearest the previous ring's end; with each ring's
+/// start.
 fn wall_paths(
     root: &Region,
     direction: CutDirection,
+    keep: &dyn Fn(&Ring) -> bool,
     anchor: &mut Option<Point>,
 ) -> Vec<(Polyline, Point)> {
     let tree = RingTree {
@@ -465,7 +469,7 @@ fn wall_paths(
             children: Vec::new(),
         }],
     };
-    tree.walk(WallRings::Last, anchor)
+    tree.walk_keeping(WallRings::Last, anchor, keep)
         .into_iter()
         .map(|ring| {
             let start = ring.start;
