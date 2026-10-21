@@ -70,7 +70,30 @@ pub enum Verdict {
 /// not read to its end.
 #[must_use]
 pub fn judge(run: &Run) -> Verdict {
-    let _ = (run, BANNER, PROGRAM_END);
+    let messages: Vec<&str> = run
+        .stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && *line != BANNER)
+        .collect();
+    match run.status {
+        Some(0) => {}
+        Some(code) if messages.is_empty() => {
+            return Verdict::Rejected(format!("exited {code}"));
+        }
+        Some(_) => return Verdict::Rejected(messages.join(" | ")),
+        None => return Verdict::Rejected("ended by a signal".to_owned()),
+    }
+    if !messages.is_empty() {
+        return Verdict::Rejected(format!("warning: {}", messages.join(" | ")));
+    }
+    if !run
+        .stdout
+        .lines()
+        .any(|line| line.trim_end().ends_with(PROGRAM_END))
+    {
+        return Verdict::Rejected("never reached the program end (M2 or M30)".to_owned());
+    }
     Verdict::Accepted
 }
 
@@ -182,8 +205,22 @@ pub enum Misconfigured {
 ///
 /// [`Misconfigured`] when a probe went the wrong way.
 pub fn classify(verdicts: &ProbeVerdicts) -> Result<ArcTier, Misconfigured> {
-    let _ = verdicts;
-    Ok(ArcTier::Strict)
+    if let Verdict::Rejected(why) = &verdicts.smoke {
+        return Err(Misconfigured::SmokeRejected(why.clone()));
+    }
+    if let Verdict::Rejected(why) = &verdicts.arc_valid {
+        return Err(Misconfigured::ValidArcRejected(why.clone()));
+    }
+    if verdicts.arc_gross == Verdict::Accepted {
+        return Err(Misconfigured::GrossArcAccepted);
+    }
+    if verdicts.absolute_centre_arc == Verdict::Accepted {
+        return Err(Misconfigured::AbsoluteCentreArcAccepted);
+    }
+    Ok(match verdicts.arc_tight {
+        Verdict::Accepted => ArcTier::Tolerant,
+        Verdict::Rejected(_) => ArcTier::Strict,
+    })
 }
 
 /// Writes each probe program into `dir` and runs `rs274` on it.

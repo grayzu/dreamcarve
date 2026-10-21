@@ -172,6 +172,9 @@ read from the chapters themselves.
   figure is stale.
 - `tools/third-party-licenses`: gathers the license texts shipped with
   release binaries.
+- `tools/gcode-conformance`: runs the LinuxCNC and generic programs
+  through LinuxCNC's `rs274` interpreter, in the `gcode-conformance` CI
+  job. See [Verifying a post-processor](post-processor-checklist.md#linuxcncs-interpreter).
 - `tools/parity/`: a Node script, not a Cargo crate, that drives a local
   PureCutCNC checkout to capture golden outputs. Not needed to build or
   test DreamCarve. See [Golden corpus](golden-corpus.md).

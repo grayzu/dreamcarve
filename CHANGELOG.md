@@ -185,6 +185,9 @@ it is written:
 - Profiles that would cut through material you keep are refused (see Changed),
   and S9 holds hand-written programs to the same rules.
 - Two enabled tools with the same `number`, or a number of 0, stop export.
+- The LinuxCNC and generic programs run through LinuxCNC's own interpreter,
+  `rs274` 2.9.10, in CI (`gcode-conformance`), which fails on any error or
+  warning it reports ([#173]).
 
 ### Removed
 
@@ -227,6 +230,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#153]: https://github.com/grayzu/dreamcarve/issues/153
 [#157]: https://github.com/grayzu/dreamcarve/issues/157
 [#171]: https://github.com/grayzu/dreamcarve/issues/171
+[#173]: https://github.com/grayzu/dreamcarve/issues/173
 [#175]: https://github.com/grayzu/dreamcarve/issues/175
 [#192]: https://github.com/grayzu/dreamcarve/issues/192
 [#199]: https://github.com/grayzu/dreamcarve/issues/199
