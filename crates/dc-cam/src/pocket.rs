@@ -2451,6 +2451,45 @@ mod tests {
         }
     }
 
+    /// #196: every ring starts at the point of its contour nearest the end
+    /// of the ring before it, arcs included, not at its nearest vertex. A
+    /// ring round the circular island is two arcs; its nearest vertex can
+    /// be 7.6 mm from the previous ring where its nearest point is a
+    /// step-over away (PureCutCNC's dense polygon ring starts there).
+    #[test]
+    fn ring_starts_at_nearest_point_not_nearest_vertex() {
+        let p = island_project();
+        let (tp, _) = generate(&p, &pocket_op(&p, CutDirection::Climb));
+        let centre = Point::new(70.0, 45.0);
+        for z in PASS_Z_MM {
+            let rings = rings_at(&tp, z);
+            let mut circles = 0;
+            for pair in rings.windows(2) {
+                let (before, ring) = (&pair[0], &pair[1]);
+                let link_mm = before.start().distance_to(ring.start());
+                assert!(
+                    link_mm <= STEPOVER_MM * std::f64::consts::SQRT_2 + RING_TOL,
+                    "Z {z}: link of {link_mm} mm onto the ring at {:?}",
+                    ring.start()
+                );
+                let radius_mm = ring.start().distance_to(centre);
+                let is_circle = ring
+                    .points
+                    .iter()
+                    .all(|q| (q.distance_to(centre) - radius_mm).abs() <= RING_TOL);
+                if !is_circle {
+                    continue;
+                }
+                circles += 1;
+                // The nearest point of a circle lies on the line from its
+                // centre: the link is the gap to the circle.
+                let gap_mm = (before.start().distance_to(centre) - radius_mm).abs();
+                assert_approx_eq!(link_mm, gap_mm, RING_TOL);
+            }
+            assert!(circles >= 1, "Z {z}: no ring round the island");
+        }
+    }
+
     #[test]
     fn unknown_tool_and_other_cutters_are_errors() {
         let p = rect_project();
@@ -2611,10 +2650,10 @@ mod tests {
     }
 
     /// Design step 7 at 0°: every clearance line is parallel to X, the
-    /// lines are one step-over apart, the first half a step-over above the
-    /// bottom of the tool-centre rect, and each spans the rect. The
-    /// tool-centre rect is 43.65 high: lines at 1.27 + 2.54 k for k = 0 to
-    /// 16 lie below 43.65 − 1.27, so 17 lines.
+    /// lines are one step-over apart, the first half a step-over below the
+    /// top of the tool-centre rect (PureCutCNC's Y-down `minY`, #195), and
+    /// each spans the rect. The tool-centre rect is 43.65 high: lines at
+    /// 43.65 − 1.27 − 2.54 k for k = 0 to 16 lie above 1.27, so 17 lines.
     #[test]
     fn raster_lines_at_zero_degrees_are_horizontal_and_spaced() {
         let p = rect_project();
@@ -2631,8 +2670,8 @@ mod tests {
                 assert_approx_eq!(line.from.x.max(line.to.x), tc.max.x, RING_TOL);
             }
             let ys: Vec<f64> = lines.iter().map(|l| l.from.y).collect();
-            let lowest = ys.iter().copied().fold(f64::MAX, f64::min);
-            assert_approx_eq!(lowest, tc.min.y + STEPOVER_MM / 2.0, RING_TOL);
+            let highest = ys.iter().copied().fold(f64::MIN, f64::max);
+            assert_approx_eq!(highest, tc.max.y - STEPOVER_MM / 2.0, RING_TOL);
             assert_spaced_by_stepover(ys, "0°");
         }
     }
@@ -2778,9 +2817,9 @@ mod tests {
                 .iter()
                 .filter(|m| m.is_rapid() && (m.to.z - SAFE_Z_MM).abs() <= TOL)
                 .count();
-            // Every line through the island's grown circle lifts once
-            // between its halves; at least the lines near Y 45 do.
-            assert!(retracts >= 2, "retracts at Z {z}: {retracts}");
+            // The far side of the island is reached by a lift (#150: the
+            // pieces are cut nearest-first, so only once).
+            assert!(retracts >= 1, "retracts at Z {z}: {retracts}");
             for pair in lines.windows(2) {
                 let (a, b) = (pair[0], pair[1]);
                 let same_line = (a.from.y - b.from.y).abs() <= TOL;
@@ -2793,6 +2832,79 @@ mod tests {
                         "no retract between {a:?} and {b:?}"
                     );
                 }
+            }
+        }
+    }
+
+    /// The retracts to safe Z at `z_mm` between the first raster line of
+    /// the island fixture and its last, and every link between two lines
+    /// checked: either a retract, or a stay-down of straight feed moves at
+    /// `z_mm`, together no longer than one diameter plus a step-over,
+    /// inside the tool-centre rect and clear of the island's grown circle.
+    fn island_raster_lifts_at(tp: &Toolpath, z_mm: f64) -> usize {
+        let centre = Point::new(70.0, 45.0);
+        let tc = tool_centre();
+        let lines: Vec<Cut> = raster_lines_at(tp, z_mm)
+            .into_iter()
+            .filter(|c| tp.moves[c.index].kind == MoveKind::Linear)
+            .collect();
+        assert!(lines.len() > 17, "Z {z_mm}: {lines:?}");
+        let is_retract = |m: &Move| m.is_rapid() && (m.to.z - SAFE_Z_MM).abs() <= TOL;
+        let mut lifts = 0;
+        for pair in lines.windows(2) {
+            let between = &tp.moves[pair[0].index + 1..pair[1].index];
+            if between.iter().any(is_retract) {
+                lifts += 1;
+                continue;
+            }
+            let links: Vec<Cut> = cuts(tp)
+                .into_iter()
+                .filter(|c| c.index > pair[0].index && c.index < pair[1].index)
+                .collect();
+            assert_eq!(links.len(), between.len(), "{between:?}");
+            let length_mm: f64 = links.iter().map(Cut::length_mm).sum();
+            assert!(length_mm <= LINK_MAX_MM + EPS_MM, "{links:?}");
+            for link in links {
+                let mv = tp.moves[link.index];
+                assert_eq!(mv.kind, MoveKind::Linear, "{mv:?}");
+                assert_approx_eq!(mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
+                assert_approx_eq!(link.z_mm, z_mm, TOL);
+                for q in [link.from, link.to] {
+                    assert!(
+                        q.x >= tc.min.x - RING_TOL
+                            && q.x <= tc.max.x + RING_TOL
+                            && q.y >= tc.min.y - RING_TOL
+                            && q.y <= tc.max.y + RING_TOL,
+                        "link leaves the tool-centre rect: {link:?}"
+                    );
+                }
+                let d = segment_distance(centre, link.from, link.to);
+                assert!(
+                    d >= 10.0 + RADIUS_MM - FLAT_TOL,
+                    "link {link:?} crosses the island ({d} mm from its centre)"
+                );
+            }
+        }
+        lifts
+    }
+
+    /// #150: the pieces of lines split by the island are cut nearest-first
+    /// (upstream `orderOpenSegmentsGreedy`), so the tool zigzags down one
+    /// side of the island before it crosses to the other. In scan order
+    /// every split line lifted once, 11 times per pass; nearest-first lifts
+    /// once per pass. Every link between lines is a stay-down inside the
+    /// region or a retract.
+    #[test]
+    fn raster_lifts_around_island_are_minimised() {
+        let p = island_project();
+        for wall_pass in [WallPass::None, WallPass::Last, WallPass::First] {
+            let op = raster_op(&p, CutDirection::Climb, 0.0, wall_pass);
+            let (tp, warnings) = generate(&p, &op);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_clear_of_island(&tp);
+            for z in PASS_Z_MM {
+                let lifts = island_raster_lifts_at(&tp, z);
+                assert_eq!(lifts, 1, "{wall_pass:?} at Z {z}");
             }
         }
     }

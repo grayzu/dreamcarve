@@ -280,7 +280,8 @@ pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Polyline, area_mm2, assert_approx_eq};
+    use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Polyline, area_mm2, assert_approx_eq};
+    use std::f64::consts::TAU;
 
     fn region(polylines: Vec<Polyline>) -> Region {
         let contours = polylines
@@ -335,6 +336,42 @@ mod tests {
         assert!(out.is_empty(), "{out:?}");
         let tree = RingTree::build(r, 1.2, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
         assert_eq!(tree.nodes.len(), 1);
+    }
+
+    /// #196: a ring starts at its point nearest the anchor, on an arc too,
+    /// not at its nearest vertex. A circle of radius 10 about the origin
+    /// has vertices at (±10, 0); from (12, 1) its nearest point is at
+    /// θ = atan2(1, 12), and the ring's contour gains a vertex there.
+    #[test]
+    fn ring_starts_at_nearest_point_of_an_arc() {
+        let r = region(vec![Polyline::circle(Point::new(0.0, 0.0), 10.0)]);
+        let tree = RingTree::build(r, 50.0, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        let mut anchor = Some(Point::new(12.0, 1.0));
+        let rings = tree.walk(WallRings::Last, &mut anchor);
+        assert_eq!(rings.len(), 1);
+        let theta = 1.0_f64.atan2(12.0);
+        let want = Point::new(10.0 * theta.cos(), 10.0 * theta.sin());
+        assert!(
+            rings[0].start.distance_to(want) <= EPS_MM,
+            "starts at {:?}, want {want:?}",
+            rings[0].start
+        );
+        assert_eq!(anchor, Some(rings[0].start));
+        let contour = rings[0].contour.polyline();
+        assert!(
+            contour
+                .vertices()
+                .iter()
+                .any(|v| v.point().distance_to(want) <= EPS_MM),
+            "{contour:?}"
+        );
+        // Splitting keeps the circle: same length and area.
+        assert_approx_eq!(contour.length_mm(), TAU * 10.0, 1e-9);
+        assert_approx_eq!(
+            contour.signed_area_mm2(),
+            std::f64::consts::PI * 100.0,
+            1e-9
+        );
     }
 
     #[test]

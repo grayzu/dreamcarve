@@ -332,14 +332,15 @@ mod tests {
         )])
     }
 
-    /// Upstream's scan: 10 high at step 2 gives lines at 1, 3, 5, 7 and 9,
-    /// alternating, each across the full width.
+    /// Upstream's scan starts from its Y-down `minY`, which is the top in
+    /// Y-up (#195): 10 high at step 2 gives lines at 9, 7, 5, 3 and 1, top
+    /// first, alternating, each across the full width.
     #[test]
-    fn scan_starts_half_a_step_in_and_alternates() {
+    fn scan_starts_half_a_step_below_the_top() {
         let lines = raster_lines(&rect(20.0, 10.0), 2.0, 0.0, TOL, false, 100).unwrap();
         let ys: Vec<f64> = lines.iter().map(|l| l.start.y).collect();
         assert_eq!(ys.len(), 5, "{lines:?}");
-        for (y, want) in ys.iter().zip([1.0, 3.0, 5.0, 7.0, 9.0]) {
+        for (y, want) in ys.iter().zip([9.0, 7.0, 5.0, 3.0, 1.0]) {
             assert_approx_eq!(*y, want, 1e-9);
         }
         assert_approx_eq!(lines[0].start.x, 0.0, 1e-9);
@@ -358,14 +359,17 @@ mod tests {
         assert_approx_eq!(lines[0].start.y, 0.75, 1e-9);
     }
 
-    /// 10 high at step 3.6: the scan gives 1.8 and 5.4, 4.6 short of the
-    /// top; a closing line at 10 − 1.8 keeps the gap within a step-over.
+    /// 10 high at step 3.6: the scan from the top gives 8.2 and 4.6, 4.6
+    /// above the bottom; a closing line at 1.8 keeps the gap within a
+    /// step-over.
     #[test]
     fn closing_line_when_the_scan_stops_short() {
         let lines = raster_lines(&rect(20.0, 10.0), 3.6, 0.0, TOL, false, 100).unwrap();
         let ys: Vec<f64> = lines.iter().map(|l| l.start.y).collect();
         assert_eq!(ys.len(), 3, "{ys:?}");
-        assert_approx_eq!(ys[2], 8.2, 1e-9);
+        for (y, want) in ys.iter().zip([8.2, 4.6, 1.8]) {
+            assert_approx_eq!(*y, want, 1e-9);
+        }
     }
 
     /// At 90° the lines run along +Y and −Y, one step apart in X.
@@ -390,18 +394,18 @@ mod tests {
             Polyline::rect(Point::new(10.0, 2.0), 10.0, 6.0),
         ]);
         let lines = raster_lines(&r, 2.0, 0.0, TOL, false, 100).unwrap();
-        // Y 1 and 9 clear the island; 3, 5 and 7 are split.
+        // Y 9 and 1 clear the island; 7, 5 and 3 are split.
         assert_eq!(lines.len(), 8, "{lines:?}");
-        // Y 3 is the second scan line, reversed: right piece first.
-        let at_3: Vec<&RasterLine> = lines
+        // Y 7 is the second scan line, reversed: right piece first.
+        let at_7: Vec<&RasterLine> = lines
             .iter()
-            .filter(|l| (l.start.y - 3.0).abs() < 1e-9)
+            .filter(|l| (l.start.y - 7.0).abs() < 1e-9)
             .collect();
-        assert_eq!(at_3.len(), 2);
-        assert_approx_eq!(at_3[0].start.x, 30.0, 1e-9);
-        assert_approx_eq!(at_3[0].end.x, 20.0, 1e-9);
-        assert_approx_eq!(at_3[1].start.x, 10.0, 1e-9);
-        assert_approx_eq!(at_3[1].end.x, 0.0, 1e-9);
+        assert_eq!(at_7.len(), 2);
+        assert_approx_eq!(at_7[0].start.x, 30.0, 1e-9);
+        assert_approx_eq!(at_7[0].end.x, 20.0, 1e-9);
+        assert_approx_eq!(at_7[1].start.x, 10.0, 1e-9);
+        assert_approx_eq!(at_7[1].end.x, 0.0, 1e-9);
     }
 
     #[test]
