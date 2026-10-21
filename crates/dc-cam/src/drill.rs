@@ -287,6 +287,7 @@ pub fn generate_drill(
         // this rate; the plunge rate is the only rate a Drill uses.
         feed_mm_min: plunge_mm_min,
         plunge_mm_min,
+        cut_before: &[],
     };
     let records = plan(&input)?
         .into_iter()

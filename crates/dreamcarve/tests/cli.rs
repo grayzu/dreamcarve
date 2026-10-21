@@ -4246,8 +4246,10 @@ fn engrave_exports_and_passes_safety() {
         "the border's passes run the same way: {b1:?} then {b2:?}"
     );
 
-    // Safety: rapids at safe Z (5 mm above the stock top), nothing below
-    // the stock bottom.
+    // Safety: rapids at safe Z (5 mm above the stock top), except a rapid
+    // straight down from there to 1 mm above the stock top or above the
+    // pass before's floor, before a plunge (#227); nothing below the stock
+    // bottom.
     for (k, m) in moves.iter().enumerate() {
         let z = m.to.z.expect("Z is known after the first move");
         assert!(
@@ -4255,7 +4257,16 @@ fn engrave_exports_and_passes_safety() {
             "move {k} below the stock: {m:?}"
         );
         if !m.kind.is_cut() {
-            assert!(z >= 5.0 - 1e-6, "rapid {k} below safe Z: {m:?}");
+            let down = m.from.x == m.to.x && m.from.y == m.to.y && m.from.z >= Some(5.0 - 1e-6);
+            let floor = if down { -0.5 + 1.0 } else { 5.0 };
+            assert!(z >= floor - 1e-6, "rapid {k} below safe Z: {m:?}");
+            if down && z < 5.0 - 1e-6 {
+                let next = &moves[k + 1];
+                assert!(
+                    next.kind.is_cut() && next.to.z < Some(z),
+                    "a plunge follows rapid {k}: {next:?}"
+                );
+            }
         }
     }
 }

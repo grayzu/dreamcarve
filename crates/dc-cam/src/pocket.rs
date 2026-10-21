@@ -465,6 +465,7 @@ pub fn generate_pocket(
         stepover_mm,
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
+        cut_before: &[],
     };
     let mut toolpath = sequence(&input)?;
     // Design step 10: the relief pass after all the passes; S9 allows each
@@ -1638,7 +1639,9 @@ mod tests {
     /// second pass is preceded by a vertical plunge at the plunge rate that
     /// ends where that cut starts, and the plunge comes down from a rapid
     /// at safe Z. Upstream's `-4` is the second pass Z of a 4 mm cut in 2
-    /// mm steps; here that is Z 2 above the bottom of 6 mm stock.
+    /// mm steps; here that is Z 2 above the bottom of 6 mm stock. (changed
+    /// in #227: the rapid from safe Z goes on straight down to 1 mm above
+    /// the first pass's floor, Z 5, and the plunge starts there.)
     #[test]
     fn levels_rapid_at_safe_z_before_plunging() {
         let p = rect_project();
@@ -1665,7 +1668,11 @@ mod tests {
         );
         assert_approx_eq!(plunge.to.z, PASS_Z_MM[1], TOL);
         assert!(before.is_rapid(), "{before:?}");
-        assert_approx_eq!(before.to.z, SAFE_Z_MM, TOL);
+        assert_approx_eq!(before.to.z, PASS_Z_MM[0] + 1.0, TOL);
+        let lifted = m[first_deep - 3];
+        assert!(lifted.is_rapid(), "{lifted:?}");
+        assert!(lifted.to.xy().distance_to(plunge.to.xy()) <= EPS_MM);
+        assert_approx_eq!(lifted.to.z, SAFE_Z_MM, TOL);
         // And the ring continues from the plunge at the feed rate.
         assert_approx_eq!(m[first_deep].feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
     }

@@ -609,8 +609,12 @@ impl Relief {
                 stepover_mm: 0.0,
                 feed_mm_min: self.rates.feed_mm_min,
                 plunge_mm_min: self.rates.plunge_mm_min,
+                // #227: the notch's rapid down stops just above the floor
+                // the main path cut at its descend point.
+                cut_before: &toolpath.moves,
             };
-            toolpath.moves.extend(sequence(&input)?.moves);
+            let notch = sequence(&input)?;
+            toolpath.moves.extend(notch.moves);
         }
         Ok(ordered)
     }
@@ -1923,7 +1927,8 @@ mod tests {
     /// path has cut the floor at Z 4, starts from a rapid straight down
     /// from safe Z that stops 1 mm above that floor, not at safe Z: for a
     /// Pocket's relief pass, cut after the main path, and for an inside
-    /// Profile's notches, cut among its passes.
+    /// Profile's notches, cut among its passes. The last rapid down at a
+    /// descend point is the notch's; a lap may start there too.
     #[test]
     fn notch_rapids_to_just_above_the_cut_floor() {
         let p = one_tool(vec![rect(40.0, 40.0)]);
@@ -1941,7 +1946,7 @@ mod tests {
                 let i = tp
                     .moves
                     .iter()
-                    .position(|m| m.is_rapid() && at_d(m) && m.to.z < safe_z_mm - EPS_MM)
+                    .rposition(|m| m.is_rapid() && at_d(m) && m.to.z < safe_z_mm - EPS_MM)
                     .unwrap_or_else(|| panic!("{name}: no rapid down at {d:?}: {:?}", tp.moves));
                 assert_eq!(
                     tp.moves[i - 1],
