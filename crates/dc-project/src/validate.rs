@@ -1045,7 +1045,7 @@ impl Validator {
                 });
             }
             let at = format!("instances[{}]", inst.id);
-            let coeffs = inst.transform.as_kurbo().as_coeffs();
+            let coeffs = inst.transform.coeffs();
             let mut ok = true;
             for (i, c) in coeffs.iter().enumerate() {
                 let field = format!("{at}.transform[{i}]");
