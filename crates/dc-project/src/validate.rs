@@ -43,9 +43,9 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
-    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, Lead, Operation,
-    OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement, Tool,
-    ToolKind,
+    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, LastPass, Lead,
+    Operation, OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement,
+    Tool, ToolKind,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -381,6 +381,34 @@ pub enum Problem {
         /// half the included angle.
         cone_height_mm: f64,
     },
+    /// An enabled Profile's last pass allowance is not more than 0 and at
+    /// most a third of its bit's diameter (#284; VCarve advises keeping it
+    /// well below a third). An error.
+    LastPassAllowance {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool's display name.
+        tool_name: String,
+        /// The allowance set, mm.
+        allowance_mm: f64,
+        /// The bit's diameter, mm.
+        diameter_mm: f64,
+        /// The largest allowance allowed, mm: a third of the diameter.
+        limit_mm: f64,
+    },
+    /// A Profile has a last pass but cuts On line, Left or Right (#284):
+    /// only Inside and Outside leave material on a wall the last pass can
+    /// take off. An error.
+    LastPassNeedsSide {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The side it cuts.
+        side: Side,
+    },
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min (#67).
@@ -435,6 +463,8 @@ impl Problem {
             Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
             Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
             Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
+            Self::LastPassAllowance { .. } => "last_pass_allowance",
+            Self::LastPassNeedsSide { .. } => "last_pass_needs_side",
         }
     }
 
@@ -456,7 +486,9 @@ impl Problem {
             | Self::DuplicateToolNumber { .. }
             | Self::RestOfInvalid { .. }
             | Self::HelixNeedsWasteSide { .. }
-            | Self::CannedCyclesUnsupported { .. } => Severity::Error,
+            | Self::CannedCyclesUnsupported { .. }
+            | Self::LastPassAllowance { .. }
+            | Self::LastPassNeedsSide { .. } => Severity::Error,
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -563,6 +595,12 @@ impl Problem {
             }
             Self::EngraveDeeperThanCone { operation, .. } => {
                 Some(format!("operations[{operation}].depth_mm"))
+            }
+            Self::LastPassAllowance { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass.allowance_mm"))
+            }
+            Self::LastPassNeedsSide { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass"))
             }
         }
     }
@@ -742,6 +780,32 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
             ),
+            Self::LastPassAllowance {
+                operation,
+                name,
+                tool_name,
+                allowance_mm,
+                diameter_mm,
+                limit_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has last_pass.allowance_mm {allowance_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
+            ),
+            Self::LastPassNeedsSide {
+                operation,
+                name,
+                side,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the allowance off a wall the other passes leave, so it needs an Inside or Outside Profile. Set last_pass to null, or cut Inside or Outside",
+                match side {
+                    Side::OnLine => "on the line",
+                    Side::Left => "to the left of open paths",
+                    Side::Right => "to the right of open paths",
+                    Side::Inside => "inside",
+                    Side::Outside => "outside",
+                }
+            ),
             Self::HelixNeedsWasteSide { operation, name } => write!(
                 f,
                 "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
@@ -801,6 +865,7 @@ const SWEEP: &str = "an angle greater than 0 and at most 180 degrees";
 const ENTRY_ANGLE: &str = "an angle greater than 0 and at most 45 degrees";
 const RASTER_ANGLE: &str = "an angle of 0 or more and less than 180 degrees";
 const BELOW_Z_TOP: &str = "a value at most the instance's z_top_mm";
+const LAST_PASS_THICKNESS: &str = "a value greater than 0 and at most the operation's depth_mm";
 // The limits below spell out `MAX_COORDINATE_MM`; a test checks they agree.
 const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
 const COORDINATE: &str = "a value from -6000 to 6000 mm";
@@ -1283,6 +1348,26 @@ impl Validator {
                 tool_name: tool.name.clone(),
             });
         }
+        // #284: VCarve advises an allowance well below a third of the bit.
+        if let Operation::Profile(profile) = op
+            && let Some(last_pass) = &profile.last_pass
+            && last_pass.allowance_mm.is_finite()
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0
+        {
+            let limit_mm = tool.diameter_mm / 3.0;
+            let allowance_mm = last_pass.allowance_mm;
+            if allowance_mm <= 0.0 || allowance_mm > limit_mm {
+                self.problems.push(Problem::LastPassAllowance {
+                    operation: op.id().clone(),
+                    name: op.name().to_owned(),
+                    tool_name: tool.name.clone(),
+                    allowance_mm,
+                    diameter_mm: tool.diameter_mm,
+                    limit_mm,
+                });
+            }
+        }
         if let (Operation::Engrave(engrave), ToolKind::VBit { included_angle_deg }) =
             (op, &tool.cutter)
             && let included_angle_deg = *included_angle_deg
@@ -1344,6 +1429,35 @@ impl Validator {
         }
         if let Some(lead) = &op.lead {
             self.lead(lead, at);
+        }
+        if let Some(last_pass) = &op.last_pass {
+            self.last_pass(op, last_pass, at);
+        }
+    }
+
+    /// A last pass's values that need no tool (#284): a finite allowance
+    /// (its range needs the bit, [`Self::enabled_operation`]), a thickness
+    /// in (0, depth], and an Inside or Outside side.
+    fn last_pass(&mut self, op: &ProfileOp, last_pass: &LastPass, at: &str) {
+        self.finite(
+            &format!("{at}.last_pass.allowance_mm"),
+            last_pass.allowance_mm,
+        );
+        if let Some(thickness_mm) = last_pass.thickness_mm {
+            let field = format!("{at}.last_pass.thickness_mm");
+            let above_depth = op
+                .depth_mm
+                .is_some_and(|depth_mm| depth_mm.is_finite() && thickness_mm > depth_mm);
+            if self.finite(&field, thickness_mm) && (thickness_mm <= 0.0 || above_depth) {
+                self.out_of_range(field, thickness_mm, LAST_PASS_THICKNESS);
+            }
+        }
+        if !op.side.has_waste_area() {
+            self.problems.push(Problem::LastPassNeedsSide {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+                side: op.side,
+            });
         }
     }
 

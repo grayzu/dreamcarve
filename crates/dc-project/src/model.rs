@@ -504,6 +504,34 @@ pub struct ProfileOp {
     /// an Inside cut, the part's concave corners on an Outside cut.
     /// Migration: none.
     pub corner_relief: CornerRelief,
+    /// A finishing pass (#284): every pass but the last leaves
+    /// [`LastPass::allowance_mm`] on the wall and the last cuts it to
+    /// size. Inside and Outside only. `init` and migration: none.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub last_pass: Option<LastPass>,
+}
+
+/// A Profile's last pass allowance (#284, functional spec capability 34;
+/// VCarve's 2D Profile "Last Pass Allowance", Fusion's 2D Contour stock to
+/// leave and finishing pass): every pass but the last runs `allowance_mm`
+/// farther from the part, and the last pass cuts on the part's path, so
+/// it takes an even skin off the whole wall and leaves no step marks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LastPass {
+    /// Material every pass but the last leaves on the wall, millimetres:
+    /// more than 0 and at most a third of the bit's diameter.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub allowance_mm: f64,
+    /// How deep the last pass cuts, millimetres, more than 0 and at most
+    /// `depth_mm` (VCarve's "Set Last Pass Thickness"): the other passes
+    /// step down to `depth_mm − thickness_mm`. `None`: the last pass is the
+    /// last of the usual depth passes.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub thickness_mm: Option<f64>,
+    /// Cut the last pass the other way round (VCarve's "Reverse
+    /// direction"): conventional after climbing passes, and the reverse.
+    pub reverse: bool,
 }
 
 /// How a Pocket clears its region (functional spec, capability 12). Saved

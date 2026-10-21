@@ -5904,7 +5904,9 @@ fn last_pass_exports_and_refuses_what_cannot_work() {
         (Side::OnLine, 0.5, "Inside or Outside"),
     ] {
         set_last_pass(side, allowance_mm);
-        std::fs::remove_file(dir.join("coaster.nc")).expect("program removed");
+        if dir.join("coaster.nc").exists() {
+            std::fs::remove_file(dir.join("coaster.nc")).expect("program removed");
+        }
         for args in [
             &["check", "coaster.dcv"][..],
             &["export", "coaster.dcv", "--date", FIXED_DATE],

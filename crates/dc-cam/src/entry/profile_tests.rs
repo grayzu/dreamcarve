@@ -140,6 +140,7 @@ fn op(p: &Project, side: Side, entry: Entry) -> ProfileOp {
         entry,
         lead: None,
         corner_relief: CornerRelief::None,
+        last_pass: None,
     }
 }
 

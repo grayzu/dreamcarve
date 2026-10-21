@@ -18,9 +18,9 @@ use dc_geometry::{Point, Polyline, Transform, Vertex};
 use dc_project::test_support::sample_project;
 use dc_project::{
     ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, DrillCycle, DrillOp, EngraveOp,
-    Entry, FeatureDefinition, FeatureInstance, InstanceId, Lead, MachineOrigin, MachiningOrder,
-    Operation, OperationId, OriginXy, OriginZ, PeckRetract, PocketOp, ProfileOp, Project, Side,
-    Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units, WallPass,
+    Entry, FeatureDefinition, FeatureInstance, InstanceId, LastPass, Lead, MachineOrigin,
+    MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PeckRetract, PocketOp, ProfileOp,
+    Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units, WallPass,
     latest_definitions,
 };
 use proptest::prelude::*;
@@ -432,6 +432,22 @@ fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape, boo
     ))
 }
 
+/// A last pass (#284) where the side has a wall to leave it on, as
+/// (allowance as a fraction of a third of the bit, thickness as a fraction
+/// of the depth, reverse).
+fn last_pass(wall: bool) -> BoxedStrategy<Option<(f64, Option<f64>, bool)>> {
+    if wall {
+        prop::option::of((
+            0.05..=1.0_f64,
+            prop::option::of(0.05..=1.0_f64),
+            any::<bool>(),
+        ))
+        .boxed()
+    } else {
+        Just(None).boxed()
+    }
+}
+
 fn lead() -> impl Strategy<Value = Option<Lead>> {
     prop::option::of(
         (0.5..4.0_f64, 10.0..=180.0_f64, any::<bool>(), 0.0..3.0_f64).prop_map(
@@ -476,6 +492,7 @@ fn profile_project_of(
                     entry(side.has_waste_area()),
                     lead(),
                     relief(),
+                    last_pass(side.has_waste_area()),
                 ),
             )
         })
@@ -484,9 +501,10 @@ fn profile_project_of(
                 setup,
                 side,
                 (depth, step_down_mm, direction, safe_z_mm),
-                (tabs, order, entry, lead, relief),
+                (tabs, order, entry, lead, relief, last_pass),
             )| {
                 project(setup, |s, targets| {
+                    let depth_mm = depth.depth_mm(s.thickness_mm);
                     Operation::Profile(ProfileOp {
                         id: OperationId::new("o1"),
                         name: "Profile".into(),
@@ -494,7 +512,7 @@ fn profile_project_of(
                         targets,
                         tool: s.tool.id.clone(),
                         side,
-                        depth_mm: Some(depth.depth_mm(s.thickness_mm)),
+                        depth_mm: Some(depth_mm),
                         step_down_mm,
                         direction,
                         through_cut_allowance_mm: depth.allowance_mm,
@@ -510,6 +528,11 @@ fn profile_project_of(
                         entry,
                         lead,
                         corner_relief: relief,
+                        last_pass: last_pass.map(|(allowance, thickness, reverse)| LastPass {
+                            allowance_mm: allowance * s.tool.diameter_mm / 3.0,
+                            thickness_mm: thickness.map(|t| t * depth_mm),
+                            reverse,
+                        }),
                     })
                 })
             },

@@ -302,6 +302,7 @@ fn default_project(
         },
         lead: None,
         corner_relief: CornerRelief::None,
+        last_pass: None,
     };
     Project {
         version: CURRENT_VERSION,

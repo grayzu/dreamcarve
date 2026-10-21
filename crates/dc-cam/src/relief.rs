@@ -651,10 +651,13 @@ impl Relief {
     /// lap first reaches the descend point at depth, so no notch plunges
     /// into the skin and nothing is cut after the lap closes. A shape's
     /// corners are taken nearest-neighbour from where its first block
-    /// ends, the same order at every pass.
+    /// ends, the same order at every pass. With `only_pass` (#284) every
+    /// level goes to that pass, the only one whose lap opens the column at
+    /// the descend point.
     fn interleave(
         &self,
         sites: &[Site],
+        only_pass: Option<usize>,
         blocks: &mut [CutBlock],
         warnings: &mut Vec<Warning>,
     ) -> Vec<CutBlock> {
@@ -705,6 +708,9 @@ impl Relief {
             let mut passes: Vec<(usize, f64)> = own.iter().map(|b| (b.pass, b.z_mm)).collect();
             passes.sort_by_key(|(pass, _)| *pass);
             passes.dedup_by_key(|(pass, _)| *pass);
+            if let Some(only) = only_pass {
+                passes.retain(|(pass, _)| *pass == only);
+            }
             for corner in nearest_neighbour(mine, first.exit) {
                 let mut groups: Vec<(usize, Vec<f64>)> = Vec::new();
                 for &level in &self.levels {
@@ -971,6 +977,11 @@ pub(crate) struct ProfileGeometry<'a> {
     pub paths: &'a [(Polyline, &'a ShapeRef)],
     /// The wall each path cuts and the index of its region.
     pub walls: &'a [(Wall, usize)],
+    /// The only pass whose laps run on `paths` (#284: the last pass of a
+    /// Profile with a last pass allowance, whose earlier passes run on the
+    /// allowance path and open no column where a notch descends); `None`
+    /// when every pass does.
+    pub only_pass: Option<usize>,
 }
 
 /// The relief sites of a Profile on `side`: per region, its outline and
@@ -1055,7 +1066,12 @@ pub(crate) fn profile_notches(
         tolerance_mm: project.flatten_tolerance_mm,
     };
     Ok(match setup.plan(warnings)? {
-        Some(relief) => relief.interleave(&profile_sites(op.side, geometry), blocks, warnings),
+        Some(relief) => relief.interleave(
+            &profile_sites(op.side, geometry),
+            geometry.only_pass,
+            blocks,
+            warnings,
+        ),
         None => Vec::new(),
     })
 }
@@ -1402,6 +1418,7 @@ mod tests {
             entry: Entry::Plunge,
             lead: None,
             corner_relief: relief,
+            last_pass: None,
         }
     }
 

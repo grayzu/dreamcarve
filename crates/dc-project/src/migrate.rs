@@ -63,6 +63,12 @@
 //!   `dc-cam` builds, so generation places it before it cuts, and each
 //!   `dreamcarve tabs` command that saves the project writes it as placed
 //!   tabs.
+//! - **12**: separate heights (#283). STAND-IN until #283 merges: an
+//!   identity step, so this branch's version 13 has a version 12 to
+//!   migrate from. #283's own step replaces it.
+//! - **13**: adds each Profile's last pass allowance, `last_pass: null`
+//!   after `corner_relief` (#284): every pass cuts on the part's path, as
+//!   before.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -73,7 +79,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 11;
+pub const CURRENT_VERSION: u32 = 13;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -93,6 +99,8 @@ fn step(from: u32) -> Option<Step> {
         8 => Some(v8_to_v9),
         9 => Some(v9_to_v10),
         10 => Some(v10_to_v11),
+        11 => Some(v11_to_v12),
+        12 => Some(v12_to_v13),
         _ => None,
     }
 }
@@ -474,6 +482,50 @@ fn v10_to_v11(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
         out.insert("tabs".into(), Value::Array(Vec::new()));
     }
     Ok(out)
+}
+
+/// Version 11 → 12 (#283, separate heights). STAND-IN until #283 merges:
+/// changes only the version. #283's step replaces it.
+fn v11_to_v12(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    Ok(root)
+}
+
+/// Version 12 → 13 (#284): `last_pass: null` right after each Profile's
+/// `corner_relief`, so every pass cuts on the part's path as before. Other
+/// operations are unchanged. Fails if a Profile already has the key: that
+/// is not a version 12 file.
+fn v12_to_v13(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("last_pass") {
+            return Err(format!(
+                "a version 12 file has no `operations[{i}].last_pass`, but this one does"
+            ));
+        }
+        let mut out = Map::with_capacity(fields.len() + 1);
+        let mut inserted = false;
+        for (key, value) in fields {
+            let after_this = key == "corner_relief";
+            out.insert(key, value);
+            if after_this {
+                out.insert("last_pass".into(), Value::Null);
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("last_pass".into(), Value::Null);
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
 }
 
 /// `map` with `key: value` inserted right after `after`, or at the end
@@ -1278,7 +1330,10 @@ mod tests {
         let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
         let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
         assert_eq!(at("tabs"), at("operations") + 1, "{keys:?}");
-        assert_eq!(migrate(sample_root_at(10), 10).unwrap(), sample_root_at(11));
+        assert_eq!(
+            migrate(sample_root_at(10), 10).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
     }
 
     #[test]

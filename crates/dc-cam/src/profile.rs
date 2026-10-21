@@ -15,6 +15,7 @@
 //! counter-clockwise arc, and the direction rule is [`traversal_is_ccw`].
 
 mod entries;
+mod last_pass;
 mod waste;
 
 use crate::block::CutBlock;
@@ -24,7 +25,7 @@ use crate::entry::{
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
 use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
-use crate::passes::pass_z_mm;
+
 use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
@@ -334,13 +335,19 @@ pub fn generate_profile(
     let depth_mm = op
         .depth_mm
         .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
-    let pass_z = pass_z_mm(
-        &op.id,
-        thickness_mm,
-        depth_mm,
-        step_down_mm,
-        op.through_cut_allowance_mm,
-    )?;
+    // #284: a last pass, with its own depth when it sets a thickness.
+    let last_pass = op.last_pass.as_ref();
+    if let Some(last_pass) = last_pass {
+        last_pass::check(op, last_pass, tool.diameter_mm, depth_mm)?;
+    }
+    let pass_z = last_pass::pass_z(op, thickness_mm, depth_mm, step_down_mm, last_pass)?;
+    let last_index = pass_z.len().saturating_sub(1);
+    // The passes before the last run on the allowance paths; with no pass
+    // before it there are none.
+    let allowance_mm = last_pass
+        .filter(|_| pass_z.len() > 1)
+        .map(|l| l.allowance_mm);
+    let reverse_last = last_pass.is_some_and(|l| l.reverse);
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let start_z_mm = entry::descent_start_z_mm(thickness_mm, safe_z_mm);
 
@@ -366,12 +373,17 @@ pub fn generate_profile(
         &shapes,
         &open_paths,
         project.flatten_tolerance_mm,
+        allowance_mm,
         &mut warnings,
     )?;
-    let walls: Vec<(Wall, usize)> = placed.iter().map(|(_, _, w, r, _)| (*w, *r)).collect();
-    let holes: Vec<bool> = placed.iter().map(|(_, _, _, _, hole)| *hole).collect();
-    let paths: Vec<(Polyline, &ShapeRef)> =
-        placed.into_iter().map(|(p, s, _, _, _)| (p, s)).collect();
+    let walls: Vec<(Wall, usize)> = placed.iter().map(|c| (c.wall, c.region)).collect();
+    let holes: Vec<bool> = placed.iter().map(|c| c.hole).collect();
+    let mut twins: Vec<Option<Polyline>> = Vec::with_capacity(placed.len());
+    let mut paths: Vec<(Polyline, &ShapeRef)> = Vec::with_capacity(placed.len());
+    for c in placed {
+        twins.push(c.twin);
+        paths.push((c.path, c.shape));
+    }
 
     // Tab layout per path, and one block per path per pass (#105): the
     // placed tabs on each path's outline, and the tabs a request asks for.
@@ -402,6 +414,60 @@ pub fn generate_profile(
             shape,
         });
     }
+    // #284: the part's `n` paths, then each one's allowance twin, which
+    // the passes before the last cut; `twin_of` finds it. A twin's tabs
+    // are its part path's, carried onto it and widened by the allowance;
+    // a reversed last pass runs its path the other way from the same
+    // start, its tabs where they were.
+    let n = paths.len();
+
+    let mut walls = walls;
+    let mut layouts = layouts;
+    let mut allowances: Vec<f64> = vec![0.0; n];
+    let mut reversed: Vec<bool> = vec![false; n];
+    let mut twin_of: Vec<Option<usize>> = vec![None; n];
+    if let Some(allowance_mm) = allowance_mm {
+        for (i, twin) in twins.into_iter().enumerate() {
+            let (Some(twin), Some((path, shape)), Some(wall), Some(layout)) =
+                (twin, paths.get(i), walls.get(i), layouts.get(i))
+            else {
+                continue;
+            };
+            let carried = layout.as_ref().map(|(l, overlapped)| {
+                (
+                    last_pass::carry(path, l, &twin, false, allowance_mm),
+                    *overlapped,
+                )
+            });
+            let (shape, wall) = (*shape, *wall);
+            if let Some(slot) = twin_of.get_mut(i) {
+                *slot = Some(paths.len());
+            }
+            paths.push((twin, shape));
+            walls.push(wall);
+            layouts.push(carried);
+            allowances.push(allowance_mm);
+            reversed.push(false);
+        }
+    }
+    if reverse_last {
+        for i in 0..n {
+            let (Some((path, _)), Some(layout)) = (paths.get_mut(i), layouts.get_mut(i)) else {
+                continue;
+            };
+            if !path.is_closed() {
+                continue;
+            }
+            let back = last_pass::reversed_from_start(path);
+            if let Some((l, _)) = layout {
+                *l = last_pass::carry(path, l, &back, true, 0.0);
+            }
+            *path = back;
+            if let Some(flag) = reversed.get_mut(i) {
+                *flag = true;
+            }
+        }
+    }
     let quantum_mm = project
         .post_processor
         .decimal_places
@@ -429,6 +495,8 @@ pub fn generate_profile(
         start_z_mm,
         entry_tool: &entry_tool,
         tolerance_mm: project.flatten_tolerance_mm,
+        allowances: &allowances,
+        reversed: &reversed,
     };
     let lead = op.lead.as_ref();
     if let Some(lead) = lead {
@@ -507,23 +575,36 @@ pub fn generate_profile(
         .collect();
     let entries = path_entries(&setup, &domains, &targets);
     let mut entry_warnings = EntryWarnings::default();
-    let mut blocks = Vec::with_capacity(paths.len() * pass_z.len());
-    // The path each block cuts, for naming contours in cut order.
+    let mut blocks = Vec::with_capacity(n * pass_z.len());
+    // The part's path each block cuts, for naming contours in cut order.
     let mut block_paths = Vec::with_capacity(blocks.capacity());
-    for (i, ((path, shape), layout)) in paths.iter().zip(&layouts).enumerate() {
-        let path_tabs = match (&tabs, layout) {
-            (Some(tabs), Some((layout, _))) => Some((tabs, layout)),
-            _ => None,
-        };
-        let Some(start) = path.vertices().first().map(|v| v.point()) else {
-            continue;
-        };
-        let wall = walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
+    for i in 0..n {
+        // The path the previous pass cut, whose entry this pass's follows.
+        let mut previous_path: Option<usize> = None;
         let mut previous: Option<(bool, EntryKind)> = None;
         for (pass, &z_mm) in pass_z.iter().enumerate() {
+            // #284: every pass but the last cuts the allowance twin.
+            let k = match twin_of.get(i).copied().flatten() {
+                Some(twin) if pass < last_index => twin,
+                _ => i,
+            };
+            if previous_path != Some(k) {
+                previous_path = Some(k);
+                previous = None;
+            }
+            let (Some((path, shape)), Some(layout)) = (paths.get(k), layouts.get(k)) else {
+                continue;
+            };
+            let path_tabs = match (&tabs, layout) {
+                (Some(tabs), Some((layout, _))) => Some((tabs, layout)),
+                _ => None,
+            };
+            let Some(start) = path.vertices().first().map(|v| v.point()) else {
+                continue;
+            };
             let below_tabs = below_tabs(z_mm);
             let led = leads
-                .get(i)
+                .get(k)
                 .and_then(Option::as_ref)
                 .filter(|l| l.below_tabs || !below_tabs);
             let led_block = led.and_then(|l| {
@@ -548,14 +629,14 @@ pub fn generate_profile(
             };
             // An open path cuts a slot; it frees nothing.
             block.frees &= path.is_closed();
-            if let Some(entry) = entries.get(i).and_then(Option::as_ref) {
+            if let Some(entry) = entries.get(k).and_then(Option::as_ref) {
                 let pass_entry = PassEntry {
                     path,
                     pass,
                     z_mm,
                     below_tabs,
                     start_z_mm,
-                    tool: entry_tool(wall),
+                    tool: entries::tool_for(&setup, k),
                     tolerance_mm: project.flatten_tolerance_mm,
                 };
                 if on_tab {
@@ -578,7 +659,7 @@ pub fn generate_profile(
                     };
                     let (descent, from_z_mm) = entry.descend(&pass_entry, from_z_mm, &mut previous);
                     entry_warnings.record(shape, &descent);
-                    entry.check(op, shape, &pass_entry, &descent, from_z_mm, domains.get(i))?;
+                    entry.check(op, shape, &pass_entry, &descent, from_z_mm, domains.get(k))?;
                     block.descent_from = descent.from;
                     block.descent_from_z_mm = from_z_mm;
                     block.descent = descent.moves;
@@ -609,7 +690,7 @@ pub fn generate_profile(
     // Warnings name contours by their position in the cut order, which
     // the plan sets.
     let cut_order = plan(&input)?;
-    let mut path_order: Vec<usize> = Vec::with_capacity(paths.len());
+    let mut path_order: Vec<usize> = Vec::with_capacity(n);
     for index in cut_order {
         if let Some(&path_index) = block_paths.get(index)
             && !path_order.contains(&path_index)
@@ -618,7 +699,7 @@ pub fn generate_profile(
         }
     }
     // Paths the plan never reached (none in practice) keep their place.
-    for index in 0..paths.len() {
+    for index in 0..n {
         if !path_order.contains(&index) {
             path_order.push(index);
         }
@@ -644,10 +725,12 @@ pub fn generate_profile(
             ));
         }
     }
-    // D6: paths in cut order, so the warnings follow it.
+    // D6: paths in cut order, so the warnings follow it; each part path's
+    // allowance twin, cut before it, with it (#284).
     let cut_paths: Vec<CutPath<'_>> = path_order
         .iter()
-        .filter_map(|&i| paths.get(i))
+        .flat_map(|&i| std::iter::once(i).chain(twin_of.get(i).copied().flatten()))
+        .filter_map(|i| paths.get(i))
         .map(|(path, shape)| (path, Some(*shape)))
         .collect();
     // #207: a Left or Right cut that comes within the radius of another
@@ -660,18 +743,22 @@ pub fn generate_profile(
             &regions,
             op.side,
             tool,
+            allowance_mm.unwrap_or(0.0),
             project.flatten_tolerance_mm,
         ));
     }
 
     // Corner relief among each shape's own passes, never after the pass
     // that frees it (`crate::relief`, #189); a freeing pass's notches are
-    // cut from inside its lap (#193).
+    // cut from inside its lap (#193). With a last pass allowance only the
+    // last pass runs on the part's paths, so it opens every notch's column
+    // and cuts every level (#284).
     let geometry = relief::ProfileGeometry {
         regions: &regions,
         shapes: &shapes,
-        paths: &paths,
-        walls: &walls,
+        paths: paths.get(..n).unwrap_or_default(),
+        walls: walls.get(..n).unwrap_or_default(),
+        only_pass: allowance_mm.map(|_| last_index),
     };
     let notches = relief::profile_notches(
         project,
@@ -743,15 +830,34 @@ fn target_geometry(
     Ok((shapes, open_paths, regions))
 }
 
-/// One tool-centre path: the path, the shape it cuts, the wall it cuts,
-/// the index of its region, and whether the shape is a hole.
-type CentrePath<'s> = (Polyline, &'s ShapeRef, Wall, usize, bool);
+/// One tool-centre path.
+struct CentrePath<'s> {
+    /// The path.
+    path: Polyline,
+    /// The shape it cuts.
+    shape: &'s ShapeRef,
+    /// The wall it cuts.
+    wall: Wall,
+    /// The index of its region.
+    region: usize,
+    /// The shape is a hole.
+    hole: bool,
+    /// #284: the allowance path the passes before the last cut instead,
+    /// `allowance_mm` farther from the shape, running the same way.
+    twin: Option<Polyline>,
+}
 
 /// Every tool-centre path of `op` cut with `tool`, in drawing order:
 /// each closed shape offset per `op.side` and oriented per
 /// [`traversal_is_ccw`], then each open path as drawn (reversed under
 /// climb, #242). Shapes the tool does not fit warn
-/// [`Warning::ToolTooLarge`]; bands narrower than the tool fail.
+/// [`Warning::ToolTooLarge`]; bands narrower than the tool fail. With a
+/// last pass `allowance_mm` (#284) each closed shape's path has its
+/// allowance twin, or the shape is refused ([`last_pass::twins`]).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every argument is one fact about the paths; a struct would only rename them"
+)]
 fn centre_paths<'s>(
     op: &ProfileOp,
     tool: &Tool,
@@ -759,6 +865,7 @@ fn centre_paths<'s>(
     shapes: &'s [(ShapeRef, Contour)],
     open_paths: &'s [(ShapeRef, Polyline)],
     tolerance_mm: f64,
+    allowance_mm: Option<f64>,
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<CentrePath<'s>>, CamError> {
     let radius_mm = tool.diameter_mm / 2.0;
@@ -787,20 +894,55 @@ fn centre_paths<'s>(
                 &op.id,
                 op.side,
                 tool,
+                0.0,
                 region,
                 (contour, shape),
                 &centres,
                 shapes,
                 tolerance_mm,
             )?;
+            // #284: each part path's allowance twin.
+            let twins: Vec<Option<Contour>> = match allowance_mm {
+                Some(allowance_mm) => {
+                    let outline = last_pass::Outline {
+                        region,
+                        contour,
+                        shape,
+                        how,
+                        centres: &centres,
+                    };
+                    let twins =
+                        last_pass::twins(op, tool, &outline, shapes, allowance_mm, tolerance_mm)?;
+                    for twin in &twins {
+                        last_pass::check_neighbours(
+                            op,
+                            tool,
+                            regions,
+                            shapes,
+                            (twin.polyline(), shape, contour),
+                            region_index,
+                            allowance_mm,
+                        )?;
+                    }
+                    twins.into_iter().map(Some).collect()
+                }
+                None => centres.iter().map(|_| None).collect(),
+            };
             let ccw = traversal_is_ccw(wall, op.direction);
-            placed.extend(centres.into_iter().map(|c| {
-                let path = if c.is_ccw() == ccw {
+            let orient = |c: Contour| {
+                if c.is_ccw() == ccw {
                     c.into_polyline()
                 } else {
                     c.reversed().into_polyline()
-                };
-                (path, shape, wall, region_index, role == Role::Hole)
+                }
+            };
+            placed.extend(centres.into_iter().zip(twins).map(|(c, twin)| CentrePath {
+                path: orient(c),
+                shape,
+                wall,
+                region: region_index,
+                hole: role == Role::Hole,
+                twin: twin.map(orient),
             }));
         }
     }
@@ -843,7 +985,14 @@ fn centre_paths<'s>(
     for (shape, centres) in open_centres {
         for path in centres {
             let path = if reversed_open { path.reversed() } else { path };
-            placed.push((path, shape, Wall::Outside, regions.len(), false));
+            placed.push(CentrePath {
+                path,
+                shape,
+                wall: Wall::Outside,
+                region: regions.len(),
+                hole: false,
+                twin: None,
+            });
         }
     }
     // Drawing order is the order the targets were resolved in: target,
@@ -855,7 +1004,7 @@ fn centre_paths<'s>(
             shape.profile,
         )
     };
-    placed.sort_by_key(|(_, shape, _, _, _)| drawing_index(shape));
+    placed.sort_by_key(|c| drawing_index(c.shape));
     Ok(placed)
 }
 
@@ -1106,6 +1255,7 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
         .transpose()?;
     let mut ignored = Vec::new();
     let (shapes, open_paths, regions) = target_geometry(project, op, &mut ignored)?;
+    // Tabs are laid on the part's paths (#284), whatever the last pass.
     let centres = centre_paths(
         op,
         tool,
@@ -1113,11 +1263,12 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
         &shapes,
         &open_paths,
         project.flatten_tolerance_mm,
+        None,
         &mut ignored,
     )?;
-    let holes: Vec<bool> = centres.iter().map(|(_, _, _, _, hole)| *hole).collect();
+    let holes: Vec<bool> = centres.iter().map(|c| c.hole).collect();
     let paths: Vec<(Polyline, &ShapeRef)> =
-        centres.into_iter().map(|(p, s, _, _, _)| (p, s)).collect();
+        centres.into_iter().map(|c| (c.path, c.shape)).collect();
     let reversed_open = open_runs_reversed(op.side, op.direction);
     let plan = plan_tabs(
         project,
@@ -1165,14 +1316,21 @@ pub(crate) fn op_tabs(project: &Project, op: &ProfileOp) -> Result<OpTabs, CamEr
 /// first first. Paths in different regions are D6's
 /// [`Warning::ToolpathsOverlap`]; under Inside never closer than `r`
 /// once this check passes.
+///
+/// With a last pass `allowance_mm` (#284, more than 0), `centres` are the
+/// allowance paths, `r + a` from `contour`, and Inside each must keep
+/// `r + a` from every other line, so it cuts neither that line's skin nor
+/// the part: the band must be `D + 2a` wide, or
+/// [`CamError::BandNarrowerThanAllowance`].
 #[allow(
     clippy::too_many_arguments,
     reason = "every argument is one fact about the band; a struct would only rename them"
 )]
-fn check_band(
+pub(super) fn check_band(
     op: &OperationId,
     side: Side,
     tool: &Tool,
+    allowance_mm: f64,
     region: &Region,
     (contour, shape): (&Contour, &ShapeRef),
     centres: &[Contour],
@@ -1180,7 +1338,7 @@ fn check_band(
     tolerance_mm: f64,
 ) -> Result<(), CamError> {
     let reach_mm = match side {
-        Side::Inside => tool.diameter_mm / 2.0,
+        Side::Inside => tool.diameter_mm / 2.0 + allowance_mm,
         Side::OnLine => tool.diameter_mm,
         // Left and Right cut no closed outline (#207).
         Side::Outside | Side::Left | Side::Right => return Ok(()),
@@ -1195,12 +1353,24 @@ fn check_band(
         let a = shape;
         let drawn = |s: &ShapeRef| shapes.iter().position(|(x, _)| x == s);
         let (shape, other) = if drawn(a) <= drawn(b) { (a, b) } else { (b, a) };
-        return Err(CamError::BandNarrowerThanTool {
-            op: op.clone(),
-            shape: shape.clone(),
-            other: Box::new(other.clone()),
-            band_mm: distance_mm(contour.polyline(), line.polyline()),
-            diameter_mm: tool.diameter_mm,
+        let band_mm = distance_mm(contour.polyline(), line.polyline());
+        return Err(if allowance_mm > 0.0 {
+            CamError::BandNarrowerThanAllowance {
+                op: op.clone(),
+                shape: shape.clone(),
+                other: Box::new(other.clone()),
+                band_mm,
+                diameter_mm: tool.diameter_mm,
+                allowance_mm,
+            }
+        } else {
+            CamError::BandNarrowerThanTool {
+                op: op.clone(),
+                shape: shape.clone(),
+                other: Box::new(other.clone()),
+                band_mm,
+                diameter_mm: tool.diameter_mm,
+            }
         });
     }
     if side != Side::OnLine {
@@ -4817,8 +4987,6 @@ mod tests {
 
     // ── #284: the last pass allowance ──
 
-    /// The 6.35 mm tool's radius.
-    const R_MM: f64 = 3.175;
     const ALLOWANCE_MM: f64 = 0.5;
     /// Acceptance 46: 12 mm stock cut through in 4 mm passes.
     const LAST_STOCK_MM: f64 = 12.0;
@@ -5011,10 +5179,10 @@ mod tests {
             }),
             ..last_pass_op(&p, Side::Outside)
         };
-        let laps = laps(&generate(&p, &op).0);
-        assert_eq!(laps.len(), 1);
-        assert_approx_eq!(laps[0].z_mm, 0.0, TOL);
-        assert_approx_eq!(laps[0].x_extent_mm(), 66.35, TOL);
+        let only = super::tests::laps(&generate(&p, &op).0);
+        assert_eq!(only.len(), 1);
+        assert_approx_eq!(only[0].z_mm, 0.0, TOL);
+        assert_approx_eq!(only[0].x_extent_mm(), 66.35, TOL);
     }
 
     /// Acceptance 46: with `reverse` the last pass runs the other way
@@ -5275,6 +5443,48 @@ mod tests {
                 },
             );
         }
+    }
+
+    /// #284: Outside, a part inside another part's 40 mm hole, 6.6 mm
+    /// from its walls: the plain cut keeps the radius from every line,
+    /// but the part's allowance passes, 0.5 mm farther out, would cut
+    /// 0.25 mm into the frame round the hole, which S9 rejects. Refused,
+    /// naming the hole and the part; a 0.2 mm allowance fits.
+    #[test]
+    fn last_pass_allowance_into_a_neighbour_is_refused() {
+        let p = last_pass_project_of(vec![
+            Polyline::rect(Point::new(0.0, 0.0), 80.0, 80.0),
+            Polyline::rect(Point::new(20.0, 20.0), 40.0, 40.0),
+            Polyline::rect(Point::new(26.6, 26.6), 26.8, 26.8),
+        ]);
+        let op = last_pass_op(&p, Side::Outside);
+        let (_, warnings) = generate(
+            &p,
+            &ProfileOp {
+                last_pass: None,
+                ..op.clone()
+            },
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        generate(
+            &p,
+            &ProfileOp {
+                last_pass: Some(allowance(0.2)),
+                ..op.clone()
+            },
+        );
+        let err = generate_profile(&p, &op).expect_err("the allowance passes would gouge");
+        let CamError::BandNarrowerThanAllowance {
+            shape,
+            other,
+            band_mm,
+            ..
+        } = &err
+        else {
+            panic!("expected BandNarrowerThanAllowance, got {err:?}");
+        };
+        assert_eq!((shape.profile, other.profile), (1, 2), "{err}");
+        assert_approx_eq!(*band_mm, 6.6, 1e-9);
     }
 
     /// Acceptance 46 Inside: the first two passes run 0.5 mm farther

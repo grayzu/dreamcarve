@@ -397,6 +397,74 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
+    /// A Profile's last pass has an allowance that is not more than 0 and
+    /// at most a third of the bit's diameter, or a thickness that is not
+    /// more than 0 and at most the depth (#284). Validation rejects both;
+    /// the generator does not trust its callers.
+    #[error("operation `{op}` has last_pass.{field} {value} mm; it must be {range}")]
+    InvalidLastPass {
+        /// The operation.
+        op: OperationId,
+        /// `allowance_mm` or `thickness_mm`.
+        field: &'static str,
+        /// The value set, mm.
+        value: f64,
+        /// The allowed range, as the user reads it.
+        range: String,
+    },
+    /// A Profile that cuts On line, Left or Right has a last pass (#284):
+    /// only Inside and Outside leave a wall to take the allowance off.
+    /// Validation rejects it; the generator refuses it too.
+    #[error(
+        "operation `{op}` has a last_pass but does not cut Inside or Outside; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside or Outside"
+    )]
+    LastPassNeedsSide {
+        /// The operation.
+        op: OperationId,
+    },
+    /// #284: an Inside Profile with a last pass allowance cuts two lines
+    /// of one region whose band fits the tool but not the tool and the
+    /// allowance on both lines (`diameter + 2 · allowance`): the passes
+    /// before the last, `allowance_mm` farther from each line, would cut
+    /// into the skin the other line's passes leave, or into the part.
+    /// `shape` is the one drawn first; `other` is boxed to keep the error
+    /// small.
+    #[error(
+        "operation `{op}` cuts {shape} and {other} with a {allowance_mm} mm last pass allowance, but the band between them is {band_mm:.3} mm wide, narrower than its {diameter_mm} mm tool plus the allowance on both sides, so the passes before the last would cut into material the Profile keeps; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    BandNarrowerThanAllowance {
+        /// The operation.
+        op: OperationId,
+        /// One line of the band, the one drawn first.
+        shape: ShapeRef,
+        /// The other line.
+        other: Box<ShapeRef>,
+        /// The narrowest distance between the two lines, mm.
+        band_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+    },
+    /// #284: somewhere `shape` is wide enough for the tool but not for the
+    /// tool and the last pass allowance on both sides (a neck, a slot or a
+    /// small hole, Inside; the mouth of a narrow inlet, Outside), so the
+    /// passes before the last cannot follow the part's path there: they
+    /// would skip it or run apart from it, and the last pass would cut a
+    /// full slot to the full depth in one go.
+    #[error(
+        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere it is wider than its {diameter_mm} mm tool and narrower than the tool plus the allowance on both sides, so the passes before the last cannot follow it and the last pass would cut a full slot to the full depth there; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    ShapeNarrowerThanAllowance {
+        /// The operation.
+        op: OperationId,
+        /// The shape the allowance passes cannot follow.
+        shape: ShapeRef,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+    },
     /// A Left or Right Profile's cut beside one open path comes within the
     /// tool radius of another line of the operation, or of the strip one
     /// radius wide that a line keeps on the side away from its own cut

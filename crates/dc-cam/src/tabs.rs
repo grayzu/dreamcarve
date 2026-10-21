@@ -249,38 +249,9 @@ impl Tabs {
             && cuts
                 .iter()
                 .any(|cut| cut.width_mm + self.diameter_mm >= l - EPS_MM);
-        let mut spans: Vec<Raw> = cuts.iter().map(|cut| self.closed_span(cut, l)).collect();
-        spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
-
-        // Spans whose end may lie beyond L, merged in order.
-        let mut merged: Vec<Raw> = Vec::new();
-        for span in spans {
-            match merged.last_mut() {
-                Some(last) if span.start_mm <= last.end_mm + EPS_MM => {
-                    overlap = true;
-                    last.absorb(&span);
-                }
-                _ => merged.push(span),
-            }
-        }
-        // The last span may run past L into the first.
-        while merged.len() > 1 {
-            let (Some(first), Some(last)) = (merged.first().copied(), merged.last()) else {
-                break;
-            };
-            if last.end_mm - l < first.start_mm - EPS_MM {
-                break;
-            }
-            overlap = true;
-            merged.remove(0);
-            if let Some(last) = merged.last_mut() {
-                last.absorb(&Raw {
-                    start_mm: first.start_mm + l,
-                    end_mm: first.end_mm + l,
-                    ..first
-                });
-            }
-        }
+        let spans: Vec<Raw> = cuts.iter().map(|cut| self.closed_span(cut, l)).collect();
+        let (merged, merges) = merge_closed(spans, l);
+        overlap |= merges;
         layout.full = merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM);
         layout.spans = merged.iter().map(Raw::span).collect();
         (layout, overlap)
@@ -555,6 +526,46 @@ impl Raw {
     }
 }
 
+/// The spans of a closed path `l` long (each start in `[0, L)`, its end
+/// possibly beyond `L`) merged where they overlap or touch, including the
+/// last into the first through the path start, in start order; and
+/// whether any merged.
+fn merge_closed(mut spans: Vec<Raw>, l: f64) -> (Vec<Raw>, bool) {
+    let mut overlap = false;
+    spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
+
+    // Spans whose end may lie beyond L, merged in order.
+    let mut merged: Vec<Raw> = Vec::new();
+    for span in spans {
+        match merged.last_mut() {
+            Some(last) if span.start_mm <= last.end_mm + EPS_MM => {
+                overlap = true;
+                last.absorb(&span);
+            }
+            _ => merged.push(span),
+        }
+    }
+    // The last span may run past L into the first.
+    while merged.len() > 1 {
+        let (Some(first), Some(last)) = (merged.first().copied(), merged.last()) else {
+            break;
+        };
+        if last.end_mm - l < first.start_mm - EPS_MM {
+            break;
+        }
+        overlap = true;
+        merged.remove(0);
+        if let Some(last) = merged.last_mut() {
+            last.absorb(&Raw {
+                start_mm: first.start_mm + l,
+                end_mm: first.end_mm + l,
+                ..first
+            });
+        }
+    }
+    (merged, overlap)
+}
+
 /// The merged tab spans on one tool-centre path.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PathTabs {
@@ -606,6 +617,82 @@ impl PathTabs {
             closed: self.closed,
             tab_count: self.tab_count,
         }
+    }
+
+    /// These spans, laid on a closed path, carried onto another closed
+    /// path `length_mm` long that runs beside it (#284, design A8 step 3):
+    /// `along` maps a distance along this path to the distance along the
+    /// other of the point nearest it. Each span runs on the other path
+    /// from where its start lands to where its end lands (from its end to
+    /// its start when `reversed`: the other path runs the other way, so
+    /// its ramps swap too), widened by `widen_mm` at both ends, and its
+    /// smooth ramps lengthened by as much, so that at every point it is
+    /// at least as high as this one where it lands. Spans that then
+    /// overlap merge; spans that cover the path cover the other.
+    pub(crate) fn carried(
+        &self,
+        length_mm: f64,
+        along: impl Fn(f64) -> f64,
+        reversed: bool,
+        widen_mm: f64,
+    ) -> Self {
+        let l = length_mm;
+        let mut carried = Self {
+            length_mm: l,
+            spans: Vec::new(),
+            full: self.full,
+            closed: true,
+            tab_count: self.tab_count,
+        };
+        if self.full || l <= EPS_MM || self.length_mm <= EPS_MM {
+            carried.spans = self
+                .spans
+                .iter()
+                .map(|s| Span {
+                    start_mm: 0.0,
+                    length_mm: l,
+                    ..*s
+                })
+                .collect();
+            return carried;
+        }
+        let spans: Vec<Raw> = self
+            .spans
+            .iter()
+            .map(|s| {
+                let (from_mm, to_mm) = if reversed {
+                    (along(s.end_mm()), along(s.start_mm))
+                } else {
+                    (along(s.start_mm), along(s.end_mm()))
+                };
+                let (ramp_in_mm, ramp_out_mm) = if reversed {
+                    (s.ramp_out_mm, s.ramp_in_mm)
+                } else {
+                    (s.ramp_in_mm, s.ramp_out_mm)
+                };
+                // The other path is about as long as this one here: a
+                // span that would wrap most of the way round is a short
+                // one whose ends landed out of order.
+                let expected_mm = s.length_mm * l / self.length_mm;
+                let mut run_mm = (to_mm - from_mm).rem_euclid(l);
+                if run_mm - expected_mm > l / 2.0 {
+                    run_mm -= l;
+                }
+                let start_mm = (from_mm - widen_mm).rem_euclid(l);
+                Raw {
+                    start_mm,
+                    end_mm: start_mm + run_mm.max(0.0) + 2.0 * widen_mm,
+                    top_z_mm: s.top_z_mm,
+                    shape: s.shape,
+                    ramp_in_mm: ramp_in_mm + widen_mm,
+                    ramp_out_mm: ramp_out_mm + widen_mm,
+                }
+            })
+            .collect();
+        let (merged, _) = merge_closed(spans, l);
+        carried.full = merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM);
+        carried.spans = merged.iter().map(Raw::span).collect();
+        carried
     }
 
     /// True when no tab stands on the path: its last pass cuts free.
@@ -1186,6 +1273,7 @@ mod tests {
             entry: Entry::Plunge,
             lead: None,
             corner_relief: CornerRelief::None,
+            last_pass: None,
         };
         p.operations = vec![Operation::Profile(op.clone())];
         (p, op)

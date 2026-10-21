@@ -108,6 +108,7 @@ pub fn sample_project() -> Project {
             entry: Entry::Plunge,
             lead: None,
             corner_relief: CornerRelief::None,
+            last_pass: None,
         })],
         // No placed tabs: the Profile's tab request is placed by `dc-cam`
         // (#105), so the sample is a project as a format 10 file migrates.
