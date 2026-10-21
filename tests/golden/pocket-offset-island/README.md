@@ -24,11 +24,10 @@ Captured from PureCutCNC commit `2ebab10e5e17c48281ff96805d5e936af135cb58` with
   circle, as a user would draw it.
 - Pocket settings as `pocket-offset-rect`: `roundOutsideCorners`,
   `roundLinkCorners` and `cleanWallCorners` off, no slot-feed reduction.
-- Known bug: #196. DreamCarve starts the first ring round the island at
-  the circle's vertex nearest the previous ring, which on a two-vertex
-  circle is 7.6 mm away; PureCutCNC's polygon ring starts at its nearest
-  point, 2.54 mm away. The test is ignored until that is fixed; with the
-  island drawn as a polygon in DreamCarve too, it passes.
+- Each ring starts at its point nearest the previous ring's end, on an
+  arc too (#196), so the link onto the first ring round the island is
+  2.54 mm, as PureCutCNC's polygon ring's. Before that fix DreamCarve
+  started it at the circle's nearest vertex, 7.6 mm away.
 
 Files: `program.nc` is the emitted G-code; `toolpath.json` is the
 key-sorted toolpath per operation in PureCutCNC's internal (Y-down) frame.

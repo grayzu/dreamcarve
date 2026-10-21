@@ -19,15 +19,17 @@ Captured from PureCutCNC commit `2ebab10e5e17c48281ff96805d5e936af135cb58` with
 - PureCutCNC cuts the boundary before the lines on a raster pocket, so the
   DreamCarve project asks for `wall_pass: first` (DreamCarve's default is
   last).
-- Intentional difference (#146, decision 5): DreamCarve cuts the lines in
-  scan order; PureCutCNC orders them greedily from the wall pass's end. The
-  two programs therefore visit the lines in different orders and link
-  different pairs of them. The links are not compared; the lines are,
-  without direction, as the design spec says raster lines ignore it.
-- Known bug: #195. DreamCarve scans from the bottom of the region in its
-  Y-up frame; PureCutCNC scans from `minY` of its Y-down frame, the top in
-  the machine frame. The lines sit 0.63 mm apart. The test is ignored
-  until that is fixed; with the scan started from the top, it passes.
+- Intentional difference (#146, decision 5; #150): PureCutCNC orders the
+  lines greedily from the wall pass's end; DreamCarve orders them
+  nearest-first among the lines a link inside the region reaches, and
+  starts its wall ring elsewhere. The two programs can therefore visit
+  the lines in different orders and link different pairs of them. The
+  links are not compared; the lines are, without direction, as the
+  design spec says raster lines ignore it.
+- The scan starts half a step-over below the top of the region: PureCutCNC
+  scans from `minY` of its Y-down frame, the top in the machine frame
+  (#195). Before that fix DreamCarve scanned from the bottom and its lines
+  sat 0.63 mm from PureCutCNC's.
 
 Files: `program.nc` is the emitted G-code; `toolpath.json` is the
 key-sorted toolpath per operation in PureCutCNC's internal (Y-down) frame.
