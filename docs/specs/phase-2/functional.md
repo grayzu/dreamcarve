@@ -566,7 +566,11 @@ check between shapes.
 - **S10 Entry descent rate.** A ramp or helix descends with a vertical
 component no faster than the plunge rate: the move's feed is scaled so
 that `feed × sin(slope) ≤ plunge`. Checked on the parsed program by
-recomputing the slope of every descending `G1` with XY motion.
+recomputing the slope of every descending `G1` with XY motion. Changed in
+#325: nothing above the plunge rate is allowed for rounding, and the
+emitter rounds the feed of a cut the toolpath holds to the plunge rate
+down until its rate, from the written coordinates and feed, is at most
+the plunge rate.
 - **S11 Canned cycles mean what the plain moves mean.** When a program uses
 `G81`/`G82`/`G83`/`G73`, the safety pass expands each cycle line into the
 motion the controller performs (per that controller's documentation,

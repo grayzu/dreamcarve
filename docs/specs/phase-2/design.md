@@ -1680,6 +1680,11 @@ Ported from `cornerRelief.ts`.
 3. **End point:** dogbone `C + bisector·r`; T-bone `C + u·r` along the
    longer adjacent edge (tie: the more X-parallel edge, then `+x`). Notch
    depth past the wall: `r(1 − sin(θ/2))` dogbone, `r` T-bone (tests).
+   The excursion, descend point to end point, must keep `r` from every
+   edge of the site's loops but the corner's own two, else
+   `ReliefCornerTooTight` (`NearOtherWall`, #322): nearer, the notch
+   cuts past that wall too, through a part thinner there than the notch
+   is deep or into an island, which S9's notch rule refuses.
 4. **Pass:** the levels are `generateStepLevels(top, bottom,
    tool.step_down)`; per corner and level: plunge at the descend point,
    cut to the end, cut back. Only corners whose descend point the main

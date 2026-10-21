@@ -467,7 +467,11 @@ has just cut, without lifting to safe Z first. A corner under a [tab](tabs.md)
 is skipped with `relief_corner_not_cut`: the path rises over the tab
 there, so the notch would plunge into uncut material. Edges shorter than
 the bit is wide skip their corner with `relief_corner_too_tight`, and a
-tool with no `step_down_mm` skips the relief with `relief_skipped`.
+tool with no `step_down_mm` skips the relief with `relief_skipped`. So
+does a corner whose notch would come nearer another wall than the bit's
+radius (`relief_corner_too_tight`): a T-bone reaches the bit's radius
+past its wall, so in a hole whose part is thinner than that beyond the
+wall it would cut through the part.
 
 On a through cut the last pass frees the part (or the slug of a hole),
 so its notch levels are cut from inside that last lap instead, never
