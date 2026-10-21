@@ -22,12 +22,12 @@
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
 use crate::passes::pass_z_mm;
-use crate::profile::{containment_pairs, rates_of, shape_warning};
+use crate::profile::{containment_pairs, rates_of};
 use crate::sequence::{SequenceInput, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::segment_kind;
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, Point3, Polyline, nest};
 use dc_project::{EngraveOp, Project};
 
@@ -48,7 +48,7 @@ use dc_project::{EngraveOp, Project};
 /// open paths have none.
 ///
 /// A path of fewer than two distinct points is skipped with
-/// [`WarningCode::EngravePathDegenerate`]. Fails without a toolpath when a
+/// [`Warning::EngravePathDegenerate`]. Fails without a toolpath when a
 /// feed, plunge rate, or step-down is missing, when the depth goes below the
 /// stock bottom plus allowance (S1), when an id does not resolve, or when
 /// the cutter would leave the stock ([`CamError::OffStock`]).
@@ -217,9 +217,10 @@ fn resolve_targets(
                     source,
                 })?;
             if !has_two_distinct_points(&placed) {
-                warnings.push(
-                    shape_warning(WarningCode::EngravePathDegenerate, &shape).with("op", &op.id),
-                );
+                warnings.push(Warning::EngravePathDegenerate {
+                    op: op.id.clone(),
+                    shape,
+                });
                 continue;
             }
             paths.push((shape, placed));
@@ -627,11 +628,14 @@ mod tests {
             .filter(|w| w.code() == WarningCode::EngravePathDegenerate)
             .collect();
         assert_eq!(degenerate.len(), 2, "{warnings:?}");
-        for (w, profile) in degenerate.iter().zip(["1", "2"]) {
-            assert_eq!(w.param("op"), Some("o1"), "{w:?}");
-            assert_eq!(w.param("instance"), Some("i1"), "{w:?}");
-            assert_eq!(w.param("instance_name"), Some("Shape i1"), "{w:?}");
-            assert_eq!(w.param("profile"), Some(profile), "{w:?}");
+        for (w, profile) in degenerate.iter().zip([1, 2]) {
+            let Warning::EngravePathDegenerate { op, shape } = w else {
+                panic!("{w:?}");
+            };
+            assert_eq!(op.as_str(), "o1", "{w:?}");
+            assert_eq!(shape.instance.as_str(), "i1", "{w:?}");
+            assert_eq!(shape.instance_name, "Shape i1", "{w:?}");
+            assert_eq!(shape.profile, profile, "{w:?}");
         }
         let laps = laps(&tp);
         assert_eq!(laps.len(), 1, "{laps:?}");

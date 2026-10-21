@@ -32,7 +32,7 @@ use crate::tabs::{
     LapRates, PathTabs, Tabs, coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{OpenPathReason, Warning, WarningCode};
+use crate::warning::{OpenPathReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
     distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset,
@@ -1386,15 +1386,6 @@ pub(crate) fn crossing_error(error: GeometryError, shapes: &[(ShapeRef, Contour)
         };
     }
     CamError::Geometry(error)
-}
-
-/// A warning about `shape`, with its `instance`, `instance_name`, and
-/// `profile` params set.
-pub(crate) fn shape_warning(code: WarningCode, shape: &ShapeRef) -> Warning {
-    Warning::new(code)
-        .with("instance", &shape.instance)
-        .with("instance_name", &shape.instance_name)
-        .with("profile", shape.profile)
 }
 
 /// True when `nested` is `input` as `nest` returns it: unchanged, or
