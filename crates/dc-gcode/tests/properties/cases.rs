@@ -132,7 +132,7 @@ fn outside_t_bone_beside_an_island_part_exports() {
         );
         project.tools[0].diameter_mm = 4.412;
         let warnings = exports(&project);
-        let codes: Vec<WarningCode> = warnings.iter().map(|w| w.code).collect();
+        let codes: Vec<WarningCode> = warnings.iter().map(Warning::code).collect();
         assert_eq!(
             codes,
             [WarningCode::ToolpathsOverlap],
