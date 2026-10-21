@@ -36,9 +36,11 @@ maintains. They run `dreamcarve tools import club.tools`, see the 23 tools
 that imported and the 2 that did not (and why), set `--post linuxcnc`,
 and export a `.ngc` whose header, tool change and footer match LinuxCNC's
 documentation.
-- **Alex** drills 20 holes with a peck cycle. On LinuxCNC they opt in to
-canned cycles and get 20 `G83` lines; on grblHAL they get the same holes
-as plain moves. The two programs drill identical holes.
+- **Alex** drills 20 holes with a simple cycle. On LinuxCNC they opt in
+to canned cycles and get 20 `G81` lines; on grblHAL they get the same
+holes as plain moves. The two programs drill identical holes. (changed
+in slice 17, #172: LinuxCNC's `G83` back-off differs between versions,
+so a peck cycle is plain moves there.)
 - **Jo** imports a DXF from LibreCAD with blocks and arcs. The arcs stay
 arcs (no facets), the blocks are expanded, the layer names become shape
 names, and the inch drawing lands at the right size because the file says
@@ -114,13 +116,19 @@ cycle types):
      Fusion "Chip breaking");
     - **dwell**: `dwell_s` seconds at the bottom of every plunge before
      retracting (both products use seconds), on its own or with pecking.
-      `retract_mm` is the height above the hole top the tool returns to
-      between pecks and between holes when that is below safe Z. Where the
+      `retract_mm` is the height above the hole top the tool rapids down
+      to before each hole and returns to between pecks, when that is below
+      safe Z; each hole ends with a retract to safe Z, as a canned cycle's
+      `G98` does (changed in slice 7, #145). Where the
       post-processor supports canned cycles and the user has turned them on,
       a simple cycle writes `G81`, dwell alone `G82`, peck with full retract
       `G83`, and chip-break `G73`; every other combination, and every
       controller without them, writes the same motion as plain moves. The
       holes are drilled in the same order and to the same depth either way.
+      `G83` and `G73` need a controller that documents a fixed re-entry
+      distance and a retract height of 0; no bundled definition has them,
+      so peck and chip-break Drills are plain moves on all six (changed in
+      slice 17, #172).
 15. **Engrave** follows each target path, open or closed, with the tool
 centre on the line, to `depth_mm` in passes of `step_down_mm`
 (VCarve "Quick Engraving", Outline strategy; Fusion "2D Trace"). Any
@@ -161,7 +169,8 @@ down at the tool's step-down.
 19. **Multi-tool export.** A project whose enabled operations use more
 than one tool exports either one program per tool run (phase 1,
 default) or one program with tool changes (`tool_change.mode: "m6"`,
-on a post-processor whose tool change has `M6`). The user sets a
+on a post-processor whose tool change has `M6`; of the six, grblHAL).
+The user sets a
 default once in the user config file, which `init` and `--post` write
 into new projects' post-processor settings, and overrides it per
 export with `--programs-per-tool` or `--one-program` without changing
@@ -218,8 +227,9 @@ the phase 1 safety rules, with the sources cited in the definitions
 README. The same `.dcv` exported for any two of them produces identical
 XYZ motion and differs only in dialect lines (acceptance 13 holds
 across all six).
-24. **Arc fitting at export.** Runs of straight moves that lie on one
-circle within `arc_fit_tolerance_mm` (project setting, default 0.01;
+24. **Arc fitting at export.** Runs of straight moves (with any corner
+arcs shallower than the tolerance between them) that lie on one circle
+within `arc_fit_tolerance_mm` (project setting, default 0.01;
 `null` turns fitting off) are written as `G2`/`G3` where the
 post-processor supports arcs, so an imported circle exports as a few
 arcs instead of hundreds of lines. Arcs the controller would reject
@@ -279,15 +289,18 @@ pocket's.
 plunge per hole at the plunge rate and one retract to safe Z; `peck`
 with 4 mm pecks and `retract: full` gives three plunges per hole, each
 retracting above the hole top; `chip_break` with a 0.5 mm gap retracts
-0.5 mm between pecks; `dwell_s: 0.5` writes `G4 P0.5` at the bottom of
+0.5 mm between pecks; `dwell_s: 0.5` writes a 0.5 s `G4` (`G4 P0.500` on grblHAL) at the bottom of
 each plunge. Holes are visited nearest-first from the first in drawing
 order. The two 5 mm circles and a 5×8 mm slot targeted together drill
 two holes and warn `drill_target_not_circle` naming the slot.
 24. **Canned cycles.** The simple case on LinuxCNC with canned cycles on
 writes one `G81` line per hole after `G98`, ends with `G80`, and the
 program's parsed motion is identical to the plain-moves program's
-motion. With canned cycles off, or on grblHAL, no `G8x` word appears.
-A peck-with-dwell cycle writes plain moves even with canned cycles on.
+motion. With canned cycles off, or on grblHAL, no cycle word (`G73`,
+`G81`–`G83`, `G98`, `G99`) appears; LinuxCNC's header `G80` only
+cancels, so it stays. A peck-with-dwell cycle writes plain moves even
+with canned cycles on. (changed in slice 17, #172: the LinuxCNC header
+has `G80`.)
 25. **Engrave open and closed.** An open polyline and a closed rectangle,
 1 mm deep in 0.5 mm passes with a 60° V-bit: both are traced with the
 tool centre on the line (every cut vertex is on the drawing within
@@ -305,9 +318,14 @@ passes; the rectangle's passes run the same way both times.
 27. **Helix entry.** A Pocket with `entry: helix` at 80 %: the descent is
 a helix of diameter 5.08 mm (for a 6.35 mm tool) whose footprint lies
 inside the region, followed by one flat revolution at the pass depth;
-in a 6 mm wide slot the helix does not fit, a ramp is used instead and
-`entry_fallback` is warned naming the operation and shape; in a 2 mm
-hole neither fits and the warning says `plunge`.
+in a 7 mm wide slot (tool-centre region 0.65 mm wide) the helix does not
+fit, a ramp along the slot is used instead and `entry_fallback` is
+warned naming the operation and shape; in a 7 mm hole (tool-centre
+circle 0.65 mm across) neither fits and the warning says `plunge`.
+(changed in slice 9, #156: 6 mm and 2 mm are narrower than the tool, so
+the Pocket skipped them with `pocket_no_room`. With the ported constants
+a helix fails in a slot narrower than about 1.3 tool diameters and a
+ramp in a hole narrower than about 1.22; 7 mm is inside both bands.)
 28. **Arc lead.** An inside Profile of a 60×40 mm rectangle with a 3 mm
 lead radius: the tool reaches each pass depth at a point 3 mm or more
 from the wall, arrives on the wall along an arc tangent to it, leaves
@@ -367,12 +385,18 @@ copies the tool into the project with a new project tool id; editing
 the library afterwards leaves the project unchanged.
 36. **Four more post-processors.** The coaster exported for LinuxCNC,
 Mach3, UCCNC and generic has XYZ motion identical to its grblHAL
-program; LinuxCNC ends with `M2`, Mach3 and UCCNC number every line
-and begin with `%` and `O0001`, generic has no trailing zeros. Each
-bundled definition's README cites the controller document each line
-was checked against.
+program; LinuxCNC ends with `M2`; Mach3 begins with an unnumbered `%`,
+numbers every line after it, and has no `O0001`; UCCNC has no line numbers, `%`,
+`O0001` or units word; generic has no trailing zeros. Each bundled
+definition's README cites the controller document each line was checked
+against. (changed in slice 17, #172: Mach3 reads an `O` word as a
+subroutine label and "The O line may not have a line number" (Using
+Mach3Mill 1.84, 10.5.2, 10.8.7); UCCNC's manual documents none of the
+three and has no `G20`/`G21`.)
 37. **Arc fitting.** The 90 mm coaster circle, imported as 160 facets,
-exports as at most 8 `G2`/`G3` moves per lap on grblHAL and the same
+exports as at most 8 `G2`/`G3` moves per full lap on grblHAL (a tabbed
+lap is one run per segment between tabs: 4 tab tops and 5 segments give
+9 runs, so at least 9 arcs; changed in slice 14, #133) and the same
 number of `G1` moves as before on a post-processor without arc
 support; every original vertex lies on its fitted arc within 0.01 mm;
 an ellipse is not fitted; the program with `arc_fit_tolerance_mm:  null` equals the phase 1 program. The fitted program passes S6.
@@ -402,13 +426,19 @@ motion the controller performs (per that controller's documentation,
 with `G98` retract) and checks S1, S2 and S6 against that expansion, so
 a canned-cycle program is accepted only if its expansion is the Drill
 toolpath move for move.
-- **S12 Arc fitting is a refinement, not a change.** A fitted arc replaces
-only straight moves whose vertices all lie on the arc within the
-tolerance, keeps the run's start and end points exactly, never sweeps
-more than 90° per arc, and is rejected (lines kept) when the
-controller's arc-radius check would fail after number rounding. S6
-accepts a fitted arc where the toolpath has lines only under those
-conditions.
+- **S12 Arc fitting is a refinement, not a change.** A fitted run of arcs
+replaces only straight moves, and corner arcs shallower than the
+tolerance, whose vertices and shallow-arc midpoints all lie on the
+circle within the tolerance; it keeps the run's start and end points
+exactly, never sweeps more than 90° per arc, and is rejected (the
+original moves kept) when the controller's arc-radius check would fail
+after number rounding. S6 accepts, where the toolpath has those moves, a
+chain of consecutive `G2`/`G3` on one circle (each piece's centre within
+the tolerance plus one unit in the last place of the previous piece's),
+each at most 90°, starting and ending
+on toolpath vertices and covering at least three moves, and nothing else
+(changed in slice 14, #133: a run is split at points on the circle, so
+only its ends are vertices).
 - **S13 Order invariants** O1–O10 from `docs/research/toolpath-ordering.md`
 §6: containment order, permutation (the same cuts in every order),
 links at safe Z unless provably inside cleared material, pass monotony,
@@ -496,7 +526,7 @@ the capabilities above and the design spec; the record stays here.
 | 4 | Pocket `direction` in the chapter's JSON | `climb`. |
 | 5 | Corner relief on Profile | Yes, on Pocket and Profile. |
 | 6 | Profile ramp style | Zigzag on both, as PureCutCNC does; On line ramps along the path. Default entry is `ramp` at 15° for new projects. |
-| 7 | Tool numbers | Add `Tool::number: Option<u32>` in v7; Fusion import reads it; export uses it when set (capability 21a). |
+| 7 | Tool numbers | Add `Tool::number: Option<u32>` in v7 (built as v8: #106 took v7); Fusion import reads it; export uses it when set (capability 21a). |
 | 10 | Fusion sample libraries | Autodesk's sample files are reference only, not committed; the fixtures are hand-written in the schema's structure. `TA` is the half angle (a 90° V-bit has `TA` 45), confirmed against IDC Woodcraft's Fusion library. |
-| 8 | `machining_order` migration | A v6 → v7 migration, not a serde default. |
+| 8 | `machining_order` migration | A v6 → v7 migration, not a serde default (built as v7 → v8: #106 took v7). |
 | 9 | Rest machining | In scope. |

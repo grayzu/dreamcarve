@@ -24,9 +24,11 @@ written. There are no safety warnings, only errors.
    hole already drilled, and never in uncut material.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
    the tool: the plunge rate for straight-down moves and tab steps, the feed
-   rate for everything else. The one value in between is a ramp or helix
-   [entry](pocket.md#entry): its feed rate is lowered just enough that it
-   goes down no faster than the plunge rate. A tool without a feed rate or
+   rate for everything else. The one value in between is a move that goes
+   down while it moves sideways, a ramp or helix [entry](pocket.md#entry)
+   or a smooth [tab](tabs.md)'s ramp down: its feed rate is lowered just
+   enough that it goes down no faster than the plunge rate (rule 11). A
+   tool without a feed rate or
    plunge rate stops the export, and so does one without a spindle speed unless the
    router is switched by hand. DreamCarve has no defaults for these.
 4. **The spindle runs before it cuts.** With automatic spindle control, the
@@ -89,6 +91,39 @@ written. There are no safety warnings, only errors.
     moves: they must be the Drill's own moves, hole for hole, depth for
     depth. A cycle the check cannot read back exactly, such as one with a
     word missing, is refused.
+11. **Nothing goes down faster than the plunge rate.** For every cutting
+    move that goes down, the check works out its slope from the numbers
+    written in the program, and its speed straight down: the feed rate
+    times the sine of the slope. That must not be faster than the tool's
+    plunge rate. This holds for a ramp, a helix, a smooth tab's ramp down,
+    and a straight plunge, whose speed straight down is its feed rate. The
+    rounding of the numbers is allowed for: one unit in the last decimal
+    place written. A move that goes down too fast stops the export with an
+    error that names the line and the operation, for example ``emitted
+    line 42 of operation `op2` descends faster than its tool's plunge
+    rate``.
+12. **Each operation cuts only its own material.** The check works out
+    what each operation may cut from the project's shapes, not from the
+    toolpath, and holds every cutting move to it:
+
+    - a [Pocket](pocket.md): the whole width of the bit stays inside the
+      pocket's outline and outside its islands, `allowance_mm` away from
+      both, arcs counted all the way round. Entry ramps and helixes count
+      too. A rest machining Pocket is held to its own outline the same
+      way.
+    - a [Drill](drill.md): the bit stays inside one of the circles it
+      drills.
+    - an [Engrave](engrave.md): the centre of the bit stays on the line.
+    - a [Profile](profile.md): rules 8 and 9 already hold its cuts to its
+      shapes' outlines and to the stock, and toolpath generation keeps one
+      shape's cut out of another part.
+
+    A move may miss by as much as the program may already differ from the
+    toolpath: one unit in the last decimal place written, plus
+    `flatten_tolerance_mm`, plus `arc_fit_tolerance_mm` when arc fitting
+    is on. A cut outside stops the export with an error that names the
+    line and the operation, for example ``emitted line 57 takes operation
+    `op2`'s tool outside the material it may cut``.
 
 It also checks that:
 

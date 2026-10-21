@@ -48,7 +48,10 @@
 //!   and the program retracts to safe Z again before the spindle starts or
 //!   the router-on pause (#43). A program that changes tools first sets the
 //!   controller's current tool with `M61 Q<n>`, because grblHAL skips an
-//!   `M6` for the tool it holds.
+//!   `M6` for the tool it holds. `<n>`, here and in `{toolNumber}`, is the
+//!   tool's `number` when set, otherwise its 1-based place in the
+//!   project's tool list (#120); two tools of one program with the same
+//!   number, or a number of 0, fail the export.
 //! - Before the first move the program sets absolute distance mode (`G90`)
 //!   as well as units and work coordinates, adding any the header leaves
 //!   out. After every pause that more motion follows, it sets them again,
@@ -72,6 +75,7 @@ use crate::ExportError;
 use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
+use crate::material::Material;
 use crate::parse::{CycleModel, parse_program_with};
 use crate::safety::{self, DWELL_TOLERANCE_S, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
@@ -100,8 +104,12 @@ pub struct Program {
 /// The tool a program starts with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FirstTool {
-    /// Its number, `T<n>`: its 1-based place in the project's tool list.
-    pub number: usize,
+    /// Its id, to find it in the project's tool list.
+    pub id: ToolId,
+    /// Its number, `T<n>`, which also names a tool run's program file: the
+    /// tool's `number` when set, otherwise its 1-based place in the
+    /// project's tool list (#120, capability 21a). Not an index.
+    pub number: u32,
     /// Its name, as written in the program's comments.
     pub name: String,
 }
@@ -398,7 +406,9 @@ pub fn emit_programs(
 /// multi-tool project as the post-processor's tool-change mode says.
 ///
 /// The emitted text is parsed back and checked against safety rules S1–S7
-/// before it is returned.
+/// and phase 2's S9–S12 before it is returned. For S9 the material each
+/// operation may cut is worked out from `project`, not taken from the
+/// toolpath.
 ///
 /// # Errors
 ///
@@ -468,17 +478,17 @@ fn emit_enabled(
     for &entry in enabled {
         let (op, tool, toolpath) = (&entry.op, &entry.tool, &entry.toolpath);
         let rates = Rates::of(tool, control)?;
-        let number = project
-            .tools
-            .iter()
-            .position(|t| t.id == tool.id)
-            .map(|i| i + 1)
-            .ok_or_else(|| ExportError::UnknownTool {
-                op: op.id().clone(),
-                tool: tool.id.clone(),
-            })?;
+        let number = tool_number(project, &tool.id).ok_or_else(|| ExportError::UnknownTool {
+            op: op.id().clone(),
+            tool: tool.id.clone(),
+        })?;
         planned.push((op, tool, toolpath, rates, number, entry.holes.as_deref()));
     }
+    check_tool_numbers(
+        planned
+            .iter()
+            .map(|&(_, tool, _, _, number, _)| (tool, number)),
+    )?;
     // #57: the program stops for every tool after the first, and only `M6`
     // stops where the user may jog to set Z zero. #95: and only when the
     // user chose one program with `M6`; otherwise each tool run is a
@@ -502,6 +512,7 @@ fn emit_enabled(
     let first_tool = planned
         .first()
         .map(|&(_, tool, _, _, number, _)| FirstTool {
+            id: tool.id.clone(),
             number,
             name: comment_text(&tool.name),
         })
@@ -775,14 +786,21 @@ fn emit_enabled(
     };
     let text = w.finish();
 
-    // Step 7: the safety pass, on the text.
+    // Step 7: the safety pass, on the text. The material each operation
+    // may cut (S9) comes from the project, not from the generator.
+    let materials: Vec<Material> = planned
+        .iter()
+        .map(|&(op, ..)| Material::of(project, op))
+        .collect();
     let spans: Vec<OpSpan<'_>> = planned
         .iter()
         .zip(lines)
-        .map(|(&(op, tool, toolpath, ..), lines)| OpSpan {
+        .zip(&materials)
+        .map(|((&(op, tool, toolpath, ..), lines), material)| OpSpan {
             op,
             tool,
             toolpath,
+            material,
             lines,
         })
         .collect();
@@ -1216,6 +1234,47 @@ const TOOL_CHANGE_COMMAND: &str = "M6";
 /// grblHAL's "set current tool number" (`M61 Q<n>`): no stop, no motion.
 const SET_TOOL_COMMAND: &str = "M61";
 
+/// The `T` number of the project's tool `id` (#120, capability 21a): its
+/// `number` when set, otherwise its 1-based place in the project's tool
+/// list. `None` when the project has no tool `id`.
+fn tool_number(project: &Project, id: &ToolId) -> Option<u32> {
+    let (index, tool) = project
+        .tools
+        .iter()
+        .enumerate()
+        .find(|(_, t)| &t.id == id)?;
+    // A place in the list is far below u32::MAX.
+    tool.number.or_else(|| u32::try_from(index + 1).ok())
+}
+
+/// Fails unless every tool of a program has a `T` number of 1 or more
+/// that no other tool of it has: the program would fit the wrong bit.
+/// Validation refuses both first; the post-processor trusts no caller.
+fn check_tool_numbers<'a>(
+    tools: impl IntoIterator<Item = (&'a Tool, u32)>,
+) -> Result<(), ExportError> {
+    let mut numbered: Vec<(u32, &ToolId)> = Vec::new();
+    for (tool, number) in tools {
+        if number == 0 {
+            return Err(ExportError::ToolNumberZero {
+                tool: tool.id.clone(),
+            });
+        }
+        match numbered.iter().find(|&&(n, _)| n == number) {
+            Some(&(_, other)) if other != &tool.id => {
+                return Err(ExportError::DuplicateToolNumber {
+                    tool: tool.id.clone(),
+                    other: other.clone(),
+                    number,
+                });
+            }
+            Some(_) => {}
+            None => numbered.push((number, &tool.id)),
+        }
+    }
+    Ok(())
+}
+
 /// Whether a program for `post` may change tools: the user chose one
 /// program with `M6` (`tool_change.mode` `"m6"`, #95) and its tool change
 /// has an `M6` line, which GRBL 1.1 lacks (#57).
@@ -1251,7 +1310,7 @@ const SET_Z_ZERO: &str = "Set Z zero, then resume.";
 /// The message of the tool change for tool `number` named `name`.
 /// The name is shortened so the instruction always fits
 /// [`MAX_MESSAGE_CHARS`] whole.
-fn tool_change_message(number: usize, name: &str) -> String {
+fn tool_change_message(number: u32, name: &str) -> String {
     let head = format!("Fit T{number}");
     let room = MAX_MESSAGE_CHARS.saturating_sub(head.len() + SET_Z_ZERO.len() + 3);
     let name = sanitize_comment(name, room);
@@ -1632,7 +1691,7 @@ impl<'a> Writer<'a> {
     /// would be reported when the controller reads the line, which may be
     /// long before it stops; on the `M6` line grblHAL reports it after the
     /// planner has synced, as it stops (`dc-project/src/definitions/README.md`).
-    fn change_tool(&mut self, number: usize, message: &str) {
+    fn change_tool(&mut self, number: u32, message: &str) {
         let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
         self.line(&format!("T{number} {TOOL_CHANGE_COMMAND} (MSG, {message})"));
         self.stopped(true);
@@ -3559,7 +3618,11 @@ mod tests {
                 let starts: Vec<&str> = text.lines().filter(|l| has_word(l, "M3")).collect();
                 let rpm = ops[k].tool.rpm.unwrap();
                 assert_eq!(starts, [format!("M3 S{rpm}")], "{post} program {k}");
-                assert_eq!(program.first_tool.number, k + 1, "{post} program {k}");
+                assert_eq!(
+                    program.first_tool.number,
+                    u32::try_from(k + 1).unwrap(),
+                    "{post} program {k}"
+                );
                 let (alone, _) = emit(&project, &ops[k..=k], DATE).unwrap();
                 assert_eq!(program, &alone, "{post} program {k} is its run alone");
             }
@@ -3579,6 +3642,159 @@ mod tests {
             emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
         let (single, _) = emit(&project, &ops, DATE).unwrap();
         assert_eq!(programs, [single]);
+    }
+
+    /// Sets the `number` of the tools of `project` and `ops`, in project
+    /// order: the project is the one the emitter reads numbers from, and
+    /// each operation carries a copy of its tool.
+    fn number_tools(project: &mut Project, ops: &mut [EmitOp], numbers: &[Option<u32>]) {
+        for (tool, &number) in project.tools.iter_mut().zip(numbers) {
+            tool.number = number;
+            for entry in ops.iter_mut().filter(|e| e.tool.id == tool.id) {
+                entry.tool.number = number;
+            }
+        }
+    }
+
+    /// #120, capability 21a: a tool's set `number` is its `T` number in
+    /// every program. One program per tool run: each says which tool it
+    /// starts with, by id and by number (the number names its file), and
+    /// writes the number in the definition's `{toolNumber}` comment.
+    #[test]
+    fn set_tool_number_is_written_as_t_word_and_file_name() {
+        let mut project = project_with("grblhal");
+        let mut ops = two_tool_ops(&mut project);
+        project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        number_tools(&mut project, &mut ops, &[Some(7), Some(12)]);
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        let [first, second] = programs.as_slice() else {
+            panic!("two programs, not {}", programs.len());
+        };
+        for (program, id, number, name) in [
+            (first, "t1", 7, "6.35 mm upcut"),
+            (second, "t2", 12, "3 mm downcut"),
+        ] {
+            assert_eq!(program.first_tool.id, ToolId::new(id));
+            assert_eq!(program.first_tool.number, number);
+            let comment = format!("( Tool {number}: {name} )");
+            assert!(
+                program.text.lines().any(|l| l == comment),
+                "{comment}: {}",
+                program.text
+            );
+        }
+        for (program, absent) in [(first, "( Tool 1:"), (second, "( Tool 2:")] {
+            assert!(!program.text.contains(absent), "{}", program.text);
+        }
+    }
+
+    /// #120: with no `number`, a tool's `T` number is its 1-based place in
+    /// the project's tool list, as in phase 1. Numbers that equal the
+    /// places write the same bytes as no numbers, in both modes.
+    #[test]
+    fn unset_tool_number_falls_back_to_position() {
+        for mode in [ToolChangeMode::M6, ToolChangeMode::SeparatePrograms] {
+            let mut project = project_with("grblhal");
+            let mut ops = two_tool_ops(&mut project);
+            project.post_processor.tool_change_mode = mode;
+            let (unset, _) =
+                emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+            let numbers: Vec<u32> = unset.iter().map(|p| p.first_tool.number).collect();
+            let expected: &[u32] = match mode {
+                ToolChangeMode::M6 => &[1],
+                ToolChangeMode::SeparatePrograms => &[1, 2],
+            };
+            assert_eq!(numbers, expected, "{mode:?}");
+            if mode == ToolChangeMode::M6 {
+                let text = &unset[0].text;
+                assert!(text.lines().any(|l| l == "M61 Q1"), "{text}");
+                assert!(text.lines().any(|l| l.starts_with("T2 M6 ")), "{text}");
+            }
+
+            number_tools(&mut project, &mut ops, &[Some(1), Some(2)]);
+            let (set, _) =
+                emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+            assert_eq!(set, unset, "{mode:?}");
+        }
+    }
+
+    /// #120: in one program with `M6`, the set numbers are the `M61 Q<n>`
+    /// of the first tool and the `T<n> M6` and `Fit T<n>` message of the
+    /// later one, and the pause list says the same. The program still
+    /// passes the safety pass, which `emit` runs.
+    #[test]
+    fn m6_mode_uses_tool_number_in_m61_and_m6() {
+        let mut project = project_with("grblhal");
+        let mut ops = two_tool_ops(&mut project);
+        number_tools(&mut project, &mut ops, &[Some(7), Some(12)]);
+        let program = emit(&project, &ops, DATE).unwrap().0;
+        let text = &program.text;
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(program.first_tool.number, 7);
+        let sets: Vec<&str> = lines
+            .iter()
+            .filter(|l| has_word(l, "M61"))
+            .copied()
+            .collect();
+        assert_eq!(sets, ["M61 Q7"], "{text}");
+        let changes: Vec<&str> = lines
+            .iter()
+            .filter(|l| has_word(l, "M6"))
+            .copied()
+            .collect();
+        assert_eq!(
+            changes,
+            ["T12 M6 (MSG, Fit T12 3 mm downcut. Set Z zero, then resume.)"],
+            "{text}"
+        );
+        assert!(lines.contains(&"( Tool 7: 6.35 mm upcut )"), "{text}");
+        assert!(lines.contains(&"( Tool 12: 3 mm downcut )"), "{text}");
+        let messages: Vec<&str> = program.pauses.iter().map(|p| p.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            ["Fit T12 3 mm downcut. Set Z zero, then resume."],
+            "{text}"
+        );
+        for position in ["T1", "T2", "Q1", "Q2"] {
+            assert!(
+                !lines.iter().any(|l| has_word(l, position)),
+                "{position}: {text}"
+            );
+        }
+    }
+
+    /// #120: the post-processor trusts no caller. Two tools of one program
+    /// that resolve to the same `T` number, set or by position, or a set
+    /// number of 0, fail the export, which validation would have refused.
+    #[test]
+    fn clashing_or_zero_tool_number_fails_export() {
+        for (numbers, number) in [
+            (&[Some(5), Some(5)][..], 5),
+            (&[None, Some(1)][..], 1),
+            (&[Some(2), None][..], 2),
+        ] {
+            let mut project = project_with("grblhal");
+            let mut ops = two_tool_ops(&mut project);
+            number_tools(&mut project, &mut ops, numbers);
+            let err = emit(&project, &ops, DATE).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::DuplicateToolNumber { tool, other, number: n }
+                        if tool == &ToolId::new("t2") && other == &ToolId::new("t1") && *n == number
+                ),
+                "{numbers:?}: {err:?}"
+            );
+        }
+        let mut project = project_with("grblhal");
+        let mut ops = ops_for(&project);
+        number_tools(&mut project, &mut ops, &[Some(0)]);
+        let err = emit(&project, &ops, DATE).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::ToolNumberZero { tool } if tool == &ToolId::new("t1")),
+            "{err:?}"
+        );
     }
 
     /// #95: [`emit`] writes one program, so with `"separate_programs"` it
@@ -3682,12 +3898,26 @@ mod tests {
         assert_eq!(programs.len(), 2, "separate_programs: one per tool run");
     }
 
-    /// A one-hole Drill of the sample project at (50, 50), 3 mm deep: in
-    /// at safe Z (11), down to the retract plane 1 mm above the 6 mm stock,
-    /// plunge, dwell 0.5 s, back to safe Z. Hand-written so the emitter is
-    /// tested apart from the generator.
-    fn drill_ops(project: &Project) -> Vec<EmitOp> {
-        let op = dc_project::test_support::sample_drill();
+    /// A one-hole Drill at (50, 50), 3 mm deep, of an 8 mm circle added to
+    /// `project`: in at safe Z (11), down to the retract plane 1 mm above
+    /// the 6 mm stock, plunge, dwell 0.5 s, back to safe Z. Hand-written so
+    /// the emitter is tested apart from the generator.
+    fn drill_ops(project: &mut Project) -> Vec<EmitOp> {
+        let hole = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d2"),
+            name: "Hole".into(),
+            profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 4.0)],
+        };
+        project.definitions.insert(hole.id.clone(), hole);
+        let mut instance = project.instances[0].clone();
+        instance.id = dc_project::InstanceId::new("h1");
+        instance.definition = dc_project::DefinitionId::new("d2");
+        instance.transform = dc_geometry::Transform::translate(50.0, 50.0);
+        project.instances.push(instance);
+        let op = dc_project::DrillOp {
+            targets: vec![dc_project::InstanceId::new("h1")],
+            ..dc_project::test_support::sample_drill()
+        };
         let tool = project.tools[0].clone();
         let toolpath = Toolpath {
             moves: vec![
@@ -3719,8 +3949,9 @@ mod tests {
     /// rapid down to the retract plane).
     #[test]
     fn dwell_writes_g4() {
-        let project = project_with("grblhal");
-        let (program, _) = emit(&project, &drill_ops(&project), DATE).unwrap();
+        let mut project = project_with("grblhal");
+        let ops = drill_ops(&mut project);
+        let (program, _) = emit(&project, &ops, DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P0.500");
     }
 
@@ -3729,10 +3960,11 @@ mod tests {
     /// milliseconds gets the same dwell as `P500`.
     #[test]
     fn dwell_in_milliseconds_when_the_post_says_so() {
-        let project = project_with("grblhal");
+        let mut project = project_with("grblhal");
         let mut post = post_of(&project);
         post.feed_speed.spindle_on_dwell.units = dc_project::DwellUnits::Milliseconds;
-        let (program, _) = emit_with(&project, &post, &drill_ops(&project), DATE).unwrap();
+        let ops = drill_ops(&mut project);
+        let (program, _) = emit_with(&project, &post, &ops, DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P500");
     }
 
@@ -3743,10 +3975,11 @@ mod tests {
     /// manual documents seconds; see the definitions README.
     #[test]
     fn uccnc_dwell_is_milliseconds() {
-        let project = project_with("uccnc");
+        let mut project = project_with("uccnc");
         let text = emit_text(&project);
         assert!(text.lines().any(|l| code(l) == "G4 P3000"), "{text}");
-        let (program, _) = emit(&project, &drill_ops(&project), DATE).unwrap();
+        let ops = drill_ops(&mut project);
+        let (program, _) = emit(&project, &ops, DATE).unwrap();
         assert_eq!(line_after_plunge(&program.text), "G4 P500");
         let mach3 = emit_text(&project_with("mach3"));
         assert!(

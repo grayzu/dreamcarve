@@ -15,6 +15,7 @@ pub mod canned;
 pub mod emit;
 mod error;
 pub mod format;
+mod material;
 pub mod parse;
 #[cfg(test)]
 mod post;

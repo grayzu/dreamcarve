@@ -28,6 +28,28 @@ pub enum ExportError {
         /// The missing tool id.
         tool: ToolId,
     },
+    /// Two tools of one program resolve to the same `T` number: a set
+    /// `number`, or the 1-based place in the tool list of a tool with none
+    /// (#120). The program would fit the wrong bit. Validation refuses
+    /// such a project first.
+    #[error(
+        "tools `{other}` and `{tool}` would both be T{number} in the program; give one of them another number"
+    )]
+    DuplicateToolNumber {
+        /// The later tool.
+        tool: ToolId,
+        /// The earlier tool with that number.
+        other: ToolId,
+        /// The number both resolve to.
+        number: u32,
+    },
+    /// A tool's `number` is 0: `T0` is no tool. Validation refuses it
+    /// first.
+    #[error("tool `{tool}` has number 0; a tool number is 1 or more")]
+    ToolNumberZero {
+        /// The tool.
+        tool: ToolId,
+    },
     /// A tool lacks a feed or plunge rate: unset, or not a positive number.
     /// Rates are never invented.
     #[error("tool `{tool}` has no usable {field}")]
@@ -338,6 +360,27 @@ pub enum ExportError {
         "emitted line {line} is an arc in place of operation `{op}`'s straight moves that does not follow them"
     )]
     ArcFitViolation {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+    },
+    /// S10: a cutting move descends faster than its tool's plunge rate:
+    /// its feed times the sine of its slope is above the plunge rate. A
+    /// ramp, a helix, a tab's down slope and a straight plunge are all
+    /// held to it.
+    #[error("emitted line {line} of operation `{op}` descends faster than its tool's plunge rate")]
+    EntryTooSteep {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+    },
+    /// S9: a cutting move takes the tool out of the material its operation
+    /// may cut: past a Pocket's wall, its allowance, or into an island; off
+    /// a Drill's holes; or off an Engrave's lines.
+    #[error("emitted line {line} takes operation `{op}`'s tool outside the material it may cut")]
+    OffMaterial {
         /// The operation.
         op: OperationId,
         /// 1-based line number in the program.

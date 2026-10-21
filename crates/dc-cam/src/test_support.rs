@@ -33,12 +33,11 @@ use dc_project::{Operation, Project};
 /// 4. **Feeds (S3).** Every linear and arc move carries `Some` positive
 ///    feed. A straight plunge (Z falls, XY stays) carries the tool's plunge
 ///    rate. A straight move that falls while it moves in XY (a ramp or
-///    helix descent, a tab's down slope) carries the tool's feed rate, or
-///    the feed rate scaled so its vertical component is the plunge rate,
-///    `min(feed, plunge × length / drop)` (S10's feed scale). Every other
-///    move that changes XY carries the tool's feed rate. That an entry's
-///    descent is scaled whenever it must be is checked by the entry tests;
-///    S10 on every descending move is the safety pass's (slice 16).
+///    helix descent, a tab's down slope) carries the feed rate scaled so
+///    its vertical component is at most the plunge rate, `min(feed,
+///    plunge × length / drop)` (S10's feed scale, #157): the cutting feed
+///    where that is slow enough, else exactly the plunge-limited feed.
+///    Every other move that changes XY carries the tool's feed rate.
 /// 5. **Dwells.** A dwell ends where the tool already is and carries no
 ///    feed.
 ///
@@ -158,9 +157,8 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
                     let length = (dx * dx + dy * dy + drop * drop).sqrt();
                     let limited = feed.min(plunge * length / drop);
                     assert!(
-                        approx_eq(f, feed, EPS_MM)
-                            || approx_eq(f, limited, EPS_MM * limited.max(1.0)),
-                        "descending XY move {i} feeds at {f}, neither feed {feed} nor the plunge-limited {limited} (plunge {plunge}): {prev:?} -> {mv:?}"
+                        approx_eq(f, limited, EPS_MM * limited.max(1.0)),
+                        "descending XY move {i} feeds at {f}, not the plunge-limited {limited} (feed {feed}, plunge {plunge}): {prev:?} -> {mv:?}"
                     );
                 } else if moves_xy {
                     assert!(
@@ -305,15 +303,24 @@ mod tests {
 
     /// Any other feed on a descending XY move is invented.
     #[test]
-    #[should_panic(expected = "neither feed")]
+    #[should_panic(expected = "not the plunge-limited")]
     fn rejects_steep_ramp_at_an_invented_feed() {
         check(ramp_cut_by(2.0, 500.0));
     }
 
     #[test]
-    #[should_panic(expected = "neither feed")]
+    #[should_panic(expected = "not the plunge-limited")]
     fn rejects_ramp_down_at_plunge_rate() {
         check(ramp_cut(300.0));
+    }
+
+    /// S10 (#157): the steep ramp at the cutting feed would descend at 371
+    /// mm/min, past the 300 plunge, whatever made it: an entry or a tab's
+    /// down slope.
+    #[test]
+    #[should_panic(expected = "not the plunge-limited")]
+    fn rejects_steep_ramp_at_cutting_feed() {
+        check(ramp_cut_by(2.0, 1000.0));
     }
 
     #[test]

@@ -2290,6 +2290,96 @@ fn m6_mode_writes_one_program() {
     assert!(summary.contains("sender must stop at M6"), "{summary}");
 }
 
+/// Sets the `number` of each tool of the `.dcv` at `dcv`, in list order.
+fn set_tool_numbers(dcv: &Path, numbers: &[Option<u32>]) {
+    let mut project = load_file(dcv).project;
+    for (tool, &number) in project.tools.iter_mut().zip(numbers) {
+        tool.number = number;
+    }
+    std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
+}
+
+/// #120, capability 21a: a tool's set `number` names its tool run's
+/// program, `<stem>-<k>-T<number>`, and is the number the summary tells
+/// the user to fit and the program's comments carry. Each program's
+/// cutter edge is its own tool's, found by id, not by number.
+#[test]
+fn tool_number_names_program_files() {
+    let dir = work_dir("tool_number_names_program_files");
+    let dcv = two_tool_coaster(&dir);
+    set_tool_numbers(&dcv, &[Some(5), Some(9)]);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    for (name, comment) in [
+        ("coaster-1-T5.nc", "( Tool 5: Set me )"),
+        ("coaster-2-T9.nc", "( Tool 9: 3mm finisher )"),
+    ] {
+        let program = std::fs::read_to_string(dir.join(name))
+            .unwrap_or_else(|e| panic!("{name} written: {e}"));
+        assert!(program.lines().any(|l| l == comment), "{name}: {program}");
+    }
+    for name in ["coaster-1-T1.nc", "coaster-2-T2.nc"] {
+        assert!(!dir.join(name).exists(), "{name} not written");
+    }
+    let summary = stdout(&out);
+    let expected = "Wrote 2 programs; run them in this order:\n  \
+        1. coaster-1-T5.nc  Before you start: fit T5 Set me and set work zero (X, Y and Z) with it.\n  \
+        2. coaster-2-T9.nc  Before you start: fit T9 3mm finisher and set Z zero with it. Keep X and Y zero.\n";
+    assert!(summary.contains(expected), "{summary}");
+    let edges = summary
+        .lines()
+        .filter(|l| l.contains("The cutter's edge reaches"))
+        .count();
+    assert_eq!(
+        edges, 2,
+        "both programs name their cutter's edge: {summary}"
+    );
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stderr(&out));
+    let report = stdout(&out);
+    for line in ["Program 1 (T5):", "Program 2 (T9):"] {
+        assert!(report.lines().any(|l| l == line), "{line}: {report}");
+    }
+}
+
+/// #120: the tool the user fits before starting is named by its set
+/// `number`: for a one-tool program, and for one program with `M6`, whose
+/// `M61 Q<n>` and `T<n> M6` use the numbers too.
+#[test]
+fn before_you_start_names_the_tool_number() {
+    let dir = work_dir("before_you_start_names_the_tool_number");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    set_tool_numbers(&dcv, &[Some(4)]);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(
+        summary.contains("Before you start: fit T4 Set me and set work zero with it."),
+        "{summary}"
+    );
+
+    let dir = work_dir("before_you_start_names_the_tool_number_m6");
+    let dcv = two_tool_coaster(&dir);
+    set_tool_change_mode(&dcv, ToolChangeMode::M6);
+    set_tool_numbers(&dcv, &[Some(5), Some(9)]);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(
+        summary.contains("Before you start: fit T5 Set me and set work zero with it."),
+        "{summary}"
+    );
+    assert!(summary.contains("Fit T9 3mm finisher."), "{summary}");
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(program.lines().any(|l| l == "M61 Q5"), "{program}");
+    assert!(
+        program.lines().any(|l| l.starts_with("T9 M6 ")),
+        "{program}"
+    );
+}
+
 /// #95: GRBL has no `M6`, so `"m6"` on its definition is an error located
 /// at the field, which `check` reports and on which export writes nothing.
 #[test]

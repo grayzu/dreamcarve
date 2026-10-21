@@ -62,7 +62,9 @@ Added `1/4 end mill` (lt1) to plaque.dcv as tool t2.
 ```
 
 The tool gets a new project id, the next free `t<n>` in that project, and
-keeps every value from the library, including its tool `number`. Point an
+keeps every value from the library, including its tool `number`, which
+programs then write as `T<number>` (a tool with no number is written as
+its place in the project's tool list). Point an
 operation at it by setting the operation's `"tool"` to that id. Library ids
 (`lt<n>`) never appear in a project.
 

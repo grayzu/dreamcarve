@@ -23,6 +23,7 @@
 //! the tab top at a single point, which leaves only about 60% of the height
 //! under a 6.35 mm bit; it is not ported.
 
+use crate::entry::plunge_limited_feed_mm_min;
 use crate::error::{CamError, ShapeRef};
 use crate::toolpath::{Move, MoveKind};
 use crate::warning::{Warning, WarningCode};
@@ -482,8 +483,9 @@ pub(crate) struct LapCuts {
 /// rect tabs with a vertical lift, a traverse at the tab top, and a
 /// vertical descent; smooth tabs along straight ramps either side of a hold
 /// at the tab top. Every vertical move is at the plunge rate; every move
-/// along the path, smooth ramps down included, is at the feed rate. `None`
-/// for a path with no vertices.
+/// along the path is at the feed rate, except a smooth ramp down, whose
+/// feed is scaled so it descends no faster than the plunge rate (S10,
+/// #157). `None` for a path with no vertices.
 pub(crate) fn lap_cuts(
     path: &Polyline,
     z_mm: f64,
@@ -501,10 +503,21 @@ pub(crate) fn lap_cuts(
             current = Point3::new(current.x, current.y, piece.from_z_mm);
             moves.push(Move::linear(current, rates.plunge_mm_min));
         }
+        // A ramp is straight (an arc is split into chords while Z
+        // changes), so the straight-move scale covers every descent.
+        let feed_mm_min = match piece.kind {
+            MoveKind::Linear => plunge_limited_feed_mm_min(
+                rates.feed_mm_min,
+                rates.plunge_mm_min,
+                current,
+                piece.to,
+            ),
+            _ => rates.feed_mm_min,
+        };
         moves.push(Move {
             kind: piece.kind,
             to: piece.to,
-            feed_mm_min: Some(rates.feed_mm_min),
+            feed_mm_min: Some(feed_mm_min),
         });
         current = piece.to;
     }
@@ -1556,7 +1569,8 @@ mod tests {
 
         // On the coaster's arcs: four tabs, each the same triangle centred
         // on its distance, each lifted over width + diameter, every move
-        // along the path at the feed rate, with no vertical step.
+        // along the path at the feed rate or its plunge-limited scale
+        // (S10, #157), with no vertical step.
         let (p, op) = coaster(Some(tab_spec(
             TabPlacement::Count { count: 4 },
             TabShape::Smooth,
@@ -1582,9 +1596,51 @@ mod tests {
                 .all(|m| m.from.z >= -1e-12 && m.mv.to.z <= TAB_Z_MM + 1e-12)
         );
         for m in &lap {
-            assert_approx_eq!(m.mv.feed_mm_min.unwrap(), FEED_MM_MIN, EPS_MM);
+            assert_approx_eq!(m.mv.feed_mm_min.unwrap(), plunge_limited(m), EPS_MM);
         }
         assert_no_vertical_step_in_final_pass(&tp);
+    }
+
+    /// The feed S10 asks of `m`: the cutting feed, scaled on a descending
+    /// move so its vertical rate is at most the plunge rate, `min(feed,
+    /// plunge × length / drop)`.
+    fn plunge_limited(m: &XyMove) -> f64 {
+        let drop_mm = m.from.z - m.mv.to.z;
+        if drop_mm <= EPS_MM {
+            return FEED_MM_MIN;
+        }
+        let length_mm = m.length_mm.hypot(drop_mm);
+        FEED_MM_MIN.min(PLUNGE_MM_MIN * length_mm / drop_mm)
+    }
+
+    /// S10 (#157): a smooth tab's down slope descends no faster than the
+    /// plunge rate. The bar's 3 mm tab over a 4 mm ramp (half the 8 mm
+    /// width) would fall at 1000 × 3/5 = 600 mm/min at the cutting feed,
+    /// twice the 300 plunge, so its feed is scaled to 300 × 5/3 = 500; the
+    /// up slope and the hold stay at the cutting feed.
+    #[test]
+    fn smooth_tab_down_slope_is_plunge_limited() {
+        let (p, op) = bar_smooth_tab();
+        let (tp, _) = generate(&p, &op);
+        let lap = final_lap(&tp);
+        let mut falling = 0;
+        for m in &lap {
+            let f = m.mv.feed_mm_min.unwrap();
+            let drop_mm = m.from.z - m.mv.to.z;
+            if drop_mm > EPS_MM {
+                falling += 1;
+                let vertical = f * drop_mm / m.length_mm.hypot(drop_mm);
+                assert!(
+                    vertical <= PLUNGE_MM_MIN + 1e-9,
+                    "down slope falls at {vertical} mm/min: {m:?}"
+                );
+                assert!(f < FEED_MM_MIN, "the scale applies: {m:?}");
+            } else {
+                assert_approx_eq!(f, FEED_MM_MIN, EPS_MM);
+            }
+            assert_approx_eq!(f, plunge_limited(m), EPS_MM);
+        }
+        assert!(falling > 0, "the final lap comes down off the tab");
     }
 
     #[test]
