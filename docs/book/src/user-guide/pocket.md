@@ -225,7 +225,10 @@ depth, so it has no entry.
   the pass depth, then moves to that start. The line is the longest
   one through that point that fits in the tool-centre area, kept a tenth
   of the bit's diameter in from its edge so the ramp does not mark the
-  wall, and at most three diameters long.
+  wall, and at most three diameters long. When the depth is a hair over
+  a whole number of legs, the last two legs share what is left, so no
+  leg is too short for the program to write; no leg is steeper than
+  `angle_deg`.
 - `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`: a spiral
   down, `diameter_fraction` of the bit's diameter across (5.08 mm for a
   6.35 mm bit at 0.8), at `angle_deg`, then one flat turn at the pass

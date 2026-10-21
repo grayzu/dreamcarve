@@ -361,7 +361,13 @@ walls. A Drill's stays in its holes, and an Engrave's on its lines. A
 Pocket's corner-relief notches may cut into their corners' relief zones.
 A Profile is held to its waste (#177). Inside, the tool centre stays in a
 target region, `r` from its walls, as a Pocket with no allowance. Outside,
-it stays outside every target region, `r` from every outline. On line,
+it stays outside every target region, `r` from every outline. Which side
+of an outline an Outside cut or a lap is on is judged at the cut's
+middle, not its start. (changed in #231: judged at its start, a T-bone's
+return leg, which starts on the wall it slots into, failed on a rotated
+part once the program's rounding moved that start up to a quantum into
+the part; a cut that does reach into the part still fails the clearance
+test.) On line,
 it stays on a target's line, at least `d` from every other line of that
 line's region. (changed in #199: On line was held to the line only, so a
 ring narrower than the tool passed; dc-cam now refuses it, see "Profile
@@ -386,7 +392,11 @@ so every Profile cutting move is checked: laps, descents, lead arcs and
 notches. One exception is the lap of one outline, a cut at `r` from that
 outline on its waste side. It passes even where an outline of another
 region comes nearer, because that gouge is the one `ToolpathsOverlap`
-warns of. It still keeps `r` from every outline of its own region.
+warns of. It still keeps `r` from every outline of its own region. A
+relief notch that runs within `r` of its outline counts as that lap
+here too: a T-bone in a hole's corner beside an island part closer than
+the tool starts at the lap's corner and runs away from the island, so
+it comes no nearer the island than the lap does (#231).
 (changed in #192: the exception covered every other outline, so an
 Inside island's lap in a band narrower than the tool passed although
 `ToolpathsOverlap` never compares one region's lines; dc-cam now refuses
@@ -513,7 +523,12 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
 5. **Stepover** `s = diameter × step_over_fraction` (operation, else tool;
    validation guarantees (0, 1]).
 6. **Offset strategy.** Build the ring tree once per tool-centre region:
-   `children(node) = inset_region(node, s)`, recursively, until empty.
+   `children(node) = inset_region(node, s)`, recursively, until empty;
+   an inset whose area is under the flatten tolerance times its
+   perimeter (a piece thinner than twice the tolerance, rest machining's
+   noise rule) is not a node. (changed in #235: a nested circle 5.0006
+   step-overs in radius kept a sixth ring 0.0002 mm in radius, three
+   arcs whose ends round to one point, and S6 refused the program.)
    Every node's outer and islands are rings. Emit blocks per pass,
    innermost first (PureCutCNC `inner-first`): for each root region, a
    depth-first post-order walk emits the leaf rings, then their parents,
@@ -524,7 +539,7 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    Profile Pass" warns; a region too small for a second ring is then not
    cut). **Residual rings:** when `s > r + tolerance`, each node also gets
    residual leaf children, one per piece of `inset_region(node, r + tol)`
-   less its children grown by `r + tol` (`rings::residual_regions`),
+   less its children (noise dropped) grown by `r + tol` (`rings::residual_regions`),
    pieces under `tolerance × perimeter` dropped as noise. A ring sweeps
    `r` either side, so those are the points neither the node's rings nor
    its children's subtrees reach; every one lies under `s ≤ 2r` from the
@@ -814,7 +829,12 @@ cut direction and cut side.
   target; longest chord inside the region, shrunk by `safety` at both
   ends; run at most `3·D` centred on the target and slid to stay inside;
   zigzag descent at `angle`, final partial run clamped; handoff to the
-  target.
+  target. A final run that would fall less than `RAMP_MIN_LAST_DROP_MM`
+  (0.05 mm) shares the last two runs' depth instead, each at `angle`, the
+  first cut short and the second back to where it began; a one-run ramp
+  that shallow runs the whole run. (changed in #234: a depth a sliver
+  over a whole number of runs left a last run of micrometres, written
+  level at the plunge-limited feed, which S3 refuses.)
 - **Profile ramp:** the same zigzag placement, in the Profile's waste
   domain (below), as PureCutCNC's edge routes do (`edge.ts`,
   `bandEntryPolicy` with `cutSide: 'internal'` for inside routes and
@@ -846,7 +866,9 @@ cut direction and cut side.
 - **On line ramp:** an On line Profile removes only its own kerf, so the
   ramp runs along the cut path itself: from the start vertex, forward
   along the path for `run = min(3·D, L)` and back, descending at `angle`
-  on each leg until pass Z is reached, the final partial leg clamped;
+  on each leg until pass Z is reached, the final partial leg clamped (a
+  final leg that would fall less than `RAMP_MIN_LAST_DROP_MM` runs the
+  whole leg, shallower; changed in #234, as for the Pocket ramp);
   arcs are split into chords within the flatten tolerance while Z
   changes. The pass then cuts the full path from the start vertex, so
   the ramped stretch is cut again at full depth (VCarve's Zig Zag ramp).
@@ -1284,8 +1306,13 @@ cut order" in its warnings (`TabsOverlap`, `TabsCoverMostOfContour`,
      `b.entry`, and `b`'s descent is not cut (the tool is already at
      `b`'s Z in cleared material; replaying a helix would climb back
      through air) (O3). "Inside" means both ends in one piece of the
-     union, no crossing of its boundary, and every sample point, at most
-     0.5 mm apart along the link, inside;
+     union, no crossing of its boundary, the middle of every stretch
+     between the points where the link touches the boundary inside, and
+     every sample point, at most 0.5 mm apart along the link, inside
+     (changed in #232: without the stretches, a raster link under 0.5 mm
+     between two ends on the round tool-centre boundary about an island
+     corner had no sample point, crossed nothing, and cut 0.024 mm into
+     the island);
    - otherwise: rapid up to safe Z, rapid in XY to `b.descent_from`, then
      `b.descent` from safe Z (or a plunge at the plunge rate). When
      `b.descent_from_z_mm` is below safe Z, the tool gets there by a rapid

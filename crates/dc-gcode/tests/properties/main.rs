@@ -24,6 +24,7 @@
     reason = "test code reports failure by panicking"
 )]
 
+mod cases;
 mod projects;
 
 use dc_cam::test_support::assert_safe;
@@ -57,13 +58,16 @@ fn config(cases: u32) -> ProptestConfig {
 }
 
 /// Generator errors a valid project may still get, because they depend on
-/// how the shapes and the tool meet: the cutter would leave the stock, or a
-/// band between two lines is narrower than the tool. Any other error from a
-/// project that validates is a defect.
+/// how the shapes and the tool meet: the cutter would leave the stock, a
+/// band between two lines is narrower than the tool, or an On line part is
+/// nowhere as wide as the tool (#223). Any other error from a project that
+/// validates is a defect.
 fn rejects_drawing(error: &CamError) -> bool {
     matches!(
         error,
-        CamError::OffStock { .. } | CamError::BandNarrowerThanTool { .. }
+        CamError::OffStock { .. }
+            | CamError::BandNarrowerThanTool { .. }
+            | CamError::PartNarrowerThanTool { .. }
     )
 }
 
@@ -122,21 +126,18 @@ proptest! {
     #![proptest_config(config(64))]
 
     /// Profile: any side, direction, depth, step-down, tabs, entry, lead,
-    /// corner relief and machining order. Ignored until #231: S9 refuses
-    /// a T-bone notch on a rotated Outside Profile.
+    /// corner relief and machining order.
     #[test]
-    #[ignore = "#231"]
     fn random_valid_profiles_never_panic_and_pass_safety(project in projects::profile_project()) {
         exports_safely(&project)?;
     }
 
     /// Pocket: offset and raster at any angle, any wall pass, allowance,
     /// step-over, entry (plunge, ramp, helix) and corner relief. Ignored
-    /// until its three remaining bugs are fixed: a raster link into an
-    /// island (#232), a micrometre ramp leg (#234) and a ring too small to
-    /// write (#235). Arc fitting off a long chord (#233) is fixed.
+    /// until #262: arc fitting a tiny helix's flat revolution fails S12 in
+    /// an inch program (the committed seed `9cea68b9…`).
     #[test]
-    #[ignore = "#232, #234, #235"]
+    #[ignore = "#262"]
     fn random_valid_pockets_never_panic_and_pass_safety(project in projects::pocket_project()) {
         exports_safely(&project)?;
     }

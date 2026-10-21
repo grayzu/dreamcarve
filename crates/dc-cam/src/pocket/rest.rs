@@ -163,7 +163,7 @@ pub fn in_air(ring: &Contour, left: &[Region], radius_mm: f64, tolerance_mm: f64
 
 /// `regions` without the pieces thinner than twice `tolerance_mm`: area
 /// under `tolerance_mm` times the perimeter.
-pub(super) fn without_noise(regions: Vec<Region>, tolerance_mm: f64) -> Vec<Region> {
+fn without_noise(regions: Vec<Region>, tolerance_mm: f64) -> Vec<Region> {
     regions
         .into_iter()
         .filter(|r| {

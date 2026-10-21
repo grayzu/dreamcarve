@@ -36,7 +36,7 @@ use dc_geometry::{
 };
 use std::f64::consts::TAU;
 
-use super::rest::{grow_all, without_noise};
+use super::rest::grow_all;
 use crate::sequence::nearest_of;
 
 /// `region` inset by `inset_mm`: its outer offset inward and its islands
@@ -89,6 +89,22 @@ pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Re
     difference(&subject, &clip, tolerance_mm)
 }
 
+/// Whether `region` is noise at `tolerance_mm`, not a ring to cut: its
+/// area is under the tolerance times its perimeter, a piece thinner than
+/// twice the tolerance (rest machining's rule, [`super::rest`]); for a
+/// circle, a radius under twice the tolerance. A ring that small is
+/// below what a program can be trusted to write (#235: one of radius
+/// 0.0002 mm, three arcs whose ends round to one point, failed S6), and
+/// it cuts nothing the ring around it does not already reach within the
+/// tolerance when the step-over is at most the tool radius.
+fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
+    let perimeter_mm: f64 = std::iter::once(region.outer())
+        .chain(region.holes())
+        .map(|c| c.polyline().length_mm())
+        .sum();
+    region.area_mm2() <= tolerance_mm * perimeter_mm
+}
+
 /// The region `contour` alone encloses.
 fn single_region(contour: Contour) -> Option<Region> {
     nest(vec![contour])
@@ -111,7 +127,7 @@ fn single_region(contour: Contour) -> Option<Region> {
 /// at step-over `2r`, where the two edges meet along a straight wall, no
 /// sliver is left between them; the pieces' rings still sweep the
 /// tolerance-wide strips this leaves out. Pieces thinner than twice the
-/// tolerance are noise, as rest machining's are. Empty when nothing is
+/// tolerance are noise ([`is_noise`]). Empty when nothing is
 /// left; at step-over `r` or less nothing ever is.
 ///
 /// Upstream (`appendResidualCoreGuides`) adds one ring inset by the
@@ -139,7 +155,9 @@ pub fn residual_regions(
             tolerance_mm,
         )
     };
-    without_noise(left, tolerance_mm)
+    left.into_iter()
+        .filter(|r| !is_noise(r, tolerance_mm))
+        .collect()
 }
 
 /// The rings of one tool-centre region: the region itself at the root,
@@ -204,7 +222,9 @@ impl RingTree {
     /// The tree of `root` at step-over `stepover_mm` for a tool of radius
     /// `radius_mm`, or `None` when it would have more than `max_nodes`
     /// nodes. Each node's children are its [`inset_region`] by the
-    /// step-over, then its [`residual_regions`] as residual leaves.
+    /// step-over, then its [`residual_regions`] as residual leaves. An
+    /// inset that is noise at `tolerance_mm` ([`is_noise`]) is not a node
+    /// (#235); what it stood for is then in the residual regions.
     #[must_use]
     pub fn build(
         root: Region,
@@ -222,7 +242,11 @@ impl RingTree {
         while let Some(index) = pending.pop() {
             let (children, residual) = match nodes.get(index) {
                 Some(node) => {
-                    let children = inset_region(&node.region, stepover_mm, tolerance_mm);
+                    let children: Vec<Region> =
+                        inset_region(&node.region, stepover_mm, tolerance_mm)
+                            .into_iter()
+                            .filter(|r| !is_noise(r, tolerance_mm))
+                            .collect();
                     let residual = if stepover_mm > radius_mm + tolerance_mm {
                         residual_regions(&node.region, &children, radius_mm, tolerance_mm)
                     } else {
@@ -732,5 +756,42 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    /// #235 (found by the dc-gcode property test): the nested circular
+    /// pocket's tool-centre region, a circle of radius 1.4994 mm, at the
+    /// property case's 0.2998 mm step-over is 5.0006 step-overs across its
+    /// radius, so a sixth ring of radius 0.0002 mm was kept: three arcs
+    /// whose ends round to one point in the program (S6). A ring under
+    /// twice the tolerance across is noise by the rule rest machining
+    /// uses (area under the tolerance times the perimeter), and nothing
+    /// the tool does not already reach from the ring before it: five
+    /// rings, none under 0.02 mm across.
+    #[test]
+    fn no_ring_smaller_than_the_tolerance() {
+        let tool_radius_mm = 1.715_671_296_509_893_3 / 2.0;
+        let centre_radius_mm = 2.906_933_833_965_864_4 - tool_radius_mm - 0.549_697_563_087_318_1;
+        let stepover_mm = 1.715_671_296_509_893_3 * 0.174_767_951_923_974_57;
+        let root = region(vec![Polyline::circle(
+            Point::new(120.0, 80.0),
+            centre_radius_mm,
+        )]);
+        let tree = RingTree::build(
+            root,
+            stepover_mm,
+            tool_radius_mm,
+            FLATTEN_TOLERANCE_DEFAULT_MM,
+            100,
+        )
+        .unwrap();
+        assert_eq!(tree.nodes.len(), 5, "{:?}", tree.nodes);
+        for (i, node) in tree.nodes.iter().enumerate() {
+            let bounds = node.region.outer().polyline().bounds().unwrap();
+            let across_mm = bounds.width_mm().min(bounds.height_mm());
+            assert!(
+                across_mm >= 2.0 * FLATTEN_TOLERANCE_DEFAULT_MM,
+                "ring {i} is {across_mm} mm across"
+            );
+        }
     }
 }

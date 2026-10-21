@@ -706,8 +706,17 @@ fn distance_3d(a: Point3, b: Point3) -> f64 {
 
 /// True when the straight link `from → to` lies inside the union of the
 /// two cleared areas: its ends are in one piece of the union, it crosses
-/// no boundary edge of that piece properly, and every sample point along
-/// it (at most [`LINK_SAMPLE_STEP_MM`] apart) is inside.
+/// no boundary edge of that piece properly, the middle of every stretch
+/// between the points where it touches the boundary is inside, and so is
+/// every sample point along it (at most [`LINK_SAMPLE_STEP_MM`] apart).
+///
+/// The stretches (#232): a link that crosses no edge properly can still
+/// leave the piece where it touches the boundary, at a vertex or at its
+/// own ends. Between two touches it is wholly inside or wholly outside
+/// the flattened boundary, so its middle tells which. A link from one
+/// raster end to the next on the round tool-centre boundary about an
+/// island corner is one such stretch, and at 0.34 mm it had no sample
+/// point at all.
 pub(crate) fn link_inside_cleared(a: &Region, b: &Region, from: Point, to: Point) -> bool {
     let pieces = union(
         std::slice::from_ref(a),
@@ -720,27 +729,40 @@ pub(crate) fn link_inside_cleared(a: &Region, b: &Region, from: Point, to: Point
     if !piece.contains_point(to) {
         return false;
     }
+    let link = to - from;
+    let length_sq = link.dot(link);
+    let at = |t: f64| Point::new(from.x + link.x * t, from.y + link.y * t);
+    // Where along the link, 0 to 1, it touches the boundary.
+    let mut touches = vec![0.0, 1.0];
     let boundary = std::iter::once(piece.outer()).chain(piece.holes());
     for contour in boundary {
         let flat = contour
             .polyline()
             .with_arcs_flattened(FLATTEN_TOLERANCE_DEFAULT_MM);
-        if flat
-            .segments()
-            .any(|s| crosses_properly(from, to, s.start, s.end))
-        {
-            return false;
+        for s in flat.segments() {
+            if crosses_properly(from, to, s.start, s.end) {
+                return false;
+            }
+            if length_sq > EPS_MM * EPS_MM {
+                let t = (s.start - from).dot(link) / length_sq;
+                if t > 0.0 && t < 1.0 && at(t).distance_to(s.start) <= EPS_MM {
+                    touches.push(t);
+                }
+            }
         }
+    }
+    touches.sort_by(f64::total_cmp);
+    let stretches_inside = touches
+        .windows(2)
+        .all(|w| matches!(w, [t0, t1] if piece.contains_point(at((t0 + t1) / 2.0))));
+    if !stretches_inside {
+        return false;
     }
     let length_mm = from.distance_to(to);
     // Rounds up; the count is small, so the cast cannot truncate.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let steps = (length_mm / LINK_SAMPLE_STEP_MM).ceil().max(1.0) as usize;
-    (1..steps).all(|k| {
-        let t = k as f64 / steps as f64;
-        let p = Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
-        piece.contains_point(p)
-    })
+    (1..steps).all(|k| piece.contains_point(at(k as f64 / steps as f64)))
 }
 
 /// True when segments `p → q` and `r → s` cross at interior points of
@@ -1827,5 +1849,33 @@ mod tests {
         .concat();
         let input = input(blocks, MachiningOrder::PassFirst, &[]);
         assert_eq!(plan(&input).unwrap(), [0, 4, 2, 3, 5, 1]);
+    }
+
+    /// #232: a link between two points on a cleared area's boundary that
+    /// bridges a dent of the material into it, shorter than the old
+    /// 0.5 mm sample step. A 20 mm square with a diamond hole whose two
+    /// tips (10, 10.15) and (10, 9.85) are 0.3 mm apart: the straight link
+    /// between them runs through the diamond, crossing none of its edges
+    /// properly (it touches them only at its ends), and no sample point
+    /// was tested. It is refused; a link of the same length beside the
+    /// diamond, in the material, is still inside.
+    #[test]
+    fn short_chord_between_boundary_points_is_not_inside() {
+        let outer = Contour::new(Polyline::rect(Point::new(0.0, 0.0), 20.0, 20.0)).unwrap();
+        let diamond = Contour::new(Polyline::new(
+            [(10.0, 10.15), (9.0, 10.0), (10.0, 9.85), (10.05, 10.0)]
+                .into_iter()
+                .map(|(x, y)| dc_geometry::Vertex::line(x, y))
+                .collect(),
+            true,
+        ))
+        .unwrap();
+        let cleared = nest(vec![outer, diamond]).unwrap().0.remove(0);
+        assert_eq!(cleared.holes().len(), 1);
+        let (top, bottom) = (Point::new(10.0, 10.15), Point::new(10.0, 9.85));
+        assert!(!link_inside_cleared(&cleared, &cleared, top, bottom));
+        assert!(!link_inside_cleared(&cleared, &cleared, bottom, top));
+        let (a, b) = (Point::new(12.0, 10.15), Point::new(12.0, 9.85));
+        assert!(link_inside_cleared(&cleared, &cleared, a, b));
     }
 }

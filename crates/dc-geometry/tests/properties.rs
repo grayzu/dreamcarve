@@ -256,9 +256,9 @@ proptest! {
     /// A random cubic Bézier flattens to one open polyline whose vertices
     /// and segment points all lie within the tolerance of the curve, and
     /// which passes within the tolerance of every point of the curve.
-    /// Ignored until #225: kurbo exceeds the tolerance by up to a third.
+    /// flatten asks kurbo for half the tolerance, its own bound being
+    /// approximate (#225).
     #[test]
-    #[ignore = "#225"]
     fn flatten_stays_within_tolerance(
         (p0, p1, p2, p3) in (point(), point(), point(), point()),
         tolerance_mm in 0.001..1.0_f64,
