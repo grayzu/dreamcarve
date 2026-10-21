@@ -5480,6 +5480,38 @@ fn line_starting<'a>(report: &'a str, prefix: &str) -> Option<&'a str> {
         .find(|l| l.starts_with(prefix))
 }
 
+/// Capability 30 on the quick start's coaster, whose program is pinned in
+/// `tests/expected/coaster-grblhal.nc`: its estimate is pinned with it.
+/// The rapids are the 4 mm down to the ramp's start and the 17 mm back up
+/// to safe Z. With manual spindle control the program pauses twice, to
+/// turn the router on and off, and the line says those are left out.
+#[test]
+fn coaster_prints_estimate() {
+    let dir = work_dir("coaster_prints_estimate");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration."
+        ),
+        "{report}"
+    );
+    set_spindle_control(&dcv, SpindleControl::Manual);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    let line = line_starting(&report, "Estimated time:")
+        .unwrap_or_else(|| panic!("an estimate: {report}"));
+    assert!(
+        line.ends_with("Excludes acceleration and 2 pauses."),
+        "{line}"
+    );
+}
+
 /// Acceptance 42 (functional capability 30): a program of 100 mm of feed
 /// at F600, a 3 s spin-up dwell and 50 mm of rapids is estimated at 10 s
 /// cutting and 3 s dwell, and with no rapid rate configured the 50 mm is

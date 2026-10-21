@@ -4,11 +4,14 @@
 //! The user config file and directory (`docs/specs/phase-2/design.md`,
 //! "User config (CLI only)") and `dreamcarve config path`.
 //!
-//! `<config dir>/config.toml` holds the defaults a user sets once. Today
-//! that is `[export] tool_change_mode`, which `init` and `export --post`
-//! write into a new post-processor reference (functional spec, capability
-//! 19). Nothing else reads the file: a plain `export` works from the
-//! project alone, so a project exports the same on every machine.
+//! `<config dir>/config.toml` holds the defaults a user sets once:
+//! `[export] tool_change_mode`, which `init` and `export --post` write
+//! into a new post-processor reference (functional spec, capability 19),
+//! and `[estimate]`, the machine's rapid rate and a scale factor for the
+//! cycle-time estimate `export` and `check` print (capability 30). No
+//! program depends on the file: a plain `export` reads only `[estimate]`,
+//! for the printed estimate, so a project exports the same bytes on every
+//! machine.
 //! `<config dir>/tools.json` is the tool library (slice 20). `<config dir>`
 //! is `DREAMCARVE_CONFIG_DIR` when that is set; otherwise the platform's
 //! usual place, read from the environment with std alone (no crate for
@@ -58,11 +61,15 @@ pub struct Config {
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct EstimateConfig {
-    /// The machine's rapid rate, mm/min. Unset, rapids are reported as a
-    /// distance and left out of the time, rather than guessed.
+    /// The machine's rapid rate, mm/min, finite and above 0. Unset, rapids
+    /// are reported as a distance and left out of the time, rather than
+    /// guessed.
+    #[serde(deserialize_with = "positive_some")]
     pub rapid_mm_min: Option<f64>,
     /// What every time is multiplied by, as VCarve's "Scale Factor": the
-    /// user's correction for acceleration and the like. 1 unless set.
+    /// user's correction for acceleration and the like. Finite and above
+    /// 0; 1 unless set.
+    #[serde(deserialize_with = "positive")]
     pub scale_factor: f64,
 }
 
@@ -73,6 +80,35 @@ impl Default for EstimateConfig {
             scale_factor: 1.0,
         }
     }
+}
+
+/// A number that is finite and above 0; anything else is an error at the
+/// value, which [`parse`] locates.
+fn positive<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    let value = f64::deserialize(deserializer)?;
+    if value.is_finite() && value > 0.0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "must be a number above 0, not {value}"
+        )))
+    }
+}
+
+/// [`positive`], for a key that may be left out.
+fn positive_some<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    positive(deserializer).map(Some)
+}
+
+/// Reads the `[estimate]` table of the user config: the only part of the
+/// file a plain `export` or `check` reads, for the printed estimate alone
+/// (design spec, addendum A4). A bad value anywhere in the file is an
+/// error, as for `init`.
+pub fn estimate_settings() -> Result<EstimateConfig, Failure> {
+    let paths = Paths::from_env()?;
+    Ok(load_from(&paths)?.estimate)
 }
 
 /// The `[export]` table.

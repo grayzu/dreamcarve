@@ -22,10 +22,14 @@
 //!
 //! The estimate only reads the program; it never changes it.
 
-use dc_project::{PostProcessor, Units};
+use std::f64::consts::TAU;
+
+use dc_project::{DwellUnits, PostProcessor};
 
 use crate::emit::Program;
 use crate::error::ExportError;
+use crate::parse::{CycleModel, MachineMove, MotionKind, parse_program_with};
+use crate::transform::mm_per_unit;
 
 /// What a program's run time is made of. Distances are millimetres,
 /// whatever the program's units.
@@ -67,16 +71,136 @@ impl std::ops::Add for Estimate {
 /// Neither happens to a program [`crate::emit`] returned, which passed the
 /// safety pass.
 pub fn estimate(program: &Program, post: &PostProcessor) -> Result<Estimate, ExportError> {
-    let _ = (program, post, Units::Mm);
-    Ok(Estimate::default())
+    // As the safety pass reads it: a controller without units words
+    // (UCCNC) reads the program in the program's units.
+    let model = CycleModel {
+        units: program.extents.units,
+        ..CycleModel::of(post)
+    };
+    let mut out = Estimate::default();
+    for block in parse_program_with(&program.text, &model)? {
+        if block.has('G', 4.0) {
+            // A dwell's `P` is in the definition's dwell units; a canned
+            // cycle's dwell is written in the same unit.
+            let p = block.value('P').unwrap_or(0.0);
+            out.dwell_s += match post.feed_speed.spindle_on_dwell.units {
+                DwellUnits::Seconds => p,
+                DwellUnits::Milliseconds => p / 1000.0,
+            };
+        }
+        if STOP_CODES.iter().any(|&code| block.has('M', code)) {
+            out.stops += 1;
+        }
+        let Some(m) = block.motion else {
+            continue;
+        };
+        let mm = mm_per_unit(m.units);
+        if m.kind == MotionKind::Rapid {
+            out.rapid_mm += straight_length(&m) * mm;
+            continue;
+        }
+        let length = match m.kind {
+            MotionKind::ArcCw | MotionKind::ArcCcw => arc_length(&m)?,
+            MotionKind::Rapid | MotionKind::Linear => straight_length(&m),
+        };
+        let feed = m
+            .feed
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .ok_or(ExportError::CutWithoutFeed { line: m.line })?;
+        // Length and feed are both in program units, so the time needs no
+        // conversion.
+        out.feed_s += length / feed * SECONDS_PER_MINUTE;
+        out.feed_mm += length * mm;
+    }
+    Ok(out)
 }
+
+/// The M codes the program waits for the user at: `M0` and `M1` pauses
+/// and an `M6` tool change.
+const STOP_CODES: [f64; 3] = [0.0, 1.0, 6.0];
+
+const SECONDS_PER_MINUTE: f64 = 60.0;
+
+/// The change along one axis, 0 where either end is not known: the first
+/// move starts where the machine was left, which the program does not
+/// say.
+fn delta(from: Option<f64>, to: Option<f64>) -> f64 {
+    match (from, to) {
+        (Some(from), Some(to)) => to - from,
+        _ => 0.0,
+    }
+}
+
+/// The 3D length of the straight move `m`, program units.
+fn straight_length(m: &MachineMove) -> f64 {
+    let dx = delta(m.from.x, m.to.x);
+    let dy = delta(m.from.y, m.to.y);
+    let dz = delta(m.from.z, m.to.z);
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
+/// The length of the arc `m` in the XY plane (`G17`, the only plane
+/// DreamCarve writes), with its Z change as a helix: `sqrt((r θ)² + dz²)`,
+/// program units. A centre-format arc whose end is its start is a full
+/// circle, as the controller reads it; an `R` arc sweeps at most 180°, or
+/// more with a negative `R`.
+fn arc_length(m: &MachineMove) -> Result<f64, ExportError> {
+    let unparseable = |reason: &str| ExportError::Unparseable {
+        line: m.line,
+        reason: reason.to_owned(),
+    };
+    let (Some(x0), Some(y0)) = (m.from.x, m.from.y) else {
+        return Err(unparseable("an arc from an unknown position"));
+    };
+    let (x1, y1) = (m.to.x.unwrap_or(x0), m.to.y.unwrap_or(y0));
+    let dz = delta(m.from.z, m.to.z);
+    let planar = if let Some(r) = m.arc.r {
+        let chord = (x1 - x0).hypot(y1 - y0);
+        let radius = r.abs();
+        if radius <= 0.0 {
+            return Err(unparseable("an arc with radius 0"));
+        }
+        // The controller accepts a chord a rounding error longer than the
+        // diameter; it is then a half circle.
+        let half = (chord / (2.0 * radius)).min(1.0).asin();
+        let sweep = if r < 0.0 {
+            TAU - 2.0 * half
+        } else {
+            2.0 * half
+        };
+        radius * sweep
+    } else {
+        let (i, j) = (m.arc.i.unwrap_or(0.0), m.arc.j.unwrap_or(0.0));
+        let radius = i.hypot(j);
+        if radius <= 0.0 {
+            return Err(unparseable("an arc with no centre"));
+        }
+        let (cx, cy) = (x0 + i, y0 + j);
+        let start = (y0 - cy).atan2(x0 - cx);
+        let end = (y1 - cy).atan2(x1 - cx);
+        let turn = match m.kind {
+            MotionKind::ArcCcw => end - start,
+            _ => start - end,
+        };
+        let mut sweep = turn.rem_euclid(TAU);
+        if sweep <= FULL_CIRCLE_TOLERANCE_RAD {
+            sweep = TAU;
+        }
+        radius * sweep
+    };
+    Ok(planar.hypot(dz))
+}
+
+/// A centre-format arc that turns less than this is read as a full circle:
+/// its end is its start.
+const FULL_CIRCLE_TOLERANCE_RAD: f64 = 1e-9;
 
 #[cfg(test)]
 mod tests {
     use std::f64::consts::PI;
 
     use dc_geometry::assert_approx_eq;
-    use dc_project::{ToolId, latest_definition};
+    use dc_project::{ToolId, Units, latest_definition};
 
     use super::*;
     use crate::emit::FirstTool;
