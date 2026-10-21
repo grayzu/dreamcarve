@@ -520,9 +520,16 @@ The whole `post_processor` block, in the order DreamCarve writes it:
 | `use_canned_cycles` | `false` (default) or `true`: whether a Drill operation is written as the controller's drilling cycles (`G81`, `G82`, `G83`, `G73`) where the post-processor has them. See [Canned cycles](#canned-cycles). LinuxCNC and Mach3 have `G81` and `G82`; on grblHAL, GRBL, UCCNC and generic `true` is an error. The holes are drilled the same either way. |
 
 Names that DreamCarve puts in comments (the project, tool and operation
-names) are reduced to plain ASCII without `( ) ; ! ? ~`. GRBL and grblHAL
-act on `!`, `?` and `~` immediately, even inside a comment, and `)` would
-end a comment early. On LinuxCNC, Mach3, UCCNC and generic a name never
+names) are reduced to plain ASCII without `( ) ; ! ? ~ { } %`. GRBL and
+grblHAL act on `!`, `?` and `~` immediately, even inside a comment, and `)`
+would end a comment early. A letter with an accent, and the symbols a
+workshop writes, are spelled in ASCII first, so they are not lost: "Café"
+is written `Cafe`, "Ø6 mm" `O6 mm`, "½ in" `1/2 in`, "Straße" `Strasse`,
+"—" `-` and "°" `deg`. DreamCarve's table covers the Latin letters of
+Western, Central and Northern European languages; a character it does not
+have, such as one in Chinese or Cyrillic, is left out, so a name of only
+such characters is written empty. Only comments change: the motion is the
+same. On LinuxCNC, Mach3, UCCNC and generic a name never
 starts a comment (`( Project: coaster )`), because LinuxCNC acts on a
 comment that starts with a word such as `MSG,` or `LOGOPEN,`.
 
