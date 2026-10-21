@@ -96,7 +96,8 @@ island. Then the tool-centre area splits into separate pieces, each with
 its own rings, and the bit lifts to safe Z to go from one to the other:
 it never cuts across an island. The material in the gap is narrower than
 the bit and stays; `pocket_island_too_close` names the island and the
-gap.
+gap. With an [allowance](#allowance) the bit needs its diameter plus
+twice the allowance to pass, so a gap narrower than that warns too.
 
 A shape inside an island is a pocket of its own, cut after the pocket
 around the island.
@@ -286,8 +287,8 @@ Pocket's own allowance, is the leftover. This Pocket's bit then runs
 wherever it would touch the leftover: along every wall, which also takes
 off the earlier allowance, into each corner as far as it can, and through
 each narrow slot, overlapping the cleared area by up to its own width so
-no ridge is left at the edge. With `"offset"` it also runs a ring along
-the inner edge of that band, in air the earlier Pocket cleared.
+no ridge is left at the edge. It does not run along the inner edge of
+that band, where its bit would only touch air the earlier Pocket cleared.
 
 **Safety.** The rest Pocket is checked exactly as any Pocket: its cut
 stays inside its own shape, the allowance off the walls and out of every
@@ -302,7 +303,7 @@ larger allowance), it warns `rest_of_clears_nothing` and cuts nothing.
 A 100 × 50 mm rectangle with a 10 × 10 mm notch, roughed with a 12.7 mm
 bit at 0.5 mm allowance, then rest-machined with a 3.175 mm bit: the rest
 Pocket cuts a band about 2 mm wide along the walls, the four corners and
-the notch, about a sixth of the length a full 3.175 mm Pocket would cut.
+the notch, under a tenth of the length a full 3.175 mm Pocket would cut.
 
 ## Corner relief
 
@@ -371,7 +372,7 @@ walls, nowhere else. If not, export fails and nothing is written.
 | Code | Meaning |
 | --- | --- |
 | `pocket_no_room` | The bit is wider than the pocket everywhere; that shape is not cut. |
-| `pocket_island_too_close` | An island is nearer the wall or another island than the bit is wide; the material between them stays. |
+| `pocket_island_too_close` | An island is nearer the wall or another island than the bit needs to pass (its diameter plus twice the allowance); the material between them stays. |
 | `entry_fallback` | The helix or ramp asked for does not fit a shape; it uses a ramp or a plunge instead. |
 | `helix_diameter_reduced` | The helix fits a shape only smaller than asked; it is cut at the size that fits. |
 | `relief_skipped` | The tool has no `step_down_mm`, so no corner is relieved. |

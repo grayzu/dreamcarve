@@ -185,9 +185,21 @@ impl RingTree {
     /// `wall` says. `anchor` is updated to each ring's point nearest it,
     /// which is where that ring will start and end.
     pub fn walk(&self, wall: WallRings, anchor: &mut Option<Point>) -> Vec<Ring> {
+        self.walk_keeping(wall, anchor, &|_| true)
+    }
+
+    /// [`RingTree::walk`] over the rings `keep` accepts: a ring it refuses
+    /// is not cut, and the next ring starts nearest the end of the last one
+    /// kept. Rest machining refuses the rings that cut only air (#167).
+    pub fn walk_keeping(
+        &self,
+        wall: WallRings,
+        anchor: &mut Option<Point>,
+        keep: &dyn Fn(&Ring) -> bool,
+    ) -> Vec<Ring> {
         let mut out = Vec::new();
         if wall == WallRings::First {
-            self.push_rings(0, anchor, &mut out);
+            self.push_rings(0, anchor, keep, &mut out);
         }
         // Frames of (node, children not yet visited).
         let mut stack: Vec<(usize, Vec<usize>)> = vec![(0, self.children(0))];
@@ -196,7 +208,7 @@ impl RingTree {
                 let node = *node;
                 stack.pop();
                 if node != 0 || wall == WallRings::Last {
-                    self.push_rings(node, anchor, &mut out);
+                    self.push_rings(node, anchor, keep, &mut out);
                 }
                 continue;
             }
@@ -226,8 +238,15 @@ impl RingTree {
             .map_or_else(Vec::new, |n| n.children.clone())
     }
 
-    /// Appends `node`'s outer and holes, nearest `anchor` first.
-    fn push_rings(&self, node: usize, anchor: &mut Option<Point>, out: &mut Vec<Ring>) {
+    /// Appends `node`'s outer and holes that `keep` accepts, nearest
+    /// `anchor` first.
+    fn push_rings(
+        &self,
+        node: usize,
+        anchor: &mut Option<Point>,
+        keep: &dyn Fn(&Ring) -> bool,
+        out: &mut Vec<Ring>,
+    ) {
         let Some(n) = self.nodes.get(node) else {
             return;
         };
@@ -239,6 +258,7 @@ impl RingTree {
         };
         let mut rings: Vec<Ring> = std::iter::once(ring(n.region.outer(), RingKind::Outer))
             .chain(n.region.holes().iter().map(|h| ring(h, RingKind::Hole)))
+            .filter(|r| keep(r))
             .collect();
         while !rings.is_empty() {
             let pick = rings

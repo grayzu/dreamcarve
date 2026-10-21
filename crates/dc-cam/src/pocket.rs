@@ -96,8 +96,8 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// `op.allowance_mm` ([`rings::inset_region`]), so the footprint stays the
 /// allowance off every wall and island; where it is empty the shape is
 /// skipped with
-/// [`WarningCode::PocketNoRoom`], and an island closer than the tool's
-/// diameter to the wall or another island warns
+/// [`WarningCode::PocketNoRoom`], and an island closer to the wall or
+/// another island than the tool's diameter plus twice the allowance warns
 /// [`WarningCode::PocketIslandTooClose`]. With the offset strategy each
 /// tool-centre region's rings step in by `diameter × step_over_fraction`
 /// ([`RingTree`]); per depth pass they are cut innermost first, with the
@@ -116,8 +116,9 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// never from its toolpath (S14), [`rest::left_by`] gives the material it
 /// left, and the tool-centre region keeps only the centres within this
 /// tool's radius of it ([`rest::rest_centre`]); rings or lines are then
-/// built on that as on any tool-centre region. When nothing is left that
-/// this tool reaches the operation warns
+/// built on that as on any tool-centre region, less the root rings that
+/// would sweep only cleared area ([`rest::in_air`], #167). When nothing is
+/// left that this tool reaches the operation warns
 /// [`WarningCode::RestOfClearsNothing`] and has no cutting move. The
 /// reference must be an enabled Pocket with the same targets listed before
 /// `op` ([`CamError::RestOfInvalid`]).
@@ -321,7 +322,7 @@ pub fn generate_pocket(
         }
         // Design step 3: a rest operation keeps only the tool centres that
         // touch what its reference left.
-        let tool_centre = match reference {
+        let (tool_centre, left) = match reference {
             Some(reference) => {
                 rest_had_room = true;
                 let left = rest::left_by(region, op.allowance_mm, reference, tolerance_mm);
@@ -330,9 +331,19 @@ pub fn generate_pocket(
                     continue;
                 }
                 rest_found = true;
-                centre
+                (centre, Some(left))
             }
-            None => tool_centre,
+            None => (tool_centre, None),
+        };
+        // #167: a rest operation skips the root rings that run along the
+        // leftover's edge against the cleared area, cutting only air. The
+        // tool-centre region itself is unchanged, as are the entry domain
+        // and every ring's cleared area.
+        let keep = |ring: &Ring| match &left {
+            Some(left) => {
+                ring.node != 0 || !rest::in_air(&ring.contour, left, radius_mm, tolerance_mm)
+            }
+            None => true,
         };
         centre_regions.extend(tool_centre.iter().cloned());
         if relief.is_some() {
@@ -349,7 +360,7 @@ pub fn generate_pocket(
                     wall,
                     direction: op.direction,
                 };
-                let paths = raster::region_paths(&root, root_index, &settings, &mut anchor)
+                let paths = raster::region_paths(&root, root_index, &settings, &keep, &mut anchor)
                     .ok_or_else(invalid_step_over)?;
                 // Raster lines reach the tool-centre region's edge at every
                 // wall pass, so the whole root is cleared each pass.
@@ -371,7 +382,7 @@ pub fn generate_pocket(
             let domain = (op.entry != Entry::Plunge).then(|| {
                 EntryDomain::new(&entry_regions(&tree, wall), tool.diameter_mm, tolerance_mm)
             });
-            for ring in tree.walk(wall, &mut anchor) {
+            for ring in tree.walk_keeping(wall, &mut anchor, &keep) {
                 let Some(node) = tree.nodes.get(ring.node) else {
                     continue;
                 };
@@ -567,7 +578,9 @@ fn entry_regions(tree: &RingTree, wall: WallRings) -> Vec<Region> {
 }
 
 /// [`WarningCode::PocketIslandTooClose`] for every island of `region`
-/// nearer than the tool's diameter to the wall or to a later island.
+/// nearer the wall or a later island than the tool needs to pass between
+/// them: its diameter plus twice `op.allowance_mm` (#168), the gap at which
+/// the tool-centre region splits.
 fn island_gap_warnings(
     op: &PocketOp,
     tool: &Tool,
@@ -576,12 +589,15 @@ fn island_gap_warnings(
     shape: &ShapeRef,
 ) -> Vec<Warning> {
     let mut warnings = Vec::new();
+    let needed_mm = tool.diameter_mm + 2.0 * op.allowance_mm;
     let warn = |island: &ShapeRef, other: String, gap_mm: f64| {
         shape_warning(WarningCode::PocketIslandTooClose, shape)
             .with("op", &op.id)
             .with("island", island.profile)
             .with("other", other)
             .with("gap_mm", gap_mm)
+            .with("needed_mm", needed_mm)
+            .with("allowance_mm", op.allowance_mm)
             .with("tool", &tool.name)
             .with("diameter_mm", tool.diameter_mm)
     };
@@ -591,7 +607,7 @@ fn island_gap_warnings(
             continue;
         };
         let gap_mm = distance_mm(hole.polyline(), region.outer().polyline());
-        if gap_mm < tool.diameter_mm - EPS_MM {
+        if gap_mm < needed_mm - EPS_MM {
             warnings.push(warn(island, "wall".into(), gap_mm));
         }
         for other in holes.iter().skip(i + 1) {
@@ -599,7 +615,7 @@ fn island_gap_warnings(
                 continue;
             };
             let gap_mm = distance_mm(hole.polyline(), other.polyline());
-            if gap_mm < tool.diameter_mm - EPS_MM {
+            if gap_mm < needed_mm - EPS_MM {
                 warnings.push(warn(island, other_shape.profile.to_string(), gap_mm));
             }
         }
@@ -894,6 +910,8 @@ mod tests {
         /// Signed area enclosed, arcs included; negative is clockwise.
         area_mm2: f64,
         bounds: Rect,
+        /// The ring's cutting moves, from its start.
+        moves: Vec<Move>,
     }
 
     impl Ring {
@@ -999,12 +1017,14 @@ mod tests {
                         points: vec![from],
                         area_mm2: 0.0,
                         bounds: Rect::from_point(from),
+                        moves: Vec::new(),
                     })
                 }
             };
             let (area, extremes) = move_area_and_extremes(from, &mv);
             ring.area_mm2 += area;
             ring.points.push(mv.to.xy());
+            ring.moves.push(mv);
             ring.bounds = ring.bounds.including(mv.to.xy());
             for p in extremes {
                 ring.bounds = ring.bounds.including(p);
@@ -1433,6 +1453,56 @@ mod tests {
             }
             pos = mv.to;
         }
+    }
+
+    /// #168: with an allowance the tool needs `diameter + 2 × allowance`
+    /// between an island and the wall. A 10 × 30 island 7 mm from the left
+    /// wall leaves the 6.35 mm tool room at allowance 0, and none at 0.5
+    /// (7.35 needed): the gap warns then, with `needed_mm` and
+    /// `allowance_mm`.
+    #[test]
+    fn island_gap_warning_accounts_for_allowance() {
+        let island = Polyline::rect(Point::new(7.0, 10.0), 10.0, 30.0);
+        let p = project(vec![rect_100x50(), island], &[("i1", at_20_20())]);
+        let mut op = pocket_op(&p, CutDirection::Climb);
+        let (_, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        op.allowance_mm = 0.5;
+        let (_, warnings) = generate(&p, &op);
+        assert_eq!(
+            codes(&warnings),
+            vec![WarningCode::PocketIslandTooClose],
+            "{warnings:?}"
+        );
+        let w = &warnings[0];
+        assert_eq!(w.param("island"), Some("1"));
+        assert_eq!(w.param("other"), Some("wall"));
+        let number = |key: &str| w.param(key).unwrap().parse::<f64>().unwrap();
+        assert_approx_eq!(number("gap_mm"), 7.0, RING_TOL);
+        assert_approx_eq!(number("needed_mm"), DIAMETER_MM + 1.0, TOL);
+        assert_approx_eq!(number("allowance_mm"), 0.5, TOL);
+        assert_approx_eq!(number("diameter_mm"), DIAMETER_MM, TOL);
+        assert_eq!(
+            w.to_string(),
+            "in the pocket of `Shape i1` (instance `i1`, profile 0), island profile 1 is 7 mm from the pocket wall, closer than tool `6.35 mm upcut` needs with a 0.5 mm allowance (7.35 mm), so the material between them is left uncut"
+        );
+        // At allowance 0 the message is as before.
+        let w = Warning::new(WarningCode::PocketIslandTooClose)
+            .with("instance", "i1")
+            .with("instance_name", "Shape i1")
+            .with("profile", 0)
+            .with("island", 1)
+            .with("other", "wall")
+            .with("gap_mm", 5.0)
+            .with("needed_mm", 6.35)
+            .with("allowance_mm", 0.0)
+            .with("tool", "t")
+            .with("diameter_mm", 6.35);
+        assert_eq!(
+            w.to_string(),
+            "in the pocket of `Shape i1` (instance `i1`, profile 0), island profile 1 is 5 mm from the pocket wall, closer than the 6.35 mm tool `t` is wide, so the material between them is left uncut"
+        );
     }
 
     /// A 10 mm square inside a 30 mm circular island inside the rect is a
@@ -1882,6 +1952,99 @@ mod tests {
         assert!(
             rest_mm < 0.25 * full_mm,
             "rest cuts {rest_mm} mm, a full pocket {full_mm} mm"
+        );
+    }
+
+    /// The area `ring` sweeps with a tool of radius `radius_mm`.
+    fn ring_footprint(ring: &Ring, radius_mm: f64) -> Vec<Region> {
+        let start = ring.start();
+        let mut moves = vec![Move::rapid(Point3::new(start.x, start.y, ring.z_mm))];
+        moves.extend(ring.moves.iter().copied());
+        footprint(&Toolpath { moves }, radius_mm)
+    }
+
+    /// The XY length of `ring`'s moves, mm.
+    fn ring_length_mm(ring: &Ring) -> f64 {
+        let start = ring.start();
+        let mut moves = vec![Move::rapid(Point3::new(start.x, start.y, ring.z_mm))];
+        moves.extend(ring.moves.iter().copied());
+        cutting_length_mm(&Toolpath { moves })
+    }
+
+    /// The rest Pocket's cutting length on acceptance 22 before #167, mm:
+    /// both passes, the ring along the band's inner edge included.
+    const REST_BEFORE_167_MM: f64 = 1237.0;
+
+    /// #167: with the offset strategy no rest ring runs wholly in the area
+    /// the rough cleared. Each ring's footprint takes off more of what the
+    /// rough left than a noise strip along it (`FLAT_TOL` × its length),
+    /// so the ring along the wall band's inner edge, 276 mm a pass in air,
+    /// is gone and the rest cuts at least 270 mm less on each of its two
+    /// passes. Coverage is unchanged:
+    /// `rest_coverage_with_rough_reaches_small_tool_inset`.
+    #[test]
+    fn rest_offset_cuts_no_ring_entirely_in_air() {
+        let (p, _, rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        let (tp, warnings) = generate(&p, &rest);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let reference = rest::Reference {
+            radius_mm: ROUGH_MM / 2.0,
+            allowance_mm: ROUGH_ALLOWANCE_MM,
+        };
+        let left = rest::left_by(&notched_region(), 0.0, reference, FLAT_TOL);
+        for z in PASS_Z_MM {
+            let rings = rings_at(&tp, z);
+            assert!(!rings.is_empty(), "rings at Z {z}");
+            for ring in &rings {
+                let length_mm = ring_length_mm(ring);
+                let cut = intersection(&ring_footprint(ring, REST_MM / 2.0), &left, FLAT_TOL);
+                assert!(
+                    area_mm2(&cut) > FLAT_TOL * length_mm,
+                    "a {length_mm} mm ring at Z {z} cuts {} mm² of what the rough left: {:?}",
+                    area_mm2(&cut),
+                    ring.bounds
+                );
+            }
+        }
+        let rest_mm = cutting_length_mm(&tp);
+        assert!(
+            rest_mm <= REST_BEFORE_167_MM - 2.0 * 270.0,
+            "the rest cuts {rest_mm} mm"
+        );
+    }
+
+    /// The raster rest Pocket's cutting length on acceptance 22 before
+    /// #167, mm: both passes, the wall pass round the band's inner edge
+    /// included.
+    const RASTER_REST_BEFORE_167_MM: f64 = 1602.0;
+
+    /// #167: the raster strategy's wall pass skips the ring in air too;
+    /// its lines already end at the rest tool-centre region's edge.
+    #[test]
+    fn rest_raster_wall_pass_skips_the_ring_in_air() {
+        let (p, rough, mut rest) = rough_and_rest(ROUGH_MM, ROUGH_ALLOWANCE_MM, REST_MM);
+        rest.strategy = ClearanceStrategy::Raster { angle_deg: 0.0 };
+        let (tp, warnings) = generate(&p, &rest);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let rest_mm = cutting_length_mm(&tp);
+        assert!(
+            rest_mm <= RASTER_REST_BEFORE_167_MM - 2.0 * 270.0,
+            "the rest cuts {rest_mm} mm"
+        );
+        // Still everything the rest tool reaches, with the rough.
+        let (rough_tp, _) = generate(&p, &rough);
+        let both = dc_geometry::union(
+            &footprint(&rough_tp, ROUGH_MM / 2.0),
+            &footprint(&tp, REST_MM / 2.0),
+            FLAT_TOL,
+        );
+        let reachable = inset_region(&notched_region(), REST_MM / 2.0, FLAT_TOL);
+        let perimeter_mm = reachable[0].outer().polyline().length_mm();
+        let uncut = difference(&reachable, &both, FLAT_TOL);
+        assert!(
+            area_mm2(&uncut) <= 0.05 * perimeter_mm,
+            "{} mm² the rest tool reaches is left",
+            area_mm2(&uncut)
         );
     }
 

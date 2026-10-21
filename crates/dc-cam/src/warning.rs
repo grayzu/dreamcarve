@@ -58,10 +58,12 @@ pub enum WarningCode {
     /// `diameter_mm`.
     PocketNoRoom,
     /// Two of a pocket's boundaries, an island and the wall or two
-    /// islands, are closer than the tool is wide, so the material between
-    /// them stays. Params: `op`, `instance`, `instance_name`, `profile`
-    /// (the pocket's outline), `island` (the island's profile index),
-    /// `other` (`wall`, or the other island's profile index), `gap_mm`,
+    /// islands, are closer than the tool needs to pass between them (its
+    /// diameter plus twice the allowance), so the material between them
+    /// stays. Params: `op`, `instance`, `instance_name`, `profile` (the
+    /// pocket's outline), `island` (the island's profile index), `other`
+    /// (`wall`, or the other island's profile index), `gap_mm`,
+    /// `needed_mm` (`diameter_mm + 2 × allowance_mm`), `allowance_mm`,
     /// `tool`, `diameter_mm`.
     PocketIslandTooClose,
     /// The entry asked for did not fit a shape, so its passes start with
@@ -377,14 +379,29 @@ impl fmt::Display for Warning {
                     Some(index) => format!("island profile {index}"),
                     None => "another boundary".to_owned(),
                 };
+                let allowance = self
+                    .param("allowance_mm")
+                    .and_then(|a| a.parse::<f64>().ok())
+                    .filter(|&a| a > 0.0);
+                let needs = match allowance {
+                    Some(_) => format!(
+                        "tool `{}` needs with a {} mm allowance ({} mm)",
+                        self.text("tool"),
+                        self.mm("allowance_mm"),
+                        self.number("needed_mm", DIAMETER_DECIMALS)
+                    ),
+                    None => format!(
+                        "the {} mm tool `{}` is wide",
+                        self.number("diameter_mm", DIAMETER_DECIMALS),
+                        self.text("tool")
+                    ),
+                };
                 write!(
                     f,
-                    "in the pocket of {}, island profile {} is {} mm from {other}, closer than the {} mm tool `{}` is wide, so the material between them is left uncut",
+                    "in the pocket of {}, island profile {} is {} mm from {other}, closer than {needs}, so the material between them is left uncut",
                     self.shape(),
                     self.text("island"),
                     self.mm("gap_mm"),
-                    self.number("diameter_mm", DIAMETER_DECIMALS),
-                    self.text("tool")
                 )
             }
             WarningCode::EntryFallback => {
