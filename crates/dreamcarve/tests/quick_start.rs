@@ -670,6 +670,65 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
     }
 }
 
+/// The pieces of `line`: each number, and each run of other text.
+fn tokens(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut in_number = false;
+    for (i, c) in line.char_indices() {
+        let number_char = c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '-' | '+');
+        let starts_number = c.is_ascii_digit() || c == '-';
+        let now = if in_number {
+            number_char
+        } else {
+            starts_number
+        };
+        if now != in_number && i > start {
+            out.push(&line[start..i]);
+            start = i;
+        }
+        in_number = now;
+    }
+    if start < line.len() {
+        out.push(&line[start..]);
+    }
+    out
+}
+
+/// `built`, the project the chapter's steps wrote in `dir`, is the
+/// committed `fixture`: the same lines, with every number equal to within
+/// 1e-6. Imported coordinates differ in their last bits between platforms'
+/// maths libraries (a DXF spline, an SVG arc), so the text cannot be
+/// compared byte for byte.
+fn assert_same_project(built: &str, committed: &str, fixture: &str, dir: &Path) {
+    let (a, b): (Vec<&str>, Vec<&str>) = (built.lines().collect(), committed.lines().collect());
+    let hint = format!(
+        "if the chapter changed on purpose, copy {} over {fixture}",
+        dir.join("plaque.dcv").display()
+    );
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "the project has a different number of lines from {fixture}; {hint}"
+    );
+    for (k, (x, y)) in a.iter().zip(&b).enumerate() {
+        if x == y {
+            continue;
+        }
+        let (tx, ty) = (tokens(x), tokens(y));
+        let same = tx.len() == ty.len()
+            && tx.iter().zip(&ty).all(|(p, q)| {
+                p == q
+                    || matches!((p.parse::<f64>(), q.parse::<f64>()), (Ok(u), Ok(v)) if (u - v).abs() <= 1e-6)
+            });
+        assert!(
+            same,
+            "line {} of the project is `{x}`, but {fixture} has `{y}`; {hint}",
+            k + 1
+        );
+    }
+}
+
 /// The phase 2 quick start (`docs/book/src/quick-start/plaque.md`, issue
 /// #125) run as written on `tests/fixtures/plaque.dxf`: every command exits
 /// as the chapter says, the hand edits and pasted blocks apply, every
@@ -713,11 +772,7 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
     let built = std::fs::read_to_string(dir.join("plaque.dcv")).expect("plaque.dcv written");
     let committed = std::fs::read_to_string(repo_root().join("tests/fixtures/plaque.dcv"))
         .expect("tests/fixtures/plaque.dcv readable");
-    assert!(
-        built == committed,
-        "the chapter builds a project that differs from tests/fixtures/plaque.dcv; if the chapter changed on purpose, copy {} over it",
-        dir.join("plaque.dcv").display()
-    );
+    assert_same_project(&built, &committed, "tests/fixtures/plaque.dcv", &dir);
 
     let mut programs: Vec<String> = std::fs::read_dir(&dir)
         .expect("work dir readable")
@@ -793,9 +848,5 @@ fn plaque_chapter_on_the_svg_twin_builds_the_svg_fixture() {
     let built = std::fs::read_to_string(dir.join("plaque.dcv")).expect("plaque.dcv written");
     let committed = std::fs::read_to_string(repo_root().join("tests/fixtures/plaque-svg.dcv"))
         .expect("tests/fixtures/plaque-svg.dcv readable");
-    assert!(
-        built == committed,
-        "the chapter on plaque.svg builds a project that differs from tests/fixtures/plaque-svg.dcv; if that is on purpose, copy {} over it",
-        dir.join("plaque.dcv").display()
-    );
+    assert_same_project(&built, &committed, "tests/fixtures/plaque-svg.dcv", &dir);
 }
