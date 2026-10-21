@@ -567,7 +567,9 @@ Inputs: project, op. Output: toolpath in project space.
    mm, and flipped: `y' = height_mm − y`.
 3. `flatten` at `flatten_tolerance_mm`. Closed subpaths become closed
    polylines; open stay open. Zero-area closed polylines are dropped with a
-   warning.
+   warning. (Changed in phase 2, #70: the cubics usvg makes of circular
+   arcs are recognised exactly and kept as bulges, and only other curves
+   are flattened; see `crates/dc-import/src/svg/arc.rs`.)
 4. Each definition gets one instance with identity transform and
    `z_top_mm`, `z_bottom_mm` unset (`None`, #99).
 

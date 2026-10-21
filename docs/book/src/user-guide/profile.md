@@ -71,9 +71,12 @@ A 100 × 50 mm rectangle cut outside with a 6.35 mm bit gives a tool path
 106.35 × 56.35 mm across its centre line; cut inside, 93.65 × 43.65 mm.
 
 Offsetting a corner outward rounds it, so an outside path has a small arc at
-each corner of the outline. A curve in the SVG reaches DreamCarve as many
-short straight lines, so an outside cut of a circle is many short lines
-joined by tiny arcs (`G1` and `G2` moves in turn).
+each corner of the outline. A circle or circular arc in the drawing stays
+an arc, and its path is the arc offset by the bit's radius. Other curves,
+such as ellipses and Bézier curves, reach DreamCarve as many short straight
+lines, so an outside cut of one is many short lines joined by tiny arcs
+(`G1` and `G2` moves in turn) until
+[arc fitting](project-file.md#arc-fitting) writes runs of them as arcs.
 
 ## Depth and passes
 
