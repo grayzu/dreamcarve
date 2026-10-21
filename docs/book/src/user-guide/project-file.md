@@ -127,7 +127,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `10`. |
+| `version` | Format version. This build writes `11`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -136,6 +136,7 @@ The fields, in the order DreamCarve writes them:
 | `origin` | Where work zero is on the stock. |
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
+| `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
 | `instances` | Placed copies of the shapes. |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
 | `definitions` | The shapes, keyed by id. Last, because it is most of the file. |
@@ -349,10 +350,16 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
 }
 ```
 
-Each field is explained in [Profile operation](profile.md), and `tabs` in
-[Tabs](tabs.md). `side` is `"outside"`, `"inside"` or `"on_line"`, or,
-from format version 10, `"left"` or `"right"`, which cut beside open paths
-(see [Left and right](profile.md#left-and-right)). `tabs.on_holes` came with format version 9: `false`
+Each field is explained in [Profile operation](profile.md). `side` is
+`"outside"`, `"inside"` or `"on_line"`, or, from format version 10,
+`"left"` or `"right"`, which cut beside open paths (see
+[Left and right](profile.md#left-and-right)). A Profile's
+`tabs` is a **tab request**: tabs to place on every outline it cuts, or
+`null` for none. It is cut as the tabs it places, and the first
+`dreamcarve tabs` command that saves the project writes them into the
+project's [`tabs`](#tabs) list and sets the request to `null`
+([Tabs: tab requests](tabs.md#tab-requests)). `tabs.on_holes` came with
+format version 9: `false`
 leaves the holes among the operation's outlines without tabs, which is
 what `init` writes; a project upgraded from version 8 gets `true`, so its
 holes keep their tabs. `init` leaves `depth_mm` as `null`; export refuses until
@@ -383,6 +390,40 @@ same meaning, plus its own fields:
 Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md)
 and [Engrave](engrave.md).
 
+## `tabs`
+
+The project's placed tabs: short stretches of material left uncut on a
+part's outline to hold it in the stock. `init` writes an empty list, `[]`; `dreamcarve
+tabs place` fills it. Each tab names one outline of one instance and a
+point, and every enabled Profile that cuts that outline rises over it:
+
+```json
+"tabs": [
+  {
+    "id": "tab1",
+    "instance": "i1",
+    "profile": 0,
+    "x_mm": 84.0648714595208,
+    "y_mm": 15.935129303418655,
+    "width_mm": 8.0,
+    "height_mm": 3.0,
+    "shape": "rect"
+  }
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The tab's id, used by `tabs clear --tab`. Two tabs may not share one. |
+| `instance` | The id of the instance whose outline holds the tab. It must exist. |
+| `profile` | Which of that instance's definition's `profiles`, counted from 0. It must exist. |
+| `x_mm`, `y_mm` | The tab's point, in the definition's coordinates, before the instance's `transform`: the tab moves with the instance. A Profile centres the tab at the point of its tool path nearest this point. |
+| `width_mm` | Length of the tab along the outline. More than 0. |
+| `height_mm` | Height of the tab top above the stock bottom. More than 0. |
+| `shape` | `"rect"` (square shoulders) or `"smooth"` (a triangle). |
+
+[Tabs](tabs.md) explains placing, listing and removing them.
+
 ## `post_processor`
 
 Which bundled post-processor the project uses, and your settings for it:
@@ -390,7 +431,7 @@ Which bundled post-processor the project uses, and your settings for it:
 ```json
 "post_processor": {
   "id": "grblhal",
-  "definition_version": 2,
+  "definition_version": 3,
   "file_extension": "nc",
   "spindle_control": "automatic",
   "spindle_on_dwell_s": 3.0,
@@ -413,8 +454,8 @@ rather than editing `id` or `definition_version`. Each field is explained in
 
 `version` is the format version. When this build of DreamCarve opens an
 older file, it upgrades it in memory; the file on disk changes only when
-DreamCarve saves it (`export --post`). A file from a newer DreamCarve is
-refused.
+DreamCarve saves it (`export --post`, `tools add`, or a `tabs` command
+that changes the project). A file from a newer DreamCarve is refused.
 
 | Version | Change |
 | --- | --- |
@@ -429,6 +470,7 @@ refused.
 | 8 | Phase 2. Adds `arc_fit_tolerance_mm` (set to 0.01 on upgrade), each tool's `number` (`null`), each Profile's `machining_order` (`"full_depth_first"`), `entry` (`"plunge"`), `lead` (`null`) and `corner_relief` (`"none"`), and `post_processor.use_canned_cycles` (`false`): the values that make an upgraded project cut exactly as before. Adds the `"pocket"`, `"drill"` and `"engrave"` operation kinds. |
 | 9 | Adds `on_holes` to each Profile's `tabs`, set to `true` on upgrade (#109). A Profile now cuts its holes without tabs unless `on_holes` is `true`; before, every outline it cut had tabs, so the upgrade keeps them. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
 | 10 | Adds the `"left"` and `"right"` values of a Profile's `side` (#207), which cut beside open paths. An older file holds neither, so the upgrade changes nothing else; an older DreamCarve refuses a version 10 file rather than misread a side it does not know. See [Left and right](profile.md#left-and-right). |
+| 11 | Adds `tabs`, the project's placed tabs, empty on upgrade (#105). A Profile's `tabs` setting stays as a tab request: it is cut as before, and the next `dreamcarve tabs` command that saves the project places it. See [Tabs](tabs.md). |
 
 ## What `check` reports
 
@@ -436,11 +478,11 @@ Errors stop export. Warnings do not.
 
 | Errors | Warnings |
 | --- | --- |
-| Two tools, instances or operations with the same id | An operation is disabled |
-| An id that refers to nothing | An open path that no enabled Engrave or On line, Left or Right Profile targets |
+| Two tools, instances, operations or tabs with the same id | An operation is disabled |
+| An id that refers to nothing, or a tab on an outline its instance does not have | An open path that no enabled Engrave or On line, Left or Right Profile targets |
 | A value you must set that is `null`: the stock's `thickness_mm`, an operation's `depth_mm`, and for a tool an enabled operation uses, its `feed_mm_min` and `plunge_mm_min`, and its `rpm` unless spindle control is manual | A tool no enabled operation uses (its unset values are not reported) |
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
-| A value that is not a number | Any [toolpath warning](warnings.md#toolpath-generation): a shape the tool does not fit, an entry or lead that does not fit, a duplicate shape, tabs that overlap or do nothing |
+| A value that is not a number | Any [toolpath warning](warnings.md#toolpath-generation): a shape the tool does not fit, an entry or lead that does not fit, a duplicate shape, tabs that overlap or do nothing, a tab on a hole or one no enabled Profile cuts round |
 | A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |
 | `post_processor.tool_change_mode` is `"m6"` but the post-processor has no `M6` (every one but grblHAL) | |
 | A cut deeper than the stock plus its through-cut allowance | |

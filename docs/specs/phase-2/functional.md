@@ -253,20 +253,68 @@ field when it concerns one value. The codes are listed in the
 
 ### Tabs
 
-26. **Tabs per outline** (#109). A Profile's `tabs` apply to each
-outline it cuts on its own, as VCarve applies tabs per vector. Holes
+26. **Tabs per outline** (#109). A tab request (a Profile's `tabs`, and
+`dreamcarve tabs place --count`) lays its tabs on each outline the
+Profile cuts on its own, as VCarve applies tabs per vector. Holes
 (outlines nested as holes among the operation's targets) get no tabs
-unless `tabs.on_holes` is `true`: a hole's slug is waste. `init` writes
-`false`; a project from format version 8 or earlier upgrades to `true`,
-so it cuts as before. An outline whose tabs would cover more than half
-of its tool path gets the most tabs that cover at most half, and
-`tabs_cover_most_of_contour` names it with the tabs asked and cut. A
-part's outline keeps at least one tab, even one that covers more than
-half (the warning says the part may need cutting free by hand); a hole
-with `on_holes` may get none. So one operation cuts a part and its holes, holes first:
+unless `tabs.on_holes` is `true` (`--on-holes`): a hole's slug is waste.
+`init` writes `false`; a project from format version 8 or earlier
+upgrades to `true`, so it cuts as before. An outline whose tabs would
+cover more than half of its tool path gets the most tabs that cover at
+most half, and `tabs_cover_most_of_contour` names it with the tabs asked
+and cut. A part's outline keeps at least one tab, even one that covers
+more than half (the warning says the part may need cutting free by
+hand); a hole with `on_holes` may get none. So one operation cuts a part and its holes, holes first:
 a star with 4 tabs and its 7 mm hole, with a 6.35 mm bit, no longer
 needs a second operation. (changed in #109: one setting tabbed every
 outline, and too-short outlines kept tabs covering most of them.)
+(changed in #105: these are now the rules for placing tabs from a
+request, capability 26a; the tabs placed are cut as placed tabs.)
+26a. **Placed tabs** (#105, ADR-0005). A tab is a project object in
+`Project::tabs`: an instance, one of its definition's profiles, a point
+in definition space (`x_mm`, `y_mm`), and its own `width_mm`,
+`height_mm` (tab top above the stock bottom) and `shape` (`rect` or
+`smooth`). It follows its instance when the instance moves, rotates,
+mirrors or scales. Every enabled Profile that cuts that outline rises
+over the tab, centred at its tool path's point nearest the tab, with the
+phase 1 span (the tab width plus the tool diameter) and shapes. A
+Profile crosses a tab when its path passes within the tool radius plus
+half the tab width of where the tab meets the outline and its cut goes
+below the tab's top, so a shallow score pass of a tabbed outline crosses
+none. A pass rises over
+a tab only below that tab's top; overlapping spans merge, taking the
+highest top, smooth only if every tab in them is, and warn
+`tabs_overlap`; one tab alone whose span covers its whole path overlaps
+nothing and warns only its coverage. Placed tabs are cut as placed: export never drops one,
+and a layout that covers more than half its path warns
+`tabs_cover_most_of_contour` ("All of them are cut, as placed"). Two new
+warnings: `tab_not_crossed`, project-level, for a tab no enabled Profile
+crosses (its outline is not cut by an enabled Profile, or only by a
+Pocket or a disabled Profile, or every path runs too far from it or stops
+above its top), and
+`tab_on_hole` for a tab on an outline a Profile cuts as a hole: the tab
+is cut and holds the slug. The CLI gains `dreamcarve tabs place <dcv>
+<op> [--count N | --at d1,d2,…] [--width] [--height] [--shape]
+[--on-holes]` (with neither `--count` nor `--at`, the operation's own
+request), `tabs list <dcv>` (each tab, its distance along the outline,
+and the enabled Profiles that cross it) and `tabs clear <dcv> [<op> |
+--tab <id>…]`, where `<op>` must be a Profile and only the tabs it
+crosses are removed, with a note naming any part a through cut then
+frees with no tab (changed in #105 review: `<op>` removed every tab on
+its targets, whatever the operation). `--count` is at least 1, and
+`--width`, `--height`, `--shape` and `--on-holes` need `--count` or
+`--at`. `--count` follows capability 26; `--at` puts a tab at
+each distance along the outline from its first vertex as drawn. Format
+version 11 adds `"tabs": []`; a Profile's `tabs` stays as a tab
+request, which generation places before it cuts, so older files cut
+byte-identically. Each `tabs` command that saves the project places the
+requests of every enabled Profile first and clears them; a disabled
+Profile keeps its request. `init` writes a request, as before, and an
+empty list. Once placed, two Profiles that cut one outline both rise
+over its tabs. (changed in #105: tabs were an operation setting, so a
+change of tool or side moved every tab and two Profiles of one outline
+each rose over their own tabs only; tabs as placed objects were out of
+scope.)
 
 ### Open paths
 
@@ -303,11 +351,14 @@ corner rounding of toolpaths, wall corner clean-up (PureCutCNC features not
 in VCarve's pocket form; post-1.0 or phase 8). Pocket fill patterns for
 Engrave (VCarve's hatch and offset fill). Straight-line leads. Start depth
 (every operation starts at the stock top). Drill tip
-compensation and "drill through". Tabs as placed objects (#105, with the
-GUI). Region masks and clamps as obstacles. A GUI, simulation, text.
-Reading Vectric, Carveco or Carbide Create tool databases. (changed in
-the #73 addendum: separate clearance, tool-change and park heights and an
-SVG toolpath preview moved in scope; see "Phase 2 addendum (#73)".)
+compensation and "drill through". Region masks and clamps as obstacles. A
+GUI, simulation, text. Reading Vectric, Carveco or Carbide Create tool
+databases. (changed in the #73 addendum: separate clearance, tool-change
+and park heights and an SVG toolpath preview moved in scope; see "Phase 2
+addendum (#73)".) (changed in #105: tabs as placed objects were out of
+scope, waiting for the GUI; the maintainer asked for ready-for-agent work
+to be picked up, so they are capability 26a, placed and edited from the
+CLI.)
 
 ## Acceptance tests
 
@@ -472,6 +523,17 @@ it, and the CLI check uses the coaster drawn as Béziers,
 design spec, the cutting moves at each Z match PureCutCNC's exported
 G-code within 0.01 mm after start-point alignment; for the two
 multi-part cases the order of shapes is compared too.
+38a. **Placed tabs.** A star and its 7 mm hole cut by one Outside Profile
+with a 6.35 mm bit, with tabs placed only on the star by `tabs place
+--at`: the hole is cut free (no pass over it rises) and only the star's
+last passes rise over the tabs; the program passes S1–S9. A tab
+follows its instance when the instance is moved and turned. Two
+Profiles of one outline both rise over its tabs. A tab on an outline no
+enabled Profile cuts warns `tab_not_crossed`. A version 9 file with
+`count: 4` tabs exports byte-identical G-code as loaded and after `tabs
+place` has saved its tabs as placed tabs, for each project of the
+`crates/dreamcarve/tests/fixtures/tabs-migration/` corpus, the golden
+cases with tabs and the coaster `init` writes. (added in #105.)
 
 ## Safety requirements
 
@@ -574,7 +636,8 @@ Tool library (commands, the library file, Fusion import and its
 mapping table); Importing DXF; Post-processors updated (six
 controllers, what each verifies, canned cycles, tool changes on each);
 Warnings (every code with its message and what to do); The project file
-updated for every new field and version.
+updated for every new field and version; Tabs updated for placed tabs and
+the `tabs` commands (#105).
 - Quick start: "A pocketed plaque from DXF", end to end on the test part.
 - Contributing: Crate map (new crates and modules); Porting from
 PureCutCNC updated with the Y-up rules for pocket direction, helix

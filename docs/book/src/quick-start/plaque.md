@@ -358,9 +358,12 @@ warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider 
 Program 1 (T1):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
+  Estimated time: 3 min 2 s (cutting 2 min 59 s, dwells 3 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 2 (T2):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 35 s (cutting 3 min 29 s, dwells 6 s); 1.6 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 plaque.dcv: 0 error(s), 5 warning(s)
 ```
 
@@ -392,24 +395,31 @@ warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider 
 Wrote 2 programs; run them in this order:
   1. plaque-1-T1.nc  Before you start: fit T1 1/4 end mill and set work zero (X, Y and Z) with it.
   2. plaque-2-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
+This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
 Post-processor grblhal.
   op1 `Panel`: tool `t2` (1/4 end mill), 2 target(s), 4.000 mm deep
   op2 `Square recess`: tool `t2` (1/4 end mill), 1 target(s), 6.000 mm deep
   op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12.000 mm deep
   op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12.000 mm deep
   op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1.000 mm deep
-plaque-1-T1.nc (514 lines):
+plaque-1-T1.nc (516 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
-plaque-2-T2.nc (49 lines):
+  Estimated time: 3 min 2 s (cutting 2 min 59 s, dwells 3 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+plaque-2-T2.nc (51 lines):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 35 s (cutting 3 min 29 s, dwells 6 s); 1.6 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 ```
 
 The project uses two bits, so export writes two programs, one per bit,
 numbered in the order to run them: `plaque-1-T1.nc` with the 6.35 mm bit
 (the two pockets, the holes and the cut-out), then `plaque-2-T2.nc` with
 the 3.175 mm bit (the engraving). `T1` and `T2` are the tools' numbers.
+Each program's estimated time, and the total, leave out the rapids and
+the bit change between programs; see
+[Estimated run time](../user-guide/configuration.md#estimated-run-time).
 
 The **Before you start** line of each program says what to do before you
 press start:
@@ -442,6 +452,8 @@ which work with any sender.
 G90
 G17
 G94
+G80
+G40
 G21
 G54
 ( Operation 1: Panel )
@@ -511,6 +523,8 @@ Then it rises to safe Z for the next hole.
 G90
 G17
 G94
+G80
+G40
 G21
 G54
 ( Operation 1: Border and squiggle )

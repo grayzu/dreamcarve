@@ -19,7 +19,7 @@
 //! Geometry is Y-up, Z-up, millimetres (ADR-0001). Stock occupies
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
-use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
+use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::post_processor::PostProcessorRef;
 use crate::units_input;
 use dc_geometry::{Polyline, Transform};
@@ -60,6 +60,9 @@ pub struct Project {
     pub tools: Vec<Tool>,
     /// Machining operations, in cutting order.
     pub operations: Vec<Operation>,
+    /// Holding tabs placed on the outlines of instances (#105, ADR-0005).
+    /// Every enabled Profile that cuts a tab's outline rises over it.
+    pub tabs: Vec<PlacedTab>,
     /// Placed copies of definitions.
     pub instances: Vec<FeatureInstance>,
     /// The bundled post-processor definition version and the user's
@@ -480,7 +483,13 @@ pub struct ProfileOp {
     /// Retract height above the stock top, millimetres.
     #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
-    /// Holding tabs, if any.
+    /// A tab request: tabs still to be placed on this operation's
+    /// targets, as a format 10 file set them (#105, ADR-0005). Placed
+    /// tabs are [`Project::tabs`]; a request is not cut data. Generation
+    /// places a request before it cuts, as `dreamcarve tabs place` does,
+    /// so an older file cuts the same; every `tabs` command that saves the
+    /// project places the requests of its enabled Profiles and sets them
+    /// to `null`. Kept for format 11, so older files cut the same.
     #[serde(deserialize_with = "Option::deserialize")]
     pub tabs: Option<TabSpec>,
     /// The order shapes and passes are visited. Migration: full depth
@@ -735,7 +744,39 @@ pub enum CutDirection {
     Conventional,
 }
 
-/// Holding tabs left by a profile.
+/// A holding tab placed on one outline of one instance (#105, ADR-0005):
+/// material a Profile that cuts the outline leaves standing, up to
+/// `height_mm`. Its place is a point in definition space, so it follows
+/// the instance when the instance moves, rotates, mirrors or scales; a
+/// Profile centres the tab at its tool path's point nearest it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacedTab {
+    /// This tab's id.
+    pub id: TabId,
+    /// The instance whose outline holds the tab.
+    pub instance: InstanceId,
+    /// The outline: an index into the instance's definition's
+    /// [`FeatureDefinition::profiles`].
+    pub profile: usize,
+    /// The tab's centre, X in definition space, millimetres: on the
+    /// profile, or on the tool path of the Profile it was placed for.
+    pub x_mm: f64,
+    /// The tab's centre, Y in definition space, millimetres (Y-up).
+    pub y_mm: f64,
+    /// Tab length along the outline, millimetres. A pass below the tab top
+    /// rises over `width_mm` plus the tool diameter of its tool path.
+    pub width_mm: f64,
+    /// Tab top above the stock bottom, millimetres.
+    pub height_mm: f64,
+    /// Tab cross-section.
+    pub shape: TabShape,
+}
+
+/// Holding tabs to place on every outline a Profile cuts (#105, ADR-0005):
+/// a generator of [`PlacedTab`]s with the phase 2 layout rules, as
+/// `dreamcarve tabs place` and `init` use it, and the format 10 tab
+/// setting a format 11 file may still hold as [`ProfileOp::tabs`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TabSpec {
@@ -756,7 +797,7 @@ pub struct TabSpec {
     pub on_holes: bool,
 }
 
-/// Where tabs go along the tool-centre contour.
+/// Where a [`TabSpec`] puts tabs along each tool-centre path.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TabPlacement {

@@ -24,7 +24,8 @@
 //! link to that line and column (#76). Every warning carries its stable
 //! `snake_case` code and prints as `warning: <code>: <message>` (functional
 //! spec, capability 25); the Warnings chapter lists the codes. After
-//! generation, `dc_cam::order::check` adds the operation-order warnings.
+//! generation, `dc_cam::order::check` adds the operation-order warnings,
+//! and `dc_cam::placed_tabs::check` the tabs no Profile cuts round (#105).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -32,10 +33,11 @@ use std::process::ExitCode;
 
 use dc_cam::{
     Toolpath, generate_drill, generate_engrave, generate_pocket, generate_profile, order,
+    placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, EmitOp, ExportWarning, Program, ProgramSplit, emit_programs};
+use dc_gcode::{AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs};
 use dc_project::{
     Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap,
     ToolChangeMode, Units, validate,
@@ -44,7 +46,7 @@ use dc_project::{
 use crate::cli::{
     ExportArgs, Failure, StagedFile, commit_all, lookup_post, read_file, switch_post, today_utc,
 };
-use crate::config;
+use crate::config::{self, EstimateConfig};
 use crate::output::{errln, outln};
 
 /// One error or warning.
@@ -206,15 +208,17 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         .iter()
         .map(|entry| (&entry.op, &entry.toolpath))
         .collect();
-    findings
-        .warnings
-        .extend(order::check(project, &generated).iter().map(|w| {
-            let message = match w.op() {
-                Some(op) => format!("operation `{op}`: {w}"),
-                None => w.to_string(),
-            };
-            Finding::coded(w.code().as_str(), message)
-        }));
+    // #105: a placed tab no enabled Profile cuts round holds nothing.
+    let project_warnings = order::check(project, &generated)
+        .into_iter()
+        .chain(placed_tabs::check(project, &generated));
+    findings.warnings.extend(project_warnings.map(|w| {
+        let message = match w.op() {
+            Some(op) => format!("operation `{op}`: {w}"),
+            None => w.to_string(),
+        };
+        Finding::coded(w.code().as_str(), message)
+    }));
     if !findings.errors.is_empty() {
         return Built {
             programs: Vec::new(),
@@ -290,6 +294,9 @@ pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> 
 /// Runs `export`.
 pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     let (mut project, mut file) = load_project(&args.dcv)?;
+    // Read before anything is written, so a bad value stops the export
+    // with nothing changed. It is used for the printed estimate only.
+    let estimate_settings = config::estimate_settings()?;
     // `--post` is how a project changes post-processor or upgrades to a
     // newer version of its own (#106): an explicit action, reported below.
     let mut switched = None;
@@ -355,11 +362,150 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     // move, or the reverse, would not match what was reported.
     commit_all(staged_programs.into_iter().chain(staged_project).collect())?;
 
+    // The programs are written; the estimate only reads them.
+    let estimates = Estimates::new(&project, &programs, estimate_settings);
     match (programs.as_slice(), outputs.as_slice()) {
-        ([program], [output]) => report(&project, program, output, args, switched.as_ref())?,
-        _ => report_runs(&project, &programs, &outputs, args, switched.as_ref())?,
+        ([program], [output]) => report(
+            &project,
+            program,
+            output,
+            args,
+            switched.as_ref(),
+            &estimates,
+        )?,
+        _ => report_runs(
+            &project,
+            &programs,
+            &outputs,
+            args,
+            switched.as_ref(),
+            &estimates,
+        )?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The cycle-time estimate of each program (functional spec, capability
+/// 30), with the user's `[estimate]` settings to print them with. It reads
+/// the programs and changes nothing.
+pub struct Estimates {
+    /// Each program's estimate, in program order, or why there is none.
+    per_program: Vec<Result<Estimate, String>>,
+    settings: EstimateConfig,
+}
+
+impl Estimates {
+    /// The estimates of `programs`, emitted from `project`.
+    pub fn new(project: &Project, programs: &[Program], settings: EstimateConfig) -> Self {
+        let post = project.post_processor.resolve().map_err(|e| e.to_string());
+        let per_program = programs
+            .iter()
+            .map(|program| {
+                let post = post.as_ref().map_err(Clone::clone)?;
+                dc_gcode::estimate(program, post).map_err(|e| e.to_string())
+            })
+            .collect();
+        Self {
+            per_program,
+            settings,
+        }
+    }
+
+    /// The `Estimated time: …` line of program `k`.
+    pub fn program_line(&self, k: usize) -> String {
+        match self.per_program.get(k) {
+            Some(Ok(estimate)) => describe_estimate("Estimated time", estimate, &self.settings),
+            Some(Err(reason)) => format!("Estimated time: not available ({reason})."),
+            None => "Estimated time: not available.".to_owned(),
+        }
+    }
+
+    /// The `Estimated total time: …` line over every program, when there
+    /// is more than one.
+    pub fn total_line(&self) -> Option<String> {
+        if self.per_program.len() < 2 {
+            return None;
+        }
+        let total = self
+            .per_program
+            .iter()
+            .try_fold(Estimate::default(), |sum, e| {
+                e.as_ref().ok().map(|e| sum + *e)
+            });
+        Some(match total {
+            Some(total) => describe_estimate("Estimated total time", &total, &self.settings),
+            None => "Estimated total time: not available.".to_owned(),
+        })
+    }
+}
+
+/// `estimate` as one line, as capability 30 shows it: the total, then the
+/// cutting and dwell times, the rapids' time when the user has given a
+/// rapid rate or else their distance and how to include it, the scale
+/// factor when it is not 1, and what is left out: acceleration, and the
+/// time at each pause and tool change, counted. Every time is multiplied
+/// by the scale factor.
+fn describe_estimate(label: &str, estimate: &Estimate, settings: &EstimateConfig) -> String {
+    let scale = settings.scale_factor;
+    let cutting_s = estimate.feed_s * scale;
+    let dwells_s = estimate.dwell_s * scale;
+    let rapids = settings
+        .rapid_mm_min
+        .map(|rate| (estimate.rapid_mm / rate * SECONDS_PER_MINUTE * scale, rate));
+    let total_s = cutting_s + dwells_s + rapids.map_or(0.0, |(s, _)| s);
+    let mut parts = format!(
+        "cutting {}, dwells {}",
+        duration(cutting_s),
+        duration(dwells_s)
+    );
+    if let Some((rapids_s, rate)) = rapids {
+        parts.push_str(&format!(", rapids {} at {rate} mm/min", duration(rapids_s)));
+    }
+    if (scale - 1.0).abs() > f64::EPSILON {
+        parts.push_str(&format!("; scale factor {scale}"));
+    }
+    let mut line = format!("{label}: {} ({parts})", duration(total_s));
+    if rapids.is_none() && estimate.rapid_mm > 0.0 {
+        line.push_str(&format!(
+            "; {} of rapids not included: set [estimate] rapid_mm_min in config.toml",
+            distance(estimate.rapid_mm)
+        ));
+    }
+    line.push_str(". Excludes acceleration");
+    match estimate.stops {
+        0 => {}
+        1 => line.push_str(" and 1 pause"),
+        n => line.push_str(&format!(" and {n} pauses")),
+    }
+    line.push('.');
+    line
+}
+
+const SECONDS_PER_MINUTE: f64 = 60.0;
+
+/// `seconds`, rounded to the second, as `1 h 2 min 3 s`, `14 min 5 s` or
+/// `13 s`.
+fn duration(seconds: f64) -> String {
+    let total = seconds.max(0.0).round();
+    let hours = (total / 3600.0).floor();
+    let minutes = ((total - hours * 3600.0) / 60.0).floor();
+    let secs = total - hours * 3600.0 - minutes * 60.0;
+    if hours > 0.0 {
+        format!("{hours:.0} h {minutes:.0} min {secs:.0} s")
+    } else if minutes > 0.0 {
+        format!("{minutes:.0} min {secs:.0} s")
+    } else {
+        format!("{secs:.0} s")
+    }
+}
+
+/// `mm` as `50 mm`, or from a metre up as `4.3 m`.
+fn distance(mm: f64) -> String {
+    if mm < 1000.0 {
+        format!("{mm:.0} mm")
+    } else {
+        format!("{:.1} m", mm / 1000.0)
+    }
 }
 
 /// Where each program goes. One program goes to `-o`, or to the project's
@@ -404,16 +550,18 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Prints the export summary of one program: the file written, one line
-/// per exported operation, the program's extents (#62), the tool to fit and
-/// set work zero with before starting (#57), then every pause and tool
-/// change with its line number and message, because the controller or
-/// sender may not show the message (design step 8).
+/// per exported operation, the program's extents (#62), its estimated run
+/// time (capability 30), the tool to fit and set work zero with before
+/// starting (#57), then every pause and tool change with its line number
+/// and message, because the controller or sender may not show the message
+/// (design step 8).
 fn report(
     project: &Project,
     program: &Program,
     output: &Path,
     args: &ExportArgs,
     switched: Option<&Switched>,
+    estimates: &Estimates,
 ) -> Result<(), Failure> {
     outln!(
         "Wrote {} ({} lines, post-processor {}).",
@@ -425,12 +573,14 @@ fn report(
     for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
         outln!("{line}")?;
     }
+    outln!("{}", estimates.program_line(0))?;
     // #57: the program does not stop for the first tool.
     outln!(
         "Before you start: fit T{}{} and set work zero with it.",
         program.first_tool.number,
         name_suffix(&program.first_tool.name)
     )?;
+    report_tool_length_offset(project)?;
     report_pauses(program, "")?;
     // #95: the user chose one program with M6, in the project or with
     // `--one-program`; it stops only if the sender lets M6 through or
@@ -452,13 +602,15 @@ fn report(
 
 /// Prints the export summary of the programs of tool runs (#95): the files
 /// in the order to run them, with what to do before each, then one line
-/// per exported operation, then each program's extents (#62) and pauses.
+/// per exported operation, then each program's extents (#62), estimated
+/// run time and pauses, then the total run time (capability 30).
 fn report_runs(
     project: &Project,
     programs: &[Program],
     outputs: &[PathBuf],
     args: &ExportArgs,
     switched: Option<&Switched>,
+    estimates: &Estimates,
 ) -> Result<(), Failure> {
     outln!("Wrote {} programs; run them in this order:", programs.len())?;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
@@ -477,9 +629,10 @@ fn report_runs(
             output.display()
         )?;
     }
+    report_tool_length_offset(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
     report_post_and_operations(project, args, switched)?;
-    for (program, output) in programs.iter().zip(outputs) {
+    for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
         outln!(
             "{} ({} lines):",
             output.display(),
@@ -488,7 +641,11 @@ fn report_runs(
         for line in describe_extents(project, program, tool_radius_mm(project, program)) {
             outln!("  {line}")?;
         }
+        outln!("  {}", estimates.program_line(k))?;
         report_pauses(program, "  ")?;
+    }
+    if let Some(total) = estimates.total_line() {
+        outln!("{total}")?;
     }
     Ok(())
 }
@@ -582,6 +739,24 @@ fn describe_length(project: &Project, length_mm: f64) -> String {
         .and_then(|post| format_number(value, &post.number_format, units).ok())
         .unwrap_or_else(|| value.to_string());
     format!("{number} {unit}")
+}
+
+/// The post-processors whose programs leave the tool length offset
+/// (`G43.1`) alone: grblHAL and GRBL fold an active offset into the work
+/// zero the user sets (`G10 L20`), so a `G49` after the user zeroes Z
+/// would move every Z by it (#279; `dc-project/src/definitions/README.md`,
+/// "Header modal state").
+const KEEPS_TOOL_LENGTH_OFFSET: [&str; 2] = ["grblhal", "grbl"];
+
+/// Prints, for a program that leaves the tool length offset alone, when
+/// to set one (functional spec, capability 29).
+fn report_tool_length_offset(project: &Project) -> Result<(), Failure> {
+    if KEEPS_TOOL_LENGTH_OFFSET.contains(&project.post_processor.id.as_str()) {
+        outln!(
+            "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero."
+        )?;
+    }
+    Ok(())
 }
 
 /// Prints every pause and tool change of `program`, each line after

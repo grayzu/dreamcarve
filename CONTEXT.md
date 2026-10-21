@@ -176,6 +176,20 @@ A short bridge of material left uncut on a Profile so the part stays attached
 to the stock.
 _Avoid_: Bridge, holding tab, clamp (a clamp is a workholding obstacle)
 
+**Placed Tab**:
+A tab as the project holds it: on one outline of one feature instance, at a
+point in its definition's space, with its own width, height and shape. Every
+enabled Profile that cuts that outline rises over it (ADR-0005).
+_Avoid_: Tab footprint, tab rectangle (PureCutCNC's world-space form)
+_PureCutCNC_: Tab
+
+**Tab Request**:
+A Profile's tab setting (count or distances, size, shape, holes or not):
+tabs the operation asks for, which are placed on its targets' outlines
+with the layout rules before anything is cut, or written as placed tabs by
+`dreamcarve tabs`. It is not cut data.
+_Avoid_: Tab spec, tab setting (in prose), auto tabs
+
 **Tool**:
 A cutter with geometry (diameter, type, angle, flutes) and feeds for a given
 material. A project embeds copies of the tools it uses.

@@ -156,8 +156,9 @@ impl Freed {
 /// leaves without tabs. Any side frees: Outside and On line free the part,
 /// Inside frees the hole's slug. Tabs hold an outline through the final
 /// pass, so a tabbed Profile frees only the outlines it cuts with no tab:
-/// its holes unless `on_holes`, and outlines too short for one (#109).
-/// The outlines it cuts with tabs are held only by them (#269).
+/// those with no placed tab (#105) and none its tab request places (its
+/// holes unless `on_holes`, and outlines too short for one, #109). The
+/// outlines it cuts with tabs are held only by them (#269).
 fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
     let Operation::Profile(profile) = op else {
         return Freed::Nothing;
@@ -166,10 +167,12 @@ fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
         .moves
         .iter()
         .any(|m| !m.is_rapid() && m.to.z <= EPS_MM);
-    match (through, &profile.tabs) {
-        (false, _) => Freed::Nothing,
-        (true, None) => Freed::All,
-        (true, Some(_)) => Freed::Tabbed(cut_outlines(project, profile)),
+    if !through {
+        return Freed::Nothing;
+    }
+    match cut_outlines(project, profile) {
+        None => Freed::All,
+        Some(outlines) => Freed::Tabbed(outlines),
     }
 }
 

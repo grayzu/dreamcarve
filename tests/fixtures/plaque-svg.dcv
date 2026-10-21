@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -151,6 +151,7 @@
       "safe_z_mm": 15.0
     }
   ],
+  "tabs": [],
   "instances": [
     {
       "id": "i1",
@@ -325,7 +326,7 @@
   ],
   "post_processor": {
     "id": "grblhal",
-    "definition_version": 2,
+    "definition_version": 3,
     "file_extension": "nc",
     "spindle_control": "automatic",
     "spindle_on_dwell_s": 3.0,

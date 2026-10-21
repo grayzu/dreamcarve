@@ -55,20 +55,20 @@ dev-dependencies only.
 | `region.rs` | `Region` and `nest`: loose contours to parts with holes. See [Shapes, holes, and islands](../user-guide/shapes-and-holes.md). |
 | `boolean.rs` | Union, difference and intersection of regions (i_overlay), for pockets, rest machining and coverage. Arcs are flattened first; results are canonical (outers CCW, holes CW, a fixed start vertex and order). |
 | `circle.rs` | `as_circle`, whether a closed outline is a drillable hole within a tolerance; `fit_circle_kasa`, the least-squares fit arc fitting starts from. |
-| `distance.rs` | Shortest distances between points, segments and polylines, following arcs exactly. |
+| `distance.rs` | Shortest distances between points, segments and polylines, following arcs exactly; `nearest_point`, the point of a polyline nearest a point and how far along it that is. |
 
 ### `dc-project` (`crates/dc-project/src/`)
 
 | Module | Contents |
 | --- | --- |
-| `model.rs` | `Project` and everything in it: `Stock`, `MachineOrigin`, `FeatureDefinition`, `FeatureInstance`, `Tool` (with its `number`), `Operation` and `ProfileOp`, `PocketOp`, `DrillOp`, `EngraveOp`; `TabSpec`, `Entry`, `Lead`, `CornerRelief`, `MachiningOrder`. |
+| `model.rs` | `Project` and everything in it: `Stock`, `MachineOrigin`, `FeatureDefinition`, `FeatureInstance`, `Tool` (with its `number`), `Operation` and `ProfileOp`, `PocketOp`, `DrillOp`, `EngraveOp`; `PlacedTab` (the project's `tabs`), `TabSpec` (a Profile's tab request), `Entry`, `Lead`, `CornerRelief`, `MachiningOrder`. |
 | `post_processor.rs` | `PostProcessor`, the controller dialect; `PostProcessorRef`, what a project stores (a bundled definition's id and version, and the user's settings such as `tool_change_mode` and `use_canned_cycles`); and the bundled definitions, by id and version. |
 | `definitions/` | `<id>/v<n>.json` for grblHAL, GRBL, LinuxCNC, Mach3, UCCNC and generic, one file per definition version, compiled in and never edited once released, and a README with their verification against controller sources. |
-| `ids.rs` | `DefinitionId`, `InstanceId`, `ToolId`, `OperationId` newtypes. |
+| `ids.rs` | `DefinitionId`, `InstanceId`, `ToolId`, `OperationId`, `TabId` newtypes. |
 | `serialize.rs` | `save`, `load` (strict: unknown and missing fields fail), `Loaded`, `LoadError`. |
 | `layout.rs` | The saved file's layout: serde_json's pretty printing with each vertex on one line (#76). |
 | `locate.rs` | `SourceMap`: the line and column of every value in a `.dcv`'s text, so messages read `plaque.dcv:10:21:` (#76). |
-| `migrate.rs` | `CURRENT_VERSION` (8) and the raw-JSON migration steps from older versions. |
+| `migrate.rs` | `CURRENT_VERSION` (11) and the raw-JSON migration steps from older versions. |
 | `validate.rs` | `validate`, `Problem`, `Severity`: every problem at once, errors and warnings. |
 | `history.rs` | `History`: snapshot undo and redo. Nothing drives it until the GUI. |
 | `test_support.rs` | Fixture builders such as `sample_project()` (`test-support` feature). |
@@ -113,7 +113,8 @@ dev-dependencies only.
 | `passes.rs` | `pass_z_mm`: depth pass levels; refuses cuts below the stock bottom plus allowance. |
 | `overlap.rs` | The check that two shapes' tool paths in one Profile do not cut into each other (D6). |
 | `stock.rs` | `swept_bounds`, `stock_overhang`: does the cutter stay on the stock (#62). |
-| `tabs.rs` | Tab placement along the tool-centre path, rect and smooth laps. |
+| `tabs.rs` | Tab spans along the tool-centre path, each tab with its own width, height and shape; merging; rect and smooth laps. |
+| `placed_tabs.rs` | Placed tabs (#105): `place` (a tab request's layout as placed tabs), `place_on_outlines` (`tabs place --at`), `place_requests`, `crossed_by`, and `check`, the `tab_not_crossed` warning. |
 | `toolpath.rs` | `Toolpath`, `Move`, `MoveKind` (including `Dwell`): project-space output. |
 | `error.rs`, `warning.rs` | `CamError`; `Warning` with a stable `WarningCode`. |
 | `test_support.rs` | `assert_safe`, the shared emitted-motion safety assertions (`test-support` feature). |
@@ -133,6 +134,7 @@ the code they test.
 | `parse.rs` | Reads a program back as a controller would, canned cycles expanded into their moves. |
 | `safety.rs` | Checks S1–S7 and S9–S12, S14 and S15 on the parsed program and measures its extents. Every violation is an error. (S8 is validation's warnings; S13, the order invariants, is tested in `dc-cam`.) |
 | `material.rs` | S9: every operation's cuts stay in its own material, worked out from the project. |
+| `estimate.rs` | `estimate`: a program's cycle-time estimate (feed time, dwells, rapid distance, stops), read from its text as `parse.rs` reads it. |
 | `post.rs` | Tests of every bundled definition version against the controller facts. |
 | `error.rs` | `ExportError`. |
 
@@ -153,10 +155,11 @@ the code they test.
 | `cli.rs` | Arguments (clap), exit codes, staged file writes, the date. |
 | `output.rs` | `outln!`, `out!`, `errln!`: all printing; a closed stdout pipe stops output and keeps the exit code (#216). |
 | `init.rs` | `init`: SVG or DXF import and the default project; the DXF-only `--units`, `--join-tolerance` and `--layer`. |
-| `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`. |
+| `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`; the printed run-time estimate (`Estimates`). |
 | `check.rs` | `check`. |
-| `config.rs` | The user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's), `config.toml`, and `config path`. |
+| `config.rs` | The user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's), `config.toml` (`[export]`, `[estimate]`), and `config path`. |
 | `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: reads and writes `tools.json` and, for `add`, the project. |
+| `tabs.rs` | `tabs place`, `list`, `clear`: the project's placed tabs. |
 | `clock.rs` | UTC dates from the system clock, with no date crate; `build.rs` includes it for `--version`. |
 
 Behaviour tests for the binary are in `crates/dreamcarve/tests/`: `cli.rs`
