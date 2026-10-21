@@ -1260,7 +1260,7 @@ fn arc_lines(program: &str) -> usize {
 }
 
 /// Slice 11 (#180), capability 17 end to end: the coaster's Profile with
-/// a 3 mm lead-in, lead-out and 1 mm overcut checks with no lead warning
+/// a 2 mm lead-in, lead-out and 1 mm overcut checks with no lead warning
 /// and exports on grblHAL and on LinuxCNC; each program passed the
 /// emitter's safety pass (export refuses one that fails it) and has more
 /// arc moves than the same project without the lead: the lead arcs.
@@ -1276,7 +1276,7 @@ fn profile_lead_exports_and_passes_safety() {
             if with_lead {
                 for op in project.operations.iter_mut().map(as_profile_mut) {
                     op.lead = Some(Lead {
-                        radius_mm: 3.0,
+                        radius_mm: 2.0,
                         sweep_deg: 90.0,
                         lead_out: true,
                         overcut_mm: 1.0,

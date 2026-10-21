@@ -24,6 +24,9 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::float_cmp,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
     reason = "tests"
 )]
 
@@ -144,7 +147,7 @@ fn start_tangent(path: &Polyline) -> Vec2 {
 fn entry_arrives_tangent_to_the_ring() {
     let ring = square_ring(20.0, 80.0, 6);
     let domain = open_domain();
-    let space = DomainSpace::new(&domain, D);
+    let space = DomainSpace::new(&domain, D, 0.0);
     let plan = plan_lead_in(&ring, &lead_of(D), D, &space, None).expect("a lead on an open ring");
     assert!(plan.arrival().distance_to(start_of(&plan.seam)) < 1e-9);
     let approach = plan.arc.tangent_at(plan.arrival());
@@ -160,7 +163,7 @@ fn entry_arrives_tangent_to_the_ring() {
 fn exit_departs_tangent() {
     let ring = square_ring(20.0, 80.0, 6);
     let domain = open_domain();
-    let space = DomainSpace::new(&domain, D);
+    let space = DomainSpace::new(&domain, D, 0.0);
     let out = plan_lead_out(&ring, &lead_of(D), D, &space);
     assert!(out.overcut.is_none(), "no overcut was asked for");
     let arc = out.arc.expect("a lead-out on an open ring");
@@ -187,7 +190,7 @@ fn join_avoids_corners_then_takes_nearest() {
             .fold(f64::MAX, f64::min)
     };
     let domain = open_domain();
-    let space = DomainSpace::new(&domain, D);
+    let space = DomainSpace::new(&domain, D, 0.0);
     let plan = plan_lead_in(&ring, &lead_of(D), D, &space, None).unwrap();
     assert!(corner_distance(plan.arrival()) > D, "{:?}", plan.arrival());
     assert!(corner_distance(start_of(&plan.seam)) > D);
@@ -228,7 +231,7 @@ fn filleted_corner_ranks_like_mitred() {
         true,
     );
     let domain = open_domain();
-    let space = DomainSpace::new(&domain, D);
+    let space = DomainSpace::new(&domain, D, 0.0);
     let centre = Point::new(80.0 - radius, 60.0 - radius);
     for ring in [tessellated, arc_fillet] {
         let plan = plan_lead_in(&ring, &lead_of(D), D, &space, None).unwrap();
@@ -254,7 +257,7 @@ fn circle_falls_through_to_travel() {
     );
     let true_circle = Polyline::circle(Point::new(50.0, 50.0), 20.0);
     let domain = open_domain();
-    let space = DomainSpace::new(&domain, D);
+    let space = DomainSpace::new(&domain, D, 0.0);
     for ring in [tessellated, true_circle] {
         let east = plan_lead_in(&ring, &lead_of(D), D, &space, Some(Point::new(95.0, 50.0)));
         let west = plan_lead_in(&ring, &lead_of(D), D, &space, Some(Point::new(5.0, 50.0)));
@@ -278,7 +281,14 @@ fn strip(h: f64) -> impl Fn(Point) -> bool {
 fn radius_ladder_takes_widest_that_fits() {
     let ring = square_ring(20.0, 80.0, 6);
     let domain = open_domain();
-    let open = plan_lead_in(&ring, &lead_of(D), D, &DomainSpace::new(&domain, D), None).unwrap();
+    let open = plan_lead_in(
+        &ring,
+        &lead_of(D),
+        D,
+        &DomainSpace::new(&domain, D, 0.0),
+        None,
+    )
+    .unwrap();
     assert_approx_eq!(open.arc.radius_mm, D, 1e-9);
     assert_approx_eq!(open.arc.sweep_deg, 90.0, 1e-9);
     let chord = open.staging().distance_to(open.arrival());
@@ -313,7 +323,7 @@ fn domain_rejection_leaves_no_lead_and_warns() {
             .is_none()
     );
 
-    let p = project_of(&[("slot", vec![rect(20.0, 20.0, 7.0, 30.0)])]);
+    let p = project_of(&[("slot", vec![rect(20.0, 20.0, 6.5, 30.0)])]);
     let (tp, warnings) = generate(&p, &inside(&p, Some(lead_of(3.0))));
     let dropped = codes(&warnings, WarningCode::LeadDropped);
     assert_eq!(dropped.len(), 1, "{warnings:?}");
@@ -363,7 +373,14 @@ fn swept_sampling_sees_between_vertices() {
 fn rotate_ring_for_lead_preserves_perimeter() {
     let ring = square_ring(20.0, 80.0, 4);
     let domain = open_domain();
-    let plan = plan_lead_in(&ring, &lead_of(D), D, &DomainSpace::new(&domain, D), None).unwrap();
+    let plan = plan_lead_in(
+        &ring,
+        &lead_of(D),
+        D,
+        &DomainSpace::new(&domain, D, 0.0),
+        None,
+    )
+    .unwrap();
     assert!(start_of(&plan.seam).distance_to(plan.arrival()) < 1e-9);
     assert!(plan.seam.vertices().len() >= ring.vertices().len());
     assert_approx_eq!(plan.seam.length_mm(), ring.length_mm(), 1e-6);
@@ -391,7 +408,7 @@ fn rotate_ring_for_lead_preserves_perimeter() {
 fn determinism() {
     let ring = square_ring(20.0, 80.0, 6);
     let domain = open_domain();
-    let space = DomainSpace::new(&domain, D);
+    let space = DomainSpace::new(&domain, D, 0.0);
     let first = plan_lead_in(&ring, &lead_of(D), D, &space, None);
     let second = plan_lead_in(&ring, &lead_of(D), D, &space, None);
     assert!(first.is_some());
@@ -415,6 +432,8 @@ const R_MM: f64 = TOOL_MM / 2.0;
 const FEED: f64 = 1000.0;
 const PLUNGE: f64 = 300.0;
 const THICKNESS_MM: f64 = 6.0;
+/// The project's flatten tolerance (`sample_project`'s).
+const TOLERANCE_MM: f64 = dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 /// 2 mm steps through the 6 mm stock.
 const PASS_Z_MM: [f64; 3] = [4.0, 2.0, 0.0];
 
@@ -599,8 +618,8 @@ fn leads_on_rect(tp: &Toolpath, min: Point, max: Point) -> (Vec<usize>, Vec<usiz
 /// staging point, 3 mm from the tool-centre path (R·(1 − cos 90°)); the
 /// tool arrives on the wall along an arc tangent to it, more than one
 /// diameter from every corner; after the lap it overcuts 2 mm along the
-/// wall, then leaves along an arc tangent to it. With a ramp entry the
-/// descent ends at the staging point too.
+/// wall, then leaves along an arc tangent to it. With a ramp or a helix
+/// entry the descent ends at the staging point too.
 #[test]
 fn inside_rectangle_lead_arrives_tangent_away_from_corners() {
     let (p, min, max) = hole_60x40();
@@ -608,7 +627,11 @@ fn inside_rectangle_lead_arrives_tangent_away_from_corners() {
         overcut_mm: 2.0,
         ..lead_of(3.0)
     };
-    for entry in [Entry::Plunge, Entry::Ramp { angle_deg: 15.0 }] {
+    let helix = Entry::Helix {
+        diameter_fraction: 0.8,
+        angle_deg: 5.0,
+    };
+    for entry in [Entry::Plunge, Entry::Ramp { angle_deg: 15.0 }, helix] {
         let o = ProfileOp {
             entry: entry.clone(),
             ..inside(&p, Some(lead.clone()))
@@ -703,6 +726,37 @@ fn seven_mm_hole_drops_the_lead() {
     assert_eq!(dropped[0].param("reason"), Some("no_room"));
     for (_, mv) in arcs(&tp) {
         assert!(centre_of(&mv).distance_to(centre) < 1e-6, "{mv:?}");
+    }
+}
+
+/// Validation rejects a lead radius of 0 or less, a sweep outside (0,
+/// 180] and a negative overcut; the generator refuses them too, naming
+/// the field, rather than cut something validation did not pass.
+#[test]
+fn invalid_lead_values_are_refused() {
+    let (p, _, _) = hole_60x40();
+    for (lead, field) in [
+        (lead_of(0.0), "radius_mm"),
+        (
+            Lead {
+                sweep_deg: 181.0,
+                ..lead_of(3.0)
+            },
+            "sweep_deg",
+        ),
+        (
+            Lead {
+                overcut_mm: -1.0,
+                ..lead_of(3.0)
+            },
+            "overcut_mm",
+        ),
+    ] {
+        let err = generate_profile(&p, &inside(&p, Some(lead))).unwrap_err();
+        assert!(
+            matches!(err, CamError::InvalidLead { field: f, .. } if f == field),
+            "{err:?}"
+        );
     }
 }
 
@@ -838,10 +892,14 @@ fn arc_samples(from: Point3, mv: &Move) -> Vec<Point> {
 }
 
 /// Port: upstream `testOutsideDomainKeepsTheArcOffThePart`, with a
-/// neighbour and the stock edge. Two 20 mm squares Outside, 8 mm apart,
-/// the first 8 mm from the stock's left edge, a 6 mm lead: every lead
-/// sample keeps the cutter on the stock and off its own part, and keeps
-/// the tool centre out of the neighbour's kerf (2r from it).
+/// neighbour and the stock edge. Two 20 mm squares Outside, 6 mm apart,
+/// the first 8 mm from the stock's left edge, a 6 mm lead: there is no
+/// room between the parts or beside the stock edge, and every lead sample
+/// keeps the cutter on the stock and off its own part, and keeps the tool
+/// centre out of the neighbour's kerf (2r from it, less the flatten
+/// tolerance twice: once for the kerf's arcs, once for the slack a point
+/// joining a curved wall is allowed). The leads are the 6 mm arcs; the
+/// others are the laps' corners.
 #[test]
 fn lead_stays_off_neighbouring_shapes_and_stock_edge() {
     let a = (8.0, 30.0);
@@ -851,8 +909,11 @@ fn lead_stays_off_neighbouring_shapes_and_stock_edge() {
         ("b", vec![rect(b.0, b.1, 20.0, 20.0)]),
     ]);
     let (tp, _) = generate(&p, &profile(&p, Side::Outside, Some(lead_of(6.0))));
-    let leads = arcs(&tp);
-    assert!(!leads.is_empty(), "leads are cut");
+    let leads: Vec<(Point3, Move)> = arcs(&tp)
+        .into_iter()
+        .filter(|(from, mv)| (as_lead_arc(*from, mv).radius_mm - 6.0).abs() < 1e-6)
+        .collect();
+    assert_eq!(leads.len(), 2 * 2 * PASS_Z_MM.len(), "leads are cut");
     let part = |(x, y): (f64, f64)| (Point::new(x, y), Point::new(x + 20.0, y + 20.0));
     for (from, mv) in leads {
         let samples = arc_samples(from, &mv);
@@ -882,7 +943,7 @@ fn lead_stays_off_neighbouring_shapes_and_stock_edge() {
                 "{s:?} in its part"
             );
             assert!(
-                to_rect_boundary(s, nmin, nmax) >= 2.0 * R_MM - 1e-3,
+                to_rect_boundary(s, nmin, nmax) >= 2.0 * R_MM - 2.0 * TOLERANCE_MM - 1e-6,
                 "{s:?} in the neighbour's kerf"
             );
         }

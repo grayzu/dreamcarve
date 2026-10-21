@@ -582,6 +582,42 @@ mod tests {
     }
 
     #[test]
+    fn lead_warnings_name_the_shape_and_both_sizes() {
+        let shape = |w: Warning| {
+            w.with("op", "o1")
+                .with("instance", "i1")
+                .with("instance_name", "Hole")
+                .with("profile", 0)
+        };
+        let shrunk = shape(Warning::new(WarningCode::LeadShrunk))
+            .with("requested_mm", 30.0)
+            .with("used_mm", 22.5)
+            .with("requested_sweep_deg", 90.0)
+            .with("used_sweep_deg", 45.0);
+        assert_eq!(
+            shrunk.to_string(),
+            "the lead arc on `Hole` (instance `i1`, profile 0) is 22.5 mm in radius over 45°, smaller than the 30 mm over 90° asked for, because a larger one does not fit there"
+        );
+        let no_room = shape(Warning::new(WarningCode::LeadDropped)).with("reason", "no_room");
+        assert_eq!(
+            no_room.to_string(),
+            "there is no room for a lead-in arc on `Hole` (instance `i1`, profile 0), even at a quarter of the radius, so its passes start on the outline without one"
+        );
+        let exit = shape(Warning::new(WarningCode::LeadDropped)).with("reason", "exit");
+        assert_eq!(
+            exit.to_string(),
+            "there is no room for a lead-out arc where the cut on `Hole` (instance `i1`, profile 0) ends, so it stops on the outline"
+        );
+        let on_line = Warning::new(WarningCode::LeadDropped)
+            .with("op", "o1")
+            .with("reason", "on_line");
+        assert_eq!(
+            on_line.to_string(),
+            "operation `o1` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside"
+        );
+    }
+
+    #[test]
     fn engrave_path_degenerate_names_the_shape() {
         let w = Warning::new(WarningCode::EngravePathDegenerate)
             .with("op", "o4")

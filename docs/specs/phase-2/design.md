@@ -271,7 +271,8 @@ pub mod order {
 New `WarningCode`s (params in parentheses): `EntryFallback (op, instance,
 profile, requested, used)`, `HelixDiameterReduced (op, instance,
 requested_mm, used_mm)`, `LeadShrunk (op, instance, requested_mm,
-used_mm)`, `LeadDropped (op, instance, reason)`, `ReliefCornerTooTight
+used_mm, requested_sweep_deg, used_sweep_deg)`, `LeadDropped (op,
+instance, reason)` (no instance for `on_line`), `ReliefCornerTooTight
 (op, instance, x_mm, y_mm)`, `ReliefCornerNotCut (…)`, `ReliefSkipped
 (op, reason)`, `PocketNoRoom (op, instance, pass)` (tool wider than the
 region at that pass), `PocketIslandTooClose (op, instance, island,
@@ -606,6 +607,35 @@ Ported from `xyLead.ts`, with the user's radius.
    policy places the plunge/ramp/helix there); lead moves are `Linear`/
    `Arc` at the feed rate at `z_mm`, part of `cuts`. Tabs are applied to
    the contour portion only.
+
+Slice 11 (#180) decisions:
+
+- **Tabs.** A lead is planned once per path, first in the domain less
+  the tab keep-outs; one that fits there fits the whole domain, so it
+  serves every pass. Failing that, a lead in the whole domain serves the
+  passes above the tab top and `LeadDropped (no_room)` is warned for the
+  rest. The tab layout is moved with the seam (`PathTabs::reseamed`), so
+  tabs stay at their distances from the contour's own start; the lap and
+  the overcut rise over them, the arcs never do.
+- **Travel.** Blocks are ordered after they are built, so "the previous
+  cut's exit" is the previous path's in drawing order (its lead-out end);
+  the first path ranks without travel.
+- **Passes.** Each pass starts at the staging point and ends off the
+  contour, so the sequencer's "different entry" link applies: retract,
+  rapid, and descend at the staging point, through the column the pass
+  above cut there.
+- **`LeadShrunk`** warns when the radius or the sweep is reduced, with
+  `requested_sweep_deg` and `used_sweep_deg` beside the radii, once per
+  shape with the smallest cut.
+- **On line:** no lead; `LeadDropped (op, reason: on_line)` once per
+  operation (not a validation error: ignoring the lead is safe, and a
+  project switched to On line still exports).
+- **No length budget** (upstream's 2.5·D): the user sets the size. No
+  overlap search for the exit (upstream's 0–1·D): the overcut is the
+  user's. "Inside domain" near the join allows the flatten tolerance,
+  since the domain's arcs are chords and a curved wall's tool path lies
+  up to that far outside them. A lead arc whose samples leave its domain
+  is `CamError::OffMaterial` (S9), as a descent's.
 
 ### Corner relief (dc-cam::relief)
 
