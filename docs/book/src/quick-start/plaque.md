@@ -302,7 +302,8 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
     "machining_order": "full_depth_first",
     "entry": { "ramp": { "angle_deg": 15.0 } },
     "lead": { "radius_mm": 3.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 1.0 },
-    "corner_relief": "none"
+    "corner_relief": "none",
+    "last_pass": null
   },
   {
     "kind": "engrave",

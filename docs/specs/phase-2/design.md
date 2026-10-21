@@ -2927,7 +2927,11 @@ pub struct LastPass {
 **Validation** (errors): `allowance_mm` not in (0, D/3]
 (`Problem::LastPassAllowance`, naming the bit diameter and the limit);
 `thickness_mm` not in (0, depth]; `last_pass` on `Side::OnLine`
-(`Problem::LastPassNeedsSide`).
+(`Problem::LastPassNeedsSide`). (changed in #284: Left and Right are
+`LastPassNeedsSide` too, as capability 34's "Inside and Outside only"
+says; all three `LastPass` keys are required, as `Lead`'s are; the
+generator refuses the same values, `CamError::InvalidLastPass` and
+`CamError::LastPassNeedsSide`.)
 
 **Algorithm** (`dc-cam::profile`).
 
@@ -2940,6 +2944,19 @@ pub struct LastPass {
    direction when `reverse`. The band and narrowness checks
    (#192, #199, #223) run with `D + 2a` for the allowance path, so a band
    that fits the bit but not the allowance is refused, naming it.
+   (changed in #284: the checks are `dc-cam::profile::last_pass::twins`.
+   Inside, an allowance path within `r + a` of another line of its
+   region is `CamError::BandNarrowerThanAllowance`. Where the outline is
+   wider than `D` but narrower than `D + 2a` somewhere, the allowance
+   offset loses or gains loops (a neck, a small hole, an inlet's mouth),
+   or a final path runs more than `r` from every allowance path (a slot,
+   a sharp concave corner with a large `a`), where the last pass would
+   cut a full slot at full depth: `CamError::ShapeNarrowerThanAllowance`.
+   An allowance path within `r` of a line of another region is
+   `BandNarrowerThanAllowance` too: S9 holds only a lap at the radius to
+   D6's warning, so such a pass would fail the safety pass. Allowance
+   paths join D6's overlap check, its needed gap grown by `a`. A cut of
+   one pass has no allowance path: its one pass is the last.)
 3. **Tabs** are laid out on the final path (the tabs left on the part).
    On the allowance path each tab stretch is the nearest-point projection
    of the final stretch's ends, widened by `a` each way, so the raised
@@ -2947,9 +2964,17 @@ pub struct LastPass {
 4. **Entry and lead** are planned per path, each in its own domain; the
    last pass descends where the allowance passes have already cut to
    `depth − t` (its XY is within `a < r` of their path), so S2's rapid
-   down stops 1 mm above that floor.
+   down stops 1 mm above that floor. (changed in #284: S2's floor counts
+   a cut only within `CLEARED_POINT_TOLERANCE_MM` of the rapid's XY, and
+   the final path is `a` from the allowance path, so the rapid stops 1 mm
+   above the stock and the plunge at the plunge rate runs down the
+   cleared column to `depth − t`, then the entry. S2 is unchanged. The
+   allowance path's domain is the waste less the part grown by
+   `r + a`; a reversed last pass's helix turns the other way.)
 5. **Relief** is planned on the final path, as now; its notches are in
-   waste beyond the allowance.
+   waste beyond the allowance. (changed in #284: every relief level is
+   cut from the last pass, the only one whose lap opens the column at a
+   notch's descend point; an allowance pass is `a` off it.)
 6. The last pass is the block that `frees`; `pass_first` orders by pass
    index as now.
 

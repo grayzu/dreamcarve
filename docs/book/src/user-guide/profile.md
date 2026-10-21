@@ -29,7 +29,8 @@ bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
-  "corner_relief": "none"
+  "corner_relief": "none",
+  "last_pass": null
 }
 ```
 
@@ -56,6 +57,7 @@ This is the Profile `init` writes, with `depth_mm` and
 | `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
 | `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
 | `corner_relief` | `"none"` (as `init` writes it), `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
+| `last_pass` | `null` (as `init` writes it), or a last pass allowance: every pass but the last leaves a thin skin on the wall, and the last pass cuts it off at full depth. Inside and Outside only. See [Last pass](#last-pass). |
 
 ## Side
 
@@ -482,6 +484,76 @@ An inside Profile of a 40 × 30 mm rectangle with a 6.35 mm bit and
 the bisector, the same four a Pocket of that rectangle gets; an outside
 Profile of an L-shaped part gets one, in the inside corner of the L.
 
+## Last pass
+
+Every pass of a Profile cuts the finished wall, so each one leaves a faint
+step where it ended, and the bit is pushed off the line by the full depth
+of material on every pass. `last_pass` is VCarve's **Last Pass
+Allowance**: the passes before the last run a little farther from the
+part, the **allowance**, and the last pass runs on the part's path at the
+full depth. It takes an even skin off the whole wall in one go, so the
+wall is cut by one pass from top to bottom and comes out clean and to
+size. (Fusion calls the same thing radial stock to leave with a
+finishing pass.)
+
+```json
+"last_pass": {
+  "allowance_mm": 0.5,
+  "thickness_mm": null,
+  "reverse": false
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `allowance_mm` | How much every pass but the last leaves on the wall, in mm. More than 0 and at most a third of the bit's diameter (2.117 mm for a 6.35 mm bit), as VCarve advises: the last pass cuts the full depth, so keep its skin thin. 0.2 to 0.5 mm is usual. |
+| `thickness_mm` | `null` for the usual depth passes, the last of which is the last pass. A number sets how deep the last pass cuts (VCarve's "Set Last Pass Thickness"): the other passes step down to `depth_mm` less it, then the last pass cuts the whole depth. More than 0 and at most `depth_mm`. |
+| `reverse` | `true` cuts the last pass the other way round (VCarve's "Reverse direction"): conventional after climbing passes, or climb after conventional ones. Each has its finish; try both on scrap. |
+
+All three keys are needed. An outside Profile of a 60 × 40 mm rectangle,
+12 mm deep in 4 mm passes with a 6.35 mm bit and a 0.5 mm allowance, cuts
+its first two passes 0.5 mm farther out (a 67.35 × 47.35 mm path across
+its centre line) and the third on the 66.35 × 46.35 mm path it cuts with
+no last pass. With `thickness_mm` 1 the passes are 4, 8, 11 and 12 mm
+deep, and only the 12 mm pass is on the part's path. Cut inside, the
+earlier passes run 0.5 mm farther into the hole instead.
+
+**How it cuts.** The last pass starts at the start of its own path, beside
+where the others started. It is reached by a rapid up to safe Z, a rapid
+down to 1 mm above the stock and a plunge at the plunge rate through the
+slot the earlier passes cut, then its own [entry](#entry) (ramp, helix or
+plunge) from their floor to the full depth.
+
+**With tabs**, the tabs are laid on the last pass's path, so they are
+where they would be without a last pass. Each earlier pass rises over the
+same tab a little sooner and comes down a little later, by the allowance
+at each end, so the farther-out cut never bites into it. [Leads](#leads)
+and [entries](#entry) are planned for each path, the earlier passes' kept
+the allowance farther from the part. [Corner relief](#corner-relief)
+notches are cut from the last pass only, the one that cuts the corner:
+an earlier pass does not reach it, so a notch after it would plunge into
+the skin.
+
+**When it does not fit.** The earlier passes need the bit plus the
+allowance on both sides wherever the last pass goes. A drawing where that
+is not so is refused, naming the shapes, and nothing is exported:
+
+- Inside, an island closer to the outline than the bit plus twice the
+  allowance (a 7 mm band with a 6.35 mm bit and 0.5 mm, which needs
+  7.35 mm), or a neck, slot or small hole that the bit fits but the bit
+  plus the allowance does not. The earlier passes would skip it, and the
+  last pass would have to cut a full slot to the full depth there. A
+  sharp concave corner with a large allowance is refused the same way.
+- A part so close to another that the earlier passes, the allowance
+  farther out, would come within the bit's radius of it: a part 6.6 mm
+  from the wall of a frame's hole with a 6.35 mm bit and 0.5 mm.
+
+Make `allowance_mm` smaller, or set `last_pass` to `null`. An On line,
+Left or Right Profile has no wall for the allowance, so a `last_pass`
+there is an error; so is an allowance of 0 or less or above a third of
+the bit, or a `thickness_mm` of 0 or less or deeper than `depth_mm`.
+A cut of only one pass is the last pass, on the part's path.
+
 ## Order of operations
 
 Operations run in the order the project lists them, whichever tools they
@@ -508,7 +580,10 @@ one drawn (see [Machining order](machining-order.md)). For each outline:
    plunge.
 3. Cut one full lap at the feed rate, ending where it began.
 4. Go down to the next pass the same way, from the floor of the last, and
-   cut another lap, until the last pass. Under
+   cut another lap, until the last pass. With a [last pass](#last-pass)
+   the passes before it run on the allowance path, and the tool rapids up
+   to safe Z before the last, which it reaches through the slot already
+   cut. Under
    `"pass_first"` the tool instead rapids up to safe Z and goes on to the
    next shape, coming back for the next pass once every shape has had this
    one.

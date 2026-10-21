@@ -851,7 +851,11 @@ built (design addendum, "Order and format versions").
     pass the other way. The allowance must be more than 0 and at most a
     third of the bit diameter, as VCarve advises. Inside and Outside only:
     On line has no wall to leave material on. Unset (`null`) by default,
-    in `init` and in migrated projects.
+    in `init` and in migrated projects. (changed in #284: Left and Right
+    are refused as On line is. A drawing the earlier passes cannot follow,
+    where it fits the bit but not the bit plus the allowance on both sides
+    or an earlier pass would come within the bit's radius of another
+    part, is refused naming the shapes.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 

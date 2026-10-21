@@ -127,7 +127,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `11`. |
+| `version` | Format version. This build writes `13`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -346,7 +346,8 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
-  "corner_relief": "none"
+  "corner_relief": "none",
+  "last_pass": null
 }
 ```
 
@@ -366,9 +367,10 @@ holes keep their tabs. `init` leaves `depth_mm` as `null`; export refuses until
 you set it. It also leaves `step_down_mm` as `null`, so the operation uses
 the tool's depth per pass; set it only to override the tool's.
 
-The last four fields came with format version 8 and are shared with the
-other kinds. This build reads and checks them. A Profile cuts
-`machining_order`, `entry`, `lead` and `corner_relief` as set:
+`machining_order`, `entry`, `lead` and `corner_relief` came with format
+version 8 and are shared with the other kinds; `last_pass`, Profile only,
+came with format version 13. This build reads and checks them all, and a
+Profile cuts them as set:
 
 | Field | Values |
 | --- | --- |
@@ -376,6 +378,7 @@ other kinds. This build reads and checks them. A Profile cuts
 | `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line, Left or Right Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
 | `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line, Left or Right. See [Leads](profile.md#leads). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each internal corner a round tool cannot reach. Pocket and Profile. Steps down at the tool's `step_down_mm`, so that must be set. See [Pocket: corner relief](pocket.md#corner-relief) and [Profile: corner relief](profile.md#corner-relief). |
+| `last_pass` | `null`, or `{ "allowance_mm": 0.5, "thickness_mm": null, "reverse": false }`: every pass but the last leaves `allowance_mm` on the wall (more than 0, at most a third of the bit's diameter), and the last pass cuts to size at full depth. `thickness_mm` is `null` for the usual last pass, or how deep the last pass cuts (more than 0, at most `depth_mm`); `reverse` cuts the last pass the other way round. All three keys are needed. Inside and Outside Profiles only. `init` writes `null`, and a project upgraded from version 12 gets `null`, so it cuts as before. See [Last pass](profile.md#last-pass). |
 
 A Pocket, Drill or Engrave has `kind`, `id`, `name`, `enabled`, `targets`,
 `tool`, `depth_mm`, `through_cut_allowance_mm` and `safe_z_mm` with the
@@ -471,6 +474,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 9 | Adds `on_holes` to each Profile's `tabs`, set to `true` on upgrade (#109). A Profile now cuts its holes without tabs unless `on_holes` is `true`; before, every outline it cut had tabs, so the upgrade keeps them. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
 | 10 | Adds the `"left"` and `"right"` values of a Profile's `side` (#207), which cut beside open paths. An older file holds neither, so the upgrade changes nothing else; an older DreamCarve refuses a version 10 file rather than misread a side it does not know. See [Left and right](profile.md#left-and-right). |
 | 11 | Adds `tabs`, the project's placed tabs, empty on upgrade (#105). A Profile's `tabs` setting stays as a tab request: it is cut as before, and the next `dreamcarve tabs` command that saves the project places it. See [Tabs](tabs.md). |
+| 13 | Adds each Profile's `last_pass`, `null` on upgrade (#284), so every pass cuts on the part's path as before. See [Last pass](profile.md#last-pass). |
 
 ## What `check` reports
 
@@ -497,6 +501,8 @@ Errors stop export. Warnings do not.
 | A Pocket's `rest_of` that is not an earlier enabled Pocket with the same `targets` | A Drill whose cutter is not `"drill"` or `"end_mill"` |
 | A `step_over_fraction`, lead, entry, raster angle, dwell, retract, peck or chip-break value outside its range (see [`operations`](#operations)) | `corner_relief` on a tool with no `step_down_mm` (the relief is skipped) |
 | A helix `entry` on an On line, Left or Right Profile | An Engrave with a V-bit deeper than the bit's cone |
+| A `last_pass` on an On line, Left or Right Profile; a `last_pass.thickness_mm` that is 0 or less or deeper than `depth_mm`; a `last_pass.allowance_mm` that is 0 or less or more than a third of the tool's diameter | |
+| A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot or hole that fits the bit but not the bit plus the allowance on both sides, or an allowance pass that would come within the bit's radius of another part ([Last pass](profile.md#last-pass)) | |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at

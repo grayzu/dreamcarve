@@ -381,7 +381,8 @@ hole.
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
-  "corner_relief": "none"
+  "corner_relief": "none",
+  "last_pass": null
 }
 ```
 

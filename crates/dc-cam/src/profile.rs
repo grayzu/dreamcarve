@@ -25,7 +25,6 @@ use crate::entry::{
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::lead::{self, DomainSpace, DropReason, LeadArc, LeadIn, LeadOut, LeadWarnings};
 use crate::overlap::{CutPath, overlap_warnings, region_holds_path, within};
-
 use crate::relief;
 use crate::sequence::{SequenceInput, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
@@ -229,6 +228,20 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// #189, #193); On line warns
 /// [`Warning::ReliefSkipped`].
 ///
+/// With `op.last_pass` (#284, design spec addendum A8; VCarve's "Last
+/// Pass Allowance") every pass but the last cuts each closed shape's
+/// allowance path, its tool-centre path offset `allowance_mm` farther
+/// into the waste, and the last pass cuts the shape's own path at full
+/// depth, after the usual passes to `depth − thickness_mm` when a
+/// thickness is set, the other way round when `reverse`. The tabs are laid
+/// on the shape's path and carried onto the allowance path widened by the
+/// allowance; entries, leads and waste domains are planned per path; every
+/// relief level is cut from the last pass. A drawing the allowance passes
+/// cannot follow is refused ([`CamError::BandNarrowerThanAllowance`],
+/// [`CamError::ShapeNarrowerThanAllowance`]), and a last pass On line,
+/// Left or Right, or out of range, is
+/// [`CamError::LastPassNeedsSide`] or [`CamError::InvalidLastPass`].
+///
 /// An On line Profile also cuts open paths (#175, as VCarve's Profile
 /// "On" an open vector): each pass runs the path from its first vertex to
 /// its last (conventional) or from its last to its first (climb, #242), with
@@ -420,7 +433,6 @@ pub fn generate_profile(
     // a reversed last pass runs its path the other way from the same
     // start, its tabs where they were.
     let n = paths.len();
-
     let mut walls = walls;
     let mut layouts = layouts;
     let mut allowances: Vec<f64> = vec![0.0; n];
