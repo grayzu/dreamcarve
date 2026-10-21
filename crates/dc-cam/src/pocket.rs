@@ -31,7 +31,8 @@ use crate::error::{CamError, ShapeRef};
 use crate::footprint::footprint_at;
 use crate::passes::pass_z_mm;
 use crate::profile::{
-    contour_contains, crossing_error, rates_of, resolve_targets, shape_of, shape_warning,
+    contour_contains, crossing_error, hole_shapes, outer_shape, rates_of, resolve_targets,
+    shape_warning,
 };
 use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, sequence};
@@ -300,9 +301,7 @@ pub fn generate_pocket(
     // Each region's cleared loops and tool-centre rings, for the relief.
     let mut sites: Vec<Site> = Vec::new();
     for region in &regions {
-        // `nest` keeps every contour or reverses it, so this always finds
-        // the shape.
-        let Some(shape) = shape_of(&shapes, region.outer()) else {
+        let Some(shape) = outer_shape(region, &shapes) else {
             continue;
         };
         warnings.extend(island_gap_warnings(op, tool, region, &shapes, shape));
@@ -612,19 +611,13 @@ fn island_gap_warnings(
             .with("tool", &tool.name)
             .with("diameter_mm", tool.diameter_mm)
     };
-    let holes = region.holes();
-    for (i, hole) in holes.iter().enumerate() {
-        let Some(island) = shape_of(shapes, hole) else {
-            continue;
-        };
+    let holes: Vec<(&Contour, &ShapeRef)> = hole_shapes(region, shapes).collect();
+    for (i, &(hole, island)) in holes.iter().enumerate() {
         let gap_mm = distance_mm(hole.polyline(), region.outer().polyline());
         if gap_mm < needed_mm - EPS_MM {
             warnings.push(warn(island, "wall".into(), gap_mm));
         }
-        for other in holes.iter().skip(i + 1) {
-            let Some(other_shape) = shape_of(shapes, other) else {
-                continue;
-            };
+        for &(other, other_shape) in holes.iter().skip(i + 1) {
             let gap_mm = distance_mm(hole.polyline(), other.polyline());
             if gap_mm < needed_mm - EPS_MM {
                 warnings.push(warn(island, other_shape.profile.to_string(), gap_mm));
@@ -675,7 +668,7 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
             continue;
         };
         let (Some(inner), Some(probe)) = (
-            shape_of(shapes, region.outer()),
+            outer_shape(region, shapes),
             region.outer().polyline().vertices().first(),
         ) else {
             continue;
@@ -684,7 +677,7 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
             .iter()
             .filter(|r| r.depth() == parent_depth)
             .find(|r| r.holes().iter().any(|h| contour_contains(h, probe.point())));
-        if let Some(outer) = around.and_then(|r| shape_of(shapes, r.outer())) {
+        if let Some(outer) = around.and_then(|r| outer_shape(r, shapes)) {
             pairs.push((outer.clone(), inner.clone()));
         }
     }
@@ -737,7 +730,7 @@ fn check_in_material(
             .iter()
             .find(|r| probe.is_some_and(|p| contour_contains(r.outer(), p)))
             .or_else(|| regions.first())
-            .and_then(|r| shape_of(shapes, r.outer()));
+            .and_then(|r| outer_shape(r, shapes));
         match named {
             Some(shape) => Err(CamError::OffMaterial {
                 op: op.id.clone(),

@@ -2212,7 +2212,7 @@ fn project_file_chapter_names_current_version() {
 fn set_coaster_e(dcv: &Path, e_mm: f64) {
     let mut project = load_file(dcv).project;
     let instance = project.instances.first_mut().expect("the coaster");
-    let [a, b, c, d, _, f] = instance.transform.as_kurbo().as_coeffs();
+    let [a, b, c, d, _, f] = instance.transform.coeffs();
     instance.transform = [a, b, c, d, e_mm, f].into();
     std::fs::write(dcv, save(&project).expect("project saves")).expect("dcv written");
 }
@@ -3024,10 +3024,7 @@ fn instance_named<'a>(project: &'a Project, name: &str) -> &'a FeatureInstance {
 /// instance named `name`: (50, 50) moved by the instance's translation.
 /// `origin.xy` is `bottom_left`, so machine X and Y are project X and Y.
 fn hole_centre(project: &Project, name: &str) -> (f64, f64) {
-    let [_, _, _, _, e, f] = instance_named(project, name)
-        .transform
-        .as_kurbo()
-        .as_coeffs();
+    let [_, _, _, _, e, f] = instance_named(project, name).transform.coeffs();
     (50.0 + e, 50.0 + f)
 }
 

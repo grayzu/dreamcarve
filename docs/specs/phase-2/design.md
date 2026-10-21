@@ -837,9 +837,13 @@ cut direction and cut side.
   paths for `Side::OnLine` (Inside and Outside still skip them with
   `OpenPathSkipped`, an open path having no side; one of no length
   skips with `reason: no_length`). The path is not nested: no band
-  check, no containment pair, no waste domain. Climb cuts it from the
-  first vertex to the last, conventional from the last to the first
-  (VCarve: the direction picks the end). Each pass is one block from the
+  check, no containment pair, no waste domain. Conventional cuts it
+  from the first vertex to the last, climb from the last to the first
+  (VCarve: "Conventional starts cutting at the Start point Climb cutting
+  starts cutting at the end point"). (changed in #242: #175 had climb
+  start at the first vertex, the opposite of VCarve's rule, which is the
+  reference for option behaviour; tabs stay measured from the first
+  vertex, so they do not move.) Each pass is one block from the
   start to the far end at pass Z, `frees` false; its descent starts at
   the previous pass Z, so the sequencer retracts, rapids back, and
   plunges down the slot to it before the ramp (`along_path`, which
