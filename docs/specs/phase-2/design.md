@@ -1261,7 +1261,7 @@ a change of bit or side still warns on every export. (changed in #300: every
 hole tab warned on every `check` and `export`, and a user who kept the
 tabs a migrated request asked for could not silence it. Marking a tab as
 meant to hold its slug needs a field, so a format version; #283 holds
-the next one.)
+the next one; #302 adds it after.)
 
 **Not crossed.** `placed_tabs::check(project, generated)` gives one
 `TabNotCrossed (tab, shape)` for each tab no enabled, generated Profile
