@@ -523,4 +523,64 @@ mod tests {
         );
         assert!(near.is_infinite(), "{near}");
     }
+
+    /// #105: the nearest point of a polyline names how far along it lies,
+    /// on the segment it is on.
+    #[test]
+    fn nearest_point_on_a_line_reports_distance_along() {
+        let square = Polyline::rect(Point::new(0.0, 0.0), 10.0, 10.0);
+        let near = nearest_point(&square, Point::new(13.0, 4.0)).unwrap();
+        assert_approx_eq!(near.point.x, 10.0, 1e-12);
+        assert_approx_eq!(near.point.y, 4.0, 1e-12);
+        assert_approx_eq!(near.gap_mm, 3.0, 1e-12);
+        assert_approx_eq!(near.along_mm, 14.0, 1e-12);
+        assert_eq!(near.segment, 1);
+        assert_approx_eq!(near.along_segment_mm, 4.0, 1e-12);
+        // A point on the path is its own nearest point.
+        let (on, _) = square.point_at(27.5).unwrap();
+        let near = nearest_point(&square, on).unwrap();
+        assert_approx_eq!(near.gap_mm, 0.0, 1e-12);
+        assert_approx_eq!(near.along_mm, 27.5, 1e-9);
+    }
+
+    /// #105: on an arc the distance along follows the sweep, either way
+    /// round.
+    #[test]
+    fn nearest_point_on_an_arc_follows_the_sweep() {
+        for circle in [
+            Polyline::circle(Point::new(0.0, 0.0), 10.0),
+            Polyline::circle(Point::new(0.0, 0.0), 10.0).reversed(),
+        ] {
+            for along_mm in [0.5, 10.0, 31.0, 50.0, 62.0] {
+                let (on, _) = circle.point_at(along_mm).unwrap();
+                let outside = on + (on - Point::new(0.0, 0.0)) * 0.3;
+                let near = nearest_point(&circle, outside).unwrap();
+                assert_approx_eq!(near.gap_mm, 3.0, 1e-9);
+                assert_approx_eq!(near.along_mm, along_mm, 1e-9);
+            }
+        }
+    }
+
+    /// #105: every point of an arc centred on the given point is equally
+    /// near it, so the arc's middle is taken: a tab at a corner lands in
+    /// the middle of the arc an offset path turns round that corner.
+    #[test]
+    fn nearest_point_at_an_arc_centre_takes_the_arc_middle() {
+        // A quarter arc of radius 2 round (10, 0), from (10, -2) to (12, 0).
+        let path = Polyline::new(
+            vec![
+                Vertex::line(0.0, -2.0),
+                Vertex::new(10.0, -2.0, (std::f64::consts::PI / 8.0).tan()),
+                Vertex::line(12.0, 0.0),
+                Vertex::line(12.0, 10.0),
+            ],
+            false,
+        );
+        let near = nearest_point(&path, Point::new(10.0, 0.0)).unwrap();
+        let middle = std::f64::consts::FRAC_PI_4;
+        assert_approx_eq!(near.point.x, 10.0 + 2.0 * middle.sin(), 1e-9);
+        assert_approx_eq!(near.point.y, -2.0 * middle.cos(), 1e-9);
+        assert_approx_eq!(near.along_mm, 10.0 + std::f64::consts::PI / 2.0, 1e-9);
+        assert!(nearest_point(&Polyline::new(Vec::new(), false), Point::new(0.0, 0.0)).is_none());
+    }
 }

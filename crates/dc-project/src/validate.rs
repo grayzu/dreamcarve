@@ -1519,6 +1519,91 @@ mod tests {
     };
     use dc_geometry::{MAX_COORDINATE_MM, Polyline, Transform, Vertex, approx_eq};
 
+    /// #105: a placed tab must name an instance and one of its
+    /// definition's profiles, and its id must be its own.
+    #[test]
+    fn placed_tab_on_a_missing_outline_is_an_error() {
+        use crate::test_support::sample_tab;
+        let mut p = sample_project();
+        p.tabs = vec![
+            sample_tab("tab1", 25.0, 0.0),
+            PlacedTab {
+                instance: InstanceId::new("nope"),
+                ..sample_tab("tab2", 0.0, 0.0)
+            },
+            PlacedTab {
+                profile: 3,
+                ..sample_tab("tab3", 0.0, 0.0)
+            },
+            sample_tab("tab1", 50.0, 15.0),
+        ];
+        let problems = validate(&p);
+        assert!(
+            problems.contains(&Problem::TabDanglingInstance {
+                tab: TabId::new("tab2"),
+                instance: InstanceId::new("nope"),
+            }),
+            "{problems:?}"
+        );
+        assert!(
+            problems.contains(&Problem::TabProfileMissing {
+                tab: TabId::new("tab3"),
+                instance: InstanceId::new("i1"),
+                profile: 3,
+                count: 1,
+            }),
+            "{problems:?}"
+        );
+        assert!(
+            problems.contains(&Problem::DuplicateTabId {
+                id: TabId::new("tab1")
+            }),
+            "{problems:?}"
+        );
+        let dangling = problems
+            .iter()
+            .find(|q| matches!(q, Problem::TabDanglingInstance { .. }))
+            .unwrap();
+        assert!(dangling.is_error());
+        assert_eq!(dangling.field().as_deref(), Some("tabs[tab2].instance"));
+        assert_eq!(
+            dangling.to_string(),
+            "tab `tab2` is on instance `nope`, which does not exist"
+        );
+    }
+
+    /// #105: a placed tab's size must be positive and its point a finite
+    /// coordinate within the limit.
+    #[test]
+    fn placed_tab_size_and_point_are_checked() {
+        use crate::test_support::sample_tab;
+        let mut p = sample_project();
+        p.tabs = vec![
+            PlacedTab {
+                width_mm: 0.0,
+                height_mm: -1.0,
+                ..sample_tab("tab1", 25.0, 0.0)
+            },
+            PlacedTab {
+                x_mm: 1.0e7,
+                ..sample_tab("tab2", 25.0, 0.0)
+            },
+        ];
+        let fields: Vec<String> = errors(&validate(&p))
+            .iter()
+            .filter_map(|q| q.field())
+            .collect();
+        for field in [
+            "tabs[tab1].width_mm",
+            "tabs[tab1].height_mm",
+            "tabs[tab2].x_mm",
+        ] {
+            assert!(fields.iter().any(|f| f == field), "{field}: {fields:?}");
+        }
+        p.tabs = vec![sample_tab("tab1", 25.0, 0.0)];
+        assert_eq!(errors(&validate(&p)), Vec::<&Problem>::new());
+    }
+
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
         problems.iter().filter(|p| p.is_error()).collect()
     }

@@ -593,6 +593,9 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 11 {
+            root.as_object_mut().unwrap().shift_remove("tabs");
+        }
         if version < 9 {
             for op in root["operations"].as_array_mut().unwrap() {
                 if let Some(tabs) = op["tabs"].as_object_mut() {
@@ -1167,10 +1170,10 @@ mod tests {
         assert_eq!(migrated["operations"][0]["tabs"]["on_holes"], json!(true));
 
         let migrated = migrate(sample_root_at(8), 8).unwrap();
-        assert_eq!(migrated, sample_root_at(9));
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
         assert_eq!(
             serde_json::to_string_pretty(&migrated).unwrap(),
-            serde_json::to_string_pretty(&sample_root_at(9)).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
             "key order"
         );
 
@@ -1188,6 +1191,56 @@ mod tests {
         assert!(
             matches!(&err, LoadError::Migration { from: 8, to: 9, message }
                 if message.contains("on_holes")),
+            "{err:?}"
+        );
+    }
+
+    // Version 10 → 11 (#105): placed tabs. The tab setting stays as a
+    // request, which `dreamcarve` places when it loads the project.
+
+    const V9_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v9/sample.dcv");
+    const V10_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v10/sample.dcv");
+
+    #[test]
+    fn version_9_fixture_loads() {
+        let loaded = load(V9_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    #[test]
+    fn version_10_fixture_loads() {
+        let loaded = load(V10_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #105: a version 10 project gains an empty list of placed tabs right
+    /// after its operations; each Profile keeps its tab setting, now a
+    /// request, so the project cuts the same.
+    #[test]
+    fn v10_project_gains_an_empty_tab_list() {
+        let root: Value = serde_json::from_slice(V10_FIXTURE).unwrap();
+        let tabs_before = root["operations"][0]["tabs"].clone();
+        let migrated = migrate(root, 10).unwrap();
+        assert_eq!(migrated["tabs"], json!([]));
+        assert_eq!(migrated["operations"][0]["tabs"], tabs_before);
+        let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
+        let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+        assert_eq!(at("tabs"), at("operations") + 1, "{keys:?}");
+        assert_eq!(migrate(sample_root_at(10), 10).unwrap(), sample_root_at(11));
+    }
+
+    #[test]
+    fn v10_with_tabs_already_present_fails() {
+        let mut root = sample_root_at(10);
+        root["tabs"] = json!([]);
+        let err = migrate(root, 10).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 10, to: 11, message }
+                if message.contains("tabs")),
             "{err:?}"
         );
     }

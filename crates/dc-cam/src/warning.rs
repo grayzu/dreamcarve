@@ -1055,6 +1055,37 @@ mod tests {
     fn message_fixtures() -> Vec<(Warning, &'static str)> {
         vec![
             (
+                Warning::TabOnHole {
+                    op: op(),
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                },
+                "tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear --tab tab3`) unless you mean to keep the slug",
+            ),
+            (
+                Warning::TabNotCrossed {
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                },
+                "tab `tab3` on `Shape` (instance `i1`, profile 2) is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear --tab tab3`)",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 60.0,
+                    tab_count: 3,
+                    tab_width_mm: 6.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 12.35,
+                    tab_total_mm: 37.05,
+                    cut_count: 3,
+                    max_width_mm: Some(3.65),
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 3 tabs is 6 mm wide, and with the 6.35 mm bit each one keeps 12.35 mm of the tool path raised, 37.05 mm in total on a 60 mm path (61.7%), so the part or hole would not cut free. All of them are cut, as placed, so the part or hole may need cutting free by hand. To let it cut free, make them at most 3.65 mm wide.",
+            ),
+            (
                 Warning::OpenPathSkipped {
                     shape: shape(),
                     reason: OpenPathReason::NoSide,
@@ -1499,7 +1530,9 @@ mod tests {
             C::DuplicateShapeDropped => C::TabsOverlap,
             C::TabsOverlap => C::TabsOutsideCutRange,
             C::TabsOutsideCutRange => C::TabsCoverMostOfContour,
-            C::TabsCoverMostOfContour => C::ToolpathsOverlap,
+            C::TabsCoverMostOfContour => C::TabOnHole,
+            C::TabOnHole => C::TabNotCrossed,
+            C::TabNotCrossed => C::ToolpathsOverlap,
             C::ToolpathsOverlap => C::PocketNoRoom,
             C::PocketNoRoom => C::PocketIslandTooClose,
             C::PocketIslandTooClose => C::EntryFallback,
@@ -1539,6 +1572,7 @@ mod tests {
                 WarningCode::OpenPathSkipped
                     | WarningCode::ToolTooLarge
                     | WarningCode::DuplicateShapeDropped
+                    | WarningCode::TabNotCrossed
                     | WarningCode::ToolpathsOverlap
                     | WarningCode::ToolChangeAvoidable
             );
@@ -1552,7 +1586,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 25);
+        assert_eq!(count, 27);
     }
 
     #[test]

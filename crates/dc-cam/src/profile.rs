@@ -2873,6 +2873,103 @@ mod tests {
         assert_approx_eq!(top_mm, 3.0, TOL);
     }
 
+    /// #105, the issue's second test: one Outside Profile of the star and
+    /// its hole with no tab request, and four smooth 6 × 3 mm tabs placed
+    /// on the star only (`tabs place --at`, holes left out): the hole is
+    /// cut free and only the star's last pass rises, four times, whatever
+    /// `on_holes` would have said. A tab placed on the hole as well is cut,
+    /// so the hole's last pass rises too, and warns `tab_on_hole`.
+    #[test]
+    fn star_with_tabs_placed_only_on_the_star_lifts_only_on_the_star() {
+        let mut p = star_with_hole_project();
+        let op = ProfileOp {
+            targets: vec![InstanceId::new("i1"), InstanceId::new("i2")],
+            depth_mm: Some(12.0),
+            step_down_mm: Some(4.0),
+            through_cut_allowance_mm: 0.01,
+            tabs: None,
+            ..profile_op(&p, Side::Outside, CutDirection::Climb)
+        };
+        p.operations = vec![Operation::Profile(op.clone())];
+        let star_mm = p.definitions[&DefinitionId::new("d1")].profiles[0].length_mm();
+        let at: Vec<f64> = [0.5, 1.5, 2.5, 3.5].map(|k| star_mm * k / 4.0).to_vec();
+        let size = crate::placed_tabs::TabSize {
+            width_mm: 6.0,
+            height_mm: 3.0,
+            shape: TabShape::Smooth,
+        };
+        let placed = crate::placed_tabs::place_on_outlines(&p, &op.id, &at, size, false).unwrap();
+        assert_eq!(placed.tabs.len(), 4, "{placed:?}");
+        assert!(placed.tabs.iter().all(|t| t.instance.as_str() == "i1"));
+        p.tabs = placed.tabs;
+
+        let (tp, warnings) = generate(&p, &op);
+        assert!(
+            !codes(&warnings).contains(&WarningCode::TabOnHole),
+            "{warnings:?}"
+        );
+        let (hole_rises, star_tabs, top_mm) = star_and_hole_rises(&tp);
+        assert!(!hole_rises, "the hole has no tabs");
+        assert_eq!(star_tabs, 4, "the star rises over its four tabs");
+        assert_approx_eq!(top_mm, 3.0, TOL);
+
+        let mut on_hole = p.tabs[0].clone();
+        on_hole.id = dc_project::TabId::new("tab9");
+        on_hole.instance = InstanceId::new("i2");
+        on_hole.x_mm = STAR_HOLE_CENTRE.x + 3.5;
+        on_hole.y_mm = STAR_HOLE_CENTRE.y;
+        on_hole.width_mm = 1.0;
+        p.tabs.push(on_hole);
+        let (tp, warnings) = generate(&p, &op);
+        assert!(
+            codes(&warnings).contains(&WarningCode::TabOnHole),
+            "{warnings:?}"
+        );
+        let (hole_rises, star_tabs, _) = star_and_hole_rises(&tp);
+        assert!(hole_rises, "the hole's tab holds its slug");
+        assert_eq!(star_tabs, 4);
+    }
+
+    /// The last pass of a star-and-hole toolpath: whether the hole's
+    /// leaves the floor, how many times the star's rises, and the highest
+    /// Z the star's reaches.
+    fn star_and_hole_rises(tp: &Toolpath) -> (bool, usize, f64) {
+        let mut cuts: Vec<(Point3, Move)> = Vec::new();
+        for pair in tp.moves.windows(2) {
+            let (from, mv) = (pair[0].to, pair[1]);
+            if !mv.is_rapid() && from.xy().distance_to(mv.to.xy()) > EPS_MM {
+                cuts.push((from, mv));
+            }
+        }
+        let in_hole = |(from, mv): &(Point3, Move)| {
+            from.xy().distance_to(STAR_HOLE_CENTRE) < 3.5
+                && mv.to.xy().distance_to(STAR_HOLE_CENTRE) < 3.5
+        };
+        let floor_mm = tp.moves.iter().map(|m| m.to.z).fold(f64::MAX, f64::min);
+        let on_last_pass = |(from, mv): &(Point3, Move)| from.z < 3.5 && mv.to.z < 3.5;
+        let level = |(from, mv): &(Point3, Move)| {
+            (from.z - floor_mm).abs() <= TOL && (mv.to.z - floor_mm).abs() <= TOL
+        };
+        let hole_rises = cuts
+            .iter()
+            .filter(|c| in_hole(c) && on_last_pass(c))
+            .any(|c| !level(c));
+        let star_last: Vec<_> = cuts
+            .iter()
+            .filter(|c| !in_hole(c) && on_last_pass(c))
+            .collect();
+        let raised: Vec<bool> = star_last.iter().map(|c| !level(c)).collect();
+        let mut tabs = raised.windows(2).filter(|w| !w[0] && w[1]).count();
+        if raised.first() == Some(&true) && raised.last() != Some(&true) {
+            tabs += 1;
+        }
+        let top_mm = star_last
+            .iter()
+            .map(|(from, mv)| from.z.max(mv.to.z))
+            .fold(f64::MIN, f64::max);
+        (hole_rises, tabs, top_mm)
+    }
+
     // ── #176: the start moves off a tab ──
 
     fn ramp_15() -> Entry {

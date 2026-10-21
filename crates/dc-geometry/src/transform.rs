@@ -136,6 +136,19 @@ mod tests {
 
     use std::f64::consts::PI;
 
+    /// #105: a tab's point goes into definition space and back unchanged.
+    #[test]
+    fn inverse_undoes_the_transform() {
+        let t = Transform::scale(-2.0, 2.0)
+            .then(Transform::rotate(0.7))
+            .then(Transform::translate(12.5, -3.0));
+        let p = Point::new(3.25, -7.5);
+        let back = t.inverse().unwrap().apply(t.apply(p));
+        assert_approx_eq!(back.x, p.x, 1e-12);
+        assert_approx_eq!(back.y, p.y, 1e-12);
+        assert_eq!(Transform::scale(1.0, 0.0).inverse(), None);
+    }
+
     #[test]
     fn translate_then_rotate_composes_in_order() {
         let t = Transform::translate(10.0, 0.0).then(Transform::rotate(PI / 2.0));

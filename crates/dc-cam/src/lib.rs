@@ -10,6 +10,8 @@
 //! order of operations cuts inside a part an earlier one freed. Phase 2
 //! also adds Pocket ([`generate_pocket`]), Drill ([`generate_drill`]) and
 //! Engrave ([`generate_engrave`]), and entries, leads and corner relief.
+//! Tabs are placed on the project's outlines ([`placed_tabs`], #105,
+//! ADR-0005), and every Profile that cuts a tab's outline rises over it.
 //!
 //! Toolpaths use the project's absolute frame: Y-up, Z-up, millimetres
 //! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.
@@ -24,6 +26,7 @@ mod lead;
 pub mod order;
 mod overlap;
 pub mod passes;
+pub mod placed_tabs;
 pub mod pocket;
 mod profile;
 mod relief;
