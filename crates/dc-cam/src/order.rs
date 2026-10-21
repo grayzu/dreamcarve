@@ -204,13 +204,14 @@ fn tool_change_hints(project: &Project) -> Vec<Warning> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engrave::generate_engrave;
     use crate::profile::generate_profile;
     use crate::warning::WarningCode;
-    use dc_geometry::{Point, Polyline, Transform};
+    use dc_geometry::{Point, Polyline, Transform, Vertex};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
     use dc_project::{
-        DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, OperationId, ProfileOp, Side,
-        TabPlacement, TabShape, TabSpec, ToolId,
+        DefinitionId, EngraveOp, FeatureDefinition, FeatureInstance, InstanceId, MachiningOrder,
+        OperationId, ProfileOp, Side, TabPlacement, TabShape, TabSpec, ToolId,
     };
 
     /// The sample project (100 × 100 × 6 mm stock, the 50 × 30 mm rectangle
@@ -273,11 +274,13 @@ mod tests {
             .iter()
             .filter(|op| op.enabled())
             .map(|op| {
-                let Operation::Profile(profile) = op else {
-                    panic!("these tests use Profile operations");
+                let generated = match op {
+                    Operation::Profile(profile) => generate_profile(project, profile),
+                    Operation::Engrave(engrave) => generate_engrave(project, engrave),
+                    _ => panic!("these tests use Profile and Engrave operations"),
                 };
-                let (toolpath, _) = generate_profile(project, profile)
-                    .unwrap_or_else(|e| panic!("{} generates: {e}", op.id()));
+                let (toolpath, _) =
+                    generated.unwrap_or_else(|e| panic!("{} generates: {e}", op.id()));
                 (op.clone(), toolpath)
             })
             .collect()
@@ -412,6 +415,109 @@ mod tests {
             vec![(Some("o2"), Some("o1")), (Some("o3"), Some("o1"))]
         );
         assert_eq!(warnings, check_all(&project), "deterministic");
+    }
+
+    /// [`part_and_hole`] with an open line `i3` from `from` to `to`.
+    fn part_and_line(from: (f64, f64), to: (f64, f64)) -> Project {
+        let mut project = part_and_hole();
+        let line = FeatureDefinition {
+            id: DefinitionId::new("d3"),
+            name: "Line".into(),
+            profiles: vec![Polyline::new(
+                vec![Vertex::line(from.0, from.1), Vertex::line(to.0, to.1)],
+                false,
+            )],
+        };
+        project.definitions.insert(line.id.clone(), line);
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new("i3"),
+            definition: DefinitionId::new("d3"),
+            transform: Transform::IDENTITY,
+            name: "Slot".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        project
+    }
+
+    /// An Engrave `id` on `target`, `depth_mm` deep, cutting with `t1`.
+    fn engrave(id: &str, target: &str, depth_mm: f64) -> EngraveOp {
+        EngraveOp {
+            id: OperationId::new(id),
+            name: id.to_uppercase(),
+            enabled: true,
+            targets: vec![InstanceId::new(target)],
+            tool: ToolId::new("t1"),
+            depth_mm: Some(depth_mm),
+            step_down_mm: None,
+            alternate_direction: false,
+            machining_order: MachiningOrder::FullDepthFirst,
+            through_cut_allowance_mm: 0.0,
+            safe_z_mm: 5.0,
+        }
+    }
+
+    /// #206, O8: an Engrave and an On line Profile of an open line inside
+    /// the rectangle, after an Outside Profile freed it, both cut in a
+    /// loose part. An Inside Profile of the line cuts nothing there (it
+    /// skips open paths), so it is quiet.
+    #[test]
+    fn open_path_inside_freed_part_warns() {
+        let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
+        project.operations = vec![
+            Operation::Profile(profile("o1", "i1", Side::Outside, 6.0)),
+            Operation::Engrave(engrave("o2", "i3", 1.0)),
+            Operation::Profile(profile("o3", "i3", Side::OnLine, 1.0)),
+            Operation::Profile(profile("o4", "i3", Side::Inside, 1.0)),
+        ];
+        let warnings = check_all(&project);
+        let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
+        let ops: Vec<_> = found
+            .iter()
+            .map(|w| (w.param("op"), w.param("earlier_op")))
+            .collect();
+        assert_eq!(
+            ops,
+            vec![(Some("o2"), Some("o1")), (Some("o3"), Some("o1"))],
+            "{warnings:?}"
+        );
+        for w in found {
+            assert_eq!(w.param("instance"), Some("i3"));
+            assert_eq!(w.param("instance_name"), Some("Slot"));
+            assert_eq!(w.param("profile"), Some("0"));
+            assert_eq!(w.param("freed_instance"), Some("i1"));
+            assert!(w.to_string().contains("`Slot`"), "{w}");
+        }
+    }
+
+    /// #206, O8: an open line that leaves the freed outline is not inside
+    /// it, as crossing closed shapes are not; nor is one cut before the
+    /// outline is freed.
+    #[test]
+    fn open_path_crossing_a_freed_outline_is_quiet() {
+        let mut project = part_and_line((5.0, 15.0), (30.0, 15.0));
+        project.operations = vec![
+            Operation::Profile(profile("o1", "i1", Side::Outside, 6.0)),
+            Operation::Engrave(engrave("o2", "i3", 1.0)),
+        ];
+        let warnings = check_all(&project);
+        assert!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
+            "crossing: {warnings:?}"
+        );
+
+        let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
+        project.operations = vec![
+            Operation::Engrave(engrave("o1", "i3", 1.0)),
+            Operation::Profile(profile("o2", "i1", Side::Outside, 6.0)),
+        ];
+        let warnings = check_all(&project);
+        assert!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
+            "cut first: {warnings:?}"
+        );
     }
 
     /// Enabled operations using T1, T2, T1: one hint for T1 listing both

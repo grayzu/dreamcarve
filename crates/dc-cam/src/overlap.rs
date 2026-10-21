@@ -128,7 +128,7 @@ mod tests {
     use crate::profile::generate_profile;
     use crate::toolpath::{MoveKind, Toolpath};
     use crate::warning::{Warning, WarningCode};
-    use dc_geometry::{Point, Polyline, Transform};
+    use dc_geometry::{Point, Polyline, Transform, Vertex};
     use dc_project::test_support::sample_project;
     use dc_project::{
         CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
@@ -369,6 +369,104 @@ mod tests {
             }
         }
         order
+    }
+
+    // ── #206: open paths cut On line ──
+
+    /// An open line from `from` to `to`.
+    fn line(from: (f64, f64), to: (f64, f64)) -> Polyline {
+        Polyline::new(
+            vec![Vertex::line(from.0, from.1), Vertex::line(to.0, to.1)],
+            false,
+        )
+    }
+
+    /// The 20 mm square part `a` at (20, 20) and one open line instance
+    /// `l` per entry of `lines`, drawn in project space.
+    fn square_and_lines(lines: &[(&str, Polyline)]) -> Project {
+        let mut definitions = vec![(
+            "square",
+            vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 20.0)],
+        )];
+        definitions.extend(lines.iter().map(|(id, l)| (*id, vec![l.clone()])));
+        let mut instances = vec![("a", "square", Transform::translate(20.0, 20.0))];
+        instances.extend(lines.iter().map(|(id, _)| (*id, *id, Transform::IDENTITY)));
+        project(&definitions, &instances)
+    }
+
+    /// #206: an open line cut On line beside a part, closer than the tool
+    /// radius to its outline, or crossing it, warns as two close parts do.
+    #[test]
+    fn open_on_line_path_too_close_to_a_part_warns() {
+        // 2 mm right of the square's right edge (x = 40), 3 mm radius.
+        let beside = square_and_lines(&[("l", line((42.0, 20.0), (42.0, 40.0)))]);
+        let (_, warnings) = generate_profile(&beside, &profile_op(&beside, Side::OnLine)).unwrap();
+        let found = overlaps(&warnings);
+        assert_eq!(found.len(), 1, "{warnings:?}");
+        let w = found[0];
+        let (first, other) = named(w);
+        let mut pair = [first, other];
+        pair.sort_unstable();
+        assert_eq!(pair, ["a", "l"]);
+        assert_eq!(w.param("profile"), Some("0"));
+        assert_eq!(w.param("other_profile"), Some("0"));
+        assert_eq!(w.param("needed_mm"), Some("3"));
+        assert!((gap_mm(w) - 2.0).abs() < TOL, "{w:?}");
+
+        // Across the square's left edge: the gap is nothing.
+        let across = square_and_lines(&[("l", line((10.0, 30.0), (30.0, 30.0)))]);
+        let (_, warnings) = generate_profile(&across, &profile_op(&across, Side::OnLine)).unwrap();
+        let found = overlaps(&warnings);
+        assert_eq!(found.len(), 1, "{warnings:?}");
+        assert!(gap_mm(found[0]).abs() < TOL, "{:?}", found[0]);
+    }
+
+    /// #206: a line a tool radius clear of the part is quiet.
+    #[test]
+    fn open_line_far_from_shapes_is_quiet() {
+        let p = square_and_lines(&[("l", line((43.5, 20.0), (43.5, 40.0)))]);
+        let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
+        assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
+    }
+
+    /// #206: two open lines closer than the radius, or crossing, are two
+    /// shapes whose cuts meet; each has its own line, so it is never
+    /// compared with itself.
+    #[test]
+    fn open_lines_too_close_to_each_other_warn() {
+        let close = square_and_lines(&[
+            ("l", line((100.0, 20.0), (100.0, 60.0))),
+            ("m", line((102.0, 20.0), (102.0, 60.0))),
+        ]);
+        let (_, warnings) = generate_profile(&close, &profile_op(&close, Side::OnLine)).unwrap();
+        let found = overlaps(&warnings);
+        assert_eq!(found.len(), 1, "{warnings:?}");
+        let (first, other) = named(found[0]);
+        let mut pair = [first, other];
+        pair.sort_unstable();
+        assert_eq!(pair, ["l", "m"]);
+        assert!((gap_mm(found[0]) - 2.0).abs() < TOL, "{:?}", found[0]);
+
+        let crossing = square_and_lines(&[
+            ("l", line((100.0, 20.0), (100.0, 60.0))),
+            ("m", line((80.0, 40.0), (120.0, 40.0))),
+        ]);
+        let (_, warnings) =
+            generate_profile(&crossing, &profile_op(&crossing, Side::OnLine)).unwrap();
+        let found = overlaps(&warnings);
+        assert_eq!(found.len(), 1, "{warnings:?}");
+        assert!(gap_mm(found[0]).abs() < TOL, "{:?}", found[0]);
+    }
+
+    /// #206: a line in a part's material belongs to that part's region,
+    /// as a hole does, so it is not compared with the part's own lines
+    /// (a cut into the part, not a second shape beside it).
+    #[test]
+    fn open_path_in_a_part_is_not_compared_with_its_lines() {
+        // 1 mm inside the square's left edge (x = 20).
+        let p = square_and_lines(&[("l", line((21.0, 25.0), (21.0, 35.0)))]);
+        let (_, warnings) = generate_profile(&p, &profile_op(&p, Side::OnLine)).unwrap();
+        assert!(overlaps(&warnings).is_empty(), "{warnings:?}");
     }
 
     #[test]
