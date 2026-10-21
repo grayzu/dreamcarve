@@ -1053,6 +1053,169 @@ fn pocket_exports_and_passes_safety() {
     );
 }
 
+/// Slice 6 (#163), capabilities 12 and 13, S9 and S14 end to end: a 40 ×
+/// 20 mm rectangle with a 6 × 6 mm notch inside the coaster, roughed with
+/// the coaster's 6.35 mm bit at a 0.5 mm allowance and then rest-machined
+/// with a 3.175 mm bit, checks with no error and exports one program per
+/// tool run, which the emitter's safety pass accepted. The rest program
+/// cuts only near the walls and in the notch, where the rough bit cannot
+/// go, never in the middle, and its tool centre stays a radius inside the
+/// shape.
+#[test]
+fn pocket_rough_then_rest_exports_and_passes_safety() {
+    const REST_RADIUS_MM: f64 = 3.175 / 2.0;
+    let dir = work_dir("pocket_rough_then_rest_exports_and_passes_safety");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let v = dc_geometry::Vertex::line;
+    let notched = FeatureDefinition {
+        id: DefinitionId::new("notched"),
+        name: "Notched".into(),
+        profiles: vec![Polyline::new(
+            vec![
+                v(30.0, 35.0),
+                v(70.0, 35.0),
+                v(70.0, 55.0),
+                v(53.0, 55.0),
+                v(53.0, 61.0),
+                v(47.0, 61.0),
+                v(47.0, 55.0),
+                v(30.0, 55.0),
+            ],
+            true,
+        )],
+    };
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("notched1"),
+        definition: notched.id.clone(),
+        transform: Transform::IDENTITY,
+        name: "Notched".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: Some(MEASURED_THICKNESS_MM),
+        z_bottom_mm: Some(0.0),
+    });
+    project.definitions.insert(notched.id.clone(), notched);
+    let mut small = project.tools[0].clone();
+    small.id = ToolId::new("t2");
+    small.name = "3mm finisher".into();
+    small.diameter_mm = 3.175;
+    small.step_down_mm = Some(3.0);
+    project.tools.push(small);
+    let mut rough = sample_pocket();
+    rough.id = OperationId::new("rough");
+    rough.name = "Rough".into();
+    rough.targets = vec![InstanceId::new("notched1")];
+    rough.tool = project.operations[0].tool().clone();
+    rough.step_over_fraction = Some(0.4);
+    rough.allowance_mm = 0.5;
+    let mut rest = rough.clone();
+    rest.id = OperationId::new("rest");
+    rest.name = "Rest".into();
+    rest.tool = ToolId::new("t2");
+    rest.allowance_mm = 0.0;
+    rest.rest_of = Some(rough.id.clone());
+    project.operations.insert(0, Operation::Pocket(rough));
+    project.operations.insert(1, Operation::Pocket(rest));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(" 0 error(s)"), "{report}");
+    assert!(!report.contains("rest_of_clears_nothing"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster-2-T2.nc")).expect("rest program");
+    assert!(program.contains("Rest"), "the rest operation is named");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let cuts: Vec<&MachineMove> = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && (m.from.x != m.to.x || m.from.y != m.to.y))
+        .collect();
+    assert!(!cuts.is_empty(), "the rest Pocket cuts:\n{program}");
+    let xy = |m: &MachineMove| Point::new(m.to.x.expect("X known"), m.to.y.expect("Y known"));
+    let shape = Rect {
+        min: Point::new(30.0 + REST_RADIUS_MM, 35.0 + REST_RADIUS_MM),
+        max: Point::new(70.0 - REST_RADIUS_MM, 61.0 - REST_RADIUS_MM),
+    };
+    let middle = Rect {
+        min: Point::new(33.5, 38.5),
+        max: Point::new(66.5, 51.5),
+    };
+    let inside = |r: Rect, p: Point| {
+        p.x >= r.min.x - 1e-3
+            && p.x <= r.max.x + 1e-3
+            && p.y >= r.min.y - 1e-3
+            && p.y <= r.max.y + 1e-3
+    };
+    for m in &cuts {
+        let p = xy(m);
+        assert!(inside(shape, p), "line {}: {p:?} off the shape", m.line);
+        assert!(
+            !(p.x > middle.min.x && p.x < middle.max.x && p.y > middle.min.y && p.y < middle.max.y),
+            "line {}: {p:?} recuts the middle the rough cleared",
+            m.line
+        );
+    }
+    assert!(
+        cuts.iter().any(|m| xy(m).y > 55.0 + REST_RADIUS_MM),
+        "the rest cuts into the notch"
+    );
+    let deepest = moves.iter().filter_map(|m| m.to.z).fold(f64::MAX, f64::min);
+    assert_approx_eq!(deepest, -3.0, 1e-3);
+}
+
+/// Slice 9 (#147), capability 16 and S10 end to end: the coaster's Pocket
+/// with a helix entry at 80 % and 5°, on a tool whose plunge rate (100)
+/// is under the helix's vertical rate at full feed (1500 × sin 5° = 131),
+/// checks with no entry warning and exports. The helix moves run at the
+/// plunge-limited feed, between the plunge rate and the feed, and the
+/// safety pass accepted them.
+#[test]
+fn pocket_helix_entry_exports_and_passes_safety() {
+    let dir = work_dir("pocket_helix_entry_exports_and_passes_safety");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 100.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut pocket = sample_pocket();
+    pocket.targets = project.operations[0].targets().to_vec();
+    pocket.tool = project.operations[0].tool().clone();
+    pocket.step_over_fraction = Some(0.4);
+    pocket.entry = Entry::Helix {
+        diameter_fraction: 0.8,
+        angle_deg: 5.0,
+    };
+    project.operations.insert(0, Operation::Pocket(pocket));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(!report.contains("entry_fallback"), "{report}");
+    assert!(!report.contains("helix_diameter_reduced"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    let scaled: Vec<f64> = program
+        .lines()
+        .filter_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix('F')))
+        .filter_map(|f| f.parse::<f64>().ok())
+        .filter(|f| *f > 100.0 + 1e-6 && *f < 1500.0 - 1e-6)
+        .collect();
+    assert!(
+        !scaled.is_empty(),
+        "the helix runs at a plunge-limited feed:\n{program}"
+    );
+    // 100 / sin 5° = 1147 mm/min, a little less on the chords.
+    for f in scaled {
+        assert!((1100.0..1150.0).contains(&f), "helix feed {f}");
+    }
+}
+
 /// Slice 7 (#138), acceptance test 23 on the CLI: the coaster with an
 /// 8 mm hole at its centre, drilled through in 4 mm pecks with a full
 /// retract and a 0.25 s dwell, checks clean and exports. The program dwells
@@ -3801,33 +3964,186 @@ fn tools_remove() {
     assert_eq!(read_library(&dir).tools.len(), 1, "nothing else removed");
 }
 
-/// A Fusion library (a `.tools` zip, or JSON with a `data` array) is
-/// recognised and refused with a pointer to the slice that adds it, not
-/// reported as a malformed DreamCarve file. Nothing is written.
+// ── Fusion import (phase 2, slice 21; functional spec capability 22, ─────
+// ── acceptance test 35) ──────────────────────────────────────────────────
+
+/// The tools `tests/fixtures/fusion/sample.json` imports as, in order.
+const FUSION_IMPORTED: [&str; 13] = [
+    "6 mm Flat End Mill",
+    "3 mm Ball End Mill",
+    "8 mm Bull Nose End Mill (bull nose r1)",
+    "20 mm Slot Mill",
+    "12 mm 90-Degree Chamfer Mill",
+    "5 mm Drill",
+    "6 mm 90-Degree Spot Drill",
+    "10 mm 90-Degree Countersink",
+    "8 mm Counter Bore",
+    "6 mm Reamer",
+    "1/4 in Flat End Mill",
+    "3.175 mm Flat End Mill (Plywood)",
+    "3.175 mm Flat End Mill (Acrylic)",
+];
+
+/// The items of the sample Fusion library that are skipped, with their
+/// types.
+const FUSION_SKIPPED: [(&str, &str); 10] = [
+    ("6 mm Thread Mill, 1 mm Pitch", "thread mill"),
+    ("M6 Right-Hand Tap", "tap right hand"),
+    ("50 mm Face Mill", "face mill"),
+    ("Ogee Form Router Bit", "form mill"),
+    ("6 mm Lollipop Mill", "lollipop mill"),
+    ("12 mm 14-Degree Dovetail Mill", "dovetail mill"),
+    ("3 mm Tapered Ball Mill, 2-Degree Taper", "tapered mill"),
+    ("General Turning Tool", "turning general"),
+    ("Probe, 2 mm Stylus", "probe"),
+    ("ER20 Collet Holder", "holder"),
+];
+
+/// The library tool named `name`.
+fn library_tool<'a>(lib: &'a dc_library::Library, name: &str) -> &'a dc_library::LibraryTool {
+    lib.tools
+        .iter()
+        .find(|t| t.tool.name == name)
+        .unwrap_or_else(|| panic!("no library tool `{name}`"))
+}
+
+/// Acceptance 35: `tools import sample.tools` reports each tool as
+/// imported or skipped with its reason, notes unset feeds, then counts.
+/// The flat end mill keeps its diameter, flutes, number and preset; the
+/// chamfer mill with `TA` 45 is a 90° V-bit; the two-preset tool is two
+/// tools. A damaged archive fails naming the file and writes nothing.
 #[test]
-fn tools_import_fusion_is_not_yet_supported() {
-    let dir = work_dir("tools_import_fusion_is_not_yet_supported");
-    std::fs::write(dir.join("sample.tools"), b"PK\x03\x04not really a zip").expect("written");
-    std::fs::write(
-        dir.join("sample.json"),
-        b"{\"version\": 24, \"data\": [{\"type\": \"flat end mill\"}]}",
-    )
-    .expect("written");
-    for file in ["sample.tools", "sample.json"] {
-        let out = run(&dir, &["tools", "import", file]);
-        assert_eq!(out.status.code(), Some(1), "{file}: {}", stdout(&out));
-        assert!(
-            stderr(&out).contains("Fusion import lands in slice 21"),
-            "{file}: {}",
-            stderr(&out)
-        );
-    }
+fn tools_import_fusion_reports_each_tool() {
+    let dir = work_dir("tools_import_fusion_reports_each_tool");
+    std::fs::write(dir.join("broken.tools"), b"PK\x03\x04not really a zip").expect("written");
+    let out = run(&dir, &["tools", "import", "broken.tools"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains("broken.tools") && stderr(&out).contains("archive"),
+        "{}",
+        stderr(&out)
+    );
     assert!(!library_file(&dir).exists(), "nothing written");
 
-    // A malformed DreamCarve file is an error naming it, with nothing written.
+    copy_fixture(&dir, "fusion/sample.tools", "sample.tools");
+    let out = run(&dir, &["tools", "import", "sample.tools"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    let text = stdout(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines.len(),
+        FUSION_IMPORTED.len() + FUSION_SKIPPED.len() + 1,
+        "one line per tool, then the counts:\n{text}"
+    );
+    for (k, name) in FUSION_IMPORTED.iter().enumerate() {
+        let expected = format!("`{name}`: imported (lt{})", k + 1);
+        assert!(
+            lines.iter().any(|line| line.starts_with(&expected)),
+            "no line `{expected}`:\n{text}"
+        );
+    }
+    for (description, kind) in FUSION_SKIPPED {
+        let expected = format!("`{description}`: skipped: unsupported tool type `{kind}`");
+        assert!(
+            lines.contains(&expected.as_str()),
+            "no line {expected}:\n{text}"
+        );
+    }
+    assert!(
+        lines.contains(&"`5 mm Drill`: imported (lt6); feed unset"),
+        "the drill's unset feed is noted:\n{text}"
+    );
+    assert!(
+        lines.contains(&"`6 mm Flat End Mill`: imported (lt1)"),
+        "a complete preset has no note:\n{text}"
+    );
+    assert!(
+        lines.last().is_some_and(
+            |l| l.starts_with("13 imported, 0 already present, 0 replaced, 10 skipped")
+        ),
+        "{text}"
+    );
+
+    let lib = read_library(&dir);
+    assert_eq!(lib.tools.len(), 13);
+    let flat = library_tool(&lib, "6 mm Flat End Mill");
+    assert_eq!(
+        flat.source.as_deref(),
+        Some("fusion:dc000001-0000-4000-8000-000000000001:dc0000p1-0000-4000-8000-000000000001")
+    );
+    let tool = &flat.tool;
+    assert_eq!(tool.cutter, ToolKind::EndMill);
+    assert_approx_eq!(tool.diameter_mm, 6.0, 1e-9);
+    assert_eq!(tool.flutes, 2);
+    assert_eq!(tool.number, Some(5));
+    assert_eq!(tool.rpm, Some(18000));
+    assert_eq!(tool.feed_mm_min, Some(1200.0));
+    assert_eq!(tool.plunge_mm_min, Some(400.0));
+    assert_eq!(tool.step_down_mm, Some(2.0));
+    assert_approx_eq!(tool.step_over_fraction.expect("stepover set"), 0.4, 1e-9);
+
+    let chamfer = &library_tool(&lib, "12 mm 90-Degree Chamfer Mill").tool;
+    assert_eq!(
+        chamfer.cutter,
+        ToolKind::VBit {
+            included_angle_deg: 90.0
+        },
+        "TA 45 is the half angle"
+    );
+    let inch = &library_tool(&lib, "1/4 in Flat End Mill").tool;
+    assert_approx_eq!(inch.diameter_mm, 6.35, 1e-9);
+    assert_approx_eq!(inch.feed_mm_min.expect("feed set"), 1524.0, 1e-9);
+    let plywood = &library_tool(&lib, "3.175 mm Flat End Mill (Plywood)").tool;
+    let acrylic = &library_tool(&lib, "3.175 mm Flat End Mill (Acrylic)").tool;
+    assert_eq!((plywood.number, acrylic.number), (Some(7), Some(7)));
+    assert_eq!(acrylic.feed_mm_min, Some(800.0));
+    let drill = &library_tool(&lib, "5 mm Drill").tool;
+    assert_eq!(drill.cutter, ToolKind::Drill);
+    assert_eq!(drill.feed_mm_min, None, "never defaulted");
+    assert_eq!(drill.plunge_mm_min, Some(300.0));
+}
+
+/// Acceptance 35: importing the same library again, zipped or not,
+/// reports every tool as already present (and the skipped ones skipped
+/// again) and leaves the library byte-identical, with or without
+/// `--replace`.
+#[test]
+fn tools_import_twice_is_already_present() {
+    let dir = work_dir("tools_import_twice_is_already_present");
+    copy_fixture(&dir, "fusion/sample.tools", "sample.tools");
+    copy_fixture(&dir, "fusion/sample.json", "sample.json");
+    let out = run(&dir, &["tools", "import", "sample.tools"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    let first = std::fs::read(library_file(&dir)).expect("library readable");
+
+    for args in [
+        &["tools", "import", "sample.json"][..],
+        &["tools", "import", "sample.tools", "--replace"][..],
+    ] {
+        let out = run(&dir, args);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", stderr(&out));
+        let text = stdout(&out);
+        assert_eq!(text.matches(": already present (lt").count(), 13, "{text}");
+        assert_eq!(text.matches(": skipped: ").count(), 10, "{text}");
+        assert!(!text.contains(": imported"), "{text}");
+        assert!(
+            text.contains("0 imported, 13 already present, 0 replaced, 10 skipped"),
+            "{text}"
+        );
+        assert_eq!(
+            std::fs::read(library_file(&dir)).expect("library readable"),
+            first,
+            "{args:?} changed the library"
+        );
+    }
+
+    // A malformed DreamCarve file is still an error naming it.
     std::fs::write(dir.join("bad.json"), b"{\"version\": 1, \"tools\": [{}]}").expect("written");
     let out = run(&dir, &["tools", "import", "bad.json"]);
     assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
     assert!(stderr(&out).contains("bad.json"), "{}", stderr(&out));
-    assert!(!library_file(&dir).exists(), "nothing written");
+    assert_eq!(
+        std::fs::read(library_file(&dir)).expect("library readable"),
+        first
+    );
 }

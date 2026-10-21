@@ -64,11 +64,19 @@ pub enum WarningCode {
     /// `other` (`wall`, or the other island's profile index), `gap_mm`,
     /// `tool`, `diameter_mm`.
     PocketIslandTooClose,
-    /// The operation's entry could not be used and a plunge was cut
-    /// instead. Params: `op`, `requested` (`ramp` or `helix`), `used`
-    /// (`plunge`), `reason` (`not_supported_yet` until the entry slices
-    /// land).
+    /// The entry asked for did not fit a shape, so its passes start with
+    /// the next one in the chain helix → ramp → plunge
+    /// (`docs/specs/phase-2/design.md`, "Algorithms → Entry"). Params:
+    /// `op`, `instance`, `instance_name`, `profile`, `requested` (`ramp`
+    /// or `helix`), `used` (`ramp` or `plunge`), `reason` (`no_room`: the
+    /// shape leaves no room for it; `too_many_moves`: at this angle and
+    /// depth it would need more than the descent move limit).
     EntryFallback,
+    /// A helix entry fits a shape only smaller than asked, so it is cut at
+    /// the largest diameter that fits. Params: `op`, `instance`,
+    /// `instance_name`, `profile`, `requested_mm`, `used_mm` (the smallest
+    /// helix diameter cut in that shape).
+    HelixDiameterReduced,
     /// The operation's corner relief was not cut. Params: `op`,
     /// `requested` (`dogbone` or `t_bone`), `reason` (`not_supported_yet`
     /// until the relief slice lands).
@@ -106,6 +114,11 @@ pub enum WarningCode {
     /// `requested_mm` (the height above the stock top as set, negative),
     /// `used_mm` (0).
     DrillRetractBelowStockTop,
+    /// A rest Pocket's tool reaches nothing the Pocket it rests on left
+    /// (`docs/specs/phase-2/design.md`, "Algorithms → Pocket", step 3), so
+    /// it emits no toolpath. Params: `op`, `rest_of` (the reference
+    /// operation), `tool` (this operation's tool name).
+    RestOfClearsNothing,
 }
 
 impl WarningCode {
@@ -123,6 +136,7 @@ impl WarningCode {
             Self::PocketNoRoom => "pocket_no_room",
             Self::PocketIslandTooClose => "pocket_island_too_close",
             Self::EntryFallback => "entry_fallback",
+            Self::HelixDiameterReduced => "helix_diameter_reduced",
             Self::ReliefSkipped => "relief_skipped",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
@@ -131,6 +145,7 @@ impl WarningCode {
             Self::DrillToolWiderThanHole => "drill_tool_wider_than_hole",
             Self::DrillPeckDeeperThanHole => "drill_peck_deeper_than_hole",
             Self::DrillRetractBelowStockTop => "drill_retract_below_stock_top",
+            Self::RestOfClearsNothing => "rest_of_clears_nothing",
         }
     }
 }
@@ -337,10 +352,33 @@ impl fmt::Display for Warning {
                     self.text("tool")
                 )
             }
-            WarningCode::EntryFallback => write!(
+            WarningCode::EntryFallback => {
+                let requested = self.text("requested");
+                let why = match self.param("reason") {
+                    Some("too_many_moves") => format!(
+                        "a `{requested}` entry at this angle would take too many moves to reach depth in"
+                    ),
+                    _ => format!("there is no room for a `{requested}` entry in"),
+                };
+                let (used, advice) = match self.param("used") {
+                    Some("ramp") => ("a zigzag ramp", ""),
+                    _ => (
+                        "a straight plunge at the plunge rate",
+                        "; set the operation's entry to `plunge` to stop this warning",
+                    ),
+                };
+                write!(
+                    f,
+                    "{why} {}, so its passes start with {used} instead{advice}",
+                    self.shape()
+                )
+            }
+            WarningCode::HelixDiameterReduced => write!(
                 f,
-                "entry `{}` is not supported by this build yet, so the operation plunges straight down instead",
-                self.text("requested")
+                "the helix entry in {} is {} mm across, smaller than the {} mm asked for, because a larger one does not fit there",
+                self.shape(),
+                self.number("used_mm", DIAMETER_DECIMALS),
+                self.number("requested_mm", DIAMETER_DECIMALS)
             ),
             WarningCode::ReliefSkipped => write!(
                 f,
@@ -391,6 +429,12 @@ impl fmt::Display for Warning {
                 f,
                 "retract_mm is {} mm, below the stock top; the tool retracts to the stock top instead, because it must never rapid into material",
                 self.mm("requested_mm")
+            ),
+            WarningCode::RestOfClearsNothing => write!(
+                f,
+                "operation `{}`, which this one rests on, already reaches everything tool `{}` can, so this operation cuts nothing; use a smaller tool, or remove it",
+                self.text("rest_of"),
+                self.text("tool")
             ),
             WarningCode::TabsCoverMostOfContour => {
                 let path_mm = self
@@ -458,6 +502,39 @@ mod tests {
         assert_eq!(
             w.to_string(),
             "tabs on `Hole` (instance `i1`, profile 1) cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole may not cut free. To let it cut free, even one tab this wide covers more than half: this outline is too short for tabs with this bit, so consider removing them. The tabs are cut as set."
+        );
+    }
+
+    #[test]
+    fn entry_warnings_name_the_shape_and_both_entries() {
+        let shape = |w: Warning| {
+            w.with("op", "o1")
+                .with("instance", "i1")
+                .with("instance_name", "Slot")
+                .with("profile", 0)
+        };
+        let ramp = shape(Warning::new(WarningCode::EntryFallback))
+            .with("requested", "helix")
+            .with("used", "ramp")
+            .with("reason", "no_room");
+        assert_eq!(
+            ramp.to_string(),
+            "there is no room for a `helix` entry in `Slot` (instance `i1`, profile 0), so its passes start with a zigzag ramp instead"
+        );
+        let plunge = shape(Warning::new(WarningCode::EntryFallback))
+            .with("requested", "ramp")
+            .with("used", "plunge")
+            .with("reason", "no_room");
+        assert_eq!(
+            plunge.to_string(),
+            "there is no room for a `ramp` entry in `Slot` (instance `i1`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning"
+        );
+        let reduced = shape(Warning::new(WarningCode::HelixDiameterReduced))
+            .with("requested_mm", 5.08)
+            .with("used_mm", 2.539_999_9);
+        assert_eq!(
+            reduced.to_string(),
+            "the helix entry in `Slot` (instance `i1`, profile 0) is 2.54 mm across, smaller than the 5.08 mm asked for, because a larger one does not fit there"
         );
     }
 

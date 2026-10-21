@@ -31,7 +31,7 @@ somewhere else.
 | --- | --- |
 | `dreamcarve tools list` | Lists every tool: its library id, name, cutter, diameter, feed, plunge rate, RPM, tool number and source. A value not set shows as `-`. |
 | `dreamcarve tools list --json` | Prints the library as JSON, exactly as the file holds it. |
-| `dreamcarve tools import <file>` | Adds the tools of a DreamCarve tool library file and reports, for each, `imported`, `imported as <new name>`, or `already present`. |
+| `dreamcarve tools import <file>` | Adds the tools of a DreamCarve tool library file or a [Fusion 360 library](#fusion-360-tool-libraries) and reports, for each, `imported`, `imported as <new name>`, `already present`, or for a Fusion tool DreamCarve has no cutter for, `skipped` with the reason. |
 | `dreamcarve tools import <file> --replace` | The same, except that a tool with the same `source` as one already in the library overwrites it (keeping its id) instead of being added beside it. |
 | `dreamcarve tools export <file>` | Writes the library to `<file>`, in the same format. |
 | `dreamcarve tools add <project.dcv> <tool>` | Copies a library tool into a project. |
@@ -145,8 +145,107 @@ Feeds, plunge rate and RPM may be left `null` in the library, as in a
 project. DreamCarve never fills them in: a project using a tool without
 them will not export until you set them.
 
-## Fusion 360 tool libraries (coming)
+## Fusion 360 tool libraries
 
-Importing a Fusion 360 tool library (`.tools` or `.json`) lands in a later
-phase 2 release. Today `tools import` recognises such a file and stops with
-`Fusion import lands in slice 21`, without changing the library.
+`tools import` also reads a Fusion 360 tool library, so the tools you set
+up in Fusion, or a library a tool vendor publishes for Fusion, need not be
+typed in again. Autodesk publishes this format, and DreamCarve reads it the
+way Autodesk describes it.
+
+### Getting the file out of Fusion
+
+In Fusion's **Manufacture** workspace, open **Manage → Tool Library**,
+right-click the library in the list on the left and choose **Export**.
+Fusion writes a `.tools` file (a zip holding the library as JSON). Vendor
+libraries for Fusion often come as `.json`; that is the same library,
+unzipped. Either works:
+
+```sh
+dreamcarve tools import "My Router Bits.tools"
+```
+
+DreamCarve tells a Fusion library from a DreamCarve one by its content,
+not its name.
+
+### What the import reports
+
+Each tool gets one line: `imported`, `already present`, or `skipped` with
+the reason. A value the library did not set is noted on the tool's line.
+Then come the counts:
+
+```text
+$ dreamcarve tools import sample.tools
+`6 mm Flat End Mill`: imported (lt1)
+`12 mm 90-Degree Chamfer Mill`: imported (lt2)
+`5 mm Drill`: imported (lt3); feed unset
+`3.175 mm Flat End Mill (Plywood)`: imported (lt4)
+`3.175 mm Flat End Mill (Acrylic)`: imported (lt5)
+`6 mm Thread Mill, 1 mm Pitch`: skipped: unsupported tool type `thread mill`
+5 imported, 0 already present, 0 replaced, 1 skipped; library: /Users/you/.../tools.json
+```
+
+Each imported tool's `source` is `fusion:<tool guid>:<preset guid>`, so
+importing the same library again reports every tool as `already present`
+and changes nothing. After you change a tool's presets in Fusion, import
+with `--replace` to overwrite the tools it made before instead of adding
+new ones beside them.
+
+### How Fusion tools map
+
+| Fusion tool type | DreamCarve cutter | Notes |
+| --- | --- | --- |
+| flat end mill, slot mill | end mill | |
+| bull nose end mill | end mill | DreamCarve has no corner radius; the name gains ` (bull nose r<RE>)` so you can tell it apart. |
+| ball end mill | ball nose | |
+| chamfer mill | V-bit | Included angle is twice Fusion's taper angle `TA`: a 90° chamfer mill has `TA` 45 in Fusion and imports as a 90° V-bit. |
+| drill, spot drill, center drill, counter sink, counter bore, reamer | drill | |
+
+| Fusion value | DreamCarve value |
+| --- | --- |
+| `description` | `name` (a tool without one takes its product id, else `<diameter> <unit> <type>`) |
+| `geometry.DC` (cutting diameter) | `diameter_mm` |
+| `geometry.NOF` (flutes) | `flutes`; 0 or missing becomes 1, noted |
+| `post-process.number` (tool number) | `number` when above 0; 0 means not set |
+| preset `n` (spindle speed) | `rpm` |
+| preset `v_f` (cutting feed) | `feed_mm_min` |
+| preset `v_f_plunge` (plunge feed) | `plunge_mm_min` |
+| preset `stepdown` | `step_down_mm`, unless the preset's **use stepdown** is off |
+| preset `stepover` | `step_over_fraction`, the stepover divided by the diameter (at most 1, noted when Fusion's is wider), unless **use stepover** is off |
+
+Lengths and feeds in an inch library are converted to millimetres and
+mm/min; spindle speed has no unit. Values Fusion keeps that DreamCarve does
+not use (holder, shaft, lengths, coolant, materials, cutting speed, feed
+per tooth) are ignored.
+
+**Presets.** Each Fusion cutting preset becomes one library tool, with the
+preset's feeds, so a tool with presets for plywood and acrylic becomes two
+tools: `<description> (Plywood)` and `<description> (Acrylic)`. A tool
+with one preset keeps its description as the name. A tool with no presets
+imports once with no feeds. All the tools made from one Fusion tool share
+its tool number; that is fine in the library, and `dreamcarve check`
+reports it only if one project uses two of them.
+
+### Unset feeds
+
+DreamCarve never invents a feed, plunge rate or spindle speed. A preset
+without one imports with that value unset (`-` in `tools list`, `null` in
+the file), and the import line says which. Fusion drill presets usually
+have a plunge feed and no cutting feed: that drill imports with
+`feed unset`, which a Drill operation never needs. A project that uses a
+tool for an operation needing the missing value will not export until you
+set it in the project, or in the library before you copy the tool.
+
+### What is skipped
+
+DreamCarve has no cutter for these, so they are skipped, each by its
+Fusion type: radius, lollipop, dovetail, face, form, thread, tapered,
+corner chamfer and circle segment mills; taps and boring bars; turning
+tools; plasma, laser and waterjet cutters; additive (depositing) tools;
+probes; and holders. A tool whose type Fusion's schema does not name is
+skipped as `unknown tool type`. A tool without a cutting diameter, or with
+a unit other than millimetres or inches, is skipped too, rather than
+guessed at.
+
+A file that is not a Fusion library at all, a damaged `.tools` archive, or
+a library older than Fusion's schema version 11 is refused whole, and the
+library is left as it was.

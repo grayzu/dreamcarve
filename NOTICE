@@ -62,6 +62,11 @@ generated from Cargo.lock at release time.
   Copyright (c) 2024 iShape-Rust
 - i_key_sort 0.12 (MIT), https://github.com/iShape-Rust/iKeySort
   Copyright (c) 2024 iShape-Rust
+- zip 9.0 (MIT), https://github.com/zip-rs/zip2
+  Copyright (c) 2014 Mathijs van de Nes
+- nix 0.31 (MIT), https://github.com/nix-rust/nix (a dependency of zip on
+  macOS and the BSDs)
+  Copyright (c) 2015 Carl Lerche + nix-rust Authors
 
 When a third-party component is added, list it here with its name, version,
 license, and source URL if its license requires attribution.

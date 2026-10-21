@@ -60,6 +60,11 @@ dxf = { version = "0.6", default-features = false }
 # features are off: `display` (the writer) is not needed; `parse` and
 # `serde` deserialize the file into a struct.
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
+# Unzips Fusion 360 `.tools` libraries (phase 2 design, "Fusion import").
+# Default features are off: they add encryption, timestamps and five more
+# codecs. Fusion writes deflate, so only the deflate decoder is on, through
+# flate2's pure-Rust zlib-rs backend.
+zip = { version = "9.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic

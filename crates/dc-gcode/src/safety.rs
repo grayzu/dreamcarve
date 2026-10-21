@@ -775,7 +775,12 @@ fn differs(a: Option<f64>, b: Option<f64>) -> bool {
     }
 }
 
-/// S3: a cut has a positive feed, and it is one of its tool's rates.
+/// S3: a cut has a positive feed, and it is one of its tool's rates. A
+/// straight move that falls while it moves in XY (an entry ramp or helix)
+/// may also run anywhere between the tool's plunge rate and its feed: its
+/// feed is the cutting feed scaled so its vertical rate stays under the
+/// plunge rate (S10's feed scale, `dc_cam::entry`), which lands between
+/// the two. Whether that vertical rate is right is S10's check (slice 16).
 fn check_feed(
     mv: &MachineMove,
     limits: &Limits<'_>,
@@ -787,15 +792,36 @@ fn check_feed(
     };
     let feed_mm_min = feed * mm_per_unit(mv.units);
     if let Some(tool) = limits.tool {
-        let matches = [tool.feed_mm_min, tool.plunge_mm_min]
+        let on_a_rate = [tool.feed_mm_min, tool.plunge_mm_min]
             .into_iter()
             .flatten()
             .any(|rate| approx_eq(rate, feed_mm_min, tolerance_mm_min));
+        let scaled_descent = is_descent(mv)
+            && tool
+                .plunge_mm_min
+                .zip(tool.feed_mm_min)
+                .is_some_and(|(plunge, cut)| {
+                    feed_mm_min >= plunge - tolerance_mm_min
+                        && feed_mm_min <= cut + tolerance_mm_min
+                });
+        let matches = on_a_rate || scaled_descent;
         if !matches {
             return Err(ExportError::FeedNotFromTool { line, feed_mm_min });
         }
     }
     Ok(())
+}
+
+/// True for a `G1` that falls while it moves in XY, every coordinate
+/// known.
+fn is_descent(mv: &MachineMove) -> bool {
+    let (from, to) = (mv.from, mv.to);
+    let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+        (from.x, from.y, from.z, to.x, to.y, to.z)
+    else {
+        return false;
+    };
+    mv.kind == MotionKind::Linear && tz < fz && (tx - fx).hypot(ty - fy) > 0.0
 }
 
 /// An arc move whose end is its start within half a unit in the last
@@ -1754,6 +1780,39 @@ mod tests {
         let err = check_text(zero).unwrap_err();
         assert!(
             matches!(err, ExportError::CutWithoutFeed { line: 7 }),
+            "{err:?}"
+        );
+    }
+
+    /// S3 with S10's feed scaling (slice 9): a ramp or helix move, one that
+    /// falls while it moves in XY, runs at the cutting feed scaled down so
+    /// its vertical rate stays under the plunge rate, which puts its feed
+    /// between the tool's plunge rate (1000) and feed (300) rather than on
+    /// one of them. It is still derived from the tool: above the feed or
+    /// below the plunge rate fails, and so does such a feed on a level
+    /// move.
+    #[test]
+    fn descent_feed_between_plunge_and_feed_is_from_tool() {
+        let ramp = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z0 F300\nX4 Z-1 F{f}\nX10 F1000\nG0 Z5\nM5\n"
+            )
+        };
+        check_text(&ramp("650")).unwrap();
+        check_text(&ramp("300")).unwrap();
+        check_text(&ramp("1000")).unwrap();
+        for f in ["1200", "250"] {
+            let err = check_text(&ramp(f)).unwrap_err();
+            assert!(
+                matches!(err, ExportError::FeedNotFromTool { line: 8, .. }),
+                "F{f}: {err:?}"
+            );
+        }
+        let level =
+            "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F650\nG0 Z5\nM5\n";
+        let err = check_text(level).unwrap_err();
+        assert!(
+            matches!(err, ExportError::FeedNotFromTool { line: 8, .. }),
             "{err:?}"
         );
     }

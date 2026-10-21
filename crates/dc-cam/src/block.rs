@@ -19,7 +19,8 @@ use dc_geometry::{Point, Region};
 /// `descent_from_z_mm` to `entry` at `z_mm`) followed by `cuts`, which
 /// end at `exit`. The sequencer supplies the rapid that reaches
 /// `descent_from`, or a stay-down link, and never changes a block's own
-/// moves.
+/// moves. A stay-down link reaches `entry` at `z_mm` directly, so the
+/// block's descent is not cut then.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CutBlock {
     /// The target shape (instance, profile index) this block belongs to.
@@ -38,12 +39,14 @@ pub struct CutBlock {
     pub descent_from: Point,
     /// The Z, mm, the generator built `descent` to start from: safe Z, or
     /// the previous pass Z of the same shape when the generator expects to
-    /// stay down between passes.
+    /// stay down between passes or (a Pocket's ramp or helix) the floor
+    /// that pass cleared.
     pub descent_from_z_mm: f64,
     /// Ramp, helix or plunge moves from `descent_from` to `entry` at `z_mm`,
-    /// every one `Linear` or an arc at the plunge or feed rate, except a
-    /// Drill's single rapid straight down to its retract height above the
-    /// stock. Empty means a straight plunge at the plunge rate, which the
+    /// every one `Linear` or an arc at the plunge or feed rate (a ramp or
+    /// helix move at the feed rate scaled so it descends no faster than the
+    /// plunge rate, S10), except a Drill's single rapid straight down to
+    /// its retract height above the stock. Empty means a straight plunge at the plunge rate, which the
     /// sequencer writes.
     pub descent: Vec<Move>,
     /// XY, mm, where the descent ends and cutting begins.
