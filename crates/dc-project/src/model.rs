@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The project data model (`docs/specs/phase-1/design.md`, "Data model →
-//! dc-project"). Every type here is persisted in a `.dcv` file, so each one
+//! dc-project"; `docs/specs/phase-2/design.md`, "Data model → dc-project"
+//! for the Pocket, Drill and Engrave operations, entries, leads, corner
+//! relief and tool numbers). Every type here is persisted in a `.dcv` file, so each one
 //! denies unknown fields and serializes `Option` as `null`
 //! (`docs/rust-guidelines.md`, "Serialization"). `Option` fields are also
 //! required on load (`deserialize_with = "Option::deserialize"` turns off
@@ -37,6 +39,12 @@ pub struct Project {
     /// Maximum deviation, millimetres, when curves are flattened to
     /// polylines. Default [`dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM`].
     pub flatten_tolerance_mm: f64,
+    /// Fit arcs to straight runs at export within this deviation,
+    /// millimetres (functional spec, capability 24). `None` turns fitting
+    /// off. `init` writes 0.01. Read by the arc fitter once it lands
+    /// (#117 lists the follow-ups).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub arc_fit_tolerance_mm: Option<f64>,
     /// The material block.
     pub stock: Stock,
     /// Where the machine's work zero sits relative to the stock.
@@ -173,6 +181,12 @@ pub struct Tool {
     pub id: ToolId,
     /// Display name.
     pub name: String,
+    /// Tool number, the `<n>` of `T<n>` in programs and of `-T<n>` in
+    /// file names (functional spec, capability 21a). `None` means the
+    /// tool's 1-based position in [`Project::tools`]. Never 0; validation
+    /// rejects two used tools that resolve to the same number.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub number: Option<u32>,
     /// Cutter geometry. Named `cutter`, not `kind`, so the file does not
     /// read `"kind": {"kind": ...}` (the variant tag is `kind`).
     pub cutter: ToolKind,
@@ -213,13 +227,17 @@ pub enum ToolKind {
     },
     /// Engraving bit.
     Engraver,
+    /// Twist drill. Phase 2 drills with any cutter; the kind drives
+    /// warnings and Fusion import only.
+    Drill,
 }
 
 impl ToolKind {
     /// Whether the cutter cuts its full diameter at every depth, as a flat
-    /// end mill does. Profile offsets the path by half the diameter, which
-    /// is right only for such a cutter (#67). An engraving bit usually
-    /// narrows to a point, and its kind carries no shape, so it is not.
+    /// end mill does. Profile and Pocket offset the path by half the
+    /// diameter, which is right only for such a cutter (#67). An engraving
+    /// bit usually narrows to a point, and its kind carries no shape, so it
+    /// is not; nor is a drill, whose tip is a cone.
     #[must_use]
     pub const fn is_flat(&self) -> bool {
         matches!(self, Self::EndMill)
@@ -233,16 +251,24 @@ impl ToolKind {
             Self::BallNose => "a ball-nose bit",
             Self::VBit { .. } => "a V-bit",
             Self::Engraver => "an engraving bit",
+            Self::Drill => "a drill",
         }
     }
 }
 
-/// A machining operation. Phase 1 has only Profile.
+/// A machining operation: Profile, Pocket, Drill or Engrave. Tagged by
+/// `kind` in the file, so each one reads as a flat object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Operation {
     /// Cut along closed outlines.
     Profile(ProfileOp),
+    /// Clear the inside of closed outlines.
+    Pocket(PocketOp),
+    /// Plunge at the centre of circular outlines.
+    Drill(DrillOp),
+    /// Trace open or closed paths with the tool centre on the line.
+    Engrave(EngraveOp),
 }
 
 impl Operation {
@@ -250,6 +276,9 @@ impl Operation {
     pub fn id(&self) -> &OperationId {
         match self {
             Self::Profile(op) => &op.id,
+            Self::Pocket(op) => &op.id,
+            Self::Drill(op) => &op.id,
+            Self::Engrave(op) => &op.id,
         }
     }
 
@@ -257,6 +286,9 @@ impl Operation {
     pub fn name(&self) -> &str {
         match self {
             Self::Profile(op) => &op.name,
+            Self::Pocket(op) => &op.name,
+            Self::Drill(op) => &op.name,
+            Self::Engrave(op) => &op.name,
         }
     }
 
@@ -264,6 +296,9 @@ impl Operation {
     pub fn enabled(&self) -> bool {
         match self {
             Self::Profile(op) => op.enabled,
+            Self::Pocket(op) => op.enabled,
+            Self::Drill(op) => op.enabled,
+            Self::Engrave(op) => op.enabled,
         }
     }
 
@@ -271,6 +306,9 @@ impl Operation {
     pub fn tool(&self) -> &ToolId {
         match self {
             Self::Profile(op) => &op.tool,
+            Self::Pocket(op) => &op.tool,
+            Self::Drill(op) => &op.tool,
+            Self::Engrave(op) => &op.tool,
         }
     }
 
@@ -278,8 +316,107 @@ impl Operation {
     pub fn targets(&self) -> &[InstanceId] {
         match self {
             Self::Profile(op) => &op.targets,
+            Self::Pocket(op) => &op.targets,
+            Self::Drill(op) => &op.targets,
+            Self::Engrave(op) => &op.targets,
         }
     }
+
+    /// Retract height above the stock top, millimetres.
+    pub fn safe_z_mm(&self) -> f64 {
+        match self {
+            Self::Profile(op) => op.safe_z_mm,
+            Self::Pocket(op) => op.safe_z_mm,
+            Self::Drill(op) => op.safe_z_mm,
+            Self::Engrave(op) => op.safe_z_mm,
+        }
+    }
+
+    /// Final depth below the stock top, millimetres; `None` until set.
+    pub fn depth_mm(&self) -> Option<f64> {
+        match self {
+            Self::Profile(op) => op.depth_mm,
+            Self::Pocket(op) => op.depth_mm,
+            Self::Drill(op) => op.depth_mm,
+            Self::Engrave(op) => op.depth_mm,
+        }
+    }
+
+    /// The operation's kind as the file tags it: `profile`, `pocket`,
+    /// `drill` or `engrave`.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Profile(_) => "profile",
+            Self::Pocket(_) => "pocket",
+            Self::Drill(_) => "drill",
+            Self::Engrave(_) => "engrave",
+        }
+    }
+}
+
+/// The order an operation visits its shapes and passes (functional spec,
+/// capability 11). Changes the order of cuts, never which cuts are made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MachiningOrder {
+    /// Each shape is cut to its full depth before the next.
+    FullDepthFirst,
+    /// Each pass is cut across every shape before the next, deeper pass.
+    PassFirst,
+}
+
+/// How the tool reaches each pass depth (functional spec, capability 16).
+/// Saved as `"plunge"`, or as a one-key object for the variants with
+/// values: `{ "ramp": { "angle_deg": 15.0 } }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Entry {
+    /// Straight down at the plunge rate.
+    Plunge,
+    /// A zigzag ramp in removed material (Pocket, Inside and Outside
+    /// Profile) or along the cut path (On line Profile).
+    Ramp {
+        /// Descent angle from the horizontal, degrees, in (0, 45].
+        angle_deg: f64,
+    },
+    /// A helix in removed material. Pocket and Inside or Outside Profile
+    /// only: an On line Profile removes nothing but its kerf.
+    Helix {
+        /// Helix diameter as a fraction of the tool diameter, in (0, 1].
+        diameter_fraction: f64,
+        /// Descent angle from the horizontal, degrees, in (0, 45].
+        angle_deg: f64,
+    },
+}
+
+/// A lead-in arc tangent to the cut, and optionally the matching lead-out
+/// (functional spec, capability 17).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lead {
+    /// Arc radius, millimetres, greater than 0.
+    pub radius_mm: f64,
+    /// Arc sweep, degrees, in (0, 180]. `init` writes 90.
+    pub sweep_deg: f64,
+    /// Add the matching exit arc.
+    pub lead_out: bool,
+    /// Distance to continue past the start point before leading out,
+    /// millimetres, 0 or more.
+    pub overcut_mm: f64,
+}
+
+/// Corner relief for internal corners a round tool cannot reach
+/// (functional spec, capability 18).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CornerRelief {
+    /// No relief.
+    None,
+    /// A notch along the corner's bisector.
+    Dogbone,
+    /// A notch along the corner's longer edge.
+    TBone,
 }
 
 /// A profile operation: cuts inside, outside or on closed outlines.
@@ -315,6 +452,191 @@ pub struct ProfileOp {
     /// Holding tabs, if any.
     #[serde(deserialize_with = "Option::deserialize")]
     pub tabs: Option<TabSpec>,
+    /// The order shapes and passes are visited. Migration: full depth
+    /// first, as phase 1 cut.
+    pub machining_order: MachiningOrder,
+    /// How each pass depth is reached. Migration: plunge, as phase 1 cut.
+    pub entry: Entry,
+    /// Lead-in and lead-out arcs, if any. Migration: none.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub lead: Option<Lead>,
+    /// Relief of the corners the tool cannot reach: the hole's corners on
+    /// an Inside cut, the part's concave corners on an Outside cut.
+    /// Migration: none.
+    pub corner_relief: CornerRelief,
+}
+
+/// How a Pocket clears its region (functional spec, capability 12). Saved
+/// as `"offset"`, or `{ "raster": { "angle_deg": 45.0 } }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ClearanceStrategy {
+    /// Concentric passes stepping inward from the wall.
+    Offset,
+    /// Parallel straight passes.
+    Raster {
+        /// Angle of the passes from the X axis, degrees, in [0, 180).
+        angle_deg: f64,
+    },
+}
+
+/// Whether and when a Pocket runs a pass along its wall and islands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WallPass {
+    /// After the clearing passes. `init` writes this.
+    Last,
+    /// Before the clearing passes.
+    First,
+    /// No wall pass: the wall keeps the clearing passes' scallops.
+    None,
+}
+
+/// A pocket operation: clears the inside of closed outlines, leaving
+/// shapes nested inside them as islands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PocketOp {
+    /// This operation's id.
+    pub id: OperationId,
+    /// Display name.
+    pub name: String,
+    /// Whether the operation is included in export.
+    pub enabled: bool,
+    /// Instances whose insides are cleared.
+    pub targets: Vec<InstanceId>,
+    /// The tool to cut with. Offsets by half its diameter, so it must be
+    /// a flat end mill.
+    pub tool: ToolId,
+    /// Offset rings or raster lines.
+    pub strategy: ClearanceStrategy,
+    /// Whether and when the wall pass runs.
+    pub wall_pass: WallPass,
+    /// Final depth below the stock top, millimetres. `None` until set.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub depth_mm: Option<f64>,
+    /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub step_down_mm: Option<f64>,
+    /// Step-over as a fraction of the tool diameter, in (0, 1]; overrides
+    /// [`Tool::step_over_fraction`].
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub step_over_fraction: Option<f64>,
+    /// Climb or conventional milling, on every ring and the wall pass.
+    pub direction: CutDirection,
+    /// Material to leave on the walls, millimetres, 0 or more.
+    pub allowance_mm: f64,
+    /// An earlier enabled Pocket with the same targets whose tool could
+    /// not reach everything: this one clears only what it left
+    /// (functional spec, capability 13).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub rest_of: Option<OperationId>,
+    /// How each pass depth is reached.
+    pub entry: Entry,
+    /// Relief of the pocket's corners and the islands' concave corners.
+    pub corner_relief: CornerRelief,
+    /// The order shapes and passes are visited.
+    pub machining_order: MachiningOrder,
+    /// How far below the stock bottom the cut may go, millimetres.
+    pub through_cut_allowance_mm: f64,
+    /// Retract height above the stock top, millimetres.
+    pub safe_z_mm: f64,
+}
+
+/// How a peck drill retracts between pecks. Saved as `"full"`, or
+/// `{ "chip_break": { "gap_mm": 0.5 } }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum PeckRetract {
+    /// To the retract height above the hole top.
+    Full,
+    /// By a short gap, enough to break the chip.
+    ChipBreak {
+        /// How far to lift, millimetres, greater than 0.
+        gap_mm: f64,
+    },
+}
+
+/// A drill cycle (functional spec, capability 14). Saved as `"simple"`,
+/// or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum DrillCycle {
+    /// One plunge at the plunge rate, then a retract.
+    Simple,
+    /// Plunges of a peck depth, retracting between them.
+    Peck {
+        /// Depth of each peck, millimetres, greater than 0. `None` takes
+        /// the tool's step-down, which must then be set.
+        #[serde(deserialize_with = "Option::deserialize")]
+        peck_depth_mm: Option<f64>,
+        /// How far to retract between pecks.
+        retract: PeckRetract,
+    },
+}
+
+/// A drill operation: plunges at the centre of each circular target.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DrillOp {
+    /// This operation's id.
+    pub id: OperationId,
+    /// Display name.
+    pub name: String,
+    /// Whether the operation is included in export.
+    pub enabled: bool,
+    /// Instances to drill at the centre of. A target that is not a circle
+    /// is skipped with a warning at export.
+    pub targets: Vec<InstanceId>,
+    /// The tool to drill with. Any cutter; a drill or end mill is usual.
+    pub tool: ToolId,
+    /// Simple or peck.
+    pub cycle: DrillCycle,
+    /// Seconds to wait at the bottom of every plunge, 0 or more; 0 is no
+    /// dwell. Combinable with any cycle.
+    pub dwell_s: f64,
+    /// Final depth below the stock top, millimetres. `None` until set.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub depth_mm: Option<f64>,
+    /// Height above the hole top to return to between pecks and between
+    /// holes, millimetres, 0 or more. `init` writes 1.
+    pub retract_mm: f64,
+    /// How far below the stock bottom the cut may go, millimetres.
+    pub through_cut_allowance_mm: f64,
+    /// Retract height above the stock top, millimetres.
+    pub safe_z_mm: f64,
+}
+
+/// An engrave operation: follows each target path, open or closed, with
+/// the tool centre on the line (functional spec, capability 15).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngraveOp {
+    /// This operation's id.
+    pub id: OperationId,
+    /// Display name.
+    pub name: String,
+    /// Whether the operation is included in export.
+    pub enabled: bool,
+    /// Instances whose paths are traced.
+    pub targets: Vec<InstanceId>,
+    /// The tool to cut with. Any cutter.
+    pub tool: ToolId,
+    /// Final depth below the stock top, millimetres. `None` until set.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub depth_mm: Option<f64>,
+    /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub step_down_mm: Option<f64>,
+    /// Cut successive passes of an open path in opposite directions,
+    /// saving a retract per pass.
+    pub alternate_direction: bool,
+    /// The order shapes and passes are visited.
+    pub machining_order: MachiningOrder,
+    /// How far below the stock bottom the cut may go, millimetres.
+    pub through_cut_allowance_mm: f64,
+    /// Retract height above the stock top, millimetres.
+    pub safe_z_mm: f64,
 }
 
 /// Which side of an outline a profile cuts on.

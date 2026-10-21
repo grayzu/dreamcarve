@@ -425,8 +425,8 @@ mod tests {
     use dc_geometry::{EPS_MM, Point, Polyline, Transform, Vertex, assert_approx_eq};
     use dc_project::test_support::sample_project;
     use dc_project::{
-        DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, OperationId, Side, Stock,
-        ToolId,
+        CornerRelief, DefinitionId, Entry, FeatureDefinition, FeatureInstance, InstanceId,
+        MachiningOrder, OperationId, Side, Stock, ToolId,
     };
     use std::collections::BTreeMap;
     use std::f64::consts::{PI, TAU};
@@ -510,6 +510,10 @@ mod tests {
             through_cut_allowance_mm: 0.0,
             safe_z_mm: 5.0,
             tabs: None,
+            machining_order: MachiningOrder::FullDepthFirst,
+            entry: Entry::Plunge,
+            lead: None,
+            corner_relief: CornerRelief::None,
         }
     }
 

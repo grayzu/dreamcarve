@@ -618,11 +618,11 @@ fn export_refuses_feed_above_limit_with_location() {
     assert_eq!(out.status.code(), Some(1), "an error exits 1");
     let stderr = stderr(&out);
     assert!(
-        stderr.contains("coaster.dcv:22:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
+        stderr.contains("coaster.dcv:24:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("coaster.dcv:24:14: warning: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        stderr.contains("coaster.dcv:26:14: warning: tool `Set me` (`t1`) is set to 1000000 RPM"),
         "{stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
@@ -766,7 +766,10 @@ fn v7_project_exports_the_same_program() {
     let v7 = dir.join("v7.dcv");
     std::fs::copy(&fixture, &v7).expect("fixture copied");
     let text = std::fs::read_to_string(&v7).expect("dcv readable");
-    assert!(text.contains("\"version\": 7,"), "the fixture is a version 7 file");
+    assert!(
+        text.contains("\"version\": 7,"),
+        "the fixture is a version 7 file"
+    );
     let out = run(&dir, &["export", "v7.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export v7: {}", stderr(&out));
     let from_v7 = std::fs::read_to_string(dir.join("v7.nc")).expect("v7.nc written");
@@ -798,8 +801,13 @@ fn export_refuses_pocket_until_its_slice_lands() {
     project.operations.push(Operation::Pocket(pocket));
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
+    // `check` runs the same build as `export`, so it says so first; the
+    // project itself validates (no `error:` about a field).
     let check = run(&dir, &["check", "coaster.dcv"]);
-    assert_eq!(check.status.code(), Some(0), "check: {}", stderr(&check));
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert!(report.contains("1 error(s)"), "{report}");
+    assert!(report.contains("not supported"), "{report}");
+    assert!(!report.contains("operations[o2]"), "{report}");
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_ne!(out.status.code(), Some(0), "export must fail");
     let err = stderr(&out);
@@ -1698,7 +1706,7 @@ fn post_processor_block(dcv: &Path) -> serde_json::Map<String, serde_json::Value
 
 /// The keys of a project's `post_processor` block, in the order written
 /// (#106).
-const POST_PROCESSOR_KEYS: [&str; 7] = [
+const POST_PROCESSOR_KEYS: [&str; 8] = [
     "id",
     "definition_version",
     "file_extension",
@@ -1706,6 +1714,7 @@ const POST_PROCESSOR_KEYS: [&str; 7] = [
     "spindle_on_dwell_s",
     "tool_change_mode",
     "decimal_places",
+    "use_canned_cycles",
 ];
 
 /// #106: `init` writes a reference to the latest bundled grblHAL
@@ -1727,7 +1736,8 @@ fn init_writes_post_processor_reference() {
             "spindle_control": "automatic",
             "spindle_on_dwell_s": 3.0,
             "tool_change_mode": "separate_programs",
-            "decimal_places": { "mm": 3, "inch": 4 }
+            "decimal_places": { "mm": 3, "inch": 4 },
+            "use_canned_cycles": false
         })
     );
 }
@@ -1784,7 +1794,8 @@ fn export_post_switch_writes_reference() {
             "spindle_control": "automatic",
             "spindle_on_dwell_s": 3.0,
             "tool_change_mode": "separate_programs",
-            "decimal_places": { "mm": 3, "inch": 4 }
+            "decimal_places": { "mm": 3, "inch": 4 },
+            "use_canned_cycles": false
         })
     );
     let grbl = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");

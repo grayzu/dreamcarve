@@ -89,8 +89,13 @@ pub struct PostProcessor {
     pub feed_speed: FeedSpeed,
     /// Tool-change block.
     pub tool_change: ToolChange,
+    /// Whether Drill writes canned cycles (`G81`–`G83`, `G73`) where
+    /// `canned_cycles` has them, or plain moves everywhere (functional
+    /// spec, capability 14). A project setting
+    /// ([`PostProcessorRef::use_canned_cycles`]); off by default on every
+    /// controller.
+    pub use_canned_cycles: bool,
     /// Drilling canned cycles, or `None` if the controller has none.
-    /// Parsed but unused until phase 2.
     #[serde(deserialize_with = "Option::deserialize")]
     pub canned_cycles: Option<CannedCycles>,
     /// Coolant commands, or `None` if the controller has none.
@@ -319,16 +324,31 @@ pub enum SpindleControl {
     Manual,
 }
 
-/// A dwell after the spindle starts.
+/// A dwell after the spindle starts, and the dwell word a Drill's `dwell_s`
+/// is written with.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpindleDwell {
     /// Template for the dwell line; `{seconds}` is replaced by
-    /// `duration_s`. `G4 P{seconds}` on GRBL and grblHAL, where P is in
-    /// seconds.
+    /// `duration_s` converted to `units`. `G4 P{seconds}` on GRBL and
+    /// grblHAL, where P is in seconds.
     pub command: String,
     /// How long to wait, seconds. `0` emits no dwell.
     pub duration_s: f64,
+    /// The unit of the number written into `command`: seconds on GRBL,
+    /// grblHAL and LinuxCNC, milliseconds on Mach3 (design spec,
+    /// "Post-processor definitions").
+    pub units: DwellUnits,
+}
+
+/// The unit a controller's dwell word takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DwellUnits {
+    /// `P` is seconds.
+    Seconds,
+    /// `P` is milliseconds.
+    Milliseconds,
 }
 
 /// Tool-change block.
@@ -404,8 +424,9 @@ pub enum RetractMode {
     G99,
 }
 
-/// Drilling canned cycles. Parsed but unused until phase 2.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Drilling canned cycles (design spec, "Canned cycles"). Written only
+/// when the project's [`PostProcessor::use_canned_cycles`] is on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CannedCycles {
     /// Plain drill cycle, for example `G81`.
@@ -427,6 +448,12 @@ pub struct CannedCycles {
     pub retract_mode: Option<RetractMode>,
     /// Cycle cancel, for example `G80`.
     pub cancel_command: String,
+    /// How far above the previous depth the controller re-enters after a
+    /// full peck retract (`G83`), millimetres, as its documentation
+    /// states; `None` where it retracts fully. The safety pass compares
+    /// the cycle's expansion with the Drill toolpath to this tolerance.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub reentry_gap_mm: Option<f64>,
 }
 
 /// Coolant commands. Parsed but unused until phase 2.
@@ -479,6 +506,10 @@ pub struct PostProcessorRef {
     pub tool_change_mode: ToolChangeMode,
     /// Decimal places per output unit.
     pub decimal_places: DecimalPlaces,
+    /// Whether Drill writes canned cycles where the definition has them
+    /// (functional spec, capability 14). Off by default; an error when on
+    /// for a definition without them. Added in `.dcv` version 8.
+    pub use_canned_cycles: bool,
 }
 
 impl PostProcessorRef {
@@ -514,6 +545,7 @@ impl PostProcessorRef {
         post.feed_speed.spindle_on_dwell.duration_s = self.spindle_on_dwell_s;
         post.tool_change.mode = self.tool_change_mode;
         post.number_format.decimal_places = self.decimal_places;
+        post.use_canned_cycles = self.use_canned_cycles;
         Ok(post)
     }
 }
@@ -521,9 +553,10 @@ impl PostProcessorRef {
 /// Where each setting of a [`PostProcessorRef`] sits in a full
 /// [`PostProcessor`]: its key in the reference and in a definition's
 /// `default_settings`, and its path in the full definition. Up to `.dcv`
-/// version 6 a project held its whole definition, with the settings at
-/// these paths.
-pub(crate) const SETTING_PATHS: [(&str, &[&str]); 5] = [
+/// version 6 a project held its whole definition, with the first
+/// [`V6_SETTING_COUNT`] settings at these paths; `use_canned_cycles`
+/// came with version 8 (#117).
+pub(crate) const SETTING_PATHS: [(&str, &[&str]); 6] = [
     ("file_extension", &["file_extension"]),
     ("spindle_control", &["feed_speed", "spindle_control"]),
     (
@@ -532,7 +565,11 @@ pub(crate) const SETTING_PATHS: [(&str, &[&str]); 5] = [
     ),
     ("tool_change_mode", &["tool_change", "mode"]),
     ("decimal_places", &["number_format", "decimal_places"]),
+    ("use_canned_cycles", &["use_canned_cycles"]),
 ];
+
+/// How many of [`SETTING_PATHS`] a version 6 file's embedded copy holds.
+pub(crate) const V6_SETTING_COUNT: usize = 5;
 
 /// Why a post-processor reference names no bundled definition.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -636,6 +673,7 @@ impl BundledDefinition {
             spindle_on_dwell_s: post.feed_speed.spindle_on_dwell.duration_s,
             tool_change_mode: post.tool_change.mode,
             decimal_places: post.number_format.decimal_places,
+            use_canned_cycles: post.use_canned_cycles,
         }
     }
 
@@ -1271,9 +1309,12 @@ mod tests {
     /// "Versions"); pin it here when it is added.
     #[test]
     fn released_definition_versions_are_unchanged() {
+        // Re-pinned in #117 when `spindle_on_dwell.units` and
+        // `default_settings.use_canned_cycles` reached every version (a
+        // schema-wide field; see `definitions/README.md`, "Versions").
         const PINNED: [(&str, u64); 2] = [
-            ("grblhal/v1.json", 0xb466_2fca_9b77_df77),
-            ("grbl/v1.json", 0xe5dc_88e6_fd09_a5a9),
+            ("grblhal/v1.json", 0xac47_0795_847b_c94d),
+            ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
         ];
         let bundled = bundled_definitions().unwrap();
         let paths: Vec<&str> = bundled.iter().map(|d| d.path).collect();

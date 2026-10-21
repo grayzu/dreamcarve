@@ -145,7 +145,7 @@ sentence, after the operation's id, with lengths rounded to 0.01 mm.
 `check` and `export` also look for values that are allowed but probably a
 mistake. They check only enabled operations and the tools those use. Each
 finding names the operation or tool and starts with where the value is in
-the file, as in `coaster.dcv:22:22:`. DreamCarve never changes the value
+the file, as in `coaster.dcv:24:22:`. DreamCarve never changes the value
 for you.
 
 | Message says | Kind | Meaning |
@@ -155,7 +155,7 @@ for you.
 | "... is set to ... RPM, faster than the 60000 RPM ..." | Warning | The spindle speed is above 60 000 RPM. GRBL and grblHAL run the spindle at its maximum instead, and with manual spindle control the speed is only a hint, so this does not stop export. |
 | "... is ... mm in diameter, larger than the 50 mm ..." | Warning | The tool's `diameter_mm` is above 50 mm. Check it for a typo. |
 | "feed_mm_min is ..., expected a value greater than 0 and at most 20000 mm/min" (or `plunge_mm_min`) | Error | No hobby machine moves faster than 20 000 mm/min, so the value is almost surely a typo. Export fails. |
-| "... cuts with tool ..., a V-bit; Profile offsets the path by half the diameter ..." | Error | With `side` `"outside"` or `"inside"`, Profile needs a flat end mill (`"cutter": "end_mill"`): it offsets the path by half the diameter, so with a V-bit, ball-nose or engraving bit the part comes out the wrong size. Export fails. With `"on_line"` the bit's centre follows the line, so any cutter is allowed. |
+| "... cuts with tool ..., a V-bit; an Inside or Outside Profile and a Pocket offset the path by half the diameter ..." | Error | With `side` `"outside"` or `"inside"`, Profile needs a flat end mill (`"cutter": "end_mill"`): it offsets the path by half the diameter, so with a V-bit, ball-nose or engraving bit the part comes out the wrong size. Export fails. With `"on_line"` the bit's centre follows the line, so any cutter is allowed. |
 | "... is enabled but has no targets ..." | Error | The operation would cut nothing. Add targets or set `enabled` to `false`. |
 
 ### Shapes too close together

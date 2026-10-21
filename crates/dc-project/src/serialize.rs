@@ -20,7 +20,7 @@
 use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::migrate;
-use crate::model::{ProfileOp, Project};
+use crate::model::{DrillOp, EngraveOp, PocketOp, ProfileOp, Project};
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
 use serde::Serialize;
@@ -264,6 +264,9 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
     // One arm per `Operation` variant, by its `kind`.
     match kind.as_str()? {
         "profile" => serde_path_to_error::deserialize::<_, ProfileOp>(&fields).err(),
+        "pocket" => serde_path_to_error::deserialize::<_, PocketOp>(&fields).err(),
+        "drill" => serde_path_to_error::deserialize::<_, DrillOp>(&fields).err(),
+        "engrave" => serde_path_to_error::deserialize::<_, EngraveOp>(&fields).err(),
         _ => None,
     }
 }
@@ -795,6 +798,7 @@ mod tests {
         &["canned_cycles", "peck_drill_command"],
         &["canned_cycles", "chip_break_drill_command"],
         &["canned_cycles", "retract_mode"],
+        &["canned_cycles", "reentry_gap_mm"],
         &["coolant"],
     ];
 
@@ -804,6 +808,9 @@ mod tests {
     #[test]
     fn every_missing_post_option_fails() {
         let mut post: Value = serde_json::from_str(GRBLHAL).unwrap();
+        // The fixture predates the phase 2 definition fields (#117).
+        post["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
+        post["use_canned_cycles"] = Value::from(false);
         // grblHAL has no canned cycles; fill them so their options are there
         // to remove.
         post["canned_cycles"] = serde_json::json!({
@@ -813,7 +820,8 @@ mod tests {
             "chip_break_drill_command": "G73",
             "peck_step_word": "Q",
             "retract_mode": "G98",
-            "cancel_command": "G80"
+            "cancel_command": "G80",
+            "reentry_gap_mm": null
         });
         let parse = serde_json::from_value::<crate::PostProcessor>;
         assert!(parse(post.clone()).is_ok(), "the grblHAL sample parses");

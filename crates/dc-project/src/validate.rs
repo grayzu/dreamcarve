@@ -25,15 +25,31 @@
 //! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
 //! changes a value; they only report.
 //!
+//! Phase 2 (#117; `docs/specs/phase-2/design.md`, "Tool numbers" and
+//! "Validation") adds the rules for tool numbers and for the Pocket, Drill
+//! and Engrave operations, entries, leads and corner relief. Errors: two
+//! used tools resolving to one `T` number, or a number of 0; a `rest_of`
+//! that is not an earlier enabled Pocket with the same targets; a
+//! step-over fraction outside (0, 1]; a Pocket, Engrave or peck Drill with
+//! no step-down anywhere; lead, entry and raster values out of range; a
+//! helix on an On line Profile; canned cycles on a definition without
+//! them; a Pocket with a cutter that is not a flat end mill. Warnings: a
+//! Drill with a cutter other than a drill or end mill; corner relief on a
+//! tool with no step-down; a V-bit engraving deeper than its cone.
+//!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
-use crate::model::{Operation, OriginXy, ProfileOp, Project, Side, TabPlacement, Tool, ToolKind};
+use crate::model::{
+    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, Lead, Operation,
+    OriginXy, PeckRetract, PocketOp, ProfileOp, Project, Side, TabPlacement, Tool, ToolKind,
+};
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
 };
 use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -253,6 +269,88 @@ pub enum Problem {
         /// The diameter, mm.
         diameter_mm: f64,
     },
+    /// Two tools of enabled operations resolve to the same `T` number,
+    /// set or positional (#117, functional spec capability 21a): the
+    /// program would change to the wrong bit. An error at the later tool.
+    DuplicateToolNumber {
+        /// The later tool.
+        tool: ToolId,
+        /// Its display name.
+        name: String,
+        /// The number both resolve to.
+        number: u32,
+        /// The earlier tool with that number.
+        other: ToolId,
+    },
+    /// A Pocket's `rest_of` is not an earlier enabled Pocket with the same
+    /// targets (#117, functional spec capability 13). An error.
+    RestOfInvalid {
+        /// The Pocket holding the reference.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The operation named.
+        rest_of: OperationId,
+    },
+    /// An On line Profile asks for a helix entry (#117, functional spec
+    /// capability 16). A helix sits in material the operation removes,
+    /// and an On line cut removes only its kerf. An error.
+    HelixNeedsWasteSide {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+    },
+    /// Canned cycles are on, but the post-processor definition has none
+    /// (#117, functional spec capability 14), so the choice could only be
+    /// ignored. An error.
+    CannedCyclesUnsupported {
+        /// The post-processor's id.
+        post: String,
+    },
+    /// An enabled Drill cuts with a cutter other than a drill or flat end
+    /// mill (#117): a V-bit or ball nose makes a cone, not a hole. A
+    /// warning.
+    DrillCutterUnusual {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        tool_name: String,
+        /// The cutter in words, such as `a V-bit`.
+        cutter: &'static str,
+    },
+    /// An enabled Pocket or Profile asks for corner relief on a tool whose
+    /// step-down is unset (#117): the relief pass steps down at the
+    /// tool's step-down, so it is skipped. A warning.
+    ReliefNeedsStepDown {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        tool_name: String,
+    },
+    /// An enabled Engrave with a V-bit cuts deeper than the bit's cone is
+    /// tall (#117), so the shank, not the cone, would cut. A warning.
+    EngraveDeeperThanCone {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool's display name.
+        tool_name: String,
+        /// The depth asked for, mm.
+        depth_mm: f64,
+        /// The cone's height, mm: half the diameter over the tangent of
+        /// half the included angle.
+        cone_height_mm: f64,
+    },
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min (#67).
@@ -276,8 +374,16 @@ impl Problem {
             | Self::StepDownAboveDiameter { .. }
             | Self::SpindleSpeedHigh { .. }
             | Self::PlungeAboveFeed { .. }
-            | Self::LargeDiameter { .. } => Severity::Warning,
-            Self::CutterNotFlat { .. } | Self::OperationHasNoTargets { .. } => Severity::Error,
+            | Self::LargeDiameter { .. }
+            | Self::DrillCutterUnusual { .. }
+            | Self::ReliefNeedsStepDown { .. }
+            | Self::EngraveDeeperThanCone { .. } => Severity::Warning,
+            Self::CutterNotFlat { .. }
+            | Self::OperationHasNoTargets { .. }
+            | Self::DuplicateToolNumber { .. }
+            | Self::RestOfInvalid { .. }
+            | Self::HelixNeedsWasteSide { .. }
+            | Self::CannedCyclesUnsupported { .. } => Severity::Error,
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -359,6 +465,25 @@ impl Problem {
             Self::SpindleSpeedHigh { tool, .. } => Some(format!("tools[{tool}].rpm")),
             Self::PlungeAboveFeed { tool, .. } => Some(format!("tools[{tool}].plunge_mm_min")),
             Self::LargeDiameter { tool, .. } => Some(format!("tools[{tool}].diameter_mm")),
+            Self::DuplicateToolNumber { tool, .. } => Some(format!("tools[{tool}].number")),
+            Self::RestOfInvalid { operation, .. } => {
+                Some(format!("operations[{operation}].rest_of"))
+            }
+            Self::HelixNeedsWasteSide { operation, .. } => {
+                Some(format!("operations[{operation}].entry"))
+            }
+            Self::CannedCyclesUnsupported { .. } => {
+                Some("post_processor.use_canned_cycles".to_owned())
+            }
+            Self::DrillCutterUnusual { operation, .. } => {
+                Some(format!("operations[{operation}].tool"))
+            }
+            Self::ReliefNeedsStepDown { operation, .. } => {
+                Some(format!("operations[{operation}].corner_relief"))
+            }
+            Self::EngraveDeeperThanCone { operation, .. } => {
+                Some(format!("operations[{operation}].depth_mm"))
+            }
         }
     }
 }
@@ -478,7 +603,7 @@ impl fmt::Display for Problem {
                 cutter,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; Profile offsets the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; an Inside or Outside Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
             ),
             Self::OperationHasNoTargets { operation, name } => write!(
                 f,
@@ -505,6 +630,60 @@ impl fmt::Display for Problem {
                 f,
                 "tool `{name}` (`{tool}`) is {diameter_mm} mm in diameter, larger than the {MAX_TOOL_DIAMETER_MM} mm of a hobby router bit; check it for a typo"
             ),
+            Self::DuplicateToolNumber {
+                tool,
+                name,
+                number,
+                other,
+            } => write!(
+                f,
+                "tool `{name}` (`{tool}`) and tool `{other}` would both be T{number} in the program; a tool with no `number` is its position in the list, so give one of them another number"
+            ),
+            Self::RestOfInvalid {
+                operation,
+                name,
+                rest_of,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
+            ),
+            Self::HelixNeedsWasteSide { operation, name } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts on the line but asks for a helix entry; a helix sits in material the cut removes, and an on-line cut removes only its kerf. Use \"plunge\" or a ramp"
+            ),
+            Self::CannedCyclesUnsupported { post } => write!(
+                f,
+                "use_canned_cycles is true, but post-processor `{post}` has no canned cycles, so Drill cannot write them; set it to false"
+            ),
+            Self::DrillCutterUnusual {
+                operation,
+                name,
+                tool,
+                tool_name,
+                cutter,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) drills with tool `{tool_name}` (`{tool}`), {cutter}, which makes a cone rather than a flat-bottomed hole; a drill or an end mill is usual"
+            ),
+            Self::ReliefNeedsStepDown {
+                operation,
+                name,
+                tool,
+                tool_name,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) asks for corner relief, but tool `{tool_name}` (`{tool}`) has no step_down_mm, which the relief pass steps down at; the relief is skipped until it is set"
+            ),
+            Self::EngraveDeeperThanCone {
+                operation,
+                name,
+                tool_name,
+                depth_mm,
+                cone_height_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) engraves {depth_mm} mm deep with tool `{tool_name}`, whose cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
+            ),
         }
     }
 }
@@ -523,6 +702,9 @@ const POSITIVE: &str = "a value greater than 0";
 const NON_NEGATIVE: &str = "a value of 0 or more";
 const FRACTION: &str = "a value greater than 0 and at most 1";
 const ANGLE: &str = "an angle greater than 0 and less than 180 degrees";
+const SWEEP: &str = "an angle greater than 0 and at most 180 degrees";
+const ENTRY_ANGLE: &str = "an angle greater than 0 and at most 45 degrees";
+const RASTER_ANGLE: &str = "an angle of 0 or more and less than 180 degrees";
 // The limits below spell out `MAX_COORDINATE_MM`; a test checks they agree.
 const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
 const COORDINATE: &str = "a value from -6000 to 6000 mm";
@@ -558,18 +740,32 @@ impl Validator {
             .filter(|op| op.enabled())
             .map(Operation::tool)
             .collect();
-        // Tools an enabled operation takes its step-down from (#98).
+        // Tools an enabled operation takes its step-down from (#98): a
+        // Profile, Pocket or Engrave with no step-down of its own, and a
+        // peck Drill with no peck depth (functional spec, capability 14).
         let step_down_from_tool: BTreeSet<&ToolId> = p
             .operations
             .iter()
             .filter(|op| op.enabled())
-            .filter_map(|op| {
-                let Operation::Profile(op) = op;
-                op.step_down_mm.is_none().then_some(&op.tool)
+            .filter(|op| match op {
+                Operation::Profile(op) => op.step_down_mm.is_none(),
+                Operation::Pocket(op) => op.step_down_mm.is_none(),
+                Operation::Engrave(op) => op.step_down_mm.is_none(),
+                Operation::Drill(op) => matches!(
+                    op.cycle,
+                    DrillCycle::Peck {
+                        peck_depth_mm: None,
+                        ..
+                    }
+                ),
             })
+            .map(Operation::tool)
             .collect();
+        // #117: the `T` number each used tool resolves to, set or
+        // positional, and the first tool with it.
+        let mut numbers: BTreeMap<u32, &ToolId> = BTreeMap::new();
         let mut seen = BTreeSet::new();
-        for tool in &p.tools {
+        for (position, tool) in p.tools.iter().enumerate() {
             let in_use = used.contains(&tool.id);
             if !in_use {
                 self.problems.push(Problem::UnusedTool {
@@ -583,6 +779,31 @@ impl Validator {
                 });
             }
             let at = format!("tools[{}]", tool.id);
+            // #117: `T0` is no tool; a set number must be positive, used
+            // or not. Only used tools are written, so only they clash.
+            match tool.number {
+                Some(0) => self.tool_out_of_range(tool, "number", 0.0, POSITIVE),
+                number if in_use => {
+                    // The position is a list index, far below u32::MAX.
+                    let resolved =
+                        number.unwrap_or_else(|| u32::try_from(position + 1).unwrap_or(u32::MAX));
+                    match numbers.get(&resolved) {
+                        Some(other) if *other != &tool.id => {
+                            self.problems.push(Problem::DuplicateToolNumber {
+                                tool: tool.id.clone(),
+                                name: tool.name.clone(),
+                                number: resolved,
+                                other: (*other).clone(),
+                            });
+                        }
+                        Some(_) => {}
+                        None => {
+                            numbers.insert(resolved, &tool.id);
+                        }
+                    }
+                }
+                _ => {}
+            }
             if let ToolKind::VBit { included_angle_deg } = tool.cutter {
                 let field = "cutter.v_bit.included_angle_deg";
                 if self.finite(&format!("{at}.{field}"), included_angle_deg)
@@ -666,69 +887,51 @@ impl Validator {
         let tool_ids: BTreeSet<_> = p.tools.iter().map(|t| &t.id).collect();
         let instance_ids: BTreeSet<_> = p.instances.iter().map(|i| &i.id).collect();
         let mut seen = BTreeSet::new();
-        for op in &p.operations {
-            let Operation::Profile(op) = op;
-            if !seen.insert(&op.id) {
-                self.problems
-                    .push(Problem::DuplicateOperationId { id: op.id.clone() });
+        for (index, op) in p.operations.iter().enumerate() {
+            if !seen.insert(op.id()) {
+                self.problems.push(Problem::DuplicateOperationId {
+                    id: op.id().clone(),
+                });
             }
-            if !op.enabled {
+            if !op.enabled() {
                 self.problems.push(Problem::OperationDisabled {
-                    operation: op.id.clone(),
+                    operation: op.id().clone(),
                 });
             }
-            if !tool_ids.contains(&op.tool) {
+            if !tool_ids.contains(op.tool()) {
                 self.problems.push(Problem::DanglingTool {
-                    operation: op.id.clone(),
-                    tool: op.tool.clone(),
+                    operation: op.id().clone(),
+                    tool: op.tool().clone(),
                 });
             }
-            for target in &op.targets {
+            for target in op.targets() {
                 if !instance_ids.contains(target) {
                     self.problems.push(Problem::DanglingInstance {
-                        operation: op.id.clone(),
+                        operation: op.id().clone(),
                         instance: target.clone(),
                     });
                 }
             }
-            let at = format!("operations[{}]", op.id);
-            if op.enabled {
-                self.enabled_profile(op, p.tools.iter().find(|t| t.id == op.tool), &at);
+            let at = format!("operations[{}]", op.id());
+            let tool = p.tools.iter().find(|t| &t.id == op.tool());
+            if op.enabled() {
+                self.enabled_operation(op, tool, &at);
             }
-            match op.depth_mm {
+            match op.depth_mm() {
                 Some(depth_mm) => self.positive(&format!("{at}.depth_mm"), depth_mm),
                 None => self.problems.push(Problem::OperationValueUnset {
-                    operation: op.id.clone(),
-                    name: op.name.clone(),
+                    operation: op.id().clone(),
+                    name: op.name().to_owned(),
                     field: "depth_mm",
                 }),
             }
-            if let Some(step) = op.step_down_mm {
-                self.positive(&format!("{at}.step_down_mm"), step);
-            }
-            self.non_negative(
-                &format!("{at}.through_cut_allowance_mm"),
-                op.through_cut_allowance_mm,
-            );
-            self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
-            if let Some(tabs) = &op.tabs {
-                match &tabs.placement {
-                    TabPlacement::Count { count } => {
-                        if *count == 0 {
-                            self.out_of_range(format!("{at}.tabs.placement.count"), 0.0, POSITIVE);
-                        }
-                    }
-                    TabPlacement::AtDistances { distances_mm } => {
-                        for (i, d) in distances_mm.iter().enumerate() {
-                            self.non_negative(
-                                &format!("{at}.tabs.placement.distances_mm[{i}]"),
-                                *d,
-                            );
-                        }
-                    }
-                }
-                self.positive(&format!("{at}.tabs.width_mm"), tabs.width_mm);
-                self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
+            // The rest of each kind's fields, in the order the file holds
+            // them.
+            match op {
+                Operation::Profile(op) => self.profile(op, &at),
+                Operation::Pocket(op) => self.pocket(op, index, &p.operations, &at),
+                Operation::Drill(op) => self.drill(op, &at),
+                Operation::Engrave(op) => self.engrave(op, &at),
             }
         }
 
@@ -842,31 +1045,69 @@ impl Validator {
         }
 
         self.non_negative("post_processor.spindle_on_dwell_s", post.spindle_on_dwell_s);
+        // #117: canned cycles can only be written where the definition
+        // has them; asking elsewhere would be ignored, so it is an error.
+        let definition_has_cycles = post
+            .definition()
+            .is_ok_and(|d| d.post_processor().canned_cycles.is_some());
+        if post.use_canned_cycles && !definition_has_cycles {
+            self.problems.push(Problem::CannedCyclesUnsupported {
+                post: post.id.clone(),
+            });
+        }
     }
 
-    /// The sanity checks of an enabled Profile `op` at `at`, cutting with
-    /// `tool` when it exists (#67): it has targets, the tool is a flat end
-    /// mill unless the cut is on the line, and the step-down in effect is at most the tool's diameter.
-    fn enabled_profile(&mut self, op: &ProfileOp, tool: Option<&Tool>, at: &str) {
-        if op.targets.is_empty() {
+    /// The sanity checks of an enabled operation `op` at `at`, cutting
+    /// with `tool` when it exists (#67, #117): it has targets; a Pocket or
+    /// an Inside or Outside Profile cuts with a flat end mill; a Drill
+    /// cuts with a drill or end mill (a warning otherwise); the step-down
+    /// in effect is at most the tool's diameter; corner relief has a tool
+    /// step-down to step at; a V-bit engraves no deeper than its cone.
+    fn enabled_operation(&mut self, op: &Operation, tool: Option<&Tool>, at: &str) {
+        if op.targets().is_empty() {
             self.problems.push(Problem::OperationHasNoTargets {
-                operation: op.id.clone(),
-                name: op.name.clone(),
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
             });
         }
         let Some(tool) = tool else {
             return;
         };
-        if op.side != Side::OnLine && !tool.cutter.is_flat() {
+        let offsets_by_radius = match op {
+            Operation::Profile(op) => op.side != Side::OnLine,
+            Operation::Pocket(_) => true,
+            Operation::Drill(_) | Operation::Engrave(_) => false,
+        };
+        if offsets_by_radius && !tool.cutter.is_flat() {
             self.problems.push(Problem::CutterNotFlat {
-                operation: op.id.clone(),
-                name: op.name.clone(),
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
                 tool: tool.id.clone(),
                 tool_name: tool.name.clone(),
                 cutter: tool.cutter.describe(),
             });
         }
-        let step = match (op.step_down_mm, tool.step_down_mm) {
+        if let Operation::Drill(_) = op
+            && !matches!(tool.cutter, ToolKind::Drill | ToolKind::EndMill)
+        {
+            self.problems.push(Problem::DrillCutterUnusual {
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                cutter: tool.cutter.describe(),
+            });
+        }
+        let own_step_down = match op {
+            Operation::Profile(op) => op.step_down_mm,
+            Operation::Pocket(op) => op.step_down_mm,
+            Operation::Engrave(op) => op.step_down_mm,
+            Operation::Drill(op) => match op.cycle {
+                DrillCycle::Peck { peck_depth_mm, .. } => peck_depth_mm,
+                DrillCycle::Simple => None,
+            },
+        };
+        let step = match (own_step_down, tool.step_down_mm) {
             (Some(step), _) => Some((step, format!("{at}.step_down_mm"))),
             (None, Some(step)) => Some((step, format!("tools[{}].step_down_mm", tool.id))),
             (None, None) => None,
@@ -878,14 +1119,217 @@ impl Validator {
             && step_down_mm > tool.diameter_mm
         {
             self.problems.push(Problem::StepDownAboveDiameter {
-                operation: op.id.clone(),
-                name: op.name.clone(),
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
                 tool_name: tool.name.clone(),
                 field,
                 step_down_mm,
                 diameter_mm: tool.diameter_mm,
             });
         }
+        // The relief pass steps down at the tool's step-down (functional
+        // spec, capability 18). With no step-down anywhere the operation
+        // is already an error at the tool; the warning is for the case
+        // the main passes are fine and only the relief is lost.
+        let relief = match op {
+            Operation::Profile(op) => op.corner_relief,
+            Operation::Pocket(op) => op.corner_relief,
+            Operation::Drill(_) | Operation::Engrave(_) => CornerRelief::None,
+        };
+        if relief != CornerRelief::None && tool.step_down_mm.is_none() && own_step_down.is_some() {
+            self.problems.push(Problem::ReliefNeedsStepDown {
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+            });
+        }
+        if let (Operation::Engrave(engrave), ToolKind::VBit { included_angle_deg }) =
+            (op, &tool.cutter)
+            && let included_angle_deg = *included_angle_deg
+            && let Some(depth_mm) = engrave.depth_mm
+            && included_angle_deg > 0.0
+            && included_angle_deg < 180.0
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0
+        {
+            let cone_height_mm =
+                tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
+            if depth_mm.is_finite() && depth_mm > cone_height_mm {
+                self.problems.push(Problem::EngraveDeeperThanCone {
+                    operation: op.id().clone(),
+                    name: op.name().to_owned(),
+                    tool_name: tool.name.clone(),
+                    depth_mm,
+                    cone_height_mm,
+                });
+            }
+        }
+    }
+
+    /// A Profile's own fields after `depth_mm`, in file order.
+    fn profile(&mut self, op: &ProfileOp, at: &str) {
+        if let Some(step) = op.step_down_mm {
+            self.positive(&format!("{at}.step_down_mm"), step);
+        }
+        self.non_negative(
+            &format!("{at}.through_cut_allowance_mm"),
+            op.through_cut_allowance_mm,
+        );
+        self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+        if let Some(tabs) = &op.tabs {
+            match &tabs.placement {
+                TabPlacement::Count { count } => {
+                    if *count == 0 {
+                        self.out_of_range(format!("{at}.tabs.placement.count"), 0.0, POSITIVE);
+                    }
+                }
+                TabPlacement::AtDistances { distances_mm } => {
+                    for (i, d) in distances_mm.iter().enumerate() {
+                        self.non_negative(&format!("{at}.tabs.placement.distances_mm[{i}]"), *d);
+                    }
+                }
+            }
+            self.positive(&format!("{at}.tabs.width_mm"), tabs.width_mm);
+            self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
+        }
+        self.entry(&op.entry, at);
+        // #117: a helix needs removed material to sit in (functional spec,
+        // capability 16); an On line cut removes only its kerf.
+        if op.side == Side::OnLine && matches!(op.entry, Entry::Helix { .. }) {
+            self.problems.push(Problem::HelixNeedsWasteSide {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+            });
+        }
+        if let Some(lead) = &op.lead {
+            self.lead(lead, at);
+        }
+    }
+
+    /// A Pocket's own fields, in file order, and its `rest_of` against the
+    /// operations before it (`index`).
+    fn pocket(&mut self, op: &PocketOp, index: usize, operations: &[Operation], at: &str) {
+        if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
+            let field = format!("{at}.strategy.raster.angle_deg");
+            if self.finite(&field, angle_deg) && !(0.0..180.0).contains(&angle_deg) {
+                self.out_of_range(field, angle_deg, RASTER_ANGLE);
+            }
+        }
+        if let Some(step) = op.step_down_mm {
+            self.positive(&format!("{at}.step_down_mm"), step);
+        }
+        if let Some(fraction) = op.step_over_fraction {
+            let field = format!("{at}.step_over_fraction");
+            if self.finite(&field, fraction) && !(fraction > 0.0 && fraction <= 1.0) {
+                self.out_of_range(field, fraction, FRACTION);
+            }
+        }
+        self.non_negative(&format!("{at}.allowance_mm"), op.allowance_mm);
+        // #117: rest machining clears what an earlier Pocket of the same
+        // shapes left (functional spec, capability 13).
+        if let Some(rest_of) = &op.rest_of {
+            let earlier = operations
+                .iter()
+                .take(index)
+                .find(|other| other.id() == rest_of);
+            let valid = matches!(
+                earlier,
+                Some(Operation::Pocket(rough)) if rough.enabled && rough.targets == op.targets
+            );
+            if !valid {
+                self.problems.push(Problem::RestOfInvalid {
+                    operation: op.id.clone(),
+                    name: op.name.clone(),
+                    rest_of: rest_of.clone(),
+                });
+            }
+        }
+        self.entry(&op.entry, at);
+        self.non_negative(
+            &format!("{at}.through_cut_allowance_mm"),
+            op.through_cut_allowance_mm,
+        );
+        self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+    }
+
+    /// A Drill's own fields, in file order.
+    fn drill(&mut self, op: &DrillOp, at: &str) {
+        if let DrillCycle::Peck {
+            peck_depth_mm,
+            retract,
+        } = &op.cycle
+        {
+            if let Some(peck_depth_mm) = peck_depth_mm {
+                self.positive(&format!("{at}.cycle.peck.peck_depth_mm"), *peck_depth_mm);
+            }
+            if let PeckRetract::ChipBreak { gap_mm } = retract {
+                self.positive(
+                    &format!("{at}.cycle.peck.retract.chip_break.gap_mm"),
+                    *gap_mm,
+                );
+            }
+        }
+        self.non_negative(&format!("{at}.dwell_s"), op.dwell_s);
+        self.non_negative(&format!("{at}.retract_mm"), op.retract_mm);
+        self.non_negative(
+            &format!("{at}.through_cut_allowance_mm"),
+            op.through_cut_allowance_mm,
+        );
+        self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+    }
+
+    /// An Engrave's own fields, in file order.
+    fn engrave(&mut self, op: &EngraveOp, at: &str) {
+        if let Some(step) = op.step_down_mm {
+            self.positive(&format!("{at}.step_down_mm"), step);
+        }
+        self.non_negative(
+            &format!("{at}.through_cut_allowance_mm"),
+            op.through_cut_allowance_mm,
+        );
+        self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+    }
+
+    /// An entry's values (functional spec, capability 16): a ramp or helix
+    /// angle in (0, 45], a helix diameter fraction in (0, 1].
+    fn entry(&mut self, entry: &Entry, at: &str) {
+        match entry {
+            Entry::Plunge => {}
+            Entry::Ramp { angle_deg } => {
+                self.entry_angle(&format!("{at}.entry.ramp.angle_deg"), *angle_deg);
+            }
+            Entry::Helix {
+                diameter_fraction,
+                angle_deg,
+            } => {
+                let field = format!("{at}.entry.helix.diameter_fraction");
+                if self.finite(&field, *diameter_fraction)
+                    && !(*diameter_fraction > 0.0 && *diameter_fraction <= 1.0)
+                {
+                    self.out_of_range(field, *diameter_fraction, FRACTION);
+                }
+                self.entry_angle(&format!("{at}.entry.helix.angle_deg"), *angle_deg);
+            }
+        }
+    }
+
+    fn entry_angle(&mut self, field: &str, angle_deg: f64) {
+        if self.finite(field, angle_deg) && !(angle_deg > 0.0 && angle_deg <= 45.0) {
+            self.out_of_range(field.to_owned(), angle_deg, ENTRY_ANGLE);
+        }
+    }
+
+    /// A lead's values (functional spec, capability 17): a positive radius,
+    /// a sweep in (0, 180], a non-negative overcut.
+    fn lead(&mut self, lead: &Lead, at: &str) {
+        self.positive(&format!("{at}.lead.radius_mm"), lead.radius_mm);
+        let field = format!("{at}.lead.sweep_deg");
+        if self.finite(&field, lead.sweep_deg) && !(lead.sweep_deg > 0.0 && lead.sweep_deg <= 180.0)
+        {
+            self.out_of_range(field, lead.sweep_deg, SWEEP);
+        }
+        self.non_negative(&format!("{at}.lead.overcut_mm"), lead.overcut_mm);
     }
 
     /// Reports `field` if `value` is not finite; returns whether it is.
@@ -993,8 +1437,7 @@ impl Validator {
 mod tests {
     use super::*;
     use crate::model::{
-        ClearanceStrategy, CornerRelief, DrillCycle, Entry, Lead, Operation, PeckRetract,
-        ToolKind,
+        ClearanceStrategy, CornerRelief, DrillCycle, Entry, Lead, Operation, PeckRetract, ToolKind,
     };
     use crate::test_support::{
         profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
@@ -1788,8 +2231,7 @@ mod tests {
     // #67: sanity checks on dangerous but valid values.
 
     fn op_mut(p: &mut Project) -> &mut crate::model::ProfileOp {
-        let op = profile_mut(&mut p);
-        op
+        profile_mut(p)
     }
 
     /// Asserts `problems` is exactly one problem with `severity`, whose
@@ -1845,7 +2287,7 @@ mod tests {
         assert_eq!(problems[0].field().unwrap(), "operations[o1].tool");
         assert_eq!(
             message,
-            "operation `Cut out` (`o1`) cuts with tool `6.35 mm upcut` (`t1`), a V-bit; Profile offsets the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+            "operation `Cut out` (`o1`) cuts with tool `6.35 mm upcut` (`t1`), a V-bit; an Inside or Outside Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
         );
     }
 
@@ -2093,7 +2535,7 @@ mod tests {
         let mut p = sample_project();
         p.tools[0].step_down_mm = None;
         op_mut(&mut p).step_down_mm = None;
-        let Operation::Profile(mut second) = p.operations[0].clone();
+        let mut second = op_mut(&mut p).clone();
         second.id = OperationId::new("o2");
         p.operations.push(Operation::Profile(second));
         let problems = validate(&p);
@@ -2303,9 +2745,15 @@ mod tests {
         // Disabled.
         let mut off = rough.clone();
         off.enabled = false;
-        let p = with_ops(vec![Operation::Pocket(off), Operation::Pocket(rest.clone())]);
+        let p = with_ops(vec![
+            Operation::Pocket(off),
+            Operation::Pocket(rest.clone()),
+        ]);
         let problems = validate(&p);
-        assert!(problems.contains(&invalid), "a disabled Pocket: {problems:?}");
+        assert!(
+            problems.contains(&invalid),
+            "a disabled Pocket: {problems:?}"
+        );
 
         // A Profile, not a Pocket.
         let mut rest_of_profile = rest.clone();
@@ -2906,7 +3354,13 @@ mod tests {
         for problem in &problems {
             let field = problem.field().unwrap();
             assert!(map.locate(&field).is_some(), "{field} in {text}");
-            kinds.push(format!("{problem:?}").split([' ', '{']).next().unwrap().to_owned());
+            kinds.push(
+                format!("{problem:?}")
+                    .split([' ', '{'])
+                    .next()
+                    .unwrap()
+                    .to_owned(),
+            );
         }
         for expected in [
             "ToolOutOfRange",
@@ -2917,7 +3371,10 @@ mod tests {
             "ReliefNeedsStepDown",
             "OutOfRange",
         ] {
-            assert!(kinds.contains(&expected.to_owned()), "{expected} in {kinds:?}");
+            assert!(
+                kinds.contains(&expected.to_owned()),
+                "{expected} in {kinds:?}"
+            );
         }
     }
 }

@@ -599,8 +599,8 @@ mod tests {
     use dc_geometry::{EPS_MM, Point, Point3, Transform, assert_approx_eq};
     use dc_project::test_support::sample_project;
     use dc_project::{
-        CutDirection, DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, Operation,
-        ProfileOp, Project, Side, Stock, ToolId,
+        CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
+        InstanceId, MachiningOrder, Operation, ProfileOp, Project, Side, Stock, ToolId,
     };
     use std::collections::BTreeMap;
     use std::f64::consts::TAU;
@@ -693,6 +693,10 @@ mod tests {
             through_cut_allowance_mm: 0.0,
             safe_z_mm: 5.0,
             tabs,
+            machining_order: MachiningOrder::FullDepthFirst,
+            entry: Entry::Plunge,
+            lead: None,
+            corner_relief: CornerRelief::None,
         };
         p.operations = vec![Operation::Profile(op.clone())];
         (p, op)
