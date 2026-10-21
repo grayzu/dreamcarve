@@ -37,10 +37,13 @@ use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
 use dc_gcode::{AxisRange, EmitOp, ExportWarning, Program, ProgramSplit, emit_programs};
 use dc_project::{
-    Operation, PostProcessorRef, Project, Severity, SourceMap, ToolChangeMode, Units, validate,
+    Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap,
+    ToolChangeMode, Units, validate,
 };
 
-use crate::cli::{ExportArgs, Failure, StagedFile, commit_all, lookup_post, read_file, today_utc};
+use crate::cli::{
+    ExportArgs, Failure, StagedFile, commit_all, lookup_post, read_file, switch_post, today_utc,
+};
 use crate::config;
 use crate::output::{errln, outln};
 
@@ -289,13 +292,26 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     let (mut project, mut file) = load_project(&args.dcv)?;
     // `--post` is how a project changes post-processor or upgrades to a
     // newer version of its own (#106): an explicit action, reported below.
-    let mut switched_from = None;
+    let mut switched = None;
     if let Some(id) = &args.post {
-        let mut latest = lookup_post(id)?;
-        // The new settings are the definition's defaults with the user's
-        // configured ones on top, as `init` writes them.
-        config::seed_post(&mut latest)?;
-        switched_from = Some(std::mem::replace(&mut project.post_processor, latest));
+        let (new, resets) = if args.reset_settings {
+            // The definition's defaults with the user's configured ones on
+            // top, as `init` writes them.
+            let mut latest = lookup_post(id)?;
+            config::seed_post(&mut latest)?;
+            (latest, None)
+        } else {
+            // #277: the user's settings carry over; the config's
+            // `tool_change_mode` applies only where the mode was reset
+            // (functional spec, capability 27).
+            let (mut new, resets) = switch_post(&project.post_processor, id)?;
+            if resets.iter().any(|r| r.setting == "tool_change_mode") {
+                config::seed_post(&mut new)?;
+            }
+            (new, Some(resets))
+        };
+        let old = std::mem::replace(&mut project.post_processor, new);
+        switched = Some(Switched { old, resets });
         file.post_replaced = true;
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
@@ -340,8 +356,8 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     commit_all(staged_programs.into_iter().chain(staged_project).collect())?;
 
     match (programs.as_slice(), outputs.as_slice()) {
-        ([program], [output]) => report(&project, program, output, args, switched_from.as_ref())?,
-        _ => report_runs(&project, &programs, &outputs, args, switched_from.as_ref())?,
+        ([program], [output]) => report(&project, program, output, args, switched.as_ref())?,
+        _ => report_runs(&project, &programs, &outputs, args, switched.as_ref())?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -397,7 +413,7 @@ fn report(
     program: &Program,
     output: &Path,
     args: &ExportArgs,
-    switched_from: Option<&PostProcessorRef>,
+    switched: Option<&Switched>,
 ) -> Result<(), Failure> {
     outln!(
         "Wrote {} ({} lines, post-processor {}).",
@@ -405,7 +421,7 @@ fn report(
         program.text.lines().count(),
         project.post_processor.id
     )?;
-    report_post_and_operations(project, args, switched_from)?;
+    report_post_and_operations(project, args, switched)?;
     for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
         outln!("{line}")?;
     }
@@ -443,7 +459,7 @@ fn report_runs(
     programs: &[Program],
     outputs: &[PathBuf],
     args: &ExportArgs,
-    switched_from: Option<&PostProcessorRef>,
+    switched: Option<&Switched>,
 ) -> Result<(), Failure> {
     outln!("Wrote {} programs; run them in this order:", programs.len())?;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
@@ -464,7 +480,7 @@ fn report_runs(
     }
     report_tool_length_offset(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
-    report_post_and_operations(project, args, switched_from)?;
+    report_post_and_operations(project, args, switched)?;
     for (program, output) in programs.iter().zip(outputs) {
         outln!(
             "{} ({} lines):",
@@ -479,27 +495,54 @@ fn report_runs(
     Ok(())
 }
 
+/// What `--post` replaced: the old reference, and the settings the switch
+/// reset (`None` with `--reset-settings`, which resets them all).
+pub struct Switched {
+    /// The reference the project had.
+    old: PostProcessorRef,
+    /// The settings the new definition could not use (#277).
+    resets: Option<Vec<SettingReset>>,
+}
+
 /// Prints that `--post` updated the project, from which post-processor
-/// version to which (`grblhal v1 → v2`, #106), then one line per exported
-/// operation.
+/// version to which (`grblhal v1 → v2`, #106), whether it kept the user's
+/// settings, and each one it reset and why (#277); then one line per
+/// exported operation.
 fn report_post_and_operations(
     project: &Project,
     args: &ExportArgs,
-    switched_from: Option<&PostProcessorRef>,
+    switched: Option<&Switched>,
 ) -> Result<(), Failure> {
-    if let Some(old) = switched_from {
+    if let Some(Switched { old, resets }) = switched {
         let new = &project.post_processor;
         let to = if new.id == old.id {
             format!("v{}", new.definition_version)
         } else {
             format!("{} v{}", new.id, new.definition_version)
         };
+        let settings = match resets {
+            Some(_) => "keeping your settings",
+            None => "with its default settings",
+        };
         outln!(
-            "Updated {}: post-processor {} v{} → {to}, with its default settings.",
+            "Updated {}: post-processor {} v{} → {to}, {settings}.",
             args.dcv.display(),
             old.id,
             old.definition_version
         )?;
+        for reset in resets.iter().flatten() {
+            let why = match reset.reason {
+                ResetReason::NoM6 => "has no M6 tool change",
+                ResetReason::NoCannedCycles => "has no canned cycles",
+            };
+            outln!(
+                "  Reset {} {} → {}: post-processor {} {why}.",
+                reset.setting,
+                reset.from,
+                reset.to,
+                new.id
+            )?;
+        }
     }
     for op in project.operations.iter().filter(|op| op.enabled()) {
         let tool = project

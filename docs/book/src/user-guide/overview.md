@@ -98,7 +98,8 @@ default ([Projects with more than one tool](post-processors.md#projects-with-mor
 | Option | Meaning |
 | --- | --- |
 | `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). With one program per tool run, its stem and extension name them: `-o job.nc` writes `job-1-T1.nc`, `job-2-T2.nc`, … |
-| `--post <ID>` | Switch the project to the latest version of this post-processor, with its default settings (and your [configured](configuration.md) ones), save the project with it, then export. With the project's own id, it upgrades to the latest version ([Versions](post-processors.md#versions)). The project is checked against the new post-processor, not the old one. |
+| `--post <ID>` | Switch the project to the latest version of this post-processor, keeping the settings you changed where it can use them, save the project with it, then export. A setting it cannot use is reset and named ([Switching keeps your settings](post-processors.md#switching-keeps-your-settings)). With the project's own id, it upgrades to the latest version and changes nothing else ([Versions](post-processors.md#versions)). The project is checked against the new post-processor, not the old one. |
+| `--reset-settings` | With `--post`: take every setting from the new post-processor's defaults, with your [configured](configuration.md) ones on top, instead of keeping yours. |
 | `--programs-per-tool` | One program per tool run, whatever the project's `tool_change_mode` says. Not saved to the project. |
 | `--one-program` | One program with `T<n> M6` tool changes, whatever the project's `tool_change_mode` says; an error on a post-processor without `M6` (every one but grblHAL). Not saved to the project. Cannot be combined with `--programs-per-tool`. |
 
