@@ -95,7 +95,7 @@ dev-dependencies only.
 | `lib.rs` | The crate's public surface: the four `generate_*` functions, `sequence`, `footprint`, the toolpath and warning types. |
 | `block.rs` | `CutBlock`: one contour, open path, drill point or relief notch at one pass depth, what a generator produces before ordering (D10). |
 | `sequence.rs` | `sequence`: orders blocks by machining order, containment precedence and nearest neighbour, writes the links (stay down or retract), and produces the `Toolpath`. |
-| `order.rs` | `order::check`: the `cut_inside_freed_part` and `tool_change_avoidable` warnings between operations. Never reorders. |
+| `order.rs` | `order::check`: the `cut_inside_freed_part`, `cut_inside_tab_held_part` and `tool_change_avoidable` warnings between operations. Never reorders. |
 | `profile.rs` | `generate_profile` on blocks; the direction rule `traversal_is_ccw`. |
 | `profile/entries.rs` | Each Profile pass's entry, placed in the waste domain, with and without the tab keep-outs. |
 | `profile/waste.rs` | The Profile waste domain: where an entry or lead may go because the material there is cut away anyway. |

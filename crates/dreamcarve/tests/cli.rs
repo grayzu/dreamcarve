@@ -1692,7 +1692,9 @@ fn drill_exports_and_passes_safety() {
     drill.dwell_s = 0.25;
     drill.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
     drill.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
-    project.operations.push(Operation::Drill(drill));
+    // Drilled before the tabbed cut-out, while the stock still holds the
+    // coaster: after it, the hole would be cut in a tab-held part (#269).
+    project.operations.insert(0, Operation::Drill(drill));
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
     let check = run(&dir, &["check", "coaster.dcv"]);
@@ -4600,13 +4602,107 @@ fn check_reports_order_warnings() {
     }
 }
 
+/// #269: the plaque engraves 1 mm deep after its tabbed cut-out, a light
+/// cut on a tab-held part that is normal practice, so `check` gives it no
+/// order warning: its five warnings are the unused tool and the four
+/// drilled holes, as the quick start shows.
+#[test]
+fn plaque_engrave_after_tabbed_cut_out_is_quiet() {
+    let dir = work_dir("plaque_engrave_after_tabbed_cut_out_is_quiet");
+    copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    assert!(
+        !report.contains("cut_inside_tab_held_part"),
+        "the engrave is light: {report}"
+    );
+    assert!(report.contains("0 error(s), 5 warning(s)"), "{report}");
+}
+
+/// #269: the maintainer's two-operation star from before format v9
+/// (`tests/manual/star_with_hole`): op1 cuts the star `outside` through
+/// the stock with `init`'s tabs, then op2 cuts its hole `inside`. The hole
+/// is cut in a star held only by its tabs, so `check` and `export` warn
+/// `cut_inside_tab_held_part` once, naming both operations and both
+/// shapes, and `check` still exits 0. The tabs hold the star, so it is not
+/// `cut_inside_freed_part`. The hole first, or the star and its hole in
+/// `init`'s one operation (#109), is quiet.
+#[test]
+fn check_warns_hole_cut_in_tab_held_star() {
+    let dir = work_dir("check_warns_hole_cut_in_tab_held_star");
+    let dcv = init_star(&dir, STAR_AND_HOLE_SVG);
+    let mut project = load_file(&dcv).project;
+    let one_operation = project.operations.clone();
+    let star = instance_named(&project, "star").id.clone();
+    let hole = instance_named(&project, "hole").id.clone();
+    let mut star_op = as_profile(&project.operations[0]).clone();
+    star_op.name = "Star".into();
+    star_op.targets = vec![star];
+    star_op.side = Side::Outside;
+    assert!(star_op.tabs.is_some(), "init gives the profile tabs");
+    let mut hole_op = star_op.clone();
+    hole_op.id = OperationId::new("op2");
+    hole_op.name = "Hole".into();
+    hole_op.targets = vec![hole];
+    hole_op.side = Side::Inside;
+    hole_op.tabs = None;
+    let order_codes = ["cut_inside_tab_held_part", "cut_inside_freed_part"];
+    let order_lines = |report: &str| -> Vec<String> {
+        warning_lines(report)
+            .into_iter()
+            .filter(|l| warning_code(l).is_some_and(|c| order_codes.contains(&c)))
+            .map(str::to_owned)
+            .collect()
+    };
+
+    project.operations = vec![
+        Operation::Profile(star_op.clone()),
+        Operation::Profile(hole_op.clone()),
+    ];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "star.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "warnings exit 0: {report}");
+    let found = order_lines(&report);
+    assert_eq!(found.len(), 1, "one order warning: {report}");
+    let line = &found[0];
+    assert_eq!(
+        warning_code(line),
+        Some("cut_inside_tab_held_part"),
+        "{line}"
+    );
+    for needle in ["`op1`", "`op2`", "`hole`", "`star`"] {
+        assert!(line.contains(needle), "names {needle}: {line}");
+    }
+    let out = run(&dir, &["export", "star.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(order_lines(&stderr(&out)), found, "export prints it too");
+
+    for (what, operations) in [
+        (
+            "the hole first",
+            vec![Operation::Profile(hole_op), Operation::Profile(star_op)],
+        ),
+        ("one operation", one_operation),
+    ] {
+        project.operations = operations;
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let out = run(&dir, &["check", "star.dcv"]);
+        let report = stdout(&out);
+        assert_eq!(out.status.code(), Some(0), "{what}: {report}");
+        assert!(order_lines(&report).is_empty(), "{what} is quiet: {report}");
+    }
+}
+
 /// Capability 25: every warning `check` and `export` print is
 /// `warning: <code>: <message>`, the code a stable `snake_case` word,
 /// after the file position when the warning is about one value. The
 /// project raises toolpath warnings (an open path, a duplicate, a hole the
 /// bit does not fit, tabs that overlap, cover most of a hole and sit above
-/// the stock top), an order warning, and a validation warning (an unused
-/// tool), and each code is the one the Warnings chapter lists.
+/// the stock top), order warnings (a hole cut after the tabbed op1 and
+/// after the untabbed op2), and a validation warning (an unused tool), and
+/// each code is the one the Warnings chapter lists.
 #[test]
 fn warnings_print_code_and_message() {
     let dir = work_dir("warnings_print_code_and_message");
@@ -4690,6 +4786,7 @@ fn warnings_print_code_and_message() {
             "tabs_cover_most_of_contour",
             "tabs_outside_cut_range",
             "cut_inside_freed_part",
+            "cut_inside_tab_held_part",
             "unused_tool",
         ] {
             assert!(

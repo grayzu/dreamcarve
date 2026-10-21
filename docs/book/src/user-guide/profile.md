@@ -265,7 +265,9 @@ line.
   runs closer than a bit's width beside them stops the operation (see
   [Bands narrower than the bit](#bands-narrower-than-the-bit)). Cut after
   a Profile that freed the part it lies in, it warns
-  `cut_inside_freed_part`.
+  `cut_inside_freed_part`; after one that left that part held only by
+  tabs, `cut_inside_tab_held_part` when it cuts deeper than half the
+  stock.
 
 A 100 mm line cut `on_line` 6 mm deep in 2 mm passes with a 15° ramp and a
 6.35 mm bit: each pass ramps out 19.05 mm along the line and back, then
@@ -388,7 +390,10 @@ Profile of an L-shaped part gets one, in the inside corner of the L.
 Operations run in the order the project lists them, whichever tools they
 use; DreamCarve never reorders them or groups them by tool. `check` warns
 `cut_inside_freed_part` when an operation cuts inside a part an earlier
-Profile without tabs has already cut free, and hints
+Profile without tabs has already cut free, `cut_inside_tab_held_part` when
+it cuts deeper than half the stock inside a part an earlier Profile has
+left held only by its tabs,
+and hints
 `tool_change_avoidable` when one tool's operations are split by another's.
 The program is still written as listed. See [Machining order and
 operation order](machining-order.md#checks-on-the-operation-order).

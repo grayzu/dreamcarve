@@ -26,7 +26,7 @@ tool library (dc-library) ─ tools add ─────────────�
    dc-cam::sequence::sequence(&SequenceInput) ─▶ Toolpath (project coords, mm, Y-up)
                          │
                          ▼
-   dc-cam::order::check(project, toolpaths) ─▶ cut_inside_freed_part, tool_change_avoidable
+   dc-cam::order::check(project, toolpaths) ─▶ cut_inside_freed_part, cut_inside_tab_held_part, tool_change_avoidable
                          │
                          ▼
    dc-gcode::emit_programs(project, ops, split, date) ─▶ arc fitting ─▶ Programs + warnings
@@ -62,7 +62,7 @@ tabs needed two operations in the right order.)
 | `dc-cam::lead` | `src/engine/toolpaths/xyLead.ts` (`planXyLeadIn`, `planXyLeadOut`, `contourArrivals` corner scoring, `validateLead`, radius and sweep ladders), `xyLead.test.ts`, `xyLeadEdge.test.ts` | The user sets the radius (VCarve); the ladder shrinks from it. Sweep ladder kept. Overcut is DreamCarve's (VCarve). Feed is the cut feed, not the plunge-scaled feed, because the descent is finished before the lead. |
 | `dc-cam::relief` | `src/engine/toolpaths/cornerRelief.ts` (`collectReliefCorners`, `reliefExcursionEnd`, `generateCornerReliefPass`, `chooseTBoneEdge`, `mainPathCutsAt`), `cornerRelief.test.ts` | `t_bone` goes on the longer edge (VCarve placement); `longest_edge` variant dropped. Keep-outs dropped. |
 | `dc-cam::sequence` | `src/engine/toolpaths/multiFeature.ts` (`perFeatureOperations`, `mergeToolpathResults` nearest), `geometry.ts` (`greedyNearestNeighbor`), `pocket.ts` (`transitionToCutEntry`, `transitionLinksAtDepth`) | New module per D10. Blocks, containment precedence, nearest neighbour, links. `maxLinkDistance = tool diameter` for stay-down links inside cleared material. |
-| `dc-cam::order` | `src/engine/operations/camPlan/createCamPlan.ts` (outside-last as a planning rule) | DreamCarve warns instead of planning: `cut_inside_freed_part`, `tool_change_avoidable`. |
+| `dc-cam::order` | `src/engine/operations/camPlan/createCamPlan.ts` (outside-last as a planning rule) | DreamCarve warns instead of planning: `cut_inside_freed_part`, `cut_inside_tab_held_part` (#269), `tool_change_avoidable`. |
 | `dc-gcode::arcfit` | `src/engine/gcode/arcFitting.ts` (`fitArcsInMachineMoves`, `splitArc`, `resolveEmittedArc`, `runSurvivesFormatting`, `applyEmittedArcFallback`), `arcReconstruction.ts` (`findArcRunsInPoints`, Kasa fit, endpoint projection, gates), `arcFitting.test.ts` | Runs in project space before the machine transform (no mirror, so handedness is preserved). Tolerance from the project. S12 gates added to the safety pass. |
 | `dc-gcode::emit` canned cycles | `src/engine/gcode/postprocessor.ts` lines 301–430 | One cycle word per Drill operation; mixed cycles expand. `G4` dwell on expansion. Safety pass expands cycles (S11). |
 | `dc-project/src/definitions/{linuxcnc,mach3,uccnc,generic}/v1.json` | `src/engine/gcode/definitions/*.json` | Data start point only. Every line re-verified against the controller's documentation or source; `G43 H` and `M6` lines removed; `G40 G49 G80` kept where the controller documents them; see "Post-processor definitions". |
@@ -308,7 +308,7 @@ pub enum CannedKind { G81, G82, G83, G73, Expanded }
 pub fn footprint(toolpath: &Toolpath, radius_mm: f64) -> Vec<Region>;   // swept area of cutting moves (S9, coverage tests)
 
 pub mod order {
-    pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning>;  // cut_inside_freed_part, tool_change_avoidable
+    pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning>;  // cut_inside_freed_part, cut_inside_tab_held_part, tool_change_avoidable
 }
 ```
 
@@ -340,6 +340,7 @@ depth_mm)` (once per operation: every hole has the same depth),
 `DrillRetractBelowStockTop (op, requested_mm, used_mm)` (a negative
 `retract_mm` is raised to the stock top), `EngravePathDegenerate (op,
 instance, profile)`, `CutInsideFreedPart (op, earlier_op, instance)`,
+`CutInsideTabHeldPart (op, earlier_op, instance, held)` (#269),
 `ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of,
 tool)`. All phase 1 codes stay. (changed in slices 4, 7 and 9, #137,
 #138, #147: params as built.)
@@ -1466,6 +1467,30 @@ An open path frees nothing. (changed in #206: O8 read closed targets
 only, so an Engrave or an On line Profile of a line inside a freed part
 ran in the loose part with no warning.)
 
+The outlines a tabbed Profile through the stock cuts with tabs are held
+only by them (`profile::cut_outlines`, `Hold::Tabs`). Every target of
+`j`, closed or open, that lies inside one of them by the same rule
+yields, when `j` cuts deep, `CutInsideTabHeldPart (op: j, earlier_op: i,
+instance, held)`. `j` cuts deep when its `depth_mm` is more than half the
+stock thickness (plus `EPS_MM`), which takes in every cut that reaches
+the stock bottom, through-cut allowance and all; with either value unset
+it does not (validation reports them). A lighter cut, such as the
+plaque's 1 mm Engrave after its tabbed cut-out, is normal practice and
+quiet. `held` is
+the innermost such outline (the smallest by area: outlines round
+one target are nested). It comes in the same order as
+`CutInsideFreedPart` and is skipped for a pair `(target, i)` that already
+warns `CutInsideFreedPart`, since a loose slug inside a tabbed part is
+the worse news. The message says to move `j` before `i`, or, for a hole,
+to cut it in `i` with its part ("Tabs per outline"). `CutInsideFreedPart`
+is unchanged. (changed in #269: a tab-held part was treated as safely
+held, so the two-operation star of `tests/manual/star_with_hole`, part
+with tabs first, then its hole, cut the hole in a part held by four
+small bridges with no warning; projects migrated from v8 keep such
+pairs. Then narrowed in #269 review to deep cuts, so a light cut on a
+tab-held part, which is normal practice, does not train users to ignore
+the warning.)
+
 ### Arc fitting (dc-gcode::arcfit)
 
 Ported from `arcFitting.ts`. Runs in `emit` after the toolpath is in
@@ -1953,6 +1978,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `tabs::holes_get_no_tabs_by_default`, `tabs::on_holes_opt_in_keeps_hole_tabs`, `tabs::too_short_outline_gets_fewer_tabs_and_warns`, `tabs::short_part_outline_keeps_at_least_one_tab`.
 - `profile::star_and_its_hole_cut_in_one_operation` (the manual `tests/manual/star_with_hole` case, redrawn).
 - `order::tabbed_profile_frees_the_outlines_it_leaves_untabbed`.
+- `order::cut_inside_tab_held_part_warns`, `order::deep_cut_inside_tab_held_part_warns`, `order::shallow_engrave_inside_tab_held_part_is_quiet`, `order::inside_first_is_quiet`, `order::one_operation_part_and_hole_is_quiet`, `order::tab_held_warning_names_the_innermost_outline`, `cli::check_warns_hole_cut_in_tab_held_star`, `cli::plaque_engrave_after_tabbed_cut_out_is_quiet` (#269).
 - `migrate::version_8_fixture_loads`, `migrate::v8_tabs_keep_their_holes_tabbed`, `migrate::v8_with_on_holes_already_present_fails`.
 
 **dc-cam — pocket**
