@@ -198,7 +198,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// An On line Profile also cuts open paths (#175, as VCarve's Profile
 /// "On" an open vector): each pass runs the path from its first vertex to
-/// its last (climb) or from its last to its first (conventional), with
+/// its last (conventional) or from its last to its first (climb, #242), with
 /// the ramp along it and its tabs placed from its first vertex as drawn,
 /// then retracts; it has no lead, no relief and frees nothing. Inside and
 /// Outside skip open paths ([`WarningCode::OpenPathSkipped`]), as they
@@ -385,11 +385,12 @@ pub fn generate_profile(
         &open_paths,
         project.flatten_tolerance_mm,
     )?;
-    // #175: an open path is cut On line as drawn, from its first vertex
-    // under climb and from its last under conventional (VCarve's rule:
-    // the direction picks the end). It bounds no region, so no
+    // #175: an open path is cut On line as drawn. #242: from its first
+    // vertex under conventional and from its last under climb, as VCarve
+    // ("Conventional starts cutting at the Start point Climb cutting
+    // starts cutting at the end point"). It bounds no region, so no
     // containment and no waste domain; its wall is never asked.
-    let reversed_open = op.direction == CutDirection::Conventional;
+    let reversed_open = op.direction == CutDirection::Climb;
     for (shape, path) in &open_paths {
         let path = if reversed_open {
             path.reversed()
@@ -2758,12 +2759,16 @@ mod tests {
 
     /// #175: an On line Profile cuts an open path, as VCarve's Profile
     /// "On" cuts an open vector. Each pass runs the line from its first
-    /// vertex to its last at the pass Z, then the tool retracts and comes
-    /// back to the first vertex for the next.
+    /// vertex to its last at the pass Z (conventional), then the tool
+    /// retracts and comes back to the first vertex for the next. (changed
+    /// in #242: climb ran first to last; VCarve starts conventional there.)
     #[test]
     fn on_line_cuts_an_open_path() {
         let p = line_project();
-        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, CutDirection::Climb));
+        let (tp, warnings) = generate(
+            &p,
+            &profile_op(&p, Side::OnLine, CutDirection::Conventional),
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
         let laps = laps(&tp);
         assert_eq!(laps.len(), PASS_Z_MM.len(), "{laps:?}");
@@ -2800,24 +2805,73 @@ mod tests {
         assert_eq!(laps(&tp).len(), PASS_Z_MM.len(), "only the rect is cut");
     }
 
-    /// #175: the direction picks the end an open path's cut starts at, as
-    /// VCarve's does: climb from its first vertex, conventional from its
-    /// last.
-    #[test]
-    fn open_path_direction_picks_the_end_it_starts_at() {
+    /// The direction picks the end an open path's cut starts at, as
+    /// VCarve's does ("Conventional starts cutting at the Start point
+    /// Climb cutting starts cutting at the end point"). Checks that every
+    /// pass of the line, cut `direction`, descends at `start` (the line's
+    /// X there), runs straight to `end` and ends there.
+    fn assert_open_line_runs(direction: CutDirection, start: f64, end: f64) {
         let p = line_project();
-        for (direction, start, end) in [
-            (CutDirection::Climb, 20.0, 120.0),
-            (CutDirection::Conventional, 120.0, 20.0),
-        ] {
-            let (tp, _) = generate(&p, &profile_op(&p, Side::OnLine, direction));
-            let laps = laps(&tp);
-            assert_eq!(laps.len(), PASS_Z_MM.len(), "{direction:?}");
-            for lap in laps {
-                assert_approx_eq!(lap.points[0].x, start, TOL);
-                assert_approx_eq!(lap.points[lap.points.len() - 1].x, end, TOL);
-            }
+        let (tp, warnings) = generate(&p, &profile_op(&p, Side::OnLine, direction));
+        assert!(warnings.is_empty(), "{direction:?}: {warnings:?}");
+        let laps = laps(&tp);
+        assert_eq!(laps.len(), PASS_Z_MM.len(), "{direction:?}: {laps:?}");
+        for (lap, z) in laps.iter().zip(PASS_Z_MM) {
+            assert_approx_eq!(lap.z_mm, z, TOL);
+            assert!(lap.points[0].distance_to(Point::new(start, 20.0)) <= TOL);
+            let last = lap.points[lap.points.len() - 1];
+            assert!(last.distance_to(Point::new(end, 20.0)) <= TOL, "{last:?}");
         }
+        let toward = (end - start).signum();
+        for (from, mv) in xy_cuts(&tp) {
+            assert!((mv.to.x - from.x) * toward > 0.0, "{direction:?}: {mv:?}");
+        }
+        let plunges = plunges_below_top(&tp);
+        assert!(!plunges.is_empty());
+        for (from, _) in plunges {
+            assert!(from.xy().distance_to(Point::new(start, 20.0)) <= TOL);
+        }
+    }
+
+    /// #242: conventional cuts an open path from its first vertex to its
+    /// last, as VCarve's "Conventional starts cutting at the Start point".
+    /// (Replaces #175's `open_path_direction_picks_the_end_it_starts_at`,
+    /// which pinned the opposite ends.)
+    #[test]
+    fn open_on_line_conventional_starts_at_first_vertex() {
+        assert_open_line_runs(CutDirection::Conventional, 20.0, 120.0);
+    }
+
+    /// #242: climb cuts an open path from its last vertex to its first,
+    /// as VCarve's "Climb cutting starts cutting at the end point". A tab
+    /// at a distance stays at the same XY whichever end the cut starts at.
+    #[test]
+    fn open_on_line_climb_starts_at_last_vertex() {
+        assert_open_line_runs(CutDirection::Climb, 120.0, 20.0);
+        let p = line_project();
+        let held_xs = |direction| {
+            let mut op = profile_op(&p, Side::OnLine, direction);
+            op.tabs = Some(tab_at(30.0, TabShape::Rect));
+            let (tp, _) = generate(&p, &op);
+            let mut xs: Vec<f64> = held_at_tab_top(&tp)
+                .0
+                .into_iter()
+                .flat_map(|(a, b)| [a.x.min(b.x), a.x.max(b.x)])
+                .collect();
+            xs.sort_by(f64::total_cmp);
+            xs
+        };
+        let (climb, conventional) = (
+            held_xs(CutDirection::Climb),
+            held_xs(CutDirection::Conventional),
+        );
+        assert!(!climb.is_empty());
+        assert_eq!(climb.len(), conventional.len());
+        for (a, b) in climb.iter().zip(&conventional) {
+            assert_approx_eq!(*a, *b, TOL);
+        }
+        assert_approx_eq!(climb[0], 50.0 - TAB_SPAN_MM / 2.0, TOL);
+        assert_approx_eq!(climb[climb.len() - 1], 50.0 + TAB_SPAN_MM / 2.0, TOL);
     }
 
     /// Acceptance 26 (#175): an On line Profile of a 100 mm line ramps
@@ -2827,11 +2881,12 @@ mod tests {
     /// pass's Z, before it ramps. At 5° a leg falls 1.67 mm, less than
     /// every pass's descent, so each turns back. (changed in #214: at 15°
     /// the first pass, from safe Z, turned back; from 1 mm above the stock
-    /// one leg reaches it.)
+    /// one leg reaches it. changed in #242: cut climb, which now starts at
+    /// the last vertex; conventional starts at the first, as VCarve.)
     #[test]
     fn on_line_open_path_ramps_back_and_forth_along_the_line() {
         let p = line_project();
-        let mut op = profile_op(&p, Side::OnLine, CutDirection::Climb);
+        let mut op = profile_op(&p, Side::OnLine, CutDirection::Conventional);
         op.entry = Entry::Ramp { angle_deg: 5.0 };
         let (tp, warnings) = generate(&p, &op);
         assert!(warnings.is_empty(), "{warnings:?}");
