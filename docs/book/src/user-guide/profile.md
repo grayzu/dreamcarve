@@ -51,7 +51,7 @@ This is the Profile `init` writes, with `depth_mm` and
 | `direction` | `"climb"` or `"conventional"`. See [Direction](#direction). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. 0 by default. See [Cutting through](#cutting-through). |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
-| `tabs` | Tabs that hold the part to the stock, or `null` for none. See [Tabs](tabs.md). |
+| `tabs` | A tab request: tabs to place on every outline this Profile cuts, or `null` for none. The project's placed tabs, in its own `tabs` list, hold the part whatever this says: every enabled Profile that cuts a tab's outline rises over it. See [Tabs](tabs.md). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](#machining-order). |
 | `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
 | `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
@@ -77,8 +77,8 @@ edges of the ring keep the size you drew.
 
 This is decided among one operation's targets only. A hole cut by an
 operation of its own is a part to that operation, so cut it `"inside"`.
-Holes get no tabs unless you ask for them, so one operation can cut a
-part and its holes: see [Tabs](tabs.md#parts-with-holes).
+`tabs place` puts no tabs on holes unless you ask for them, so one
+operation can cut a part and its holes: see [Tabs](tabs.md#parts-with-holes).
 
 A 100 × 50 mm rectangle cut outside with a 6.35 mm bit gives a tool path
 106.35 × 56.35 mm across its centre line; cut inside, 93.65 × 43.65 mm.
@@ -253,7 +253,8 @@ line.
   three bit diameters. A later pass first comes straight down the slot
   the pass above cut, at the plunge rate, to that pass's depth, then
   ramps from there.
-- [Tabs](tabs.md) are placed by distance from the path's first vertex as
+- [Tabs](tabs.md) placed at distances (`tabs place --at`, or a
+  request's `at_distances`) are measured from the path's first vertex as
   you drew it, whichever end the cut starts at, and stop at the path's
   ends. A tab over the start of the cut makes the bit plunge there with
   `entry_fallback`: an open path's start cannot move.
@@ -442,7 +443,7 @@ These still give a safe program. `check` and `export` print each one as
 | "... is an open path" | An Inside or Outside target is not a closed outline; it is not cut. See [Open paths](#open-paths). |
 | "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
 | "... is the same outline in the same place as ..." | Two shapes are the same outline, or the same open path in either direction, in the same place; the second is not cut. |
-| "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
+| "tabs on ...", "the tab top is ...", "tab ... is on ..." | See [Tabs](tabs.md#warnings). |
 | "there is no room for a `helix` entry ...", "the helix entry in ... is ... smaller than ..." | See [Entry](#entry), "When it does not fit". |
 | "the lead arc on ... is ... smaller than ...", "there is no room for a lead-in arc ..." | See [Leads](#leads). |
 | "the tool paths of ... and ... cut into each other" | Two shapes are closer than the bit needs to cut between them, so cutting one gouges the other. See below. |

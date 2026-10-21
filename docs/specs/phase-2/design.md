@@ -76,16 +76,32 @@ header.
 
 ## Data model
 
-### dc-project (format version 9)
+### dc-project (format version 11)
 
 ```rust
-pub const CURRENT_VERSION: u32 = 9;   // #106 took 7 (slice 2, #117); #109 took 9
+pub const CURRENT_VERSION: u32 = 11;  // #106 took 7 (slice 2, #117); #109 took 9; #105 took 11
 
 pub struct Project {
     // phase 1 fields unchanged, plus:
     /// Fit arcs to straight runs at export within this deviation. `None`
     /// turns fitting off. `init` writes 0.01.
     pub arc_fit_tolerance_mm: Option<f64>,
+    /// The project's placed tabs (version 11, #105, ADR-0005), saved after
+    /// `operations`. `init`: empty; migration: empty.
+    pub tabs: Vec<PlacedTab>,
+}
+
+/// A tab placed on one outline of one instance (#105). Every enabled
+/// Profile that cuts that outline rises over it ("Placed tabs").
+pub struct PlacedTab {
+    pub id: TabId,               // "tab<n>"; unique in the project
+    pub instance: InstanceId,    // the instance whose outline holds it
+    pub profile: usize,          // index into the instance's definition's profiles
+    pub x_mm: f64,               // the tab's point in definition space (Y-up):
+    pub y_mm: f64,               //   on the outline, or on the tool path it was placed for
+    pub width_mm: f64,           // along the outline; > 0
+    pub height_mm: f64,          // tab top above the stock bottom; > 0
+    pub shape: TabShape,         // "rect" | "smooth"
 }
 
 pub struct Tool {
@@ -125,6 +141,9 @@ pub struct Lead {
 
 pub enum CornerRelief { None, Dogbone, TBone }       // "none" | "dogbone" | "t_bone"
 
+/// From version 11 a *tab request*: tabs to place on every outline the
+/// Profile cuts ("Placed tabs"). Generation places it before cutting;
+/// `dreamcarve tabs` commands place it on save and set it to `None`.
 pub struct TabSpec {
     // phase 1 fields unchanged, plus (version 9, #109):
     /// Holes get tabs too: the outlines nested as holes among the
@@ -133,7 +152,8 @@ pub struct TabSpec {
 }
 
 pub struct ProfileOp {
-    // phase 1 fields unchanged, plus:
+    // phase 1 fields unchanged (`tabs: Option<TabSpec>` is now the
+    // request; `init` still writes one: 4 rect tabs, 8 × 3 mm), plus:
     pub machining_order: MachiningOrder,  // migration: full_depth_first
     pub entry: Entry,                     // migration: plunge; init: ramp 15°
     pub lead: Option<Lead>,               // migration: null
@@ -228,6 +248,29 @@ hole's slug is waste, and holding it is extra hand work. (changed in
 hole too small for tabs took two operations, and in the wrong order the
 hole was cut in a loose part.)
 
+**Migration v10 → v11** (`migrate::v10_to_v11`, #105, ADR-0005): add
+`"tabs": []` right after `operations`, and change nothing else. A
+Profile's `tabs` stays as a tab request: placing it needs the Profile's
+tool paths, which only `dc-cam` builds, and a migration step rewrites
+JSON only. Generation places a request with the rules `tabs place`
+uses, so an upgraded file cuts byte-identically with no step by the
+user; the next `dreamcarve tabs` command that saves the file places the
+requests of its enabled Profiles ("Placed tabs"). The migration fails if
+`tabs` is already there. The fixtures
+`crates/dc-project/tests/fixtures/dcv/{v10, v11}/` load as the sample
+project (`migrate::version_10_fixture_loads`,
+`migrate::v10_project_gains_an_empty_tab_list`,
+`migrate::v10_with_tabs_already_present_fails`). Byte identity is
+checked end to end on a corpus: the projects of
+`crates/dreamcarve/tests/fixtures/tabs-migration/` (13 made for it, plus
+`plaque.dcv`, `plaque-svg.dcv` and a version 6 grblHAL file), every
+golden case with tabs, and the coaster `init` writes each export the
+same G-code as before #105, both as loaded and after `tabs place` has
+saved their tabs as placed tabs (`cli::version_9_tab_settings_export_byte_identical_programs`,
+the golden harness). One change is intended: once placed, two Profiles
+that cut one outline both rise over the tabs of both. (changed in #105:
+tabs were an operation setting.)
+
 `DwellUnits` and `reentry_gap_mm` are definition fields, and every
 definition field is required, so the bundled `v1.json` files were edited
 in place and re-pinned; their emitted bytes do not change
@@ -255,7 +298,11 @@ without an `M6` line (phase 1). Warnings: a Drill whose tool is not
 or Profile with `corner_relief` on a tool whose step-down is unset
 (`Problem::ReliefNeedsStepDown`, the relief pass is skipped); an Engrave
 with a Side-less V-bit deeper than the bit's cone height
-(`Problem::EngraveDeeperThanCone`).
+(`Problem::EngraveDeeperThanCone`). Placed tabs (#105), as errors: two
+tabs with one id (`Problem::DuplicateTabId`), a tab on an instance that
+does not exist (`TabDanglingInstance`) or on a profile its definition
+does not have (`TabProfileMissing`), a tab point beyond the coordinate
+limit, and a `width_mm` or `height_mm` that is not more than 0.
 
 ### dc-cam
 
@@ -310,6 +357,22 @@ pub fn footprint(toolpath: &Toolpath, radius_mm: f64) -> Vec<Region>;   // swept
 pub mod order {
     pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning>;  // cut_inside_freed_part, cut_inside_tab_held_part, tool_change_avoidable
 }
+
+pub mod placed_tabs {   // #105, "Placed tabs"
+    pub struct Placement { pub tabs: Vec<PlacedTab>, pub warnings: Vec<Warning> }
+    pub struct TabSize { pub width_mm: f64, pub height_mm: f64, pub shape: TabShape }
+    /// A request's layout on the tool paths of Profile `op`, as placed tabs.
+    pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Placement, CamError>;
+    /// A tab at each distance along every outline `op` cuts (`tabs place --at`).
+    pub fn place_on_outlines(project: &Project, op: &OperationId, at_mm: &[f64], size: TabSize, on_holes: bool) -> Result<Placement, CamError>;
+    /// Every enabled Profile's request placed and cleared, as `dreamcarve` saves.
+    pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamError>;
+    pub fn crossed_by(project: &Project, op: &ProfileOp) -> Result<Vec<TabId>, CamError>;
+    pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning>;  // tab_not_crossed
+    pub fn tab_point(project: &Project, tab: &PlacedTab) -> Option<Point>;   // project space
+}
+// CamError::UnknownOperation { op }, CamError::TabsNeedProfile { op, kind },
+// CamError::InvalidTab { op, field, value_mm }                    (#105)
 ```
 
 (changed in slice 1, #127: `CutBlock::descent_from`,
@@ -343,7 +406,9 @@ depth_mm)` (once per operation: every hole has the same depth),
 instance, profile)`, `CutInsideFreedPart (op, earlier_op, instance)`,
 `CutInsideTabHeldPart (op, earlier_op, instance, held)` (#269),
 `ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of,
-tool)`. All phase 1 codes stay. (changed in slices 4, 7 and 9, #137,
+tool)`, `TabOnHole (op, tab, instance, instance_name, profile)` and
+`TabNotCrossed (tab, instance, instance_name, profile)` (#105; the second
+names no operation). All phase 1 codes stay. (changed in slices 4, 7 and 9, #137,
 #138, #147: params as built.)
 
 ### dc-gcode
@@ -1058,8 +1123,11 @@ Slice 11 (#180) decisions:
 
 ### Tabs per outline (dc-cam::tabs)
 
-Tabs stay an operation setting (`TabSpec`; placed tabs are #105, with the
-GUI), but each tool-centre path gets its own layout, `Tabs::fit`:
+A tab request (`TabSpec`) gets its own layout on each tool-centre path,
+`Tabs::fit`. (changed in #105: tabs were an operation setting, and placed
+tabs waited for the GUI. These rules now lay out a request, whether
+generation places it before cutting or `tabs place --count` writes it as
+placed tabs; placed tabs are cut as placed, "Placed tabs" below.)
 
 1. A path cut for a hole (`Role::Hole`: nested as a hole among the
    operation's targets, at any depth) gets no tabs unless `on_holes`.
@@ -1083,15 +1151,128 @@ GUI), but each tool-centre path gets its own layout, `Tabs::fit`:
    left a part that asked for tabs loose on the through cut.)
 3. `order::check` counts an outline a tabbed Profile through the stock
    cuts with no tab (its holes, or a hole too short for a tab) as freed
-   (`profile::untabbed_outlines`).
+   (`profile::cut_outlines`, `Hold::Free`). A tab is a request's or a
+   placed tab the Profile crosses. (changed in #105: placed tabs count.)
 
 PureCutCNC sizes auto-tabs per feature (`autoTabs.ts`, a 15 % free-path
-rule) as a command that writes placed tabs; that port waits for #105.
-VCarve applies tabs per vector and lets the user leave vectors out, which
-`on_holes` approximates without placed tabs. (changed in #109: one tab
+rule) as a command that writes placed tabs; with #105 that port can write
+`Project::tabs` and needs no format change. VCarve applies tabs per
+vector and lets the user leave vectors out, which `on_holes`
+approximates and placed tabs now do outright. (changed in #109: one tab
 setting applied to every outline, holes included, and a too-short
 outline kept tabs covering most of it, warned but cut as set; a star and
 its 7 mm hole took two operations.)
+
+### Placed tabs (dc-cam::placed_tabs)
+
+A tab is a project object (#105, ADR-0005), not an operation setting.
+The ADR records the decisions; this section is the algorithm.
+
+**Representation.** `PlacedTab` names an instance, one profile of its
+definition, and a point (`x_mm`, `y_mm`) in definition space, with its
+own `width_mm`, `height_mm` and `shape`. In definition space, the tab
+follows its instance through every transform (move, rotate, mirror,
+scale). It is a point, not a distance along the outline: an Outside
+path turns round each convex corner on an arc of radius `r`, and every
+point of that arc is nearest the corner itself, so a distance along the
+outline cannot say where on the arc a request's tab was; in the
+tabs-migration corpus 3 of 13 projects had such a tab. A point keeps
+every position a tool path can have. A tab placed on the outline
+(`--at`, later the GUI) is the outline's point; a tab placed from a
+request is the request's centre on that Profile's tool path, `r` off the
+outline for Inside and Outside.
+
+**Forward mapping.** For each enabled Profile and each of its tool paths
+of the tab's outline (same instance and profile), the tab goes on the
+path nearest it, centred at the path's point nearest the tab's point in
+project space (`dc_geometry::nearest_point`, which reports the point,
+its distance along the path from the first vertex, and the gap). Ties go
+to the earlier segment, except that an arc centred on the point (within
+`EPS_MM`) gives its middle, and the segment ends beside it tie with that
+middle: a tab placed at a convex corner of the outline comes back at the
+middle of the path's corner arc, not at one end of it. The tab's foot is
+the outline's point nearest the tab (`placed_tabs::outline_foot`; a tab
+on the outline is its own foot).
+
+**Crossing.** A Profile crosses a tab when that nearest path point lies
+within `r + w/2` of the foot (`w` the tab width): closer, the cutter
+would cut into the tab. A path farther off, such as an Outside path past
+a narrow notch the tool cannot reach into, does not cross it.
+`crossed_by` lists the tabs a Profile crosses; only the tab's own
+outline counts, so a neighbouring part's path, a Pocket or an Engrave
+over the spot never rises.
+
+**Spans.** Each crossed tab gives a span of `w + d` along the path
+centred at its path point, with its own top and shape, the phase 1 rect
+lift and the phase 2 smooth bridge (ramps of `w/2`, held for `d`, the
+plunge-rate feed limit of #157). A pass rises over a tab only when it is
+below that tab's top (`tabs.rs`, per-tab spans). Spans that touch or
+overlap merge as before: the merged span takes the highest top and is
+smooth only if every tab in it is, and the path warns `TabsOverlap`.
+A request's tabs and the placed tabs on one path are laid together.
+
+**Cut as placed.** Placed tabs are never reduced. When the spans on a
+path cover more than half of it, `TabsCoverMostOfContour` warns with the
+"All of them are cut, as placed" wording, and every tab is cut; only a
+request is reduced (#109's rules). A placed tab on an outline the
+Profile cuts as a hole (`Role::Hole`) is cut too, because the user
+placed it, and warns `TabOnHole (op, tab, shape)`: the slug is usually
+waste and holding it is work by hand.
+
+**Not crossed.** `placed_tabs::check(project, generated)` gives one
+`TabNotCrossed (tab, shape)` for each tab no enabled, generated Profile
+crosses: its outline is cut by no enabled Profile (only by a Pocket, by
+a disabled Profile, or not at all), or every path runs too far from it.
+It is project-level, so it names no operation. `check` and `export` run
+it after `order::check` and print its warnings with the others.
+
+**Placing from a request** (`place`). The request is laid on the
+Profile's tool paths exactly as #109 lays it ("Tabs per outline",
+`count` from `L/(2n)`, `at_distances` modulo `L`, holes none unless
+`on_holes`, the coverage reduction with at least one on a part), on the
+path before it is re-seamed for a lead or an entry (#176), so the
+positions are those the request cut. Each centre `q` on the path, in project space,
+is taken to definition space by the inverse of the instance's transform
+(`Transform::inverse`; a singular transform places nothing). The round
+trip is exact: the forward mapping's nearest path point of `q` is `q`
+itself, so a placed request cuts byte-identically to the request,
+including a tab on a corner arc. An open path's centre is measured from
+its first vertex as drawn, whichever end the cut starts at.
+
+**Placing on the outline** (`place_on_outlines`, `tabs place --at`). One
+tab at each distance along each outline the Profile cuts, measured in
+definition space from the outline's first vertex as drawn; a closed
+outline takes the distance modulo its length, an open one clamps it to
+its ends. Holes are skipped unless `on_holes`. The point stored is the
+outline's point there. These tabs are cut as placed; placing them warns
+`TabsOverlap` and `TabsCoverMostOfContour` as generation would.
+
+**Ids and copies.** New tabs take `tab<n>` from one more than the
+largest `tab<n>` in the project, so a removed id is not reused. A tab
+equal to one the project already has, or to one placed in the same
+call (same instance, profile and shape, point, width and height within
+`EPS_MM`), is not added, so placing the same tabs twice adds none.
+
+**Requests.** Generation places any request still present before it
+cuts (`profile::plan_tabs`), so a file with requests, of any version,
+cuts as before with no step by the user. Every `dreamcarve tabs`
+command that saves the project first runs `place_requests`: the request
+of every enabled Profile is placed and set to `None`, so the saved file
+holds placed tabs only. A disabled Profile keeps its request, which
+would otherwise be placed for a cut that does not run; `tabs place
+<dcv> <op>` with neither `--count` nor `--at` places it by name. `tabs
+list` places requests in memory only and says so. `export`, `check`,
+`export --post` and `tools add` leave requests as they are. `init`
+writes its Profile's request, as phase 2 did, and an empty `tabs`: its
+one Profile targets every closed shape, so tabs placed at init would be
+left on shapes the user later cuts with other operations.
+
+(changed in #105: tabs were an operation setting. Changing a Profile's
+tool or side moved every tab, and two Profiles that cut one outline each
+rose over their own tabs only; once placed, both rise over the tabs of
+both. PureCutCNC's tabs are project-level objects too, but each is a
+rectangle in the world that any path crossing it lifts over; here a tab
+names its outline.)
 
 ### Profile bands (dc-cam::profile)
 
@@ -1478,8 +1659,11 @@ Profile with no tabs and a cutting move of its toolpath reaches Z ≤ 0
 Outside and On line free the part, and Inside frees the slug of its
 hole. A tabbed Profile frees only the outlines it cuts with no tab: its
 holes unless `on_holes`, and holes too short for one ("Tabs per
-outline"; a part always keeps one); the tabs hold the rest. (changed in #109: a tabbed Profile
-freed nothing, because every outline had tabs.)
+outline"; a part always keeps one), and any outline on which it crosses
+no placed tab ("Placed tabs"); the tabs hold the rest. (changed in #109: a tabbed Profile
+freed nothing, because every outline had tabs.) (changed in #105: a tab
+is a request's or a placed tab the Profile crosses, so a Profile with no
+request is tabbed on the outlines that carry placed tabs.)
 Every closed target of `j` nested in one of `i`'s freed outlines, or the
 same outline, by `dc_geometry::nest` on the true curves, yields
 `CutInsideFreedPart (op: j, earlier_op: i, instance)`. Crossing shapes
@@ -1503,8 +1687,9 @@ An open path frees nothing. (changed in #206: O8 read closed targets
 only, so an Engrave or an On line Profile of a line inside a freed part
 ran in the loose part with no warning.)
 
-The outlines a tabbed Profile through the stock cuts with tabs are held
-only by them (`profile::cut_outlines`, `Hold::Tabs`). Every target of
+The outlines a tabbed Profile through the stock cuts with tabs, a
+request's or placed tabs it crosses, are held only by them
+(`profile::cut_outlines`, `Hold::Tabs`). Every target of
 `j`, closed or open, that lies inside one of them by the same rule
 yields, when `j` cuts deep, `CutInsideTabHeldPart (op: j, earlier_op: i,
 instance, held)`. `j` cuts deep when its `depth_mm` is more than half the
@@ -1955,6 +2140,9 @@ dreamcarve export <dcv> [-o] [--post <id>] [--one-program | --programs-per-tool]
 dreamcarve check <dcv>
 dreamcarve posts
 dreamcarve tools {list|add|import|export|remove} ...
+dreamcarve tabs place <dcv> <op> [--count <n> | --at <mm>,...] [--width <mm>] [--height <mm>] [--shape rect|smooth] [--on-holes]
+dreamcarve tabs list <dcv>
+dreamcarve tabs clear <dcv> [<op> | --tab <id>...]
 dreamcarve config path
 ```
 
@@ -1962,23 +2150,48 @@ dreamcarve config path
 `tool_change_mode` into the post-processor, and one Profile as in phase 1.
 It does not write Pocket, Drill or Engrave operations: the user adds them,
 following the chapters, which each carry a complete JSON block to paste.
-`export` and `check` run `order::check` after generation and print its
-warnings with the others. `export` prints, per program, the operations in
+`export` and `check` run `order::check` after generation, then
+`placed_tabs::check` (#105), and print their warnings with the others.
+
+`tabs` (#105, `crates/dreamcarve/src/tabs.rs`; "Placed tabs"):
+
+- `tabs place <dcv> <op> --count N`: `placed_tabs::place` with a
+  `TabSpec` of `count` N and the flags (width 8, height 3, `rect`, no
+  holes by default: `init`'s). `--at d1,d2,…`: `place_on_outlines`.
+  Neither: the operation's own request, set to `null` (a usage error,
+  exit 2, when it has none). Prints `Placed `tab5` on `coaster`
+  (instance `i1`, profile 0) 35.343 mm along it: 8 mm wide, top 3 mm
+  above the stock bottom, rect` per new tab, then `N tab(s) placed;
+  coaster.dcv saved with M tab(s).`, and the placing warnings on stderr.
+- `tabs list <dcv>`: a table `ID INSTANCE PROFILE AT_MM X_MM Y_MM
+  WIDTH_MM HEIGHT_MM SHAPE CUT_BY`, `AT_MM` the distance of the tab's
+  foot along its outline from the first vertex as drawn, `CUT_BY` the
+  enabled Profiles that cross it (`-` for none). Requests are shown as
+  the tabs they place, with a note line; nothing is saved.
+- `tabs clear <dcv>` removes every tab, `tabs clear <dcv> <op>` those on
+  the instances `op` targets, `--tab <id>` (repeatable) the ones named;
+  an unknown id fails (exit 1) and saves nothing.
+- `place` and `clear` first run `place_requests`, then save through
+  `dc_project::save`, staged and renamed into place. An unknown
+  operation fails with "operation `op9` is not in coaster.dcv", one that
+  is not a Profile with "operation `o2` is a pocket operation; only a
+  Profile cuts tabs" (exit 1). `export` prints, per program, the operations in
 it and the warnings per operation, each as `<code>: <message>`.
 
 ## Module layout
 
 ```
 crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection on Regions), circle.rs (circle test, Kasa fit), self_band.rs (a line against itself, #221)}
-crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder), migrate.rs (v7_to_v8), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
-crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, overlap.rs, stock.rs, warning.rs}
+crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder, PlacedTab), ids.rs (+ TabId), migrate.rs (v7_to_v8, v8_to_v9, v10_to_v11), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
+crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, placed_tabs.rs (#105), overlap.rs, stock.rs, warning.rs}
 crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, canned.rs (controller model of G81–G83/G73), safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4, `%`), post.rs (definition checks)}
 crates/dc-import/src/{svg.rs, dxf.rs, dxf/{groups.rs, document.rs, entities.rs, spline.rs, stitch.rs}}
 crates/dc-library/src/{lib.rs, library.rs, fusion.rs, error.rs}
-crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs, tools.rs, config.rs}
+crates/dreamcarve/src/{main.rs, cli.rs, init.rs, export.rs, check.rs, tools.rs, tabs.rs (#105), config.rs}
 tests/golden/{pocket-offset-rect, pocket-offset-island, pocket-raster-0deg, pocket-raster-45deg, pocket-rough-then-rest, drill-simple, drill-peck, engrave-open-closed, profile-ramp, profile-helix-inside, profile-lead, profile-dogbone, order-full-depth-first, order-pass-first, post-linuxcnc-coaster, post-mach3-coaster, post-uccnc-coaster, post-generic-coaster}/
 tests/fixtures/{plaque.svg, plaque.dxf, dxf/*.dxf, fusion/{sample.tools, sample.json}}
-crates/dc-project/tests/fixtures/dcv/{v7, v8}/sample.dcv
+crates/dc-project/tests/fixtures/dcv/{v7, v8, v9, v10, v11}/sample.dcv
+crates/dreamcarve/tests/fixtures/tabs-migration/*.dcv, crates/dreamcarve/tests/expected/tabs-migration/*.nc (#105)
 ```
 
 New dependencies: `i_overlay` (MIT, booleans; already a settled decision),
@@ -2000,12 +2213,14 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `boolean::difference_of_rect_and_circle_has_one_hole`, `boolean::union_of_touching_rects_is_one_region`, `boolean::intersection_of_disjoint_is_empty`.
 - `circle::sixteen_facets_are_a_circle_within_tolerance`, `circle::two_bulge_arcs_are_a_circle`, `circle::ellipse_is_not_a_circle`, `circle::kasa_fit_recovers_centre_and_radius`.
 - `self_band::hairpins_are_narrow_and_square_corners_are_not`, `self_band::a_neck_in_a_closed_outline_is_narrow`, `self_band::sharp_corners_meet_and_set_their_arms_aside`, `self_band::a_crossing_is_a_meeting`, `self_band::far_from_leaves_out_the_stretches_near_the_cut`, `distance::closest_points_follow_arcs_and_ends` (#221).
+- `distance::nearest_point_on_a_line_reports_distance_along`, `distance::nearest_point_on_an_arc_follows_the_sweep`, `distance::nearest_point_at_an_arc_centre_takes_the_arc_middle`, `transform::inverse_undoes_the_transform` (#105).
 
 **dc-project**
 - `migrate::v7_profile_gains_phase_2_fields_with_defaults` — fixture loads with `machining_order: full_depth_first`, `entry: plunge`, `lead: null`, `corner_relief: none`, `arc_fit_tolerance_mm: 0.01`, `use_canned_cycles: false`; `migrate::v7_to_v8_writes_the_defaults`, `migrate::v7_with_phase_2_field_already_present_fails`.
 - `cli::v7_project_exports_the_same_program` (the spec's `v6_fixture_exports_phase_1_bytes_with_fitting_off` at version 8).
 - `serialize::tool_number_round_trips`, `validate::duplicate_tool_number_is_error`, `validate::set_number_clashing_with_positional_is_error`, `validate::tool_number_zero_is_error`, `emit::set_tool_number_is_written_as_t_word_and_file_name`, `emit::unset_tool_number_falls_back_to_position`.
 - `serialize::pocket_drill_engrave_round_trip`, `serialize::entry_variants_serialize_as_string_or_object`, `serialize::clearance_strategy_raster_carries_angle`.
+- `migrate::version_9_fixture_loads`, `migrate::version_10_fixture_loads`, `migrate::v10_project_gains_an_empty_tab_list`, `migrate::v10_with_tabs_already_present_fails`, `serialize::placed_tabs_round_trip`, `validate::placed_tab_on_a_missing_outline_is_an_error`, `validate::placed_tab_size_and_point_are_checked` (#105).
 - `validate::rest_of_must_be_an_earlier_enabled_pocket_with_the_same_targets`, `validate::step_over_fraction_outside_unit_interval_is_error`, `validate::pocket_without_step_down_is_error`, `validate::peck_without_depth_or_tool_step_down_is_error`, `validate::helix_on_on_line_profile_is_error`, `validate::lead_radius_must_be_positive`, `validate::ramp_angle_range`, `validate::canned_cycles_on_definition_without_them_is_error`, `validate::drill_with_v_bit_warns`, `validate::relief_without_step_down_warns`.
 
 **dc-cam — sequence (O1–O10)**
@@ -2026,6 +2241,15 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `order::tabbed_profile_frees_the_outlines_it_leaves_untabbed`.
 - `order::cut_inside_tab_held_part_warns`, `order::deep_cut_inside_tab_held_part_warns`, `order::shallow_engrave_inside_tab_held_part_is_quiet`, `order::inside_first_is_quiet`, `order::one_operation_part_and_hole_is_quiet`, `order::tab_held_warning_names_the_innermost_outline`, `cli::check_warns_hole_cut_in_tab_held_star`, `cli::plaque_engrave_after_tabbed_cut_out_is_quiet` (#269).
 - `migrate::version_8_fixture_loads`, `migrate::v8_tabs_keep_their_holes_tabbed`, `migrate::v8_with_on_holes_already_present_fails`.
+
+**dc-cam — placed tabs (#105)**
+- `placed_tabs::placed_requests_cut_what_the_requests_cut` (Outside both directions, an odd count with a tab on a corner arc, Inside at distances, On line, with a ramp and a lead: the same motion once placed).
+- `placed_tabs::tab_no_enabled_operation_crosses_warns` (no Profile, only a disabled Profile, only a Pocket: `tab_not_crossed`; a crossed tab is quiet).
+- `placed_tabs::tab_follows_its_instance_when_it_moves`, `placed_tabs::two_profiles_on_one_outline_both_rise_over_its_tabs`, `placed_tabs::tabs_of_different_heights_rise_each_to_its_own_top`.
+- `placed_tabs::place_keeps_the_rules_for_holes_and_short_outlines`, `placed_tabs::tab_on_a_hole_is_cut_and_warns`, `placed_tabs::place_does_not_place_a_tab_twice`, `placed_tabs::place_needs_a_profile_of_the_project`, `placed_tabs::place_on_outlines_puts_a_tab_at_each_distance`.
+- `profile::star_with_tabs_placed_only_on_the_star_lifts_only_on_the_star` (acceptance 39).
+- `safety::placed_tab_programs_pass_s1_to_s9`; the golden harness checks that every golden case with tabs cuts the same once its tabs are placed.
+- `cli::version_9_tab_settings_export_byte_identical_programs` (the tabs-migration corpus, as loaded and after `tabs place`), `cli::init_asks_for_four_tabs_that_tabs_place_writes`, `cli::tabs_place_list_and_clear`, `cli::tabs_place_at_puts_tabs_along_the_outline`, `cli::tabs_place_refuses_what_it_cannot_place`, `cli::check_warns_tab_not_crossed`.
 
 **dc-cam — pocket**
 - `pocket::offset_rings_are_concentric_and_spaced_by_stepover` — 100×50, 6.35 mm, 40 %: ring gaps 2.54 ± 0.01.

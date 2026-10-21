@@ -16,8 +16,9 @@ listed.
 2. `dreamcarve init part.svg` (or `part.dxf`) writes a **project file**,
    `part.dcv`, with one Profile of every closed shape.
 3. Edit `part.dcv` in a text editor: the stock, the tools and their feeds,
-   the operations, and the tabs. `dreamcarve tools add` copies a tool from
-   your [tool library](tool-library.md) instead of typing it in.
+   and the operations. `dreamcarve tools add` copies a tool from
+   your [tool library](tool-library.md) instead of typing it in, and
+   `dreamcarve tabs place` places [tabs](tabs.md) on the part.
 4. `dreamcarve check part.dcv` reports problems without writing anything.
 5. `dreamcarve export part.dcv` writes the G-code program, `part.nc`.
 6. Air cut, then cut.
@@ -154,6 +155,16 @@ Manages your [tool library](tool-library.md): `tools list`, `tools import
 <file>` (a DreamCarve library or a Fusion 360 `.tools` or `.json`
 library), `tools export <file>`, `tools add <project.dcv> <tool>` to copy
 a library tool into a project, and `tools remove <tool>`.
+
+### `dreamcarve tabs`
+
+Places, lists and removes the project's [tabs](tabs.md): `tabs place
+<dcv> <op> --count N` (or `--at d1,d2,…`, or neither for the operation's
+own tab request) puts tabs on the outlines a Profile cuts, `tabs list
+<dcv>` shows every tab and the Profiles that cut round it, and `tabs
+clear <dcv>` removes all of them, those on one operation's shapes
+(`tabs clear <dcv> <op>`), or the ones named with `--tab <id>`. `place`
+and `clear` save the project.
 
 ### `dreamcarve config path`
 

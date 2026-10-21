@@ -70,7 +70,7 @@ reads). `init` fills it with these defaults:
 | Work zero | X and Y at the stock's bottom-left corner, Z at the stock top |
 | Tool `t1`, named "Set me" | 6.35 mm end mill, 2 flutes, **no feed, plunge rate, spindle speed or depth per pass** |
 | Operation `op1` | A Profile of every closed shape: outside the line, climb, **no depth**, passes as deep as the tool's depth per pass, a 15° ramp into each pass, safe Z 5 mm |
-| Tabs | 4 tabs, 8 mm wide and 3 mm tall, square |
+| Tabs | 4 tabs on each part's outline, 8 mm wide and 3 mm tall, square, asked for in the Profile's `tabs`; `dreamcarve tabs` places and lists them ([Tabs](../user-guide/tabs.md)) |
 | Post-processor | grblHAL, millimetres |
 
 A **Profile** cuts along a shape's outline. "Outside" puts the cutter outside
@@ -110,7 +110,7 @@ set is near the top, before the shapes. The file starts like this:
 <!-- doc-test: excerpt coaster.dcv -->
 ```json
 {
-  "version": 9,
+  "version": 11,
   "name": "coaster",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -138,8 +138,9 @@ set is near the top, before the shapes. The file starts like this:
       "step_down_mm": null,
 ```
 
-The operations follow the tools, then the placed shapes and the
-`post_processor` block, which names grblHAL and holds its settings, and
+The operations follow the tools, then the project's placed tabs (an
+empty list for now: the Profile's `tabs` asks for the four tabs), the
+placed shapes and the `post_processor` block, which names grblHAL and holds its settings, and
 last the shapes themselves.
 
 ### The material
