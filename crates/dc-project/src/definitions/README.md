@@ -654,7 +654,7 @@ between others at safe Z (holes of one part) cannot be one `G98` series,
 and is written as plain moves (`canned_cycle_expanded`,
 `clearance_height`). Ending the series with `G80` and starting a new one
 per part would follow it, at the cost of a `G80`, a rise and a `G98` per
-part; it is not done.
+part; it is not done yet (#314).
 
 Not checked on a real LinuxCNC: whether a configuration with a
 spindle-at-speed signal (`spindle.0.at-speed`) makes the 3 s dwell
