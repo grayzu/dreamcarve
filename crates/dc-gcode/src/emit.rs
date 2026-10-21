@@ -2702,7 +2702,8 @@ mod tests {
             let mut project = project_with(post);
             let ops = two_tool_ops(&mut project);
             project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
-            let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+            let (programs, _) =
+                emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
             assert_eq!(programs.len(), 2, "{post}: one program per tool run");
             for (k, program) in programs.iter().enumerate() {
                 let text = &program.text;
@@ -2719,7 +2720,8 @@ mod tests {
                 let (alone, _) = emit(&project, &ops[k..=k], DATE).unwrap();
                 assert_eq!(program, &alone, "{post} program {k} is its run alone");
             }
-            let (again, _) = emit_programs(&project, &ops, DATE).unwrap();
+            let (again, _) =
+                emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
             assert_eq!(again, programs, "{post}: deterministic");
         }
     }
@@ -2730,7 +2732,8 @@ mod tests {
     fn m6_mode_emits_one_program_with_m6() {
         let mut project = project_with("grblhal");
         let ops = two_tool_ops(&mut project);
-        let (programs, _) = emit_programs(&project, &ops, DATE).unwrap();
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
         let (single, _) = emit(&project, &ops, DATE).unwrap();
         assert_eq!(programs, [single]);
     }
@@ -2748,5 +2751,91 @@ mod tests {
             matches!(err, ExportError::ToolChangeNotSupported { .. }),
             "{err:?}"
         );
+    }
+
+    /// Acceptance 33: `--one-program` ([`ProgramSplit::OneProgram`]) on
+    /// grblHAL writes the one program `"m6"` mode writes, `T2 M6` included,
+    /// while the project's own mode stays `"separate_programs"`.
+    #[test]
+    fn one_program_flag_writes_m6_on_grblhal() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        let (programs, _) = emit_programs(&project, &ops, ProgramSplit::OneProgram, DATE).unwrap();
+        let [program] = programs.as_slice() else {
+            panic!("one program, not {}", programs.len());
+        };
+        assert!(
+            program.text.lines().any(|l| l.starts_with("T2 M6")),
+            "{}",
+            program.text
+        );
+        let mut m6 = project.clone();
+        m6.post_processor.tool_change_mode = ToolChangeMode::M6;
+        let (expected, _) = emit(&m6, &ops, DATE).unwrap();
+        assert_eq!(*program, expected, "the program `\"m6\"` mode writes");
+    }
+
+    /// Acceptance 33: GRBL has no `M6`, so one program with tool changes is
+    /// refused naming the post-processor, whatever the project's mode says.
+    #[test]
+    fn one_program_flag_on_grbl_is_error() {
+        for mode in [ToolChangeMode::SeparatePrograms, ToolChangeMode::M6] {
+            let mut project = project_with("grbl");
+            let ops = two_tool_ops(&mut project);
+            project.post_processor.tool_change_mode = mode;
+            let err = emit_programs(&project, &ops, ProgramSplit::OneProgram, DATE).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OneProgramNeedsM6 { post } if post == "grbl"),
+                "{mode:?}: {err:?}"
+            );
+            assert!(err.to_string().contains("`grbl`"), "{err}");
+        }
+    }
+
+    /// Acceptance 33: `--programs-per-tool` ([`ProgramSplit::ProgramPerTool`])
+    /// on a project in `"m6"` mode writes one program per tool run, exactly
+    /// what `"separate_programs"` writes, and leaves the project as it was.
+    #[test]
+    fn programs_per_tool_flag_overrides_m6_mode_without_saving() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        assert_eq!(project.post_processor.tool_change_mode, ToolChangeMode::M6);
+        let before = project.clone();
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE).unwrap();
+        assert_eq!(programs.len(), 2, "one program per tool run");
+        for (k, program) in programs.iter().enumerate() {
+            for word in ["M6", "M61"] {
+                assert!(
+                    !program.text.lines().any(|l| has_word(l, word)),
+                    "program {k} has {word}: {}",
+                    program.text
+                );
+            }
+        }
+        let mut separate = project.clone();
+        separate.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        let (expected, _) =
+            emit_programs(&separate, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        assert_eq!(programs, expected, "what `\"separate_programs\"` writes");
+        assert_eq!(project, before, "the project is not changed");
+    }
+
+    /// Without a flag ([`ProgramSplit::ProjectDefault`]) the project's mode
+    /// decides, as before (#95): `"m6"` is the one program [`emit`] writes,
+    /// `"separate_programs"` one per tool run.
+    #[test]
+    fn project_default_split_follows_the_project_mode() {
+        let mut project = project_with("grblhal");
+        let ops = two_tool_ops(&mut project);
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        let (single, _) = emit(&project, &ops, DATE).unwrap();
+        assert_eq!(programs, [single], "m6: one program");
+        project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        assert_eq!(programs.len(), 2, "separate_programs: one per tool run");
     }
 }
