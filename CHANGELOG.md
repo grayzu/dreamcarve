@@ -167,6 +167,24 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   millimetres exactly when the file is read, so the program is the one the
   millimetre numbers give; a bad unit is an error at its line and column. A
   command that saves the file writes millimetre numbers back ([#282]).
+- **Profile last pass allowance; project format version 13.** A Profile's
+  `last_pass` (`allowance_mm`, `thickness_mm`, `reverse`) is VCarve's "Last
+  Pass Allowance": every pass but the last runs `allowance_mm` farther from
+  the part, and the last pass cuts on the part's path at full depth, so it
+  takes an even skin off the whole wall and leaves no step marks
+  ([#284]). `thickness_mm` sets how deep that last pass is; `reverse` cuts it
+  the other way round. Tabs, leads, ramps, helixes and corner relief work with
+  it: the earlier passes rise over a slightly longer stretch round each tab,
+  and the notches are cut from the last pass. The allowance must be more than
+  0 and at most a third of the bit's diameter, on an Inside or Outside
+  Profile, and `thickness_mm` at most the step-down. The last pass takes
+  off at most the allowance (√2 times it in a square corner): a drawing the
+  earlier passes cannot follow (a band, neck, slot, notch or hole that fits
+  the bit but not the bit plus the allowance, a corner sharper than 90°, or
+  a part that close to another) is refused, naming the shapes. A one-pass
+  cut warns `last_pass_unused`. `last_pass` is `null` in
+  `init` and in upgraded projects, which cut exactly as before. Older
+  DreamCarve versions cannot read version 13 files.
 - **Post-processor end-to-end plan and motion check.** `docs/testing/post-processor-e2e.md`
   says, for LinuxCNC, Mach3, UCCNC and generic, what is checked automatically,
   what cannot be and why, and the manual and air-cut procedures for the rest.
@@ -237,6 +255,21 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   line, and refuses `G51` and `G68` on every definition. `init` writes
   version 3; a version 1 or 2 project keeps its bytes until
   `export --post <id>`.
+- **grblHAL definition version 4** cancels axis scaling (`G50`) in the
+  header, after `G40`, and in the setup written again after every pause and
+  tool change ([#316]). grblHAL keeps a `G51` scale past the end of a
+  program too. The safety pass accepts this `G50` under the same rule as
+  Mach3's and UCCNC's. grblHAL has no rotation, so there is no `G69`. GRBL
+  has no scaling and stays at version 3. `init` writes version 4; a version
+  1, 2 or 3 project keeps its bytes until `export --post grblhal`. grblHAL's
+  own `G50` leaves a scale whose X factor is 1 (such as `G51 Z-1`) in
+  force, so soft-reset after any `G51` and check `$G`.
+- **`export` warns grblHAL users about `G51`** ([#320]). Every export with
+  a grblHAL definition whose header writes `G50` (version 4 and later)
+  prints, once, after the tool length offset note: soft-reset after any
+  `G51` and check that `$G` shows `G50`, because grblHAL's `G50` does not
+  clear a scale that leaves X at 1. The note is printed only; no program
+  changes.
 - **On line Profile of an open path starts where VCarve's does:** conventional
   at the first vertex, climb at the last ([#242]). Tabs are still placed from the
   first vertex as drawn.
@@ -421,9 +454,12 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#314]: https://github.com/grayzu/dreamcarve/issues/314
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
 [#312]: https://github.com/grayzu/dreamcarve/issues/312
+[#316]: https://github.com/grayzu/dreamcarve/issues/316
+[#320]: https://github.com/grayzu/dreamcarve/issues/320
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
+[#284]: https://github.com/grayzu/dreamcarve/issues/284
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#306]: https://github.com/grayzu/dreamcarve/issues/306

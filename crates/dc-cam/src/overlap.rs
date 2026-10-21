@@ -59,7 +59,15 @@ pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 /// later paths. Its sharp corners and the points where it touches or
 /// crosses itself are set aside as `generate_profile`'s band check sets
 /// them aside (#221).
+///
+/// `paths` include a Profile's allowance paths (#284), which run
+/// `allowance_mm` farther from their lines than the radius, so the gap
+/// the warning says two shapes need grows by it.
 #[must_use]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every argument is one fact about the cut; a struct would only rename them"
+)]
 pub(crate) fn overlap_warnings(
     paths: &[CutPath<'_>],
     shapes: &[(ShapeRef, Contour)],
@@ -67,6 +75,7 @@ pub(crate) fn overlap_warnings(
     regions: &[Region],
     side: Side,
     tool: &Tool,
+    allowance_mm: f64,
     tolerance_mm: f64,
 ) -> Vec<Warning> {
     let radius_mm = tool.diameter_mm / 2.0;
@@ -102,7 +111,7 @@ pub(crate) fn overlap_warnings(
         tool: tool.name.clone(),
         tool_id: tool.id.clone(),
         diameter_mm: tool.diameter_mm,
-        needed_mm: needed_gap_mm(side, tool.diameter_mm),
+        needed_mm: needed_gap_mm(side, tool.diameter_mm) + allowance_mm,
     };
     let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
     let mut warnings = Vec::new();
@@ -263,6 +272,7 @@ mod tests {
             entry: Entry::Plunge,
             lead: None,
             corner_relief: CornerRelief::None,
+            last_pass: None,
         }
     }
 

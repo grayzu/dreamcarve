@@ -1068,6 +1068,33 @@ pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
     }
 }
 
+/// The export note of a grblHAL program whose header writes `G50` (#320).
+/// grblHAL's `G50` does not clear a scale that leaves X at 1: `set_scaling`
+/// assigns its `changed` flag on each pass of the axis loop instead of
+/// OR-ing it, so only X's factor decides `scale_changed`, and the machine's
+/// state is updated only when it is set (`grblHAL/core` `4ec1ae44`,
+/// `gcode.c` 226, 2799, 4475-4482). A soft reset clears every factor
+/// (`gc_init`, 822), and `$G` ends with `G50` once none is left, or with
+/// `G51:` and the scaled axes (`report.c` 816-821). See
+/// `dc-project/src/definitions/README.md`, "Scaling on grblHAL".
+const GRBLHAL_SCALING_NOTE: &str = "If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.";
+
+/// What `export` tells the user about axis scaling before a program for
+/// `post` runs (#320): [`GRBLHAL_SCALING_NOTE`] for a grblHAL definition
+/// whose header writes `G50` (version 4 and later), so a user who trusts
+/// that `G50` still soft-resets after a `G51`. `None` for every other
+/// definition: GRBL and LinuxCNC have no scaling, Mach3's and UCCNC's
+/// `G50` clears every factor, and an older grblHAL header cancels none.
+#[must_use]
+pub fn scaling_note(post: &PostProcessor) -> Option<&'static str> {
+    let writes_g50 = post
+        .program
+        .header
+        .iter()
+        .any(|line| code_words(line).iter().any(|w| w == "G50"));
+    (post.id == "grblhal" && writes_g50).then_some(GRBLHAL_SCALING_NOTE)
+}
+
 /// The longest text one placeholder puts into a line, in characters. With
 /// the bundled templates every line stays well under
 /// [`crate::MAX_LINE_CHARS`]; the safety pass rejects any that does not.
@@ -1764,7 +1791,8 @@ const ABSOLUTE_COMMAND: &str = "G90";
 /// motion, and `G91.1` selects incremental arc centres, each the state
 /// DreamCarve assumes (#154; LinuxCNC and Mach3 headers). `G50` and `G69`
 /// set every scale factor to 1 and cancel coordinate rotation on Mach3 and
-/// UCCNC (#312), which only their version 3 headers write.
+/// UCCNC (#312), which only their version 3 headers write. grblHAL's
+/// version 4 header writes `G50` too, with the same meaning (#316).
 const MODAL_SETUP_CODES: [&str; 17] = [
     "G17", "G20", "G21", "G40", "G49", "G50", "G54", "G55", "G56", "G57", "G58", "G59", "G69",
     "G80", "G90", "G91.1", "G94",
@@ -2987,7 +3015,8 @@ mod tests {
             for line in &lines[..units] {
                 let c = code(line);
                 assert!(
-                    c.is_empty() || ["G90", "G17", "G94", "G80", "G40"].contains(&c.as_str()),
+                    c.is_empty()
+                        || ["G90", "G17", "G94", "G80", "G40", "G50"].contains(&c.as_str()),
                     "{post}: {line}"
                 );
             }
@@ -4100,14 +4129,55 @@ mod tests {
                 }
             }
         }
+        // #316: grblHAL v4 cancels scaling (`G50`) the same way, on a line
+        // of its own, in the header and after every stop: an `M6` and a
+        // manual-spindle `M0`. It has no rotation, so no `G69`. GRBL has
+        // neither, so its programs write none of the four.
+        let (mut after_m6, mut after_m0) = (0, 0);
         for (case, text) in every_program() {
+            let lines: Vec<&str> = text.lines().collect();
+            let grblhal = case.starts_with("grblhal ");
+            let present: &[&str] = if grblhal { &["G50"] } else { &[] };
             for word in ["G50", "G51", "G68", "G69"] {
-                assert!(
-                    !text.lines().any(|l| has_word(l, word)),
+                assert_eq!(
+                    text.lines().any(|l| has_word(l, word)),
+                    present.contains(&word),
                     "{case}: {word}:\n{text}"
                 );
             }
+            if !grblhal {
+                continue;
+            }
+            for l in lines.iter().filter(|l| has_word(l, "G50")) {
+                assert_eq!(code(l), "G50", "{case}: G50 shares its line: {l}");
+            }
+            let moves = |l: &str| {
+                let c = code(l);
+                c.contains('X') || c.contains('Y') || c.contains('Z')
+            };
+            let first_move = first_index(&lines, moves).unwrap();
+            assert!(
+                lines[..first_move].iter().any(|l| has_word(l, "G50")),
+                "{case}: no G50 before the first move:\n{text}"
+            );
+            for (line, between) in after_pauses(&text) {
+                if has_word(lines[line - 1], "M6") {
+                    after_m6 += 1;
+                } else {
+                    after_m0 += 1;
+                }
+                let at = |word: &str| between.iter().position(|l| has_word(l, word));
+                assert!(
+                    at("G50").is_some(),
+                    "{case}: no G50 after the stop on line {line}: {between:?}"
+                );
+                assert!(
+                    at("G40") < at("G50"),
+                    "{case}: G50 before G40 after the stop on line {line}: {between:?}"
+                );
+            }
         }
+        assert!(after_m6 > 0 && after_m0 > 0, "{after_m6} M6, {after_m0} M0");
     }
 
     /// #279: in `G80` mode a line with axis words and no motion word is an

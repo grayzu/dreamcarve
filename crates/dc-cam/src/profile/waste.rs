@@ -37,7 +37,7 @@ use crate::footprint::footprint_at;
 use crate::pocket::rings::inset_region;
 use crate::toolpath::{Move, Toolpath};
 use dc_geometry::{
-    Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, difference, nest, offset,
+    Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, approx_eq, difference, nest, offset,
 };
 use dc_project::{Side, Stock};
 
@@ -52,12 +52,20 @@ pub(super) const WALL_SLACK_MM: f64 = 1e-4;
 /// bounds, in tool diameters (upstream `OUTSIDE_DOMAIN_REACH_DIAMETERS`).
 pub(super) const OUTSIDE_REACH_DIAMETERS: f64 = 3.5;
 
+/// The target regions grown for one allowance (#284): the allowance, each
+/// region grown by the reach plus it, and the bounds of each.
+type Grown = (f64, Vec<Vec<Region>>, Vec<Option<Rect>>);
+
 /// One tool-centre path of a Profile, with what its domain needs.
 pub(super) struct WallPath<'a> {
     /// The tool-centre path, closed.
     pub path: &'a Polyline,
     /// Index into the regions of the region whose wall it cuts.
     pub region: usize,
+    /// How much farther than the radius the path runs from that wall,
+    /// mm: a last pass allowance (#284), 0 for the part's own path. Its
+    /// domain keeps the tool centre that much farther from the region.
+    pub allowance_mm: f64,
 }
 
 /// The waste domain of each of `paths`, in order: tool-centre regions
@@ -83,16 +91,33 @@ pub(super) fn domains(
         }
     }
     let kerf_bounds: Vec<Option<Rect>> = kerfs.iter().map(|k| bounds_of(k)).collect();
-    let grown: Vec<Vec<Region>> = match side {
-        Side::Outside => regions
+    // Each region grown by the reach plus each allowance a path has
+    // (#284: 0, and the last pass allowance), with its bounds.
+    let mut allowances: Vec<f64> = Vec::new();
+    for p in paths {
+        if !allowances
             .iter()
-            .map(|r| inset_region(r, -reach, tolerance_mm))
+            .any(|a| approx_eq(*a, p.allowance_mm, EPS_MM))
+        {
+            allowances.push(p.allowance_mm);
+        }
+    }
+    let grown: Vec<Grown> = match side {
+        Side::Outside => allowances
+            .iter()
+            .map(|&allowance_mm| {
+                let grown: Vec<Vec<Region>> = regions
+                    .iter()
+                    .map(|r| inset_region(r, -(reach + allowance_mm), tolerance_mm))
+                    .collect();
+                let bounds = grown.iter().map(|g| bounds_of(g)).collect();
+                (allowance_mm, grown, bounds)
+            })
             .collect(),
         Side::Inside | Side::OnLine | Side::Left | Side::Right => Vec::new(),
     };
-    let grown_bounds: Vec<Option<Rect>> = grown.iter().map(|g| bounds_of(g)).collect();
-    // Inside domains depend only on the region.
-    let mut inside_cache: Vec<Option<Vec<Region>>> = vec![None; regions.len()];
+    // Inside domains depend only on the region and the allowance.
+    let mut inside_cache: Vec<Option<Vec<Region>>> = vec![None; regions.len() * allowances.len()];
 
     paths
         .iter()
@@ -110,21 +135,25 @@ pub(super) fn domains(
             };
             match side {
                 Side::Inside => {
-                    if let Some(Some(cached)) = inside_cache.get(p.region) {
+                    let slot = allowances
+                        .iter()
+                        .position(|a| approx_eq(*a, p.allowance_mm, EPS_MM))
+                        .map_or(usize::MAX, |k| k * regions.len() + p.region);
+                    if let Some(Some(cached)) = inside_cache.get(slot) {
                         return cached.clone();
                     }
                     let Some(region) = regions.get(p.region) else {
                         return Vec::new();
                     };
-                    let area = inset_region(region, reach, tolerance_mm);
+                    let area = inset_region(region, reach + p.allowance_mm, tolerance_mm);
                     let clip = others(bounds_of(&area));
                     let domain = if clip.is_empty() {
                         area
                     } else {
                         difference(&area, &clip, tolerance_mm)
                     };
-                    if let Some(slot) = inside_cache.get_mut(p.region) {
-                        *slot = Some(domain.clone());
+                    if let Some(cached) = inside_cache.get_mut(slot) {
+                        *cached = Some(domain.clone());
                     }
                     domain
                 }
@@ -137,7 +166,8 @@ pub(super) fn domains(
                     };
                     let mut clip: Vec<Region> = grown
                         .iter()
-                        .zip(&grown_bounds)
+                        .filter(|(a, _, _)| approx_eq(*a, p.allowance_mm, EPS_MM))
+                        .flat_map(|(_, grown, bounds)| grown.iter().zip(bounds))
                         .filter(|(_, b)| b.is_some_and(|b| overlaps(b, frame)))
                         .flat_map(|(g, _)| g.iter().cloned())
                         .collect();

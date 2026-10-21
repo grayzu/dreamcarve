@@ -771,7 +771,20 @@ built (design addendum, "Order and format versions").
     after every pause repeats them; the safety pass accepts them only
     there, alone on a line, and refuses `G51` and `G68` everywhere.
     LinuxCNC and generic have no such codes and do not write them. A v2
-    project keeps v2 until `export --post`.)
+    project keeps v2 until `export --post`.) (changed in #316: grblHAL
+    also keeps a `G51` scale past `M30`, so grblHAL v4 adds `G50` after
+    `G40`, again after every pause and tool change, under the same
+    safety rule. grblHAL has no rotation, so there is no `G69`. GRBL has
+    no scaling and stays at v3. New projects get grblHAL v4. A v3 project
+    keeps v3 until `export --post`. At the checked commit grblHAL's `G50`
+    leaves a scale whose X factor is 1, such as `G51 Z-1`, in force. The
+    post-processors chapter tells the user to soft-reset after any `G51`
+    and check `$G`.) (changed in #320: `export` says so too, once per
+    export, after the tool length note, for a grblHAL definition whose
+    header writes `G50`: "If you used G51 on this controller, soft-reset
+    it and check that $G shows G50 before you start: grblHAL's G50 does
+    not clear a scale that leaves X at 1, such as G51 Z-1." The note is
+    printed, not written into the program.)
 
 ### A4. Cycle-time estimate (#280)
 
@@ -885,7 +898,15 @@ built (design addendum, "Order and format versions").
     pass the other way. The allowance must be more than 0 and at most a
     third of the bit diameter, as VCarve advises. Inside and Outside only:
     On line has no wall to leave material on. Unset (`null`) by default,
-    in `init` and in migrated projects.
+    in `init` and in migrated projects. (changed in #284: Left and Right
+    are refused as On line is. A drawing the earlier passes cannot follow,
+    where it fits the bit but not the bit plus the allowance on both sides
+    or an earlier pass would come within the bit's radius of another
+    part, is refused naming the shapes. Changed again in the #310 review:
+    `thickness_mm` may be no more than the step-down; the last pass may
+    take off no more than the allowance, √2 times it in a square corner,
+    so a corner sharper than 90° is refused; and a one-pass cut warns
+    `last_pass_unused`.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 
@@ -998,4 +1019,9 @@ built (design addendum, "Order and format versions").
   make the S16 lift; S2 holds for that rapid. A link between parts rises
   to the clearance height; a link between passes of one part, to safe Z.
 - **S9 with a last pass.** Every pass but the last keeps `allowance_mm`
-  more than `r` from the part; the last keeps `r`, as now.
+  more than `r` from the part; the last keeps `r`, as now. (changed in
+  the #310 review: every pass but the last also keeps at least `r` from,
+  and stays out of, the operation's other parts; nearer than `r + a` it
+  cuts only their skin, which is allowed. The last pass takes off at most
+  `√2 · allowance_mm` plus 0.05 mm anywhere, and no pass before it cuts
+  into stock a tab leaves.)

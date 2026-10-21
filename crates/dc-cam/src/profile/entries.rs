@@ -27,7 +27,7 @@ use crate::pocket::rings::inset_region;
 use crate::tabs::{PathTabs, Tabs};
 use crate::toolpath::{Move, Toolpath};
 use dc_geometry::{EPS_MM, Point, Point3, Polyline, Region, area_mm2, difference};
-use dc_project::{Entry, ProfileOp, Side, Stock};
+use dc_project::{CutDirection, Entry, ProfileOp, Side, Stock};
 
 /// What [`path_entries`] and [`wall_domains`] need from the generator.
 pub(super) struct EntrySetup<'a, 'b> {
@@ -46,6 +46,14 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub start_z_mm: f64,
     pub entry_tool: &'a dyn Fn(Wall) -> EntryTool,
     pub tolerance_mm: f64,
+    /// How much farther than the radius each path runs from its wall: a
+    /// last pass allowance (#284), 0 for the part's own path. Missing
+    /// entries are 0.
+    pub allowances: &'a [f64],
+    /// The paths cut against `op.direction` (#284: a reversed last
+    /// pass), whose entries turn the other way. Missing entries are
+    /// false.
+    pub reversed: &'a [bool],
 }
 
 /// One domain a path's entries and leads are placed in: its regions (for
@@ -261,10 +269,22 @@ pub(super) fn tab_seams(
         .collect()
 }
 
-/// The entry tool of path `i`.
-fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
+/// The entry tool of path `i`: cutting the other way on a reversed path
+/// (#284).
+pub(super) fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
     let wall = setup.walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
-    (setup.entry_tool)(wall)
+    let tool = (setup.entry_tool)(wall);
+    if setup.reversed.get(i).copied().unwrap_or(false) {
+        EntryTool {
+            direction: match tool.direction {
+                CutDirection::Climb => CutDirection::Conventional,
+                CutDirection::Conventional => CutDirection::Climb,
+            },
+            ..tool
+        }
+    } else {
+        tool
+    }
 }
 
 /// Inside and Outside: each path's waste domain ([`waste::domains`]) and,
@@ -281,9 +301,11 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
         .paths
         .iter()
         .zip(setup.walls)
-        .map(|((path, _), (_, region))| WallPath {
+        .enumerate()
+        .map(|(i, ((path, _), (_, region)))| WallPath {
             path,
             region: *region,
+            allowance_mm: setup.allowances.get(i).copied().unwrap_or(0.0),
         })
         .collect();
     let domains = waste::domains(

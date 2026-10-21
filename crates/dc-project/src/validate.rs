@@ -48,9 +48,9 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
-    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, Lead, Operation,
-    OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement, Tool,
-    ToolKind,
+    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, LastPass, Lead,
+    Operation, OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement,
+    Tool, ToolKind,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -416,6 +416,51 @@ pub enum Problem {
         /// half the included angle.
         cone_height_mm: f64,
     },
+    /// An enabled Profile's last pass allowance is not more than 0 and at
+    /// most a third of its bit's diameter (#284; VCarve advises keeping it
+    /// well below a third). An error.
+    LastPassAllowance {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool's display name.
+        tool_name: String,
+        /// The allowance set, mm.
+        allowance_mm: f64,
+        /// The bit's diameter, mm.
+        diameter_mm: f64,
+        /// The largest allowance allowed, mm: a third of the diameter.
+        limit_mm: f64,
+    },
+    /// A Profile has a last pass but cuts On line, Left or Right (#284):
+    /// only Inside and Outside leave material on a wall the last pass can
+    /// take off. An error.
+    LastPassNeedsSide {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The side it cuts.
+        side: Side,
+    },
+    /// An enabled Profile's last pass is thicker than its step-down in
+    /// effect, the operation's or else the tool's (#310 review): it would
+    /// cut that much in one pass, where every other pass steps down less.
+    /// An error.
+    LastPassThickerThanStepDown {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `last_pass.thickness_mm`.
+        thickness_mm: f64,
+        /// The step-down in effect, mm.
+        step_down_mm: f64,
+        /// Where that step-down is set: `operations[o1].step_down_mm` or
+        /// `tools[t1].step_down_mm`.
+        step_down_field: String,
+    },
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min (#67).
@@ -470,6 +515,9 @@ impl Problem {
             Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
             Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
             Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
+            Self::LastPassAllowance { .. } => "last_pass_allowance",
+            Self::LastPassNeedsSide { .. } => "last_pass_needs_side",
+            Self::LastPassThickerThanStepDown { .. } => "last_pass_thicker_than_step_down",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
             Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
@@ -495,6 +543,9 @@ impl Problem {
             | Self::RestOfInvalid { .. }
             | Self::HelixNeedsWasteSide { .. }
             | Self::CannedCyclesUnsupported { .. }
+            | Self::LastPassAllowance { .. }
+            | Self::LastPassNeedsSide { .. }
+            | Self::LastPassThickerThanStepDown { .. }
             | Self::ClearanceBelowSafeZ { .. }
             | Self::MachineZNotBelowHome { .. }
             | Self::MachineZNeedsG53 { .. } => Severity::Error,
@@ -604,6 +655,15 @@ impl Problem {
             }
             Self::EngraveDeeperThanCone { operation, .. } => {
                 Some(format!("operations[{operation}].depth_mm"))
+            }
+            Self::LastPassAllowance { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass.allowance_mm"))
+            }
+            Self::LastPassNeedsSide { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass"))
+            }
+            Self::LastPassThickerThanStepDown { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass.thickness_mm"))
             }
             Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
             Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
@@ -789,6 +849,42 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
             ),
+            Self::LastPassAllowance {
+                operation,
+                name,
+                tool_name,
+                allowance_mm,
+                diameter_mm,
+                limit_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has last_pass.allowance_mm {allowance_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
+            ),
+            Self::LastPassNeedsSide {
+                operation,
+                name,
+                side,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the allowance off a wall the other passes leave, so it needs an Inside or Outside Profile. Set last_pass to null, or cut Inside or Outside",
+                match side {
+                    Side::OnLine => "on the line",
+                    Side::Left => "to the left of open paths",
+                    Side::Right => "to the right of open paths",
+                    Side::Inside => "inside",
+                    Side::Outside => "outside",
+                }
+            ),
+            Self::LastPassThickerThanStepDown {
+                operation,
+                name,
+                thickness_mm,
+                step_down_mm,
+                step_down_field,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has last_pass.thickness_mm {thickness_mm} mm, more than its {step_down_mm} mm step-down ({step_down_field}); the last pass would cut that deep in one go. Make it at most the step-down, or set it to null for the usual last pass"
+            ),
             Self::HelixNeedsWasteSide { operation, name } => write!(
                 f,
                 "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
@@ -865,6 +961,7 @@ const SWEEP: &str = "an angle greater than 0 and at most 180 degrees";
 const ENTRY_ANGLE: &str = "an angle greater than 0 and at most 45 degrees";
 const RASTER_ANGLE: &str = "an angle of 0 or more and less than 180 degrees";
 const BELOW_Z_TOP: &str = "a value at most the instance's z_top_mm";
+const LAST_PASS_THICKNESS: &str = "a value greater than 0 and at most the operation's depth_mm";
 // The limits below spell out `MAX_COORDINATE_MM`; a test checks they agree.
 const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
 const COORDINATE: &str = "a value from -6000 to 6000 mm";
@@ -1316,6 +1413,26 @@ impl Validator {
             (None, Some(step)) => Some((step, format!("tools[{}].step_down_mm", tool.id))),
             (None, None) => None,
         };
+        // #310 review: the last pass is at most one step-down thick.
+        if let Operation::Profile(profile) = op
+            && let Some(thickness_mm) = profile.last_pass.as_ref().and_then(|l| l.thickness_mm)
+            && thickness_mm.is_finite()
+            && thickness_mm > 0.0
+            && profile
+                .depth_mm
+                .is_none_or(|depth_mm| thickness_mm <= depth_mm)
+            && let Some((step_down_mm, field)) = &step
+            && step_down_mm.is_finite()
+            && thickness_mm > *step_down_mm
+        {
+            self.problems.push(Problem::LastPassThickerThanStepDown {
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
+                thickness_mm,
+                step_down_mm: *step_down_mm,
+                step_down_field: field.clone(),
+            });
+        }
         if let Some((step_down_mm, field)) = step
             && step_down_mm.is_finite()
             && tool.diameter_mm.is_finite()
@@ -1347,6 +1464,26 @@ impl Validator {
                 tool: tool.id.clone(),
                 tool_name: tool.name.clone(),
             });
+        }
+        // #284: VCarve advises an allowance well below a third of the bit.
+        if let Operation::Profile(profile) = op
+            && let Some(last_pass) = &profile.last_pass
+            && last_pass.allowance_mm.is_finite()
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0
+        {
+            let limit_mm = tool.diameter_mm / 3.0;
+            let allowance_mm = last_pass.allowance_mm;
+            if allowance_mm <= 0.0 || allowance_mm > limit_mm {
+                self.problems.push(Problem::LastPassAllowance {
+                    operation: op.id().clone(),
+                    name: op.name().to_owned(),
+                    tool_name: tool.name.clone(),
+                    allowance_mm,
+                    diameter_mm: tool.diameter_mm,
+                    limit_mm,
+                });
+            }
         }
         if let (Operation::Engrave(engrave), ToolKind::VBit { included_angle_deg }) =
             (op, &tool.cutter)
@@ -1409,6 +1546,35 @@ impl Validator {
         }
         if let Some(lead) = &op.lead {
             self.lead(lead, at);
+        }
+        if let Some(last_pass) = &op.last_pass {
+            self.last_pass(op, last_pass, at);
+        }
+    }
+
+    /// A last pass's values that need no tool (#284): a finite allowance
+    /// (its range needs the bit, [`Self::enabled_operation`]), a thickness
+    /// in (0, depth], and an Inside or Outside side.
+    fn last_pass(&mut self, op: &ProfileOp, last_pass: &LastPass, at: &str) {
+        self.finite(
+            &format!("{at}.last_pass.allowance_mm"),
+            last_pass.allowance_mm,
+        );
+        if let Some(thickness_mm) = last_pass.thickness_mm {
+            let field = format!("{at}.last_pass.thickness_mm");
+            let above_depth = op
+                .depth_mm
+                .is_some_and(|depth_mm| depth_mm.is_finite() && thickness_mm > depth_mm);
+            if self.finite(&field, thickness_mm) && (thickness_mm <= 0.0 || above_depth) {
+                self.out_of_range(field, thickness_mm, LAST_PASS_THICKNESS);
+            }
+        }
+        if !op.side.has_waste_area() {
+            self.problems.push(Problem::LastPassNeedsSide {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+                side: op.side,
+            });
         }
     }
 
@@ -1728,7 +1894,8 @@ impl Validator {
 mod tests {
     use super::*;
     use crate::model::{
-        ClearanceStrategy, CornerRelief, DrillCycle, Entry, Lead, Operation, PeckRetract, ToolKind,
+        ClearanceStrategy, CornerRelief, DrillCycle, Entry, LastPass, Lead, Operation, PeckRetract,
+        ToolKind,
     };
     use crate::test_support::{
         profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
@@ -3489,6 +3656,187 @@ mod tests {
                 "{field} {value}"
             );
         }
+    }
+
+    /// The last pass acceptance 46 asks for, on the sample's Outside
+    /// Profile (#284).
+    fn last_pass(allowance_mm: f64) -> LastPass {
+        LastPass {
+            allowance_mm,
+            thickness_mm: None,
+            reverse: false,
+        }
+    }
+
+    /// #284 (capability 34, acceptance 46): the allowance is more than 0
+    /// and at most a third of the bit's diameter, as VCarve advises. 0, a
+    /// negative value and 2.2 mm with the 6.35 mm bit are errors naming the
+    /// diameter and the limit; 0.5 and exactly a third are valid.
+    #[test]
+    fn last_pass_allowance_limit() {
+        let mut p = sample_project();
+        for allowance_mm in [0.5, 6.35 / 3.0] {
+            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
+            assert_eq!(validate(&p), vec![], "{allowance_mm}");
+        }
+        for allowance_mm in [0.0, -0.5, 2.2] {
+            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::LastPassAllowance {
+                    operation: OperationId::new("o1"),
+                    name: "Cut out".into(),
+                    tool_name: "6.35 mm upcut".into(),
+                    allowance_mm,
+                    diameter_mm: 6.35,
+                    limit_mm: 6.35 / 3.0,
+                }],
+                "{allowance_mm}"
+            );
+            let problem = &problems[0];
+            assert!(problem.is_error());
+            assert_eq!(problem.code(), "last_pass_allowance");
+            assert_eq!(
+                problem.field().as_deref(),
+                Some("operations[o1].last_pass.allowance_mm")
+            );
+            let message = problem.to_string();
+            for part in ["6.35 mm", "2.117 mm", "a third"] {
+                assert!(message.contains(part), "{message}");
+            }
+        }
+        profile_mut(&mut p).last_pass = Some(last_pass(f64::NAN));
+        assert_eq!(
+            validate(&p),
+            vec![Problem::NonFinite {
+                field: "operations[o1].last_pass.allowance_mm".into()
+            }]
+        );
+    }
+
+    /// #284: On line has no wall to leave material on, and Left and Right
+    /// are open-path cuts the last pass does not cover: Inside and Outside
+    /// only.
+    #[test]
+    fn last_pass_on_line_is_error() {
+        for side in [Side::OnLine, Side::Left, Side::Right] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.last_pass = Some(last_pass(0.5));
+            let problems = validate(&p);
+            let expected = Problem::LastPassNeedsSide {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                side,
+            };
+            assert!(problems.contains(&expected), "{side:?}: {problems:?}");
+            assert!(expected.is_error());
+            assert_eq!(expected.code(), "last_pass_needs_side");
+            assert_eq!(
+                expected.field().as_deref(),
+                Some("operations[o1].last_pass")
+            );
+        }
+        for side in [Side::Inside, Side::Outside] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.last_pass = Some(last_pass(0.5));
+            assert_eq!(validate(&p), vec![], "{side:?}");
+        }
+    }
+
+    /// #284: `thickness_mm`, the last pass's depth, is more than 0 and at
+    /// most the operation's `depth_mm`.
+    #[test]
+    fn last_pass_thickness_range() {
+        let mut p = sample_project();
+        for thickness_mm in [0.5, 2.0] {
+            profile_mut(&mut p).last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            assert_eq!(validate(&p), vec![], "{thickness_mm}");
+        }
+        for thickness_mm in [0.0, -1.0, 6.5] {
+            profile_mut(&mut p).last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            assert_eq!(
+                validate(&p),
+                vec![Problem::OutOfRange {
+                    field: "operations[o1].last_pass.thickness_mm".into(),
+                    value: thickness_mm,
+                    expected: LAST_PASS_THICKNESS,
+                }],
+                "{thickness_mm}"
+            );
+        }
+        // With the depth unset, only the depth is reported.
+        let op = profile_mut(&mut p);
+        op.depth_mm = None;
+        op.last_pass = Some(LastPass {
+            thickness_mm: Some(6.5),
+            ..last_pass(0.5)
+        });
+        assert!(
+            validate(&p)
+                .iter()
+                .all(|problem| !matches!(problem, Problem::OutOfRange { .. })),
+            "{:?}",
+            validate(&p)
+        );
+    }
+
+    /// #310 review: the last pass is at most one step-down thick, the
+    /// operation's when it sets one, else the tool's: the sample's 2 mm
+    /// tool step-down allows 2 mm and refuses 2.5 and 6, at the thickness;
+    /// with the operation's 4 mm, 3 is fine.
+    #[test]
+    fn last_pass_thickness_at_most_step_down() {
+        let mut p = sample_project();
+        for (thickness_mm, step_down_mm) in [(2.5, None), (6.0, None), (4.5, Some(4.0))] {
+            let op = profile_mut(&mut p);
+            op.step_down_mm = step_down_mm;
+            op.last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            let problems = validate(&p);
+            let (field, step) = match step_down_mm {
+                Some(step) => ("operations[o1].step_down_mm", step),
+                None => ("tools[t1].step_down_mm", 2.0),
+            };
+            let expected = Problem::LastPassThickerThanStepDown {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                thickness_mm,
+                step_down_mm: step,
+                step_down_field: field.into(),
+            };
+            assert_eq!(problems, vec![expected.clone()], "{thickness_mm}");
+            assert!(expected.is_error());
+            assert_eq!(expected.code(), "last_pass_thicker_than_step_down");
+            assert_eq!(
+                expected.field().as_deref(),
+                Some("operations[o1].last_pass.thickness_mm")
+            );
+            let message = expected.to_string();
+            assert!(
+                message.contains(field) && message.contains("step-down"),
+                "{message}"
+            );
+        }
+        let op = profile_mut(&mut p);
+        op.step_down_mm = Some(4.0);
+        op.last_pass = Some(LastPass {
+            thickness_mm: Some(3.0),
+            ..last_pass(0.5)
+        });
+        assert_eq!(validate(&p), vec![]);
     }
 
     /// Functional spec, capability 16: a ramp steeper than 45° is a
