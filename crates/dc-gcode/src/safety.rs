@@ -1058,7 +1058,7 @@ impl ToolpathArc {
 mod tests {
     use super::*;
     use crate::emit::{emit, emit_with};
-    use std::f64::consts::FRAC_PI_2;
+    use std::f64::consts::{FRAC_PI_2, PI};
 
     use dc_cam::{Move, MoveKind, generate_profile};
     use dc_geometry::{Point, Point3};
@@ -1828,8 +1828,18 @@ mod tests {
     }
 
     /// Runs the whole safety pass, S6 included, on `text` as the fixture's
-    /// operation with `toolpath`.
+    /// operation with `toolpath`, with the fixture's arc-fit tolerance.
     fn check_against(text: &str, toolpath: &Toolpath) -> Result<(), ExportError> {
+        let (project, _, _) = fixture();
+        check_against_with(text, toolpath, project.arc_fit_tolerance_mm)
+    }
+
+    /// [`check_against`] with the arc-fit tolerance `arc_fit_mm`.
+    fn check_against_with(
+        text: &str,
+        toolpath: &Toolpath,
+        arc_fit_mm: Option<f64>,
+    ) -> Result<(), ExportError> {
         let (project, op, tool) = fixture();
         let post = project.post_processor.resolve().unwrap();
         let transform = MachineTransform::new(&project, &post).unwrap();
@@ -1845,7 +1855,10 @@ mod tests {
             &transform,
             &project.stock,
             project.stock.thickness_mm.unwrap(),
-            project.flatten_tolerance_mm,
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm,
+            },
             &spans,
         )
         .map(|_| ())
@@ -1989,5 +2002,81 @@ mod tests {
             "{result:?}"
         );
         emit_one(&project, &op, &tool, line_then_arc()).unwrap();
+    }
+
+    /// Rapid in, plunge to Z 5, then `n` chords of the circle of radius 10
+    /// about (0, 0) from +X through `sweep_rad` counter-clockwise, retract.
+    /// Vertex `bump` (1-based along the chords), if any, is pushed 0.05 mm
+    /// outwards, off the circle.
+    fn chord_run(n: u32, sweep_rad: f64, bump: Option<u32>) -> Toolpath {
+        let mut moves = vec![
+            Move::rapid(Point3::new(10.0, 0.0, 11.0)),
+            Move::linear(Point3::new(10.0, 0.0, 5.0), 300.0),
+        ];
+        for k in 1..=n {
+            let angle = sweep_rad * f64::from(k) / f64::from(n);
+            let r = if bump == Some(k) { 10.05 } else { 10.0 };
+            moves.push(Move::linear(
+                Point3::new(r * angle.cos(), r * angle.sin(), 5.0),
+                1000.0,
+            ));
+        }
+        let last = moves.last().unwrap().to;
+        moves.push(Move::rapid(Point3::new(last.x, last.y, 11.0)));
+        Toolpath { moves }
+    }
+
+    /// The program for [`chord_run`] with `arc` written for the chords.
+    fn chord_run_text(arc: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX10 Y0\nG1 Z-1 F300\n{arc}G0 Z5\nM5\n")
+    }
+
+    /// S12: one `G3` in place of eight chords of a quarter circle passes
+    /// S6 when arc fitting is on; with the tolerance `null` the program
+    /// must have the chords.
+    #[test]
+    fn fitted_arcs_pass_s6() {
+        let text = chord_run_text("G3 X0 Y10 I-10 J0 F1000\n");
+        let toolpath = chord_run(8, FRAC_PI_2, None);
+        check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+        let result = check_against_with(&text, &toolpath, None);
+        assert!(is_mismatch_at(&result, 2), "{result:?}");
+        // Two arcs over the run, meeting at a vertex, pass too.
+        let text = chord_run_text("G3 X7.071 Y7.071 I-10 J0 F1000\nX0 Y10 I-7.071 J-7.071\n");
+        check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+    }
+
+    /// S12: a vertex between the arc's ends that is off the arc by more
+    /// than the tolerance fails.
+    #[test]
+    fn arc_off_the_vertices_fails_s6() {
+        let text = chord_run_text("G3 X0 Y10 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, Some(4)), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        // An arc that ends between vertices fails too.
+        let text = chord_run_text("G3 X0.5 Y9.987 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(8, FRAC_PI_2, None), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+    }
+
+    /// S12: one arc over 180° of chords is refused even though every vertex
+    /// is on it: a fitted arc sweeps at most 90°.
+    #[test]
+    fn arc_over_90_degrees_fails_s12() {
+        let text = chord_run_text("G3 X-10 Y0 I-10 J0 F1000\n");
+        let result = check_against_with(&text, &chord_run(16, PI, None), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        // The same run as two 90° arcs passes.
+        let text = chord_run_text("G3 X0 Y10 I-10 J0 F1000\nX-10 Y0 I0 J-10\n");
+        check_against_with(&text, &chord_run(16, PI, None), Some(0.01)).unwrap();
     }
 }

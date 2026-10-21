@@ -9,6 +9,7 @@
 //! from toolpaths, then parses it back and checks the safety rules on the
 //! text (`docs/specs/phase-1/design.md`, "Emission").
 
+pub mod arcfit;
 pub mod emit;
 mod error;
 pub mod format;
