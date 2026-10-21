@@ -539,7 +539,13 @@ Inputs: project, op. Output: toolpath in project space.
    are its toolpath move for move: rapids split only into their Z and XY
    parts, arcs as `G2`/`G3` with the toolpath's direction and centre, or
    as straight moves on the arc in order within the flatten tolerance, and
-   nothing else but retracts before the first move and after the last),
+   nothing else but retracts before the first move and after the last; a
+   move that ends where the controller already is, within the rounding,
+   may be written as nothing, a straight move or an arc of at most a half
+   turn (changed in the property-test fixes of #225–#235: an offset ring
+   began 0.0017 mm before the end of a round corner, and the arc piece
+   left, shorter than a unit of a 4-place inch program, was written as
+   nothing and failed S6),
    S7 (every cutting move, mapped back to project space with its arc
    extremes and widened by its operation's tool radius, stays in the stock
    rectangle within one unit in the last written place:

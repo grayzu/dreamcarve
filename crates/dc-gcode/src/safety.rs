@@ -25,7 +25,7 @@
 //! operation's own material, worked out from the project
 //! ([`crate::material`]).
 
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::Range;
 
 use dc_cam::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
@@ -1235,7 +1235,12 @@ fn check_reproduces(
             MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
                 let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
                 match previous.map(|start| ToolpathArc::new(start, mv.to, centre, clockwise)) {
-                    Some(Some(arc)) => match_arc(rest, &arc, transform, tolerances.flatten_mm),
+                    // An arc of at most a half turn that ends where the
+                    // controller already is lies wholly within the
+                    // rounding of it: `emit` writes it as nothing, as it
+                    // does such a straight move.
+                    Some(Some(arc)) => match_arc(rest, &arc, transform, tolerances.flatten_mm)
+                        .or_else(|| (already_there && arc.sweep_rad <= PI).then_some(0)),
                     // Too small to be an arc: `emit` writes a straight cut.
                     Some(None) => match_linear(rest, mv.to, already_there),
                     // `emit` cannot write an arc without a start.
