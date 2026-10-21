@@ -481,8 +481,11 @@ impl<'a> Emitter<'a, '_> {
                 Link::Retract => {
                     // #283: between parts at the clearance height, between
                     // passes and holes of one part at safe Z.
-                    let _ = previous;
-                    let link_z = safe_z;
+                    let link_z = if previous.shape.instance == block.shape.instance {
+                        safe_z
+                    } else {
+                        self.input.clearance_z_mm.max(safe_z)
+                    };
                     self.push(Move::rapid(Point3::new(current.x, current.y, link_z)));
                     self.push(Move::rapid(Point3::new(
                         block.descent_from.x,

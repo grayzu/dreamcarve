@@ -1541,8 +1541,7 @@ impl Validator {
     /// below 0 and only on a definition that documents `G53`; the park
     /// point is within the coordinate limit.
     fn heights(&mut self, p: &Project) {
-        let _ = p;
-        let heights = &crate::Heights::unset();
+        let heights = &p.heights;
         if let Some(clearance_mm) = heights.clearance_mm
             && self.coordinate(CLEARANCE, clearance_mm)
         {

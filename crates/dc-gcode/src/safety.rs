@@ -337,7 +337,7 @@ fn check_rules(
     let blocks = parse_program_with(text, &model)?;
     // S16: `G53` only from a definition that documents it, and only when
     // the project sets the height it lifts to.
-    let with_g53 = false;
+    let with_g53 = machine_lift_mm.is_some() && post.work_coordinates.machine_command.is_some();
     check_words(
         &blocks,
         changes_tools_in_program(post),

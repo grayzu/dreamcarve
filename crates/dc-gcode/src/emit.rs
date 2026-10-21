@@ -930,8 +930,7 @@ impl Lifts {
         ops: impl Iterator<Item = &'a Operation> + Clone,
         thickness_mm: f64,
     ) -> Result<Self, ExportError> {
-        let _ = project;
-        let heights = &dc_project::Heights::unset();
+        let heights = &project.heights;
         let highest_safe_z_mm = ops
             .clone()
             .map(|op| thickness_mm + op.safe_z_mm())
