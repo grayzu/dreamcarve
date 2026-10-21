@@ -284,7 +284,6 @@ fn pocket_offset_rect() {
 /// island is a 360-sided polygon on the circle, because PureCutCNC samples
 /// a `circle` too coarsely for 0.01 mm; DreamCarve's is a true circle.
 #[test]
-#[ignore = "#196: the ring round the island starts at its nearest vertex, not its nearest point"]
 fn pocket_offset_island() {
     harness::check(&case("pocket-offset-island", vec![], Order::Sets));
 }
@@ -293,7 +292,6 @@ fn pocket_offset_island() {
 /// first as PureCutCNC cuts it. The lines are compared without direction
 /// and the links between them not at all ([`Difference::RasterLineOrder`]).
 #[test]
-#[ignore = "#195: the raster scan starts at the Y-up bottom of the region, PureCutCNC's at the top"]
 fn pocket_raster_0deg() {
     harness::check(&case(
         "pocket-raster-0deg",
@@ -306,7 +304,6 @@ fn pocket_raster_0deg() {
 /// by −`pocketAngle` in its Y-down frame, so its +45° is DreamCarve's 135°
 /// (#146); the `.camj` says `pocketAngle: -45`.
 #[test]
-#[ignore = "#195: the raster scan starts at the Y-up bottom of the region, PureCutCNC's at the top"]
 fn pocket_raster_45deg() {
     harness::check(&case(
         "pocket-raster-45deg",

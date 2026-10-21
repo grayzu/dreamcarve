@@ -29,8 +29,8 @@ alone.
 | `profile-ring` | A circle in a circle: the inner one cut as a hole. PureCutCNC needs two operations for what DreamCarve does in one. |
 | `profile-tabs-circle` | The coaster: a 90 mm circle with four rect tabs. |
 | `pocket-offset-rect` | Offset Pocket of a 60 × 40 mm rectangle. |
-| `pocket-offset-island` | Offset Pocket round a circular island. Ignored until #196 is fixed. |
-| `pocket-raster-0deg`, `pocket-raster-45deg` | Raster Pocket at 0° and 45°. The `.camj` says −45°: PureCutCNC's angles are mirrored by its Y-down frame. Ignored until #195 is fixed. |
+| `pocket-offset-island` | Offset Pocket round a circular island: each ring starts at its nearest point, on an arc too (#196). |
+| `pocket-raster-0deg`, `pocket-raster-45deg` | Raster Pocket at 0° and 45°. The `.camj` says −45°: PureCutCNC's angles are mirrored by its Y-down frame. The scan starts at the machine-frame top, PureCutCNC's Y-down `minY` (#195). |
 | `pocket-rough-then-rest` | A rough leaving 0.5 mm, then a rest Pocket with a smaller tool, in one program with `M6`. |
 | `drill-simple`, `drill-peck` | Four holes drilled in order, simple and peck. |
 | `engrave-open-closed` | Engrave of an open polyline and a closed rectangle. |
@@ -129,7 +129,7 @@ difference is:
 | `EntryPlacement` | #147, #165, #174 | The laps are compared, not the ramp or helix. Both programs descend at the entry angle; a helix has the entry's diameter and turns the same way in both; DreamCarve's ramp starts on the path it enters. |
 | `PecksFromRetractPlane` | #153 | Hole positions, depths and order. Each program's pecks follow its own rule. |
 | `RestMachiningAgainstFinishPass` | #163 | The rough is compared. Both programs cover the pocket at full depth; the rest cuts every level, the finish only the last. |
-| `RasterLineOrder` | #146, decision 5 | Raster lines are compared without direction; links between lines are not. |
+| `RasterLineOrder` | #146, decision 5; #150 | Raster lines are compared without direction; links between lines are not. PureCutCNC orders the pieces nearest-first outright; DreamCarve prefers pieces a link inside the region reaches, and keeps scan order where that lifts less (#150). |
 | `LeadArcsAtCuttingFeed` | #185 | Lead arcs at the tool's feed in DreamCarve, below it in PureCutCNC. |
 | `PassOrderWithinLayer` | Design, "Sequence", D5 | The passes are compared in order, each as a set. DreamCarve's walk within a pass is checked against D5. |
 

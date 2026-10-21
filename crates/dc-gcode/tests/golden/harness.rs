@@ -146,10 +146,11 @@ pub enum Difference {
     /// every level the rough did, and PureCutCNC's finish pass at the
     /// final depth alone.
     RestMachiningAgainstFinishPass,
-    /// Raster lines are cut in scan order in DreamCarve and greedily
-    /// nearest-first in PureCutCNC (#146, decision 5), so the two programs
-    /// cross the region in different orders and link different pairs of
-    /// lines. The raster lines (the open moves along the raster angle) are
+    /// Raster lines are ordered greedily nearest-first in PureCutCNC; in
+    /// DreamCarve nearest-first among the pieces a link inside the region
+    /// reaches, or in scan order where that lifts less (#146, decision 5;
+    /// #150). So the two programs cross the region in different orders and
+    /// link different pairs of lines. The raster lines (the open moves along the raster angle) are
     /// compared without their direction (the design spec: "raster lines
     /// ignore direction"); the wall pass rings are compared as usual; the
     /// links between lines, which follow the order, are not compared.
