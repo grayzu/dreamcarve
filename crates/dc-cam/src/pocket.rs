@@ -1263,36 +1263,150 @@ mod tests {
     #[test]
     fn offset_coverage_reaches_inset_region() {
         let p = rect_project();
-        let (tp, _) = generate(&p, &pocket_op(&p, CutDirection::Climb));
-        let fp = footprint(&tp, RADIUS_MM);
-        let outer = Contour::new(at_20_20().apply_polyline(&rect_100x50()).unwrap()).unwrap();
-        let reachable = nest(offset(&outer, -RADIUS_MM)).unwrap().0;
-        assert_eq!(reachable.len(), 1);
-        let uncut = difference(&reachable, &fp, FLAT_TOL);
-        let perimeter_mm = reachable[0].outer().polyline().length_mm();
-        assert!(
-            area_mm2(&uncut) <= 0.05 * perimeter_mm,
-            "{} mm² of the reachable area is not cut: {uncut:?}",
-            area_mm2(&uncut)
-        );
-        // Coverage holds at every pass, not only in the union of passes.
-        for z in PASS_Z_MM {
-            let at_z = Toolpath {
-                moves: tp
-                    .moves
-                    .iter()
-                    .filter(|m| !m.is_rapid() && (m.to.z - z).abs() <= EPS_MM)
-                    .copied()
-                    .collect(),
-            };
-            let fp = footprint(&at_z, RADIUS_MM);
+        let outer = at_20_20().apply_polyline(&rect_100x50()).unwrap();
+        for fraction in STEP_OVERS {
+            let mut op = pocket_op(&p, CutDirection::Climb);
+            op.step_over_fraction = Some(fraction);
+            let (tp, _) = generate(&p, &op);
+            let fp = footprint(&tp, RADIUS_MM);
+            let reachable = reachable_of(&outer);
+            assert_eq!(reachable.len(), 1);
             let uncut = difference(&reachable, &fp, FLAT_TOL);
             assert!(
-                area_mm2(&uncut) <= 0.05 * perimeter_mm,
-                "at Z {z}: {} mm² uncut",
-                area_mm2(&uncut)
+                area_mm2(&uncut) <= coverage_tolerance_mm2(&reachable),
+                "{fraction}: {} mm² of the reachable area is not cut, in {} pieces",
+                area_mm2(&uncut),
+                uncut.len()
+            );
+            // Coverage holds at every pass, not only in the union of passes.
+            assert_covers_at_every_pass(&tp, &outer, &format!("{fraction}"));
+        }
+    }
+
+    /// The step-overs the coverage tests run at: the fixtures' 40 % and
+    /// three above half the diameter, where the ring tree alone left
+    /// material standing (#258).
+    const STEP_OVERS: [f64; 4] = [0.4, 0.6, 0.8, 1.0];
+
+    /// The reachable area of a pocket whose (placed) wall is `outer`: the
+    /// wall inset by the tool radius.
+    fn reachable_of(outer: &Polyline) -> Vec<Region> {
+        nest(offset(&Contour::new(outer.clone()).unwrap(), -RADIUS_MM))
+            .unwrap()
+            .0
+    }
+
+    /// The coverage tests' tolerance: 0.05 mm, as area, 0.05 × the
+    /// reachable area's perimeter.
+    fn coverage_tolerance_mm2(reachable: &[Region]) -> f64 {
+        let perimeter_mm: f64 = reachable
+            .iter()
+            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+            .map(|c| c.polyline().length_mm())
+            .sum();
+        0.05 * perimeter_mm
+    }
+
+    /// The footprint of the cutting moves of `tp` at `z_mm`.
+    fn footprint_at_z(tp: &Toolpath, z_mm: f64) -> Vec<Region> {
+        let at_z = Toolpath {
+            moves: tp
+                .moves
+                .iter()
+                .filter(|m| !m.is_rapid() && (m.to.z - z_mm).abs() <= EPS_MM)
+                .copied()
+                .collect(),
+        };
+        footprint(&at_z, RADIUS_MM)
+    }
+
+    /// At every pass, the footprint of `tp` covers the reachable area of
+    /// the pocket walled by `outer` within the coverage tolerance.
+    fn assert_covers_at_every_pass(tp: &Toolpath, outer: &Polyline, what: &str) {
+        let reachable = reachable_of(outer);
+        for z in PASS_Z_MM {
+            let uncut = difference(&reachable, &footprint_at_z(tp, z), FLAT_TOL);
+            assert!(
+                area_mm2(&uncut) <= coverage_tolerance_mm2(&reachable),
+                "{what} at Z {z}: {} mm² uncut, in {} pieces",
+                area_mm2(&uncut),
+                uncut.len()
             );
         }
+    }
+
+    /// #258: above half the diameter, the ring tree stops when a region
+    /// cannot be inset by another step-over, so its innermost ring can lie
+    /// up to a step-over from the middle while the tool reaches only its
+    /// radius, and with step-over 1.0 each ring's sharp corners lie more
+    /// than a radius from the ring inside it. Circles and rects whose
+    /// innermost region is between `r` and `s` across, and the 100 × 50
+    /// rect, are covered at every pass and their centre is cut.
+    #[test]
+    fn offset_above_half_step_over_leaves_no_centre_pin() {
+        for fraction in [0.6, 0.8, 1.0] {
+            for (name, outer) in pin_shapes() {
+                let p = project(vec![outer.clone()], &[("i1", Transform::IDENTITY)]);
+                let mut op = pocket_op(&p, CutDirection::Climb);
+                op.step_over_fraction = Some(fraction);
+                let (tp, _) = generate(&p, &op);
+                let what = format!("{name} at {fraction}");
+                assert_covers_at_every_pass(&tp, &outer, &what);
+                for z in PASS_Z_MM {
+                    assert!(
+                        covers(&footprint_at_z(&tp, z), PIN_CENTRE),
+                        "{what} at Z {z}: a pin is left at the centre"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Raster has no such gap (#258): its lines are `s ≤ 2r` apart, and a
+    /// point between two lines is within `s/2` of one of them or of the
+    /// wall ring.
+    #[test]
+    fn raster_above_half_step_over_leaves_no_ridge() {
+        for fraction in [0.6, 0.8, 1.0] {
+            for (name, outer) in pin_shapes() {
+                let p = project(vec![outer.clone()], &[("i1", Transform::IDENTITY)]);
+                for angle_deg in [0.0, 45.0] {
+                    let mut op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
+                    op.step_over_fraction = Some(fraction);
+                    let (tp, _) = generate(&p, &op);
+                    let what = format!("{name} at {fraction}, {angle_deg}°");
+                    assert_covers_at_every_pass(&tp, &outer, &what);
+                }
+            }
+        }
+    }
+
+    /// The centre of every [`pin_shapes`] shape.
+    const PIN_CENTRE: Point = Point::new(100.0, 80.0);
+
+    /// Circles whose tool-centre radius (theirs less 3.175) falls between
+    /// `r` and `s` at step-over 0.6, 0.8 and 1.0 or at a later ring, and
+    /// rects whose tool-centre half-height does, with the 100 × 50 rect,
+    /// all centred on [`PIN_CENTRE`].
+    fn pin_shapes() -> Vec<(String, Polyline)> {
+        let circles = [6.775, 7.475, 8.0, 8.175, 8.5, 9.0, 12.0, 20.0].map(|radius_mm| {
+            (
+                format!("circle r{radius_mm}"),
+                Polyline::circle(PIN_CENTRE, radius_mm),
+            )
+        });
+        let rects = [
+            (100.0, 50.0),
+            (40.0, 13.5),
+            (40.0, 15.0),
+            (40.0, 17.0),
+            (40.0, 25.0),
+        ]
+        .map(|(w, h): (f64, f64)| {
+            let corner = Point::new(PIN_CENTRE.x - w / 2.0, PIN_CENTRE.y - h / 2.0);
+            (format!("rect {w}x{h}"), Polyline::rect(corner, w, h))
+        });
+        circles.into_iter().chain(rects).collect()
     }
 
     /// The wall ring (93.65 mm wide) and the island ring (the 20 mm circle
@@ -3697,28 +3811,16 @@ mod tests {
     #[test]
     fn raster_coverage_reaches_inset_region() {
         let p = rect_project();
-        let outer = Contour::new(at_20_20().apply_polyline(&rect_100x50()).unwrap()).unwrap();
-        let reachable = nest(offset(&outer, -RADIUS_MM)).unwrap().0;
-        let perimeter_mm = reachable[0].outer().polyline().length_mm();
-        for angle_deg in [0.0, 45.0, 100.0] {
-            let op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
-            let (tp, _) = generate(&p, &op);
-            for z in PASS_Z_MM {
-                let at_z = Toolpath {
-                    moves: tp
-                        .moves
-                        .iter()
-                        .filter(|m| !m.is_rapid() && (m.to.z - z).abs() <= EPS_MM)
-                        .copied()
-                        .collect(),
-                };
-                let fp = footprint(&at_z, RADIUS_MM);
-                let uncut = difference(&reachable, &fp, FLAT_TOL);
-                assert!(
-                    area_mm2(&uncut) <= 0.05 * perimeter_mm,
-                    "{angle_deg}° at Z {z}: {} mm² uncut",
-                    area_mm2(&uncut)
-                );
+        let outer = at_20_20().apply_polyline(&rect_100x50()).unwrap();
+        // Raster lines `s` apart each clear `r` either side, and
+        // `s ≤ 2r` at every allowed step-over, so no ridge is left between
+        // them (#258).
+        for fraction in STEP_OVERS {
+            for angle_deg in [0.0, 45.0, 100.0] {
+                let mut op = raster_op(&p, CutDirection::Climb, angle_deg, WallPass::Last);
+                op.step_over_fraction = Some(fraction);
+                let (tp, _) = generate(&p, &op);
+                assert_covers_at_every_pass(&tp, &outer, &format!("{fraction} at {angle_deg}°"));
             }
         }
     }
