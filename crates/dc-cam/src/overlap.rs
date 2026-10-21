@@ -15,7 +15,9 @@
 //! narrower than the tool, #192), so at least `r` from every other
 //! region's line too, and only Outside and On line cuts can warn. A part
 //! and its own holes are one region and are never compared here: Outside,
-//! cutting close to them leaves a thin wall, not a gouge.
+//! cutting close to them leaves a thin wall, not a gouge; On line, lines
+//! of one region closer than the tool's diameter would cut through the
+//! part between them, which `generate_profile` refuses (#199).
 
 use crate::error::ShapeRef;
 use crate::warning::{Warning, WarningCode};

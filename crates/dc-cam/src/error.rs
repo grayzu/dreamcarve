@@ -347,15 +347,16 @@ pub enum CamError {
         /// The later shape in target order.
         second: ShapeRef,
     },
-    /// An Inside Profile's tool-centre path along one line of a region
-    /// comes closer than the tool radius to another line of the same
-    /// region: the band between them (an outline and an island in it, or
-    /// two islands) is narrower than the tool, so the cutter would cut
-    /// into the material the Profile keeps beyond the other line (#192).
-    /// `shape` is the one drawn first; `other` is boxed to keep the error
-    /// small.
+    /// A Profile's cut along one line of a region comes too close to
+    /// another line of the same region: the band between them (an outline
+    /// and an island or hole in it, or two of those) is narrower than the
+    /// tool. Inside, the band is waste and the cutter would cut into the
+    /// material the Profile keeps beyond the other line (#192); On line,
+    /// the band is the part, and the two lines' cuts would cut through it
+    /// (#199). `shape` is the one drawn first; `other` is boxed to keep
+    /// the error small.
     #[error(
-        "operation `{op}` cuts inside {shape} and {other}, but the band between them is {band_mm:.3} mm wide, narrower than its {diameter_mm} mm tool, so the bit would cut into the material beyond them; no toolpath was produced"
+        "operation `{op}` cuts {shape} and {other}, but the band between them is {band_mm:.3} mm wide, narrower than its {diameter_mm} mm tool, so the bit would cut into material the Profile keeps; no toolpath was produced"
     )]
     BandNarrowerThanTool {
         /// The operation.

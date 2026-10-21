@@ -415,8 +415,10 @@ that is too narrow for the bit is an error instead (see below).
 The warning names both shapes and the smallest gap between them, listed in
 the order the shapes are cut. It also applies to a part inside another
 part's hole: a coaster 1 mm from the wall of a frame's hole warns. A part
-and its own holes are never compared: a hole close to its outline leaves a
-thin wall, not a gouge. The program is still written as drawn. Move the
+and its own holes are never compared here: cut **outside**, a hole close
+to its outline leaves a thin wall, not a gouge, and cut **inside** or **on
+line**, a hole too close is an error (see below). The program is still
+written as drawn. Move the
 shapes apart, or use a smaller bit.
 
 ### Bands narrower than the bit
@@ -429,7 +431,7 @@ would bite into the material beyond the other: a 3 mm band with a
 6.35 mm bit gouges the part by 3.35 mm. That is an error, not a warning,
 and nothing is exported:
 
-``operation `o1` cuts inside `Ring` (instance `i1`, profile 0) and `Ring`
+``operation `o1` cuts `Ring` (instance `i1`, profile 0) and `Ring`
 (instance `i1`, profile 1), but the band between them is 3.000 mm wide,
 narrower than its 6.35 mm tool, ...``
 
@@ -438,8 +440,19 @@ Use a bit no wider than the band, widen the band, or cut the ring with a
 bit does not fit inside at all is different: it is skipped with the
 "tool ... does not fit ..." warning, because nothing is cut there. An
 island in such a shape is still an error, since its lap would run
-outside the outline. Cut **outside**, a hole close to its outline only
-leaves a thin wall and is cut as drawn.
+outside the outline.
+
+Cut **on line**, the band between a part's outline and its hole (or
+between two of its holes) is the part itself. The bit's centre follows
+each line and cuts half a bit into the band beside it, so when the band
+is narrower than the bit the two cuts together cut right through it,
+and the part falls apart there. That is the same error: a 4.5 mm ring
+with a 6.35 mm bit is refused, even though neither cut alone reaches the
+other line. A band at least as wide as the bit is cut as drawn. To cut a
+double line on purpose, use [Engrave](engrave.md).
+
+Cut **outside**, a hole close to its outline only leaves a thin wall and
+is cut as drawn.
 
 Shapes that cross each other, or a shape that crosses itself, are an error:
 DreamCarve cannot tell which side is material, so it cuts nothing. See
