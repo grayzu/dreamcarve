@@ -4998,6 +4998,46 @@ mod tests {
         check_against_with(&text, &toolpath, Some(0.01)).unwrap();
     }
 
+    /// Found by the Pocket property test once #232, #234 and #235 were
+    /// fixed: an offset ring started 0.0017 mm before the end of a round
+    /// corner, leaving an arc piece shorter than a unit of a 4-place inch
+    /// program. `emit` writes such an arc as nothing (its ends round to one
+    /// point, and a G2 there would be a full circle), so S6 must take a
+    /// toolpath arc of at most a half turn that ends where the controller
+    /// already is as reproduced, as it takes such a straight move. Here a
+    /// 0.001 mm arc of radius 0.685 mm, in inches; the same arc in mm is
+    /// written and matched as usual.
+    #[test]
+    fn arc_shorter_than_a_quantum_is_written_as_nothing() {
+        for units in [Units::Inch, Units::Mm] {
+            let (mut project, op, tool) = partless_fixture();
+            project.display_units = units;
+            let centre = Point::new(20.0, 10.685);
+            let turn: f64 = 0.001 / 0.685;
+            let end = Point::new(20.0 + 0.685 * turn.sin(), 10.685 - 0.685 * turn.cos());
+            let toolpath = Toolpath {
+                moves: vec![
+                    Move::rapid(Point3::new(10.0, 10.0, 11.0)),
+                    Move::linear(Point3::new(10.0, 10.0, 3.0), 300.0),
+                    Move::linear(Point3::new(20.0, 10.0, 3.0), 1000.0),
+                    Move {
+                        kind: MoveKind::ArcCcw { centre },
+                        to: Point3::new(end.x, end.y, 3.0),
+                        feed_mm_min: Some(1000.0),
+                    },
+                    Move::linear(Point3::new(30.0, 10.0, 3.0), 1000.0),
+                    Move::rapid(Point3::new(30.0, 10.0, 11.0)),
+                ],
+            };
+            let result = emit(
+                &project,
+                &[(Operation::Profile(op), tool, toolpath).into()],
+                "2026-10-21",
+            );
+            assert!(result.is_ok(), "{units:?}: {result:?}");
+        }
+    }
+
     /// #142: two abutting runs on different circles stay separate chains.
     /// A quarter of the radius 10 circle about (50, 50) from +X to
     /// (50, 60), then a quarter of the radius 15 circle about (50, 45) on
