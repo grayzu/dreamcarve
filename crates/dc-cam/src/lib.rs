@@ -16,6 +16,7 @@
 mod block;
 mod drill;
 mod engrave;
+pub mod entry;
 mod error;
 mod footprint;
 pub mod order;

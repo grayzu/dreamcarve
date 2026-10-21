@@ -848,6 +848,54 @@ fn pocket_exports_and_passes_safety() {
     );
 }
 
+/// Slice 9 (#147), capability 16 and S10 end to end: the coaster's Pocket
+/// with a helix entry at 80 % and 5°, on a tool whose plunge rate (100)
+/// is under the helix's vertical rate at full feed (1500 × sin 5° = 131),
+/// checks with no entry warning and exports. The helix moves run at the
+/// plunge-limited feed, between the plunge rate and the feed, and the
+/// safety pass accepted them.
+#[test]
+fn pocket_helix_entry_exports_and_passes_safety() {
+    let dir = work_dir("pocket_helix_entry_exports_and_passes_safety");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 100.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut pocket = sample_pocket();
+    pocket.targets = project.operations[0].targets().to_vec();
+    pocket.tool = project.operations[0].tool().clone();
+    pocket.step_over_fraction = Some(0.4);
+    pocket.entry = Entry::Helix {
+        diameter_fraction: 0.8,
+        angle_deg: 5.0,
+    };
+    project.operations.insert(0, Operation::Pocket(pocket));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(!report.contains("entry_fallback"), "{report}");
+    assert!(!report.contains("helix_diameter_reduced"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    let scaled: Vec<f64> = program
+        .lines()
+        .filter_map(|l| l.split_whitespace().find_map(|w| w.strip_prefix('F')))
+        .filter_map(|f| f.parse::<f64>().ok())
+        .filter(|f| *f > 100.0 + 1e-6 && *f < 1500.0 - 1e-6)
+        .collect();
+    assert!(
+        !scaled.is_empty(),
+        "the helix runs at a plunge-limited feed:\n{program}"
+    );
+    // 100 / sin 5° = 1147 mm/min, a little less on the chords.
+    for f in scaled {
+        assert!((1100.0..1150.0).contains(&f), "helix feed {f}");
+    }
+}
+
 /// Slice 7 (#138), acceptance test 23 on the CLI: the coaster with an
 /// 8 mm hole at its centre, drilled through in 4 mm pecks with a full
 /// retract and a 0.25 s dwell, checks clean and exports. The program dwells

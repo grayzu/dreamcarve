@@ -168,6 +168,20 @@ pub enum CamError {
         /// The fraction in effect.
         step_over_fraction: f64,
     },
+    /// The operation's entry has an angle outside (0, 45] degrees or a
+    /// helix diameter fraction outside (0, 1]. Validation rejects both; the
+    /// generator does not trust its callers.
+    #[error("operation `{op}` has entry {field} {value}; it must be {range}")]
+    InvalidEntry {
+        /// The operation.
+        op: OperationId,
+        /// `angle_deg` or `diameter_fraction`.
+        field: &'static str,
+        /// The value set.
+        value: f64,
+        /// The allowed range, as the user reads it.
+        range: &'static str,
+    },
     /// The operation asks for something this build does not generate yet.
     /// Validation accepts it, so a project may carry it; export refuses it
     /// rather than cutting something else.
