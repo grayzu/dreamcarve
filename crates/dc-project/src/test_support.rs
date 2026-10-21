@@ -4,13 +4,13 @@
 //! Fixture builders for tests in this crate and, with the `test-support`
 //! feature, in crates that depend on it (`docs/rust-guidelines.md`, "Tests").
 
-use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
+use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
     ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
     FeatureDefinition, FeatureInstance, MachineOrigin, MachiningOrder, Operation, OriginXy,
-    OriginZ, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool,
-    ToolKind, Units, WallPass,
+    OriginZ, PlacedTab, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec,
+    Tool, ToolKind, Units, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
@@ -48,8 +48,8 @@ pub fn tool_6_35_upcut() -> Tool {
 
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
-/// profile through the stock with four tabs. Matches the committed fixture
-/// `tests/fixtures/dcv/v10/sample.dcv`.
+/// profile through the stock with a request for four tabs, none placed
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v11/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -109,7 +109,25 @@ pub fn sample_project() -> Project {
             lead: None,
             corner_relief: CornerRelief::None,
         })],
+        // No placed tabs: the Profile's tab request is placed by `dc-cam`
+        // (#105), so the sample is a project as a format 10 file migrates.
+        tabs: Vec::new(),
         post_processor: grbl_post_processor(),
+    }
+}
+
+/// A 6 × 2 mm rect tab `id` on the sample rectangle's outline, its centre
+/// at (`x_mm`, `y_mm`) in definition space (#105).
+pub fn sample_tab(id: &str, x_mm: f64, y_mm: f64) -> PlacedTab {
+    PlacedTab {
+        id: TabId::new(id),
+        instance: InstanceId::new("i1"),
+        profile: 0,
+        x_mm,
+        y_mm,
+        width_mm: 6.0,
+        height_mm: 2.0,
+        shape: TabShape::Rect,
     }
 }
 

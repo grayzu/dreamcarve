@@ -8,7 +8,7 @@
 use std::fmt;
 
 use dc_geometry::EPS_MM;
-use dc_project::{CornerRelief, OperationId, ToolId};
+use dc_project::{CornerRelief, OperationId, TabId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
 use crate::error::ShapeRef;
@@ -40,8 +40,16 @@ pub enum WarningCode {
     TabsOutsideCutRange,
     /// The tab spans on one tool-centre contour would cover more than half
     /// of its length, so the part or hole would not cut free. The contour
-    /// gets the most tabs that cover at most half, down to none (#109).
+    /// gets the most tabs that cover at most half, down to none (#109);
+    /// placed tabs are cut as placed (#105).
     TabsCoverMostOfContour,
+    /// A placed tab is on an outline this Profile cuts as a hole, so it
+    /// holds the hole's slug, which is usually waste (#105). It is cut.
+    TabOnHole,
+    /// No enabled Profile crosses a placed tab: none cuts its outline, or
+    /// every path that does runs too far from it, so it holds nothing
+    /// (#105).
+    TabNotCrossed,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
     ToolpathsOverlap,
@@ -130,6 +138,8 @@ impl WarningCode {
             Self::TabsOverlap => "tabs_overlap",
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
+            Self::TabOnHole => "tab_on_hole",
+            Self::TabNotCrossed => "tab_not_crossed",
             Self::ToolpathsOverlap => "toolpaths_overlap",
             Self::PocketNoRoom => "pocket_no_room",
             Self::PocketIslandTooClose => "pocket_island_too_close",
@@ -313,6 +323,25 @@ pub enum Warning {
         /// The widest tab at `tab_count` that covers at most half; `None`
         /// when none fits.
         max_width_mm: Option<f64>,
+        /// The tabs are placed tabs, all cut as placed (#105), rather than
+        /// a tab request cut down.
+        placed: bool,
+    },
+    /// [`WarningCode::TabOnHole`].
+    TabOnHole {
+        /// The operation.
+        op: OperationId,
+        /// The tab.
+        tab: TabId,
+        /// The hole it is on.
+        shape: ShapeRef,
+    },
+    /// [`WarningCode::TabNotCrossed`].
+    TabNotCrossed {
+        /// The tab.
+        tab: TabId,
+        /// The outline it is placed on.
+        shape: ShapeRef,
     },
     /// [`WarningCode::ToolpathsOverlap`].
     ToolpathsOverlap {
@@ -550,6 +579,8 @@ impl Warning {
             Self::TabsOverlap { .. } => WarningCode::TabsOverlap,
             Self::TabsOutsideCutRange { .. } => WarningCode::TabsOutsideCutRange,
             Self::TabsCoverMostOfContour { .. } => WarningCode::TabsCoverMostOfContour,
+            Self::TabOnHole { .. } => WarningCode::TabOnHole,
+            Self::TabNotCrossed { .. } => WarningCode::TabNotCrossed,
             Self::ToolpathsOverlap { .. } => WarningCode::ToolpathsOverlap,
             Self::PocketNoRoom { .. } => WarningCode::PocketNoRoom,
             Self::PocketIslandTooClose { .. } => WarningCode::PocketIslandTooClose,
@@ -579,6 +610,7 @@ impl Warning {
             Self::TabsOverlap { op, .. }
             | Self::TabsOutsideCutRange { op, .. }
             | Self::TabsCoverMostOfContour { op, .. }
+            | Self::TabOnHole { op, .. }
             | Self::PocketNoRoom { op, .. }
             | Self::PocketIslandTooClose { op, .. }
             | Self::EntryFallback { op, .. }
@@ -600,6 +632,7 @@ impl Warning {
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
             | Self::DuplicateShapeDropped { .. }
+            | Self::TabNotCrossed { .. }
             | Self::ToolpathsOverlap { .. }
             | Self::ToolChangeAvoidable { .. } => None,
         }
@@ -653,14 +686,31 @@ const fn relief_name(relief: CornerRelief) -> &'static str {
 
 /// What is cut instead of `tab_count` tabs that would cover most of a
 /// contour (`cut_count` of them; `kept_covers_most` when that is the one
-/// tab a part keeps and it still covers more than half), and the width at
-/// which all of them would fit, `max_width_mm`.
+/// tab a part keeps and it still covers more than half; `placed` when
+/// they are placed tabs, all cut as placed, #105), and the width at which
+/// all of them would fit, `max_width_mm`.
 fn coverage_advice(
     tab_count: usize,
     cut_count: usize,
     kept_covers_most: bool,
     max_width_mm: Option<f64>,
+    placed: bool,
 ) -> String {
+    if placed {
+        let (cut, them) = if tab_count == 1 {
+            ("It is cut, as placed", "it")
+        } else {
+            ("All of them are cut, as placed", "them")
+        };
+        let cut = format!("{cut}, so the part or hole may need cutting free by hand");
+        return match max_width_mm {
+            Some(width_mm) => format!(
+                "{cut}. To let it cut free, make {them} at most {} mm wide.",
+                mm(width_mm)
+            ),
+            None => format!("{cut}. To let it cut free, remove tabs or use a smaller bit."),
+        };
+    }
     let cut = match (cut_count, kept_covers_most) {
         (0, _) => "No tab is cut there".to_owned(),
         (1, true) if tab_count == 1 => "Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
@@ -772,6 +822,7 @@ impl fmt::Display for Warning {
                 tab_total_mm,
                 cut_count,
                 max_width_mm,
+                placed,
                 ..
             } => {
                 let share = if *path_length_mm > 0.0 {
@@ -804,10 +855,19 @@ impl fmt::Display for Warning {
                         *tab_count,
                         *cut_count,
                         *cut_count == 1 && 2.0 * tab_span_mm > *path_length_mm + EPS_MM,
-                        *max_width_mm
+                        *max_width_mm,
+                        *placed
                     )
                 )
             }
+            Self::TabOnHole { tab, shape, .. } => write!(
+                f,
+                "tab `{tab}` is on {shape}, which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear --tab {tab}`) unless you mean to keep the slug"
+            ),
+            Self::TabNotCrossed { tab, shape } => write!(
+                f,
+                "tab `{tab}` on {shape} is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear --tab {tab}`)"
+            ),
             Self::ToolpathsOverlap {
                 shape,
                 other,
@@ -1085,6 +1145,38 @@ mod tests {
     fn message_fixtures() -> Vec<(Warning, &'static str)> {
         vec![
             (
+                Warning::TabOnHole {
+                    op: op(),
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                },
+                "tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear --tab tab3`) unless you mean to keep the slug",
+            ),
+            (
+                Warning::TabNotCrossed {
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                },
+                "tab `tab3` on `Shape` (instance `i1`, profile 2) is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear --tab tab3`)",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 60.0,
+                    tab_count: 3,
+                    tab_width_mm: 6.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 12.35,
+                    tab_total_mm: 37.05,
+                    cut_count: 3,
+                    max_width_mm: Some(3.65),
+                    placed: true,
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 3 tabs is 6 mm wide, and with the 6.35 mm bit each one keeps 12.35 mm of the tool path raised, 37.05 mm in total on a 60 mm path (61.7%), so the part or hole would not cut free. All of them are cut, as placed, so the part or hole may need cutting free by hand. To let it cut free, make them at most 3.65 mm wide.",
+            ),
+            (
                 Warning::OpenPathSkipped {
                     shape: shape(),
                     reason: OpenPathReason::NoSide,
@@ -1173,6 +1265,7 @@ mod tests {
                     tab_total_mm: 65.4,
                     cut_count: 3,
                     max_width_mm: Some(6.15),
+                    placed: false,
                 },
                 "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole would not cut free. Only 3 of them are cut there. To keep all 4, make them at most 6.15 mm wide.",
             ),
@@ -1189,6 +1282,7 @@ mod tests {
                     tab_total_mm: 26.0,
                     cut_count: 1,
                     max_width_mm: None,
+                    placed: false,
                 },
                 "tabs on contour 2 in cut order would cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole would not cut free. Only 1 of them is cut there.",
             ),
@@ -1205,6 +1299,7 @@ mod tests {
                     tab_total_mm: 6.175,
                     cut_count: 0,
                     max_width_mm: None,
+                    placed: false,
                 },
                 "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole would not cut free. No tab is cut there: this outline is too short for tabs with this bit.",
             ),
@@ -1221,6 +1316,7 @@ mod tests {
                     tab_total_mm: 4.5,
                     cut_count: 0,
                     max_width_mm: Some(1.75),
+                    placed: false,
                 },
                 "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 1.5 mm bit it keeps 4.5 mm of the tool path raised on a 6.5 mm path (69.2%), so the part or hole would not cut free. No tab is cut there. To keep it, make it at most 1.75 mm wide.",
             ),
@@ -1237,6 +1333,7 @@ mod tests {
                     tab_total_mm: 14.35,
                     cut_count: 1,
                     max_width_mm: Some(3.65),
+                    placed: false,
                 },
                 "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 8 mm wide, and with the 6.35 mm bit it keeps 14.35 mm of the tool path raised on a 20 mm path (71.8%), so the part or hole would not cut free. Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand. To let it cut free, make it at most 3.65 mm wide.",
             ),
@@ -1253,6 +1350,7 @@ mod tests {
                     tab_total_mm: 57.4,
                     cut_count: 1,
                     max_width_mm: None,
+                    placed: false,
                 },
                 "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 20 mm path (287%), so the part or hole would not cut free. Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand.",
             ),
@@ -1550,7 +1648,9 @@ mod tests {
             C::DuplicateShapeDropped => C::TabsOverlap,
             C::TabsOverlap => C::TabsOutsideCutRange,
             C::TabsOutsideCutRange => C::TabsCoverMostOfContour,
-            C::TabsCoverMostOfContour => C::ToolpathsOverlap,
+            C::TabsCoverMostOfContour => C::TabOnHole,
+            C::TabOnHole => C::TabNotCrossed,
+            C::TabNotCrossed => C::ToolpathsOverlap,
             C::ToolpathsOverlap => C::PocketNoRoom,
             C::PocketNoRoom => C::PocketIslandTooClose,
             C::PocketIslandTooClose => C::EntryFallback,
@@ -1591,6 +1691,7 @@ mod tests {
                     | WarningCode::SideNeedsOpenPath
                     | WarningCode::ToolTooLarge
                     | WarningCode::DuplicateShapeDropped
+                    | WarningCode::TabNotCrossed
                     | WarningCode::ToolpathsOverlap
                     | WarningCode::ToolChangeAvoidable
             );
@@ -1604,7 +1705,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 26);
+        assert_eq!(count, 28);
     }
 
     #[test]

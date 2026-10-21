@@ -29,7 +29,8 @@ use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
     CornerRelief, DefinitionId, DrillCycle, EngraveOp, Entry, FeatureDefinition, FeatureInstance,
     InstanceId, Lead, Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp,
-    Project, Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, ToolKind, load, save,
+    Project, Side, SpindleControl, TabPlacement, TabShape, TabSpec, ToolChangeMode, ToolId,
+    ToolKind, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -130,6 +131,17 @@ fn as_profile_mut(op: &mut Operation) -> &mut ProfileOp {
     match op {
         Operation::Profile(op) => op,
         other => panic!("a Profile operation, not {other:?}"),
+    }
+}
+
+/// `init`'s tab request (#105): four 8 × 3 mm rect tabs, none on holes.
+fn init_tab_request() -> TabSpec {
+    TabSpec {
+        placement: TabPlacement::Count { count: 4 },
+        width_mm: 8.0,
+        height_mm: 3.0,
+        shape: TabShape::Rect,
+        on_holes: false,
     }
 }
 
@@ -5574,6 +5586,310 @@ fn tools_import_twice_is_already_present() {
     assert_eq!(
         std::fs::read(library_file(&dir)).expect("library readable"),
         first
+    );
+}
+
+// ── #105: placed tabs ──
+
+/// The repository's corpus of version 9 projects with tab settings, and
+/// the programs they exported before tabs were placed objects (#105).
+fn tabs_migration_corpus() -> Vec<(String, PathBuf)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tabs-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// Every program `export` writes for the project `name.dcv` in `dir`,
+/// with the expected file each is compared with.
+fn exported_programs(dir: &Path, name: &str) -> Vec<(String, String)> {
+    let mut programs: Vec<(String, String)> = std::fs::read_dir(dir)
+        .expect("dir readable")
+        .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "nc"))
+        .filter_map(|p| {
+            let file = p.file_name()?.to_string_lossy().into_owned();
+            (file == format!("{name}.nc") || file.starts_with(&format!("{name}-")))
+                .then(|| (file, std::fs::read_to_string(&p).expect("program readable")))
+        })
+        .collect();
+    programs.sort();
+    programs
+}
+
+/// Asserts the programs `name` exported in `dir` are byte for byte the
+/// committed `tests/expected/tabs-migration/` ones.
+fn assert_corpus_programs(dir: &Path, name: &str, case: &str) {
+    let expected_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/tabs-migration");
+    let programs = exported_programs(dir, name);
+    assert!(!programs.is_empty(), "{case}: {name} exported nothing");
+    for (file, text) in programs {
+        let expected = std::fs::read_to_string(expected_dir.join(&file))
+            .unwrap_or_else(|e| panic!("{case}: expected {file}: {e}"));
+        assert!(
+            text == expected,
+            "{case}: {file} differs from the program before #105:\n{text}"
+        );
+    }
+}
+
+/// #105, the issue's first test, on every project of the corpus (13 cut
+/// for this, the plaque fixtures and a phase 1 grblHAL file): a version 9
+/// file with tab settings exports byte-identical G-code, both as it is
+/// (its settings are tab requests, placed when it is cut) and after
+/// `tabs place` has written them as placed tabs and saved the file. The
+/// expected programs were exported by the build before #105.
+#[test]
+fn version_9_tab_settings_export_byte_identical_programs() {
+    let dir = work_dir("version_9_tab_settings_export_byte_identical_programs");
+    for (name, path) in tabs_migration_corpus() {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(text.contains("\"tabs\": {"), "{name} has a tab setting");
+
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "as loaded");
+
+        let project = load_file(&dir.join(&file)).project;
+        let op = project
+            .operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::Profile(p) if p.enabled && p.tabs.is_some() => Some(p.id.clone()),
+                _ => None,
+            })
+            .expect("a Profile with tabs");
+        let out = run(&dir, &["tabs", "place", &file, op.as_str()]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let placed = load_file(&dir.join(&file)).project;
+        assert!(!placed.tabs.is_empty(), "{name}: tabs placed");
+        assert!(
+            placed.operations.iter().all(|op| match op {
+                Operation::Profile(p) => !p.enabled || p.tabs.is_none(),
+                _ => true,
+            }),
+            "{name}: every enabled request is placed"
+        );
+        for entry in std::fs::read_dir(&dir).expect("dir readable") {
+            let path = entry.expect("entry").path();
+            if path.extension().is_some_and(|x| x == "nc") {
+                std::fs::remove_file(path).expect("program removed");
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "placed");
+    }
+}
+
+/// #105: `init` asks for four tabs on each part with a tab request and
+/// places none: its one Profile cuts every closed shape, which the user
+/// then cuts with operations of their own. `tabs place` with no count
+/// writes the request as four placed tabs on the coaster, each 8 × 3 mm
+/// rect, and sets the request to `null`.
+#[test]
+fn init_asks_for_four_tabs_that_tabs_place_writes() {
+    let dir = work_dir("init_asks_for_four_tabs_that_tabs_place_writes");
+    let dcv = init_coaster(&dir);
+    let project = load_file(&dcv).project;
+    assert!(project.tabs.is_empty(), "{:?}", project.tabs);
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.tabs, Some(init_tab_request()));
+    }
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 4, "{:?}", project.tabs);
+    for tab in &project.tabs {
+        assert_eq!(tab.instance.as_str(), "i1");
+        assert_approx_eq!(tab.width_mm, 8.0, 1e-12);
+        assert_approx_eq!(tab.height_mm, 3.0, 1e-12);
+        assert_eq!(tab.shape, TabShape::Rect);
+    }
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.tabs, None);
+    }
+}
+
+/// #105: `tabs place --count` places tabs with the phase 2 rules and
+/// saves them; `tabs list` shows each with the operation that cuts round
+/// it; `tabs clear` removes them all.
+#[test]
+fn tabs_place_list_and_clear() {
+    let dir = work_dir("tabs_place_list_and_clear");
+    let dcv = init_coaster(&dir);
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Removed 4 tab(s)"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(load_file(&dcv).project.tabs.is_empty());
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "3",
+            "--width",
+            "6",
+            "--height",
+            "2.5",
+            "--shape",
+            "smooth",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert_eq!(printed.matches("Placed `tab").count(), 3, "{printed}");
+    assert!(
+        printed.contains("6 mm wide, top 2.5 mm above the stock bottom, smooth"),
+        "{printed}"
+    );
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 3);
+    assert!(project.tabs.iter().all(|t| t.shape == TabShape::Smooth));
+
+    let out = run(&dir, &["tabs", "list", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let listed = stdout(&out);
+    let lines: Vec<&str> = listed.lines().collect();
+    assert!(lines[0].starts_with("ID"), "{listed}");
+    assert!(lines[0].contains("CUT_BY"), "{listed}");
+    assert_eq!(lines.len(), 4, "{listed}");
+    for line in &lines[1..] {
+        assert!(line.ends_with("op1"), "cut round by op1: {line}");
+        assert!(line.contains("smooth"), "{line}");
+    }
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "--tab", "tab2"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let ids: Vec<String> = load_file(&dcv)
+        .project
+        .tabs
+        .iter()
+        .map(|t| t.id.to_string())
+        .collect();
+    assert_eq!(ids, ["tab1", "tab3"]);
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(load_file(&dcv).project.tabs.is_empty());
+    let out = run(&dir, &["tabs", "list", "coaster.dcv"]);
+    assert!(stdout(&out).contains("has no tabs"), "{}", stdout(&out));
+}
+
+/// #105: `tabs place --at` puts a tab at each distance along the
+/// outline from its first vertex. The coaster's circle, centred at
+/// (55, 55), starts at its rightmost point, (100, 55), and runs clockwise
+/// as the SVG draws it, 282.74 mm round, so a quarter of the way is its
+/// bottom, (55, 10): a chord of 45√2 mm from the start.
+#[test]
+fn tabs_place_at_puts_tabs_along_the_outline() {
+    let dir = work_dir("tabs_place_at_puts_tabs_along_the_outline");
+    let dcv = init_coaster(&dir);
+    run(&dir, &["tabs", "clear", "coaster.dcv"]);
+    let quarter = format!("{}", std::f64::consts::PI * 90.0 / 4.0);
+    let at = format!("0,{quarter}");
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1", "--at", &at]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 2, "{:?}", project.tabs);
+    let instance = &project.instances[0];
+    let points: Vec<Point> = project
+        .tabs
+        .iter()
+        .map(|t| instance.transform.apply(Point::new(t.x_mm, t.y_mm)))
+        .collect();
+    let first = project.definitions[&instance.definition].profiles[0].vertices()[0];
+    let start = instance.transform.apply(Point::new(first.x, first.y));
+    assert!(points[0].distance_to(start) < 1e-9, "{points:?}");
+    assert!(
+        (points[1].distance_to(start) - 45.0 * std::f64::consts::SQRT_2).abs() < 1e-6,
+        "a quarter turn on: {points:?}"
+    );
+}
+
+/// #105: `tabs place` names the operation it needs: one the project does
+/// not have, one that is not a Profile, or a Profile with no request when
+/// neither --count nor --at is given, all fail and change nothing.
+#[test]
+fn tabs_place_refuses_what_it_cannot_place() {
+    let dir = work_dir("tabs_place_refuses_what_it_cannot_place");
+    let dcv = init_coaster(&dir);
+    // Placed and cleared: the Profile has no tab request left.
+    run(&dir, &["tabs", "clear", "coaster.dcv"]);
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op9", "--count", "2"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("operation `op9` is not in"),
+        "{}",
+        stderr(&out)
+    );
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("has no tab request"),
+        "{}",
+        stderr(&out)
+    );
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "--tab", "tab9"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("tab `tab9` is not in"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+}
+
+/// #105: `check` warns `tab_not_crossed` for a tab no enabled Profile
+/// cuts round, here once the coaster's Profile is disabled.
+#[test]
+fn check_warns_tab_not_crossed() {
+    let dir = work_dir("check_warns_tab_not_crossed");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_not_crossed"), "{report}");
+    let mut project = load_file(&dcv).project;
+    for op in &mut project.operations {
+        as_profile_mut(op).enabled = false;
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_not_crossed:").count(),
+        4,
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "tab `tab1` on `coaster` (instance `i1`, profile 0) is crossed by no enabled Profile operation"
+        ),
+        "{report}"
     );
 }
 

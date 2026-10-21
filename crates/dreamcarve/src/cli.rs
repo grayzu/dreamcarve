@@ -20,7 +20,7 @@ use dc_gcode::ProgramSplit;
 use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
 
 use crate::output::{self, errln, outln};
-use crate::{check, clock, config, export, init, tools};
+use crate::{check, clock, config, export, init, tabs, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -46,6 +46,90 @@ pub enum Command {
     Config(ConfigArgs),
     /// Manage the tool library and copy its tools into projects.
     Tools(ToolsArgs),
+    /// Place, list and remove a project's holding tabs.
+    Tabs(TabsArgs),
+}
+
+/// Arguments of `tabs`.
+#[derive(Debug, clap::Args)]
+pub struct TabsArgs {
+    /// What to do.
+    #[command(subcommand)]
+    pub command: TabsCommand,
+}
+
+/// The `tabs` subcommands. Each one that changes the project first places
+/// the tab request of every enabled Profile, as `tabs place` would, and
+/// saves the project through `dc_project::save`.
+#[derive(Debug, Subcommand)]
+pub enum TabsCommand {
+    /// Place tabs on the outlines a Profile operation cuts, and save the
+    /// project. With neither --count nor --at, places the operation's own
+    /// tab request.
+    Place(TabsPlaceArgs),
+    /// List the project's tabs, and the operations that cut round each.
+    List {
+        /// The project.
+        dcv: PathBuf,
+    },
+    /// Remove tabs and save the project: every tab, those on the outlines
+    /// one operation cuts, or those named with --tab.
+    Clear {
+        /// The project.
+        dcv: PathBuf,
+        /// Remove only the tabs on the instances this operation targets.
+        op: Option<String>,
+        /// Remove this tab; repeat for several.
+        #[arg(long = "tab", value_name = "ID", conflicts_with = "op")]
+        tabs: Vec<String>,
+    },
+}
+
+/// Arguments of `tabs place`.
+#[derive(Debug, clap::Args)]
+pub struct TabsPlaceArgs {
+    /// The project.
+    pub dcv: PathBuf,
+    /// The Profile operation whose outlines get the tabs.
+    pub op: String,
+    /// Space this many tabs evenly along each tool path, as phase 2 laid
+    /// `count` tabs: fewer on an outline too short for them.
+    #[arg(long, conflicts_with = "at")]
+    pub count: Option<u8>,
+    /// Put a tab at each of these distances along every outline, in mm
+    /// from its first vertex as drawn: `--at 10,55.5`.
+    #[arg(long, value_delimiter = ',', value_name = "MM,...")]
+    pub at: Option<Vec<f64>>,
+    /// Tab width along the outline, mm [default: 8].
+    #[arg(long, value_name = "MM")]
+    pub width: Option<f64>,
+    /// Tab top above the stock bottom, mm [default: 3].
+    #[arg(long, value_name = "MM")]
+    pub height: Option<f64>,
+    /// Tab cross-section [default: rect].
+    #[arg(long, value_enum)]
+    pub shape: Option<TabShapeArg>,
+    /// Put tabs on holes too, to hold their slugs.
+    #[arg(long)]
+    pub on_holes: bool,
+}
+
+/// `--shape` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TabShapeArg {
+    /// Square-shouldered.
+    Rect,
+    /// A triangular bridge.
+    Smooth,
+}
+
+impl From<TabShapeArg> for dc_project::TabShape {
+    fn from(shape: TabShapeArg) -> Self {
+        match shape {
+            TabShapeArg::Rect => Self::Rect,
+            TabShapeArg::Smooth => Self::Smooth,
+        }
+    }
 }
 
 /// Arguments of `tools`.
@@ -262,6 +346,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Command::Posts => posts(),
         Command::Config(args) => config::run(&args.command),
         Command::Tools(args) => tools::run(&args.command),
+        Command::Tabs(args) => tabs::run(&args.command),
     };
     // The command's own exit code stands even when stdout was a pipe its
     // reader closed (#216, `output`).

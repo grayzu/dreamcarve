@@ -4999,6 +4999,63 @@ mod tests {
         }
     }
 
+    /// #105: programs cut round placed tabs pass the safety pass (S1–S7,
+    /// S9, S10, S12): the sample's tabs placed from its request, with a
+    /// fifth, taller and smooth, on the right-hand edge, on each side, with
+    /// a plunge and with a ramp, and Inside and Outside with a lead. Every
+    /// pass below a tab rises over it: the program holds each tab top.
+    #[test]
+    fn placed_tab_programs_pass_s1_to_s9() {
+        let lead = dc_project::Lead {
+            radius_mm: 4.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 1.0,
+        };
+        for side in [
+            dc_project::Side::Outside,
+            dc_project::Side::Inside,
+            dc_project::Side::OnLine,
+        ] {
+            for entry in [
+                dc_project::Entry::Plunge,
+                dc_project::Entry::Ramp { angle_deg: 10.0 },
+            ] {
+                let mut project = sample_project();
+                let op = dc_project::test_support::profile_mut(&mut project);
+                op.side = side;
+                op.entry = entry.clone();
+                if side != dc_project::Side::OnLine {
+                    op.lead = Some(lead.clone());
+                }
+                let (mut project, _) = dc_cam::placed_tabs::place_requests(&project).unwrap();
+                assert_eq!(project.tabs.len(), 4, "{side:?}");
+                project.tabs.push(dc_project::PlacedTab {
+                    height_mm: 3.5,
+                    shape: dc_project::TabShape::Smooth,
+                    ..dc_project::test_support::sample_tab("tall", 50.0, 15.0)
+                });
+                let op = project.operations[0].clone();
+                let Operation::Profile(profile) = &op else {
+                    unreachable!("the sample's operation is a Profile");
+                };
+                let (toolpath, _) = generate_profile(&project, profile).unwrap();
+                dc_cam::test_support::assert_safe(&toolpath, &project, &op);
+                let (program, _) = emit(
+                    &project,
+                    &[(op, project.tools[0].clone(), toolpath).into()],
+                    "2026-10-21",
+                )
+                .unwrap_or_else(|e| panic!("{side:?} {entry:?}: {e}"));
+                // Machine Z zero is the stock top: tab tops at 2 and 3.5 mm
+                // above the 6 mm stock's bottom are Z-4 and Z-2.5.
+                for top in ["Z-4.000", "Z-2.500"] {
+                    assert!(program.text.contains(top), "{side:?} {entry:?}: no {top}");
+                }
+            }
+        }
+    }
+
     /// 20 parts, 15 × 15 mm, 10 mm apart in a 5 × 4 grid, cut outside
     /// with ramps, leads, tabs and dogbones (#177's cost bound).
     fn twenty_part_profile() -> (Project, Operation) {

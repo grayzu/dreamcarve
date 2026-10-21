@@ -23,8 +23,8 @@ pub use boolean::{BooleanOp, boolean, difference, intersection, union};
 pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;
 pub use distance::{
-    closest_points, distance_away_from_mm, distance_mm, meeting_points, point_segment_distance_mm,
-    segment_distance_mm,
+    Nearest, closest_points, distance_away_from_mm, distance_mm, meeting_points, nearest_point,
+    point_segment_distance_mm, segment_distance_mm,
 };
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, flatten};
 pub use offset::{inset_is_empty, offset, offset_open};

@@ -321,8 +321,25 @@ fn tool_of<'a>(project: &'a Project, op: &Operation) -> &'a Tool {
 }
 
 /// Generates, checks and emits the project's enabled operations as one
-/// program, as `dreamcarve export --one-program` does.
+/// program, as `dreamcarve export --one-program` does. A project whose
+/// Profiles hold tab requests emits the same bytes once `tabs place` has
+/// written them as placed tabs (#105, ADR-0005), which is checked too.
 fn emit_program(name: &str, project: &Project) -> String {
+    let program = emit_program_as_is(name, project);
+    let (placed, _) = dc_cam::placed_tabs::place_requests(project)
+        .unwrap_or_else(|e| panic!("{name}: the tabs place: {e}"));
+    if placed != *project {
+        let from_placed = emit_program_as_is(name, &placed);
+        assert!(
+            from_placed == program,
+            "{name}: placed tabs cut differently:\n{from_placed}"
+        );
+    }
+    program
+}
+
+/// [`emit_program`] for the project as it is.
+fn emit_program_as_is(name: &str, project: &Project) -> String {
     let mut ops = Vec::new();
     for op in project.operations.iter().filter(|op| op.enabled()) {
         let tool = tool_of(project, op).clone();
