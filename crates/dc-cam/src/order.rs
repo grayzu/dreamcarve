@@ -1012,7 +1012,10 @@ mod tests {
     /// #206, O8: an Engrave and an On line Profile of an open line inside
     /// the rectangle, after an Outside Profile freed it, both cut in a
     /// loose part. An Inside Profile of the line cuts nothing there (it
-    /// skips open paths), so it is quiet.
+    /// skips open paths), so it is quiet. #207: a Left Profile of the line
+    /// cuts beside it, in the loose part too; a Left Profile of the
+    /// rectangle through the stock cuts nothing (it skips closed shapes),
+    /// so it frees nothing and the Engrave after it is quiet.
     #[test]
     fn open_path_inside_freed_part_warns() {
         let mut project = part_and_line((20.0, 15.0), (50.0, 15.0));
@@ -1021,11 +1024,26 @@ mod tests {
             Operation::Engrave(engrave("o2", "i3", 1.0)),
             Operation::Profile(profile("o3", "i3", Side::OnLine, 1.0)),
             Operation::Profile(profile("o4", "i3", Side::Inside, 1.0)),
+            Operation::Profile(profile("o5", "i3", Side::Left, 1.0)),
         ];
         let warnings = check_all(&project);
         let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
         let ops: Vec<_> = found.iter().map(|w| ops_of(w)).collect();
-        assert_eq!(ops, vec![("o2", "o1"), ("o3", "o1")], "{warnings:?}");
+        assert_eq!(
+            ops,
+            vec![("o2", "o1"), ("o3", "o1"), ("o5", "o1")],
+            "{warnings:?}"
+        );
+        let mut skipped = part_and_line((20.0, 15.0), (50.0, 15.0));
+        skipped.operations = vec![
+            Operation::Profile(profile("o1", "i1", Side::Left, 6.0)),
+            Operation::Engrave(engrave("o2", "i3", 1.0)),
+        ];
+        let quiet = check_all(&skipped);
+        assert!(
+            with_code(&quiet, WarningCode::CutInsideFreedPart).is_empty(),
+            "{quiet:?}"
+        );
         for w in found {
             let (_, _, shape, freed) = freed_of(w);
             assert_eq!(

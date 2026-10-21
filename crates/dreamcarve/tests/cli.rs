@@ -5282,3 +5282,72 @@ fn tools_import_twice_is_already_present() {
         first
     );
 }
+
+/// #207: an SVG line from (20, 30) to (80, 30), drawn left to right, cut
+/// Left: the cut runs on the side the drawing shows as the line's left
+/// (up the page), which after the importer's flip to Y-up (ADR-0001) is
+/// one bit radius above the placed line. `check` reports nothing about the
+/// open path, `export` passes the safety pass (S9 holds the cut to its
+/// offset path), and conventional starts at the end beside the first
+/// vertex, as VCarve's.
+#[test]
+fn left_profile_of_an_svg_line_exports_on_its_left() {
+    let dir = work_dir("left_profile_of_an_svg_line_exports_on_its_left");
+    std::fs::write(
+        dir.join("edge.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="edge" d="M 20 30 L 80 30"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "edge.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("edge.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let op = as_profile_mut(&mut project.operations[0]);
+    op.side = Side::Left;
+    op.direction = dc_project::CutDirection::Conventional;
+    op.tabs = None;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let line = placed_vertices(&project, "edge");
+    let [(x0, y0), (x1, y1)] = line[..] else {
+        panic!("a two-point line: {line:?}");
+    };
+    assert!(
+        x0 < x1 && (y0 - y1).abs() <= 1e-9,
+        "still drawn left to right: {line:?}"
+    );
+
+    let check = run(&dir, &["check", "edge.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "check: {report}");
+    assert!(report.contains("0 error(s)"), "{report}");
+    assert!(!report.contains("open_profile"), "{report}");
+    let out = run(&dir, &["export", "edge.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("edge.nc")).expect("edge.nc written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let cuts: Vec<&MachineMove> = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && moves_xy(m))
+        .collect();
+    assert!(!cuts.is_empty(), "the program cuts: {program}");
+    for m in &cuts {
+        let (x, y) = (m.to.x.expect("X known"), m.to.y.expect("Y known"));
+        assert!(
+            (y - (y0 + BIT_RADIUS_MM)).abs() <= 1e-3,
+            "cut off the line's left: {m:?}"
+        );
+        assert!(
+            x >= x0 - 1e-3 && x <= x1 + 1e-3,
+            "cut past the line's ends: {m:?}"
+        );
+    }
+    let first = cuts[0];
+    assert!(
+        (first.from.x.expect("X known") - x0).abs() <= 1e-3,
+        "conventional starts beside the first vertex: {first:?}"
+    );
+}

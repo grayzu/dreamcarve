@@ -1059,7 +1059,11 @@ mod tests {
                     shape: shape(),
                     reason: OpenPathReason::NoSide,
                 },
-                "`Shape` (instance `i1`, profile 2) is an open path, which has no inside or outside, so it is not cut; an On line Profile or an Engrave cuts along it",
+                "`Shape` (instance `i1`, profile 2) is an open path, which has no inside or outside, so it is not cut; an On line, Left or Right Profile or an Engrave cuts along it",
+            ),
+            (
+                Warning::SideNeedsOpenPath { shape: shape() },
+                "`Shape` (instance `i1`, profile 2) is a closed outline, and Left and Right are sides of an open path, so it is not cut; cut it Inside, Outside or On line",
             ),
             (
                 Warning::OpenPathSkipped {
@@ -1353,6 +1357,14 @@ mod tests {
                 "operation `o1` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside",
             ),
             (
+                Warning::LeadDropped {
+                    op: op(),
+                    shape: None,
+                    reason: LeadDroppedReason::OpenPath,
+                },
+                "operation `o1` cuts beside open paths, which take no lead, so it cuts without one; remove the lead",
+            ),
+            (
                 Warning::ReliefSkipped {
                     op: op(),
                     requested: CornerRelief::Dogbone,
@@ -1367,6 +1379,14 @@ mod tests {
                     reason: ReliefSkippedReason::OnLine,
                 },
                 "corner relief `t_bone` is skipped: an On line Profile has no waste side to cut a notch into, so no corners were relieved",
+            ),
+            (
+                Warning::ReliefSkipped {
+                    op: op(),
+                    requested: CornerRelief::Dogbone,
+                    reason: ReliefSkippedReason::OpenPath,
+                },
+                "corner relief `dogbone` is skipped: a Left or Right Profile cuts open paths, whose corners have no inside or outside to relieve, so no corners were relieved",
             ),
             (
                 Warning::ReliefCornerTooTight {
@@ -1494,7 +1514,8 @@ mod tests {
     const fn next_code(code: WarningCode) -> Option<WarningCode> {
         use WarningCode as C;
         Some(match code {
-            C::OpenPathSkipped => C::ToolTooLarge,
+            C::OpenPathSkipped => C::SideNeedsOpenPath,
+            C::SideNeedsOpenPath => C::ToolTooLarge,
             C::ToolTooLarge => C::DuplicateShapeDropped,
             C::DuplicateShapeDropped => C::TabsOverlap,
             C::TabsOverlap => C::TabsOutsideCutRange,
@@ -1537,6 +1558,7 @@ mod tests {
             let names_op = !matches!(
                 c,
                 WarningCode::OpenPathSkipped
+                    | WarningCode::SideNeedsOpenPath
                     | WarningCode::ToolTooLarge
                     | WarningCode::DuplicateShapeDropped
                     | WarningCode::ToolpathsOverlap
@@ -1552,7 +1574,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 25);
+        assert_eq!(count, 26);
     }
 
     #[test]

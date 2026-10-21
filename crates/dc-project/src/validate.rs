@@ -2116,6 +2116,11 @@ mod tests {
         );
         profile_mut(&mut p).side = Side::OnLine;
         assert!(open(&p).is_none(), "{:?}", validate(&p));
+        // #207: Left and Right cut open paths too.
+        for side in [Side::Left, Side::Right] {
+            profile_mut(&mut p).side = side;
+            assert!(open(&p).is_none(), "{side:?}: {:?}", validate(&p));
+        }
         profile_mut(&mut p).enabled = false;
         assert!(open(&p).is_some(), "a disabled Profile cuts nothing");
     }
@@ -2463,6 +2468,26 @@ mod tests {
                 let message = only_located(&p, &problems, Severity::Error);
                 assert!(message.contains(words), "{message}");
             }
+        }
+    }
+
+    /// #207: Left and Right offset the path by half the diameter, as
+    /// Inside and Outside do, so they need a flat end mill too.
+    #[test]
+    fn v_bit_left_or_right_is_an_error() {
+        for side in [crate::model::Side::Left, crate::model::Side::Right] {
+            let mut p = sample_project();
+            p.tools[0].cutter = ToolKind::VBit {
+                included_angle_deg: 60.0,
+            };
+            op_mut(&mut p).side = side;
+            let problems = validate(&p);
+            assert!(
+                problems
+                    .iter()
+                    .any(|q| matches!(q, Problem::CutterNotFlat { .. })),
+                "{side:?}: {problems:?}"
+            );
         }
     }
 
@@ -3070,6 +3095,22 @@ mod tests {
         );
         assert_eq!(problems[0].severity(), Severity::Error);
         assert_eq!(problems[0].field().as_deref(), Some("operations[o1].entry"));
+        // #207: Left and Right ramp along the offset path and have no
+        // waste area for a helix either.
+        for side in [Side::Left, Side::Right] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.entry = helix.clone();
+            assert_eq!(
+                validate(&p),
+                vec![Problem::HelixNeedsWasteSide {
+                    operation: OperationId::new("o1"),
+                    name: "Cut out".into(),
+                }],
+                "{side:?}"
+            );
+        }
         let mut p = sample_project();
         let op = profile_mut(&mut p);
         op.side = Side::Inside;

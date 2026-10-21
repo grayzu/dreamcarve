@@ -577,7 +577,7 @@ fn untag(value: Value, path: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
     use crate::test_support::sample_project;
-    use crate::{OriginXy, SpindleControl, ToolChangeMode, ToolKind, load, save};
+    use crate::{OriginXy, Side, SpindleControl, ToolChangeMode, ToolKind, load, save};
     use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
     use serde_json::json;
 
@@ -1190,6 +1190,50 @@ mod tests {
                 if message.contains("on_holes")),
             "{err:?}"
         );
+    }
+
+    // Version 9 → 10 (#207): a Profile's `side` may be `"left"` or
+    // `"right"`, which no version 9 file holds.
+
+    const V9_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v9/sample.dcv");
+
+    #[test]
+    fn version_9_fixture_loads() {
+        let loaded = load(V9_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #207: version 10 only adds the `left` and `right` sides, so the
+    /// migration changes nothing but the version: every version 9 file
+    /// cuts the same. The bump makes a reader of version 9 refuse a file
+    /// that uses the new sides, instead of failing on an unknown side.
+    #[test]
+    fn v9_to_v10_changes_only_the_version() {
+        let root: Value = serde_json::from_slice(V9_FIXTURE).unwrap();
+        let mut expected = root.clone();
+        expected["version"] = Value::from(10);
+        assert_eq!(migrate(root, 9).unwrap(), expected);
+        for side in ["inside", "outside", "on_line"] {
+            let mut root = sample_root_at(9);
+            root["operations"][0]["side"] = json!(side);
+            let migrated = migrate(root, 9).unwrap();
+            assert_eq!(migrated["operations"][0]["side"], json!(side));
+        }
+        assert_eq!(migrate(sample_root_at(9), 9).unwrap(), sample_root_at(10));
+    }
+
+    /// #207: the new sides save as `"left"` and `"right"` and load back.
+    #[test]
+    fn left_and_right_sides_round_trip() {
+        for (side, text) in [(Side::Left, "\"left\""), (Side::Right, "\"right\"")] {
+            assert_eq!(serde_json::to_string(&side).unwrap(), text);
+            assert_eq!(serde_json::from_str::<Side>(text).unwrap(), side);
+            let mut p = sample_project();
+            crate::test_support::profile_mut(&mut p).side = side;
+            assert_eq!(load(save(&p).unwrap().as_bytes()).unwrap().project, p);
+        }
     }
 
     #[test]
