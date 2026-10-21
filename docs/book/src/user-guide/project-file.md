@@ -249,7 +249,7 @@ To move a shape on the stock, change `e` and `f`.
 | --- | --- |
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
-| `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. In this build the number is checked but programs still write the position; writing it is a phase 2 follow-up. |
+| `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. Set it to match your machine's tool table: with `5`, programs write `T5` (`M61 Q5`, `T5 M6`, the `( Tool 5: … )` comment, `Fit T5`) and, with one program per tool run, name its programs `<stem>-<k>-T5.nc`. |
 | `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside or Inside Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
 | `diameter_mm` | Cutting diameter. Profile and Pocket offset the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used in phase 1. |
@@ -308,15 +308,13 @@ the tool's depth per pass; set it only to override the tool's.
 
 The last four fields came with format version 8 and are shared with the
 other kinds. This build reads and checks them. A Profile cuts
-`machining_order`, `entry` and `corner_relief` as set; the cutting `lead`
-describes lands later in phase 2, so until then a Profile cuts as if it
-held the value above:
+`machining_order`, `entry`, `lead` and `corner_relief` as set:
 
 | Field | Values |
 | --- | --- |
 | `machining_order` | `"full_depth_first"` (each shape to full depth before the next) or `"pass_first"` (each pass across every shape before the next, deeper pass). |
 | `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
-| `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only. |
+| `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line. See [Leads](profile.md#leads). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each internal corner a round tool cannot reach. Pocket and Profile. Steps down at the tool's `step_down_mm`, so that must be set. See [Pocket: corner relief](pocket.md#corner-relief) and [Profile: corner relief](profile.md#corner-relief). |
 
 A Pocket, Drill or Engrave has `kind`, `id`, `name`, `enabled`, `targets`,

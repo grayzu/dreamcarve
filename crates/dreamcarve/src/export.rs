@@ -569,12 +569,13 @@ pub fn largest_tool_radius_mm(project: &Project) -> f64 {
 }
 
 /// The radius of the one tool of `program`, a tool run's program (#95), mm.
+/// The tool is found by id: its `T` number, once set, is no place in the
+/// tool list (#120).
 pub fn tool_radius_mm(project: &Project, program: &Program) -> f64 {
-    program
-        .first_tool
-        .number
-        .checked_sub(1)
-        .and_then(|i| project.tools.get(i))
+    project
+        .tools
+        .iter()
+        .find(|t| t.id == program.first_tool.id)
         .map_or(0.0, |t| t.diameter_mm / 2.0)
 }
 
@@ -629,4 +630,48 @@ pub fn describe_extents(project: &Project, program: &Program, radius_mm: f64) ->
         ));
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use dc_project::test_support::{profile_mut, sample_project};
+    use dc_project::{OperationId, ToolId};
+
+    use super::*;
+
+    /// The sample project with a second tool `t2` (3 mm) and a second
+    /// Profile that cuts with it, the tools numbered `numbers`.
+    fn two_tool_project(numbers: [Option<u32>; 2]) -> Project {
+        let mut project = sample_project();
+        let mut second = project.tools[0].clone();
+        second.id = ToolId::new("t2");
+        second.name = "3 mm".into();
+        second.diameter_mm = 3.0;
+        project.tools.push(second);
+        let mut op = profile_mut(&mut project).clone();
+        op.id = OperationId::new("o2");
+        op.tool = ToolId::new("t2");
+        project.operations.push(Operation::Profile(op));
+        for (tool, number) in project.tools.iter_mut().zip(numbers) {
+            tool.number = number;
+        }
+        project
+    }
+
+    /// #120: a tool run's program finds its tool by id, not by its `T`
+    /// number, which once set is no place in the tool list.
+    #[test]
+    fn first_tool_radius_is_found_by_id_not_number() {
+        for numbers in [[None, None], [Some(9), Some(4)], [Some(2), Some(1)]] {
+            let project = two_tool_project(numbers);
+            let Built { programs, findings } =
+                build(&project, ProgramSplit::ProgramPerTool, "2026-01-01");
+            assert!(findings.errors.is_empty(), "{numbers:?}: {findings:?}");
+            let radii: Vec<f64> = programs
+                .iter()
+                .map(|p| tool_radius_mm(&project, p))
+                .collect();
+            assert_eq!(radii, [3.175, 1.5], "{numbers:?}");
+        }
+    }
 }

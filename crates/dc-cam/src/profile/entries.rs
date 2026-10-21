@@ -9,9 +9,10 @@
 //! design.md`, "Algorithms → Entry"; functional spec capability 16, S9,
 //! S10). Upstream resolves an entry policy per level (`insideEntryForLevel`,
 //! `outsideEntryForLevel`), because the tabs it must keep out of stand only
-//! below their tops; here each path places its entry twice at most, in its
-//! waste domain and in that domain less the tab keep-outs, and each pass
-//! takes the one for its Z.
+//! below their tops; here each path has its waste domain and, when some
+//! pass is below the tab top, that domain less the tab keep-outs
+//! ([`wall_domains`]); its entry is placed in each, and each pass takes
+//! the one for its Z. The leads ([`crate::lead`]) use the same domains.
 
 use super::Wall;
 use super::waste::{self, WallPath};
@@ -27,7 +28,7 @@ use crate::toolpath::{Move, Toolpath};
 use dc_geometry::{EPS_MM, Point, Point3, Polyline, Region, area_mm2, difference};
 use dc_project::{Entry, ProfileOp, Side, Stock};
 
-/// What [`path_entries`] needs from the generator.
+/// What [`path_entries`] and [`wall_domains`] need from the generator.
 pub(super) struct EntrySetup<'a, 'b> {
     pub op: &'a ProfileOp,
     pub stock: &'a Stock,
@@ -43,12 +44,37 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub tolerance_mm: f64,
 }
 
-/// An entry placed in one domain: the domain, its regions (for the S9
-/// report) and the plan.
-pub(super) struct Placed {
-    domain: EntryDomain,
-    regions: Vec<Region>,
-    plan: EntryPlan,
+/// One domain a path's entries and leads are placed in: its regions (for
+/// the S9 report) and the [`EntryDomain`] built from them.
+pub(super) struct Space {
+    pub regions: Vec<Region>,
+    pub domain: EntryDomain,
+}
+
+/// A path's waste domain and, when some pass is below the tab top, that
+/// domain less the tab keep-outs.
+pub(super) struct PathDomain {
+    pub plain: Space,
+    pub tabbed: Option<Space>,
+}
+
+impl PathDomain {
+    /// The domain a pass uses: the tabbed one below the tab top.
+    pub(super) fn for_pass(&self, below_tabs: bool) -> &Space {
+        match &self.tabbed {
+            Some(t) if below_tabs => t,
+            _ => &self.plain,
+        }
+    }
+}
+
+/// Where a path's entries end, on the passes that use the plain domain
+/// and on those that use the tabbed one: the contour start, or a lead's
+/// staging point.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Targets {
+    pub plain: Point,
+    pub tabbed: Point,
 }
 
 /// How one path enters its passes.
@@ -59,8 +85,8 @@ pub(super) enum PathEntry {
     /// Inside or Outside: the entry placed in the waste domain, and, when
     /// some pass is below the tab top, in that domain less the tabs.
     Wall {
-        plain: Box<Placed>,
-        tabbed: Option<Box<Placed>>,
+        plain: Box<EntryPlan>,
+        tabbed: Option<Box<EntryPlan>>,
     },
 }
 
@@ -77,8 +103,13 @@ pub(super) struct PassEntry<'a> {
 }
 
 /// The entry of each path of `setup`, in order: `None` for a plunge, which
-/// cuts as phase 1 did.
-pub(super) fn path_entries(setup: &EntrySetup<'_, '_>) -> Vec<Option<PathEntry>> {
+/// cuts as phase 1 did. Inside and Outside entries are placed in each
+/// path's `domains` (from [`wall_domains`]) at its `targets`.
+pub(super) fn path_entries(
+    setup: &EntrySetup<'_, '_>,
+    domains: &[PathDomain],
+    targets: &[Targets],
+) -> Vec<Option<PathEntry>> {
     let op = setup.op;
     let n = setup.paths.len();
     match (op.side, &op.entry) {
@@ -99,17 +130,36 @@ pub(super) fn path_entries(setup: &EntrySetup<'_, '_>) -> Vec<Option<PathEntry>>
             .collect(),
         // Refused before this is reached; a plunge if it ever is.
         (Side::OnLine, Entry::Helix { .. }) => (0..n).map(|_| None).collect(),
-        (Side::Inside | Side::Outside, _) => wall_entries(setup),
+        (Side::Inside | Side::Outside, _) => (0..n)
+            .map(|i| {
+                let (domain, target) = (domains.get(i)?, targets.get(i)?);
+                let tool = tool_for(setup, i);
+                let place = |space: &Space, at: Point| {
+                    Box::new(plan_at_wall(&space.domain, &op.entry, at, &tool))
+                };
+                Some(PathEntry::Wall {
+                    plain: place(&domain.plain, target.plain),
+                    tabbed: domain.tabbed.as_ref().map(|t| place(t, target.tabbed)),
+                })
+            })
+            .collect(),
     }
 }
 
-/// Inside and Outside: each path's plans.
-fn wall_entries(setup: &EntrySetup<'_, '_>) -> Vec<Option<PathEntry>> {
-    let tool_for = |i: usize| {
-        let wall = setup.walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
-        (setup.entry_tool)(wall)
-    };
-    let radius_mm = tool_for(0).diameter_mm / 2.0;
+/// The entry tool of path `i`.
+fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
+    let wall = setup.walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
+    (setup.entry_tool)(wall)
+}
+
+/// Inside and Outside: each path's waste domain ([`waste::domains`]) and,
+/// when some pass is below the tab top, that domain less every path's tab
+/// keep-outs ([`waste::tab_keep_out`]). Empty for On line.
+pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
+    if setup.op.side == Side::OnLine {
+        return Vec::new();
+    }
+    let radius_mm = tool_for(setup, 0).diameter_mm / 2.0;
     let tolerance_mm = setup.tolerance_mm;
     let wall_paths: Vec<WallPath<'_>> = setup
         .paths
@@ -143,29 +193,21 @@ fn wall_entries(setup: &EntrySetup<'_, '_>) -> Vec<Option<PathEntry>> {
             .collect(),
         _ => Vec::new(),
     };
-    setup
-        .paths
-        .iter()
-        .zip(domains)
+    domains
+        .into_iter()
         .enumerate()
-        .map(|(i, ((path, _), regions))| {
-            let target = path.vertices().first()?.point();
-            let tool = tool_for(i);
-            let place = |regions: Vec<Region>| {
-                let domain = EntryDomain::new(&regions, tool.diameter_mm, tolerance_mm);
-                let plan = plan_at_wall(&domain, &setup.op.entry, target, &tool);
-                Box::new(Placed {
-                    domain,
-                    regions,
-                    plan,
-                })
+        .map(|(i, regions)| {
+            let diameter_mm = tool_for(setup, i).diameter_mm;
+            let space = |regions: Vec<Region>| Space {
+                domain: EntryDomain::new(&regions, diameter_mm, tolerance_mm),
+                regions,
             };
             let tabbed = (!keep_out.is_empty())
-                .then(|| place(difference(&regions, &keep_out, tolerance_mm)));
-            Some(PathEntry::Wall {
-                plain: place(regions),
+                .then(|| space(difference(&regions, &keep_out, tolerance_mm)));
+            PathDomain {
+                plain: space(regions),
                 tabbed,
-            })
+            }
         })
         .collect()
 }
@@ -206,11 +248,10 @@ impl PathEntry {
                 (d, from_z_mm)
             }
             Self::Wall { plain, tabbed } => {
-                let (key, placed) = match tabbed {
+                let (key, plan) = match tabbed {
                     Some(t) if pass.below_tabs => (true, t),
                     _ => (false, plain),
                 };
-                let plan = &placed.plan;
                 let mut from_z = from_z_mm;
                 let mut d = plan.descend(from_z, pass.z_mm);
                 if pass.pass > 0 && d.used == EntryKind::Helix {
@@ -241,10 +282,10 @@ impl PathEntry {
     }
 
     /// S9 for a descent this entry cut for `shape`: every descent move's
-    /// tool centre lies in the domain the entry was placed in, or the
-    /// generator has a defect and no toolpath is produced
-    /// ([`CamError::OffMaterial`]). On line descents follow the path and
-    /// have no domain.
+    /// tool centre lies in the domain the entry was placed in (`domain`'s
+    /// space for the pass), or the generator has a defect and no toolpath
+    /// is produced ([`CamError::OffMaterial`]). On line descents follow
+    /// the path and have no domain.
     pub(super) fn check(
         &self,
         op: &ProfileOp,
@@ -252,17 +293,15 @@ impl PathEntry {
         pass: &PassEntry<'_>,
         descent: &Descent,
         from_z_mm: f64,
+        domain: Option<&PathDomain>,
     ) -> Result<(), CamError> {
-        let Self::Wall { plain, tabbed } = self else {
+        let (Self::Wall { .. }, Some(domain)) = (self, domain) else {
             return Ok(());
         };
-        let placed = match tabbed {
-            Some(t) if pass.below_tabs => t,
-            _ => plain,
-        };
+        let space = domain.for_pass(pass.below_tabs);
         let from = Point3::new(descent.from.x, descent.from.y, from_z_mm);
         let slack_mm = pass.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
-        let Some(i) = placed
+        let Some(i) = space
             .domain
             .first_move_outside(from, &descent.moves, slack_mm)
         else {
@@ -276,21 +315,43 @@ impl PathEntry {
         ) else {
             return Ok(());
         };
-        let radius_mm = pass.tool.diameter_mm / 2.0;
-        let stray = Toolpath {
-            moves: vec![Move::rapid(start), *mv],
-        };
-        let swept = footprint_at(&stray, radius_mm, pass.tolerance_mm);
-        let allowed: Vec<Region> = placed
-            .regions
-            .iter()
-            .flat_map(|r| inset_region(r, -radius_mm, pass.tolerance_mm))
-            .collect();
-        Err(CamError::OffMaterial {
-            op: op.id.clone(),
-            shape: shape.clone(),
-            area_mm2: area_mm2(&difference(&swept, &allowed, pass.tolerance_mm)),
-        })
+        Err(off_material(
+            op,
+            shape,
+            start,
+            *mv,
+            space,
+            pass.tool.diameter_mm / 2.0,
+            pass.tolerance_mm,
+        ))
+    }
+}
+
+/// The S9 error for move `mv`, from `start`, which leaves `space`: how
+/// much of its swept area lies outside the area the cutter may sweep
+/// there.
+pub(super) fn off_material(
+    op: &ProfileOp,
+    shape: &ShapeRef,
+    start: Point3,
+    mv: Move,
+    space: &Space,
+    radius_mm: f64,
+    tolerance_mm: f64,
+) -> CamError {
+    let stray = Toolpath {
+        moves: vec![Move::rapid(start), mv],
+    };
+    let swept = footprint_at(&stray, radius_mm, tolerance_mm);
+    let allowed: Vec<Region> = space
+        .regions
+        .iter()
+        .flat_map(|r| inset_region(r, -radius_mm, tolerance_mm))
+        .collect();
+    CamError::OffMaterial {
+        op: op.id.clone(),
+        shape: shape.clone(),
+        area_mm2: area_mm2(&difference(&swept, &allowed, tolerance_mm)),
     }
 }
 

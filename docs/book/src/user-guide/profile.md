@@ -40,6 +40,7 @@ centre on it, open or closed, use [Engrave](engrave.md).
 | `tabs` | Holding tabs, or `null` for none. See [Tabs](tabs.md). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](#machining-order). |
 | `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
+| `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
 | `corner_relief` | `"none"` (as `init` writes it), `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
 
 ## Side
@@ -210,6 +211,67 @@ with a 6.35 mm bit), falls back to a plunge. Each fallback warns
 `entry_fallback`, naming the shape and both entries. A shape that can
 only be plunged warns on every export until its `entry` is `"plunge"`.
 
+## Leads
+
+Without a lead, each pass starts and ends on the outline itself: the bit
+comes down (or ramps in) on the line it is about to cut and starts
+moving sideways from a standstill against the wall, and at the end it
+stops against the wall and lifts. Both leave a mark. `lead` moves the
+start and the end off the wall onto short arcs (VCarve's "Leads",
+circular; Fusion's "Lead-In" and "Lead-Out"):
+
+```json
+"lead": { "radius_mm": 3.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 1.0 }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `radius_mm` | The arc's radius. More than 0. A larger arc takes up the cut more gently. |
+| `sweep_deg` | How much of a circle the arc turns through: 90 is a quarter circle. More than 0, at most 180. |
+| `lead_out` | `true` adds the matching arc off the wall at the end of each pass; `false` ends on the outline. |
+| `overcut_mm` | How far to keep cutting past the start before leading out, so the start and the end of the cut overlap. 0 or more; at most one more lap is cut. |
+
+Each pass then:
+
+1. comes down (by the [entry](#entry)) at the far end of the lead-in arc,
+   in the waste beside the outline: with a 90° sweep that is `radius_mm`
+   out from the bit's path;
+2. moves along the arc at the cutting feed and arrives on the outline
+   tangent to it, already moving;
+3. cuts the whole outline from there, then `overcut_mm` more;
+4. leaves along the lead-out arc, tangent to the outline, and lifts.
+
+The arcs are written as `G2`/`G3` arcs at the pass depth. Because every
+pass starts at the lead-in, the bit lifts to safe Z between passes and
+comes down at the same place each time, through the hole the pass above
+cut there.
+
+**Where the arcs go.** In the same waste the entry uses (see
+[Entry](#entry)): inside the hole for Inside, round the part for Outside,
+on the stock, out of every other part and its cut. The arc touches the
+outline only where it joins it; elsewhere it keeps a tenth of the bit's
+diameter clear of anything it must not touch. Below the tab top it keeps
+off the tabs too. The tabs stay where they are along the outline.
+
+**Where the cut starts.** Not where the outline happens to begin. Every
+edge of the bit's path is tried at its start, middle, quarter and three
+quarters; the place with the least turning within one bit diameter
+either way wins, so a rectangle starts partway along a side, away from its
+corners; among places as straight as each other, the one nearest where
+the previous outline ended; after that, the first along the outline.
+
+**When it does not fit.** The arc is tried at `radius_mm`, then at ¾, ½
+and ¼ of it, each at `sweep_deg` and then at 60° and 45° (when smaller).
+The largest that fits is used, and `lead_shrunk` gives the size cut. When
+none fits, as in a 7 mm hole with a 6.35 mm bit, the outline is cut
+without a lead and `lead_dropped` says so; when only the tabs are in the
+way, the passes below the tab top go without one. A lead-out that does
+not fit where the cut ends is left off (`lead_dropped`, reason `exit`).
+
+**On line.** An On line Profile removes only its own cut, so there is no
+waste beside it for an arc: a `lead` there is not cut, and `lead_dropped`
+says so once for the operation.
+
 ## Corner relief
 
 A round bit leaves a radius in every corner it cannot get into: the
@@ -310,6 +372,7 @@ These still give a safe program. `check` and `export` print each one as
 | "tool ... does not fit ..." | The bit does not fit inside the shape; that shape is not cut. |
 | "... is the same outline in the same place as ..." | Two shapes are the same outline in the same place; the second is not cut. |
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
+| "the lead arc on ... is ... smaller than ...", "there is no room for a lead-in arc ..." | See [Leads](#leads). |
 | "the tool paths of ... and ... cut into each other" | Two shapes are closer than the bit needs to cut between them, so cutting one gouges the other. See below. |
 | "corner relief ... is skipped", "the corner of ... is not relieved" | See [Corner relief](#corner-relief). |
 

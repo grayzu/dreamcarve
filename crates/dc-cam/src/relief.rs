@@ -1840,6 +1840,26 @@ mod tests {
         assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
     }
 
+    /// Relief composes with a lead (slice 11): the lead re-seams each lap
+    /// and the notches follow the last pass, in the same four corners.
+    #[test]
+    fn inside_profile_with_lead_relieves_the_same_corners() {
+        let p = one_tool(vec![rect(40.0, 40.0)]);
+        let op = ProfileOp {
+            lead: Some(dc_project::Lead {
+                radius_mm: 3.0,
+                sweep_deg: 90.0,
+                lead_out: true,
+                overcut_mm: 1.0,
+            }),
+            ..profile_op(Side::Inside, CornerRelief::Dogbone)
+        };
+        let (toolpath, warnings, cut) = profile_run(&p, &op);
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        assert_eq!(cut.len(), 8);
+        assert_wedges_cleared(&rect_corners(40.0, 40.0), &cuts(&toolpath), R, 4.0);
+    }
+
     /// Decision: On line has no waste side for a notch, so the relief is
     /// skipped with a warning.
     #[test]

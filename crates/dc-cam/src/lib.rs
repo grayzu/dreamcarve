@@ -19,6 +19,7 @@ mod engrave;
 pub mod entry;
 mod error;
 mod footprint;
+mod lead;
 pub mod order;
 mod overlap;
 pub mod passes;

@@ -236,6 +236,29 @@ enum Zone {
 }
 
 impl PathTabs {
+    /// The same spans measured from `start_mm` along the path instead of
+    /// from its start: the layout of the path re-seamed there, so the
+    /// tabs stay where they are along the outline.
+    pub(crate) fn reseamed(&self, start_mm: f64) -> Self {
+        let l = self.length_mm;
+        Self {
+            length_mm: l,
+            spans: self
+                .spans
+                .iter()
+                .map(|s| Span {
+                    start_mm: if l > 0.0 {
+                        (s.start_mm - start_mm).rem_euclid(l)
+                    } else {
+                        s.start_mm
+                    },
+                    length_mm: s.length_mm,
+                })
+                .collect(),
+            full: self.full,
+        }
+    }
+
     /// How far along the path from its start the first raised span
     /// begins, mm: the stretch a pass below the tab top cuts at its own Z
     /// before the first tab. 0 when a span covers the start; the path

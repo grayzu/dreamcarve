@@ -28,6 +28,28 @@ pub enum ExportError {
         /// The missing tool id.
         tool: ToolId,
     },
+    /// Two tools of one program resolve to the same `T` number: a set
+    /// `number`, or the 1-based place in the tool list of a tool with none
+    /// (#120). The program would fit the wrong bit. Validation refuses
+    /// such a project first.
+    #[error(
+        "tools `{other}` and `{tool}` would both be T{number} in the program; give one of them another number"
+    )]
+    DuplicateToolNumber {
+        /// The later tool.
+        tool: ToolId,
+        /// The earlier tool with that number.
+        other: ToolId,
+        /// The number both resolve to.
+        number: u32,
+    },
+    /// A tool's `number` is 0: `T0` is no tool. Validation refuses it
+    /// first.
+    #[error("tool `{tool}` has number 0; a tool number is 1 or more")]
+    ToolNumberZero {
+        /// The tool.
+        tool: ToolId,
+    },
     /// A tool lacks a feed or plunge rate: unset, or not a positive number.
     /// Rates are never invented.
     #[error("tool `{tool}` has no usable {field}")]
