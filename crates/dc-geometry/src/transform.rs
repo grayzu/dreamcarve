@@ -10,6 +10,12 @@ use crate::polyline::{Polyline, Vertex};
 use crate::{DegenerateReason, GeometryError};
 use serde::{Deserialize, Serialize};
 
+/// Smallest determinant of a transform's linear part that is not
+/// singular. The determinant is the factor areas scale by, so it has no
+/// unit; below this a unit square shrinks to less than a square
+/// [`EPS_MM`] on a side, mm², which is as good as nothing.
+const MIN_DETERMINANT: f64 = EPS_MM * EPS_MM;
+
 /// A 2D affine transform in millimetres. Serialized as the six coefficients
 /// `[a, b, c, d, e, f]` mapping (x, y) to (a·x + c·y + e, b·x + d·y + f).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -84,7 +90,7 @@ impl Transform {
     pub fn apply_polyline(self, polyline: &Polyline) -> Result<Polyline, GeometryError> {
         let [a, b, c, d, _, _] = self.0.as_coeffs();
         let det = a * d - b * c;
-        if det.abs() < EPS_MM * EPS_MM {
+        if det.abs() < MIN_DETERMINANT {
             return Err(GeometryError::Degenerate(
                 DegenerateReason::SingularTransform,
             ));
