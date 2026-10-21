@@ -3229,6 +3229,104 @@ mod tests {
         assert_approx_eq!(max_x_mm, 60.0 + 3.175, 1e-6);
     }
 
+    /// Ramp angles, degrees, of [`ramp_sweep`].
+    const SWEEP_ANGLES_DEG: [f64; 19] = [
+        1.0, 2.0, 3.5, 5.0, 7.0, 10.0, 15.0, 20.0, 25.0, 30.0, 37.0, 45.0, 52.0, 60.0, 67.0, 75.0,
+        80.0, 85.0, 89.0,
+    ];
+    /// Segment runs, mm, of [`ramp_sweep`]: a helix's chords and a tab's
+    /// short slopes down to a long zigzag leg.
+    const SWEEP_RUNS_MM: [f64; 6] = [0.05, 0.13, 0.37, 1.1, 2.9, 7.0];
+
+    /// One ramp per angle and segment run, each in the waste right of the
+    /// sample part, from a start off the written grid: a rapid over it at
+    /// safe Z, a straight plunge to the stock top at `plunge_mm_min`, then
+    /// segments of that run falling at that angle, at most 1.5 mm in all
+    /// and 12 mm across, each at the feed `dc_cam::entry` derives for it
+    /// (`plunge_limited_feed_mm_min`: `min(feed, plunge × length / drop)`
+    /// from the unrounded ends), and a rapid out.
+    fn ramp_sweep(feed_mm_min: f64, plunge_mm_min: f64) -> Toolpath {
+        let mut moves = Vec::new();
+        let mut k = 0.0;
+        for angle_deg in SWEEP_ANGLES_DEG {
+            for run_mm in SWEEP_RUNS_MM {
+                let heading = 0.2 * ((k % 5.0) - 2.0);
+                let (dx, dy) = (run_mm * f64::cos(heading), run_mm * f64::sin(heading));
+                let mut at = Point3::new(68.000_37 + 0.013 * k, 9.000_29 + 0.68 * k, 6.0);
+                moves.push(Move::rapid(Point3::new(at.x, at.y, 11.0)));
+                moves.push(Move::linear(at, plunge_mm_min));
+                let (mut across_mm, floor_z) = (0.0, at.z - 1.5);
+                while at.z > floor_z && across_mm + run_mm <= 12.0 {
+                    let drop_mm = (run_mm * angle_deg.to_radians().tan()).min(at.z - floor_z);
+                    let to = Point3::new(at.x + dx, at.y + dy, at.z - drop_mm);
+                    let length_mm = (run_mm * run_mm + drop_mm * drop_mm).sqrt();
+                    let feed = feed_mm_min.min(plunge_mm_min * length_mm / drop_mm);
+                    moves.push(Move::linear(to, feed));
+                    at = to;
+                    across_mm += run_mm;
+                }
+                moves.push(Move::rapid(Point3::new(at.x, at.y, 11.0)));
+                k += 1.0;
+            }
+        }
+        Toolpath { moves }
+    }
+
+    /// #325: every falling cut the program makes, read from its text
+    /// alone, falls no faster than the plunge rate: the ramp sweep's
+    /// derived feeds and its straight plunges, in mm and in inches, on
+    /// every bundled post-processor's number format, for a whole plunge
+    /// rate and one the written places cannot hold.
+    #[test]
+    fn derived_ramp_feed_never_exceeds_plunge() {
+        let mut checked = 0;
+        for definition in dc_project::latest_definitions().unwrap() {
+            for units in [Units::Mm, Units::Inch] {
+                for plunge_mm_min in [300.0, 437.123_456] {
+                    let mut project = project_with(definition.id);
+                    project.display_units = units;
+                    project.tools[0].plunge_mm_min = Some(plunge_mm_min);
+                    let mut ops = ops_for(&project);
+                    ops[0].tool.plunge_mm_min = Some(plunge_mm_min);
+                    ops[0].toolpath = ramp_sweep(1000.0, plunge_mm_min);
+                    let text = emit(&project, &ops, DATE)
+                        .unwrap_or_else(|e| {
+                            panic!("{} {units:?} {plunge_mm_min}: {e}", definition.id)
+                        })
+                        .0
+                        .text;
+                    let mm_per_unit = match units {
+                        Units::Mm => 1.0,
+                        Units::Inch => 25.4,
+                    };
+                    for m in parse_motion(&text).unwrap() {
+                        if m.kind != MotionKind::Linear {
+                            continue;
+                        }
+                        let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+                            (m.from.x, m.from.y, m.from.z, m.to.x, m.to.y, m.to.z)
+                        else {
+                            continue;
+                        };
+                        let (run, drop) = ((tx - fx).hypot(ty - fy), fz - tz);
+                        if drop <= 0.0 {
+                            continue;
+                        }
+                        let rate = m.feed.unwrap() * mm_per_unit * drop / run.hypot(drop);
+                        assert!(
+                            rate <= plunge_mm_min,
+                            "{} {units:?}: line {} falls at {rate} mm/min, past {plunge_mm_min}",
+                            definition.id,
+                            m.line
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 10_000, "{checked} falling cuts");
+    }
+
     /// UCCNC has no `G20`/`G21` (#164): an inch project's program has no
     /// units word, is in inches, warns which, and passes the safety pass,
     /// which reads it in inches. Read as millimetres, its safe Z of

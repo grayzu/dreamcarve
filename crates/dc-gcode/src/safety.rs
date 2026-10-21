@@ -4601,6 +4601,27 @@ mod tests {
         );
     }
 
+    /// #325: S10 allows nothing above the plunge rate. A short ramp, 0.3 mm
+    /// down over 0.4 mm across (sin 0.6), at F501.5 falls at 300.9 mm/min
+    /// against the fixture's 300: refused, though a unit off each written
+    /// number would bring it under. Just under the plunge rate, at F499.999,
+    /// it passes, and so does line 7, a straight plunge at exactly F300.
+    #[test]
+    fn s10_refuses_vertical_rate_above_plunge() {
+        let ramp = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z0 F300\nX0.4 Z-0.3 F{f}\nX10 F1000\nG0 Z5\nM5\n"
+            )
+        };
+        let err = check_text(&ramp("501.5")).unwrap_err();
+        assert!(
+            matches!(err, ExportError::EntryTooSteep { line: 8, .. }),
+            "{err:?}"
+        );
+        check_text(&ramp("499.999")).unwrap();
+        check_text(&ramp("400")).unwrap();
+    }
+
     /// A lap at Z 3 along Y 10 with a tab: up 2 mm over 3 mm at the
     /// cutting feed, a hold, then down 2 mm over 3 mm at `down_feed`. At
     /// the 1000 feed the down slope falls at 1000 × 2/√13 = 555 mm/min,
