@@ -87,6 +87,14 @@ Allowance, which is depth below the stock.
 _Avoid_: Stock to leave, offset, finish allowance
 _PureCutCNC_: stockToLeaveRadial
 
+**Corner Relief**:
+A short out-and-back notch a Pocket or Profile cuts into each inside corner
+its round tool cannot reach, after its main passes, so a square part fits:
+a **dogbone** along the corner's bisector, or a **T-bone** along its longer
+edge (`corner_relief`). VCarve's "Create Fillets".
+_Avoid_: Fillet (a fillet is the rounded corner relief removes), overcut
+_PureCutCNC_: cornerRelief
+
 **Rest Machining**:
 A Pocket that names an earlier Pocket of the same shapes in `rest_of` and
 clears only what that Pocket's tool could not reach (corners and slots
