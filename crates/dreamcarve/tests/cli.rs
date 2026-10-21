@@ -6018,6 +6018,220 @@ fn check_warns_tab_not_crossed() {
     );
 }
 
+/// #300, the issue's second test: `tabs list` shows how far each tab's
+/// point is from its outline, as cut, in `OFF_MM`. The coaster's request
+/// places its four tabs on the tool path, a bit radius (3.175 mm) off the
+/// circle. A tab put by hand 20 mm out from the circle's first vertex, its
+/// rightmost point, lists 20, and `check` warns `tab_off_outline` for it
+/// alone.
+#[test]
+fn tabs_list_shows_how_far_each_tab_is_off_its_outline() {
+    let dir = work_dir("tabs_list_shows_how_far_each_tab_is_off_its_outline");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mut project = load_file(&dcv).project;
+    let instance = &project.instances[0];
+    let first = project.definitions[&instance.definition].profiles[0].vertices()[0];
+    let mut far = project.tabs[0].clone();
+    far.id = dc_project::TabId::new("far");
+    far.x_mm = first.x + 20.0;
+    far.y_mm = first.y;
+    project.tabs.push(far);
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["tabs", "list", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let listed = stdout(&out);
+    let rows: Vec<Vec<&str>> = listed
+        .lines()
+        .map(|l| l.split_whitespace().collect())
+        .collect();
+    let column = rows[0]
+        .iter()
+        .position(|h| *h == "OFF_MM")
+        .unwrap_or_else(|| panic!("an OFF_MM column: {listed}"));
+    assert_eq!(rows[0][column - 1], "AT_MM", "{listed}");
+    let off: Vec<(&str, &str)> = rows[1..].iter().map(|r| (r[0], r[column])).collect();
+    assert_eq!(
+        off,
+        [
+            ("tab1", "3.175"),
+            ("tab2", "3.175"),
+            ("tab3", "3.175"),
+            ("tab4", "3.175"),
+            ("far", "20"),
+        ],
+        "{listed}"
+    );
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_off_outline:").count(),
+        1,
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "tab `far` on `coaster` (instance `i1`, profile 0) is 20 mm from that outline"
+        ),
+        "{report}"
+    );
+}
+
+/// #300, the issue's third test: a version 8 file whose part has a hole
+/// migrates with `"on_holes": true` (#109), so `tabs place` puts tabs on
+/// the hole as the file asked. It warns `tab_on_hole` once for each, as it
+/// places them; `export` then warns none, so a user who keeps the tabs is
+/// not told on every export. A tab put on the hole's outline by hand, which
+/// no placing asked for, still warns. The fixture is the tabs-migration
+/// corpus's square with a hole, written back as version 8.
+#[test]
+fn placed_v8_hole_tabs_export_without_tab_on_hole() {
+    let dir = work_dir("placed_v8_hole_tabs_export_without_tab_on_hole");
+    let v9 = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tabs-migration/square-with-hole-on-holes.dcv"),
+    )
+    .expect("fixture readable");
+    let v8 = v9
+        .replacen("\"version\": 9,", "\"version\": 8,", 1)
+        .replacen(",\n        \"on_holes\": true", "", 1);
+    assert!(
+        !v8.contains("on_holes") && v8.contains("\"version\": 8,"),
+        "{v8}"
+    );
+    std::fs::write(dir.join("square.dcv"), v8).expect("v8 written");
+
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dir.join("square.dcv")).project;
+    let hole_tabs = project.tabs.iter().filter(|t| t.profile == 1).count();
+    assert!(hole_tabs > 0, "{:?}", project.tabs);
+    assert_eq!(
+        stderr(&out).matches("warning: tab_on_hole:").count(),
+        hole_tabs,
+        "{}",
+        stderr(&out)
+    );
+
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_on_hole"), "{report}");
+
+    // By hand, on the middle of the hole's bottom edge.
+    let mut project = load_file(&dir.join("square.dcv")).project;
+    let mut by_hand = project.tabs[0].clone();
+    by_hand.id = dc_project::TabId::new("by-hand");
+    by_hand.profile = 1;
+    by_hand.x_mm = 0.0;
+    by_hand.y_mm = -15.0;
+    project.tabs.push(by_hand);
+    std::fs::write(
+        dir.join("square.dcv"),
+        save(&project).expect("project saves"),
+    )
+    .expect("dcv written");
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_on_hole:").count(),
+        1,
+        "{report}"
+    );
+    assert!(report.contains("tab `by-hand` is on"), "{report}");
+}
+
+/// #293 with #300: `tabs place --replace --on-holes` warns `tab_on_hole`
+/// once for each new tab it puts on the square's hole, and none for the
+/// tabs it removed; `export` then warns none. Both parts keep tabs, so
+/// there is no note that a part comes loose. Replacing again without
+/// `--on-holes` leaves the hole with no tabs: nothing warns, and the hole's
+/// slug coming free is no part coming loose, so there is no note either.
+#[test]
+fn tabs_place_replace_onto_a_hole_warns_once() {
+    let dir = work_dir("tabs_place_replace_onto_a_hole_warns_once");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tabs-migration/square-with-hole-on-holes.dcv"),
+        dir.join("square.dcv"),
+    )
+    .expect("fixture copied");
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = load_file(&dir.join("square.dcv")).project.tabs;
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--width",
+            "4",
+            "--on-holes",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    let project = load_file(&dir.join("square.dcv")).project;
+    let hole_tabs: Vec<&dc_project::PlacedTab> =
+        project.tabs.iter().filter(|t| t.profile == 1).collect();
+    assert_eq!(hole_tabs.len(), 2, "{:?}", project.tabs);
+    assert!(
+        printed.contains(&format!("{} tab(s) removed and 4 placed", first.len())),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let warned = stderr(&out);
+    assert_eq!(
+        warned.matches("warning: tab_on_hole:").count(),
+        2,
+        "{warned}"
+    );
+    for tab in &hole_tabs {
+        assert_eq!(
+            warned.matches(&format!("tab `{}` is on", tab.id)).count(),
+            1,
+            "{warned}"
+        );
+    }
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_on_hole"), "{report}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("tab_on_hole"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("Note:"), "{}", stdout(&out));
+    let project = load_file(&dir.join("square.dcv")).project;
+    assert!(
+        project.tabs.iter().all(|t| t.profile == 0),
+        "{:?}",
+        project.tabs
+    );
+}
+
 /// #207: an SVG line from (20, 30) to (80, 30), drawn left to right, cut
 /// Left: the cut runs on the side the drawing shows as the line's left
 /// (up the page), which after the importer's flip to Y-up (ADR-0001) is

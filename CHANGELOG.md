@@ -110,6 +110,13 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 - **`tabs place --replace`.** Swaps the tabs an operation cuts round for the
   new ones in one step, printing each tab removed and placed ([#293]). Without
   it `tabs place` still adds, and now notes an outline that already had tabs.
+- **Tabs far off their outline; `tab_on_hole` once.** `check` and `export`
+  warn `tab_off_outline` for a tab whose point is farther from its outline
+  than its width plus the widest bit that cuts round it, and `tabs list`
+  shows each tab's distance in a new `OFF_MM` column ([#300]). `tabs place`
+  warns `tab_on_hole` once for each tab it puts on a hole. `check` and
+  `export` no longer repeat it for tabs placed there for that cut, such as
+  those a version 8 file's `on_holes: true` request asks for.
 - **Estimated run time.** `export` and `check` print how long each program,
   and all of them together, should take: feed moves at their feed rates
   (arcs by their length), dwells, and rapids at the rate you set in the new
@@ -363,3 +370,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
+[#300]: https://github.com/grayzu/dreamcarve/issues/300

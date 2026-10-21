@@ -24,11 +24,13 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use dc_cam::placed_tabs::{
-    Placement, TabSize, along_outline_mm, crossed_by, freed_parts, place, place_on_outlines,
-    place_requests, replace,
+    Placement, TabSize, along_outline_mm, crossed_by, freed_parts, off_outline_mm, on_holes, place,
+    place_on_outlines, place_requests, replace,
 };
 use dc_cam::{CamError, ShapeRef, Warning};
-use dc_project::{Operation, OperationId, PlacedTab, Project, TabPlacement, TabShape, TabSpec};
+use dc_project::{
+    Operation, OperationId, PlacedTab, Project, TabId, TabPlacement, TabShape, TabSpec,
+};
 
 use crate::cli::{Failure, StagedFile, TabsCommand, TabsPlaceArgs};
 use crate::export::load_project;
@@ -51,13 +53,15 @@ pub fn run(command: &TabsCommand) -> Result<ExitCode, Failure> {
 }
 
 /// The project at `dcv` with every enabled Profile's tab request placed,
-/// printing what placing found.
-fn load_placed(dcv: &Path) -> Result<(Project, usize), Failure> {
+/// printing what placing found, with how many requests it placed and the
+/// ids of the tabs the file already had.
+fn load_placed(dcv: &Path) -> Result<(Project, usize, Vec<TabId>), Failure> {
     let (project, _) = load_project(dcv)?;
     let requests = requests_of(&project);
+    let had = project.tabs.iter().map(|t| t.id.clone()).collect();
     let (placed, warnings) = place_requests(&project).map_err(Failure::error)?;
     print_warnings(&warnings);
-    Ok((placed, requests))
+    Ok((placed, requests, had))
 }
 
 /// How many enabled Profiles hold a tab request.
@@ -192,6 +196,7 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
     for tab in &new {
         outln!("Placed {}", describe(&project, tab))?;
     }
+    warn_on_holes(&project, &new);
     save(&args.dcv, &project)?;
     if args.replace {
         outln!(
@@ -214,6 +219,32 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
         }
     }
     Ok(())
+}
+
+/// Warns `tab_on_hole` once for each of `new` that an enabled Profile of
+/// `project` cuts as a hole (#300). Generation does not warn again for a
+/// tab placed on the hole for that cut, so this is where the user hears
+/// that it holds the slug.
+fn warn_on_holes(project: &Project, new: &[&PlacedTab]) {
+    let mut warnings = Vec::new();
+    for op in &project.operations {
+        let Operation::Profile(profile) = op else {
+            continue;
+        };
+        if !profile.enabled {
+            continue;
+        }
+        for (tab, shape) in on_holes(project, profile).unwrap_or_default() {
+            if new.iter().any(|t| t.id == tab) {
+                warnings.push(Warning::TabOnHole {
+                    op: profile.id.clone(),
+                    tab,
+                    shape,
+                });
+            }
+        }
+    }
+    print_warnings(&warnings);
 }
 
 /// Notes each outline that had tabs in `before` and gets more of `added`
@@ -310,7 +341,7 @@ const fn shape_name(shape: TabShape) -> &'static str {
 /// `tabs list`: a table of every tab, with the enabled Profiles that cut
 /// round it.
 fn list(dcv: &Path) -> Result<(), Failure> {
-    let (project, requests) = load_placed(dcv)?;
+    let (project, requests, _) = load_placed(dcv)?;
     if project.tabs.is_empty() {
         outln!("{} has no tabs.", dcv.display())?;
         return Ok(());
@@ -330,6 +361,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
         "INSTANCE",
         "PROFILE",
         "AT_MM",
+        "OFF_MM",
         "X_MM",
         "Y_MM",
         "WIDTH_MM",
@@ -338,7 +370,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
         "CUT_BY",
     ]
     .map(str::to_owned);
-    let rows: Vec<[String; 10]> = project
+    let rows: Vec<[String; 11]> = project
         .tabs
         .iter()
         .map(|tab| {
@@ -352,6 +384,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
                 tab.instance.to_string(),
                 tab.profile.to_string(),
                 along_outline_mm(&project, tab).map_or_else(|| "-".to_owned(), |(at, _)| mm(at)),
+                off_outline_mm(&project, tab).map_or_else(|| "-".to_owned(), mm),
                 mm(tab.x_mm),
                 mm(tab.y_mm),
                 mm(tab.width_mm),
@@ -392,7 +425,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
 /// named in `ids`. Says which parts an enabled Profile then cuts through
 /// the stock with no tab that one held before.
 fn clear(dcv: &Path, op: Option<&str>, ids: &[String]) -> Result<(), Failure> {
-    let (mut project, _) = load_placed(dcv)?;
+    let (mut project, _, had) = load_placed(dcv)?;
     let before = project.tabs.len();
     let freed_before = freed_parts(&project);
     if let Some(op) = op {
@@ -431,6 +464,12 @@ fn clear(dcv: &Path, op: Option<&str>, ids: &[String]) -> Result<(), Failure> {
         project.tabs.clear();
     }
     let removed = before - project.tabs.len();
+    let new: Vec<&PlacedTab> = project
+        .tabs
+        .iter()
+        .filter(|t| !had.contains(&t.id))
+        .collect();
+    warn_on_holes(&project, &new);
     save(dcv, &project)?;
     outln!(
         "Removed {removed} tab(s); {} saved with {} tab(s).",
