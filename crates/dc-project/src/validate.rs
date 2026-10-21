@@ -365,6 +365,46 @@ pub const MAX_RPM: u32 = 60_000;
 pub const MAX_TOOL_DIAMETER_MM: f64 = 50.0;
 
 impl Problem {
+    /// The stable `snake_case` code of the problem, the variant's name:
+    /// what `check` and `export` print before a warning's message
+    /// (phase 2 functional spec, capability 25).
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::DefinitionKeyMismatch { .. } => "definition_key_mismatch",
+            Self::DuplicateInstanceId { .. } => "duplicate_instance_id",
+            Self::DuplicateToolId { .. } => "duplicate_tool_id",
+            Self::DuplicateOperationId { .. } => "duplicate_operation_id",
+            Self::DanglingDefinition { .. } => "dangling_definition",
+            Self::DanglingTool { .. } => "dangling_tool",
+            Self::DanglingInstance { .. } => "dangling_instance",
+            Self::OutOfRange { .. } => "out_of_range",
+            Self::NonFinite { .. } => "non_finite",
+            Self::OperationDisabled { .. } => "operation_disabled",
+            Self::ToolValueUnset { .. } => "tool_value_unset",
+            Self::UnusedTool { .. } => "unused_tool",
+            Self::StockThicknessUnset => "stock_thickness_unset",
+            Self::OperationValueUnset { .. } => "operation_value_unset",
+            Self::ToolOutOfRange { .. } => "tool_out_of_range",
+            Self::OpenProfile { .. } => "open_profile",
+            Self::UnsafeFileExtension { .. } => "unsafe_file_extension",
+            Self::ToolChangeModeNeedsM6 { .. } => "tool_change_mode_needs_m6",
+            Self::StepDownAboveDiameter { .. } => "step_down_above_diameter",
+            Self::CutterNotFlat { .. } => "cutter_not_flat",
+            Self::OperationHasNoTargets { .. } => "operation_has_no_targets",
+            Self::SpindleSpeedHigh { .. } => "spindle_speed_high",
+            Self::PlungeAboveFeed { .. } => "plunge_above_feed",
+            Self::LargeDiameter { .. } => "large_diameter",
+            Self::DuplicateToolNumber { .. } => "duplicate_tool_number",
+            Self::RestOfInvalid { .. } => "rest_of_invalid",
+            Self::HelixNeedsWasteSide { .. } => "helix_needs_waste_side",
+            Self::CannedCyclesUnsupported { .. } => "canned_cycles_unsupported",
+            Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
+            Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
+            Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
+        }
+    }
+
     /// Whether this problem is an error or a warning.
     pub fn severity(&self) -> Severity {
         match self {

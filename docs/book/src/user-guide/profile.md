@@ -140,6 +140,29 @@ it (a hole before its outline, a part inside a hole before that hole), so a
 part is freed only by its last contour. See [Shapes and holes, rule
 6](shapes-and-holes.md#6-order-follows-the-drawing).
 
+## Cut order between operations
+
+Operations run in the order the project lists them, whichever tools they
+use: DreamCarve never reorders them or groups them by tool, because the
+order carries intent it cannot infer (rough before finish, holes before
+the outline that frees the part). Two checks look at that order and warn
+when it is probably wrong; the program is still written as listed.
+
+- A Profile through the stock with no tabs cuts its parts free. Any
+  operation after it that cuts a shape inside one of those outlines, a
+  hole, a pocket, an engraving, runs in a loose part, and `check` warns
+  `cut_inside_freed_part`, naming both operations and the shape. Cutting
+  the hole inside a part first and the outline last is quiet, as is the
+  same order with tabs on the outline. An Inside Profile through the stock
+  frees the slug inside its outline, so a cut inside that hole warns too.
+- When one tool's operations are separated by another tool's (T1, T2,
+  T1), the tool is fitted twice. `check` hints `tool_change_avoidable`,
+  listing the operations, so you can put them together if the cut order
+  allows.
+
+See [Warnings](warnings.md#cut-order-between-operations) for the messages
+and what to do.
+
 ## What the program does
 
 For each part, the holes are cut first and the outline last, so a part cut
@@ -162,8 +185,9 @@ material from one shape to another.
 
 ## Warnings
 
-These still give a safe program. `check` and `export` print each one as a
-sentence, after the operation's id, with lengths rounded to 0.01 mm.
+These still give a safe program. `check` and `export` print each one as
+`warning: <code>: operation `op1`: <sentence>`, with lengths rounded to
+0.01 mm; the [Warnings](warnings.md) chapter lists every code.
 
 | Warning says | Meaning |
 | --- | --- |

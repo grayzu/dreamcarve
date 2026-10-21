@@ -115,7 +115,12 @@ only), the list shows each tool change instead, such as
 ### `dreamcarve check <dcv>`
 
 Runs everything `export` does except writing the file, and prints every
-error and warning. It also lists open paths, which Profile does not cut.
+error and warning. It also lists open paths, which Profile does not cut,
+and warns when the order of the operations cuts inside a part an earlier
+operation has already cut free, or fits a tool more than once. Each
+warning starts with its code, as in `warning: cut_inside_freed_part: …`;
+the [Warnings](warnings.md) chapter lists them all. Warnings do not fail
+`check`; only errors do.
 Each message about one value starts with its file, line and column, and
 every value still unset is reported in the same run. When the program
 could be built, it prints the program's extents as `export` does, for each
@@ -149,4 +154,5 @@ machine, and whether each exists ([Configuration](configuration.md)).
   switch on by hand.
 - [Configuration](configuration.md): the user config file and where it
   lives.
+- [Warnings](warnings.md): every warning code, its message, and what to do.
 - [Safety](safety.md): what DreamCarve checks, and what it cannot.

@@ -649,7 +649,7 @@ fn export_refuses_feed_above_limit_with_location() {
         "{stderr}"
     );
     assert!(
-        stderr.contains("coaster.dcv:26:14: warning: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        stderr.contains("coaster.dcv:26:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
         "{stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
@@ -1195,7 +1195,7 @@ fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
     let (line, _, message) = located[0];
     assert_eq!(
         message,
-        "warning: tool `t2` (`Spare bit`) is defined but not used by any enabled operation"
+        "warning: unused_tool: tool `t2` (`Spare bit`) is defined but not used by any enabled operation"
     );
     let next = text.lines().nth(line).expect("line after the tool");
     assert_eq!(next.trim(), "\"id\": \"t2\",", "located at the tool");
@@ -2807,4 +2807,213 @@ fn plaque_dxf_imports_same_shapes_as_svg() {
         9,
         "all but the squiggle"
     );
+}
+
+/// The warning lines of `report`: those starting `warning:` or carrying
+/// `: warning: ` after a file position.
+fn warning_lines(report: &str) -> Vec<&str> {
+    report
+        .lines()
+        .filter(|l| l.starts_with("warning:") || l.contains(": warning: "))
+        .collect()
+}
+
+/// The `snake_case` code of a printed warning line, the word between
+/// `warning: ` and the next `: `, when it is one.
+fn warning_code(line: &str) -> Option<&str> {
+    let rest = line.split_once("warning: ")?.1;
+    let (code, _) = rest.split_once(": ")?;
+    let is_code = !code.is_empty()
+        && code
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    is_code.then_some(code)
+}
+
+/// Acceptance test 32 (research O8, D7): the star cut `outside` through
+/// the stock with no tabs, then its hole cut `inside`: `check` warns
+/// `cut_inside_freed_part` naming both operations and still exits 0, since
+/// the order is the user's to keep. With a second tool on the hole and a
+/// third operation back on the first tool (T1, T2, T1), it also hints
+/// `tool_change_avoidable` for T1, naming its two operations.
+#[test]
+fn check_reports_order_warnings() {
+    let dir = work_dir("check_reports_order_warnings");
+    let dcv = init_star(&dir, STAR_AND_HOLE_SVG);
+    let mut project = load_file(&dcv).project;
+    let star = instance_named(&project, "star").id.clone();
+    let hole = instance_named(&project, "hole").id.clone();
+    let mut star_op = as_profile(&project.operations[0]).clone();
+    star_op.name = "Star".into();
+    star_op.targets = vec![star];
+    star_op.side = Side::Outside;
+    star_op.tabs = None;
+    let mut hole_op = star_op.clone();
+    hole_op.id = OperationId::new("op2");
+    hole_op.name = "Hole".into();
+    hole_op.targets = vec![hole];
+    hole_op.side = Side::Inside;
+    project.operations = vec![
+        Operation::Profile(star_op.clone()),
+        Operation::Profile(hole_op.clone()),
+    ];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "star.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "warnings exit 0: {report}");
+    let freed: Vec<&str> = warning_lines(&report)
+        .into_iter()
+        .filter(|l| warning_code(l) == Some("cut_inside_freed_part"))
+        .collect();
+    assert_eq!(freed.len(), 1, "one order warning: {report}");
+    let line = freed[0];
+    assert!(
+        line.contains("`op1`"),
+        "names the freeing operation: {line}"
+    );
+    assert!(line.contains("`op2`"), "names the later operation: {line}");
+    assert!(line.contains("`hole`"), "names the shape: {line}");
+    assert!(
+        !report.contains("tool_change_avoidable"),
+        "one tool, no hint: {report}"
+    );
+
+    let mut second = project.tools[0].clone();
+    second.id = ToolId::new("t2");
+    second.name = "second bit".into();
+    project.tools.push(second);
+    hole_op.tool = ToolId::new("t2");
+    let mut again = star_op.clone();
+    again.id = OperationId::new("op3");
+    again.name = "Star again".into();
+    again.side = Side::OnLine;
+    again.depth_mm = Some(1.0);
+    project.operations = vec![
+        Operation::Profile(star_op),
+        Operation::Profile(hole_op),
+        Operation::Profile(again),
+    ];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "star.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "hints exit 0: {report}");
+    let hints: Vec<&str> = warning_lines(&report)
+        .into_iter()
+        .filter(|l| warning_code(l) == Some("tool_change_avoidable"))
+        .collect();
+    assert_eq!(hints.len(), 1, "one hint: {report}");
+    let line = hints[0];
+    assert!(line.contains("`t1`"), "names the tool: {line}");
+    assert!(
+        line.contains("`op1`") && line.contains("`op3`"),
+        "names the tool's operations: {line}"
+    );
+    assert!(!line.contains("`op2`"), "not the other tool's: {line}");
+
+    let out = run(&dir, &["export", "star.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stderr(&out);
+    for code in ["cut_inside_freed_part", "tool_change_avoidable"] {
+        assert!(
+            warning_lines(&report)
+                .iter()
+                .any(|l| warning_code(l) == Some(code)),
+            "export prints {code}: {report}"
+        );
+    }
+}
+
+/// Capability 25: every warning `check` and `export` print is
+/// `warning: <code>: <message>`, the code a stable `snake_case` word,
+/// after the file position when the warning is about one value. The
+/// project raises toolpath warnings (an open path, a duplicate, a hole the
+/// bit does not fit, tabs that overlap, cover most of a hole and sit above
+/// the stock top), an order warning, and a validation warning (an unused
+/// tool), and each code is the one the Warnings chapter lists.
+#[test]
+fn warnings_print_code_and_message() {
+    let dir = work_dir("warnings_print_code_and_message");
+    std::fs::write(
+        dir.join("part.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <rect id="outline" x="10" y="10" width="60" height="40"/>
+  <rect id="outline-copy" x="10" y="10" width="60" height="40"/>
+  <rect id="small-hole" x="15" y="15" width="20" height="20"/>
+  <circle id="pin-hole" cx="55" cy="30" r="2"/>
+  <path id="guide-line" d="M 20 80 L 80 80"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "part.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("part.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let thickness_mm = project.stock.thickness_mm.expect("fill_in sets it");
+    let outline = instance_named(&project, "outline").id.clone();
+    let small_hole = instance_named(&project, "small-hole").id.clone();
+    let first = as_profile_mut(&mut project.operations[0]);
+    if let Some(tabs) = &mut first.tabs {
+        tabs.height_mm = thickness_mm + 1.0;
+    }
+    let mut outline_op = first.clone();
+    outline_op.id = OperationId::new("op2");
+    outline_op.name = "Outline".into();
+    outline_op.targets = vec![outline];
+    outline_op.side = Side::Outside;
+    outline_op.tabs = None;
+    let mut hole_op = outline_op.clone();
+    hole_op.id = OperationId::new("op3");
+    hole_op.name = "Small hole".into();
+    hole_op.targets = vec![small_hole];
+    hole_op.side = Side::Inside;
+    project
+        .operations
+        .extend([Operation::Profile(outline_op), Operation::Profile(hole_op)]);
+    let mut spare = project.tools[0].clone();
+    spare.id = ToolId::new("t2");
+    spare.name = "Spare bit".into();
+    project.tools.push(spare);
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "part.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "check: {}", stdout(&check));
+    let export = run(&dir, &["export", "part.dcv", "--date", FIXED_DATE]);
+    assert_eq!(export.status.code(), Some(0), "export: {}", stderr(&export));
+    for report in [stdout(&check), stderr(&export)] {
+        let lines = warning_lines(&report);
+        assert!(!lines.is_empty(), "warnings printed: {report}");
+        let mut codes = Vec::new();
+        for line in &lines {
+            let Some(code) = warning_code(line) else {
+                panic!("`warning: <code>: <message>`: {line}");
+            };
+            let message = line.split_once(&format!("{code}: ")).expect("code found").1;
+            assert!(
+                message.chars().next().is_some_and(|c| c != ' '),
+                "a message follows the code: {line}"
+            );
+            codes.push(code);
+        }
+        // The open path is reported by validation (`init` never targets
+        // one), so its code is `open_profile`, not `open_path_skipped`.
+        for expected in [
+            "open_profile",
+            "duplicate_shape_dropped",
+            "tool_too_large",
+            "tabs_overlap",
+            "tabs_cover_most_of_contour",
+            "tabs_outside_cut_range",
+            "cut_inside_freed_part",
+            "unused_tool",
+        ] {
+            assert!(
+                codes.contains(&expected),
+                "{expected} is printed; codes were {codes:?}: {report}"
+            );
+        }
+    }
 }
