@@ -156,10 +156,10 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// With `op.tabs`, every pass below the tab top rises over each tab span
 /// (`width + diameter` along the tool-centre contour); overlapping spans
-/// merge with [`WarningCode::TabsOverlap`], spans covering more than half a
-/// contour give [`WarningCode::TabsCoverMostOfContour`] (the tabs are still
+/// merge with [`Warning::TabsOverlap`], spans covering more than half a
+/// contour give [`Warning::TabsCoverMostOfContour`] (the tabs are still
 /// cut as set), and a tab top no pass reaches,
-/// or one above the stock top, gives [`WarningCode::TabsOutsideCutRange`].
+/// or one above the stock top, gives [`Warning::TabsOutsideCutRange`].
 ///
 /// With `op.entry` a ramp or helix (design spec, "Algorithms → Entry"),
 /// each pass reaches its depth at the contour start without a plunge:
@@ -174,7 +174,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// between tabs where it does not (#176), on every pass; the tabs stay at
 /// their distances from the original start. An entry that does not fit
 /// falls back to a ramp, then a plunge, with
-/// [`WarningCode::EntryFallback`]; so does a contour whose start no
+/// [`Warning::EntryFallback`]; so does a contour whose start no
 /// stretch frees.
 ///
 /// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
@@ -184,9 +184,9 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// the lap from the arrival, the overcut and the exit arc at the feed
 /// rate, and retracts. Below the tab top the arcs keep off the tabs, and
 /// the tabs stay where they were along the outline. A lead that fits only
-/// smaller warns [`WarningCode::LeadShrunk`]; one that does not fit, an
+/// smaller warns [`Warning::LeadShrunk`]; one that does not fit, an
 /// exit that does not fit, and any lead on an On line Profile warn
-/// [`WarningCode::LeadDropped`].
+/// [`Warning::LeadDropped`].
 ///
 /// With `op.corner_relief`, a dogbone or T-bone notch is cut in each
 /// corner the round tool cannot reach (Inside: the hole's corners;
@@ -195,21 +195,21 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// opened the column it plunges in and none after the pass that frees the
 /// shape, whose levels are cut from inside its lap (the `relief` module,
 /// #189, #193); On line warns
-/// [`WarningCode::ReliefSkipped`].
+/// [`Warning::ReliefSkipped`].
 ///
 /// An On line Profile also cuts open paths (#175, as VCarve's Profile
 /// "On" an open vector): each pass runs the path from its first vertex to
 /// its last (conventional) or from its last to its first (climb, #242), with
 /// the ramp along it and its tabs placed from its first vertex as drawn,
 /// then retracts; it has no lead, no relief and frees nothing. Inside and
-/// Outside skip open paths ([`WarningCode::OpenPathSkipped`]), as they
+/// Outside skip open paths ([`Warning::OpenPathSkipped`]), as they
 /// have no side.
 ///
 /// Open paths Inside and Outside, shapes the tool cannot fit, and
 /// duplicate shapes (closed, or open paths drawn twice either way, #221)
 /// are skipped with a [`Warning`]. Shapes in different
 /// regions whose tool paths cut into each other give
-/// [`WarningCode::ToolpathsOverlap`], in cut order; an open path cut On
+/// [`Warning::ToolpathsOverlap`], in cut order; an open path cut On
 /// line is a shape of its own unless it lies in a region's material
 /// (#206, [`crate::overlap`]). Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
@@ -220,7 +220,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// when an Inside path would come closer than the tool radius, or an On
 /// line path closer than its diameter, to another line of its region, a
 /// band narrower than the tool ([`CamError::BandNarrowerThanTool`], #192,
-/// #199; a contour with no path at all is [`WarningCode::ToolTooLarge`]
+/// #199; a contour with no path at all is [`Warning::ToolTooLarge`]
 /// and skipped; an open path a region holds is compared with that
 /// region's lines and its other open paths away from where they meet,
 /// #210; an On line line is also compared with its own stretches far
@@ -731,7 +731,7 @@ pub fn generate_profile(
 ///
 /// [`CamError::BandNarrowerThanTool`] names the two shapes, the one drawn
 /// first first. Paths in different regions are D6's
-/// [`WarningCode::ToolpathsOverlap`]; under Inside never closer than `r`
+/// [`Warning::ToolpathsOverlap`]; under Inside never closer than `r`
 /// once this check passes.
 #[allow(
     clippy::too_many_arguments,
@@ -845,7 +845,7 @@ fn check_self_band(
 
 /// #221: `open` without the paths that repeat an earlier one exactly,
 /// the same vertices in the same or the reverse direction, each dropped
-/// with [`WarningCode::DuplicateShapeDropped`] naming the one kept, as
+/// with [`Warning::DuplicateShapeDropped`] naming the one kept, as
 /// `nest` drops a closed shape drawn twice.
 fn drop_duplicate_paths(
     open: Vec<(ShapeRef, Polyline)>,
