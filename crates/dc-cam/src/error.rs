@@ -204,6 +204,15 @@ pub enum CamError {
         /// The feature, as the user would name it (`a raster strategy`).
         feature: String,
     },
+    /// A Pocket's `allowance_mm` is negative or not a number. Validation
+    /// reports it too; a negative allowance would cut into the walls.
+    #[error("operation `{op}` has allowance_mm {allowance_mm}; it must be 0 or more")]
+    InvalidAllowance {
+        /// The operation.
+        op: OperationId,
+        /// The allowance given, mm.
+        allowance_mm: f64,
+    },
     /// A rest Pocket's `rest_of` is not an earlier enabled Pocket with the
     /// same targets. Validation reports it too; the generator refuses it
     /// rather than guess what the reference left.
