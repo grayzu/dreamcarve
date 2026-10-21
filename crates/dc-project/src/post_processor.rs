@@ -1343,9 +1343,12 @@ mod tests {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
         // `default_settings.use_canned_cycles` reached every version (a
         // schema-wide field; see `definitions/README.md`, "Versions").
-        const PINNED: [(&str, u64); 6] = [
+        const PINNED: [(&str, u64); 8] = [
             ("grblhal/v1.json", 0xac47_0795_847b_c94d),
+            // #171: the project name no longer opens a comment.
+            ("grblhal/v2.json", 0x0ee4_d80e_2afc_557c),
             ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
+            ("grbl/v2.json", 0x355c_00fe_3f6a_a808),
             // Slice 17 (#164).
             ("linuxcnc/v1.json", 0x9d07_5dad_8ee8_1225),
             ("mach3/v1.json", 0x5217_9912_0119_4b63),
