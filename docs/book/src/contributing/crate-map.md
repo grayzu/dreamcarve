@@ -97,7 +97,7 @@ Dependencies point one way. `dc-gcode` depends on `dc-cam` only for the
 | Module | Contents |
 | --- | --- |
 | `library.rs` | `Library`, `LibraryTool`, `LibraryToolId` (`lt<n>`), `LIBRARY_VERSION`; `load` (strict, validated), `save`, `add` (`Added` or `AlreadyPresent`), `replace`, `find` (by id, else unique name), `remove`. Validation rules ported from PureCutCNC `src/toolLibrary.ts`. |
-| `fusion.rs` | Fusion 360 library import. Recognises a Fusion file today; the import itself lands in phase 2 slice 21. |
+| `fusion.rs` | Fusion 360 library import: `import(&[u8])` reads a `.tools` zip (the `zip` crate, deflate only) or `.json` into `FusionImport { tools: Vec<ImportedTool>, skipped: Vec<Skipped> }`, one tool per preset, with `ImportNote`s for unset values and `SkipReason`s; `is_fusion_library` tells a Fusion file from a DreamCarve one. |
 | `error.rs` | `LibraryError`. |
 
 ### `dreamcarve` (`crates/dreamcarve/src/`)
