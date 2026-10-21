@@ -644,8 +644,8 @@ Not added elsewhere:
   itself 2740-2800, applied to axis words 2802-2816). Program end does not
   reset it (5021-5053 list what it resets); a soft reset (`gc_init`, 822)
   and `G28`/`G30` (4644) do. So grblHAL has the same hazard. It is out of
-  this change, which is Mach3 and UCCNC (#312), and is tracked as a
-  follow-up; `G68` is not a grblHAL code (the G-word `default`, 1781).
+  this change, which is Mach3 and UCCNC (#312), and is tracked in #316;
+  `G68` is not a grblHAL code (the G-word `default`, 1781).
 
 `post::mach3_v3_header_cancels_scaling_and_rotation` and
 `post::uccnc_v3_header_cancels_scaling_and_rotation` check that version 3

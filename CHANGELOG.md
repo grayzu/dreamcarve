@@ -209,6 +209,15 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   at program start moved every Z by the offset, possibly deeper than the
   drawing. `init` writes version 2. A version 1 project keeps its bytes
   until `export --post <id>`.
+- **Mach3 and UCCNC definitions version 3** cancel axis scaling (`G50`) and
+  coordinate rotation (`G69`) in the header and in the setup written again
+  after every pause ([#312]). Both controllers keep a `G51` scale and a `G68`
+  rotation until something cancels them, and the end of a program does not,
+  so a `G51 Z-1` left from MDI would mirror every Z and turn retracts into
+  plunges. The safety pass accepts `G50` and `G69` only there, alone on a
+  line, and refuses `G51` and `G68` on every definition. `init` writes
+  version 3; a version 1 or 2 project keeps its bytes until
+  `export --post <id>`.
 - **On line Profile of an open path starts where VCarve's does:** conventional
   at the first vertex, climb at the last ([#242]). Tabs are still placed from the
   first vertex as drawn.
@@ -387,6 +396,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#279]: https://github.com/grayzu/dreamcarve/issues/279
 [#283]: https://github.com/grayzu/dreamcarve/issues/283
 [#286]: https://github.com/grayzu/dreamcarve/issues/286
+[#312]: https://github.com/grayzu/dreamcarve/issues/312
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282

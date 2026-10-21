@@ -757,7 +757,15 @@ built (design addendum, "Order and format versions").
     program does not change the tool length offset (G43.1). If your sender
     sets one, set it before you set Z zero." New projects get v3; a v2
     project keeps v2 until `export --post` (which, with A1, keeps its
-    settings).
+    settings). (changed in #312: Mach3 v3 and UCCNC v3
+    likewise cancel a stale scale and rotation. Both controllers keep a
+    `G51` scale and a `G68` rotation until cancelled, and `M30` does not
+    reset them, so a `G51 Z-1` left by MDI would mirror every Z. Their
+    headers add `G50` and then `G69` after the modal line, and the setup
+    after every pause repeats them; the safety pass accepts them only
+    there, alone on a line, and refuses `G51` and `G68` everywhere.
+    LinuxCNC and generic have no such codes and do not write them. A v2
+    project keeps v2 until `export --post`.)
 
 ### A4. Cycle-time estimate (#280)
 
