@@ -147,7 +147,9 @@ tool, because that would change the cut order, for example a through-cut
 before the detail work. T1, T2, T1 is three programs.
 
 The programs are named `<stem>-<k>-T<n>.<ext>`: `<k>` is the run's place
-(1, 2, …) and `<n>` the tool's number. `<stem>` is the project file's name,
+(1, 2, …) and `<n>` the tool's number: its `number` in the project file
+when set, otherwise its place in the project's tool list (the first tool
+is 1; see [Tools](project-file.md#tools)). `<stem>` is the project file's name,
 or the name given with `-o`: `-o out/job.nc` writes `out/job-1-T1.nc`,
 `out/job-2-T2.nc`, … A project with one tool writes one program, named as
 before (`coaster.nc`).
@@ -246,7 +248,8 @@ modes:
    then resume.` grblHAL waits in its tool-change state, where you can jog.
    Fit the bit, jog it down and set Z zero with it, then resume with cycle
    start. A new bit has a new length, so set Z zero even if it is a bit you
-   zeroed with before. Leave X and Y zero as they are. The tool's number and
+   zeroed with before. Leave X and Y zero as they are. `<n>` is the tool's
+   number, chosen as in the file names above. The tool's number and
    name are DreamCarve's; the line replaces the definition's own `M6` line.
    A long tool name is shortened so the message stays within 96
    characters; the instruction is never cut.

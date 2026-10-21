@@ -569,12 +569,13 @@ pub fn largest_tool_radius_mm(project: &Project) -> f64 {
 }
 
 /// The radius of the one tool of `program`, a tool run's program (#95), mm.
+/// The tool is found by id: its `T` number, once set, is no place in the
+/// tool list (#120).
 pub fn tool_radius_mm(project: &Project, program: &Program) -> f64 {
-    program
-        .first_tool
-        .number
-        .checked_sub(1)
-        .and_then(|i| project.tools.get(i))
+    project
+        .tools
+        .iter()
+        .find(|t| t.id == program.first_tool.id)
         .map_or(0.0, |t| t.diameter_mm / 2.0)
 }
 

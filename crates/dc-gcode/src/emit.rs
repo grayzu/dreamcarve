@@ -48,7 +48,10 @@
 //!   and the program retracts to safe Z again before the spindle starts or
 //!   the router-on pause (#43). A program that changes tools first sets the
 //!   controller's current tool with `M61 Q<n>`, because grblHAL skips an
-//!   `M6` for the tool it holds.
+//!   `M6` for the tool it holds. `<n>`, here and in `{toolNumber}`, is the
+//!   tool's `number` when set, otherwise its 1-based place in the
+//!   project's tool list (#120); two tools of one program with the same
+//!   number, or a number of 0, fail the export.
 //! - Before the first move the program sets absolute distance mode (`G90`)
 //!   as well as units and work coordinates, adding any the header leaves
 //!   out. After every pause that more motion follows, it sets them again,
@@ -101,8 +104,12 @@ pub struct Program {
 /// The tool a program starts with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FirstTool {
-    /// Its number, `T<n>`: its 1-based place in the project's tool list.
-    pub number: usize,
+    /// Its id, to find it in the project's tool list.
+    pub id: ToolId,
+    /// Its number, `T<n>`, which also names a tool run's program file: the
+    /// tool's `number` when set, otherwise its 1-based place in the
+    /// project's tool list (#120, capability 21a). Not an index.
+    pub number: u32,
     /// Its name, as written in the program's comments.
     pub name: String,
 }
@@ -471,17 +478,17 @@ fn emit_enabled(
     for &entry in enabled {
         let (op, tool, toolpath) = (&entry.op, &entry.tool, &entry.toolpath);
         let rates = Rates::of(tool, control)?;
-        let number = project
-            .tools
-            .iter()
-            .position(|t| t.id == tool.id)
-            .map(|i| i + 1)
-            .ok_or_else(|| ExportError::UnknownTool {
-                op: op.id().clone(),
-                tool: tool.id.clone(),
-            })?;
+        let number = tool_number(project, &tool.id).ok_or_else(|| ExportError::UnknownTool {
+            op: op.id().clone(),
+            tool: tool.id.clone(),
+        })?;
         planned.push((op, tool, toolpath, rates, number, entry.holes.as_deref()));
     }
+    check_tool_numbers(
+        planned
+            .iter()
+            .map(|&(_, tool, _, _, number, _)| (tool, number)),
+    )?;
     // #57: the program stops for every tool after the first, and only `M6`
     // stops where the user may jog to set Z zero. #95: and only when the
     // user chose one program with `M6`; otherwise each tool run is a
@@ -505,6 +512,7 @@ fn emit_enabled(
     let first_tool = planned
         .first()
         .map(|&(_, tool, _, _, number, _)| FirstTool {
+            id: tool.id.clone(),
             number,
             name: comment_text(&tool.name),
         })
@@ -1226,6 +1234,47 @@ const TOOL_CHANGE_COMMAND: &str = "M6";
 /// grblHAL's "set current tool number" (`M61 Q<n>`): no stop, no motion.
 const SET_TOOL_COMMAND: &str = "M61";
 
+/// The `T` number of the project's tool `id` (#120, capability 21a): its
+/// `number` when set, otherwise its 1-based place in the project's tool
+/// list. `None` when the project has no tool `id`.
+fn tool_number(project: &Project, id: &ToolId) -> Option<u32> {
+    let (index, tool) = project
+        .tools
+        .iter()
+        .enumerate()
+        .find(|(_, t)| &t.id == id)?;
+    // A place in the list is far below u32::MAX.
+    tool.number.or_else(|| u32::try_from(index + 1).ok())
+}
+
+/// Fails unless every tool of a program has a `T` number of 1 or more
+/// that no other tool of it has: the program would fit the wrong bit.
+/// Validation refuses both first; the post-processor trusts no caller.
+fn check_tool_numbers<'a>(
+    tools: impl IntoIterator<Item = (&'a Tool, u32)>,
+) -> Result<(), ExportError> {
+    let mut numbered: Vec<(u32, &ToolId)> = Vec::new();
+    for (tool, number) in tools {
+        if number == 0 {
+            return Err(ExportError::ToolNumberZero {
+                tool: tool.id.clone(),
+            });
+        }
+        match numbered.iter().find(|&&(n, _)| n == number) {
+            Some(&(_, other)) if other != &tool.id => {
+                return Err(ExportError::DuplicateToolNumber {
+                    tool: tool.id.clone(),
+                    other: other.clone(),
+                    number,
+                });
+            }
+            Some(_) => {}
+            None => numbered.push((number, &tool.id)),
+        }
+    }
+    Ok(())
+}
+
 /// Whether a program for `post` may change tools: the user chose one
 /// program with `M6` (`tool_change.mode` `"m6"`, #95) and its tool change
 /// has an `M6` line, which GRBL 1.1 lacks (#57).
@@ -1261,7 +1310,7 @@ const SET_Z_ZERO: &str = "Set Z zero, then resume.";
 /// The message of the tool change for tool `number` named `name`.
 /// The name is shortened so the instruction always fits
 /// [`MAX_MESSAGE_CHARS`] whole.
-fn tool_change_message(number: usize, name: &str) -> String {
+fn tool_change_message(number: u32, name: &str) -> String {
     let head = format!("Fit T{number}");
     let room = MAX_MESSAGE_CHARS.saturating_sub(head.len() + SET_Z_ZERO.len() + 3);
     let name = sanitize_comment(name, room);
@@ -1642,7 +1691,7 @@ impl<'a> Writer<'a> {
     /// would be reported when the controller reads the line, which may be
     /// long before it stops; on the `M6` line grblHAL reports it after the
     /// planner has synced, as it stops (`dc-project/src/definitions/README.md`).
-    fn change_tool(&mut self, number: usize, message: &str) {
+    fn change_tool(&mut self, number: u32, message: &str) {
         let message = sanitize_comment(message, MAX_MESSAGE_CHARS);
         self.line(&format!("T{number} {TOOL_CHANGE_COMMAND} (MSG, {message})"));
         self.stopped(true);
