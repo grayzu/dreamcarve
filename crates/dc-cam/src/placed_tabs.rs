@@ -56,7 +56,10 @@ pub struct TabSize {
 /// spaced or tabs at `at_distances` along it from its start; none on a
 /// hole unless `on_holes`; and on a path too short for them, the most
 /// that cover at most half of it, but at least one on a part. Each tab is
-/// placed at the outline point nearest its centre on the path.
+/// placed at its centre on the tool path itself, taken into the
+/// instance's definition space, so the Profile cuts it exactly where the
+/// request did; it is crossed by every Profile that comes near where it
+/// meets the outline.
 ///
 /// Fails with [`CamError::UnknownOperation`] or
 /// [`CamError::TabsNeedProfile`] when `op` is not a Profile of `project`,
@@ -805,6 +808,50 @@ mod tests {
         );
         assert!(matches!(&warnings[0], Warning::TabOnHole { tab, .. } if tab.as_str() == "tab1"));
         assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1);
+    }
+
+    /// #105: one tab placed with `--at --on-holes` on a hole whose tool
+    /// path is shorter than the tab's span covers all of it. It is cut as
+    /// placed and warns `tabs_cover_most_of_contour` as a placed tab, not
+    /// with the words for the one tab a part keeps; a single tab overlaps
+    /// nothing, so there is no `tabs_overlap`.
+    #[test]
+    fn one_placed_tab_on_a_small_hole_warns_as_placed() {
+        let square = |side_mm: f64| {
+            Polyline::rect(
+                Point::new(25.0 - side_mm / 2.0, 15.0 - side_mm / 2.0),
+                side_mm,
+                side_mm,
+            )
+        };
+        let mut p = with_profiles(vec![square(28.0), square(8.0)]);
+        let size = TabSize {
+            width_mm: 6.0,
+            height_mm: TAB_TOP_MM,
+            shape: TabShape::Rect,
+        };
+        let placed = place_on_outlines(&p, &OperationId::new("o1"), &[2.0], size, true).unwrap();
+        let on_hole: Vec<&PlacedTab> = placed.tabs.iter().filter(|t| t.profile == 1).collect();
+        assert_eq!(on_hole.len(), 1, "{placed:?}");
+        p.tabs = placed
+            .tabs
+            .iter()
+            .filter(|t| t.profile == 1)
+            .cloned()
+            .collect();
+        let (_, generated) = generate(&p);
+        for warnings in [&placed.warnings, &generated] {
+            let found = codes(warnings);
+            assert!(!found.contains(&WarningCode::TabsOverlap), "{warnings:?}");
+            let cover: Vec<String> = warnings
+                .iter()
+                .filter(|w| w.code() == WarningCode::TabsCoverMostOfContour)
+                .map(ToString::to_string)
+                .collect();
+            assert_eq!(cover.len(), 1, "{warnings:?}");
+            assert!(cover[0].contains("It is cut, as placed"), "{}", cover[0]);
+            assert!(!cover[0].contains("a part keeps"), "{}", cover[0]);
+        }
     }
 
     /// #105: placing the same tabs again adds none, and new tabs take the
