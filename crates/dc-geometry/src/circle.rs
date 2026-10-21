@@ -6,8 +6,29 @@
 //! [`as_circle`] decides whether a closed polyline is a drillable hole;
 //! [`fit_circle_kasa`] is the least-squares fit arc fitting starts from.
 
-use crate::point::Point;
+use crate::point::{EPS_MM, Point, Vec2, approx_eq};
 use crate::polyline::Polyline;
+use std::cmp::Ordering;
+
+/// Floor on the Kasa normal equations' determinant relative to the square
+/// of the points' total spread (`Suu + Svv`), dimensionless. Below it the
+/// points are collinear to working precision and the centre is unbounded.
+const KASA_DET_REL_EPS: f64 = 1e-12;
+
+/// The centroid of `points`; the origin when there are none.
+fn mean_point(points: impl Iterator<Item = Point>) -> Point {
+    let (mut sx, mut sy, mut n) = (0.0, 0.0, 0.0);
+    for p in points {
+        sx += p.x;
+        sy += p.y;
+        n += 1.0;
+    }
+    if n > 0.0 {
+        Point::new(sx / n, sy / n)
+    } else {
+        Point::default()
+    }
+}
 
 /// A closed polyline is a circle when every vertex and every segment
 /// midpoint lies within `tolerance_mm` of the circle about the vertex
@@ -23,8 +44,38 @@ use crate::polyline::Polyline;
 /// pass exactly.
 #[must_use]
 pub fn as_circle(polyline: &Polyline, tolerance_mm: f64) -> Option<(Point, f64)> {
-    let _ = (polyline, tolerance_mm);
-    None
+    let vertices = polyline.vertices();
+    if !polyline.is_closed() || vertices.len() < 2 {
+        return None;
+    }
+    let centre = mean_point(vertices.iter().map(|v| v.point()));
+    let count = vertices.len() as f64;
+    let radius_mm = vertices
+        .iter()
+        .map(|v| v.point().distance_to(centre))
+        .sum::<f64>()
+        / count;
+    if radius_mm <= EPS_MM {
+        return None;
+    }
+    let on_circle = |p: Point| approx_eq(p.distance_to(centre), radius_mm, tolerance_mm);
+    if !vertices.iter().all(|v| on_circle(v.point())) {
+        return None;
+    }
+    for seg in polyline.segments() {
+        // A zero-length segment has no midpoint and nothing to test.
+        if let Some((mid, _)) = seg.point_at(seg.length_mm() / 2.0)
+            && !on_circle(mid)
+        {
+            return None;
+        }
+        if let Some(arc) = seg.arc()
+            && arc.centre.distance_to(centre) > tolerance_mm
+        {
+            return None;
+        }
+    }
+    Some((centre, radius_mm))
 }
 
 /// Kasa least-squares circle through `points` (mm): the circle minimising
@@ -34,8 +85,42 @@ pub fn as_circle(polyline: &Polyline, tolerance_mm: f64) -> Option<(Point, f64)>
 /// when the fit yields no positive radius.
 #[must_use]
 pub fn fit_circle_kasa(points: &[Point]) -> Option<(Point, f64)> {
-    let _ = points;
-    None
+    if points.len() < 3 {
+        return None;
+    }
+    let count = points.len() as f64;
+    // Work about the centroid: the normal equations are then free of the
+    // first moments and stay well conditioned far from the origin.
+    let centroid = mean_point(points.iter().copied());
+    let (mut suu, mut suv, mut svv) = (0.0, 0.0, 0.0);
+    let (mut suuu, mut svvv, mut suuv, mut suvv) = (0.0, 0.0, 0.0, 0.0);
+    for p in points {
+        let d = *p - centroid;
+        let (u, v) = (d.x, d.y);
+        suu += u * u;
+        suv += u * v;
+        svv += v * v;
+        suuu += u * u * u;
+        svvv += v * v * v;
+        suuv += u * u * v;
+        suvv += u * v * v;
+    }
+    let det = suu * svv - suv * suv;
+    let spread = suu + svv;
+    // Via `partial_cmp` so a NaN determinant also fails.
+    let floor = KASA_DET_REL_EPS * spread * spread;
+    if !matches!(det.abs().partial_cmp(&floor), Some(Ordering::Greater)) {
+        return None;
+    }
+    let rhs_u = (suuu + suvv) / 2.0;
+    let rhs_v = (svvv + suuv) / 2.0;
+    let uc = (rhs_u * svv - rhs_v * suv) / det;
+    let vc = (suu * rhs_v - suv * rhs_u) / det;
+    let radius_sq = uc * uc + vc * vc + spread / count;
+    if !matches!(radius_sq.partial_cmp(&0.0), Some(Ordering::Greater)) {
+        return None;
+    }
+    Some((centroid + Vec2::new(uc, vc), radius_sq.sqrt()))
 }
 
 #[cfg(test)]

@@ -177,6 +177,23 @@ impl Segment {
     }
 }
 
+/// How many equal chords replace `arc` so none strays more than
+/// `tolerance_mm` (positive) from it: a chord spanning θ has sagitta
+/// r·(1 − cos(θ/2)), so θ ≤ 2·acos(1 − tolerance/r). At least one.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a chord count: at most a full turn over the step, which the tolerance floor bounds"
+)]
+fn chord_count(arc: Arc, tolerance_mm: f64) -> usize {
+    let max_step_rad = 2.0 * (1.0 - tolerance_mm / arc.radius_mm).clamp(-1.0, 1.0).acos();
+    if max_step_rad <= 0.0 {
+        // The radius is so large next to the tolerance that the bow of the
+        // whole arc is below it (1 − tolerance/r rounds to 1).
+        return 1;
+    }
+    (arc.sweep_rad.abs() / max_step_rad).ceil().max(1.0) as usize
+}
+
 /// `value` limited to `[0, max]`. Unlike `f64::clamp`, it does not panic
 /// when `max` is NaN, which an overflowing transform can produce; the
 /// result is then `value` limited below by 0.
@@ -377,8 +394,30 @@ impl Polyline {
     /// bulge of 0 and every input vertex is still present.
     #[must_use]
     pub fn with_arcs_flattened(&self, tolerance_mm: f64) -> Polyline {
-        let _ = tolerance_mm;
-        self.clone()
+        let tolerance_mm = tolerance_mm.max(EPS_MM);
+        let mut vertices = Vec::with_capacity(self.vertices.len());
+        for seg in self.segments() {
+            vertices.push(Vertex::line(seg.start.x, seg.start.y));
+            if let Some(arc) = seg.arc() {
+                let steps = chord_count(arc, tolerance_mm);
+                for i in 1..steps {
+                    let angle = arc.start_angle_rad + arc.sweep_rad * (i as f64) / (steps as f64);
+                    let p = arc.centre + Vec2::new(angle.cos(), angle.sin()) * arc.radius_mm;
+                    vertices.push(Vertex::line(p.x, p.y));
+                }
+            }
+        }
+        // `segments` starts one at every vertex but the last of an open
+        // polyline (and at none of a lone vertex); keep those too.
+        let covered = if self.closed && self.vertices.len() > 1 {
+            self.vertices.len()
+        } else {
+            self.vertices.len().saturating_sub(1)
+        };
+        for v in self.vertices.iter().skip(covered) {
+            vertices.push(Vertex::line(v.x, v.y));
+        }
+        Polyline::new(vertices, self.closed)
     }
 
     /// The same path traversed in the opposite direction, with each arc's

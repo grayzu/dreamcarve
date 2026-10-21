@@ -10,7 +10,13 @@
 //! by that vertex, so the same shapes give the same `Vec` whatever order
 //! they were given in.
 
-use crate::region::Region;
+use crate::contour::Contour;
+use crate::polyline::{Polyline, Vertex};
+use crate::region::{Region, nest_unchecked};
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::float::overlay::FloatOverlay;
+use i_overlay::i_shape::base::data::Shapes;
 
 /// Which area a boolean keeps. `a` is the subject and `b` the clip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,8 +39,114 @@ pub enum BooleanOp {
 /// area rounds to zero are dropped.
 #[must_use]
 pub fn boolean(a: &[Region], b: &[Region], op: BooleanOp, tolerance_mm: f64) -> Vec<Region> {
-    let _ = (a, b, op, tolerance_mm);
-    Vec::new()
+    let subject = to_shapes(a, tolerance_mm);
+    let clip = to_shapes(b, tolerance_mm);
+    if subject.is_empty() && clip.is_empty() {
+        return Vec::new();
+    }
+    let rule = match op {
+        BooleanOp::Union => OverlayRule::Union,
+        BooleanOp::Difference => OverlayRule::Difference,
+        BooleanOp::Intersection => OverlayRule::Intersect,
+    };
+    // Non-zero fill: outers are CCW and holes CW on input (ADR-0001), so
+    // overlapping regions on one side add up to their union.
+    let shapes = FloatOverlay::<[f64; 2]>::with_subj_and_clip(&subject, &clip)
+        .overlay(rule, FillRule::NonZero);
+    from_shapes(shapes)
+}
+
+/// Flattens `regions` to i_overlay's shape list: per region, the outer
+/// then its holes, each a closed ring of points with its winding kept.
+fn to_shapes(regions: &[Region], tolerance_mm: f64) -> Shapes<[f64; 2]> {
+    let ring = |c: &Contour| -> Vec<[f64; 2]> {
+        c.polyline()
+            .with_arcs_flattened(tolerance_mm)
+            .vertices()
+            .iter()
+            .map(|v| [v.x, v.y])
+            .collect()
+    };
+    regions
+        .iter()
+        .map(|r| {
+            std::iter::once(ring(r.outer()))
+                .chain(r.holes().iter().map(ring))
+                .collect()
+        })
+        .collect()
+}
+
+/// Rebuilds regions from i_overlay's output. Every output ring is a simple
+/// polygon, so the self-intersection test is skipped; rings of zero area
+/// (rounding noise) are dropped. Rings are made canonical and sorted
+/// before nesting, so the regions, and the holes within each, come out in
+/// an order that depends only on the shapes.
+fn from_shapes(shapes: Shapes<[f64; 2]>) -> Vec<Region> {
+    let mut contours: Vec<Contour> = shapes
+        .into_iter()
+        .flatten()
+        .filter_map(|ring| {
+            let vertices = ring.iter().map(|p| Vertex::line(p[0], p[1])).collect();
+            Contour::oriented(canonical_start(Polyline::new(vertices, true))).ok()
+        })
+        .collect();
+    contours.sort_by(|a, b| {
+        lowest_vertex(a).cmp(&lowest_vertex(b)).then_with(|| {
+            a.signed_area_mm2()
+                .abs()
+                .total_cmp(&b.signed_area_mm2().abs())
+        })
+    });
+    nest_unchecked(contours)
+}
+
+/// The lowest-then-leftmost vertex of `contour` as a totally ordered key
+/// (Y first, then X). After [`canonical_start`] it is the first vertex.
+fn lowest_vertex(contour: &Contour) -> (OrderedF64, OrderedF64) {
+    contour
+        .polyline()
+        .vertices()
+        .first()
+        .map_or((OrderedF64(0.0), OrderedF64(0.0)), |v| {
+            (OrderedF64(v.y), OrderedF64(v.x))
+        })
+}
+
+/// An f64 ordered by [`f64::total_cmp`], for sort keys.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OrderedF64(f64);
+
+impl Eq for OrderedF64 {}
+
+impl PartialOrd for OrderedF64 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedF64 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// `polyline` (closed, all bulges zero) rotated to start at its
+/// lowest-then-leftmost vertex.
+fn canonical_start(polyline: Polyline) -> Polyline {
+    let closed = polyline.is_closed();
+    let vertices = polyline.vertices();
+    let Some(start) = vertices
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.y.total_cmp(&b.y).then_with(|| a.x.total_cmp(&b.x)))
+        .map(|(i, _)| i)
+    else {
+        return polyline;
+    };
+    let mut rotated = vertices.to_vec();
+    rotated.rotate_left(start);
+    Polyline::new(rotated, closed)
 }
 
 /// Area in `a` or `b`; see [`boolean`].
@@ -196,7 +308,12 @@ mod tests {
             BooleanOp::Difference,
             BooleanOp::Intersection,
         ] {
-            let out = boolean(&[frame.clone(), disc.clone()], &[bar.clone()], op, TOL_MM);
+            let out = boolean(
+                &[frame.clone(), disc.clone()],
+                std::slice::from_ref(&bar),
+                op,
+                TOL_MM,
+            );
             assert!(!out.is_empty(), "{op:?} gives something");
             assert_canonical_winding(&out);
         }
@@ -213,7 +330,11 @@ mod tests {
         let b = rect(30.0, 5.0, 10.0, 10.0);
         let c = rect(15.0, -20.0, 10.0, 10.0);
         let d = circle(50.0, 50.0, 4.0);
-        let first = union(&[a.clone(), b.clone(), c.clone()], &[d.clone()], TOL_MM);
+        let first = union(
+            &[a.clone(), b.clone(), c.clone()],
+            std::slice::from_ref(&d),
+            TOL_MM,
+        );
         let second = union(&[d, c, a], &[b], TOL_MM);
         assert_eq!(first.len(), 4);
         assert_eq!(first, second);
