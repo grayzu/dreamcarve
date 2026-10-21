@@ -335,9 +335,10 @@ pub struct SpindleDwell {
     pub command: String,
     /// How long to wait, seconds. `0` emits no dwell.
     pub duration_s: f64,
-    /// The unit of the number written into `command`: seconds on GRBL,
-    /// grblHAL and LinuxCNC, milliseconds on Mach3 (design spec,
-    /// "Post-processor definitions").
+    /// The unit of the number written into `command`, and into a `G82`'s
+    /// `P`: seconds on GRBL, grblHAL, LinuxCNC, Mach3 (as its manual
+    /// shows it set up) and RS274/NGC, milliseconds on UCCNC
+    /// (`definitions/README.md`).
     pub units: DwellUnits,
 }
 
@@ -613,11 +614,12 @@ pub enum PostProcessorError {
 type Source = (&'static str, u32, &'static str, &'static str);
 
 /// Every bundled definition version, compiled in, in listing order: by
-/// id, grblHAL first, then oldest version first. A released version is
+/// id (grblHAL, GRBL, LinuxCNC, Mach3, UCCNC, generic), then oldest
+/// version first. A released version is
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 2] = [
+const SOURCES: [Source; 6] = [
     (
         "grblhal",
         1,
@@ -629,6 +631,30 @@ const SOURCES: [Source; 2] = [
         1,
         "grbl/v1.json",
         include_str!("definitions/grbl/v1.json"),
+    ),
+    (
+        "linuxcnc",
+        1,
+        "linuxcnc/v1.json",
+        include_str!("definitions/linuxcnc/v1.json"),
+    ),
+    (
+        "mach3",
+        1,
+        "mach3/v1.json",
+        include_str!("definitions/mach3/v1.json"),
+    ),
+    (
+        "uccnc",
+        1,
+        "uccnc/v1.json",
+        include_str!("definitions/uccnc/v1.json"),
+    ),
+    (
+        "generic",
+        1,
+        "generic/v1.json",
+        include_str!("definitions/generic/v1.json"),
     ),
 ];
 
@@ -959,7 +985,7 @@ mod tests {
 
     /// #117, design spec "Post-processor definitions": the dwell's `P`
     /// word is seconds on GRBL, grblHAL and LinuxCNC and milliseconds on
-    /// Mach3, so the definition says which. A definition without it is
+    /// UCCNC, so the definition says which. A definition without it is
     /// rejected like any missing field (#65).
     #[test]
     fn dwell_units_round_trip_as_snake_case() {
@@ -1317,9 +1343,14 @@ mod tests {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
         // `default_settings.use_canned_cycles` reached every version (a
         // schema-wide field; see `definitions/README.md`, "Versions").
-        const PINNED: [(&str, u64); 2] = [
+        const PINNED: [(&str, u64); 6] = [
             ("grblhal/v1.json", 0xac47_0795_847b_c94d),
             ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
+            // Slice 17 (#164).
+            ("linuxcnc/v1.json", 0x9d07_5dad_8ee8_1225),
+            ("mach3/v1.json", 0x5217_9912_0119_4b63),
+            ("uccnc/v1.json", 0x1866_9d4e_236b_e202),
+            ("generic/v1.json", 0xfa66_bbf8_af00_4d46),
         ];
         let bundled = bundled_definitions().unwrap();
         let paths: Vec<&str> = bundled.iter().map(|d| d.path).collect();

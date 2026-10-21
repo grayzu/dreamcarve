@@ -132,7 +132,8 @@ fn bundled_tool_changes_stop_the_spindle_then_change_once() {
     // #57: grblHAL changes tools with `T<n> M6` after `M5`, and no `M0`
     // (one stop per change). GRBL 1.1 has no M6, so its definition has
     // none and `emit` refuses a second tool; its pause line is kept for
-    // comparison with PureCutCNC and never written.
+    // comparison with PureCutCNC and never written. Slice 17's four have
+    // no M6 either (README, "Rules for the slice 17 definitions").
     for (label, post) in every_version() {
         let tc = &post.tool_change;
         assert!(tc.stop_spindle_first, "{label}");

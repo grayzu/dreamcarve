@@ -30,7 +30,7 @@ use dc_project::{
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
-use crate::emit::changes_tools_in_program;
+use crate::emit::{changes_tools_in_program, controller_sets_units};
 use crate::format::decimal_places;
 use crate::parse::{
     Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
@@ -258,7 +258,15 @@ fn check_rules(
     check_characters(text)?;
     // S11: canned cycles are expanded into the moves the controller makes,
     // and every rule below checks those.
-    let blocks = parse_program_with(text, &CycleModel::of(post))?;
+    // A controller without units words (UCCNC) reads the program in the
+    // units it is set up in, which `emit` has warned must be the
+    // program's.
+    let controller_units = controller_sets_units(post);
+    let model = CycleModel {
+        units: transform.output_units(),
+        ..CycleModel::of(post)
+    };
+    let blocks = parse_program_with(text, &model)?;
     check_words(
         &blocks,
         changes_tools_in_program(post),
@@ -268,7 +276,7 @@ fn check_rules(
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
     let manual = post.feed_speed.spindle_control == SpindleControl::Manual;
     let mut router = RouterPauses::default();
-    let mut units_set = false;
+    let mut units_set = controller_units;
     let mut wcs_set = false;
     let mut absolute_set = false;
     // The last pause: the controller's modal state must be set again after
@@ -320,7 +328,7 @@ fn check_rules(
             }
             router.z_mm = None;
             last_pause = Some(line);
-            units_set = false;
+            units_set = controller_units;
             wcs_set = false;
             absolute_set = false;
         }
@@ -515,16 +523,27 @@ const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
 /// optional on both, and `G28`, `G30`, and `G53` move in machine
 /// coordinates. `M6` is accepted only from a definition whose tool change
 /// uses it and whose tool-change mode is `"m6"` ([`TOOL_CHANGE_M`]).
-const ALLOWED_G: [f64; 16] = [
-    0.0, 1.0, 2.0, 3.0, 4.0, 17.0, 20.0, 21.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 90.0, 94.0,
+///
+/// Four codes only cancel a mode DreamCarve never turns on, or select the
+/// one it assumes, so they are accepted always (#154; LinuxCNC G-code
+/// reference, "G40", "G49", "G80", "G90.1, G91.1"; Using Mach3Mill 1.84,
+/// 10.7.13, 10.7.14, 10.7.23, 10.7.26): `G40` cutter compensation off,
+/// `G49` tool length offset off, `G80` no canned cycle (the parser then
+/// has no motion mode until the next `G0` to `G3`), and `G91.1`
+/// incremental arc centres, which is how DreamCarve writes `I` and `J`.
+/// `G90.1` stays out.
+const ALLOWED_G: [f64; 20] = [
+    0.0, 1.0, 2.0, 3.0, 4.0, 17.0, 20.0, 21.0, 40.0, 49.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0,
+    80.0, 90.0, 91.1, 94.0,
 ];
 /// See [`ALLOWED_G`].
 const ALLOWED_M: [f64; 6] = [0.0, 1.0, 2.0, 3.0, 5.0, 30.0];
-/// The drilling canned cycles, their cancel, and their retract modes,
-/// accepted when the project asks for canned cycles and the definition has
-/// them ([`writes_canned_cycles`]). The parser expands each cycle into the
-/// moves the controller makes, which the rules then check (S11).
-const CANNED_G: [f64; 7] = [73.0, 80.0, 81.0, 82.0, 83.0, 98.0, 99.0];
+/// The drilling canned cycles and their retract modes, accepted when the
+/// project asks for canned cycles and the definition has them
+/// ([`writes_canned_cycles`]). The parser expands each cycle into the
+/// moves the controller makes, which the rules then check (S11). Their
+/// cancel, `G80`, is in [`ALLOWED_G`].
+const CANNED_G: [f64; 6] = [73.0, 81.0, 82.0, 83.0, 98.0, 99.0];
 
 /// Whether a program for `post` may hold canned cycles: the project asks
 /// for them (`use_canned_cycles`) and the definition has them.

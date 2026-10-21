@@ -1,7 +1,8 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Post-processor model and G-code emission for DreamCarve. Phase 1 adds grblHAL and GRBL.
+//! Post-processor model and G-code emission for DreamCarve. Phase 1 adds
+//! grblHAL and GRBL; phase 2 LinuxCNC, Mach3, UCCNC and generic RS274/NGC.
 //!
 //! The [`PostProcessor`] type and the bundled definitions live in
 //! `dc-project`, which loads a project's reference to one (#106); this crate

@@ -795,7 +795,12 @@ fn coaster_with_holes(name: &str, post: &str, canned: bool) -> String {
     let mut drill = sample_drill();
     drill.id = OperationId::new("o2");
     drill.targets = targets;
-    drill.tool = project.operations[0].tool().clone();
+    drill.tool = project
+        .operations
+        .first()
+        .expect("init writes a Profile")
+        .tool()
+        .clone();
     drill.cycle = DrillCycle::Simple;
     drill.dwell_s = 0.0;
     drill.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
