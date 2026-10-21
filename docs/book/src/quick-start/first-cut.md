@@ -245,15 +245,15 @@ dreamcarve export coaster.dcv
 ```text
 Wrote coaster.nc (45 lines, post-processor grblhal).
   op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
-Extents (machine coordinates, mm, tool centre): X 6.825..104.006, Y 6.825..103.175, Z -12.000..5.000
-  The cutter's edge reaches X 3.650..107.181, Y 3.650..106.350; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
 Before you start: fit T1 Set me and set work zero with it.
 ```
 
 `coaster.nc` is the G-code program. The **extents** are where it takes the
 bit, in the coordinates your controller shows once work zero is set: the
-centre of the bit stays between X 6.825 and 104.006 mm, and its edge, half
-the 6.35 mm diameter further out, between X 3.65 and 107.18 mm (Y between
+centre of the bit stays between X 6.825 and 103.989 mm, and its edge, half
+the 6.35 mm diameter further out, between X 3.65 and 107.16 mm (Y between
 3.65 and 106.35 mm: the ramp into each pass, step 7, reaches a little past
 the circle on the right). Z runs from −12, the deepest cut, up to 5, safe Z. You place
 clamps from these numbers in step 8.
@@ -282,8 +282,8 @@ G0 Z5.000
 M3 S18000
 G4 P3.000
 X103.175 Y55.000
-G1 X104.006 Y74.032 Z-0.104 F1500.000
-X103.372 Y59.507 Z-4.000
+Z1.000
+G1 X103.989 Y73.642 Z-4.000 F1500.000
 X103.175 Y55.000
 G2 X6.825 Y55.000 I-48.175 J0.000
 ```
@@ -291,10 +291,11 @@ G2 X6.825 Y55.000 I-48.175 J0.000
 | Lines | What they do |
 | --- | --- |
 | `G90 G17 G94 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
-| `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) happen only at or above this height. |
+| `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) that go sideways happen only at or above this height. |
 | `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
 | `X103.175 Y55.000` | Rapid to the start of the cut, still at safe Z. |
-| `G1 X104.006 Y74.032 Z-0.104 F1500.000`, `X103.372 Y59.507 Z-4.000` | **Ramp** down to the first pass, 4 mm deep: two straight moves at 15° in the waste outside the coaster, out and back, at the feed rate. The bit enters the wood on a slope instead of drilling straight down, which is easier on the bit and leaves no plunge mark. `G1` stays in effect, so the next lines are cuts too. |
+| `Z1.000` | Rapid straight down to 1 mm above the stock top, where the ramp starts, so the bit does not ramp through the air. `G0` is still in effect from `G0 Z5.000`. |
+| `G1 X103.989 Y73.642 Z-4.000 F1500.000` | **Ramp** down to the first pass, 4 mm deep: one straight move at 15° in the waste outside the coaster, at the feed rate. The bit enters the wood on a slope instead of drilling straight down, which is easier on the bit and leaves no plunge mark. `G1` stays in effect, so the next lines are cuts too. |
 | `X103.175 Y55.000` | Back to the start of the cut, at the pass depth. |
 | `G2 X6.825 Y55.000 I-48.175 J0.000` | Cut along the outline at the feed rate, as a clockwise arc (`G2`) whose centre is `I`, `J` from the start: half the circle, 48.175 mm from the centre, the circle's 45 mm radius plus half the bit. |
 
@@ -318,7 +319,7 @@ job:
 
 1. **Fix the stock.** The program uses the 110 × 110 mm square that starts
    at your XY zero. Use the extents `export` printed (step 6) to place
-   clamps: the bit's edge reaches X 3.65 to 107.18 mm and Y 3.65 to
+   clamps: the bit's edge reaches X 3.65 to 107.16 mm and Y 3.65 to
    106.35 mm from your XY zero, so keep clamps and screws outside that area,
    with room to spare for the collet nut. Your board can be bigger. If you
    change the project, export again and use the new extents.

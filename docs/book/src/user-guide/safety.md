@@ -18,10 +18,15 @@ written. There are no safety warnings, only errors.
    So is a stock without `thickness_mm` or an operation without
    `depth_mm`: DreamCarve has no defaults for them.
 2. **Rapids only at safe Z.** Every rapid (`G0`) move is at or above safe Z.
-   The first move of the program is a rapid straight up to safe Z. The one
-   exception is inside a [Drill](drill.md): there a rapid straight down may
-   stop at the retract height above the stock, or inside the part of the
-   hole already drilled, and never in uncut material.
+   The first move of the program is a rapid straight up to safe Z. There
+   are two exceptions, both straight down and only into air. Above a ramp
+   or helix [entry](pocket.md#entry), a rapid straight down from safe Z
+   stops 1 mm above the stock top, or 1 mm above the floor the same
+   operation has already cut at that point, where the ramp or helix
+   starts; the check refuses one that stops lower, or over a floor only
+   another operation cut. Inside a [Drill](drill.md), a rapid straight
+   down may stop at the retract height above the stock, or inside the
+   part of the hole already drilled, and never in uncut material.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
    the tool: the plunge rate for straight-down moves and tab steps, the feed
    rate for everything else. The one value in between is a move that goes
