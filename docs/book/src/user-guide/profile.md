@@ -41,6 +41,7 @@ centre on it, open or closed, use [Engrave](engrave.md).
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](#machining-order). |
 | `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
 | `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
+| `corner_relief` | `"none"` (as `init` writes it), `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
 
 ## Side
 
@@ -271,6 +272,48 @@ not fit where the cut ends is left off (`lead_dropped`, reason `exit`).
 waste beside it for an arc: a `lead` there is not cut, and `lead_dropped`
 says so once for the operation.
 
+## Corner relief
+
+A round bit leaves a radius in every corner it cannot get into: the
+corners of a hole cut **inside**, and the inward-pointing corners of a
+part cut **outside** (the inside corner of an L). A square part does not
+seat in such a hole, and a square slot does not take such a part.
+`corner_relief` cuts a short notch into each of those corners after the
+outline is cut, as on a [Pocket](pocket.md#corner-relief); the names are
+VCarve's ("Create Fillets": Dog-Bone and T-Bone).
+
+- `"dogbone"`: the notch runs along the corner's bisector until the bit
+  just touches the corner, taking the same small bite out of both walls.
+  The usual choice for joints, where neither wall shows.
+- `"t_bone"`: the notch runs along the corner's longer edge (on equal
+  edges, the one nearer the X axis) until the bit reaches the corner,
+  slotting that wall a bit's radius deep and leaving the other straight.
+  Use it to keep a visible face clean.
+
+An outside Profile's outward corners need no relief: the bit already cuts
+round them, so a rectangle cut outside gets no notches at all. An On line
+Profile has no waste side to put a notch in: it skips the relief with
+`relief_skipped`.
+
+The notches are cut after every pass of the operation, nearest corner
+first, each plunging where the outline's path turned that corner and
+stepping down by the **tool's** `step_down_mm` to the operation's depth.
+A corner under a [tab](tabs.md) is skipped with `relief_corner_not_cut`:
+the path rises over the tab there, so the notch would plunge into uncut
+material. Edges shorter than the bit is wide skip their corner with
+`relief_corner_too_tight`, and a tool with no `step_down_mm` skips the
+relief with `relief_skipped`.
+
+The notches come after the outline's last pass. On a through cut with no
+tabs the part or slug is already loose by then, and the bit cuts beside
+a piece that can shift: hold it with [tabs](tabs.md) clear of the
+corners (a notch away from a tab is still cut).
+
+An inside Profile of a 40 × 30 mm rectangle with a 6.35 mm bit and
+`"dogbone"` gets four notches, each ending 3.175 mm from its corner along
+the bisector, the same four a Pocket of that rectangle gets; an outside
+Profile of an L-shaped part gets one, in the inside corner of the L.
+
 ## Cut order between operations
 
 Operations run in the order the project lists them, whichever tools they
@@ -314,7 +357,8 @@ one drawn (see [Machining order](#machining-order)). For each outline:
 5. Rapid back up to safe Z.
 
 Every move between shapes is at safe Z; the tool never travels through
-material from one shape to another.
+material from one shape to another. With [corner relief](#corner-relief)
+the notches follow, each corner reached at safe Z.
 
 ## Warnings
 
@@ -330,6 +374,7 @@ These still give a safe program. `check` and `export` print each one as
 | "tabs on ...", "the tab top is ..." | See [Tabs](tabs.md#warnings). |
 | "the lead arc on ... is ... smaller than ...", "there is no room for a lead-in arc ..." | See [Leads](#leads). |
 | "the tool paths of ... and ... cut into each other" | Two shapes are closer than the bit needs to cut between them, so cutting one gouges the other. See below. |
+| "corner relief ... is skipped", "the corner of ... is not relieved" | See [Corner relief](#corner-relief). |
 
 ### Values that look wrong
 
