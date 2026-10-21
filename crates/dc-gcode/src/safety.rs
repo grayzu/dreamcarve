@@ -26,7 +26,9 @@ use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
 use crate::emit::changes_tools_in_program;
 use crate::format::decimal_places;
-use crate::parse::{Block, MachineMove, MachinePosition, MotionKind, is_code, parse_program};
+use crate::parse::{
+    Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
+};
 use crate::transform::{MachineTransform, mm_per_unit};
 
 /// The longest line, in characters, DreamCarve emits. grblHAL's line
@@ -248,8 +250,14 @@ fn check_rules(
     spans: &[OpSpan<'_>],
 ) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
-    let blocks = parse_program(text)?;
-    check_words(&blocks, changes_tools_in_program(post))?;
+    // S11: canned cycles are expanded into the moves the controller makes,
+    // and every rule below checks those.
+    let blocks = parse_program_with(text, &CycleModel::of(post))?;
+    check_words(
+        &blocks,
+        changes_tools_in_program(post),
+        writes_canned_cycles(post),
+    )?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
     let manual = post.feed_speed.spindle_control == SpindleControl::Manual;
@@ -506,6 +514,17 @@ const ALLOWED_G: [f64; 16] = [
 ];
 /// See [`ALLOWED_G`].
 const ALLOWED_M: [f64; 6] = [0.0, 1.0, 2.0, 3.0, 5.0, 30.0];
+/// The drilling canned cycles, their cancel, and their retract modes,
+/// accepted when the project asks for canned cycles and the definition has
+/// them ([`writes_canned_cycles`]). The parser expands each cycle into the
+/// moves the controller makes, which the rules then check (S11).
+const CANNED_G: [f64; 7] = [73.0, 80.0, 81.0, 82.0, 83.0, 98.0, 99.0];
+
+/// Whether a program for `post` may hold canned cycles: the project asks
+/// for them (`use_canned_cycles`) and the definition has them.
+pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
+    false && post.use_canned_cycles && post.canned_cycles.is_some() // red: stub
+}
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
 /// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
 /// `M61`, which sets the current tool number without a stop or a move.
@@ -514,7 +533,7 @@ const TOOL_CHANGE_M: [f64; 2] = [6.0, 61.0];
 
 /// A dwell shorter than the configured one by less than this still counts:
 /// it absorbs the rounding of the written seconds.
-const DWELL_TOLERANCE_S: f64 = 0.0005;
+pub(crate) const DWELL_TOLERANCE_S: f64 = 0.0005;
 
 /// GRBL and grblHAL's arc radius check (`gcode.c`): start and end radii may
 /// differ by 0.005 mm, or by 0.1 % of the radius up to 0.5 mm.
@@ -545,13 +564,15 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 
 /// Rejects every `G` and `M` code not in [`ALLOWED_G`] or [`ALLOWED_M`].
 /// The codes in [`TOOL_CHANGE_M`] are allowed too when the program may
-/// change tools with `M6` (`with_m6`).
-fn check_words(blocks: &[Block], with_m6: bool) -> Result<(), ExportError> {
+/// change tools with `M6` (`with_m6`), and those in [`CANNED_G`] when it
+/// may hold canned cycles (`with_canned`).
+fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
+    let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
     for block in blocks {
         for word in &block.words {
             let (allowed, extra): (&[f64], &[f64]) = match word.letter {
-                'G' => (&ALLOWED_G, &[]),
+                'G' => (&ALLOWED_G, canned),
                 'M' => (&ALLOWED_M, tool_change),
                 _ => continue,
             };
@@ -850,22 +871,37 @@ fn check_reproduces(
     transform: &MachineTransform,
     tolerances: Tolerances,
 ) -> Result<(), ExportError> {
+    let in_span = |b: &Block| span.lines.contains(&b.line);
     let motions: Vec<ReadMove<'_>> = blocks
         .iter()
-        .filter(|b| span.lines.contains(&b.line))
-        .filter_map(|b| b.motion.as_ref())
-        .map(|mv| ReadMove::new(mv, post, transform))
+        .enumerate()
+        .filter(|(_, b)| in_span(b))
+        .filter_map(|(index, b)| Some((index, b.motion.as_ref()?)))
+        .map(|(index, mv)| ReadMove::new(mv, index, post, transform))
         .collect();
     let mismatch = |index| ExportError::MotionMismatch {
         op: span.op.id().clone(),
         index,
     };
-    // The span's dwells: line and seconds.
+    // The span's dwells, a canned cycle's included: block index and
+    // seconds. Blocks, not lines: a cycle's moves and dwell share its line.
     let dwells: Vec<(usize, f64)> = blocks
         .iter()
-        .filter(|b| span.lines.contains(&b.line) && b.motion.is_none() && b.has('G', 4.0))
-        .filter_map(|b| Some((b.line, dwell_seconds(post, b.value('P')?))))
+        .enumerate()
+        .filter(|(_, b)| in_span(b) && b.motion.is_none() && b.has('G', 4.0))
+        .filter_map(|(index, b)| Some((index, dwell_seconds(post, b.value('P')?))))
         .collect();
+    // S11: where a Drill is written as canned cycles, how far the
+    // controller backs off for a re-entry or a chip-break retract is its
+    // own (the definition's `reentry_gap_mm`), not the toolpath's, so a
+    // rapid in Z alone inside a hole matches within that gap. Every other
+    // move matches as for plain moves.
+    let reentry_gap_mm = (matches!(span.op, Operation::Drill(_))
+        && blocks.iter().any(|b| b.synthetic && in_span(b)))
+    .then(|| CycleModel::of(post).reentry_gap_mm)
+    .flatten();
+    // Where the last straight cut of the toolpath ended, in XY.
+    let mut last_cut: Option<Point> = None;
     let mut next_dwell = 0;
     let mut cursor = motions
         .iter()
@@ -885,22 +921,32 @@ fn check_reproduces(
             .or(motions.last())
             .map_or(EPS_MM, |m| m.tolerance_mm);
         let already_there = here.is_some_and(|h| near(h, mv.to, tolerance_mm));
+        // Inside a hole: in Z alone, where the last cut was.
+        let in_hole = || {
+            let at = |p: Point| p.distance_to(mv.to.xy()) <= tolerance_mm;
+            previous.is_some_and(|p| at(p.xy())) && last_cut.is_some_and(at)
+        };
         let consumed = match mv.kind {
-            MoveKind::Rapid => match_rapid(rest, mv.to, already_there),
+            MoveKind::Rapid => match_rapid(rest, mv.to, already_there).or_else(|| {
+                let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
+                match_in_hole_rapid(rest, mv.to, gap_mm)
+            }),
             MoveKind::Dwell { seconds } => {
                 // A `G4` with these seconds after the last motion matched
                 // and before the next; it moves nothing.
                 let after = cursor
                     .checked_sub(1)
                     .and_then(|i| motions.get(i))
-                    .map_or(0, |m| m.mv.line);
-                let before = rest.first().map_or(usize::MAX, |m| m.mv.line);
+                    .map(|m| m.block);
+                let before = rest.first().map_or(usize::MAX, |m| m.block);
                 let found = dwells
                     .iter()
                     .enumerate()
                     .skip(next_dwell)
-                    .find(|(_, (line, s))| {
-                        *line > after && *line < before && (s - seconds).abs() <= DWELL_TOLERANCE_S
+                    .find(|(_, (block, s))| {
+                        after.is_none_or(|a| *block > a)
+                            && *block < before
+                            && (s - seconds).abs() <= DWELL_TOLERANCE_S
                     })
                     .map(|(i, _)| i);
                 found.map(|i| {
@@ -923,6 +969,9 @@ fn check_reproduces(
         if let Some(consumed) = consumed {
             cursor += consumed;
             previous = Some(mv.to);
+            if mv.kind == MoveKind::Linear {
+                last_cut = Some(mv.to.xy());
+            }
             index += 1;
             continue;
         }
@@ -963,6 +1012,8 @@ fn check_reproduces(
 /// A parsed move with its ends in project space, mm.
 struct ReadMove<'a> {
     mv: &'a MachineMove,
+    /// Its block's index in the parsed program.
+    block: usize,
     /// The start, if every axis is known.
     from: Option<Point3>,
     /// The end, if every axis is known.
@@ -976,7 +1027,12 @@ struct ReadMove<'a> {
 }
 
 impl<'a> ReadMove<'a> {
-    fn new(mv: &'a MachineMove, post: &PostProcessor, transform: &MachineTransform) -> Self {
+    fn new(
+        mv: &'a MachineMove,
+        block: usize,
+        post: &PostProcessor,
+        transform: &MachineTransform,
+    ) -> Self {
         let xy = |p: &MachinePosition| {
             let m = Point3::new(p.x?, p.y?, 0.0);
             Some(transform.to_project(m, mv.units).xy())
@@ -988,6 +1044,7 @@ impl<'a> ReadMove<'a> {
         };
         Self {
             mv,
+            block,
             from: full(&mv.from),
             to: full(&mv.to),
             to_xy: xy(&mv.to),
@@ -1033,6 +1090,24 @@ fn match_rapid(rest: &[ReadMove<'_>], target: Point3, already_there: bool) -> Op
         }
     }
     already_there.then_some(0)
+}
+
+/// S11: how many of `rest` a rapid in Z alone inside a hole to `target`
+/// takes, if they match it within the controller's re-entry gap `gap_mm`:
+/// one rapid in Z alone at the target's XY whose Z is within the gap. S1
+/// and S15 still check where that rapid ends.
+fn match_in_hole_rapid(rest: &[ReadMove<'_>], target: Point3, gap_mm: f64) -> Option<usize> {
+    let first = rest.first().filter(|m| m.mv.kind == MotionKind::Rapid)?;
+    let tolerance = first.tolerance_mm;
+    let (from, to) = (&first.mv.from, &first.mv.to);
+    let z_only = !differs(from.x, to.x) && !differs(from.y, to.y);
+    let at_xy = first.to_xy.is_some_and(|p| {
+        approx_eq(p.x, target.x, tolerance) && approx_eq(p.y, target.y, tolerance)
+    });
+    let within = first
+        .to_z
+        .is_some_and(|z| approx_eq(z, target.z, gap_mm + tolerance));
+    (z_only && at_xy && within).then_some(1)
 }
 
 /// How many of `rest` a straight cut to `target` takes, if they match it.
@@ -1476,7 +1551,8 @@ mod tests {
                 Operation::Profile(op),
                 tool,
                 cut_then_half_circle(10.0, 20.0, 40.0, 20.0),
-            )],
+            )
+                .into()],
             "2026-10-15",
         )
         .unwrap()
@@ -1520,7 +1596,7 @@ mod tests {
     ) -> Result<String, ExportError> {
         emit(
             project,
-            &[(Operation::Profile(op.clone()), tool.clone(), tp)],
+            &[(Operation::Profile(op.clone()), tool.clone(), tp).into()],
             "2026-10-15",
         )
         .map(|(p, _)| p.text)
@@ -1759,7 +1835,7 @@ mod tests {
         let (project, op, tool) = fixture();
         let result = emit(
             &project,
-            &[(Operation::Profile(op), tool, one_cut(-1.0))],
+            &[(Operation::Profile(op), tool, one_cut(-1.0)).into()],
             "2026-10-15",
         );
         assert!(
@@ -2317,7 +2393,7 @@ mod tests {
             Err(ExportError::FullCircleArc { line: 8 })
         ));
 
-        let blocks = parse_program(text).unwrap();
+        let blocks = crate::parse::parse_program(text).unwrap();
         let extents = extents(&blocks, Units::Mm);
         let x = extents.x.unwrap();
         let y = extents.y.unwrap();
@@ -2411,7 +2487,7 @@ mod tests {
                 emit_with(
                     &project,
                     &post,
-                    &[(Operation::Profile(op.clone()), tool.clone(), tp)],
+                    &[(Operation::Profile(op.clone()), tool.clone(), tp).into()],
                     "2026-10-15",
                 )
                 .unwrap();
@@ -2508,5 +2584,180 @@ mod tests {
         // The same run as two 90° arcs passes.
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\n");
         check_against_with(&text, &chord_run(16, PI, None), Some(0.01)).unwrap();
+    }
+
+    // S11: canned cycles (`docs/specs/phase-2/design.md`, "S11 expansion").
+    // No bundled definition has them yet, so these use a test-only one.
+
+    /// The fixture's post-processor with canned cycles, a re-entry gap of
+    /// `gap_mm`, and `use_canned_cycles` on.
+    fn canned(gap_mm: Option<f64>) -> PostProcessor {
+        let (project, _, _) = fixture();
+        let mut post = project.post_processor.resolve().unwrap();
+        post.canned_cycles = Some(dc_project::CannedCycles {
+            drill_command: Some("G81".into()),
+            drill_with_dwell_command: Some("G82".into()),
+            peck_drill_command: Some("G83".into()),
+            chip_break_drill_command: Some("G73".into()),
+            peck_step_word: "Q".into(),
+            retract_mode: Some(dc_project::RetractMode::G98),
+            cancel_command: "G80".into(),
+            reentry_gap_mm: gap_mm,
+        });
+        post.use_canned_cycles = true;
+        post
+    }
+
+    /// The whole safety pass on `text` as the fixture's Drill with
+    /// `toolpath`, written for `post`.
+    fn check_drill_on(
+        text: &str,
+        toolpath: &Toolpath,
+        post: &PostProcessor,
+    ) -> Result<(), ExportError> {
+        let (project, _, tool) = fixture();
+        let transform = MachineTransform::new(&project, post).unwrap();
+        let op = drill();
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath,
+            lines: 1..text.lines().count() + 1,
+        }];
+        check(
+            text,
+            post,
+            &transform,
+            &project.stock,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: None,
+            },
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// A program on the fixture (stock-top origin, safe Z 5, spindle on)
+    /// that rapids over (50, 50) at safe Z, writes `G98`, then `cycles`.
+    fn cycle_program(cycles: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX50 Y50\nG98\n{cycles}G80\nM5\n")
+    }
+
+    /// The sample Drill's toolpath for simple holes at `xs` (Y 50): over
+    /// the hole at safe Z (11), down to the retract plane (7), plunge to
+    /// 3 mm, out to safe Z.
+    fn simple_holes(xs: &[f64]) -> Toolpath {
+        let mut moves = Vec::new();
+        for &x in xs {
+            let at = |z: f64| Point3::new(x, 50.0, z);
+            moves.extend([
+                Move::rapid(at(11.0)),
+                Move::rapid(at(7.0)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(11.0)),
+            ]);
+        }
+        Toolpath { moves }
+    }
+
+    /// A full-retract peck at (50, 50) from the stock top (retract 0):
+    /// pecks to 4 and 3 mm, re-entering 0.5 mm above 4.
+    fn peck_from_top() -> Toolpath {
+        let at = |z: f64| Point3::new(50.0, 50.0, z);
+        Toolpath {
+            moves: vec![
+                Move::rapid(at(11.0)),
+                Move::rapid(at(6.0)),
+                Move::linear(at(4.0), 300.0),
+                Move::rapid(at(6.0)),
+                Move::rapid(at(4.5)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(11.0)),
+            ],
+        }
+    }
+
+    /// S11: the parser expands each `G81` and `G83` line into the motion
+    /// the controller makes, and S6 compares that with the Drill toolpath
+    /// move for move. The right program passes; a wrong `Z`, `R` or `Q`
+    /// does not. `G83` needs the definition's re-entry gap, and cycles
+    /// need the project to ask for them.
+    #[test]
+    fn canned_cycle_expansion_matches_drill_toolpath() {
+        let post = canned(Some(0.5));
+        let simple = simple_holes(&[50.0, 60.0]);
+        let g81 = |z: &str, r: &str| {
+            cycle_program(&format!("G81 X50 Y50 Z{z} R{r} F300\nX60 Y50 Z{z} R{r}\n"))
+        };
+        check_drill_on(&g81("-3", "1"), &simple, &post).unwrap();
+        for (z, r) in [("-2.5", "1"), ("-3", "2")] {
+            let result = check_drill_on(&g81(z, r), &simple, &post);
+            assert!(
+                matches!(result, Err(ExportError::MotionMismatch { .. })),
+                "Z{z} R{r}: {result:?}"
+            );
+        }
+
+        let g83 = |q: &str| cycle_program(&format!("G83 X50 Y50 Z-3 R0 Q{q} F300\n"));
+        check_drill_on(&g83("2"), &peck_from_top(), &post).unwrap();
+        let result = check_drill_on(&g83("1.5"), &peck_from_top(), &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "Q1.5: {result:?}"
+        );
+        // A controller that re-enters 0.3 mm above the depth: within the
+        // gap its definition states.
+        check_drill_on(&g83("2"), &peck_from_top(), &canned(Some(0.3))).unwrap();
+        // With no stated gap the G83 cannot be expanded.
+        let result = check_drill_on(&g83("2"), &peck_from_top(), &canned(None));
+        assert!(
+            matches!(result, Err(ExportError::Unparseable { line: 8, .. })),
+            "{result:?}"
+        );
+        // Cycles are refused where the project does not ask for them.
+        let mut off = post;
+        off.use_canned_cycles = false;
+        let result = check_drill_on(&g81("-3", "1"), &simple, &off);
+        assert!(
+            matches!(&result, Err(ExportError::ForbiddenWord { line: 7, word }) if word == "G98"),
+            "{result:?}"
+        );
+    }
+
+    /// S1 on the expansion: a `G81` whose bottom is below the stock bottom
+    /// (Z −6.5 on the 6 mm stock, no allowance) fails on its line.
+    #[test]
+    fn canned_cycle_below_floor_fails_s1() {
+        let text = cycle_program("G81 X50 Y50 Z-6.5 R1 F300\n");
+        let result = check_drill_on(&text, &simple_holes(&[50.0]), &canned(Some(0.5)));
+        assert!(
+            matches!(
+                result,
+                Err(ExportError::BelowMaterialBottom { line: 8, .. })
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// S15 and S2 on the expansion: an `R` plane inside the material makes
+    /// the controller rapid into uncut stock; `G99` returns to `R` between
+    /// holes, so the rapid to the next one is below safe Z.
+    #[test]
+    fn canned_cycle_rapid_into_uncut_fails() {
+        let post = canned(Some(0.5));
+        let text = cycle_program("G81 X50 Y50 Z-3 R-1 F300\n");
+        let result = check_drill_on(&text, &simple_holes(&[50.0]), &post);
+        assert!(
+            matches!(result, Err(ExportError::RapidIntoUncut { line: 8, .. })),
+            "{result:?}"
+        );
+        let text = cycle_program("G99\nG81 X50 Y50 Z-3 R1 F300\nX60 Y50 Z-3 R1\n");
+        let result = check_drill_on(&text, &simple_holes(&[50.0, 60.0]), &post);
+        assert!(
+            matches!(result, Err(ExportError::RapidBelowSafeZ { line: 10, .. })),
+            "{result:?}"
+        );
     }
 }
