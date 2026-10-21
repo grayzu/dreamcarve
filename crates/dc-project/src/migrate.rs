@@ -42,16 +42,25 @@
 //!   that differs, or one whose id is not bundled, fails to load with
 //!   every difference and the block to paste instead: swapping in another
 //!   dialect would change the G-code without the user knowing.
+//! - **8**: phase 2 (#117; `docs/specs/phase-2/design.md`, "Migration
+//!   v6 → v7", which is 7 → 8 here since #106 took version 7). Adds
+//!   `arc_fit_tolerance_mm: 0.01` to the project, `number: null` to every
+//!   tool, `machining_order: "full_depth_first"`, `entry: "plunge"`,
+//!   `lead: null` and `corner_relief: "none"` to every Profile, and
+//!   `use_canned_cycles: false` to the post-processor settings: the values
+//!   that keep a phase 1 project cutting the same. Pocket, Drill and
+//!   Engrave operations exist from this version on.
 
 use crate::post_processor::{
-    BundledDefinition, PostProcessorError, SETTING_PATHS, bundled_definition, bundled_definitions,
+    BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
+    bundled_definitions,
 };
 use crate::serialize::LoadError;
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 7;
+pub const CURRENT_VERSION: u32 = 8;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -67,6 +76,7 @@ fn step(from: u32) -> Option<Step> {
         4 => Some(v4_to_v5),
         5 => Some(v5_to_v6),
         6 => Some(v6_to_v7),
+        7 => Some(v7_to_v8),
         _ => None,
     }
 }
@@ -249,12 +259,13 @@ fn v6_to_v7(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
         .filter(|post| post.is_object())
         .map(Value::take)
         .ok_or_else(|| "`post_processor` is missing or not an object".to_owned())?;
-    let mut settings = Map::with_capacity(SETTING_PATHS.len());
-    for (key, path) in SETTING_PATHS {
+    let mut settings = Map::with_capacity(V6_SETTING_COUNT);
+    for (key, path) in SETTING_PATHS.iter().take(V6_SETTING_COUNT) {
         let value = take_at(&mut copy, path)
             .ok_or_else(|| format!("`post_processor.{}` is missing", path.join(".")))?;
-        settings.insert(key.to_owned(), value);
+        settings.insert((*key).to_owned(), value);
     }
+    upgrade_embedded_copy(&mut copy)?;
     let id = copy
         .get("id")
         .and_then(Value::as_str)
@@ -296,6 +307,132 @@ fn v6_to_v7(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
         }
         Err(err) => Err(err.to_string()),
     }
+}
+
+/// Gives a version 6 embedded copy the definition fields the schema has
+/// gained since, with the values of its time, so it compares equal to the
+/// bundled version 1 it was made from (#117): the dwell word was always
+/// seconds on GRBL and grblHAL, and no controller then documented a
+/// chip-break re-entry gap. These are definition facts, so they never
+/// appear in a version 7 or later project; the comparison is the only
+/// place a version 6 copy meets them.
+fn upgrade_embedded_copy(copy: &mut Value) -> Result<(), String> {
+    let dwell = copy
+        .get_mut("feed_speed")
+        .and_then(|feed| feed.get_mut("spindle_on_dwell"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "`post_processor.feed_speed.spindle_on_dwell` is missing".to_owned())?;
+    if dwell.contains_key("units") {
+        return Err(
+            "a version 6 file has no `post_processor.feed_speed.spindle_on_dwell.units`, but this one does"
+                .into(),
+        );
+    }
+    dwell.insert("units".into(), Value::from("seconds"));
+    if let Some(cycles) = copy.get_mut("canned_cycles").and_then(Value::as_object_mut) {
+        if cycles.contains_key("reentry_gap_mm") {
+            return Err(
+                "a version 6 file has no `post_processor.canned_cycles.reentry_gap_mm`, but this one does"
+                    .into(),
+            );
+        }
+        cycles.insert("reentry_gap_mm".into(), Value::Null);
+    }
+    Ok(())
+}
+
+/// Version 7 → 8 (#117): the phase 2 fields, with the values that keep a
+/// phase 1 project cutting the same. Each new key lands where a version 8
+/// file writes it. Fails if any of them is already there: that is not a
+/// version 7 file.
+fn v7_to_v8(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let mut root = insert_after(
+        root,
+        "flatten_tolerance_mm",
+        "arc_fit_tolerance_mm",
+        Value::from(0.01),
+        "",
+    )?;
+    if let Some(tools) = root.get_mut("tools").and_then(Value::as_array_mut) {
+        for (i, tool) in tools.iter_mut().enumerate() {
+            let fields = tool
+                .as_object_mut()
+                .ok_or_else(|| format!("`tools[{i}]` is not an object"))?;
+            let at = format!("tools[{i}].");
+            *fields = insert_after(std::mem::take(fields), "name", "number", Value::Null, &at)?;
+        }
+    }
+    if let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) {
+        for (i, op) in ops.iter_mut().enumerate() {
+            let fields = op
+                .as_object_mut()
+                .ok_or_else(|| format!("`operations[{i}]` is not an object"))?;
+            // Only Profile exists before version 8.
+            if fields.get("kind").and_then(Value::as_str) != Some("profile") {
+                return Err(format!(
+                    "`operations[{i}].kind` is {}; a version 7 file holds only `\"profile\"` operations",
+                    fields
+                        .get("kind")
+                        .map_or_else(|| "missing".to_owned(), Value::to_string)
+                ));
+            }
+            for (key, value) in [
+                ("machining_order", Value::from("full_depth_first")),
+                ("entry", Value::from("plunge")),
+                ("lead", Value::Null),
+                ("corner_relief", Value::from("none")),
+            ] {
+                if fields.contains_key(key) {
+                    return Err(format!(
+                        "a version 7 file has no `operations[{i}].{key}`, but this one does"
+                    ));
+                }
+                fields.insert(key.to_owned(), value);
+            }
+        }
+    }
+    let post = root
+        .get_mut("post_processor")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "`post_processor` is missing or not an object".to_owned())?;
+    if post.contains_key("use_canned_cycles") {
+        return Err(
+            "a version 7 file has no `post_processor.use_canned_cycles`, but this one does".into(),
+        );
+    }
+    post.insert("use_canned_cycles".into(), Value::from(false));
+    Ok(root)
+}
+
+/// `map` with `key: value` inserted right after `after`, or at the end
+/// when `after` is absent. Fails if `key` is already there, naming it
+/// under `at` (a path prefix such as `tools[0].`).
+fn insert_after(
+    map: Map<String, Value>,
+    after: &str,
+    key: &str,
+    value: Value,
+    at: &str,
+) -> Result<Map<String, Value>, String> {
+    if map.contains_key(key) {
+        return Err(format!(
+            "a version 7 file has no `{at}{key}`, but this one does"
+        ));
+    }
+    let mut out = Map::with_capacity(map.len() + 1);
+    let mut inserted = false;
+    for (k, v) in map {
+        let after_this = k == after;
+        out.insert(k, v);
+        if after_this {
+            out.insert(key.to_owned(), value.clone());
+            inserted = true;
+        }
+    }
+    if !inserted {
+        out.insert(key.to_owned(), value);
+    }
+    Ok(out)
 }
 
 /// Removes and returns the value at `path` in `value`.
@@ -427,6 +564,25 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 8 {
+            // `shift_remove`: `remove` swaps the last key in, which would
+            // scramble the order the tests compare.
+            let root_map = root.as_object_mut().unwrap();
+            root_map.shift_remove("arc_fit_tolerance_mm");
+            for tool in root_map["tools"].as_array_mut().unwrap() {
+                tool.as_object_mut().unwrap().shift_remove("number");
+            }
+            for op in root_map["operations"].as_array_mut().unwrap() {
+                let op = op.as_object_mut().unwrap();
+                for key in ["machining_order", "entry", "lead", "corner_relief"] {
+                    op.shift_remove(key);
+                }
+            }
+            root_map["post_processor"]
+                .as_object_mut()
+                .unwrap()
+                .shift_remove("use_canned_cycles");
+        }
         if version < 7 {
             root["post_processor"] =
                 serde_json::from_str(include_str!("../tests/fixtures/post/grbl.json")).unwrap();
@@ -603,8 +759,7 @@ mod tests {
         let migrated = migrate(root, 3).unwrap();
         let project: crate::Project = serde_json::from_value(migrated).unwrap();
         dc_geometry::assert_approx_eq!(project.stock.thickness_mm.unwrap(), 18.3, 0.0);
-        let crate::Operation::Profile(op) = &project.operations[0];
-        dc_geometry::assert_approx_eq!(op.depth_mm.unwrap(), 18.5, 0.0);
+        dc_geometry::assert_approx_eq!(project.operations[0].depth_mm().unwrap(), 18.5, 0.0);
     }
 
     /// A version 3 file had no way to leave thickness unset, so a `null`
@@ -727,8 +882,12 @@ mod tests {
     /// file writes it.
     #[test]
     fn v6_to_v7_writes_the_reference() {
-        let migrated = migrate(sample_root_at(6), 6).unwrap();
-        assert_eq!(migrated, sample_root_at(7));
+        let Value::Object(root) = sample_root_at(6) else {
+            panic!("an object");
+        };
+        let mut migrated = v6_to_v7(root).unwrap();
+        migrated.insert("version".into(), Value::from(7));
+        assert_eq!(Value::Object(migrated), sample_root_at(7));
     }
 
     /// #106: a version 6 file with no embedded post-processor is broken,
@@ -754,7 +913,7 @@ mod tests {
     #[test]
     fn v6_with_bundled_copy_migrates_to_reference() {
         let loaded = load(V6_GRBLHAL_MANUAL.as_bytes()).unwrap();
-        assert_eq!(loaded.project.version, 7);
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
         assert_eq!(
             serde_json::to_value(&loaded.project.post_processor).unwrap(),
             json!({
@@ -764,9 +923,38 @@ mod tests {
                 "spindle_control": "manual",
                 "spindle_on_dwell_s": 5.0,
                 "tool_change_mode": "separate_programs",
-                "decimal_places": { "mm": 3, "inch": 4 }
+                "decimal_places": { "mm": 3, "inch": 4 },
+                "use_canned_cycles": false
             })
         );
+    }
+
+    /// #117: a version 6 copy predates `spindle_on_dwell.units` and
+    /// `canned_cycles.reentry_gap_mm`, which every bundled definition now
+    /// has. The step gives the copy the values of the time (seconds; no
+    /// gap) before comparing, so the copy still matches version 1.
+    #[test]
+    fn v6_copy_gains_dwell_units_before_comparison() {
+        assert!(
+            !V6_GRBLHAL_MANUAL.contains("\"units\": \"seconds\""),
+            "the fixture predates `spindle_on_dwell.units`"
+        );
+        assert!(!V6_GRBLHAL_MANUAL.contains("reentry_gap_mm"));
+        let loaded = load(V6_GRBLHAL_MANUAL.as_bytes()).unwrap();
+        assert_eq!(loaded.project.post_processor.id, "grblhal");
+        assert_eq!(loaded.project.post_processor.definition_version, 1);
+        assert!(!loaded.project.post_processor.use_canned_cycles);
+    }
+
+    /// #117: a version 6 copy that already names a dwell unit is not a
+    /// version 6 file.
+    #[test]
+    fn v6_with_dwell_units_already_present_fails() {
+        let message = v6_edited_error(
+            "\"command\": \"G4 P{seconds}\"",
+            "\"command\": \"G4 P{seconds}\", \"units\": \"seconds\"",
+        );
+        assert!(message.contains("units"), "{message}");
     }
 
     /// The migration error for `V6_GRBLHAL_MANUAL` with `from` replaced by
@@ -831,6 +1019,87 @@ mod tests {
         assert!(message.contains("grbl, grblhal"), "{message}");
         assert!(message.contains("post_processor.id"), "{message}");
         assert_has_replacement_block(&message, "grblhal");
+    }
+
+    // Phase 2, #117: version 7 → 8 adds the phase 2 fields with the values
+    // that keep a phase 1 project cutting the same.
+
+    const V7_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v7/sample.dcv");
+
+    #[test]
+    fn version_7_fixture_loads() {
+        let loaded = load(V7_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+    }
+
+    /// Design spec, "Migration v6 → v7" (version 7 → 8 here, #117): each
+    /// Profile plunges, cuts each shape to full depth first, has no lead
+    /// and no corner relief, exactly as phase 1 cut it; arc fitting is on
+    /// at 0.01 mm; tools have no number; canned cycles are off.
+    #[test]
+    fn v7_profile_gains_phase_2_fields_with_defaults() {
+        let root: Value = serde_json::from_slice(V7_FIXTURE).unwrap();
+        let migrated = migrate(root, 7).unwrap();
+        assert_eq!(migrated["arc_fit_tolerance_mm"], json!(0.01));
+        assert_eq!(migrated["tools"][0]["number"], Value::Null);
+        let op = &migrated["operations"][0];
+        assert_eq!(op["machining_order"], "full_depth_first");
+        assert_eq!(op["entry"], "plunge");
+        assert_eq!(op["lead"], Value::Null);
+        assert_eq!(op["corner_relief"], "none");
+        assert_eq!(
+            migrated["post_processor"]["use_canned_cycles"],
+            json!(false)
+        );
+        let loaded = load(V7_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// The new keys land where a version 8 file writes them, so a migrated
+    /// file saves with the same layout as a new one.
+    #[test]
+    fn v7_to_v8_writes_the_defaults() {
+        let migrated = migrate(sample_root_at(7), 7).unwrap();
+        assert_eq!(migrated, sample_root_at(8));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(8)).unwrap(),
+            "key order"
+        );
+    }
+
+    /// An edit to a raw root, and the key it adds.
+    type Edit = (fn(&mut Value), &'static str);
+
+    #[test]
+    fn v7_with_phase_2_field_already_present_fails() {
+        let edits: [Edit; 4] = [
+            (
+                |root| root["arc_fit_tolerance_mm"] = json!(0.02),
+                "arc_fit_tolerance_mm",
+            ),
+            (|root| root["tools"][0]["number"] = json!(1), "number"),
+            (
+                |root| root["operations"][0]["entry"] = json!("plunge"),
+                "entry",
+            ),
+            (
+                |root| root["post_processor"]["use_canned_cycles"] = json!(true),
+                "use_canned_cycles",
+            ),
+        ];
+        for (edit, key) in edits {
+            let mut root = sample_root_at(7);
+            edit(&mut root);
+            let err = migrate(root, 7).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Migration { from: 7, to: 8, message }
+                    if message.contains(key)),
+                "{key}: {err:?}"
+            );
+        }
     }
 
     #[test]

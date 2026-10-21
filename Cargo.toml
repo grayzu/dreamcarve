@@ -32,8 +32,6 @@ dc-gcode = { path = "crates/dc-gcode", version = "0.1.1" }
 dc-import = { path = "crates/dc-import", version = "0.1.1" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.
-# Geometry crates (i_overlay) are added when
-# phase 1 first uses them, so the pins are never stale.
 serde = { version = "1.0", features = ["derive"] }
 # `float_roundtrip`: parse floats exactly, so a saved .dcv loads back
 # bit-identical (acceptance test 1); the default parser can be off by 1 ulp.
@@ -45,6 +43,10 @@ serde_path_to_error = "0.1"
 clap = { version = "4.6", features = ["derive", "cargo"] }
 kurbo = "0.13"
 cavalier_contours = "0.9"
+# Polygon booleans for pockets (phase 2 design, "Algorithms → Pocket").
+# Default features are off: they pull in a glam/serde bridge and f32
+# geometry types that nothing here uses.
+i_overlay = { version = "9.1", default-features = false }
 # SVG parsing. Must stay >= 0.45: earlier releases are MPL-2.0. Default
 # features are off: they add text shaping, system font loading (file I/O),
 # svgz, and the writer, none of which an importer needs.

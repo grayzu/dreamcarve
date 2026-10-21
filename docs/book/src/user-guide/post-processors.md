@@ -28,7 +28,8 @@ block names a bundled definition and holds your settings for it:
   "decimal_places": {
     "mm": 3,
     "inch": 4
-  }
+  },
+  "use_canned_cycles": false
 }
 ```
 
@@ -325,6 +326,7 @@ The whole `post_processor` block, in the order DreamCarve writes it:
 | `spindle_on_dwell_s` | Seconds to wait after the spindle starts. Default 3. Raise it if your spindle or VFD takes longer to reach speed; 0 means no wait. |
 | `tool_change_mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). |
 | `decimal_places` | Digits after the point: `mm` at least 2, `inch` at least 3. Default 3 and 4. |
+| `use_canned_cycles` | `false` (default) or `true`: whether a Drill operation is written as the controller's drilling cycles (`G81`, `G82`, `G83`, `G73`) where the post-processor has them. Neither grblHAL nor GRBL has them, so `true` is an error on both; the holes are drilled the same either way. |
 
 Names that DreamCarve puts in comments (the project, tool and operation
 names) are reduced to plain ASCII without `( ) ; ! ? ~`. Both controllers

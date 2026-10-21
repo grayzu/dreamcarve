@@ -20,7 +20,7 @@
 use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::migrate;
-use crate::model::{ProfileOp, Project};
+use crate::model::{DrillOp, EngraveOp, PocketOp, ProfileOp, Project};
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
 use serde::Serialize;
@@ -264,6 +264,9 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
     // One arm per `Operation` variant, by its `kind`.
     match kind.as_str()? {
         "profile" => serde_path_to_error::deserialize::<_, ProfileOp>(&fields).err(),
+        "pocket" => serde_path_to_error::deserialize::<_, PocketOp>(&fields).err(),
+        "drill" => serde_path_to_error::deserialize::<_, DrillOp>(&fields).err(),
+        "engrave" => serde_path_to_error::deserialize::<_, EngraveOp>(&fields).err(),
         _ => None,
     }
 }
@@ -342,12 +345,17 @@ fn first_non_finite(problems: &[Problem]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Operation, OriginXy, ToolKind};
-    use crate::test_support::sample_project;
+    use crate::model::{
+        ClearanceStrategy, DrillCycle, Entry, Operation, OriginXy, PeckRetract, ToolKind,
+    };
+    use crate::test_support::{
+        profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
+    };
     use crate::validate::validate;
+    use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v7/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v8/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -369,7 +377,7 @@ mod tests {
         p.tools[0].feed_mm_min = None;
         p.tools[0].rpm = None;
         p.stock.thickness_mm = None;
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.tabs = None;
         op.depth_mm = None;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
@@ -407,7 +415,7 @@ mod tests {
         p.tools[0].feed_mm_min = None;
         p.tools[0].step_over_fraction = None;
         p.stock.thickness_mm = None;
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.tabs = None;
         op.depth_mm = None;
         let text = save(&p).unwrap();
@@ -591,7 +599,7 @@ mod tests {
     #[test]
     fn load_returns_warnings_without_errors() {
         let mut p = sample_project();
-        let Operation::Profile(op) = &mut p.operations[0];
+        let op = profile_mut(&mut p);
         op.enabled = false;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert!(!loaded.has_errors());
@@ -790,6 +798,7 @@ mod tests {
         &["canned_cycles", "peck_drill_command"],
         &["canned_cycles", "chip_break_drill_command"],
         &["canned_cycles", "retract_mode"],
+        &["canned_cycles", "reentry_gap_mm"],
         &["coolant"],
     ];
 
@@ -799,6 +808,9 @@ mod tests {
     #[test]
     fn every_missing_post_option_fails() {
         let mut post: Value = serde_json::from_str(GRBLHAL).unwrap();
+        // The fixture predates the phase 2 definition fields (#117).
+        post["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
+        post["use_canned_cycles"] = Value::from(false);
         // grblHAL has no canned cycles; fill them so their options are there
         // to remove.
         post["canned_cycles"] = serde_json::json!({
@@ -808,7 +820,8 @@ mod tests {
             "chip_break_drill_command": "G73",
             "peck_step_word": "Q",
             "retract_mode": "G98",
-            "cancel_command": "G80"
+            "cancel_command": "G80",
+            "reentry_gap_mm": null
         });
         let parse = serde_json::from_value::<crate::PostProcessor>;
         assert!(parse(post.clone()).is_ok(), "the grblHAL sample parses");
@@ -906,5 +919,154 @@ mod tests {
         assert!(shown.contains("`post_processor.decimal_places`"), "{shown}");
         assert!(shown.contains("a whole number"), "{shown}");
         assert!(shown.contains("`mm` and `inch`"), "{shown}");
+    }
+
+    // Phase 2, #117: the new types and fields in the file.
+
+    /// Functional spec, capability 21a: a tool's number is `null` until
+    /// set, and a set one is written as the integer.
+    #[test]
+    fn tool_number_round_trips() {
+        let mut p = sample_project();
+        let text = save(&p).unwrap();
+        assert!(text.contains("\"number\": null"), "{text}");
+        p.tools[0].number = Some(3);
+        let text = save(&p).unwrap();
+        assert!(text.contains("\"number\": 3,"), "{text}");
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(loaded.project.tools[0].number, Some(3));
+    }
+
+    /// Design spec, "Data model → dc-project": the four operation kinds
+    /// are one internally tagged list, each tagged by `kind`.
+    #[test]
+    fn pocket_drill_engrave_round_trip() {
+        let mut p = sample_project();
+        let mut pocket = sample_pocket();
+        pocket.strategy = ClearanceStrategy::Raster { angle_deg: 45.0 };
+        pocket.step_over_fraction = Some(0.5);
+        let mut drill = sample_drill();
+        drill.cycle = DrillCycle::Peck {
+            peck_depth_mm: None,
+            retract: PeckRetract::ChipBreak { gap_mm: 0.5 },
+        };
+        drill.dwell_s = 0.5;
+        let mut engrave = sample_engrave();
+        engrave.alternate_direction = true;
+        p.operations.push(Operation::Pocket(pocket));
+        p.operations.push(Operation::Drill(drill));
+        p.operations.push(Operation::Engrave(engrave));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let kinds: Vec<&str> = value["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|op| op["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["profile", "pocket", "drill", "engrave"]);
+        assert_eq!(value["operations"][1]["rest_of"], serde_json::Value::Null);
+        assert_eq!(
+            value["operations"][2]["cycle"],
+            json!({ "peck": { "peck_depth_mm": null, "retract": { "chip_break": { "gap_mm": 0.5 } } } })
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// Design spec: `Entry` is a string for `plunge` and a one-key object
+    /// for the variants with values.
+    #[test]
+    fn entry_variants_serialize_as_string_or_object() {
+        for (entry, expected) in [
+            (Entry::Plunge, json!("plunge")),
+            (
+                Entry::Ramp { angle_deg: 15.0 },
+                json!({ "ramp": { "angle_deg": 15.0 } }),
+            ),
+            (
+                Entry::Helix {
+                    diameter_fraction: 0.8,
+                    angle_deg: 5.0,
+                },
+                json!({ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }),
+            ),
+        ] {
+            let mut p = sample_project();
+            profile_mut(&mut p).entry = entry.clone();
+            let value = serde_json::to_value(&p).unwrap();
+            assert_eq!(value["operations"][0]["entry"], expected, "{entry:?}");
+            let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
+            assert_eq!(loaded.project, p, "{entry:?}");
+        }
+    }
+
+    /// Design spec: `offset` is a string, `raster` carries its angle; the
+    /// drill cycle and peck retract follow the same shape.
+    #[test]
+    fn clearance_strategy_raster_carries_angle() {
+        let mut p = sample_project();
+        p.operations.push(Operation::Pocket(sample_pocket()));
+        p.operations.push(Operation::Drill(sample_drill()));
+        let value = serde_json::to_value(&p).unwrap();
+        assert_eq!(value["operations"][1]["strategy"], json!("offset"));
+        assert_eq!(value["operations"][1]["wall_pass"], json!("last"));
+        assert_eq!(value["operations"][2]["cycle"], json!("simple"));
+        let Some(Operation::Pocket(pocket)) = p.operations.get_mut(1) else {
+            panic!("a pocket");
+        };
+        pocket.strategy = ClearanceStrategy::Raster { angle_deg: 45.0 };
+        let Some(Operation::Drill(drill)) = p.operations.get_mut(2) else {
+            panic!("a drill");
+        };
+        drill.cycle = DrillCycle::Peck {
+            peck_depth_mm: Some(2.0),
+            retract: PeckRetract::Full,
+        };
+        let value = serde_json::to_value(&p).unwrap();
+        assert_eq!(
+            value["operations"][1]["strategy"],
+            json!({ "raster": { "angle_deg": 45.0 } })
+        );
+        assert_eq!(
+            value["operations"][2]["cycle"],
+            json!({ "peck": { "peck_depth_mm": 2.0, "retract": "full" } })
+        );
+        let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+    }
+
+    /// #117, #65: a current-version file without a phase 2 field is
+    /// rejected, naming the field at the operation. Only an older file
+    /// gets it, from the migration.
+    #[test]
+    fn missing_phase_2_field_fails_to_load() {
+        for line in [
+            "      \"machining_order\": \"full_depth_first\",\n",
+            "      \"entry\": \"plunge\",\n",
+            "      \"lead\": null,\n",
+            "  \"arc_fit_tolerance_mm\": 0.01,\n",
+            "      \"number\": null,\n",
+            "    \"use_canned_cycles\": false\n",
+        ] {
+            let text = CURRENT_FIXTURE.replacen(line, "", 1);
+            assert_ne!(text, CURRENT_FIXTURE, "fixture layout changed: {line:?}");
+            // Removing the last key of the block leaves a trailing comma.
+            let text = text.replace("},\n  },\n  \"definitions\"", "}\n  },\n  \"definitions\"");
+            let key = line.trim().split('"').nth(1).unwrap();
+            let err = load(text.as_bytes()).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Schema { message, .. } if message.contains(key)),
+                "{key}: {err:?}"
+            );
+            if key == "machining_order" {
+                let LoadError::Schema { path, .. } = &err else {
+                    panic!("{err:?}");
+                };
+                assert_eq!(path, "operations[0]");
+            }
+        }
     }
 }

@@ -29,9 +29,10 @@ use dc_import::{
     import_dxf, import_svg,
 };
 use dc_project::{
-    CURRENT_VERSION, CutDirection, FeatureDefinition, FeatureInstance, MachineOrigin, Operation,
-    OperationId, OriginXy, OriginZ, PostProcessorRef, ProfileOp, Project, Side, SourceMap, Stock,
-    TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units, validate,
+    CURRENT_VERSION, CornerRelief, CutDirection, Entry, FeatureDefinition, FeatureInstance,
+    MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PostProcessorRef,
+    ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId,
+    ToolKind, Units, validate,
 };
 
 use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
@@ -55,6 +56,9 @@ const TOOL_DIAMETER_MM: f64 = 6.35;
 const TOOL_FLUTES: u8 = 2;
 /// The one operation `init` writes, a Profile, and its defaults.
 const OPERATION_ID: &str = "op1";
+/// Arc-fitting tolerance a new project starts with, mm (functional spec,
+/// capability 24).
+const ARC_FIT_TOLERANCE_MM: f64 = 0.01;
 const SAFE_Z_MM: f64 = 5.0;
 const TAB_COUNT: u8 = 4;
 const TAB_WIDTH_MM: f64 = 8.0;
@@ -251,6 +255,7 @@ fn default_project(
     let tool = Tool {
         id: ToolId::new(TOOL_ID),
         name: TOOL_NAME.into(),
+        number: None,
         cutter: ToolKind::EndMill,
         diameter_mm: TOOL_DIAMETER_MM,
         flutes: TOOL_FLUTES,
@@ -278,12 +283,20 @@ fn default_project(
             height_mm: TAB_HEIGHT_MM,
             shape: TabShape::Rect,
         }),
+        machining_order: MachiningOrder::FullDepthFirst,
+        // The design spec has `init` write a 15° ramp; until the ramp
+        // generator lands (slice 10) a new project plunges, as phase 1
+        // did, so it exports. The follow-up issue is linked from #117.
+        entry: Entry::Plunge,
+        lead: None,
+        corner_relief: CornerRelief::None,
     };
     Project {
         version: CURRENT_VERSION,
         name,
         display_units,
         flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
+        arc_fit_tolerance_mm: Some(ARC_FIT_TOLERANCE_MM),
         stock: Stock {
             width_mm: round_up_mm(bounds.max.x + dx_mm + STOCK_MARGIN_MM),
             height_mm: round_up_mm(bounds.max.y + dy_mm + STOCK_MARGIN_MM),

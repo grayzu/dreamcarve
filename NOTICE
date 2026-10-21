@@ -54,6 +54,14 @@ generated from Cargo.lock at release time.
   https://github.com/hsivonen/encoding_rs
   Copyright Mozilla Foundation. Includes data derived from the WHATWG
   Encoding Standard, under the BSD 3-Clause License.
+- i_float 5.0 (MIT), https://github.com/iShape-Rust/iFloat
+  Copyright (c) 2023 iShape-Rust
+- i_shape 5.0 (MIT), https://github.com/iShape-Rust/i_shape
+  Copyright (c) 2023 iShape-Rust
+- i_tree 0.20 (MIT), https://github.com/iShape-Rust/iTree
+  Copyright (c) 2024 iShape-Rust
+- i_key_sort 0.12 (MIT), https://github.com/iShape-Rust/iKeySort
+  Copyright (c) 2024 iShape-Rust
 
 When a third-party component is added, list it here with its name, version,
 license, and source URL if its license requires attribution.

@@ -127,8 +127,8 @@ mod tests {
     use dc_geometry::{Point, Polyline, Transform};
     use dc_project::test_support::sample_project;
     use dc_project::{
-        CutDirection, DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, OperationId,
-        ProfileOp, Project, Side, Stock, ToolId,
+        CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
+        InstanceId, MachiningOrder, OperationId, ProfileOp, Project, Side, Stock, ToolId,
     };
     use std::collections::BTreeMap;
 
@@ -192,6 +192,10 @@ mod tests {
             through_cut_allowance_mm: 0.0,
             safe_z_mm: 5.0,
             tabs: None,
+            machining_order: MachiningOrder::FullDepthFirst,
+            entry: Entry::Plunge,
+            lead: None,
+            corner_relief: CornerRelief::None,
         }
     }
 

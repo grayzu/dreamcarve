@@ -7,8 +7,10 @@
 use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
-    CutDirection, FeatureDefinition, FeatureInstance, MachineOrigin, Operation, OriginXy, OriginZ,
-    ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
+    ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
+    FeatureDefinition, FeatureInstance, MachineOrigin, MachiningOrder, Operation, OriginXy,
+    OriginZ, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool,
+    ToolKind, Units, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
@@ -32,6 +34,7 @@ pub fn tool_6_35_upcut() -> Tool {
     Tool {
         id: ToolId::new("t1"),
         name: "6.35 mm upcut".into(),
+        number: None,
         cutter: ToolKind::EndMill,
         diameter_mm: 6.35,
         flutes: 2,
@@ -46,7 +49,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with four tabs. Matches the committed fixture
-/// `tests/fixtures/dcv/v7/sample.dcv`.
+/// `tests/fixtures/dcv/v8/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -58,6 +61,7 @@ pub fn sample_project() -> Project {
         name: "Sample".into(),
         display_units: Units::Mm,
         flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
+        arc_fit_tolerance_mm: Some(0.01),
         stock: Stock {
             width_mm: 100.0,
             height_mm: 100.0,
@@ -97,7 +101,85 @@ pub fn sample_project() -> Project {
                 height_mm: 2.0,
                 shape: TabShape::Rect,
             }),
+            machining_order: MachiningOrder::FullDepthFirst,
+            entry: Entry::Plunge,
+            lead: None,
+            corner_relief: CornerRelief::None,
         })],
         post_processor: grbl_post_processor(),
+    }
+}
+
+/// The sample project's Profile operation, to edit. The sample has
+/// exactly one operation, and it is a Profile.
+#[allow(
+    clippy::panic,
+    reason = "the sample project is built above with a Profile first"
+)]
+pub fn profile_mut(project: &mut Project) -> &mut ProfileOp {
+    match project.operations.first_mut() {
+        Some(Operation::Profile(op)) => op,
+        _ => panic!("the sample project starts with a Profile operation"),
+    }
+}
+
+/// A valid 3 mm deep offset Pocket of the sample rectangle with the sample
+/// tool, id `o2`, every phase 2 field at its `init` value.
+pub fn sample_pocket() -> PocketOp {
+    PocketOp {
+        id: OperationId::new("o2"),
+        name: "Pocket".into(),
+        enabled: true,
+        targets: vec![InstanceId::new("i1")],
+        tool: ToolId::new("t1"),
+        strategy: ClearanceStrategy::Offset,
+        wall_pass: WallPass::Last,
+        depth_mm: Some(3.0),
+        step_down_mm: None,
+        step_over_fraction: None,
+        direction: CutDirection::Climb,
+        allowance_mm: 0.0,
+        rest_of: None,
+        entry: Entry::Plunge,
+        corner_relief: CornerRelief::None,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 5.0,
+    }
+}
+
+/// A valid simple Drill of the sample rectangle with the sample tool, id
+/// `o3`, 3 mm deep, retracting 1 mm above the hole.
+pub fn sample_drill() -> DrillOp {
+    DrillOp {
+        id: OperationId::new("o3"),
+        name: "Drill".into(),
+        enabled: true,
+        targets: vec![InstanceId::new("i1")],
+        tool: ToolId::new("t1"),
+        cycle: DrillCycle::Simple,
+        dwell_s: 0.0,
+        depth_mm: Some(3.0),
+        retract_mm: 1.0,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 5.0,
+    }
+}
+
+/// A valid 1 mm deep Engrave of the sample rectangle with the sample tool,
+/// id `o4`.
+pub fn sample_engrave() -> EngraveOp {
+    EngraveOp {
+        id: OperationId::new("o4"),
+        name: "Engrave".into(),
+        enabled: true,
+        targets: vec![InstanceId::new("i1")],
+        tool: ToolId::new("t1"),
+        depth_mm: Some(1.0),
+        step_down_mm: None,
+        alternate_direction: false,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 5.0,
     }
 }

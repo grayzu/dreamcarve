@@ -54,7 +54,7 @@ DXF has a chapter of its own: [Importing DXF](importing-dxf.md).
 `init` leaves the values only you can know unset (`null`): the stock
 thickness, the cut depth, and the tool's feed rate, plunge rate and spindle
 speed. It then lists each one with its line and column in the file, as
-`coaster.dcv:9:21: stock.thickness_mm is not set (mm)`. See
+`coaster.dcv:10:21: stock.thickness_mm is not set (mm)`. See
 [Finding a value](project-file.md#finding-a-value).
 
 `init` never overwrites a file: if the project already exists, it stops.

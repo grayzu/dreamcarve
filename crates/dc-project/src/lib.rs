@@ -25,15 +25,17 @@ pub use ids::{DefinitionId, InstanceId, OperationId, ToolId};
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
-    CutDirection, FeatureDefinition, FeatureInstance, MachineOrigin, Operation, OriginXy, OriginZ,
-    ProfileOp, Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
+    ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
+    FeatureDefinition, FeatureInstance, Lead, MachineOrigin, MachiningOrder, Operation, OriginXy,
+    OriginZ, PeckRetract, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement, TabShape,
+    TabSpec, Tool, ToolKind, Units, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,
-    FeedSpeed, MAX_FILE_EXTENSION_CHARS, Motion, NumberFormat, PostProcessor, PostProcessorError,
-    PostProcessorRef, ProgramFormat, RetractMode, SpindleControl, SpindleDwell, Stop, ToolChange,
-    ToolChangeMode, UnitCommands, WorkCoordinates, bundled_definition, bundled_definitions,
-    is_m6_line, is_safe_file_extension, latest_definition, latest_definitions,
+    DwellUnits, FeedSpeed, MAX_FILE_EXTENSION_CHARS, Motion, NumberFormat, PostProcessor,
+    PostProcessorError, PostProcessorRef, ProgramFormat, RetractMode, SpindleControl, SpindleDwell,
+    Stop, ToolChange, ToolChangeMode, UnitCommands, WorkCoordinates, bundled_definition,
+    bundled_definitions, is_m6_line, is_safe_file_extension, latest_definition, latest_definitions,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use validate::{MAX_RATE_MM_MIN, MAX_RPM, MAX_TOOL_DIAMETER_MM, Problem, Severity, validate};
