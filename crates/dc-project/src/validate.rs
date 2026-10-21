@@ -18,8 +18,9 @@
 //!
 //! Sanity checks (#67) catch values that are valid but dangerous, and look
 //! only at enabled operations and the tools they use. Errors: a feed or
-//! plunge rate above [`MAX_RATE_MM_MIN`], an Outside or Inside Profile cut
-//! with a cutter other than a flat end mill, and an enabled operation with
+//! plunge rate above [`MAX_RATE_MM_MIN`], an Outside, Inside, Left or
+//! Right Profile cut with a cutter other than a flat end mill, and an
+//! enabled operation with
 //! no targets. Warnings: a step-down deeper than the
 //! tool's diameter, a plunge rate above the feed rate, a spindle speed
 //! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
@@ -32,7 +33,7 @@
 //! that is not an earlier enabled Pocket with the same targets; a
 //! step-over fraction outside (0, 1]; a Pocket, Engrave or peck Drill with
 //! no step-down anywhere; lead, entry and raster values out of range; a
-//! helix on an On line Profile; canned cycles on a definition without
+//! helix on an On line, Left or Right Profile; canned cycles on a definition without
 //! them; a Pocket with a cutter that is not a flat end mill. Warnings: a
 //! Drill with a cutter other than a drill or end mill; corner relief on a
 //! tool with no step-down; a V-bit engraving deeper than its cone.
@@ -174,7 +175,8 @@ pub enum Problem {
     /// A definition's profile is open. Pocket and Inside and Outside
     /// Profile cut only closed shapes, so it is never cut (functional
     /// spec, capability 8). Not reported for a definition an enabled
-    /// Engrave or On line Profile targets, since those cut it (#175).
+    /// Engrave or an On line, Left or Right Profile targets, since those
+    /// cut it (#175, #207).
     OpenProfile {
         /// The definition.
         definition: DefinitionId,
@@ -213,8 +215,9 @@ pub enum Problem {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
-    /// An enabled Outside or Inside Profile cuts with a tool that is not a
-    /// flat end mill (#67). Those sides offset by half the diameter, so any
+    /// An enabled Outside, Inside, Left or Right Profile cuts with a tool
+    /// that is not a flat end mill (#67, #207). Those sides offset by half
+    /// the diameter, so any
     /// other cutter makes the part the wrong size: an error. On the line the
     /// tool centre follows the line, so any cutter is allowed.
     CutterNotFlat {
@@ -294,9 +297,9 @@ pub enum Problem {
         /// The operation named.
         rest_of: OperationId,
     },
-    /// An On line Profile asks for a helix entry (#117, functional spec
-    /// capability 16). A helix sits in material the operation removes,
-    /// and an On line cut removes only its kerf. An error.
+    /// An On line, Left or Right Profile asks for a helix entry (#117,
+    /// functional spec capability 16; #207). A helix sits in material the
+    /// operation removes, and those cuts remove only their kerf. An error.
     HelixNeedsWasteSide {
         /// The operation.
         operation: OperationId,
@@ -615,7 +618,7 @@ impl fmt::Display for Problem {
                 profile,
             } => write!(
                 f,
-                "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line Profile or an Engrave cuts an open path"
+                "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line, Left or Right Profile or an Engrave cuts an open path"
             ),
             Self::UnsafeFileExtension { extension } => write!(
                 f,
@@ -645,7 +648,7 @@ impl fmt::Display for Problem {
                 cutter,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; an Inside or Outside Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
             ),
             Self::OperationHasNoTargets { operation, name } => write!(
                 f,
@@ -691,7 +694,7 @@ impl fmt::Display for Problem {
             ),
             Self::HelixNeedsWasteSide { operation, name } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts on the line but asks for a helix entry; a helix sits in material the cut removes, and an on-line cut removes only its kerf. Use \"plunge\" or a ramp"
+                "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
             ),
             Self::CannedCyclesUnsupported { post } => write!(
                 f,
@@ -981,7 +984,8 @@ impl Validator {
         // Definitions with a coordinate out of range; their instances are
         // not checked again, so each mistake is reported once.
         let mut out_of_range = BTreeSet::new();
-        // Engrave and On line Profile cut open paths (#175), so a
+        // Engrave and On line, Left and Right Profile cut open paths
+        // (#175, #207), so a
         // definition an enabled one targets is not reported as having
         // paths that are never cut.
         let engraved: BTreeSet<&DefinitionId> = p
@@ -989,7 +993,7 @@ impl Validator {
             .iter()
             .filter_map(|op| match op {
                 Operation::Engrave(op) if op.enabled => Some(&op.targets),
-                Operation::Profile(op) if op.enabled && op.side == Side::OnLine => {
+                Operation::Profile(op) if op.enabled && op.side.cuts_open_paths() => {
                     Some(&op.targets)
                 }
                 _ => None,
@@ -1270,8 +1274,9 @@ impl Validator {
         }
         self.entry(&op.entry, at);
         // #117: a helix needs removed material to sit in (functional spec,
-        // capability 16); an On line cut removes only its kerf.
-        if op.side == Side::OnLine && matches!(op.entry, Entry::Helix { .. }) {
+        // capability 16); an On line, Left or Right cut removes only its
+        // kerf (#207).
+        if !op.side.has_waste_area() && matches!(op.entry, Entry::Helix { .. }) {
             self.problems.push(Problem::HelixNeedsWasteSide {
                 operation: op.id.clone(),
                 name: op.name.clone(),
@@ -2450,7 +2455,7 @@ mod tests {
         assert_eq!(problems[0].field().unwrap(), "operations[o1].tool");
         assert_eq!(
             message,
-            "operation `Cut out` (`o1`) cuts with tool `6.35 mm upcut` (`t1`), a V-bit; an Inside or Outside Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+            "operation `Cut out` (`o1`) cuts with tool `6.35 mm upcut` (`t1`), a V-bit; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
         );
     }
 

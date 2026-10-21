@@ -18,7 +18,7 @@ use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{Operation, OperationId, Project, Side, ToolId};
+use dc_project::{Operation, OperationId, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -234,17 +234,24 @@ fn lies_inside(inner: &Contour, outer: &Contour) -> bool {
 }
 
 /// Every profile of every target instance of `op` that `op` cuts, placed
-/// in project space, in target then profile order: every closed profile,
-/// and the open paths an Engrave or an On line Profile cuts along (#175,
-/// #206). Other operations skip open paths, so they are left out, as are
+/// in project space, in target then profile order: every closed profile
+/// (none for a Left or Right Profile, which skips them, #207), and the
+/// open paths an Engrave or an On line, Left or Right Profile cuts along
+/// or beside (#175, #206, #207). Other operations skip open paths, so they
+/// are left out, as are
 /// open paths with no length and anything validation already rejects (a
 /// missing instance or definition, a degenerate outline): this check only
 /// warns.
 fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
     let cuts_open = match op {
         Operation::Engrave(_) => true,
-        Operation::Profile(profile) => profile.side == Side::OnLine,
+        Operation::Profile(profile) => profile.side.cuts_open_paths(),
         Operation::Pocket(_) | Operation::Drill(_) => false,
+    };
+    // #207: Left and Right skip closed outlines.
+    let cuts_closed = match op {
+        Operation::Profile(profile) => !profile.side.is_open_path_side(),
+        Operation::Pocket(_) | Operation::Drill(_) | Operation::Engrave(_) => true,
     };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
@@ -256,6 +263,9 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
         };
         for (profile, polyline) in definition.profiles.iter().enumerate() {
             let target = if polyline.is_closed() {
+                if !cuts_closed {
+                    continue;
+                }
                 instance
                     .transform
                     .apply_polyline(polyline)

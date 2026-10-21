@@ -36,7 +36,7 @@ use crate::toolpath::{Move, Toolpath};
 use crate::warning::{OpenPathReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
-    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset,
+    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nest, offset, offset_open,
     point_segment_distance_mm,
 };
 use dc_project::{
@@ -106,6 +106,8 @@ fn placement(side: Side, role: Role) -> (Offset, Wall) {
         (Side::Outside, Role::Hole) | (Side::Inside, Role::Outer) => (Offset::Shrink, Wall::Inside),
         (Side::OnLine, Role::Outer) => (Offset::None, Wall::Outside),
         (Side::OnLine, Role::Hole) => (Offset::None, Wall::Inside),
+        // Never asked: Left and Right cut no closed outline (#207).
+        (Side::Left | Side::Right, _) => (Offset::None, Wall::Outside),
     }
 }
 
@@ -208,6 +210,19 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// Outside skip open paths ([`Warning::OpenPathSkipped`]), as they
 /// have no side.
 ///
+/// A Left or Right Profile (#207, as VCarve's Profile to the left or right
+/// of an open vector) cuts open paths only, each offset by the tool radius
+/// to that side looking from its first vertex to its last
+/// ([`offset_open`]: round on the outside of a turn, trimmed on the
+/// inside, ending square on the normals through the path's ends), and
+/// skips closed targets with [`Warning::SideNeedsOpenPath`]. A path whose
+/// offset vanishes warns [`Warning::ToolTooLarge`]. Direction, ramp and
+/// tabs are On line's, along the offset path; it has no lead or relief and
+/// frees nothing. A cut that comes within the radius of another of its
+/// lines, or of the strip a line keeps, fails with
+/// [`CamError::CutsIntoKeptSide`]; D6's overlap warning, whose condition
+/// that is, does not apply.
+///
 /// Open paths Inside and Outside, shapes the tool cannot fit, and
 /// duplicate shapes (closed, or open paths drawn twice either way, #221)
 /// are skipped with a [`Warning`]. Shapes in different
@@ -272,7 +287,7 @@ pub fn generate_profile(
         });
     }
     entry::check(&op.id, &op.entry)?;
-    if op.side == Side::OnLine && matches!(op.entry, Entry::Helix { .. }) {
+    if !op.side.has_waste_area() && matches!(op.entry, Entry::Helix { .. }) {
         return Err(CamError::HelixNeedsWasteSide { op: op.id.clone() });
     }
     let step_down_mm =
@@ -311,9 +326,17 @@ pub fn generate_profile(
         warnings.extend(cut_range_warnings(&op.id, tabs, &pass_z, thickness_mm));
     }
     // #175: On line cuts open paths too; Inside and Outside skip them.
+    // #207: Left and Right cut open paths only and skip closed outlines.
     let mut open_paths = Vec::new();
-    let keep_open = (op.side == Side::OnLine).then_some(&mut open_paths);
-    let shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, &mut warnings)?;
+    let keep_open = op.side.cuts_open_paths().then_some(&mut open_paths);
+    let mut shapes = resolve_shapes(project, &op.id, &op.targets, keep_open, &mut warnings)?;
+    if op.side.is_open_path_side() {
+        warnings.extend(
+            shapes
+                .drain(..)
+                .map(|(shape, _)| Warning::SideNeedsOpenPath { shape }),
+        );
+    }
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
     for warning in nest_warnings {
@@ -330,7 +353,9 @@ pub fn generate_profile(
         }
     }
     // #221: an open path drawn twice is cut once, as a closed shape is.
-    let open_paths = drop_duplicate_paths(open_paths, &mut warnings);
+    // #207: drawn the other way, its left is the other side, so under Left
+    // and Right only a copy drawn the same way repeats it.
+    let open_paths = drop_duplicate_paths(open_paths, !op.side.is_open_path_side(), &mut warnings);
 
     let radius_mm = tool.diameter_mm / 2.0;
     // Each tool-centre path with the shape it cuts, the wall it cuts, the
@@ -386,19 +411,48 @@ pub fn generate_profile(
         &open_paths,
         project.flatten_tolerance_mm,
     )?;
+    // #207: Left and Right cut each open path offset by the radius to that
+    // side, looking from its first vertex to its last; a path whose
+    // offset vanishes is not cut. The cut keeps the radius from every
+    // other line and from the strip each line keeps.
+    let side_mm = match op.side {
+        Side::Left => Some(radius_mm),
+        Side::Right => Some(-radius_mm),
+        Side::Inside | Side::Outside | Side::OnLine => None,
+    };
+    let mut open_centres: Vec<(&ShapeRef, Vec<Polyline>)> = Vec::with_capacity(open_paths.len());
+    for (shape, path) in &open_paths {
+        let centres = match side_mm {
+            Some(left_mm) => offset_open(path, left_mm),
+            None => vec![path.clone()],
+        };
+        if centres.is_empty() {
+            warnings.push(Warning::ToolTooLarge {
+                shape: shape.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
+                diameter_mm: tool.diameter_mm,
+            });
+            continue;
+        }
+        open_centres.push((shape, centres));
+    }
+    if let Some(left_mm) = side_mm {
+        check_kept_sides(op, tool, &open_paths, &open_centres, left_mm)?;
+    }
     // #175: an open path is cut On line as drawn. #242: from its first
     // vertex under conventional and from its last under climb, as VCarve
     // ("Conventional starts cutting at the Start point Climb cutting
-    // starts cutting at the end point"). It bounds no region, so no
-    // containment and no waste domain; its wall is never asked.
+    // starts cutting at the end point"); #207: so is a Left or Right
+    // offset of one, from the end beside that vertex. It bounds no
+    // region, so no containment and no waste domain; its wall is never
+    // asked.
     let reversed_open = op.direction == CutDirection::Climb;
-    for (shape, path) in &open_paths {
-        let path = if reversed_open {
-            path.reversed()
-        } else {
-            path.clone()
-        };
-        placed.push((path, shape, Wall::Outside, regions.len(), false));
+    for (shape, centres) in open_centres {
+        for path in centres {
+            let path = if reversed_open { path.reversed() } else { path };
+            placed.push((path, shape, Wall::Outside, regions.len(), false));
+        }
     }
     // Drawing order is the order the targets were resolved in: target,
     // then profile. Stable, so the loops of one shape keep their offset
@@ -477,8 +531,10 @@ pub fn generate_profile(
     let lead = op.lead.as_ref();
     if let Some(lead) = lead {
         lead::check(&op.id, lead)?;
-        if op.side == Side::OnLine {
-            warnings.push(lead::on_line_warning(&op.id));
+        match op.side {
+            Side::OnLine => warnings.push(lead::on_line_warning(&op.id)),
+            Side::Left | Side::Right => warnings.push(lead::open_path_warning(&op.id)),
+            Side::Inside | Side::Outside => {}
         }
     }
     // The waste domains, which the entries and the leads both use.
@@ -695,15 +751,19 @@ pub fn generate_profile(
         .filter_map(|&i| paths.get(i))
         .map(|(path, shape)| (path, Some(*shape)))
         .collect();
-    warnings.extend(overlap_warnings(
-        &cut_paths,
-        &shapes,
-        &open_paths,
-        &regions,
-        op.side,
-        tool,
-        project.flatten_tolerance_mm,
-    ));
+    // #207: a Left or Right cut that comes within the radius of another
+    // line, D6's condition, was refused above (`check_kept_sides`).
+    if !op.side.is_open_path_side() {
+        warnings.extend(overlap_warnings(
+            &cut_paths,
+            &shapes,
+            &open_paths,
+            &regions,
+            op.side,
+            tool,
+            project.flatten_tolerance_mm,
+        ));
+    }
 
     // Corner relief among each shape's own passes, never after the pass
     // that frees it (`crate::relief`, #189); a freeing pass's notches are
@@ -781,7 +841,8 @@ fn check_band(
     let reach_mm = match side {
         Side::Inside => tool.diameter_mm / 2.0,
         Side::OnLine => tool.diameter_mm,
-        Side::Outside => return Ok(()),
+        // Left and Right cut no closed outline (#207).
+        Side::Outside | Side::Left | Side::Right => return Ok(()),
     };
     for (line, b) in region_shapes(region, shapes).filter(|(l, _)| *l != contour) {
         if !centres
@@ -875,17 +936,21 @@ fn check_self_band(
 }
 
 /// #221: `open` without the paths that repeat an earlier one exactly,
-/// the same vertices in the same or the reverse direction, each dropped
-/// with [`Warning::DuplicateShapeDropped`] naming the one kept, as
-/// `nest` drops a closed shape drawn twice.
+/// the same vertices in the same direction or, when `either_way`, the
+/// reverse direction, each dropped with [`Warning::DuplicateShapeDropped`]
+/// naming the one kept, as `nest` drops a closed shape drawn twice.
 fn drop_duplicate_paths(
     open: Vec<(ShapeRef, Polyline)>,
+    either_way: bool,
     warnings: &mut Vec<Warning>,
 ) -> Vec<(ShapeRef, Polyline)> {
     let mut kept: Vec<(ShapeRef, Polyline)> = Vec::with_capacity(open.len());
     for (shape, path) in open {
         let reversed = path.reversed();
-        match kept.iter().find(|(_, k)| *k == path || *k == reversed) {
+        match kept
+            .iter()
+            .find(|(_, k)| *k == path || (either_way && *k == reversed))
+        {
             Some((original, _)) => warnings.push(Warning::DuplicateShapeDropped {
                 shape,
                 duplicate_of: original.clone(),
@@ -894,6 +959,60 @@ fn drop_duplicate_paths(
         }
     }
     kept
+}
+
+/// #207: the band rule for a Left or Right Profile. The side its cutter
+/// runs on is waste and the other side is the part, so the bit must not
+/// cross another line of the operation, nor reach the material a line
+/// keeps beside it. Each path of `centres` (the open paths `open` offset
+/// by `left_mm`, as cut) must keep the tool radius (less [`EPS_MM`]) from
+/// every other line of `open`, and from every line's kept edge: the line
+/// offset by the radius to its other side, so the strip one radius wide
+/// beside it is never cut. A path is held to its own kept edge too, which
+/// catches a spiral or hairpin whose cut reaches what the line keeps
+/// further along; it keeps its own line by construction
+/// ([`offset_open`]). Lines that meet are not set aside, unlike On line's
+/// #210: a square end that runs onto the next line of a part drawn as
+/// separate lines cuts into it. [`CamError::CutsIntoKeptSide`], the
+/// shapes in drawing order.
+fn check_kept_sides(
+    op: &ProfileOp,
+    tool: &Tool,
+    open: &[(ShapeRef, Polyline)],
+    centres: &[(&ShapeRef, Vec<Polyline>)],
+    left_mm: f64,
+) -> Result<(), CamError> {
+    let radius_mm = left_mm.abs();
+    let kept: Vec<(&ShapeRef, &Polyline, Vec<Polyline>)> = open
+        .iter()
+        .map(|(shape, line)| (shape, line, offset_open(line, -left_mm)))
+        .collect();
+    let drawn = |s: &ShapeRef| (op.targets.iter().position(|t| *t == s.instance), s.profile);
+    for &(shape, ref pieces) in centres {
+        for &(other, line, ref edges) in &kept {
+            let crosses = other != shape && pieces.iter().any(|c| within(c, line, radius_mm));
+            let enters = || {
+                pieces
+                    .iter()
+                    .any(|c| edges.iter().any(|e| within(c, e, radius_mm)))
+            };
+            if !crosses && !enters() {
+                continue;
+            }
+            let (first, second) = if drawn(shape) <= drawn(other) {
+                (shape, other)
+            } else {
+                (other, shape)
+            };
+            return Err(CamError::CutsIntoKeptSide {
+                op: op.id.clone(),
+                shape: first.clone(),
+                other: Box::new(second.clone()),
+                diameter_mm: tool.diameter_mm,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// How far from a point where two lines of one region meet their On line
@@ -1298,6 +1417,10 @@ pub(crate) fn cut_outlines(project: &Project, op: &ProfileOp) -> Vec<(ShapeRef, 
     let Some(spec) = &op.tabs else {
         return Vec::new();
     };
+    // #207: Left and Right cut no closed outline.
+    if op.side.is_open_path_side() {
+        return Vec::new();
+    }
     let Some(tool) = project.tools.iter().find(|t| t.id == op.tool) else {
         return Vec::new();
     };
@@ -3565,7 +3688,7 @@ mod tests {
     #[test]
     fn left_right_cut_into_the_kept_side_is_refused() {
         let square = |clockwise: bool| {
-            let mut corners = vec![(0.0, 0.0), (40.0, 0.0), (40.0, 40.0), (0.0, 40.0)];
+            let mut corners = [(0.0, 0.0), (40.0, 0.0), (40.0, 40.0), (0.0, 40.0)];
             if clockwise {
                 corners.reverse();
             }

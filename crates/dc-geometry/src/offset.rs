@@ -33,6 +33,31 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         .collect()
 }
 
+/// Offsets the open path `path` sideways by `left_mm` (#207): positive
+/// moves it to the left of travel from its first vertex to its last, which
+/// in Y-up (ADR-0001) is the normal `(−dy, dx)` of each segment's
+/// direction `(dx, dy)`; negative moves it to the right. Each piece runs
+/// the same way as `path` and ends square, on the normals through the
+/// path's end vertices. A turn away from the offset side becomes an arc
+/// about the vertex (a round join); a turn toward it is trimmed where the
+/// two offset edges cross; an arc whose radius is `|left_mm|` or less on
+/// the side its centre lies on collapses. What is left is every stretch at
+/// least `|left_mm|` from all of `path`, so the result may be several
+/// pieces or none. For an open `path`; a closed contour is [`offset`]'s.
+#[must_use]
+pub fn offset_open(path: &Polyline, left_mm: f64) -> Vec<Polyline> {
+    let source = to_cavalier(path);
+    // As for a contour: cavalier_contours offsets to the left of travel for
+    // a positive value (pinned by
+    // `open_offset_moves_left_of_travel_and_ends_square`).
+    source
+        .parallel_offset(left_mm)
+        .iter()
+        .map(from_cavalier)
+        .filter(|p| p.vertices().len() >= 2 && p.length_mm() > crate::EPS_MM)
+        .collect()
+}
+
 /// Whether every point inside `contour` lies within `inset_mm` of it: the
 /// contour offset inward by `inset_mm` is empty (#223, a part a bit of
 /// radius `inset_mm` cut on its line removes whole).

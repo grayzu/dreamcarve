@@ -53,6 +53,10 @@
 //! - **9**: adds `on_holes` to each Profile's `tabs`, set to `true` by the
 //!   migration (#109): a Profile now leaves its holes without tabs unless
 //!   `on_holes` is set, and every outline had tabs before.
+//! - **10**: a Profile's `side` may be `"left"` or `"right"` (#207), which
+//!   cut open paths beside them. No version 9 file holds either, so the
+//!   migration changes only the version; the bump makes an older reader
+//!   refuse a file that uses them.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -63,7 +67,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 9;
+pub const CURRENT_VERSION: u32 = 10;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -81,6 +85,7 @@ fn step(from: u32) -> Option<Step> {
         6 => Some(v6_to_v7),
         7 => Some(v7_to_v8),
         8 => Some(v8_to_v9),
+        9 => Some(v9_to_v10),
         _ => None,
     }
 }
@@ -430,6 +435,12 @@ fn v8_to_v9(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
         }
         tabs.insert("on_holes".into(), Value::from(true));
     }
+    Ok(root)
+}
+
+/// Version 9 → 10 (#207): Left and Right are new values of an existing
+/// field, so a version 9 file is already a version 10 one.
+fn v9_to_v10(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
@@ -1167,10 +1178,10 @@ mod tests {
         assert_eq!(migrated["operations"][0]["tabs"]["on_holes"], json!(true));
 
         let migrated = migrate(sample_root_at(8), 8).unwrap();
-        assert_eq!(migrated, sample_root_at(9));
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
         assert_eq!(
             serde_json::to_string_pretty(&migrated).unwrap(),
-            serde_json::to_string_pretty(&sample_root_at(9)).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
             "key order"
         );
 
@@ -1213,7 +1224,7 @@ mod tests {
     fn v9_to_v10_changes_only_the_version() {
         let root: Value = serde_json::from_slice(V9_FIXTURE).unwrap();
         let mut expected = root.clone();
-        expected["version"] = Value::from(10);
+        expected["version"] = Value::from(CURRENT_VERSION);
         assert_eq!(migrate(root, 9).unwrap(), expected);
         for side in ["inside", "outside", "on_line"] {
             let mut root = sample_root_at(9);
@@ -1221,7 +1232,10 @@ mod tests {
             let migrated = migrate(root, 9).unwrap();
             assert_eq!(migrated["operations"][0]["side"], json!(side));
         }
-        assert_eq!(migrate(sample_root_at(9), 9).unwrap(), sample_root_at(10));
+        assert_eq!(
+            migrate(sample_root_at(9), 9).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
     }
 
     /// #207: the new sides save as `"left"` and `"right"` and load back.

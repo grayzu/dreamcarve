@@ -1085,7 +1085,8 @@ fn init_writes_phase_2_defaults() {
     let dir = work_dir("init_writes_phase_2_defaults");
     let dcv = init_coaster(&dir);
     let text = std::fs::read_to_string(&dcv).expect("dcv readable");
-    assert!(text.contains("\"version\": 9,"), "{text}");
+    let version = format!("\"version\": {},", dc_project::CURRENT_VERSION);
+    assert!(text.contains(&version), "{text}");
     assert!(text.contains("\"on_holes\": false"), "{text}");
     assert!(text.contains("\"arc_fit_tolerance_mm\": 0.01,"), "{text}");
     assert!(text.contains("\"number\": null,"), "{text}");
@@ -5306,7 +5307,10 @@ fn left_profile_of_an_svg_line_exports_on_its_left() {
     let dcv = dir.join("edge.dcv");
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
+    let targets = project.instances.iter().map(|i| i.id.clone()).collect();
     let op = as_profile_mut(&mut project.operations[0]);
+    // `init` targets closed outlines only.
+    op.targets = targets;
     op.side = Side::Left;
     op.direction = dc_project::CutDirection::Conventional;
     op.tabs = None;
