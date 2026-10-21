@@ -3879,6 +3879,150 @@ mod tests {
         }
     }
 
+    /// The fixture's clearance height for the #305 tests: work Z 10,
+    /// absolute 16, above safe Z (work 5, absolute 11).
+    const CLEARANCE_Z_MM: f64 = 16.0;
+
+    /// The whole safety pass on `text` as the fixture's Drill with
+    /// `toolpath`, written for `post`, with the clearance height
+    /// [`CLEARANCE_Z_MM`].
+    fn check_drill_at_clearance(
+        text: &str,
+        toolpath: &Toolpath,
+        post: &PostProcessor,
+    ) -> Result<(), ExportError> {
+        let (project, _, tool) = fixture();
+        let transform = MachineTransform::new(&project, post).unwrap();
+        let op = drill();
+        let material = holes_under(toolpath);
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath,
+            material: &material,
+            lines: 1..text.lines().count() + 1,
+        }];
+        check(
+            text,
+            post,
+            &transform,
+            &project.stock,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: None,
+            },
+            ProgramHeights {
+                machine_lift_mm: None,
+                clearance_z_mm: Some(CLEARANCE_Z_MM),
+            },
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// The sequencer's Drill toolpath for simple holes at `xs` (Y 50),
+    /// each a part of its own, with the clearance height
+    /// [`CLEARANCE_Z_MM`]: the first hole is reached at safe Z (11); each
+    /// hole goes down to the retract plane (7), plunges to 3 mm and goes
+    /// out to safe Z; between holes the tool rises to `link_z`, crosses
+    /// there and comes down to safe Z again.
+    fn holes_linked_at(xs: &[f64], link_z: f64) -> Toolpath {
+        let mut moves = Vec::new();
+        for (k, &x) in xs.iter().enumerate() {
+            let at = |z: f64| Point3::new(x, 50.0, z);
+            if k > 0 {
+                moves.push(Move::rapid(at(link_z)));
+            }
+            moves.extend([
+                Move::rapid(at(11.0)),
+                Move::rapid(at(7.0)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(11.0)),
+            ]);
+            if k + 1 < xs.len() && link_z > 11.0 {
+                moves.push(Move::rapid(at(link_z)));
+            }
+        }
+        Toolpath { moves }
+    }
+
+    /// A program on the fixture that rises to the clearance height (work
+    /// Z 10), rapids over (50, 50) there, writes `G98`, then `cycles`.
+    fn clearance_cycle_program(cycles: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nG98\n{cycles}G80\nM5\n")
+    }
+
+    /// #305, S11: cycles written from the clearance height. `G98` returns
+    /// each hole to the Z before the first cycle of the series (LinuxCNC
+    /// `interp_cycles.cc` 926-931 and 976; Mach3Mill 10.7.29), work Z 10,
+    /// so the controller rapids from there straight to `R` and from the
+    /// bottom straight back, where the toolpath has two rapids along the
+    /// same vertical line, through safe Z. S6 takes them as one: the
+    /// program passes. A cycle whose `R` or `Z` differs from the toolpath
+    /// still fails, and so does the same program against a toolpath whose
+    /// holes are linked at safe Z, which `G98` from the clearance height
+    /// does not follow.
+    #[test]
+    fn canned_cycles_from_clearance_match_the_toolpath() {
+        let post = canned(Some(0.5));
+        let linked = holes_linked_at(&[50.0, 60.0], CLEARANCE_Z_MM);
+        let g81 = |z: &str, r: &str| {
+            clearance_cycle_program(&format!("G81 X50 Y50 Z{z} R{r} F300\nX60 Y50 Z{z} R{r}\n"))
+        };
+        check_drill_at_clearance(&g81("-3", "1"), &linked, &post).unwrap();
+        for (z, r) in [("-2.5", "1"), ("-3", "2"), ("-3", "0.5")] {
+            let result = check_drill_at_clearance(&g81(z, r), &linked, &post);
+            assert!(
+                matches!(result, Err(ExportError::MotionMismatch { .. })),
+                "Z{z} R{r}: {result:?}"
+            );
+        }
+        let at_safe_z = holes_linked_at(&[50.0, 60.0], 11.0);
+        let result = check_drill_at_clearance(&g81("-3", "1"), &at_safe_z, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "links at safe Z: {result:?}"
+        );
+    }
+
+    /// #305: S6 joins toolpath rapids along one vertical line only where
+    /// they lie on one rapid of the controller's in the same direction,
+    /// and only for a Drill written as canned cycles. A toolpath that goes
+    /// up past safe Z and then back down is not the cycle's one rapid up;
+    /// and a plain program with one `G0 Z` where the toolpath has two
+    /// still fails, as before, while the program that writes both passes.
+    #[test]
+    fn vertical_rapids_join_only_along_a_cycle_rapid() {
+        let post = canned(Some(0.5));
+        let at = |z: f64| Point3::new(50.0, 50.0, z);
+        let back_down = Toolpath {
+            moves: vec![
+                Move::rapid(at(11.0)),
+                Move::rapid(at(7.0)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(13.0)),
+                Move::rapid(at(11.0)),
+            ],
+        };
+        let text = clearance_cycle_program("G81 X50 Y50 Z-3 R1 F300\n");
+        let result = check_drill_at_clearance(&text, &back_down, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "up past safe Z, then down: {result:?}"
+        );
+
+        let linked = holes_linked_at(&[50.0, 60.0], CLEARANCE_Z_MM);
+        let one_rapid = "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ1\nG1 Z-3 F300\nG0 Z10\nX60 Y50\nZ1\nG1 Z-3\nG0 Z5\nM5\n";
+        let result = check_drill_at_clearance(one_rapid, &linked, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "plain program, one rapid for two: {result:?}"
+        );
+        let both = "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ5\nZ1\nG1 Z-3 F300\nG0 Z5\nZ10\nX60 Y50\nZ5\nZ1\nG1 Z-3\nG0 Z5\nM5\n";
+        check_drill_at_clearance(both, &linked, &post).unwrap();
+    }
+
     /// S1 on the expansion: a `G81` whose bottom is below the stock bottom
     /// (Z −6.5 on the 6 mm stock, no allowance) fails on its line.
     #[test]
