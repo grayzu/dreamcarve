@@ -14,53 +14,7 @@
 
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use dc_geometry::{EPS_MM, approx_eq};
-use dc_project::{Operation, PocketOp, ProfileOp, Project, ToolId};
-
-/// What [`assert_safe`] reads from an operation of any kind.
-pub trait OpLimits {
-    /// The tool the operation cuts with.
-    fn tool(&self) -> &ToolId;
-    /// Retract height above the stock top, mm.
-    fn safe_z_mm(&self) -> f64;
-    /// How far below the stock bottom the cut may go, mm.
-    fn through_cut_allowance_mm(&self) -> f64;
-}
-
-impl OpLimits for ProfileOp {
-    fn tool(&self) -> &ToolId {
-        &self.tool
-    }
-    fn safe_z_mm(&self) -> f64 {
-        self.safe_z_mm
-    }
-    fn through_cut_allowance_mm(&self) -> f64 {
-        self.through_cut_allowance_mm
-    }
-}
-
-impl OpLimits for PocketOp {
-    fn tool(&self) -> &ToolId {
-        &self.tool
-    }
-    fn safe_z_mm(&self) -> f64 {
-        self.safe_z_mm
-    }
-    fn through_cut_allowance_mm(&self) -> f64 {
-        self.through_cut_allowance_mm
-    }
-}
-
-impl OpLimits for Operation {
-    fn tool(&self) -> &ToolId {
-        Operation::tool(self)
-    }
-    fn safe_z_mm(&self) -> f64 {
-        Operation::safe_z_mm(self)
-    }
-    fn through_cut_allowance_mm(&self) -> f64 {
-        Operation::through_cut_allowance_mm(self)
-    }
-}
+use dc_project::{Operation, Project};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -80,7 +34,7 @@ impl OpLimits for Operation {
 ///    tool's feed rate.
 ///
 /// Panics with the offending move index on the first violation.
-pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &impl OpLimits) {
+pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
     let tool = project
         .tools
         .iter()
@@ -187,16 +141,17 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
 mod tests {
     use super::*;
     use dc_geometry::Point3;
-    use dc_project::Operation;
     use dc_project::test_support::sample_project;
 
     /// The sample project (6 mm stock, safe Z 11 absolute, feed 1000,
     /// plunge 300) and its profile operation.
-    fn fixture() -> (Project, ProfileOp) {
+    fn fixture() -> (Project, Operation) {
         let project = sample_project();
-        let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
-            panic!("sample project has a profile operation");
-        };
+        let op = project
+            .operations
+            .first()
+            .cloned()
+            .expect("sample project has an operation");
         (project, op)
     }
 

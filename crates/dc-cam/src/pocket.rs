@@ -630,7 +630,11 @@ mod tests {
     /// Generates, and checks the result with [`assert_safe`].
     fn generate(project: &Project, op: &PocketOp) -> (Toolpath, Vec<Warning>) {
         let (toolpath, warnings) = generate_pocket(project, op).unwrap();
-        assert_safe(&toolpath, project, op);
+        assert_safe(
+            &toolpath,
+            project,
+            &dc_project::Operation::Pocket(op.clone()),
+        );
         (toolpath, warnings)
     }
 

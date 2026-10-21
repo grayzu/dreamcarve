@@ -156,9 +156,13 @@ fn emit_program(project: &Project) -> String {
         warnings.is_empty(),
         "a golden case generates without warnings: {warnings:?}"
     );
-    assert_safe(&toolpath, project, op);
-    let (program, warnings) =
-        emit(project, &[(op.clone(), tool.clone(), toolpath)], DATE).expect("the program emits");
+    assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
+    let (program, warnings) = emit(
+        project,
+        &[(Operation::Profile(op.clone()), tool.clone(), toolpath)],
+        DATE,
+    )
+    .expect("the program emits");
     assert!(
         warnings.is_empty(),
         "a golden case emits without warnings: {warnings:?}"

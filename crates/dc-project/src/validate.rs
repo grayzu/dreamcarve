@@ -172,7 +172,8 @@ pub enum Problem {
         expected: &'static str,
     },
     /// A definition's profile is open. Profile cuts only closed shapes, so
-    /// it is never cut (functional spec, capability 8).
+    /// it is never cut (functional spec, capability 8). Not reported for a
+    /// definition an enabled Engrave targets, since Engrave cuts it.
     OpenProfile {
         /// The definition.
         definition: DefinitionId,
@@ -365,6 +366,46 @@ pub const MAX_RPM: u32 = 60_000;
 pub const MAX_TOOL_DIAMETER_MM: f64 = 50.0;
 
 impl Problem {
+    /// The stable `snake_case` code of the problem, the variant's name:
+    /// what `check` and `export` print before a warning's message
+    /// (phase 2 functional spec, capability 25).
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::DefinitionKeyMismatch { .. } => "definition_key_mismatch",
+            Self::DuplicateInstanceId { .. } => "duplicate_instance_id",
+            Self::DuplicateToolId { .. } => "duplicate_tool_id",
+            Self::DuplicateOperationId { .. } => "duplicate_operation_id",
+            Self::DanglingDefinition { .. } => "dangling_definition",
+            Self::DanglingTool { .. } => "dangling_tool",
+            Self::DanglingInstance { .. } => "dangling_instance",
+            Self::OutOfRange { .. } => "out_of_range",
+            Self::NonFinite { .. } => "non_finite",
+            Self::OperationDisabled { .. } => "operation_disabled",
+            Self::ToolValueUnset { .. } => "tool_value_unset",
+            Self::UnusedTool { .. } => "unused_tool",
+            Self::StockThicknessUnset => "stock_thickness_unset",
+            Self::OperationValueUnset { .. } => "operation_value_unset",
+            Self::ToolOutOfRange { .. } => "tool_out_of_range",
+            Self::OpenProfile { .. } => "open_profile",
+            Self::UnsafeFileExtension { .. } => "unsafe_file_extension",
+            Self::ToolChangeModeNeedsM6 { .. } => "tool_change_mode_needs_m6",
+            Self::StepDownAboveDiameter { .. } => "step_down_above_diameter",
+            Self::CutterNotFlat { .. } => "cutter_not_flat",
+            Self::OperationHasNoTargets { .. } => "operation_has_no_targets",
+            Self::SpindleSpeedHigh { .. } => "spindle_speed_high",
+            Self::PlungeAboveFeed { .. } => "plunge_above_feed",
+            Self::LargeDiameter { .. } => "large_diameter",
+            Self::DuplicateToolNumber { .. } => "duplicate_tool_number",
+            Self::RestOfInvalid { .. } => "rest_of_invalid",
+            Self::HelixNeedsWasteSide { .. } => "helix_needs_waste_side",
+            Self::CannedCyclesUnsupported { .. } => "canned_cycles_unsupported",
+            Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
+            Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
+            Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
+        }
+    }
+
     /// Whether this problem is an error or a warning.
     pub fn severity(&self) -> Severity {
         match self {
@@ -938,6 +979,19 @@ impl Validator {
         // Definitions with a coordinate out of range; their instances are
         // not checked again, so each mistake is reported once.
         let mut out_of_range = BTreeSet::new();
+        // Engrave cuts open paths, so a definition an enabled Engrave
+        // targets is not reported as having paths that are never cut.
+        let engraved: BTreeSet<&DefinitionId> = p
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                Operation::Engrave(op) if op.enabled => Some(&op.targets),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|id| p.instances.iter().find(|i| &i.id == id))
+            .map(|i| &i.definition)
+            .collect();
         for (key, def) in &p.definitions {
             if *key != def.id {
                 self.problems.push(Problem::DefinitionKeyMismatch {
@@ -946,7 +1000,7 @@ impl Validator {
                 });
             }
             for (i, profile) in def.profiles.iter().enumerate() {
-                if !profile.is_closed() {
+                if !profile.is_closed() && !engraved.contains(&def.id) {
                     self.problems.push(Problem::OpenProfile {
                         definition: def.id.clone(),
                         name: def.name.clone(),
@@ -1985,6 +2039,33 @@ mod tests {
             message.contains("Rectangle") && message.contains("open"),
             "{message}"
         );
+    }
+
+    /// Capability 15 (#135): Engrave cuts open paths, so an open profile of
+    /// a definition an enabled Engrave targets is not reported as never
+    /// cut. A disabled Engrave cuts nothing, so the warning stays.
+    #[test]
+    fn open_profile_engraved_is_not_reported() {
+        let mut p = sample_project();
+        p.definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .expect("the sample has d1")
+            .profiles
+            .push(Polyline::new(
+                vec![Vertex::new(0.0, 40.0, 0.0), Vertex::new(50.0, 40.0, 0.0)],
+                false,
+            ));
+        p.operations.push(Operation::Engrave(sample_engrave()));
+        let open = |p: &Project| {
+            validate(p)
+                .iter()
+                .any(|q| matches!(q, Problem::OpenProfile { .. }))
+        };
+        assert!(!open(&p), "{:?}", validate(&p));
+        if let Some(Operation::Engrave(op)) = p.operations.last_mut() {
+            op.enabled = false;
+        }
+        assert!(open(&p), "a disabled Engrave cuts nothing");
     }
 
     /// The fields of every error-class problem, in order.

@@ -61,7 +61,7 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use dc_cam::{FeedField, Move, MoveKind, Toolpath};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3};
 use dc_project::{
-    ArcFormat, OperationId, PostProcessor, ProfileOp, Project, SpindleControl, Tool,
+    ArcFormat, Operation, OperationId, PostProcessor, Project, SpindleControl, Tool,
     ToolChangeMode, ToolId, Units, is_m6_line,
 };
 
@@ -142,6 +142,19 @@ pub enum ExportWarning {
     },
 }
 
+impl ExportWarning {
+    /// The stable `snake_case` code of the warning, as `check` and
+    /// `export` print it before the message.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::DisabledOperationSkipped { .. } => "disabled_operation_skipped",
+            Self::ArcsFlattened { .. } => "arcs_flattened",
+            Self::ArcFitFallback { .. } => "arc_fit_fallback",
+        }
+    }
+}
+
 /// Fewest decimal places accepted in millimetres. The safety pass tolerates
 /// one unit in the last place, so this bounds that tolerance at 0.01 mm.
 pub const MIN_DECIMAL_PLACES_MM: u8 = 2;
@@ -149,7 +162,7 @@ pub const MIN_DECIMAL_PLACES_MM: u8 = 2;
 pub const MIN_DECIMAL_PLACES_INCH: u8 = 3;
 
 /// One operation to emit: the operation, its tool, and its toolpath.
-type OpEntry = (ProfileOp, Tool, Toolpath);
+type OpEntry = (Operation, Tool, Toolpath);
 
 /// How [`emit_programs`] splits a project whose enabled operations use
 /// more than one tool: as the project's post-processor `tool_change_mode`
@@ -280,11 +293,11 @@ fn enabled_ops(ops: &[OpEntry]) -> Result<(Vec<&OpEntry>, Vec<ExportWarning>), E
     let mut warnings = Vec::new();
     let mut enabled = Vec::with_capacity(ops.len());
     for entry in ops {
-        if entry.0.enabled {
+        if entry.0.enabled() {
             enabled.push(entry);
         } else {
             warnings.push(ExportWarning::DisabledOperationSkipped {
-                op: entry.0.id.clone(),
+                op: entry.0.id().clone(),
             });
         }
     }
@@ -316,7 +329,7 @@ fn emit_enabled(
             .position(|t| t.id == tool.id)
             .map(|i| i + 1)
             .ok_or_else(|| ExportError::UnknownTool {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 tool: tool.id.clone(),
             })?;
         planned.push((op, tool, toolpath, rates, number));
@@ -444,7 +457,7 @@ fn emit_enabled(
         let mut context = common.clone();
         context.extend([
             ("operationIndex", (index + 1).to_string()),
-            ("operationName", comment_text(&op.name)),
+            ("operationName", comment_text(op.name())),
             ("toolNumber", number.to_string()),
             ("toolName", comment_text(&tool.name)),
         ]);
@@ -453,7 +466,7 @@ fn emit_enabled(
                 "{} Operation {}: {} {}",
                 post.program.comment_prefix,
                 index + 1,
-                comment_text(&op.name),
+                comment_text(op.name()),
                 post.program.comment_suffix
             );
             w.line(comment.trim_end());
@@ -464,7 +477,7 @@ fn emit_enabled(
         }
 
         let spindle_off = post.feed_speed.spindle_off.trim();
-        let safe_z_mm = thickness_mm + op.safe_z_mm;
+        let safe_z_mm = thickness_mm + op.safe_z_mm();
         // The tool change belongs to the operation, so the safety pass
         // checks its stop against this operation's safe Z.
         let first_line = w.next_line();
@@ -541,13 +554,13 @@ fn emit_enabled(
         let written = w.toolpath(op, toolpath)?;
         if written.flattened > 0 {
             warnings.push(ExportWarning::ArcsFlattened {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 count: written.flattened,
             });
         }
         if written.fallback_runs > 0 {
             warnings.push(ExportWarning::ArcFitFallback {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 runs: written.fallback_runs,
             });
         }
@@ -1154,13 +1167,13 @@ impl<'a> Writer<'a> {
     /// in project space; each fitted run is then judged on its rounded
     /// machine numbers and reverts to its moves if the controller would
     /// reject any of its arcs.
-    fn toolpath(&mut self, op: &ProfileOp, toolpath: &Toolpath) -> Result<Written, ExportError> {
+    fn toolpath(&mut self, op: &Operation, toolpath: &Toolpath) -> Result<Written, ExportError> {
         // Every cut carries a feed, checked before fitting so the error
         // names the move whatever the fitting does.
         for (index, mv) in toolpath.moves.iter().enumerate() {
             if !mv.is_rapid() && !mv.feed_mm_min.is_some_and(|f| f.is_finite() && f > 0.0) {
                 return Err(ExportError::MoveWithoutFeed {
-                    op: op.id.clone(),
+                    op: op.id().clone(),
                     index,
                 });
             }
@@ -1221,7 +1234,7 @@ impl<'a> Writer<'a> {
     /// be flattened (0 or 1).
     fn write_move(
         &mut self,
-        op: &ProfileOp,
+        op: &Operation,
         index: usize,
         mv: &Move,
     ) -> Result<usize, ExportError> {
@@ -1233,7 +1246,7 @@ impl<'a> Writer<'a> {
             .feed_mm_min
             .filter(|f| f.is_finite() && *f > 0.0)
             .ok_or_else(|| ExportError::MoveWithoutFeed {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 index,
             })?;
         let (centre, clockwise) = match mv.kind {
@@ -1245,7 +1258,7 @@ impl<'a> Writer<'a> {
             MoveKind::ArcCcw { centre } => (centre, false),
         };
         let start = self.position.ok_or_else(|| ExportError::ArcWithoutStart {
-            op: op.id.clone(),
+            op: op.id().clone(),
             index,
         })?;
         self.arc(start, mv.to, centre, clockwise, feed)
@@ -1257,7 +1270,7 @@ impl<'a> Writer<'a> {
     /// already accepted the whole run from that same position.
     fn fitted_arc(
         &mut self,
-        op: &ProfileOp,
+        op: &Operation,
         index: usize,
         arc: &SubArc,
         feed_mm_min: f64,
@@ -1265,7 +1278,7 @@ impl<'a> Writer<'a> {
         let (sx, sy) = self
             .emitted_xy()
             .ok_or_else(|| ExportError::ArcWithoutStart {
-                op: op.id.clone(),
+                op: op.id().clone(),
                 index,
             })?;
         let end = self.transform.to_machine(arc.end);
@@ -1586,8 +1599,8 @@ mod tests {
     use dc_geometry::{Point, Point3, assert_approx_eq};
     use dc_project::test_support::{sample_project, tool_6_35_upcut};
     use dc_project::{
-        Operation, OperationId, OriginZ, PostProcessorRef, SpindleControl, ToolChangeMode, ToolId,
-        Units,
+        Operation, OperationId, OriginZ, PostProcessorRef, ProfileOp, SpindleControl,
+        ToolChangeMode, ToolId, Units,
     };
 
     const DATE: &str = "2026-10-15";
@@ -1597,6 +1610,14 @@ mod tests {
             panic!("sample project has a profile operation");
         };
         op
+    }
+
+    /// The Profile in an emit entry, to edit.
+    fn profile_of(op: &mut Operation) -> &mut ProfileOp {
+        match op {
+            Operation::Profile(op) => op,
+            other => panic!("a Profile operation, not {other:?}"),
+        }
     }
 
     /// The sample project with the bundled post-processor `post_id`.
@@ -1612,7 +1633,7 @@ mod tests {
     }
 
     /// The sample project's operation, tool, and generated toolpath.
-    fn ops_for(project: &Project) -> Vec<(ProfileOp, Tool, Toolpath)> {
+    fn ops_for(project: &Project) -> Vec<(Operation, Tool, Toolpath)> {
         let op = profile_op(project);
         let tool = project
             .tools
@@ -1621,8 +1642,8 @@ mod tests {
             .unwrap()
             .clone();
         let (toolpath, _) = generate_profile(project, &op).unwrap();
-        dc_cam::test_support::assert_safe(&toolpath, project, &op);
-        vec![(op, tool, toolpath)]
+        dc_cam::test_support::assert_safe(&toolpath, project, &Operation::Profile(op.clone()));
+        vec![(Operation::Profile(op), tool, toolpath)]
     }
 
     fn emit_text(project: &Project) -> String {
@@ -1737,7 +1758,7 @@ mod tests {
     fn no_enabled_operation_is_an_error() {
         let project = sample_project();
         let mut ops = ops_for(&project);
-        ops[0].0.enabled = false;
+        profile_of(&mut ops[0].0).enabled = false;
         assert!(matches!(
             emit(&project, &ops, DATE),
             Err(ExportError::NoEnabledOperations)
@@ -1932,7 +1953,7 @@ mod tests {
             project.name = nasty.into();
             project.tools[0].name = nasty.into();
             let mut ops = ops_for(&project);
-            ops[0].0.name = nasty.into();
+            profile_of(&mut ops[0].0).name = nasty.into();
             ops[0].1.name = nasty.into();
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             for line in text.lines() {
@@ -1977,7 +1998,7 @@ mod tests {
             let mut project = project_with(post);
             project.name = "P".repeat(1000);
             let mut ops = ops_for(&project);
-            ops[0].0.name = "O".repeat(1000);
+            profile_of(&mut ops[0].0).name = "O".repeat(1000);
             ops[0].1.name = "T".repeat(1000);
             let text = emit(&project, &ops, DATE).unwrap().0.text;
             for line in text.lines() {
@@ -2085,7 +2106,7 @@ mod tests {
     /// The sample operation, then the same with a second tool. The
     /// project's tool-change mode becomes `"m6"`, the one program with a
     /// tool change that [`emit`] writes (#95).
-    fn two_tool_ops(project: &mut Project) -> Vec<(ProfileOp, Tool, Toolpath)> {
+    fn two_tool_ops(project: &mut Project) -> Vec<(Operation, Tool, Toolpath)> {
         project.post_processor.tool_change_mode = ToolChangeMode::M6;
         project.tools.push(second_tool());
         let mut second = profile_op(project);
@@ -2095,7 +2116,7 @@ mod tests {
         project.operations.push(Operation::Profile(second.clone()));
         let mut ops = ops_for(project);
         let (toolpath, _) = generate_profile(project, &second).unwrap();
-        ops.push((second, second_tool(), toolpath));
+        ops.push((Operation::Profile(second), second_tool(), toolpath));
         ops
     }
 
@@ -2282,7 +2303,7 @@ mod tests {
     fn manual_spindle_message_includes_rpm_hint() {
         let project = manual_project("grblhal");
         let mut ops = ops_for(&project);
-        let on_line = |ops: &[(ProfileOp, Tool, Toolpath)]| -> String {
+        let on_line = |ops: &[(Operation, Tool, Toolpath)]| -> String {
             let text = emit(&project, ops, DATE).unwrap().0.text;
             text.lines()
                 .find(|l| l.contains("Turn the router ON"))
@@ -2888,7 +2909,7 @@ mod tests {
             );
 
             ops[1].1 = ops[0].1.clone();
-            ops[1].0.tool = ops[0].1.id.clone();
+            profile_of(&mut ops[1].0).tool = ops[0].1.id.clone();
             emit(&project, &ops, DATE).unwrap();
         }
     }

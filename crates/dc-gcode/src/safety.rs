@@ -18,7 +18,7 @@ use std::ops::Range;
 
 use dc_cam::{Move, MoveKind, Toolpath};
 use dc_geometry::{Arc, EPS_MM, Point, Point3, approx_eq};
-use dc_project::{PostProcessor, ProfileOp, SpindleControl, Stock, Tool, ToolId, Units};
+use dc_project::{Operation, PostProcessor, SpindleControl, Stock, Tool, ToolId, Units};
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, shallow_arc_midpoint};
@@ -35,7 +35,7 @@ pub const MAX_LINE_CHARS: usize = 255;
 #[derive(Debug, Clone)]
 pub(crate) struct OpSpan<'a> {
     /// The operation.
-    pub op: &'a ProfileOp,
+    pub op: &'a Operation,
     /// Its tool.
     pub tool: &'a Tool,
     /// Its toolpath, in project space.
@@ -226,7 +226,7 @@ fn check_on_stock(
             ];
             if let Some((side, overhang_mm)) = sides.into_iter().find(|(_, o)| *o > tolerance_mm) {
                 return Err(ExportError::OffStock {
-                    op: limits.op.map(|op| op.id.clone()),
+                    op: limits.op.map(|op| op.id().clone()),
                     line: mv.line,
                     side,
                     overhang_mm,
@@ -557,7 +557,7 @@ fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
 
 /// The rules in force on one line, project space, mm.
 struct Limits<'a> {
-    op: Option<&'a ProfileOp>,
+    op: Option<&'a Operation>,
     tool: Option<&'a Tool>,
     /// Lowest permitted Z: stock bottom minus through-cut allowance.
     floor_mm: f64,
@@ -573,17 +573,17 @@ impl<'a> Limits<'a> {
             return Self {
                 op: Some(span.op),
                 tool: Some(span.tool),
-                floor_mm: -span.op.through_cut_allowance_mm,
-                safe_z_mm: stock_thickness_mm + span.op.safe_z_mm,
+                floor_mm: -span.op.through_cut_allowance_mm(),
+                safe_z_mm: stock_thickness_mm + span.op.safe_z_mm(),
             };
         }
         let floor_mm = spans
             .iter()
-            .map(|s| -s.op.through_cut_allowance_mm)
+            .map(|s| -s.op.through_cut_allowance_mm())
             .fold(0.0, f64::max);
         let safe_z_mm = spans
             .iter()
-            .map(|s| stock_thickness_mm + s.op.safe_z_mm)
+            .map(|s| stock_thickness_mm + s.op.safe_z_mm())
             .fold(stock_thickness_mm, f64::max);
         Self {
             op: None,
@@ -607,7 +607,7 @@ fn check_depth(
     let z_mm = transform.project_z(z, mv.units);
     if z_mm < limits.floor_mm - tolerance_mm {
         return Err(ExportError::BelowMaterialBottom {
-            op: limits.op.map(|op| op.id.clone()),
+            op: limits.op.map(|op| op.id().clone()),
             line: mv.line,
             z_mm,
             floor_mm: limits.floor_mm,
@@ -779,7 +779,7 @@ fn check_reproduces(
         .map(|mv| ReadMove::new(mv, post, transform))
         .collect();
     let mismatch = |index| ExportError::MotionMismatch {
-        op: span.op.id.clone(),
+        op: span.op.id().clone(),
         index,
     };
     let mut cursor = motions
@@ -835,7 +835,7 @@ fn check_reproduces(
             rest, moves, index, previous, transform, arc_fit_mm,
         )
         .ok_or_else(|| ExportError::ArcFitViolation {
-            op: span.op.id.clone(),
+            op: span.op.id().clone(),
             line: read.mv.line,
         })?;
         cursor += lines;
@@ -1270,7 +1270,7 @@ mod tests {
     /// tool as a point: the hand-written toolpaths below run along the
     /// stock's left and front edges (X = 0, Y = 0), which S7 allows only
     /// for a tool of no width. The S7 tests set a diameter.
-    fn fixture() -> (Project, ProfileOp, Tool) {
+    fn fixture() -> (Project, dc_project::ProfileOp, Tool) {
         let project = sample_project();
         let Some(Operation::Profile(op)) = project.operations.first().cloned() else {
             panic!("sample project has a profile operation");
@@ -1362,7 +1362,11 @@ mod tests {
         tool.diameter_mm = 6.0;
         let program = emit(
             &project,
-            &[(op, tool, cut_then_half_circle(10.0, 20.0, 40.0, 20.0))],
+            &[(
+                Operation::Profile(op),
+                tool,
+                cut_then_half_circle(10.0, 20.0, 40.0, 20.0),
+            )],
             "2026-10-15",
         )
         .unwrap()
@@ -1400,11 +1404,16 @@ mod tests {
 
     fn emit_one(
         project: &Project,
-        op: &ProfileOp,
+        op: &dc_project::ProfileOp,
         tool: &Tool,
         tp: Toolpath,
     ) -> Result<String, ExportError> {
-        emit(project, &[(op.clone(), tool.clone(), tp)], "2026-10-15").map(|(p, _)| p.text)
+        emit(
+            project,
+            &[(Operation::Profile(op.clone()), tool.clone(), tp)],
+            "2026-10-15",
+        )
+        .map(|(p, _)| p.text)
     }
 
     /// Runs S1–S5 on hand-written `text` as if it were the whole of the
@@ -1432,6 +1441,7 @@ mod tests {
         let transform = MachineTransform::new(&project, &post).unwrap();
         let toolpath = Toolpath::default();
         let lines = text.lines().count() + 1;
+        let op = Operation::Profile(op);
         let spans = [OpSpan {
             op: &op,
             tool: &tool,
@@ -1637,7 +1647,11 @@ mod tests {
         // A hand-built toolpath that plunges through the spoilboard: export
         // fails outright and yields no program to write.
         let (project, op, tool) = fixture();
-        let result = emit(&project, &[(op, tool, one_cut(-1.0))], "2026-10-15");
+        let result = emit(
+            &project,
+            &[(Operation::Profile(op), tool, one_cut(-1.0))],
+            "2026-10-15",
+        );
         assert!(
             matches!(result, Err(ExportError::BelowMaterialBottom { .. })),
             "{result:?}"
@@ -2043,6 +2057,7 @@ mod tests {
         let (project, op, tool) = fixture();
         let post = project.post_processor.resolve().unwrap();
         let transform = MachineTransform::new(&project, &post).unwrap();
+        let op = Operation::Profile(op);
         let spans = [OpSpan {
             op: &op,
             tool: &tool,
@@ -2181,7 +2196,7 @@ mod tests {
                 emit_with(
                     &project,
                     &post,
-                    &[(op.clone(), tool.clone(), tp)],
+                    &[(Operation::Profile(op.clone()), tool.clone(), tp)],
                     "2026-10-15",
                 )
                 .unwrap();
