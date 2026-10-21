@@ -179,8 +179,34 @@ The choice is a machine setting, `tool_change_mode` in `post_processor`:
 | `"separate_programs"` | One program per tool run. The default, on every controller. |
 | `"m6"` | One program that stops with `T<n> M6` at each tool change. grblHAL only; see the next section. |
 
-`--post <id>` resets the settings to the definition's defaults, so it sets
-`"separate_programs"`. If you use `"m6"`, set it again after switching.
+`--post <id>` resets the settings to the definition's defaults, with your
+own default on top (next paragraph). With no config file that is
+`"separate_programs"`.
+
+**Your default.** If every project you make should use `"m6"`, set it once
+in the [user config file](configuration.md):
+
+```toml
+[export]
+tool_change_mode = "m6"
+```
+
+`init` and `export --post` then write `"m6"` into every new
+`post_processor` block. On a post-processor without `M6` (GRBL) that cannot
+apply, and both commands stop with an error naming the config file rather
+than write a project that `check` would reject. Nothing else reads the
+config: a project exports the same wherever it is opened.
+
+**For one export.** Two `export` flags override the project's mode without
+changing the project file:
+
+| Flag | Export of more than one tool |
+| --- | --- |
+| `--programs-per-tool` | One program per tool run, whatever the project says. |
+| `--one-program` | One program with `T<n> M6` tool changes, whatever the project says. On a post-processor without `M6` (GRBL) it is an error, and nothing is written. |
+
+They contradict each other, so giving both is a usage error. The flags are
+not saved: to change the project, edit `tool_change_mode`.
 
 ## One program with M6
 
@@ -324,7 +350,7 @@ The whole `post_processor` block, in the order DreamCarve writes it:
 | `file_extension` | The program's extension, without the dot. 1 to 8 letters or digits, and not `dcv`. Default `nc`. |
 | `spindle_control` | `"automatic"` (default) or `"manual"`. See below. |
 | `spindle_on_dwell_s` | Seconds to wait after the spindle starts. Default 3. Raise it if your spindle or VFD takes longer to reach speed; 0 means no wait. |
-| `tool_change_mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). |
+| `tool_change_mode` | `"separate_programs"` (default) or `"m6"` (grblHAL only). See [Projects with more than one tool](#projects-with-more-than-one-tool). The [user config file](configuration.md) can change the default new projects get. |
 | `decimal_places` | Digits after the point: `mm` at least 2, `inch` at least 3. Default 3 and 4. |
 | `use_canned_cycles` | `false` (default) or `true`: whether a Drill operation is written as the controller's drilling cycles (`G81`, `G82`, `G83`, `G73`) where the post-processor has them. Neither grblHAL nor GRBL has them, so `true` is an error on both; the holes are drilled the same either way. |
 
@@ -385,7 +411,7 @@ turn it off. `export` lists each pause with its line number:
 Before you start: fit T1 Set me and set work zero with it.
 Pauses and tool changes; resume each with cycle start:
   line 11: Turn the router ON. Speed 18000 RPM. Resume to start cutting.
-  line 999: Turn the router OFF.
+  line 57: Turn the router OFF.
 ```
 
 ### What the controller does with the pause

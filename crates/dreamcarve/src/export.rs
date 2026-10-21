@@ -7,7 +7,9 @@
 //! program, `<stem>.<ext>`. With more than one tool, the post-processor's
 //! `tool_change.mode` decides (#95): `"separate_programs"` writes one
 //! program per tool run, `<stem>-<k>-T<n>.<ext>`, and `"m6"` one program
-//! with `M6` tool changes. Nothing is written unless every step succeeds:
+//! with `M6` tool changes; `--programs-per-tool` and `--one-program`
+//! override it for one export without saving it (functional spec,
+//! capability 19). Nothing is written unless every step succeeds:
 //! every program (and, with `--post`, the updated project) is staged in a
 //! temporary file, and all are renamed into place at the end.
 //!
@@ -18,21 +20,25 @@
 //!
 //! A finding about one value of the file is printed as
 //! `coaster.dcv:9:21: error: …`, the form editors and terminals turn into a
-//! link to that line and column (#76).
+//! link to that line and column (#76). Every warning carries its stable
+//! `snake_case` code and prints as `warning: <code>: <message>` (functional
+//! spec, capability 25); the Warnings chapter lists the codes. After
+//! generation, `dc_cam::order::check` adds the operation-order warnings.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dc_cam::generate_profile;
+use dc_cam::{Toolpath, generate_profile, order};
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, ExportWarning, Program, emit_programs};
+use dc_gcode::{AxisRange, ExportWarning, Program, ProgramSplit, emit_programs};
 use dc_project::{
     Operation, PostProcessorRef, Project, Severity, SourceMap, ToolChangeMode, Units, validate,
 };
 
 use crate::cli::{ExportArgs, Failure, StagedFile, lookup_post, read_file, today_utc};
+use crate::config;
 
 /// One error or warning.
 #[derive(Debug)]
@@ -40,15 +46,28 @@ pub struct Finding {
     /// The field it is about, as validation names it
     /// (`tools[t1].feed_mm_min`), when it is about one.
     pub field: Option<String>,
+    /// The finding's stable `snake_case` code, printed before the
+    /// message. Every warning has one; errors print their message alone.
+    pub code: Option<String>,
     /// What is wrong.
     pub message: String,
 }
 
 impl Finding {
-    /// A finding about no one field.
+    /// A finding about no one field, with no code.
     fn plain(message: String) -> Self {
         Self {
             field: None,
+            code: None,
+            message,
+        }
+    }
+
+    /// A warning with code `code`, about no one field.
+    fn coded(code: &str, message: String) -> Self {
+        Self {
+            field: None,
+            code: Some(code.to_owned()),
             message,
         }
     }
@@ -84,9 +103,13 @@ impl ProjectFile<'_> {
             .as_deref()
             .filter(|f| !(self.post_replaced && f.starts_with("post_processor")))
             .and_then(|f| self.map.as_ref()?.locate(f));
+        let message = match &finding.code {
+            Some(code) => format!("{code}: {}", finding.message),
+            None => finding.message.clone(),
+        };
         match position {
-            Some(at) => format!("{}:{at}: {label}: {}", self.path.display(), finding.message),
-            None => format!("{label}: {}", finding.message),
+            Some(at) => format!("{}:{at}: {label}: {message}", self.path.display()),
+            None => format!("{label}: {message}"),
         }
     }
 }
@@ -102,15 +125,19 @@ pub struct Built {
 
 /// Validates `project`, generates every enabled operation's toolpath, and
 /// emits the programs, collecting every error and warning on the way.
-/// `date` fills each program header's `{date}`.
-pub fn build(project: &Project, date: &str) -> Built {
+/// `split` is how a multi-tool project is divided into programs (the
+/// project's mode, or an `export` flag); `date` fills each program
+/// header's `{date}`.
+pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
     let mut findings = Findings::default();
     for problem in validate(project) {
+        let severity = problem.severity();
         let finding = Finding {
             field: problem.field(),
+            code: (severity == Severity::Warning).then(|| problem.code().to_owned()),
             message: problem.to_string(),
         };
-        match problem.severity() {
+        match severity {
             Severity::Error => findings.errors.push(finding),
             Severity::Warning => findings.warnings.push(finding),
         }
@@ -151,16 +178,32 @@ pub fn build(project: &Project, date: &str) -> Built {
         };
         match generate_profile(project, op) {
             Ok((toolpath, warnings)) => {
-                findings.warnings.extend(
-                    warnings
-                        .iter()
-                        .map(|w| Finding::plain(format!("operation `{}`: {w}", op.id))),
-                );
+                findings.warnings.extend(warnings.iter().map(|w| {
+                    Finding::coded(w.code.as_str(), format!("operation `{}`: {w}", op.id))
+                }));
                 ops.push((op.clone(), tool.clone(), toolpath));
             }
             Err(e) => findings.errors.push(Finding::plain(e.to_string())),
         }
     }
+    // The order check runs on whatever generated, so `check` reports it
+    // even when another operation failed; it never needs a failed one.
+    let generated: Vec<(&Operation, &Toolpath)> = ops
+        .iter()
+        .filter_map(|(op, _, toolpath)| {
+            let operation = project.operations.iter().find(|o| o.id() == &op.id)?;
+            Some((operation, toolpath))
+        })
+        .collect();
+    findings
+        .warnings
+        .extend(order::check(project, &generated).iter().map(|w| {
+            let message = match w.param("op") {
+                Some(op) => format!("operation `{op}`: {w}"),
+                None => w.to_string(),
+            };
+            Finding::coded(w.code.as_str(), message)
+        }));
     if !findings.errors.is_empty() {
         return Built {
             programs: Vec::new(),
@@ -168,12 +211,12 @@ pub fn build(project: &Project, date: &str) -> Built {
         };
     }
 
-    match emit_programs(project, &ops, date) {
+    match emit_programs(project, &ops, split, date) {
         Ok((programs, warnings)) => {
             findings.warnings.extend(
                 warnings
                     .iter()
-                    .map(|w| Finding::plain(describe_export_warning(w))),
+                    .map(|w| Finding::coded(w.code(), describe_export_warning(w))),
             );
             Built { programs, findings }
         }
@@ -194,6 +237,9 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
         }
         ExportWarning::ArcsFlattened { op, count } => format!(
             "operation `{op}`: {count} arc(s) written as short straight moves because the controller would reject them once rounded"
+        ),
+        ExportWarning::ArcFitFallback { op, runs } => format!(
+            "operation `{op}`: {runs} run(s) of straight moves kept as written because the controller would reject the arc fitted to them once rounded"
         ),
     }
 }
@@ -225,13 +271,16 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     // newer version of its own (#106): an explicit action, reported below.
     let mut switched_from = None;
     if let Some(id) = &args.post {
-        let latest = lookup_post(id)?;
+        let mut latest = lookup_post(id)?;
+        // The new settings are the definition's defaults with the user's
+        // configured ones on top, as `init` writes them.
+        config::seed_post(&mut latest)?;
         switched_from = Some(std::mem::replace(&mut project.post_processor, latest));
         file.post_replaced = true;
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
 
-    let Built { programs, findings } = build(&project, &date);
+    let Built { programs, findings } = build(&project, args.split(), &date);
     for warning in &findings.warnings {
         eprintln!("{}", file.describe("warning", warning));
     }
@@ -350,9 +399,17 @@ fn report(
         name_suffix(&program.first_tool.name)
     );
     report_pauses(program, "");
-    // #95: the user chose one program with M6; it stops only if the
-    // sender lets M6 through or stops for it itself.
-    if project.post_processor.tool_change_mode == ToolChangeMode::M6 && changes_tools(project) {
+    // #95: the user chose one program with M6, in the project or with
+    // `--one-program`; it stops only if the sender lets M6 through or
+    // stops for it itself.
+    let one_program = match args.split() {
+        ProgramSplit::OneProgram => true,
+        ProgramSplit::ProgramPerTool => false,
+        ProgramSplit::ProjectDefault => {
+            project.post_processor.tool_change_mode == ToolChangeMode::M6
+        }
+    };
+    if one_program && changes_tools(project) {
         println!(
             "This program changes tools with M6, so your sender must stop at M6; see \"One program with M6\" in the post-processors chapter."
         );

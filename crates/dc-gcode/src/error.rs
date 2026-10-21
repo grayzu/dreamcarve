@@ -64,6 +64,18 @@ pub enum ExportError {
         /// The tools' names, in the order the program would use them.
         tools: Vec<String>,
     },
+    /// One program with tool changes was asked for (`export --one-program`,
+    /// `ProgramSplit::OneProgram`), but the post-processor's tool change has
+    /// no `M6` line, so no program of its own can stop for the user to
+    /// change the bit (#57). GRBL 1.1 has no `M6`. Checked before anything
+    /// is emitted, whatever the operations' tools.
+    #[error(
+        "post-processor `{post}` has no M6 tool change, so it cannot write one program with tool changes; export one program per tool run instead"
+    )]
+    OneProgramNeedsM6 {
+        /// The post-processor's id.
+        post: String,
+    },
     /// The post-processor lacks a command the safety rules need (S5): the
     /// units command for the output units, or the work-coordinate select.
     #[error("post-processor `{post}` has no `{field}`, which every program must start with")]
@@ -301,6 +313,19 @@ pub enum ExportError {
         "emitted line {line} is an arc that ends where it starts, which the controller cuts as a full circle"
     )]
     FullCircleArc {
+        /// 1-based line number in the program.
+        line: usize,
+    },
+    /// S12: a `G2`/`G3` written in place of straight toolpath moves does
+    /// not follow them: its start or end is not a toolpath vertex, a vertex
+    /// between lies off the arc by more than the arc-fit tolerance, it
+    /// sweeps more than 90°, or it turns against the vertices.
+    #[error(
+        "emitted line {line} is an arc in place of operation `{op}`'s straight moves that does not follow them"
+    )]
+    ArcFitViolation {
+        /// The operation.
+        op: OperationId,
         /// 1-based line number in the program.
         line: usize,
     },

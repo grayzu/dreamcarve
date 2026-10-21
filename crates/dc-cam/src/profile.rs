@@ -559,7 +559,7 @@ pub(crate) fn shape_warning(code: WarningCode, shape: &ShapeRef) -> Warning {
 /// True when `nested` is `input` as `nest` returns it: unchanged, or
 /// reversed to fix its winding. Both are exact copies of the same vertices,
 /// so exact equality is the right test.
-fn same_contour(input: &Contour, nested: &Contour) -> bool {
+pub(crate) fn same_contour(input: &Contour, nested: &Contour) -> bool {
     input == nested || &input.reversed() == nested
 }
 

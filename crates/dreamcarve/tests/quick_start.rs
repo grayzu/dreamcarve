@@ -288,6 +288,9 @@ fn quick_start_runs_as_written() {
             Step::Run { args, exit, line } => {
                 let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
                     .current_dir(&dir)
+                    // The chapter runs with no user config, whatever the
+                    // developer's own `config.toml` says.
+                    .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
                     .args(args)
                     .output()
                     .expect("binary runs");

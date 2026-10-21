@@ -39,13 +39,40 @@ fn dreamcarve() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
 }
 
+/// The environment variable that overrides the user config directory
+/// (`docs/specs/phase-2/design.md`, "User config (CLI only)").
+const CONFIG_DIR_VAR: &str = "DREAMCARVE_CONFIG_DIR";
+
+/// The user config directory every test runs with: `config/` under its
+/// working directory, so no test reads the developer's own `config.toml`
+/// and tests can write one of their own. It need not exist.
+fn config_dir(dir: &Path) -> PathBuf {
+    dir.join("config")
+}
+
+/// `dreamcarve` set up to run in `dir`, with [`config_dir`] as its user
+/// config directory. Tests that need another environment edit it.
+fn command(dir: &Path) -> Command {
+    let mut command = dreamcarve();
+    command
+        .current_dir(dir)
+        .env(CONFIG_DIR_VAR, config_dir(dir));
+    command
+}
+
 /// Runs `dreamcarve` with `args` in `dir`.
 fn run(dir: &Path, args: &[&str]) -> Output {
-    dreamcarve()
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .expect("binary runs")
+    command(dir).args(args).output().expect("binary runs")
+}
+
+/// Writes `text` as the user config file of a test working in `dir` and
+/// returns its path.
+fn write_config(dir: &Path, text: &str) -> PathBuf {
+    let config = config_dir(dir);
+    std::fs::create_dir_all(&config).expect("config dir created");
+    let path = config.join("config.toml");
+    std::fs::write(&path, text).expect("config written");
+    path
 }
 
 fn stdout(out: &Output) -> String {
@@ -623,7 +650,7 @@ fn export_refuses_feed_above_limit_with_location() {
         "{stderr}"
     );
     assert!(
-        stderr.contains("coaster.dcv:26:14: warning: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        stderr.contains("coaster.dcv:26:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
         "{stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
@@ -1169,7 +1196,7 @@ fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
     let (line, _, message) = located[0];
     assert_eq!(
         message,
-        "warning: tool `t2` (`Spare bit`) is defined but not used by any enabled operation"
+        "warning: unused_tool: tool `t2` (`Spare bit`) is defined but not used by any enabled operation"
     );
     let next = text.lines().nth(line).expect("line after the tool");
     assert_eq!(next.trim(), "\"id\": \"t2\",", "located at the tool");
@@ -1382,13 +1409,41 @@ fn printed_range(summary: &str, label: char) -> (f64, f64) {
     )
 }
 
+/// Functional acceptance 37: with `arc_fit_tolerance_mm: null` the program
+/// is the phase 1 program, byte for byte:
+/// `tests/expected/coaster-grblhal-unfitted.nc` is `coaster-grblhal.nc` as
+/// it was before arc fitting.
+#[test]
+fn null_arc_fit_tolerance_exports_the_unfitted_program() {
+    let dir = work_dir("null_arc_fit_tolerance");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    assert_eq!(project.arc_fit_tolerance_mm, Some(0.01), "init's default");
+    project.arc_fit_tolerance_mm = None;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    assert_exports_match(&dir, &[], &[("coaster.nc", "coaster-grblhal-unfitted.nc")]);
+    // The fitted program is a fraction of the length.
+    let fitted = include_str!("expected/coaster-grblhal.nc");
+    let unfitted = include_str!("expected/coaster-grblhal-unfitted.nc");
+    assert!(fitted.lines().count() < unfitted.lines().count() / 4);
+}
+
 /// #62: `export` and `check` print the program's extents in machine
 /// coordinates, rounded as the program is. Z is exactly the range of the Z
-/// words (Z min is the deepest cut). X and Y are the range of the X and Y
-/// words, except that an arc may bulge past both its end words, so they may
-/// reach further, by under 0.005 mm on the coaster.
+/// words (Z min is the deepest cut). X and Y reach at least as far as the
+/// X and Y words, and further where an arc bulges past its end words: with
+/// arc fitting the coaster's lap is a few arcs, so the extents are the
+/// tool-centre circle, radius 45 + 3.175 mm about (55, 55), within the
+/// rounding of the written arcs.
 #[test]
 fn export_prints_extents() {
+    /// The tool-centre circle's reach, mm.
+    const CIRCLE_MIN_MM: f64 = 55.0 - 48.175;
+    /// See [`CIRCLE_MIN_MM`].
+    const CIRCLE_MAX_MM: f64 = 55.0 + 48.175;
+    /// How far the extents read from the written arcs may differ from it.
+    const SLACK_MM: f64 = 0.01;
     let expected = include_str!("expected/coaster-grblhal.nc");
     let dir = work_dir("export_prints_extents");
     let dcv = init_coaster(&dir);
@@ -1408,11 +1463,11 @@ fn export_prints_extents() {
             let (min, max) = printed_range(&summary, axis);
             let (word_min, word_max) = word_range(expected, axis);
             assert!(
-                min <= word_min && min >= word_min - 0.005,
+                min <= word_min && (min - CIRCLE_MIN_MM).abs() <= SLACK_MM,
                 "{command}: {axis} min {min} vs words {word_min}: {summary}"
             );
             assert!(
-                max >= word_max && max <= word_max + 0.005,
+                max >= word_max && (max - CIRCLE_MAX_MM).abs() <= SLACK_MM,
                 "{command}: {axis} max {max} vs words {word_max}: {summary}"
             );
         }
@@ -2163,6 +2218,355 @@ fn hole_role_is_decided_within_one_operation() {
     assert!(last_star < first_hole, "file order: the star first");
 }
 
+/// The `tool_change_mode` of the `.dcv` at `dcv`, as written in the file.
+fn written_tool_change_mode(dcv: &Path) -> String {
+    let block = post_processor_block(dcv);
+    block
+        .get("tool_change_mode")
+        .and_then(serde_json::Value::as_str)
+        .expect("tool_change_mode is a string")
+        .to_owned()
+}
+
+/// Acceptance 33: the user config's `tool_change_mode` is what `init` and
+/// `export --post` write into a new post-processor reference; nothing else
+/// reads it, so a plain `export` leaves the project's mode alone. A `"m6"`
+/// default on GRBL, which has no `M6`, is refused naming the config file
+/// and the post-processor, so a bad default never lands in a project.
+#[test]
+fn config_tool_change_mode_seeds_init() {
+    let dir = work_dir("config_tool_change_mode_seeds_init");
+    // No config file: the definition's default.
+    let dcv = init_coaster(&dir);
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+
+    let config = write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(&dir, &["init", "coaster.svg", "-o", "m6.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dir.join("m6.dcv")), "m6");
+
+    // `export --post` writes the configured mode with the new settings.
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "export --post: {}",
+        stderr(&out)
+    );
+    assert_eq!(written_tool_change_mode(&dcv), "m6");
+
+    // A plain `export` does not read the config: the project's mode stays.
+    set_tool_change_mode(&dcv, ToolChangeMode::SeparatePrograms);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+
+    // GRBL has no `M6`: the configured default cannot apply, and the error
+    // names the file to fix.
+    let out = run(
+        &dir,
+        &["init", "coaster.svg", "-o", "grbl.dcv", "--post", "grbl"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "init --post grbl: {}",
+        stdout(&out)
+    );
+    let message = stderr(&out);
+    assert!(
+        message.contains(&config.display().to_string()) && message.contains("grbl"),
+        "{message}"
+    );
+    assert!(!dir.join("grbl.dcv").exists(), "nothing written");
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--post", "grbl"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "export --post grbl: {}",
+        stdout(&out)
+    );
+    assert!(
+        stderr(&out).contains(&config.display().to_string()),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        before,
+        "the project is untouched"
+    );
+}
+
+/// Acceptance 33: `--one-program` on grblHAL writes one file with `T2 M6`
+/// between the tools, and on GRBL is an error naming the post-processor;
+/// `--programs-per-tool` on a project in `"m6"` mode writes one file per
+/// tool run. Neither flag changes the project file. Both together is a
+/// usage error.
+#[test]
+fn one_program_and_programs_per_tool_flags() {
+    let dir = work_dir("one_program_and_programs_per_tool_flags");
+    let dcv = two_tool_coaster(&dir);
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "--one-program: {}",
+        stderr(&out)
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(program.lines().any(|l| l.starts_with("T2 M6")), "{program}");
+    assert!(!dir.join("coaster-1-T1.nc").exists(), "one file only");
+    assert!(
+        stdout(&out).contains("sender must stop at M6"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        before,
+        "--one-program is not saved"
+    );
+    std::fs::remove_file(dir.join("coaster.nc")).expect("program removed");
+
+    // GRBL has no `M6`.
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::PostProcessorRef::latest("grbl").expect("grbl is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "--one-program on grbl: {}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("`grbl`"), "{}", stderr(&out));
+    assert!(!dir.join("coaster.nc").exists(), "nothing written");
+    assert!(!dir.join("coaster-1-T1.nc").exists(), "nothing written");
+
+    // `"m6"` in the project, one program per tool run asked for.
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("grblhal").expect("grblhal is bundled");
+    project.post_processor.tool_change_mode = ToolChangeMode::M6;
+    let text = save(&project).expect("project saves");
+    std::fs::write(&dcv, &text).expect("dcv written");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--programs-per-tool",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "--programs-per-tool: {}",
+        stderr(&out)
+    );
+    for name in ["coaster-1-T1.nc", "coaster-2-T2.nc"] {
+        let run_program = std::fs::read_to_string(dir.join(name)).expect("run program written");
+        assert!(!has_code_word(&run_program, "M6"), "{name} has M6");
+        assert!(!has_code_word(&run_program, "M61"), "{name} has M61");
+    }
+    assert!(!dir.join("coaster.nc").exists(), "no single program");
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        text,
+        "--programs-per-tool is not saved"
+    );
+
+    // The flags contradict each other.
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--one-program",
+            "--programs-per-tool",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2), "usage error: {}", stderr(&out));
+    let usage = stderr(&out);
+    assert!(
+        usage.contains("--one-program") && usage.contains("--programs-per-tool"),
+        "{usage}"
+    );
+}
+
+/// `config path` prints the config directory, the config file and the
+/// tool library file, each with whether it exists, so a user can find
+/// them (design, "Tool library CLI").
+#[test]
+fn config_path_prints_locations() {
+    let dir = work_dir("config_path_prints_locations");
+    let config = config_dir(&dir);
+    let expected = |state: &str| {
+        vec![
+            format!("Config directory: {} ({state})", config.display()),
+            format!(
+                "Config file:      {} ({state})",
+                config.join("config.toml").display()
+            ),
+            format!(
+                "Tool library:     {} ({state})",
+                config.join("tools.json").display()
+            ),
+        ]
+    };
+    let out = run(&dir, &["config", "path"]);
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
+    assert_eq!(lines, expected("not found"));
+
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    std::fs::write(config.join("tools.json"), "{}").expect("library written");
+    let out = run(&dir, &["config", "path"]);
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    let lines: Vec<String> = stdout(&out).lines().map(str::to_owned).collect();
+    assert_eq!(lines, expected("exists"));
+}
+
+/// The first line of `config path`, the config directory, run with the
+/// environment edits `edit` makes.
+fn config_dir_line(dir: &Path, edit: impl FnOnce(&mut Command)) -> Output {
+    let mut cmd = command(dir);
+    cmd.env_remove(CONFIG_DIR_VAR).env_remove("XDG_CONFIG_HOME");
+    edit(&mut cmd);
+    cmd.args(["config", "path"]).output().expect("binary runs")
+}
+
+/// `DREAMCARVE_CONFIG_DIR` replaces the platform directory, which comes
+/// from the environment: macOS `$HOME/Library/Application Support`,
+/// Windows `%APPDATA%`, elsewhere `$XDG_CONFIG_HOME` or `$HOME/.config`,
+/// each with `dreamcarve` under it (design, "User config (CLI only)"). A
+/// missing base variable is an error naming it.
+#[test]
+fn config_dir_env_override() {
+    let dir = work_dir("config_dir_env_override");
+    let custom = dir.join("elsewhere");
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env(CONFIG_DIR_VAR, &custom);
+    });
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    assert_eq!(
+        stdout(&out).lines().next().unwrap_or_default(),
+        format!("Config directory: {} (not found)", custom.display())
+    );
+
+    // Without the override: the platform directory under the base set for
+    // this run.
+    let base = dir.join("base");
+    let (var, platform) = if cfg!(target_os = "windows") {
+        ("APPDATA", base.join("dreamcarve"))
+    } else if cfg!(target_os = "macos") {
+        (
+            "HOME",
+            base.join("Library")
+                .join("Application Support")
+                .join("dreamcarve"),
+        )
+    } else {
+        ("HOME", base.join(".config").join("dreamcarve"))
+    };
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env(var, &base);
+    });
+    assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+    assert_eq!(
+        stdout(&out).lines().next().unwrap_or_default(),
+        format!("Config directory: {} (not found)", platform.display())
+    );
+
+    // Where XDG applies, `XDG_CONFIG_HOME` beats `$HOME/.config`.
+    if !cfg!(any(target_os = "windows", target_os = "macos")) {
+        let xdg = dir.join("xdg");
+        let out = config_dir_line(&dir, |cmd| {
+            cmd.env(var, &base).env("XDG_CONFIG_HOME", &xdg);
+        });
+        assert_eq!(out.status.code(), Some(0), "config path: {}", stderr(&out));
+        assert_eq!(
+            stdout(&out).lines().next().unwrap_or_default(),
+            format!(
+                "Config directory: {} (not found)",
+                xdg.join("dreamcarve").display()
+            )
+        );
+    }
+
+    // No base variable and no override: an error naming the variable.
+    let out = config_dir_line(&dir, |cmd| {
+        cmd.env_remove(var);
+    });
+    assert_eq!(out.status.code(), Some(1), "config path: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains(var) && stderr(&out).contains(CONFIG_DIR_VAR),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// A config file that does not parse fails the commands that read it,
+/// naming the file and the line, and nothing is written.
+#[test]
+fn malformed_config_fails_init_naming_file_and_line() {
+    let dir = work_dir("malformed_config_fails_init_naming_file_and_line");
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    let config = write_config(&dir, "[export]\ntool_change_mode = m6\n");
+    let out = run(&dir, &["init", "coaster.svg"]);
+    assert_eq!(out.status.code(), Some(1), "init: {}", stdout(&out));
+    let message = stderr(&out);
+    assert!(
+        message.contains(&format!("{}:2:", config.display())),
+        "names the file and line 2: {message}"
+    );
+    assert!(!dir.join("coaster.dcv").exists(), "nothing written");
+
+    // An unknown key is a typo the user needs to see, not a silent default.
+    write_config(&dir, "[export]\ntool_change_mod = \"m6\"\n");
+    let out = run(&dir, &["init", "coaster.svg"]);
+    assert_eq!(out.status.code(), Some(1), "init: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains("tool_change_mod"),
+        "names the key: {}",
+        stderr(&out)
+    );
+    assert!(!dir.join("coaster.dcv").exists(), "nothing written");
+}
+
 // ── DXF import (phase 2, slice 19; functional spec capability 20, ─────────
 // ── acceptance test 34) ──────────────────────────────────────────────────
 
@@ -2573,6 +2977,215 @@ fn engrave_exports_and_passes_safety() {
         );
         if !m.kind.is_cut() {
             assert!(z >= 5.0 - 1e-6, "rapid {k} below safe Z: {m:?}");
+        }
+    }
+}
+
+/// The warning lines of `report`: those starting `warning:` or carrying
+/// `: warning: ` after a file position.
+fn warning_lines(report: &str) -> Vec<&str> {
+    report
+        .lines()
+        .filter(|l| l.starts_with("warning:") || l.contains(": warning: "))
+        .collect()
+}
+
+/// The `snake_case` code of a printed warning line, the word between
+/// `warning: ` and the next `: `, when it is one.
+fn warning_code(line: &str) -> Option<&str> {
+    let rest = line.split_once("warning: ")?.1;
+    let (code, _) = rest.split_once(": ")?;
+    let is_code = !code.is_empty()
+        && code
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    is_code.then_some(code)
+}
+
+/// Acceptance test 32 (research O8, D7): the star cut `outside` through
+/// the stock with no tabs, then its hole cut `inside`: `check` warns
+/// `cut_inside_freed_part` naming both operations and still exits 0, since
+/// the order is the user's to keep. With a second tool on the hole and a
+/// third operation back on the first tool (T1, T2, T1), it also hints
+/// `tool_change_avoidable` for T1, naming its two operations.
+#[test]
+fn check_reports_order_warnings() {
+    let dir = work_dir("check_reports_order_warnings");
+    let dcv = init_star(&dir, STAR_AND_HOLE_SVG);
+    let mut project = load_file(&dcv).project;
+    let star = instance_named(&project, "star").id.clone();
+    let hole = instance_named(&project, "hole").id.clone();
+    let mut star_op = as_profile(&project.operations[0]).clone();
+    star_op.name = "Star".into();
+    star_op.targets = vec![star];
+    star_op.side = Side::Outside;
+    star_op.tabs = None;
+    let mut hole_op = star_op.clone();
+    hole_op.id = OperationId::new("op2");
+    hole_op.name = "Hole".into();
+    hole_op.targets = vec![hole];
+    hole_op.side = Side::Inside;
+    project.operations = vec![
+        Operation::Profile(star_op.clone()),
+        Operation::Profile(hole_op.clone()),
+    ];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "star.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "warnings exit 0: {report}");
+    let freed: Vec<&str> = warning_lines(&report)
+        .into_iter()
+        .filter(|l| warning_code(l) == Some("cut_inside_freed_part"))
+        .collect();
+    assert_eq!(freed.len(), 1, "one order warning: {report}");
+    let line = freed[0];
+    assert!(
+        line.contains("`op1`"),
+        "names the freeing operation: {line}"
+    );
+    assert!(line.contains("`op2`"), "names the later operation: {line}");
+    assert!(line.contains("`hole`"), "names the shape: {line}");
+    assert!(
+        !report.contains("tool_change_avoidable"),
+        "one tool, no hint: {report}"
+    );
+
+    let mut second = project.tools[0].clone();
+    second.id = ToolId::new("t2");
+    second.name = "second bit".into();
+    project.tools.push(second);
+    hole_op.tool = ToolId::new("t2");
+    let mut again = star_op.clone();
+    again.id = OperationId::new("op3");
+    again.name = "Star again".into();
+    again.side = Side::OnLine;
+    again.depth_mm = Some(1.0);
+    project.operations = vec![
+        Operation::Profile(star_op),
+        Operation::Profile(hole_op),
+        Operation::Profile(again),
+    ];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "star.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "hints exit 0: {report}");
+    let hints: Vec<&str> = warning_lines(&report)
+        .into_iter()
+        .filter(|l| warning_code(l) == Some("tool_change_avoidable"))
+        .collect();
+    assert_eq!(hints.len(), 1, "one hint: {report}");
+    let line = hints[0];
+    assert!(line.contains("`t1`"), "names the tool: {line}");
+    assert!(
+        line.contains("`op1`") && line.contains("`op3`"),
+        "names the tool's operations: {line}"
+    );
+    assert!(!line.contains("`op2`"), "not the other tool's: {line}");
+
+    let out = run(&dir, &["export", "star.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stderr(&out);
+    for code in ["cut_inside_freed_part", "tool_change_avoidable"] {
+        assert!(
+            warning_lines(&report)
+                .iter()
+                .any(|l| warning_code(l) == Some(code)),
+            "export prints {code}: {report}"
+        );
+    }
+}
+
+/// Capability 25: every warning `check` and `export` print is
+/// `warning: <code>: <message>`, the code a stable `snake_case` word,
+/// after the file position when the warning is about one value. The
+/// project raises toolpath warnings (an open path, a duplicate, a hole the
+/// bit does not fit, tabs that overlap, cover most of a hole and sit above
+/// the stock top), an order warning, and a validation warning (an unused
+/// tool), and each code is the one the Warnings chapter lists.
+#[test]
+fn warnings_print_code_and_message() {
+    let dir = work_dir("warnings_print_code_and_message");
+    std::fs::write(
+        dir.join("part.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <rect id="outline" x="10" y="10" width="60" height="40"/>
+  <rect id="outline-copy" x="10" y="10" width="60" height="40"/>
+  <rect id="small-hole" x="15" y="15" width="20" height="20"/>
+  <circle id="pin-hole" cx="55" cy="30" r="2"/>
+  <path id="guide-line" d="M 20 80 L 80 80"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "part.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("part.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let thickness_mm = project.stock.thickness_mm.expect("fill_in sets it");
+    let outline = instance_named(&project, "outline").id.clone();
+    let small_hole = instance_named(&project, "small-hole").id.clone();
+    let first = as_profile_mut(&mut project.operations[0]);
+    if let Some(tabs) = &mut first.tabs {
+        tabs.height_mm = thickness_mm + 1.0;
+    }
+    let mut outline_op = first.clone();
+    outline_op.id = OperationId::new("op2");
+    outline_op.name = "Outline".into();
+    outline_op.targets = vec![outline];
+    outline_op.side = Side::Outside;
+    outline_op.tabs = None;
+    let mut hole_op = outline_op.clone();
+    hole_op.id = OperationId::new("op3");
+    hole_op.name = "Small hole".into();
+    hole_op.targets = vec![small_hole];
+    hole_op.side = Side::Inside;
+    project
+        .operations
+        .extend([Operation::Profile(outline_op), Operation::Profile(hole_op)]);
+    let mut spare = project.tools[0].clone();
+    spare.id = ToolId::new("t2");
+    spare.name = "Spare bit".into();
+    project.tools.push(spare);
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let check = run(&dir, &["check", "part.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "check: {}", stdout(&check));
+    let export = run(&dir, &["export", "part.dcv", "--date", FIXED_DATE]);
+    assert_eq!(export.status.code(), Some(0), "export: {}", stderr(&export));
+    for report in [stdout(&check), stderr(&export)] {
+        let lines = warning_lines(&report);
+        assert!(!lines.is_empty(), "warnings printed: {report}");
+        let mut codes = Vec::new();
+        for line in &lines {
+            let Some(code) = warning_code(line) else {
+                panic!("`warning: <code>: <message>`: {line}");
+            };
+            let message = line.split_once(&format!("{code}: ")).expect("code found").1;
+            assert!(
+                message.chars().next().is_some_and(|c| c != ' '),
+                "a message follows the code: {line}"
+            );
+            codes.push(code);
+        }
+        // The open path is reported by validation (`init` never targets
+        // one), so its code is `open_profile`, not `open_path_skipped`.
+        for expected in [
+            "open_profile",
+            "duplicate_shape_dropped",
+            "tool_too_large",
+            "tabs_overlap",
+            "tabs_cover_most_of_contour",
+            "tabs_outside_cut_range",
+            "cut_inside_freed_part",
+            "unused_tool",
+        ] {
+            assert!(
+                codes.contains(&expected),
+                "{expected} is printed; codes were {codes:?}: {report}"
+            );
         }
     }
 }
