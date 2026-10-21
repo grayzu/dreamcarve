@@ -254,6 +254,55 @@ pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamE
     Ok((out, warnings))
 }
 
+/// What [`replace`] did: the project after it, and which tabs it removed
+/// and placed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replacement {
+    /// The project with the tabs replaced.
+    pub project: Project,
+    /// The tabs removed, in project order.
+    pub removed: Vec<PlacedTab>,
+    /// The tabs placed, with ids after every tab the project had, and what
+    /// placing found.
+    pub placement: Placement,
+}
+
+/// `project` with the tabs Profile `op` crosses ([`crossed_by`], the set
+/// `tabs clear <dcv> <op>` removes) replaced by what `place` places on the
+/// project without them (#293). `place` sees the removed tabs gone, so a
+/// tab at a removed tab's point is placed again; the tabs it places are
+/// renumbered after every tab `project` had, so no removed tab's id names
+/// a new tab.
+///
+/// Fails with [`CamError::UnknownOperation`] or
+/// [`CamError::TabsNeedProfile`] when `op` is not a Profile of `project`,
+/// as [`crossed_by`] does, and as `place` does.
+pub fn replace<F>(project: &Project, op: &OperationId, place: F) -> Result<Replacement, CamError>
+where
+    F: FnOnce(&Project) -> Result<Placement, CamError>,
+{
+    let profile = profile_op(project, op)?;
+    let crossed = crossed_by(project, profile)?;
+    let mut cleared = project.clone();
+    let (removed, kept): (Vec<PlacedTab>, Vec<PlacedTab>) = cleared
+        .tabs
+        .drain(..)
+        .partition(|t| crossed.contains(&t.id));
+    cleared.tabs = kept;
+    let mut placement = place(&cleared)?;
+    let mut next = next_number(project);
+    for tab in &mut placement.tabs {
+        tab.id = TabId::new(format!("tab{next}"));
+        next = next.saturating_add(1);
+    }
+    cleared.tabs.extend(placement.tabs.iter().cloned());
+    Ok(Replacement {
+        project: cleared,
+        removed,
+        placement,
+    })
+}
+
 /// The placed tabs Profile `op` crosses, in project order: each tab on an
 /// outline it cuts whose nearest tool path runs within the tool radius
 /// plus half the tab's width. Fails as [`crate::generate_profile`] does
@@ -971,9 +1020,8 @@ mod tests {
             ..tab("tab5", 25.0, 0.0)
         });
         let replaced = replace(&p, &op, |cleared| place(cleared, &op, &four_tabs(false))).unwrap();
-        let ids = |tabs: &[PlacedTab]| -> Vec<String> {
-            tabs.iter().map(|t| t.id.to_string()).collect()
-        };
+        let ids =
+            |tabs: &[PlacedTab]| -> Vec<String> { tabs.iter().map(|t| t.id.to_string()).collect() };
         assert_eq!(ids(&replaced.removed), ["tab1", "tab2", "tab3", "tab4"]);
         assert_eq!(
             ids(&replaced.placement.tabs),

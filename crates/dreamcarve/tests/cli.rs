@@ -6236,7 +6236,7 @@ fn tabs_place_without_replace_notes_existing_tabs() {
     let printed = stdout(&out);
     assert!(
         printed.contains(
-            "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s); the 6 new ones are added to them. To swap them instead, give --replace."
+            "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s); this adds 6 more. To swap them instead, give --replace."
         ),
         "{printed}"
     );
