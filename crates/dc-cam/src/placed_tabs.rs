@@ -254,6 +254,55 @@ pub fn place_requests(project: &Project) -> Result<(Project, Vec<Warning>), CamE
     Ok((out, warnings))
 }
 
+/// What [`replace`] did: the project after it, and which tabs it removed
+/// and placed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replacement {
+    /// The project with the tabs replaced.
+    pub project: Project,
+    /// The tabs removed, in project order.
+    pub removed: Vec<PlacedTab>,
+    /// The tabs placed, with ids after every tab the project had, and what
+    /// placing found.
+    pub placement: Placement,
+}
+
+/// `project` with the tabs Profile `op` crosses ([`crossed_by`], the set
+/// `tabs clear <dcv> <op>` removes) replaced by what `place` places on the
+/// project without them (#293). `place` sees the removed tabs gone, so a
+/// tab at a removed tab's point is placed again; the tabs it places are
+/// renumbered after every tab `project` had, so no removed tab's id names
+/// a new tab.
+///
+/// Fails with [`CamError::UnknownOperation`] or
+/// [`CamError::TabsNeedProfile`] when `op` is not a Profile of `project`,
+/// as [`crossed_by`] does, and as `place` does.
+pub fn replace<F>(project: &Project, op: &OperationId, place: F) -> Result<Replacement, CamError>
+where
+    F: FnOnce(&Project) -> Result<Placement, CamError>,
+{
+    let profile = profile_op(project, op)?;
+    let crossed = crossed_by(project, profile)?;
+    let mut cleared = project.clone();
+    let (removed, kept): (Vec<PlacedTab>, Vec<PlacedTab>) = cleared
+        .tabs
+        .drain(..)
+        .partition(|t| crossed.contains(&t.id));
+    cleared.tabs = kept;
+    let mut placement = place(&cleared)?;
+    let mut next = next_number(project);
+    for tab in &mut placement.tabs {
+        tab.id = TabId::new(format!("tab{next}"));
+        next = next.saturating_add(1);
+    }
+    cleared.tabs.extend(placement.tabs.iter().cloned());
+    Ok(Replacement {
+        project: cleared,
+        removed,
+        placement,
+    })
+}
+
 /// The placed tabs Profile `op` crosses, in project order: each tab on an
 /// outline it cuts whose nearest tool path runs within the tool radius
 /// plus half the tab's width. Fails as [`crate::generate_profile`] does
@@ -948,6 +997,46 @@ mod tests {
         let second = place(&p, &op, &more).unwrap();
         let ids: Vec<&str> = second.tabs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["tab5", "tab6"]);
+    }
+
+    /// #293: `replace` removes the tabs the Profile crosses, the set
+    /// `tabs clear <dcv> <op>` removes, and keeps a tab on an outline it
+    /// does not cut. The new tabs are placed as if the removed ones were
+    /// gone, so one at a removed tab's point is placed again, and take ids
+    /// after every tab the project had.
+    #[test]
+    fn replace_swaps_only_the_tabs_the_profile_crosses() {
+        let mut p = untabbed();
+        let mut other = p.instances[0].clone();
+        other.id = InstanceId::new("i2");
+        other.name = "Rectangle 2".into();
+        other.transform = Transform::translate(70.0, 60.0);
+        p.instances.push(other);
+        let op = OperationId::new("o1");
+        let first = place(&p, &op, &four_tabs(false)).unwrap();
+        p.tabs = first.tabs.clone();
+        p.tabs.push(PlacedTab {
+            instance: InstanceId::new("i2"),
+            ..tab("tab5", 25.0, 0.0)
+        });
+        let replaced = replace(&p, &op, |cleared| place(cleared, &op, &four_tabs(false))).unwrap();
+        let ids =
+            |tabs: &[PlacedTab]| -> Vec<String> { tabs.iter().map(|t| t.id.to_string()).collect() };
+        assert_eq!(ids(&replaced.removed), ["tab1", "tab2", "tab3", "tab4"]);
+        assert_eq!(
+            ids(&replaced.placement.tabs),
+            ["tab6", "tab7", "tab8", "tab9"]
+        );
+        assert_eq!(
+            ids(&replaced.project.tabs),
+            ["tab5", "tab6", "tab7", "tab8", "tab9"]
+        );
+        for (old, new) in first.tabs.iter().zip(&replaced.placement.tabs) {
+            assert_approx_eq!(old.x_mm, new.x_mm, TOL);
+            assert_approx_eq!(old.y_mm, new.y_mm, TOL);
+        }
+        let (cut, _) = generate(&replaced.project);
+        assert_eq!(held_runs(&cut, TAB_TOP_MM).len(), 4);
     }
 
     /// #105: tabs are placed for a Profile; anything else is refused.

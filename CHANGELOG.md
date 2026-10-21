@@ -107,6 +107,9 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   round a tab only when its cut goes below the tab's top. `check` warns
   `tab_not_crossed` for a tab no enabled Profile cuts round, and `tab_on_hole`
   for a tab that holds a hole's slug.
+- **`tabs place --replace`.** Swaps the tabs an operation cuts round for the
+  new ones in one step, printing each tab removed and placed ([#293]). Without
+  it `tabs place` still adds, and now notes an outline that already had tabs.
 - **Estimated run time.** `export` and `check` print how long each program,
   and all of them together, should take: feed moves at their feed rates
   (arcs by their length), dwells, and rapids at the rate you set in the new
@@ -380,3 +383,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#287]: https://github.com/grayzu/dreamcarve/issues/287
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
+[#293]: https://github.com/grayzu/dreamcarve/issues/293
