@@ -121,8 +121,12 @@ written. There are no safety warnings, only errors.
       entry ramps and helixes, lead arcs and corner relief notches all
       count, so a ramp or lead arc that swings into a part, its own or a
       neighbour's, stops the export. A lap that runs along one outline at
-      the bit's radius passes even where another shape is closer than
-      the bit is wide: that gouge is the `toolpaths_overlap` warning.
+      the bit's radius passes even where another, separate shape is
+      closer than the bit is wide: that gouge is the `toolpaths_overlap`
+      warning. It never passes closer than the radius to another line of
+      its own shape, such as an island in a band narrower than the bit;
+      DreamCarve refuses that cut before export (see
+      [Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)).
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus

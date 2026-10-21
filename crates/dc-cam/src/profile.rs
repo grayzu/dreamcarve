@@ -183,7 +183,8 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// Outside: the part's concave corners), stepping down at the tool's
 /// step-down among the shape's own passes, each level after the pass that
 /// opened the column it plunges in and none after the pass that frees the
-/// shape (the `relief` module, #189); On line warns
+/// shape, whose levels are cut from inside its lap (the `relief` module,
+/// #189, #193); On line warns
 /// [`WarningCode::ReliefSkipped`].
 ///
 /// Open paths, shapes the tool cannot fit, and duplicate shapes are skipped

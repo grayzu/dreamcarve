@@ -22,11 +22,12 @@
 //! passes instead (#189), because a Profile through the stock frees its
 //! part or slug with its final lap, and a notch cut after that cuts beside
 //! a loose piece. Each notch level is cut in the unit of the shape's
-//! first pass at or below it, so that pass has already opened the column
-//! at the descend point; the sequencer cuts a unit's freeing lap last, so
-//! the levels of the freeing pass come just before the final lap, plunging
-//! through the skin it is about to cut while the skin still holds the
-//! piece. Nothing of a shape is cut after its freeing pass.
+//! first pass at or below it, after that pass's lap, so the lap has
+//! already opened the column at the descend point. The levels of the
+//! freeing pass are cut from inside the final lap (#193), where it first
+//! reaches each descend point at depth, so they never plunge through the
+//! skin and the rest of the lap still holds the piece. Nothing of a shape
+//! is cut after its freeing pass.
 //!
 //! **The touch-the-corner rule.** For corner `C` of the cleared region,
 //! with unit edge directions `u`, `v` from `C`, bisector `b`, cleared-side

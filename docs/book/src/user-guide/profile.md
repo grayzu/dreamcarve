@@ -306,12 +306,14 @@ the bit is wide skip their corner with `relief_corner_too_tight`, and a
 tool with no `step_down_mm` skips the relief with `relief_skipped`.
 
 On a through cut the last pass frees the part (or the slug of a hole),
-so its notch levels come just before it instead, never after it: every
-notch is cut while the uncut skin still holds the piece, and tabs are not
-needed for the notches. At those levels the bit
-plunges straight through the skin, at most one step-down deep, even when
-the Profile's [entry](#entry) is a ramp or a helix. Tabs still hold the
-part through the last pass itself, as without relief.
+so its notch levels are cut from inside that last lap instead, never
+after it. When the lap reaches a corner at full depth, the bit rises in
+the slot it has just cut to the first of those levels, cuts the notch out
+and back, steps down in the same slot to the next level, and carries on
+along the lap. It never plunges into uncut material, so a ramp or helix
+[entry](#entry) is honoured, and the rest of the lap still holds the
+piece while each notch is cut, so tabs are not needed for the notches.
+Tabs still hold the part through the last pass itself, as without relief.
 
 An inside Profile of a 40 × 30 mm rectangle with a 6.35 mm bit and
 `"dogbone"` gets four notches, each ending 3.175 mm from its corner along
@@ -363,7 +365,8 @@ one drawn (see [Machining order](#machining-order)). For each outline:
 Every move between shapes is at safe Z; the tool never travels through
 material from one shape to another. With [corner relief](#corner-relief)
 each pass is followed by its notches, each corner reached at safe Z; on
-a through cut the notches of the last pass go before it.
+a through cut the notches of the last pass are cut from within it, at
+each corner as the lap gets there.
 
 ## Warnings
 
@@ -406,7 +409,8 @@ closer than the bit needs to pass between them, the bit cutting one also
 cuts into the other. With **Outside** both cuts run in the gap, so the
 shapes need at least one bit diameter between them; with **On line** each
 cut reaches half a bit past its line, so they need one radius. **Inside**
-cuts stay within their own shapes and never warn.
+cuts stay within their own shapes and never warn; a band inside one shape
+that is too narrow for the bit is an error instead (see below).
 
 The warning names both shapes and the smallest gap between them, listed in
 the order the shapes are cut. It also applies to a part inside another
@@ -414,6 +418,28 @@ part's hole: a coaster 1 mm from the wall of a frame's hole warns. A part
 and its own holes are never compared: a hole close to its outline leaves a
 thin wall, not a gouge. The program is still written as drawn. Move the
 shapes apart, or use a smaller bit.
+
+### Bands narrower than the bit
+
+Cut **inside**, a part with an island in it (a ring, a frame around a
+round boss) cuts the band of waste between the outline and the island,
+and keeps the material beyond both. When that band, or the gap between
+two islands, is narrower than the bit anywhere, the cut along one line
+would bite into the material beyond the other: a 3 mm band with a
+6.35 mm bit gouges the part by 3.35 mm. That is an error, not a warning,
+and nothing is exported:
+
+``operation `o1` cuts inside `Ring` (instance `i1`, profile 0) and `Ring`
+(instance `i1`, profile 1), but the band between them is 3.000 mm wide,
+narrower than its 6.35 mm tool, ...``
+
+Use a bit no wider than the band, widen the band, or cut the ring with a
+[Pocket](pocket.md), which clears only where the bit fits. A shape the
+bit does not fit inside at all is different: it is skipped with the
+"tool ... does not fit ..." warning, because nothing is cut there. An
+island in such a shape is still an error, since its lap would run
+outside the outline. Cut **outside**, a hole close to its outline only
+leaves a thin wall and is cut as drawn.
 
 Shapes that cross each other, or a shape that crosses itself, are an error:
 DreamCarve cannot tell which side is material, so it cuts nothing. See
