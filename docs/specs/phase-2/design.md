@@ -556,7 +556,27 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    cuts into an island; DreamCarve keeps its link rule, so next to a
    curved island side, where every straight link between line ends
    enters the island, each such end is a dead end and no order lifts
-   less than scan order.) Links: `sequence` stays down when the straight
+   less than scan order.) Edge links: with a wall pass (`last` or
+   `first`), two segment ends that no straight stay-down link joins but
+   that both lie on one island ring of the tool-centre region (within
+   the flattening tolerance, as the segments end on its chords) are
+   joined along that ring: to the ring, the shorter way round it with its
+   arcs kept, and off it, at the pass Z and the feed, when that way is no
+   longer than one diameter plus `s`. The ordering counts it as a
+   stay-down link; the segments and their edge links are one block,
+   whose `cleared` area is the segments' strips and the band the edge
+   links sweep (grown by `r`, cut to the region), so `sequence` sees no
+   link inside it. The tool centre on the ring touches the island wall
+   exactly, so the block cuts only the band the island's wall ring cuts
+   anyway (or, for a ring a rest operation skips, cleared air), and S9
+   holds by construction. Without a wall pass that band is not the
+   operation's to cut, and no edge link is made. (changed in #202: round
+   a curved island side every line end was a dead end, 11 lifts per pass
+   on the 20 mm circle island test pocket; following the ring, 1 lift per
+   pass with the wall pass last and 2 with it first, and round the 20 mm
+   square island, whose ring has round corners, 2, from 4. Upstream's
+   straight link there gouges the island by up to 0.38 mm.) Links:
+   `sequence` stays down when the straight
    link between two blocks lies inside the tool-centre region (no island
    between) and is shorter than one diameter plus `s`, else retracts. The wall pass rings (root rings of step 6 with no
    children) are emitted last (or first) per pass. PureCutCNC cuts the
@@ -1528,6 +1548,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::raster::scan_starts_half_a_step_below_the_top`, `pocket::raster::closing_line_when_the_scan_stops_short` (#195).
 - `pocket::rings::ring_starts_at_nearest_point_of_an_arc`, `pocket::ring_starts_at_nearest_point_not_nearest_vertex` (#196).
 - `pocket::raster_lifts_around_island_are_minimised`, `pocket::raster::pieces_round_a_square_island_are_cut_nearest_first`, `pocket::raster::scan_order_is_kept_round_a_circle` (#150).
+- `pocket::raster_links_follow_a_round_island_edge`, `pocket::edge_link_never_enters_the_island`, `pocket::raster::pieces_round_a_circle_link_along_its_edge`, `safety::raster_edge_links_round_an_island_pass_s9` (#202; `pocket::raster_lifts_around_island_are_minimised` updated).
 - `pocket::allowance_leaves_material_on_walls` — footprint stays `allowance` from the wall.
 - `pocket::rest_region_is_corners_and_wall_band`, `pocket::rest_coverage_with_rough_reaches_small_tool_inset` (acceptance 22), `pocket::rest_of_that_clears_nothing_warns`, `pocket::rest_footprint_stays_inside_region` (S14).
 - `pocket::step_down_from_tool_when_operation_unset`, `pocket::depth_below_bottom_is_error`.
