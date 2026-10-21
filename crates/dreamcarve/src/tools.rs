@@ -10,6 +10,11 @@
 //! directory, by the first command that writes it (`import`). Every write
 //! is staged and renamed into place, so a failure leaves the old file.
 //!
+//! `tools import` reads a DreamCarve library or a Fusion 360 library
+//! (`dc_library::fusion`, by content), and adds each tool as
+//! `dc_library::add` (or `replace` with `--replace`) decides; a Fusion
+//! re-import is `already present` tool by tool.
+//!
 //! `tools add` copies a library tool into a project under the next free
 //! project id (`t<n>`), keeping every value including its `number`, and
 //! saves the project through `dc_project::save`. Projects embed copies
@@ -193,23 +198,55 @@ fn add(paths: &Paths, dcv: &Path, key: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+/// One tool `tools import` adds: the tool, its source, and the notes its
+/// report line carries.
+struct Incoming {
+    tool: Tool,
+    source: Option<String>,
+    notes: Vec<String>,
+}
+
 /// `tools import <file> [--replace]`: adds each tool of a DreamCarve
-/// library file, reporting per tool what happened. A file that does not
-/// load, or a tool that is not valid, fails the whole import and nothing
-/// is written.
+/// library file or a Fusion 360 library (told apart by content, not
+/// extension), reporting per tool what happened: imported, already
+/// present, replaced, or for a Fusion item DreamCarve has no cutter for,
+/// skipped with the reason. Values a Fusion preset left unset are noted on
+/// the tool's line. A file that does not load, or a tool that is not
+/// valid, fails the whole import and nothing is written.
 fn import(paths: &Paths, file: &Path, replace: bool) -> Result<(), Failure> {
     let bytes = read_file(file)?;
     let fail = |e: dc_library::LibraryError| {
         Failure::error(format!("cannot import {}: {e}", file.display()))
     };
-    if dc_library::fusion::is_fusion_library(&bytes) {
-        return dc_library::fusion::import(&bytes).map_err(fail);
-    }
-    let incoming = dc_library::load(&bytes).map_err(fail)?;
+    let (incoming, skipped): (Vec<Incoming>, _) = if dc_library::fusion::is_fusion_library(&bytes) {
+        let fusion = dc_library::fusion::import(&bytes).map_err(fail)?;
+        let tools = fusion
+            .tools
+            .into_iter()
+            .map(|t| Incoming {
+                tool: t.tool,
+                source: Some(t.source),
+                notes: t.notes.iter().map(ToString::to_string).collect(),
+            })
+            .collect();
+        (tools, Some(fusion.skipped))
+    } else {
+        let tools = dc_library::load(&bytes)
+            .map_err(fail)?
+            .tools
+            .into_iter()
+            .map(|entry| Incoming {
+                tool: entry.tool,
+                source: entry.source,
+                notes: Vec::new(),
+            })
+            .collect();
+        (tools, None)
+    };
     let before = read_library(paths)?.unwrap_or_default();
     let mut lib = before.clone();
     let (mut imported, mut present, mut replaced) = (0_usize, 0_usize, 0_usize);
-    for entry in incoming.tools {
+    for entry in incoming {
         let name = entry.tool.name.clone();
         let outcome = if replace {
             dc_library::replace(&mut lib, entry.tool, entry.source)
@@ -237,13 +274,21 @@ fn import(paths: &Paths, file: &Path, replace: bool) -> Result<(), Failure> {
                 format!("replaced ({id})")
             }
         };
-        println!("`{name}`: {report}");
+        if entry.notes.is_empty() {
+            println!("`{name}`: {report}");
+        } else {
+            println!("`{name}`: {report}; {}", entry.notes.join(", "));
+        }
+    }
+    for item in skipped.iter().flatten() {
+        println!("`{}`: skipped: {}", item.description, item.reason);
     }
     if lib != before {
         write_library(paths, &lib)?;
     }
+    let skipped = skipped.map_or(String::new(), |s| format!(", {} skipped", s.len()));
     println!(
-        "{imported} imported, {present} already present, {replaced} replaced; library: {}",
+        "{imported} imported, {present} already present, {replaced} replaced{skipped}; library: {}",
         paths.library_file.display()
     );
     Ok(())

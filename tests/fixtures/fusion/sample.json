@@ -1,0 +1,261 @@
+{
+  "version": 36,
+  "x-fixture-note": "Hand-written for DreamCarve tests in the structure of Autodesk's published Fusion tool library schema. Not Autodesk data.",
+  "data": [
+    {
+      "type": "flat end mill",
+      "unit": "millimeters",
+      "description": "6 mm Flat End Mill",
+      "guid": "dc000001-0000-4000-8000-000000000001",
+      "vendor": "DreamCarve fixtures",
+      "product-id": "DC-FEM-6",
+      "BMC": "carbide",
+      "geometry": { "DC": 6, "NOF": 2, "LCF": 22, "OAL": 50, "SFDM": 6, "LB": 30, "HAND": true },
+      "post-process": { "number": 5, "comment": "", "diameter-offset": 0, "length-offset": 0, "manual-tool-change": false, "turret": 0 },
+      "start-values": {
+        "presets": [
+          {
+            "name": "Hardwood",
+            "guid": "dc0000p1-0000-4000-8000-000000000001",
+            "n": 18000,
+            "v_f": 1200,
+            "v_f_plunge": 400,
+            "v_f_ramp": 400,
+            "stepdown": 2,
+            "stepover": 2.4,
+            "use-stepdown": true,
+            "use-stepover": true,
+            "tool-coolant": "disabled",
+            "material": { "category": "all", "query": "", "use-hardness": false }
+          }
+        ]
+      }
+    },
+    {
+      "type": "ball end mill",
+      "unit": "millimeters",
+      "description": "3 mm Ball End Mill",
+      "guid": "dc000002-0000-4000-8000-000000000002",
+      "geometry": { "DC": 3, "NOF": 2, "RE": 1.5, "LCF": 12, "OAL": 38, "SFDM": 3 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Finishing", "guid": "dc0000p2-0000-4000-8000-000000000002", "n": 20000, "v_f": 900, "v_f_plunge": 300, "stepdown": 1, "stepover": 0.3, "use-stepdown": true, "use-stepover": true }
+        ]
+      }
+    },
+    {
+      "type": "bull nose end mill",
+      "unit": "millimeters",
+      "description": "8 mm Bull Nose End Mill",
+      "guid": "dc000003-0000-4000-8000-000000000003",
+      "geometry": { "DC": 8, "NOF": 3, "RE": 1, "LCF": 20, "OAL": 60, "SFDM": 8 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Roughing", "guid": "dc0000p3-0000-4000-8000-000000000003", "n": 16000, "v_f": 1500, "v_f_plunge": 500, "stepdown": 3, "stepover": 4, "use-stepdown": true, "use-stepover": true }
+        ]
+      }
+    },
+    {
+      "type": "slot mill",
+      "unit": "millimeters",
+      "description": "20 mm Slot Mill",
+      "guid": "dc000004-0000-4000-8000-000000000004",
+      "geometry": { "DC": 20, "NOF": 4, "LCF": 3, "OAL": 60, "SFDM": 10 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Slotting", "guid": "dc0000p4-0000-4000-8000-000000000004", "n": 8000, "v_f": 600, "v_f_plunge": 200, "stepdown": 1, "use-stepdown": true, "use-stepover": false }
+        ]
+      }
+    },
+    {
+      "type": "chamfer mill",
+      "unit": "millimeters",
+      "description": "12 mm 90-Degree Chamfer Mill",
+      "guid": "dc000005-0000-4000-8000-000000000005",
+      "geometry": { "DC": 12, "NOF": 2, "TA": 45, "tip-diameter": 0, "LCF": 6, "OAL": 50, "SFDM": 8 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "V-carving", "guid": "dc0000p5-0000-4000-8000-000000000005", "n": 18000, "v_f": 1000, "v_f_plunge": 300, "stepdown": 1.5, "use-stepdown": true, "use-stepover": false }
+        ]
+      }
+    },
+    {
+      "type": "drill",
+      "unit": "millimeters",
+      "description": "5 mm Drill",
+      "guid": "dc000006-0000-4000-8000-000000000006",
+      "geometry": { "DC": 5, "NOF": 2, "SIG": 118, "LCF": 40, "OAL": 80, "SFDM": 5 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Drilling", "guid": "dc0000p6-0000-4000-8000-000000000006", "n": 6000, "v_f_plunge": 300, "v_f_retract": 300, "use-feed-per-revolution": false }
+        ]
+      }
+    },
+    {
+      "type": "spot drill",
+      "unit": "millimeters",
+      "description": "6 mm 90-Degree Spot Drill",
+      "guid": "dc000007-0000-4000-8000-000000000007",
+      "geometry": { "DC": 6, "NOF": 2, "SIG": 90, "LCF": 10, "OAL": 50, "SFDM": 6 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Spotting", "guid": "dc0000p7-0000-4000-8000-000000000007", "n": 8000, "v_f_plunge": 250 }
+        ]
+      }
+    },
+    {
+      "type": "counter sink",
+      "unit": "millimeters",
+      "description": "10 mm 90-Degree Countersink",
+      "guid": "dc000008-0000-4000-8000-000000000008",
+      "geometry": { "DC": 10, "NOF": 3, "SIG": 90, "tip-diameter": 2, "LCF": 5, "OAL": 50, "SFDM": 6 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Countersinking", "guid": "dc0000p8-0000-4000-8000-000000000008", "n": 5000, "v_f_plunge": 200 }
+        ]
+      }
+    },
+    {
+      "type": "counter bore",
+      "unit": "millimeters",
+      "description": "8 mm Counter Bore",
+      "guid": "dc000009-0000-4000-8000-000000000009",
+      "geometry": { "DC": 8, "NOF": 3, "LCF": 10, "OAL": 60, "SFDM": 8 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Counterboring", "guid": "dc0000p9-0000-4000-8000-000000000009", "n": 4000, "v_f_plunge": 150 }
+        ]
+      }
+    },
+    {
+      "type": "reamer",
+      "unit": "millimeters",
+      "description": "6 mm Reamer",
+      "guid": "dc000010-0000-4000-8000-000000000010",
+      "geometry": { "DC": 6, "NOF": 4, "LCF": 20, "OAL": 70, "SFDM": 6 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Reaming", "guid": "dc0000pa-0000-4000-8000-000000000010", "n": 1500, "v_f_plunge": 100 }
+        ]
+      }
+    },
+    {
+      "type": "flat end mill",
+      "unit": "inches",
+      "description": "1/4 in Flat End Mill",
+      "guid": "dc000011-0000-4000-8000-000000000011",
+      "geometry": { "DC": 0.25, "NOF": 2, "LCF": 0.75, "OAL": 2.5, "SFDM": 0.25 },
+      "post-process": { "number": 0 },
+      "start-values": {
+        "presets": [
+          { "name": "Softwood", "guid": "dc0000pb-0000-4000-8000-000000000011", "n": 18000, "v_f": 60, "v_f_plunge": 20, "stepdown": 0.125, "stepover": 0.1, "use-stepdown": true, "use-stepover": true }
+        ]
+      }
+    },
+    {
+      "type": "flat end mill",
+      "unit": "millimeters",
+      "description": "3.175 mm Flat End Mill",
+      "guid": "dc000012-0000-4000-8000-000000000012",
+      "geometry": { "DC": 3.175, "NOF": 1, "LCF": 12, "OAL": 38, "SFDM": 3.175 },
+      "post-process": { "number": 7 },
+      "start-values": {
+        "presets": [
+          { "name": "Plywood", "guid": "dc0000pc-0000-4000-8000-000000000012", "n": 18000, "v_f": 1000, "v_f_plunge": 300, "stepdown": 1.5, "stepover": 1.27, "use-stepdown": true, "use-stepover": true },
+          { "name": "Acrylic", "guid": "dc0000pd-0000-4000-8000-000000000012", "n": 16000, "v_f": 800, "v_f_plunge": 250, "stepdown": 1, "stepover": 1.27, "use-stepdown": false, "use-stepover": true }
+        ]
+      }
+    },
+    {
+      "type": "thread mill",
+      "unit": "millimeters",
+      "description": "6 mm Thread Mill, 1 mm Pitch",
+      "guid": "dc000013-0000-4000-8000-000000000013",
+      "geometry": { "DC": 6, "NOF": 3, "thread-pitch": 1, "OAL": 50 },
+      "post-process": { "number": 0 },
+      "start-values": { "presets": [ { "name": "Threading", "n": 8000, "v_f": 300 } ] }
+    },
+    {
+      "type": "tap right hand",
+      "unit": "millimeters",
+      "description": "M6 Right-Hand Tap",
+      "guid": "dc000014-0000-4000-8000-000000000014",
+      "geometry": { "DC": 6, "NOF": 3, "thread-pitch": 1, "OAL": 70 },
+      "post-process": { "number": 0 }
+    },
+    {
+      "type": "face mill",
+      "unit": "millimeters",
+      "description": "50 mm Face Mill",
+      "guid": "dc000015-0000-4000-8000-000000000015",
+      "geometry": { "DC": 50, "NOF": 5, "OAL": 40 },
+      "post-process": { "number": 0 }
+    },
+    {
+      "type": "form mill",
+      "unit": "millimeters",
+      "description": "Ogee Form Router Bit",
+      "guid": "dc000016-0000-4000-8000-000000000016",
+      "geometry": { "DC": 12, "NOF": 2, "OAL": 60 },
+      "post-process": { "number": 0 }
+    },
+    {
+      "type": "lollipop mill",
+      "unit": "millimeters",
+      "description": "6 mm Lollipop Mill",
+      "guid": "dc000017-0000-4000-8000-000000000017",
+      "geometry": { "DC": 6, "NOF": 4, "OAL": 60 },
+      "post-process": { "number": 0 }
+    },
+    {
+      "type": "dovetail mill",
+      "unit": "millimeters",
+      "description": "12 mm 14-Degree Dovetail Mill",
+      "guid": "dc000018-0000-4000-8000-000000000018",
+      "geometry": { "DC": 12, "NOF": 2, "TA": 14, "OAL": 60 },
+      "post-process": { "number": 0 }
+    },
+    {
+      "type": "tapered mill",
+      "unit": "millimeters",
+      "description": "3 mm Tapered Ball Mill, 2-Degree Taper",
+      "guid": "dc000019-0000-4000-8000-000000000019",
+      "geometry": { "DC": 3, "NOF": 2, "TA": 2, "OAL": 60 },
+      "post-process": { "number": 0 }
+    },
+    {
+      "type": "turning general",
+      "unit": "millimeters",
+      "description": "General Turning Tool",
+      "guid": "dc000020-0000-4000-8000-000000000020",
+      "post-process": { "number": 0, "turret": 1 }
+    },
+    {
+      "type": "probe",
+      "unit": "millimeters",
+      "description": "Probe, 2 mm Stylus",
+      "guid": "dc000021-0000-4000-8000-000000000021",
+      "geometry": { "DC": 2, "OAL": 50 },
+      "post-process": { "number": 0 }
+    },
+    {
+      "type": "holder",
+      "unit": "millimeters",
+      "description": "ER20 Collet Holder",
+      "guid": "dc000022-0000-4000-8000-000000000022",
+      "segments": [
+        { "height": 20, "lower-diameter": 30, "upper-diameter": 30 },
+        { "height": 10, "lower-diameter": 30, "upper-diameter": 40 }
+      ]
+    }
+  ]
+}

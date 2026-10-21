@@ -279,7 +279,7 @@ gap_mm)`, `DrillTargetNotCircle (op, instance, profile)`,
 `DrillToolWiderThanHole (op, instance, hole_mm, tool_mm)`,
 `DrillPeckDeeperThanHole (op, instance)`, `EngravePathDegenerate (op,
 instance, profile)`, `CutInsideFreedPart (op, earlier_op, instance)`,
-`ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of)`.
+`ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of, tool)`.
 All phase 1 codes stay.
 
 ### dc-gcode
@@ -358,16 +358,27 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    wall corners are reached as far as the tool allows and island corners
    are wrapped.
 3. **Rest region** (`rest_of` set): let `R` be the earlier Pocket's tool
-   radius plus its allowance. Its reachable area is
-   `offset(inset_region(region, R), +R)` (what a disc of radius `R` swept
-   along its tool-centre region covers). The rest region is
-   `region − reachable`, grown by `+r` and intersected with `region`, so
-   the small tool's wall band and corner wedges are cleared with full
-   overlap into the already-cut area. If the rest region is empty, warn
-   `RestOfClearsNothing` and emit nothing. The tool-centre region of step
-   2 is then computed from the rest region. The reference operation's
-   `allowance_mm` is included in `R` so a rough pocket with allowance 0.5
-   leaves a 0.5 mm band the rest pass removes.
+   radius and `A` its allowance, read from the project (S14: never its
+   toolpath). Its reachable area is `offset(inset_region(region, R + A),
+   +R)` (what its tool of radius `R` swept along its tool-centre region
+   covers; PureCutCNC `generateAreaRestRegionDrafts`). What it left is
+   `inset_region(region, allowance) − reachable` (this operation's own
+   allowance), less pieces thinner than twice the flatten tolerance
+   (area under `tolerance × perimeter`, the noise rule below). The
+   tool-centre region of step 2 is then cut down to the centres within
+   `r` of what is left: `tc ∩ offset(left, +r)`. The rest region it
+   clears is that grown by `r`, which lies inside `region` and overlaps
+   the already-cut area by up to the small tool's diameter, so the wall
+   band and corner wedges are cleared with no ridge at their edge. (The
+   leftover's edge against the cut area is not a wall: insetting the rest
+   region itself by `r` would leave nothing of a band narrower than the
+   tool.) If nothing is left that this tool reaches, in every region with
+   room for it, warn `RestOfClearsNothing` and emit nothing. Because the
+   reference's `allowance_mm` is in the inset, a rough pocket with
+   allowance 0.5 leaves a 0.5 mm band the rest pass removes. A chain
+   (rest of a rest) needs no special case: the second rest's reference
+   reaches exactly what its tool can, which is what the first two
+   operations cleared.
 4. **Passes.** As Profile step 5 (`passes::depths`), with `step =
    op.step_down_mm.or(tool.step_down_mm)` and S1.
 5. **Stepover** `s = diameter × step_over_fraction` (operation, else tool;
@@ -428,8 +439,10 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
     their own group at the end, stepping down at the tool's step-down.
 11. **Blocks → `sequence`** with containment pairs from `nest` depth.
 12. **Footprint check** (S9): `footprint(toolpath, r)` must lie inside
-    `region` (offset by `+EPS_MM`) and outside every island; else
-    `CamError::OffMaterial`. Stock bounds as Profile step 8.
+    `region` inset by `allowance_mm` (offset by `+EPS_MM`) and outside
+    every island grown by it; else `CamError::OffMaterial`. A rest
+    operation is checked against its own region the same way (S14).
+    Stock bounds as Profile step 8.
 
 Coverage check (acceptance 19, 22): `union(footprint per pass) ⊇
 inset_region(region, r)` within 0.05 mm, computed with i_overlay; the

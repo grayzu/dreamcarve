@@ -99,8 +99,24 @@ pub enum LibraryError {
         /// serde's description.
         message: String,
     },
-    /// The bytes are a Fusion 360 tool library, which this build cannot
-    /// read yet (`docs/specs/phase-2/design.md`, "Slices" item 21).
-    #[error("this is a Fusion 360 tool library; Fusion import lands in slice 21")]
-    FusionNotSupported,
+    /// The JSON is not a Fusion 360 tool library: the top level is not an
+    /// object with a `data` array.
+    #[error("not a Fusion 360 tool library: the top level is not an object with a `data` array")]
+    NotAFusionLibrary,
+    /// The Fusion library's `version` is not an integer of at least
+    /// [`crate::fusion::MIN_FUSION_VERSION`].
+    #[error(
+        "Fusion tool library version `{found}` is not supported: version {} or newer is required",
+        crate::fusion::MIN_FUSION_VERSION
+    )]
+    FusionVersion {
+        /// The `version` value as written.
+        found: String,
+    },
+    /// A `.tools` archive could not be unpacked, or holds no JSON document.
+    #[error("Fusion `.tools` archive cannot be read: {message}")]
+    FusionArchive {
+        /// What went wrong.
+        message: String,
+    },
 }

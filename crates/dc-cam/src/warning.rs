@@ -114,6 +114,11 @@ pub enum WarningCode {
     /// `requested_mm` (the height above the stock top as set, negative),
     /// `used_mm` (0).
     DrillRetractBelowStockTop,
+    /// A rest Pocket's tool reaches nothing the Pocket it rests on left
+    /// (`docs/specs/phase-2/design.md`, "Algorithms → Pocket", step 3), so
+    /// it emits no toolpath. Params: `op`, `rest_of` (the reference
+    /// operation), `tool` (this operation's tool name).
+    RestOfClearsNothing,
 }
 
 impl WarningCode {
@@ -140,6 +145,7 @@ impl WarningCode {
             Self::DrillToolWiderThanHole => "drill_tool_wider_than_hole",
             Self::DrillPeckDeeperThanHole => "drill_peck_deeper_than_hole",
             Self::DrillRetractBelowStockTop => "drill_retract_below_stock_top",
+            Self::RestOfClearsNothing => "rest_of_clears_nothing",
         }
     }
 }
@@ -423,6 +429,12 @@ impl fmt::Display for Warning {
                 f,
                 "retract_mm is {} mm, below the stock top; the tool retracts to the stock top instead, because it must never rapid into material",
                 self.mm("requested_mm")
+            ),
+            WarningCode::RestOfClearsNothing => write!(
+                f,
+                "operation `{}`, which this one rests on, already reaches everything tool `{}` can, so this operation cuts nothing; use a smaller tool, or remove it",
+                self.text("rest_of"),
+                self.text("tool")
             ),
             WarningCode::TabsCoverMostOfContour => {
                 let path_mm = self

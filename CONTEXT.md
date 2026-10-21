@@ -80,6 +80,21 @@ along the boundary.
 _Avoid_: Pattern, fill, clearing mode, parallel (use Raster)
 _PureCutCNC_: pocketPattern `offset`, `parallel` (with `pocketAngle`)
 
+**Pocket Allowance**:
+Material a Pocket leaves on its walls and round its islands, `allowance_mm`
+(0 or more), so a later, smaller tool can finish them. Not the Through-cut
+Allowance, which is depth below the stock.
+_Avoid_: Stock to leave, offset, finish allowance
+_PureCutCNC_: stockToLeaveRadial
+
+**Rest Machining**:
+A Pocket that names an earlier Pocket of the same shapes in `rest_of` and
+clears only what that Pocket's tool could not reach (corners and slots
+narrower than it, and its Pocket Allowance), worked out from that Pocket's
+tool and allowance, never from its toolpath.
+_Avoid_: Rest pocket, cleanup pass, finishing pass, rest milling
+_PureCutCNC_: rest regions (Pocket Finish after Pocket Rough)
+
 **Stepover**:
 The sideways distance between adjacent clearance passes, expressed as a
 percentage of tool diameter.
