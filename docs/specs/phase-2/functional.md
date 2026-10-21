@@ -572,7 +572,9 @@ recomputing the slope of every descending `G1` with XY motion.
 motion the controller performs (per that controller's documentation,
 with `G98` retract) and checks S1, S2 and S6 against that expansion, so
 a canned-cycle program is accepted only if its expansion is the Drill
-toolpath move for move.
+toolpath move for move. Rapids along one vertical line in one direction
+count as one move there: from a clearance height, `G98`'s return and the
+rapid down to `R` pass safe Z without stopping (changed in #305).
 - **S12 Arc fitting is a refinement, not a change.** A fitted run of arcs
 replaces only straight moves, and corner arcs shallower than the
 tolerance, whose vertices and shallow-arc midpoints all lie on the

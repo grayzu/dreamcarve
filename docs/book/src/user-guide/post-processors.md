@@ -522,10 +522,13 @@ moves"). On LinuxCNC, Mach3, UCCNC and generic, `check` and `export` refuse
 clearance height and the park point work on every post-processor.
 
 **Canned cycles.** A Drill whose holes are separate parts crosses between
-them at the clearance height, which a canned cycle's `G98` return cannot
-do (it returns to the height of the first hole). With a clearance height
-set, such a Drill is written as plain moves, with the warning
-`canned_cycle_expanded` (`clearance_height`).
+them at the clearance height. With canned cycles on, it rapids over the
+first hole at the clearance height before `G98`, so every cycle returns to
+the clearance height ([Drill: canned cycles](drill.md#canned-cycles)). A
+Drill that crosses between some holes at the clearance height and between
+others at safe Z (separate parts and a part with several holes) is written
+as plain moves, with the warning `canned_cycle_expanded`
+(`clearance_height`): `G98` returns every hole to one height.
 
 ## grblHAL and GRBL compared
 

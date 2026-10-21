@@ -225,9 +225,12 @@ pub enum CannedExpansion {
     /// controller does (#153), so this means a toolpath or hole records
     /// from elsewhere, or numbers rounded too far apart.
     MotionDiffers,
-    /// The project's clearance height links holes of different parts
-    /// above safe Z (#283), and a cycle's `G98` returns to the height of
-    /// its first hole: the controller's motion would not be the toolpath.
+    /// The project's clearance height links some holes above safe Z, those
+    /// of different parts (#283), and others at safe Z, those of one part,
+    /// while a series of cycles' `G98` returns every hole to one height,
+    /// the Z before its first cycle: the controller's motion would not be
+    /// the toolpath. Holes linked at one height, all at the clearance
+    /// height or all at safe Z, keep their cycles (#305).
     ClearanceHeight,
 }
 
@@ -276,7 +279,7 @@ impl std::fmt::Display for CannedExpansion {
             ),
             Self::ClearanceHeight => write!(
                 f,
-                "the holes are linked at the clearance height, which a canned cycle's G98 return does not follow"
+                "some holes are linked at the clearance height and others at safe Z, while a canned cycle's G98 returns every hole to one height"
             ),
         }
     }
@@ -778,7 +781,15 @@ fn emit_enabled(
         // the controller's motion for them is the toolpath; otherwise as
         // its moves, with a warning when cycles were asked for. Never
         // both for one operation.
-        let written = match canned_plan(&w, op, tool, toolpath, holes, safe_z_mm)? {
+        let written = match canned_plan(
+            &w,
+            op,
+            tool,
+            toolpath,
+            holes,
+            safe_z_mm,
+            heights.clearance_z_mm,
+        )? {
             CannedPlan::NotAsked => w.toolpath(op, toolpath)?,
             CannedPlan::Expand(reason) => {
                 warnings.push(ExportWarning::CannedCycleExpanded {
@@ -788,7 +799,7 @@ fn emit_enabled(
                 w.toolpath(op, toolpath)?
             }
             CannedPlan::Cycles(lines) => {
-                w.cycles(&lines, safe_z_mm)?;
+                w.cycles(&lines)?;
                 Written::default()
             }
         };
@@ -1062,13 +1073,16 @@ enum CannedPlan {
     Cycles(CycleLines),
 }
 
-/// A Drill as canned-cycle lines: rapid to the first hole at safe Z, the
-/// retract mode, one line per hole, the cancel.
+/// A Drill as canned-cycle lines: rapid to the first hole at the initial
+/// Z, the retract mode, one line per hole, the cancel.
 #[derive(Debug)]
 struct CycleLines {
-    /// The first hole's centre at safe Z, project space.
+    /// The first hole's centre at the initial Z, project space: safe Z, or
+    /// the clearance height when every link between holes is at it (#305).
+    /// `G98` returns every hole to it.
     first: Point3,
-    /// The last hole's centre at safe Z, where the cycles leave the tool.
+    /// The last hole's centre at the initial Z, where the cycles leave the
+    /// tool.
     last: Point3,
     /// `G98`.
     retract_mode: &'static str,
@@ -1123,6 +1137,13 @@ fn command_of(cycles: &CannedCycles, cycle: Cycle) -> Option<&str> {
 /// definition's re-entry gap for a peck's re-entry or chip-break retract.
 /// Anything else is written as moves, with the reason when cycles were
 /// asked for. The safety pass checks the written cycles again (S11).
+///
+/// #305: `G98` returns each hole to the Z the tool was at before the
+/// first cycle of the series, so the cycles start from the height the
+/// toolpath links its holes at: the clearance height `clearance_z_mm`
+/// when every link is at it (holes that are separate parts, or one hole),
+/// otherwise safe Z. Links at both heights fail the comparison and are
+/// written as moves (`CannedExpansion::ClearanceHeight`).
 fn canned_plan(
     w: &Writer<'_>,
     op: &Operation,
@@ -1130,6 +1151,7 @@ fn canned_plan(
     toolpath: &Toolpath,
     holes: Option<&[DrillHole]>,
     safe_z_mm: f64,
+    clearance_z_mm: Option<f64>,
 ) -> Result<CannedPlan, ExportError> {
     use CannedExpansion as Why;
     let post = w.post;
@@ -1201,19 +1223,24 @@ fn canned_plan(
             p,
         });
     }
-    let at_safe = |hole: &DrillHole| Point3::new(hole.centre.x, hole.centre.y, safe_z_mm);
+    let initial_z_mm = clearance_z_mm
+        .filter(|&clearance_mm| {
+            link_heights_mm(toolpath).all(|z_mm| (z_mm - clearance_mm).abs() <= EPS_MM)
+        })
+        .unwrap_or(safe_z_mm);
+    let at_initial = |hole: &DrillHole| Point3::new(hole.centre.x, hole.centre.y, initial_z_mm);
     let (Some(first), Some(last)) = (holes.first(), holes.last()) else {
         return expand(Why::NoHoleRecords);
     };
     let plan = CycleLines {
-        first: at_safe(first),
-        last: at_safe(last),
+        first: at_initial(first),
+        last: at_initial(last),
         retract_mode: "G98",
         cancel: cycles.cancel_command.trim().to_owned(),
         feed: w.number(plunge_mm_min / transform.mm_per_unit())?,
         holes: lines,
     };
-    if expansion_is_toolpath(w, &plan, toolpath, plunge_mm_min, gap_mm)? {
+    if expansion_is_toolpath(w, &plan, toolpath, plunge_mm_min, gap_mm, clearance_z_mm)? {
         Ok(CannedPlan::Cycles(plan))
     } else if toolpath
         .moves
@@ -1227,6 +1254,49 @@ fn canned_plan(
     }
 }
 
+/// The Z of every move of `toolpath` across the work but its first: the
+/// heights its holes are linked at, mm, project space.
+fn link_heights_mm(toolpath: &Toolpath) -> impl Iterator<Item = f64> + '_ {
+    toolpath.moves.windows(2).filter_map(|pair| match pair {
+        [from, to] if from.to.xy().distance_to(to.to.xy()) > EPS_MM => Some(to.to.z),
+        _ => None,
+    })
+}
+
+/// `steps`, from Z `start_z`, with each run of rapids that keep going the
+/// same way along the hole's vertical line joined into one: the
+/// controller does not stop between them, and the motion is the same
+/// (#305).
+fn join_rapids(start_z: f64, steps: &[HoleStep]) -> Vec<HoleStep> {
+    let mut joined: Vec<HoleStep> = Vec::with_capacity(steps.len());
+    // The Z before the last step in `joined`, and after it.
+    let (mut before, mut z) = (start_z, start_z);
+    for &step in steps {
+        // A rapid to where the tool already is moves nothing: the clearance
+        // height equal to safe Z.
+        if matches!(step, HoleStep::Rapid(to) if (to - z).abs() <= EPS_MM) {
+            continue;
+        }
+        if let (HoleStep::Rapid(to), Some(HoleStep::Rapid(last))) = (step, joined.last_mut()) {
+            let same_way = (*last - before) * (to - *last) > 0.0;
+            if same_way {
+                *last = to;
+                z = to;
+                continue;
+            }
+        }
+        match step {
+            HoleStep::Rapid(to) | HoleStep::Feed(to) => {
+                before = z;
+                z = to;
+            }
+            HoleStep::Dwell(_) => before = z,
+        }
+        joined.push(step);
+    }
+    joined
+}
+
 /// One thing the tool does at a hole, project Z, mm.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum HoleStep {
@@ -1238,15 +1308,23 @@ enum HoleStep {
 
 /// Whether the motion the controller makes for `plan`'s lines, from the
 /// numbers as written, is `toolpath`: each hole's arrival over its centre
-/// at safe Z, then its moves in Z and dwells, in the same order, each Z
-/// within one unit in the last place, a rapid inside a hole already cut
-/// within the re-entry gap `gap_mm`, every cut at the plunge rate.
+/// at the initial Z, then its moves in Z and dwells, in the same order,
+/// each Z within one unit in the last place, a rapid inside a hole
+/// already cut within the re-entry gap `gap_mm`, every cut at the plunge
+/// rate. Rapids along the hole's vertical line that keep going the same
+/// way are one rapid ([`join_rapids`], #305): with the cycles from the
+/// clearance height the controller goes straight from it to `R` and from
+/// the bottom back to it, where the toolpath stops at safe Z. The first
+/// hole is reached at safe Z below the initial Z, which the tool is at
+/// (the operation starts at the clearance height), and after the last the
+/// operation rises to the clearance height `clearance_z_mm`.
 fn expansion_is_toolpath(
     w: &Writer<'_>,
     plan: &CycleLines,
     toolpath: &Toolpath,
     plunge_mm_min: f64,
     gap_mm: Option<f64>,
+    clearance_z_mm: Option<f64>,
 ) -> Result<bool, ExportError> {
     let transform = w.transform;
     let units = transform.output_units();
@@ -1293,14 +1371,29 @@ fn expansion_is_toolpath(
     if groups.len() != plan.holes.len() {
         return Ok(false);
     }
+    // #305: after the last hole the operation rises to the clearance
+    // height, which is where the cycles return to when they start from it.
+    if let (Some(clearance_mm), Some((_, last))) = (clearance_z_mm, groups.last_mut())
+        && (clearance_mm - initial_mm).abs() <= EPS_MM
+    {
+        last.push(HoleStep::Rapid(clearance_mm));
+    }
 
     for ((arrival, actual), line) in groups.iter().zip(&plan.holes) {
         let centre = transform.to_project(Point3::new(line.x.value, line.y.value, 0.0), units);
         if centre.xy().distance_to(arrival.xy()) > tolerance_mm
-            || (arrival.z - initial_mm).abs() > tolerance_mm
+            || arrival.z > initial_mm + tolerance_mm
         {
             return Ok(false);
         }
+        // Reached below the initial Z (the first hole, at safe Z): the
+        // tool is over it at the initial Z, then goes down to there.
+        let mut from_initial = Vec::with_capacity(actual.len() + 1);
+        if arrival.z < initial_mm - tolerance_mm {
+            from_initial.push(HoleStep::Rapid(arrival.z));
+        }
+        from_initial.extend_from_slice(actual);
+        let actual = join_rapids(initial_mm, &from_initial);
         let words = CycleWords {
             cycle: line.cycle,
             z: read(&line.z)?,
@@ -1329,11 +1422,12 @@ fn expansion_is_toolpath(
                 Step::Dwell(p) => expected.push(HoleStep::Dwell(dwell_s(p))),
             }
         }
+        let expected = join_rapids(initial_mm, &expected);
         if expected.len() != actual.len() {
             return Ok(false);
         }
         let mut cut = false;
-        for (e, a) in expected.iter().zip(actual) {
+        for (e, a) in expected.iter().zip(&actual) {
             let same = match (*e, *a) {
                 (HoleStep::Rapid(e), HoleStep::Rapid(a)) => {
                     let slack = if cut { gap_mm.unwrap_or(0.0) } else { 0.0 };
@@ -2079,15 +2173,15 @@ impl<'a> Writer<'a> {
 
     /// Writes a Drill as canned cycles (`docs/specs/phase-2/design.md`,
     /// "Canned cycles", ported from `runPostProcessor`): a rapid to the
-    /// first hole at safe Z, Z first, so `G98`'s initial Z is safe Z; the
-    /// retract mode once; one line per hole with the command word (when it
+    /// first hole at the plan's initial Z (safe Z, or the clearance height,
+    /// #305), so `G98`'s initial Z is that height; the retract mode once; one line per hole with the command word (when it
     /// changes, or always unless motion is modal), `X Y`, `Z` (bottom), `R`
     /// (retract plane), `Q` (peck) or `P` (dwell), and `F` (plunge) on the
     /// first; then the cancel, which leaves no motion mode. Unlike upstream
     /// every line carries its `Z`, `R`, `Q` and `P`: controllers differ in
     /// which of them they keep, and the safety pass expands each line from
     /// its own words.
-    fn cycles(&mut self, plan: &CycleLines, safe_z_mm: f64) -> Result<(), ExportError> {
+    fn cycles(&mut self, plan: &CycleLines) -> Result<(), ExportError> {
         self.rapid(plan.first)?;
         self.line(plan.retract_mode);
         let fs = &self.post.feed_speed;
@@ -2121,14 +2215,14 @@ impl<'a> Writer<'a> {
         }
         self.line(&plan.cancel);
         // `G80` leaves no motion mode. The tool is over the last hole at
-        // the initial Z, safe Z, which the rapid above wrote.
+        // the initial Z, which the rapid above wrote.
         self.motion = None;
         self.feed = Some(plan.feed.clone());
         if let Some(last) = plan.holes.last() {
             self.axes[0] = Some(last.x.clone());
             self.axes[1] = Some(last.y.clone());
         }
-        self.position = Some(Point3::new(plan.last.x, plan.last.y, safe_z_mm));
+        self.position = Some(plan.last);
         Ok(())
     }
 
@@ -5581,6 +5675,26 @@ mod tests {
                 plain.text
             );
         }
+    }
+
+    /// #305: a clearance height equal to the Drill's safe Z (validation
+    /// allows it) links the parts at safe Z. The cycles start from it, as
+    /// without a clearance height, with no warning, and the program is the
+    /// one without the clearance height.
+    #[test]
+    fn canned_cycles_with_the_clearance_height_at_safe_z() {
+        let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        let post = canned_post(&project);
+        let without = emit_with(&project, &post, &drill_entry(&project, &op), DATE)
+            .unwrap()
+            .0
+            .text;
+        project.heights.clearance_mm = Some(op.safe_z_mm);
+        let (program, warnings) =
+            emit_with(&project, &post, &drill_entry(&project, &op), DATE).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}\n{}", program.text);
+        assert!(has_cycle_word(&program.text), "{}", program.text);
+        assert_eq!(program.text, without);
     }
 
     /// #305, acceptance 24 with a clearance height: holes that are separate

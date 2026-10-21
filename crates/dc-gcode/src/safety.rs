@@ -1267,7 +1267,11 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 ///
 /// - a rapid by one rapid that ends at its end point, or two whose first
 ///   moves in Z alone or in XY alone towards it (`emit` splits a rapid so
-///   it never travels sideways below either end);
+///   it never travels sideways below either end); in a Drill written as
+///   canned cycles, also by none, or by a rapid in XY alone over it, when
+///   a rapid in Z alone passes through its end point and the toolpath
+///   goes on the same way along that line (#305,
+///   [`match_rapid_on_the_way`]);
 /// - a straight cut by one `G1` that ends at its end point;
 /// - a dwell by a `G4` with the same seconds (within a millisecond, in
 ///   the definition's dwell units) between the motion lines around it;
@@ -1327,10 +1331,11 @@ fn check_reproduces(
     // own (the definition's `reentry_gap_mm`), not the toolpath's, so a
     // rapid in Z alone inside a hole matches within that gap. Every other
     // move matches as for plain moves.
-    let reentry_gap_mm = (matches!(span.op, Operation::Drill(_))
-        && blocks.iter().any(|b| b.synthetic && in_span(b)))
-    .then(|| CycleModel::of(post).reentry_gap_mm)
-    .flatten();
+    let canned =
+        matches!(span.op, Operation::Drill(_)) && blocks.iter().any(|b| b.synthetic && in_span(b));
+    let reentry_gap_mm = canned
+        .then(|| CycleModel::of(post).reentry_gap_mm)
+        .flatten();
     // Where the last straight cut of the toolpath ended, in XY.
     let mut last_cut: Option<Point> = None;
     let mut next_dwell = 0;
@@ -1358,10 +1363,18 @@ fn check_reproduces(
             previous.is_some_and(|p| at(p.xy())) && last_cut.is_some_and(at)
         };
         let consumed = match mv.kind {
-            MoveKind::Rapid => match_rapid(rest, mv.to, already_there).or_else(|| {
-                let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
-                match_in_hole_rapid(rest, mv.to, gap_mm)
-            }),
+            MoveKind::Rapid => match_rapid(rest, mv.to, already_there)
+                .or_else(|| {
+                    let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
+                    match_in_hole_rapid(rest, mv.to, gap_mm)
+                })
+                .or_else(|| {
+                    // #305: a cycle from the clearance height goes through
+                    // safe Z without stopping.
+                    canned
+                        .then(|| match_rapid_on_the_way(rest, mv.to, moves.get(index + 1)))
+                        .flatten()
+                }),
             MoveKind::Dwell { seconds } => {
                 // A `G4` with these seconds after the last motion matched
                 // and before the next; it moves nothing.
@@ -1562,6 +1575,59 @@ fn match_in_hole_rapid(rest: &[ReadMove<'_>], target: Point3, gap_mm: f64) -> Op
         .to_z
         .is_some_and(|z| approx_eq(z, target.z, gap_mm + tolerance));
     (z_only && at_xy && within).then_some(1)
+}
+
+/// S11 (#305): how many of `rest` a rapid to `target` takes when the
+/// controller goes through `target` without stopping there: one rapid of
+/// the controller's in Z alone, at the target's XY, passes through it on
+/// the way to a Z beyond it, and the toolpath goes on the same way along
+/// that line, by a rapid in Z alone (`next`), or the target is the
+/// toolpath's last move and the controller's rapid goes up, the retract
+/// [`check_reproduces`] accepts after the last move. Coming down, a rapid
+/// in XY alone to over the target may come first: the emitter's split of
+/// the move over the first hole, made at the clearance height. The lines
+/// taken are that one, or none; the rapid in Z stays for the next move.
+/// Only for a Drill written as canned cycles, whose `G98` returns each
+/// hole to the clearance height where the toolpath stops at safe Z.
+fn match_rapid_on_the_way(
+    rest: &[ReadMove<'_>],
+    target: Point3,
+    next: Option<&Move>,
+) -> Option<usize> {
+    let rapid = |m: &&ReadMove<'_>| m.mv.kind == MotionKind::Rapid;
+    let first = rest.first().filter(rapid)?;
+    let tolerance = first.tolerance_mm;
+    let over =
+        |p: Point| approx_eq(p.x, target.x, tolerance) && approx_eq(p.y, target.y, tolerance);
+    let xy_only = !differs(first.mv.from.z, first.mv.to.z) && first.to_xy.is_some_and(over);
+    let (taken, along) = if xy_only {
+        (1, rest.get(1).filter(rapid)?)
+    } else {
+        (0, first)
+    };
+    let (from, to) = (along.from?, along.to?);
+    if !(over(from.xy()) && over(to.xy())) {
+        return None;
+    }
+    let up = to.z > from.z;
+    let through = if up {
+        from.z + tolerance < target.z && target.z < to.z - tolerance
+    } else {
+        to.z + tolerance < target.z && target.z < from.z - tolerance
+    };
+    let goes_on = match next {
+        Some(n) => {
+            n.kind == MoveKind::Rapid
+                && over(n.to.xy())
+                && if up {
+                    n.to.z > target.z + tolerance
+                } else {
+                    n.to.z < target.z - tolerance
+                }
+        }
+        None => up && taken == 0,
+    };
+    (through && goes_on && !(xy_only && up)).then_some(taken)
 }
 
 /// How many of `rest` a straight cut to `target` takes, if they match it.
