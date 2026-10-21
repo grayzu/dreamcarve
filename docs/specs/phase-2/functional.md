@@ -248,6 +248,23 @@ stable snake_case code and named parameters, printed as
 field when it concerns one value. The codes are listed in the
 `Warnings` chapter.
 
+### Tabs
+
+26. **Tabs per outline** (#109). A Profile's `tabs` apply to each
+outline it cuts on its own, as VCarve applies tabs per vector. Holes
+(outlines nested as holes among the operation's targets) get no tabs
+unless `tabs.on_holes` is `true`: a hole's slug is waste. `init` writes
+`false`; a project from format version 8 or earlier upgrades to `true`,
+so it cuts as before. An outline whose tabs would cover more than half
+of its tool path gets the most tabs that cover at most half, and
+`tabs_cover_most_of_contour` names it with the tabs asked and cut. A
+part's outline keeps at least one tab, even one that covers more than
+half (the warning says the part may need cutting free by hand); a hole
+with `on_holes` may get none. So one operation cuts a part and its holes, holes first:
+a star with 4 tabs and its 7 mm hole, with a 6.35 mm bit, no longer
+needs a second operation. (changed in #109: one setting tabbed every
+outline, and too-short outlines kept tabs covering most of them.)
+
 ## Out of scope
 
 V-Carve and V-bit countersinking (phase 3). Helical boring of holes wider

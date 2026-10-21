@@ -13,7 +13,7 @@
 
 use crate::error::ShapeRef;
 use crate::overlap::region_holds_path;
-use crate::profile::same_contour;
+use crate::profile::{same_contour, untabbed_outlines};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
@@ -40,9 +40,9 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
         .iter()
         .map(|(op, _)| targets_of(project, op))
         .collect();
-    let freeing: Vec<bool> = generated
+    let freeing: Vec<Freed> = generated
         .iter()
-        .map(|(op, toolpath)| frees_its_targets(op, toolpath))
+        .map(|(op, toolpath)| freed_by(project, op, toolpath))
         .collect();
 
     let mut warnings = Vec::new();
@@ -52,12 +52,12 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
         };
         for (shape, target) in shapes {
             for (i, (earlier, _)) in generated.iter().enumerate().take(j) {
-                if !freeing.get(i).copied().unwrap_or(false) {
+                let Some(frees) = freeing.get(i) else {
                     continue;
-                }
+                };
                 let freed = targets.get(i).and_then(|outlines| {
-                    outlines.iter().find(|(_, o)| match o {
-                        Target::Outline(outline) => target.lies_inside(outline),
+                    outlines.iter().find(|(s, o)| match o {
+                        Target::Outline(outline) => frees.has(s) && target.lies_inside(outline),
                         Target::Path(_) => false,
                     })
                 });
@@ -76,23 +76,49 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
     warnings
 }
 
-/// True when `op`, with the toolpath generated for it, leaves whatever is
-/// inside its target outlines loose: a Profile whose final pass reaches
-/// the stock bottom (a cutting move ends at Z ≤ 0, so its depth is at
-/// least the thickness) and that leaves no tabs. Any side frees: Outside
-/// and On line free the part, Inside frees the hole's slug. Tabs hold the
-/// part through the final pass, so a tabbed Profile frees nothing.
-fn frees_its_targets(op: &Operation, toolpath: &Toolpath) -> bool {
-    let Operation::Profile(profile) = op else {
-        return false;
-    };
-    if profile.tabs.is_some() {
-        return false;
+/// The target outlines an operation leaves loose, with whatever is inside
+/// them.
+enum Freed {
+    /// None: not a Profile, or one that stops above the stock bottom.
+    Nothing,
+    /// Every outline: a Profile through the stock with no tabs.
+    All,
+    /// These outlines of a tabbed Profile through the stock: the ones its
+    /// tabs leave untabbed (#109).
+    Only(Vec<ShapeRef>),
+}
+
+impl Freed {
+    /// True when outline `shape` is left loose.
+    fn has(&self, shape: &ShapeRef) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::All => true,
+            Self::Only(shapes) => shapes.contains(shape),
+        }
     }
-    toolpath
+}
+
+/// What `op`, with the toolpath generated for it, leaves loose: a Profile
+/// whose final pass reaches the stock bottom (a cutting move ends at
+/// Z ≤ 0, so its depth is at least the thickness) frees every outline it
+/// leaves without tabs. Any side frees: Outside and On line free the part,
+/// Inside frees the hole's slug. Tabs hold an outline through the final
+/// pass, so a tabbed Profile frees only the outlines it cuts with no tab:
+/// its holes unless `on_holes`, and outlines too short for one (#109).
+fn freed_by(project: &Project, op: &Operation, toolpath: &Toolpath) -> Freed {
+    let Operation::Profile(profile) = op else {
+        return Freed::Nothing;
+    };
+    let through = toolpath
         .moves
         .iter()
-        .any(|m| !m.is_rapid() && m.to.z <= EPS_MM)
+        .any(|m| !m.is_rapid() && m.to.z <= EPS_MM);
+    match (through, &profile.tabs) {
+        (false, _) => Freed::Nothing,
+        (true, None) => Freed::All,
+        (true, Some(_)) => Freed::Only(untabbed_outlines(project, profile)),
+    }
 }
 
 /// One target as [`check`] reads it.
@@ -305,6 +331,7 @@ mod tests {
             width_mm: 6.0,
             height_mm: 2.0,
             shape: TabShape::Rect,
+            on_holes: false,
         }
     }
 
@@ -563,6 +590,81 @@ mod tests {
             with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
             "quiet: {warnings:?}"
         );
+    }
+
+    /// [`part_and_hole`] with the hole `hole_radius_mm` in radius, one
+    /// Outside Profile `o1` of the rectangle and the hole together with
+    /// [`four_tabs`] (`on_holes` as given), then an Engrave `o2` of a
+    /// 3 mm circle `i3` at the hole's centre: a cut on the hole's slug.
+    fn slug_cut_after(on_holes: bool, hole_radius_mm: f64) -> Project {
+        let mut project = part_and_hole();
+        if let Some(hole) = project.definitions.get_mut(&DefinitionId::new("d2")) {
+            hole.profiles = vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, hole_radius_mm)];
+        }
+        let dot = FeatureDefinition {
+            id: DefinitionId::new("d3"),
+            name: "Dot".into(),
+            profiles: vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, 1.5)],
+        };
+        project.definitions.insert(dot.id.clone(), dot);
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new("i3"),
+            definition: DefinitionId::new("d3"),
+            transform: Transform::translate(35.0, 25.0),
+            name: "Dot".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        let mut both = profile("o1", "i1", Side::Outside, 6.0);
+        both.targets.push(InstanceId::new("i2"));
+        both.tabs = Some(TabSpec {
+            on_holes,
+            ..four_tabs()
+        });
+        project.operations = vec![
+            Operation::Profile(both),
+            Operation::Engrave(engrave("o2", "i3", 1.0)),
+        ];
+        project
+    }
+
+    /// #109: tabs hold only the outlines they are on. A tabbed Profile
+    /// cuts its hole free when the hole gets no tabs, by default or
+    /// because none fits its tool path, so a later cut on the slug warns;
+    /// a hole that keeps its tabs is held. The tabbed rectangle is held
+    /// either way.
+    #[test]
+    fn tabbed_profile_frees_the_outlines_it_leaves_untabbed() {
+        for (on_holes, hole_radius_mm, freed) in [
+            // Holes get no tabs by default.
+            (false, 5.0, true),
+            // The 10 mm hole's 11.5 mm path has room for no tab.
+            (true, 5.0, true),
+            // Two of the four fit the 24 mm hole's 55.4 mm path.
+            (true, 12.0, false),
+        ] {
+            let warnings = check_all(&slug_cut_after(on_holes, hole_radius_mm));
+            let found: Vec<_> = with_code(&warnings, WarningCode::CutInsideFreedPart)
+                .into_iter()
+                .map(freed_of)
+                .map(|(op, earlier, shape, outline)| {
+                    (
+                        op,
+                        earlier,
+                        shape.instance.as_str(),
+                        outline.instance.as_str(),
+                    )
+                })
+                .collect();
+            let expected = if freed {
+                vec![("o2", "o1", "i3", "i2")]
+            } else {
+                vec![]
+            };
+            assert_eq!(found, expected, "on_holes {on_holes}, r {hole_radius_mm}");
+        }
     }
 
     /// Operations are never reordered (D7): the warnings come back in

@@ -2293,6 +2293,7 @@ mod tests {
                 width_mm: 6.0,
                 height_mm: 5.0,
                 shape: TabShape::Rect,
+                on_holes: false,
             }),
             ..plain.clone()
         };

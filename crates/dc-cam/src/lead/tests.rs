@@ -1010,6 +1010,7 @@ fn tabs_apply_to_contour_not_lead() {
         width_mm: 6.0,
         height_mm: 3.0,
         shape: TabShape::Rect,
+        on_holes: false,
     };
     let base = ProfileOp {
         tabs: Some(tabs),

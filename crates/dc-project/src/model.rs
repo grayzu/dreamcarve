@@ -687,6 +687,11 @@ pub struct TabSpec {
     pub height_mm: f64,
     /// Tab cross-section.
     pub shape: TabShape,
+    /// Whether holes get tabs too: the outlines nested in another of the
+    /// operation's outlines as holes. Without, a hole is cut free, since
+    /// its slug is waste (#109). `init` writes `false`; the version 9
+    /// migration writes `true`, as every outline had tabs before.
+    pub on_holes: bool,
 }
 
 /// Where tabs go along the tool-centre contour.

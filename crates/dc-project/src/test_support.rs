@@ -49,7 +49,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with four tabs. Matches the committed fixture
-/// `tests/fixtures/dcv/v8/sample.dcv`.
+/// `tests/fixtures/dcv/v9/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -100,6 +100,9 @@ pub fn sample_project() -> Project {
                 width_mm: 6.0,
                 height_mm: 2.0,
                 shape: TabShape::Rect,
+                // As every older fixture migrates (#109); the rectangle
+                // has no hole, so either value cuts the same.
+                on_holes: true,
             }),
             machining_order: MachiningOrder::FullDepthFirst,
             entry: Entry::Plunge,
