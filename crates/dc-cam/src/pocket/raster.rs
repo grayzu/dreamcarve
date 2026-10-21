@@ -38,7 +38,9 @@
 //!   tool-centre ring, at the pass Z and the feed, when that way is no
 //!   longer than a stay-down link may be (#202). Upstream stays down on a
 //!   straight link up to a diameter long there, which cuts into a curved
-//!   island side.
+//!   island side. The same holds for two line ends against the pocket
+//!   wall where it curves inward, joined along the region's outer ring
+//!   (#218).
 
 use super::rings::{Ring, RingNode, RingTree, WallRings, closest_point, inset_region, shorter_way};
 use super::{MAX_RINGS, ring_path};
@@ -153,29 +155,34 @@ pub(super) type Piece = (RasterLine, Option<Region>);
 /// One end of a piece: its index, and 0 for its start or 1 for its end.
 type End = (usize, usize);
 
-/// The island rings of one tool-centre region that a link may follow
-/// instead of lifting (#202): its holes, the tool-centre boundary round
-/// each island, where the tool touches the island's wall and does not cut
-/// into it. Following one cuts only the band the island's wall ring cuts,
-/// so they are offered only when the wall pass runs ([`Self::of`]).
+/// The rings of one tool-centre region that a link may follow instead of
+/// lifting: its holes, the tool-centre boundary round each island (#202),
+/// and its outer, the boundary along the pocket wall (#218), where the
+/// tool touches the wall or island and does not cut into it. Following
+/// one cuts only the band the wall pass's ring there cuts, so they are
+/// offered only when the wall pass runs ([`Self::of`]). Straight links
+/// win wherever they are valid, so the outer is followed only where it
+/// curves inward: along an inward arc of the wall, or round the arc of
+/// radius `r` at a reflex corner.
 #[derive(Debug, Clone, Default)]
-pub(super) struct IslandEdges {
+pub(super) struct RingEdges {
     rings: Vec<Polyline>,
     /// How far a line end may lie off a ring and still be on it, mm: the
     /// lines end on the ring's chords ([`raster_lines`] flattens it).
     tolerance_mm: f64,
 }
 
-impl IslandEdges {
-    /// The island rings of `root`, when `wall` cuts them; none without a
-    /// wall pass, where the band along an island is not the operation's
-    /// to cut. A ring a rest operation does not cut (#167) sweeps only
-    /// cleared material, so it is offered too.
+impl RingEdges {
+    /// The outer and island rings of `root`, when `wall` cuts them; none
+    /// without a wall pass, where the band along a wall or island is not
+    /// the operation's to cut. A ring a rest operation does not cut (#167)
+    /// sweeps only cleared material, so it is offered too.
     pub(super) fn of(root: &Region, wall: WallRings, tolerance_mm: f64) -> Self {
         let rings = match wall {
-            WallRings::Last | WallRings::First => {
-                root.holes().iter().map(|h| h.polyline().clone()).collect()
-            }
+            WallRings::Last | WallRings::First => std::iter::once(root.outer())
+                .chain(root.holes())
+                .map(|c| c.polyline().clone())
+                .collect(),
             WallRings::Omitted => Vec::new(),
         };
         Self {
@@ -184,12 +191,10 @@ impl IslandEdges {
         }
     }
 
-    /// The ring `p` lies on, and the point of it nearest `p`.
-    fn ring_of(&self, p: Point) -> Option<(usize, Point)> {
-        self.rings.iter().enumerate().find_map(|(index, ring)| {
-            let (q, d) = closest_point(ring, p)?;
-            (d <= self.tolerance_mm + EPS_MM).then_some((index, q))
-        })
+    /// The point of `ring` nearest `p`, when `p` lies on it.
+    fn on_ring(&self, ring: &Polyline, p: Point) -> Option<Point> {
+        let (q, d) = closest_point(ring, p)?;
+        (d <= self.tolerance_mm + EPS_MM).then_some(q)
     }
 
     /// The edge link from `p` to `q`, both on one ring: to the ring (a
@@ -198,12 +203,13 @@ impl IslandEdges {
     /// when they are not on one ring or the link is longer than
     /// `link_max_mm`, a stay-down link's limit.
     fn link(&self, p: Point, q: Point, link_max_mm: f64) -> Option<Polyline> {
-        let (ring_p, on_p) = self.ring_of(p)?;
-        let (ring_q, on_q) = self.ring_of(q)?;
-        if ring_p != ring_q {
-            return None;
-        }
-        let way = shorter_way(self.rings.get(ring_p)?, on_p, on_q)?;
+        // The first ring both lie on: where the outer and an island ring
+        // come within the tolerance of each other, a point may be on both.
+        let (ring, on_p, on_q) = self
+            .rings
+            .iter()
+            .find_map(|ring| Some((ring, self.on_ring(ring, p)?, self.on_ring(ring, q)?)))?;
+        let way = shorter_way(ring, on_p, on_q)?;
         let mut vertices = way.vertices().to_vec();
         match vertices.first_mut() {
             Some(first) if on_p.distance_to(p) <= EPS_MM => (first.x, first.y) = (p.x, p.y),
@@ -249,9 +255,11 @@ type EdgeLinks = BTreeMap<(End, End), Polyline>;
 /// more than scan order does.
 ///
 /// Where no straight link is inside the strips but both ends lie on one
-/// of `edges`' island rings, a link along that ring, no longer than
-/// `link_max_mm` either, counts as a stay-down link too (#202): round a
-/// curved island side, where every straight link enters the island. Each
+/// of `edges`' rings, a link along that ring, no longer than
+/// `link_max_mm` either, counts as a stay-down link too: round a curved
+/// island side, where every straight link enters the island (#202), or
+/// along a wall that curves inward, where every straight link leaves the
+/// region (#218). Each
 /// piece comes with the edge link that leads into it from the piece
 /// before, which [`region_paths`] joins into one path; `None` where the
 /// tool links straight or lifts.
@@ -260,7 +268,7 @@ pub(super) fn order_nearest_first(
     pieces: Vec<Piece>,
     start: Option<Point>,
     link_max_mm: f64,
-    edges: &IslandEdges,
+    edges: &RingEdges,
 ) -> Vec<(Piece, Option<Polyline>)> {
     let Some(start) = start.or_else(|| pieces.first().map(|(l, _)| l.start)) else {
         return Vec::new();
@@ -345,15 +353,15 @@ pub(super) fn order_nearest_first(
 
 /// For every end of every piece, the ends of other pieces a stay-down link
 /// reaches from it, nearest first, ties by index: a straight link at most
-/// `link_max_mm` long and inside both strips, else an edge link along an
-/// island ring of `edges` no longer than that, measured along it, and
+/// `link_max_mm` long and inside both strips, else an edge link along a
+/// ring of `edges` no longer than that, measured along it, and
 /// returned from each end to the other. A link is the same either way, so
 /// the lists are symmetric. Ends are swept in X order, so only ends within
 /// the limit in X are compared.
 fn stay_down_links(
     pieces: &[Piece],
     link_max_mm: f64,
-    edges: &IslandEdges,
+    edges: &RingEdges,
 ) -> (Vec<[Vec<End>; 2]>, EdgeLinks) {
     let ends: Vec<(Point, End)> = pieces
         .iter()
@@ -470,7 +478,8 @@ pub(super) struct RasterSettings {
 /// The raster paths of one tool-centre region `root` in cut order, each
 /// with the area it has cleared at its Z: the raster lines (open paths)
 /// nearest-first from where the tool is ([`order_nearest_first`]), lines
-/// joined by an edge link along an island's ring (#202) as one path
+/// joined by an edge link along an island's or the wall's ring (#202,
+/// #218) as one path
 /// ([`join_edge_links`]), then the wall rings for `WallRings::Last`, the
 /// rings first for
 /// `WallRings::First` (starting nearest the first scan line), or none.
@@ -523,7 +532,7 @@ pub(super) fn region_paths(
         .map(|line| (line, strip(root, &line, settings)))
         .collect();
     let link_max_mm = 2.0 * settings.radius_mm + settings.stepover_mm;
-    let edges = IslandEdges::of(root, settings.wall, settings.tolerance_mm);
+    let edges = RingEdges::of(root, settings.wall, settings.tolerance_mm);
     let pieces = order_nearest_first(pieces, *anchor, link_max_mm, &edges);
     let last_end = pieces.last().map(|((l, _), _)| l.end);
     let joined = join_edge_links(root, pieces, settings);
@@ -560,7 +569,7 @@ pub(super) fn region_paths(
 
 /// The ordered `pieces` as open paths, each with the area it has cleared:
 /// a piece on its own is its line and its strip; a run of pieces joined
-/// by edge links (#202) is one path, line, edge link, line and so on, so
+/// by edge links (#202, #218) is one path, line, edge link, line and so on, so
 /// `sequence` sees no link to check inside it, and it has cleared the
 /// pieces' strips and the band its edge links sweep (each grown by the
 /// tool radius, cut to `root`), the piece of their union holding its first
@@ -818,7 +827,7 @@ mod tests {
             .into_iter()
             .map(|l| (l, strip(&r, &l, &settings)))
             .collect();
-        let ordered = nearest_first(pieces.clone(), &IslandEdges::default());
+        let ordered = nearest_first(pieces.clone(), &RingEdges::default());
         let got: Vec<(f64, f64, f64)> = ordered
             .iter()
             .map(|(l, _)| (l.start.y, l.start.x, l.end.x))
@@ -840,12 +849,12 @@ mod tests {
                 "{got:?}"
             );
         }
-        assert_eq!(nearest_first(pieces, &IslandEdges::default()), ordered);
+        assert_eq!(nearest_first(pieces, &RingEdges::default()), ordered);
     }
 
     /// [`order_nearest_first`] from no anchor with a 4 mm link limit, the
     /// pieces only.
-    fn nearest_first(pieces: Vec<Piece>, edges: &IslandEdges) -> Vec<Piece> {
+    fn nearest_first(pieces: Vec<Piece>, edges: &RingEdges) -> Vec<Piece> {
         order_nearest_first(pieces, None, 4.0, edges)
             .into_iter()
             .map(|(piece, _)| piece)
@@ -882,11 +891,8 @@ mod tests {
     #[test]
     fn scan_order_is_kept_round_a_circle() {
         let (_, pieces) = circle_pieces();
-        assert_eq!(
-            nearest_first(pieces.clone(), &IslandEdges::default()),
-            pieces
-        );
-        let edges = IslandEdges::of(&circle_pieces().0, WallRings::Omitted, TOL);
+        assert_eq!(nearest_first(pieces.clone(), &RingEdges::default()), pieces);
+        let edges = RingEdges::of(&circle_pieces().0, WallRings::Omitted, TOL);
         assert_eq!(nearest_first(pieces.clone(), &edges), pieces);
     }
 
@@ -897,7 +903,7 @@ mod tests {
     #[test]
     fn pieces_round_a_circle_link_along_its_edge() {
         let (r, pieces) = circle_pieces();
-        let edges = IslandEdges::of(&r, WallRings::Last, TOL);
+        let edges = RingEdges::of(&r, WallRings::Last, TOL);
         let ordered = order_nearest_first(pieces.clone(), None, 4.0, &edges);
         assert_eq!(ordered.len(), pieces.len());
         let mut links = 0;
