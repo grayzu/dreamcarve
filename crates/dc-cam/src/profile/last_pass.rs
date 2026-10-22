@@ -246,11 +246,16 @@ pub(super) fn open_twins(
     })
 }
 
-/// Each of the last pass's paths `centres` with the allowance path of
-/// `found` nearest it, never one twice, in `centres`' order; `None` when
-/// the two are not one for one, or the last pass on a path would take
-/// off more than [`cuts_only_corners`] allows after the allowance path
-/// paired with it. `line` gives an allowance path's polyline.
+/// Each of the last pass's paths `centres` with an allowance path of
+/// `found`, in `centres`' order; `None` when the two are not one for one,
+/// or the last pass on a path would take off more than
+/// [`cuts_only_corners`] allows after the allowance path paired with it.
+/// `line` gives an allowance path's polyline. The pairing is greedy, each
+/// path in turn taking the nearest allowance path not yet taken, so it
+/// can pair a path with the wrong one; [`cuts_only_corners`] then finds
+/// the last pass far from its allowance path somewhere and the shape is
+/// refused, unless that allowance path runs beside it within the same
+/// bounds, when it serves as well.
 fn paired<'c, T>(
     centres: impl ExactSizeIterator<Item = &'c Polyline>,
     found: Vec<T>,
@@ -859,6 +864,10 @@ fn raised_span(
     let at = |k: usize| need.get(k).map_or(0.0, |(d, _)| *d);
     let first = run.first().map_or(0.0, |&k| at(k));
     let last = run.last().map_or(first, |&k| at(k));
+    // #311 review: a stretch an open path's end cuts short has no room for
+    // its ramp there, so it holds the top right to that end.
+    let at_start = !closed && first - step_mm <= EPS_MM;
+    let at_end = !closed && last + step_mm >= length_mm - EPS_MM;
     let (start_mm, run_mm) = if closed {
         (
             first - step_mm,
@@ -908,7 +917,11 @@ fn raised_span(
         length_mm: run_mm,
         top_z_mm: top,
         shape: TabShape::Smooth,
-        ramp_in_mm: ramp_in_mm.max(EPS_MM),
-        ramp_out_mm: ramp_out_mm.max(EPS_MM),
+        ramp_in_mm: if at_start {
+            0.0
+        } else {
+            ramp_in_mm.max(EPS_MM)
+        },
+        ramp_out_mm: if at_end { 0.0 } else { ramp_out_mm.max(EPS_MM) },
     }
 }

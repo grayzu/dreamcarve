@@ -3346,14 +3346,21 @@ bit against the part, so it takes a last pass as Inside and Outside do.
 5. **Tabs** are laid on the last pass's path (`PathEnds::Open`, from the
    end beside the first vertex) and carried onto the allowance path by
    `last_pass::twin_tabs`, its raised stretches cut short at the path's
-   ends (`PathTabs::from_spans` with `closed: false`). `twin_tabs` also
+   ends (`PathTabs::from_spans` with `closed: false`); a smooth stretch
+   an end cuts short has no ramp at that end and holds the tab's top to it
+   (changed in the #311 review: its ramp there was nearly zero long, so
+   the pass fell to its own depth inside the tab in the last fraction of
+   a millimetre). `twin_tabs` also
    samples each raised cut's reach all round it, just inside it
    (`RING_INSET_MM`): where the last pass rises onto a tab, the tab's
    foot at the far side of its kerf is a cusp thinner than the `r/12`
    lattice, which the allowance pass, `a` nearer that side, reaches up to
    `√(2ar − a²)` before the rise. This applies to outlines too, whose
    rises it lengthens by at most a lattice step.
-6. **Entries, leads, relief.** Each pass ramps along its own path
+6. **Entries, leads, relief.** A pass whose lap starts on a tab
+   descends no lower than the tab there (#337, which this relies on: a
+   reversed last pass, or an allowance pass, can start on a tab at a
+   path's end). Each pass ramps along its own path
    (`entry::along_path`); a helix stays `HelixNeedsWasteSide`. No lead
    and no relief, as without a last pass. The last pass plunges through
    the column the earlier passes cleared, as on an outline (step 4).
@@ -3375,7 +3382,8 @@ Tests: `profile::last_pass_left_offsets_earlier_passes`,
 `validate::last_pass_left_right_is_valid`,
 `safety::left_right_last_pass_passes_s9`, the G-code heightfield checks
 `side_last_pass::left_right_last_pass_keeps_the_kept_side_and_cuts_to_the_ends`
-and `side_last_pass::left_right_last_pass_keeps_the_tabs` (`dc-gcode`),
+`side_last_pass::left_right_last_pass_keeps_the_tabs` and
+`side_last_pass::left_right_last_pass_keeps_tabs_at_the_ends` (`dc-gcode`),
 and `cli::left_right_last_pass_exports_and_without_is_byte_identical`,
 whose projects without a last pass export the programs the build before
 #311 wrote. The Left and Right property projects get random last passes.

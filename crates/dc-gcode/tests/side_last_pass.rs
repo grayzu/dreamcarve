@@ -53,6 +53,24 @@ fn ell() -> Vec<Point> {
 /// open L, cut by `op` 12 mm deep in 4 mm passes with a 0.5 mm last pass
 /// allowance after `edit`.
 fn project(side: Side, direction: CutDirection, edit: impl FnOnce(&mut ProfileOp)) -> Project {
+    project_of(
+        &[(0.0, 0.0), (60.0, 0.0), (60.0, 40.0)],
+        (40.0, 40.0),
+        side,
+        direction,
+        edit,
+    )
+}
+
+/// [`project`] with its one definition the open path through `points`,
+/// placed at `at`.
+fn project_of(
+    points: &[(f64, f64)],
+    at: (f64, f64),
+    side: Side,
+    direction: CutDirection,
+    edit: impl FnOnce(&mut ProfileOp),
+) -> Project {
     let mut project = sample_project();
     project.stock = Stock {
         width_mm: 200.0,
@@ -61,15 +79,11 @@ fn project(side: Side, direction: CutDirection, edit: impl FnOnce(&mut ProfileOp
     };
     if let Some(definition) = project.definitions.values_mut().next() {
         definition.profiles = vec![Polyline::new(
-            vec![
-                Vertex::line(0.0, 0.0),
-                Vertex::line(60.0, 0.0),
-                Vertex::line(60.0, 40.0),
-            ],
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
             false,
         )];
     }
-    project.instances[0].transform = Transform::translate(40.0, 40.0);
+    project.instances[0].transform = Transform::translate(at.0, at.1);
     project.instances[0].z_top_mm = Some(STOCK_MM);
     let op = dc_project::test_support::profile_mut(&mut project);
     op.side = side;
@@ -144,12 +158,21 @@ struct Cut {
 }
 
 /// The program `project` exports, its cutting moves split into passes:
-/// each run of cuts between rapids.
-fn passes(project: &Project) -> Vec<Vec<Cut>> {
+/// each run of cuts between rapids. `None` when the generator refuses
+/// the drawing with an error that names it.
+fn passes(project: &Project) -> Option<Vec<Vec<Cut>>> {
     let Operation::Profile(op) = &project.operations[0] else {
         unreachable!("a Profile");
     };
-    let (toolpath, _) = generate_profile(project, op).unwrap_or_else(|e| panic!("{e}"));
+    let (toolpath, _) = match generate_profile(project, op) {
+        Ok(generated) => generated,
+        Err(
+            dc_cam::CamError::ShapeNarrowerThanAllowance { .. }
+            | dc_cam::CamError::AllowanceCutsIntoKeptSide { .. }
+            | dc_cam::CamError::CutsIntoKeptSide { .. },
+        ) => return None,
+        Err(e) => panic!("{e}"),
+    };
     let (program, _) = emit(
         project,
         &[(
@@ -221,11 +244,11 @@ fn passes(project: &Project) -> Vec<Vec<Cut>> {
     if !run.is_empty() {
         out.push(run);
     }
-    out
+    Some(out)
 }
 
-/// A heightfield over the L's neighbourhood: the lowest Z cut over each
-/// lattice point, the stock top where nothing is.
+/// A heightfield over an open path's neighbourhood: the lowest Z cut over
+/// each lattice point, the stock top where nothing is.
 struct Heights {
     origin: Point,
     nx: usize,
@@ -234,11 +257,24 @@ struct Heights {
 }
 
 impl Heights {
-    fn new() -> Self {
+    /// Over the points within the cuts' reach of `line`.
+    fn new(line: &[Point]) -> Self {
         let margin = 2.0 * RADIUS_MM + ALLOWANCE_MM + 1.0;
-        let origin = Point::new(40.0 - margin, 40.0 - margin);
-        let nx = ((60.0 + 2.0 * margin) / LATTICE_MM).ceil() as usize + 1;
-        let ny = ((40.0 + 2.0 * margin) / LATTICE_MM).ceil() as usize + 1;
+        let (lo, hi) = line.iter().fold(
+            (
+                Point::new(f64::MAX, f64::MAX),
+                Point::new(f64::MIN, f64::MIN),
+            ),
+            |(lo, hi), p| {
+                (
+                    Point::new(lo.x.min(p.x), lo.y.min(p.y)),
+                    Point::new(hi.x.max(p.x), hi.y.max(p.y)),
+                )
+            },
+        );
+        let origin = Point::new(lo.x - margin, lo.y - margin);
+        let nx = ((hi.x - lo.x + 2.0 * margin) / LATTICE_MM).ceil() as usize + 1;
+        let ny = ((hi.y - lo.y + 2.0 * margin) / LATTICE_MM).ceil() as usize + 1;
         Self {
             origin,
             nx,
@@ -292,6 +328,8 @@ impl Heights {
 /// What one program is checked for.
 struct Expect {
     case: String,
+    /// The open path, in project space.
+    line: Vec<Point>,
     /// The side the cut is on: +1 Left, −1 Right.
     sign: f64,
     /// The cut has tabs, so the passes do not all reach the floor.
@@ -303,15 +341,32 @@ struct Expect {
 }
 
 /// The checks of the issue's safety tests on one program (see the test
-/// docs), on the emitted G-code of `project`.
-fn check(project: &Project, expect: &Expect) {
+/// docs), on the emitted G-code of `project`; false when the generator
+/// refuses it.
+fn check(project: &Project, expect: &Expect) -> bool {
     let case = &expect.case;
-    let line = ell();
-    let length_mm = 100.0;
-    let corner_mm = 60.0;
+    let line = &expect.line;
+    let lengths: Vec<f64> = line.windows(2).map(|w| w[0].distance_to(w[1])).collect();
+    let length_mm: f64 = lengths.iter().sum();
+    // Distances along the path to its inner vertices.
+    let corners_mm: Vec<f64> = lengths
+        .iter()
+        .scan(0.0, |walked, l| {
+            *walked += l;
+            Some(*walked)
+        })
+        .take(lengths.len() - 1)
+        .collect();
+    let unit = |a: Point, b: Point| (b - a) * (1.0 / a.distance_to(b));
+    let (first_dir, last_dir) = (
+        unit(line[0], line[1]),
+        unit(line[line.len() - 2], line[line.len() - 1]),
+    );
     let tool = &project.tools[0];
     let (feed_mm_min, plunge_mm_min) = (tool.feed_mm_min.unwrap(), tool.plunge_mm_min.unwrap());
-    let passes = passes(project);
+    let Some(passes) = passes(project) else {
+        return false;
+    };
     assert_eq!(passes.len(), expect.passes, "{case}: one run per pass");
     let last_index = passes.len() - 1;
     for (k, pass) in passes.iter().enumerate() {
@@ -340,7 +395,7 @@ fn check(project: &Project, expect: &Expect) {
                 cut.feed
             );
             for p in &cut.samples {
-                let at = place(&line, p.xy());
+                let at = place(line, p.xy());
                 assert!(
                     (at.gap_mm - away_mm).abs() <= SLACK_MM,
                     "{case}: pass {k} cuts {} mm from the L at {p:?}, not {away_mm}",
@@ -354,13 +409,13 @@ fn check(project: &Project, expect: &Expect) {
                 // never past them.
                 if at.along_mm <= 1e-9 {
                     assert!(
-                        (p.x - line[0].x).abs() <= SLACK_MM,
+                        (p.xy() - line[0]).dot(first_dir).abs() <= SLACK_MM,
                         "{case}: past the start {p:?}"
                     );
                 }
                 if at.along_mm >= length_mm - 1e-9 {
                     assert!(
-                        (p.y - line[2].y).abs() <= SLACK_MM,
+                        (p.xy() - line[line.len() - 1]).dot(last_dir).abs() <= SLACK_MM,
                         "{case}: past the end {p:?}"
                     );
                 }
@@ -377,17 +432,26 @@ fn check(project: &Project, expect: &Expect) {
 
     let (earlier, last) = passes.split_at(last_index);
     let earlier: Vec<Cut> = earlier.iter().flatten().map(clone_cut).collect();
-    let mut before = Heights::new();
+    // The last pass's straight plunges (Z falls, XY stays) apart from the
+    // rest of it: what the rest leaves standing over a tab is the tab, and
+    // a plunge must not go below it either (#337: a reversed last pass
+    // that starts on a tab).
+    let plunge = |c: &Cut| c.to.z < c.from.z && c.from.xy().distance_to(c.to.xy()) <= 1e-9;
+    let (plunges, lap): (Vec<Cut>, Vec<Cut>) = last[0].iter().map(clone_cut).partition(plunge);
+    let mut before = Heights::new(line);
     before.sweep(&earlier, RADIUS_MM);
-    let mut held = Heights::new();
+    let mut held = Heights::new(line);
     held.sweep(&earlier, RADIUS_MM - 0.03);
-    let mut final_pass = Heights::new();
+    held.sweep(&plunges, RADIUS_MM - 0.03);
+    let mut final_lap = Heights::new(line);
+    final_lap.sweep(&lap, RADIUS_MM);
+    let mut final_pass = Heights::new(line);
     final_pass.sweep(&last[0], RADIUS_MM);
     let (mut skin, mut ends, mut standing) = (0, 0, 0);
     for j in 0..before.ny {
         for i in 0..before.nx {
             let q = before.point(i, j);
-            let at = place(&line, q);
+            let at = place(line, q);
             let s = at.signed_mm * expect.sign;
             let (b, l) = (before.at(i, j), final_pass.at(i, j));
             // No pass cuts the kept side, past the ends included.
@@ -399,14 +463,16 @@ fn check(project: &Project, expect: &Expect) {
                 );
                 continue;
             }
-            // No tab material is lost: where the last pass leaves stock
-            // standing above its floor, no earlier pass cuts lower.
-            if l < STOCK_MM && l > 0.01 {
+            // No tab material is lost: where the last pass's lap leaves
+            // stock standing above its floor, no earlier pass, and no
+            // plunge of the last pass, cuts lower.
+            let tab = final_lap.at(i, j);
+            if tab < STOCK_MM && tab > 0.01 {
                 standing += 1;
                 assert!(
-                    held.at(i, j) >= l - 0.01,
-                    "{case}: an earlier pass cuts {} into a tab at {q:?}",
-                    l - held.at(i, j)
+                    held.at(i, j) >= tab - 0.01,
+                    "{case}: an earlier pass or a plunge cuts {} into a tab at {q:?}",
+                    tab - held.at(i, j)
                 );
             }
             // The skin, along the L away from its corner, where its
@@ -414,7 +480,9 @@ fn check(project: &Project, expect: &Expect) {
             // passes leave the allowance standing and clear the rest of
             // their kerf, and the last pass takes it off.
             let inside = at.along_mm > 0.0 && at.along_mm < length_mm;
-            let off_corner = (at.along_mm - corner_mm).abs() > 2.0 * RADIUS_MM + ALLOWANCE_MM + 1.0;
+            let off_corner = corners_mm
+                .iter()
+                .all(|c| (at.along_mm - c).abs() > 2.0 * RADIUS_MM + ALLOWANCE_MM + 1.0);
             if expect.tabbed || !inside || !off_corner {
                 continue;
             }
@@ -449,6 +517,7 @@ fn check(project: &Project, expect: &Expect) {
             "{case}: {skin} skin points, {ends} at the ends"
         );
     }
+    true
 }
 
 fn clone_cut(c: &Cut) -> Cut {
@@ -504,16 +573,17 @@ fn left_right_last_pass_keeps_the_kept_side_and_cuts_to_the_ends() {
                 reverse,
             });
         });
-        check(
+        assert!(check(
             &project,
             &Expect {
                 case,
+                line: ell(),
                 sign: if side == Side::Left { 1.0 } else { -1.0 },
                 tabbed: false,
                 rough_floor_mm: if thickness_mm.is_some() { 1.0 } else { 4.0 },
                 passes: if thickness_mm.is_some() { 4 } else { 3 },
             },
-        );
+        ));
     }
 }
 
@@ -560,16 +630,122 @@ fn left_right_last_pass_keeps_the_tabs() {
                 project = dc_cam::placed_tabs::place_requests(&project).unwrap().0;
                 assert_eq!(project.tabs.len(), 3, "{case}");
             }
-            check(
+            assert!(check(
                 &project,
                 &Expect {
                     case,
+                    line: ell(),
                     sign: if side == Side::Left { 1.0 } else { -1.0 },
                     tabbed: true,
                     rough_floor_mm: 4.0,
                     passes: 3,
                 },
-            );
+            ));
         }
     }
+}
+
+/// The length of the last pass's path beside the open path through
+/// `points`, placed at `at`, on `side`: the length its tabs are measured
+/// along.
+fn last_path_length_mm(points: &[(f64, f64)], at: (f64, f64), side: Side) -> f64 {
+    let line = Polyline::new(
+        points
+            .iter()
+            .map(|&(x, y)| Vertex::line(x + at.0, y + at.1))
+            .collect(),
+        false,
+    );
+    let left_mm = if side == Side::Left {
+        RADIUS_MM
+    } else {
+        -RADIUS_MM
+    };
+    dc_geometry::offset_open(&line, left_mm)
+        .iter()
+        .map(Polyline::length_mm)
+        .sum()
+}
+
+/// #311 review: tabs at an open path's ends. The review's two repros and
+/// their variants: a 60 mm line at (60, 60) and a zigzag through (0, 0),
+/// (5, 15), (10, 0), (15, 15), (20, 0), Left and Right, climb, with and
+/// without `reverse` and `thickness_mm: 1`, rect and smooth 8 × 6 mm tabs
+/// requested and placed, 12 mm deep in 4 mm passes at 0.5 mm. On the line
+/// the tabs are 3 mm from each end of the last pass's path (the repro put
+/// one 57 mm along); on the zigzag three are counted along it. Either way
+/// a raised stretch reaches an end. On the emitted G-code no earlier pass,
+/// and no plunge of the last pass, goes below what the last pass's lap
+/// leaves standing at a tab, and the other checks of
+/// [`left_right_last_pass_keeps_the_kept_side_and_cuts_to_the_ends`] hold.
+/// The generator cuts every case.
+#[test]
+fn left_right_last_pass_keeps_tabs_at_the_ends() {
+    let line: &[(f64, f64)] = &[(0.0, 0.0), (60.0, 0.0)];
+    let zigzag: &[(f64, f64)] = &[
+        (0.0, 0.0),
+        (5.0, 15.0),
+        (10.0, 0.0),
+        (15.0, 15.0),
+        (20.0, 0.0),
+    ];
+    let at = (60.0, 60.0);
+    let (mut cut, mut cases) = (0, 0);
+    for (name, points, count) in [("line", line, false), ("zigzag", zigzag, true)] {
+        for side in [Side::Left, Side::Right] {
+            let placement = if count {
+                TabPlacement::Count { count: 3 }
+            } else {
+                let length_mm = last_path_length_mm(points, at, side);
+                TabPlacement::AtDistances {
+                    distances_mm: vec![3.0, length_mm - 3.0],
+                }
+            };
+            for reverse in [false, true] {
+                for thickness_mm in [None, Some(1.0)] {
+                    for shape in [TabShape::Rect, TabShape::Smooth] {
+                        for placed in [false, true] {
+                            let case = format!(
+                                "{name} {side:?} reverse {reverse} {thickness_mm:?} {shape:?} placed {placed}"
+                            );
+                            let mut project =
+                                project_of(points, at, side, CutDirection::Climb, |op| {
+                                    op.tabs = Some(TabSpec {
+                                        placement: placement.clone(),
+                                        width_mm: 8.0,
+                                        height_mm: 6.0,
+                                        shape,
+                                        on_holes: false,
+                                        avoid_corners: false,
+                                    });
+                                    op.last_pass = Some(LastPass {
+                                        allowance_mm: ALLOWANCE_MM,
+                                        thickness_mm,
+                                        reverse,
+                                    });
+                                });
+                            if placed {
+                                project = dc_cam::placed_tabs::place_requests(&project).unwrap().0;
+                            }
+                            cases += 1;
+                            let line: Vec<Point> = points
+                                .iter()
+                                .map(|&(x, y)| Point::new(x + at.0, y + at.1))
+                                .collect();
+                            let expect = Expect {
+                                case,
+                                line,
+                                sign: if side == Side::Left { 1.0 } else { -1.0 },
+                                tabbed: true,
+                                rough_floor_mm: if thickness_mm.is_some() { 1.0 } else { 4.0 },
+                                passes: if thickness_mm.is_some() { 4 } else { 3 },
+                            };
+                            cut += usize::from(check(&project, &expect));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cut, cases, "every case is cut");
 }

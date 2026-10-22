@@ -622,7 +622,8 @@ pass. Every pass runs from X 20 to X 80.
 - **Ramps, tabs and leads.** Each pass ramps along its own path. Tabs are
   laid on the last pass's path, measured from the end beside the first
   vertex as always, and each earlier pass rises over every point where
-  its cutter could reach them, as on an outline. There is still no lead
+  its cutter could reach them, as on an outline; a tab at an end of the
+  path is held at its height right to that end. There is still no lead
   and no corner relief.
 - **Corners.** Inside a turn the last pass takes the wedge between the
   earlier passes' two arms, as in a sharp corner of an outline: a 60° V
