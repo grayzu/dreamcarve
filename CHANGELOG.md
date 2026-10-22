@@ -376,6 +376,12 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
 
 ### Fixed
 
+- The post-processors chapter no longer says that on LinuxCNC a `G53` lift
+  outside the soft limits stops the program before the machine moves.
+  LinuxCNC refuses the lift when it reads ahead to it, so the job can stop
+  part-way, with the bit in the stock. The chapter now says so, and names
+  the "Program exceeds machine limits" warning AXIS shows when you press
+  Run, which catches it before anything moves ([#336]).
 - A Left or Right Profile of an open path whose last (or first) segment is
   too short for the bit on the inside of the turn before it no longer cuts
   past the end. The cut beside the segment before it ran on past the line
@@ -545,3 +551,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#321]: https://github.com/grayzu/dreamcarve/issues/321
 [#322]: https://github.com/grayzu/dreamcarve/issues/322
 [#342]: https://github.com/grayzu/dreamcarve/issues/342
+[#336]: https://github.com/grayzu/dreamcarve/issues/336

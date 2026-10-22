@@ -340,6 +340,26 @@ setting, since validation refuses every value inside it: that fails safe.
 Validation and S16 keep the rule of grblHAL and GRBL, below 0 as written,
 with no rule of their own for LinuxCNC.
 
+Before the lift is not before the machine moves (#336). Task interprets
+the program ahead of motion: `readahead_reading` reads on while its queue
+holds at most `[TASK] INTERP_MAX_LEN` commands (`src/emc/task/emctaskmain.cc`
+499-504; default 1000, `src/emc/nml_intf/emcglb.c` 35 and `emccfg.h` 37),
+and motion checks a line against the limits when task sends it, not when
+the machine reaches it. So the run stops wherever motion has got to when
+task reaches the lift. `tools/linuxcnc-sim` (#328) saw this on LinuxCNC
+2.9.4: a lift on line 530, with Z travel ending at machine −20 mm, was
+refused while motion was on line 119, mid-cut. The chapter says so, and
+names the check AXIS makes before a run: `task_run` calls `run_warn`
+(`src/emc/usr_intf/axis/scripts/axis.py` 2350-2356, 1875-1893), which
+compares the preview's extents with the soft limits and offers Re-Check
+(reload the file), Run Anyway or Cancel under "Program exceeds machine
+limits". The extents are in machine coordinates: the preview adds the
+`G92` and G5x offsets back to each point (`lib/python/rs274/interpret.py`
+28-48), and the tool length offset (`src/emc/rs274ngc/gcodemodule.cc`
+876-900, the third and fourth lists, which `glcanon.py` 220 names
+`*_extents_notool`), so a `G53 G0 Z-5` counts as machine Z −5, with the
+offsets the preview had when it loaded the file.
+
 The modal state at a LinuxCNC lift. The header sets `G90`, `G40` and
 `G80`, and every pause sets them again (#55), so none of `G53`'s errors
 applies: not incremental (`interp_check.cc` 105-108), not with cutter
