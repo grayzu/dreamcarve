@@ -102,6 +102,8 @@ pub struct PlacedTab {
     pub width_mm: f64,           // along the outline; > 0
     pub height_mm: f64,          // tab top above the stock bottom; > 0
     pub shape: TabShape,         // "rect" | "smooth"
+    pub holds_slug: Option<bool>, // #302, format 15: meant to hold its hole's slug;
+                                 //   null from the v14 → v15 migration
 }
 
 pub struct Tool {
@@ -1259,18 +1261,42 @@ request is reduced (#109's rules). A placed tab on an outline the
 Profile cuts as a hole (`Role::Hole`) is cut too, because the user
 placed it, and warns `TabOnHole (op, tab, shape)`: the slug is usually
 waste and holding it is work by hand. Generation does not warn for a tab
-whose point lies on this Profile's tool path round the hole (within
-`EPS_MM`). Only `place` with `on_holes`, from a request or `--count
---on-holes`, puts a tab there, so such a tab was asked for: a version 8
-file's migrated `on_holes: true` request among them. `placed_tabs::on_holes`
+that holds the slug: one whose `holds_slug` is `true`. `place` with
+`on_holes` (a request, the migrated `on_holes: true` request of a version
+8 file among them, or `--count --on-holes`) and `place_on_outlines` with
+`on_holes` (`--at --on-holes`) write `true` on each tab they put on a
+hole, since the user asked for it, and `false` on every other tab they
+place. A tab whose `holds_slug` is `None`, as the version 15 migration
+leaves every format 14 tab, keeps #300's rule: it holds the slug when its
+point lies on this Profile's tool path round the hole (within `EPS_MM`),
+where only `place` with `on_holes` put a tab. `placed_tabs::on_holes`
 lists every hole tab a Profile crosses, and `tabs place` and `tabs clear`
-warn `TabOnHole` once for each tab they place on a hole. A tab on the
-hole's outline (`--at --on-holes`, or a hand edit) or left off the path by
-a change of bit or side still warns on every export. (changed in #300: every
-hole tab warned on every `check` and `export`, and a user who kept the
-tabs a migrated request asked for could not silence it. Marking a tab as
-meant to hold its slug needs a field, so a format version; #283 holds
-the next one; #302 adds it after.)
+warn `TabOnHole` once for each tab they place on a hole. A hole tab
+marked `false` (a hand edit) warns on every export, wherever it sits; one
+marked `true` warns on none, on the hole's outline or after a change of
+bit or side. The flag changes no cut, and a last pass's allowance path
+carries no warning of its own. (changed in #300: every hole tab warned on
+every `check` and `export`, and a user who kept the tabs a migrated
+request asked for could not silence it. Changed again in #302: #300 told
+a tab placed for the cut by its point alone, so a tab placed with `--at
+--on-holes`, or left off the path by a change of bit or side, warned on
+every export.)
+
+**Migration v14 → v15** (`migrate::v14_to_v15`, #302): `holds_slug:
+null` at the end of every placed tab, and nothing else. Whether a format
+14 hole tab was placed for the cut shows only in where it sits against
+that Profile's tool path, which only `dc-cam` builds, and a migration
+step rewrites JSON only; `null` keeps #300's rule for it, so every format
+14 file warns and cuts as it did. The migration fails if a tab already
+has the key. Byte identity and the warnings are checked on a corpus of
+format 14 files with placed tabs, saved by the build before #302:
+`crates/dreamcarve/tests/fixtures/holds-slug-migration/`, the 16 tabbed
+projects of the #285 corpus with their requests placed and three squares
+with a hole (`--at --on-holes`, tabs placed for the cut then the bit
+changed, and `--count --on-holes` off corners with a last pass and a start
+point); its programs and the warnings of `export` and `check` are
+committed under `tests/expected/holds-slug-migration/`, beside the #284
+corpus's programs.
 
 **Not crossed.** `placed_tabs::check(project, generated)` gives one
 `TabNotCrossed (tab, shape)` for each tab no enabled, generated Profile
@@ -1306,7 +1332,8 @@ its first vertex as drawn, whichever end the cut starts at.
 tab at each distance along each outline the Profile cuts, measured in
 definition space from the outline's first vertex as drawn; a closed
 outline takes the distance modulo its length, an open one clamps it to
-its ends. Holes are skipped unless `on_holes`. The point stored is the
+its ends. Holes are skipped unless `on_holes`, and a tab put on one is
+`holds_slug: true` (#302). The point stored is the
 outline's point there. These tabs are cut as placed; placing them warns
 `TabsOverlap` and `TabsCoverMostOfContour` as generation would.
 
@@ -2389,11 +2416,16 @@ following the chapters, which each carry a complete JSON block to paste.
   With or without `--replace`, each new tab an enabled Profile cuts as a
   hole warns `tab_on_hole` once, on stderr (#300); a tab `--replace`
   removes and places again takes a new id, so it is new and warns again.
+  With `--on-holes` (`--count` or `--at`) each tab placed on a hole is
+  saved with `holds_slug: true`, and every other tab placed with `false`
+  (#302).
 - `tabs list <dcv>`: a table `ID INSTANCE PROFILE AT_MM OFF_MM X_MM Y_MM
-  WIDTH_MM HEIGHT_MM SHAPE CUT_BY`, `AT_MM` the distance of the tab's
+  WIDTH_MM HEIGHT_MM SHAPE HOLDS_SLUG CUT_BY`, `AT_MM` the distance of the tab's
   foot along its outline from the first vertex as drawn, `OFF_MM` how far
   its point is from the foot in project space (`off_outline_mm`; changed
-  in #300: the distance was not shown), `CUT_BY` the
+  in #300: the distance was not shown), `HOLDS_SLUG` the tab's
+  `holds_slug` as `yes`, `no` or `-` for `None` (changed in #302: not
+  shown), `CUT_BY` the
   enabled Profiles that cross it (`-` for none). Requests are shown as
   the tabs they place, with a note line; nothing is saved.
 - `tabs clear <dcv>` removes every tab, `tabs clear <dcv> <op>` the
@@ -2490,6 +2522,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::version_9_tab_settings_export_byte_identical_programs` (the tabs-migration corpus, as loaded and after `tabs place`), `cli::init_asks_for_four_tabs_that_tabs_place_writes`, `cli::tabs_place_list_and_clear`, `cli::tabs_place_at_puts_tabs_along_the_outline`, `cli::tabs_place_refuses_what_it_cannot_place`, `cli::check_warns_tab_not_crossed`.
 - `placed_tabs::replace_swaps_only_the_tabs_the_profile_crosses`, `cli::tabs_place_replace_swaps_the_operations_tabs`, `cli::tabs_place_without_replace_notes_existing_tabs` (#293).
 - `placed_tabs::tab_far_from_its_outline_warns`, `placed_tabs::hole_tabs_placed_for_the_cut_do_not_warn`, `cli::tabs_list_shows_how_far_each_tab_is_off_its_outline`, `cli::placed_v8_hole_tabs_export_without_tab_on_hole`, `cli::tabs_place_replace_onto_a_hole_warns_once` (#300).
+- `migrate::v14_placed_tabs_migrate_with_holds_slug_unset`, `migrate::v14_with_holds_slug_already_present_fails`, `migrate::v14_with_holds_slug_says_where`, `migrate::holds_slug_round_trips`, `migrate::invalid_holds_slug_says_where`, `placed_tabs::hand_placed_hole_tab_still_warns`, `placed_tabs::v14_hole_tabs_on_the_path_hold_their_slugs`, `placed_tabs::place_at_distances_on_holes_marks_the_hole_tabs`, `placed_tabs::hole_tabs_hold_their_slugs_off_corners_with_a_last_pass`, `cli::tabs_place_at_on_holes_exports_without_tab_on_hole`, `cli::tabs_place_count_on_holes_holds_slugs`, `cli::tabs_list_shows_whether_each_tab_holds_its_slug`, `cli::hand_edited_holds_slug_is_refused_with_its_place`, `cli::version_14_projects_export_byte_identical_programs_and_warnings` (#302; the issue's `migrate::v12_hole_tabs_on_the_path_hold_their_slugs` became the `null` migration and `placed_tabs::v14_hole_tabs_on_the_path_hold_their_slugs`, since a migration step cannot see tool paths).
 
 **dc-cam — pocket**
 - `pocket::offset_rings_are_concentric_and_spaced_by_stepover` — 100×50, 6.35 mm, 40 %: ring gaps 2.54 ± 0.01.
@@ -2698,6 +2731,7 @@ updated in the same PR. The other six change no persisted field.
 | A7 Separate heights | #283 | `Project::heights`; definition field `work_coordinates.machine_command` | 12 | #105 (v11), A3 |
 | A8 Profile last pass | #284 | `ProfileOp::last_pass` | 13 | A7 |
 | A9 Tab corners, start point | #285 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
+| (follow-up) Hole tabs hold their slugs | #302 | `PlacedTab::holds_slug` | 15 | A9 |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only

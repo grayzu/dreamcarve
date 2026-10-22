@@ -204,7 +204,10 @@ _Avoid_: Bridge, holding tab, clamp (a clamp is a workholding obstacle)
 **Placed Tab**:
 A tab as the project holds it: on one outline of one feature instance, at a
 point in its definition's space, with its own width, height and shape. Every
-enabled Profile that cuts that outline rises over it (ADR-0005).
+enabled Profile that cuts that outline rises over it (ADR-0005). A placed
+tab on a hole that the user asked for (`--on-holes`, a request's
+`on_holes`) **holds its slug**, the waste the hole would free, and records
+it in `holds_slug`, so `tab_on_hole` is not repeated for it (#302).
 _Avoid_: Tab footprint, tab rectangle (PureCutCNC's world-space form)
 _PureCutCNC_: Tab
 

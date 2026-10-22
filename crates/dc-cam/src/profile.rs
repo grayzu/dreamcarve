@@ -185,8 +185,10 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// ADR-0005) is cut round: every pass below the tab's top rises over its
 /// span (`width + diameter` along the tool-centre contour, centred on the
 /// contour's point nearest the tab), and a placed tab on a hole warns
-/// [`Warning::TabOnHole`], unless it sits on this Profile's contour round
-/// the hole, where only placing tabs asked for on holes puts one (#300).
+/// [`Warning::TabOnHole`], unless it holds the slug: its `holds_slug`
+/// says so (#302), or, unset as a format 14 file leaves it, it sits on
+/// this Profile's contour round the hole, where only placing tabs asked
+/// for on holes puts one (#300).
 /// A tab request (`op.tabs`) is placed first, as
 /// `dreamcarve tabs place` places it (#109): per contour, none on a hole
 /// unless `on_holes`, and on a contour whose spans would cover more than
@@ -438,8 +440,8 @@ pub fn generate_profile(
         let range = cut_range_warnings(&op.id, &tops_z_mm, &pass_z, thickness_mm);
         warnings.splice(range_at..range_at, range);
     }
-    // A tab placed on the hole for this cut holds the slug because the
-    // user asked: `tabs place` warned when it placed it (#300).
+    // A hole tab that holds its slug does because the user asked:
+    // `tabs place` warned when it placed it (#300, #302).
     for (tab, shape, _) in on_holes.into_iter().filter(|(_, _, asked)| !asked) {
         warnings.push(Warning::TabOnHole {
             op: op.id.clone(),
@@ -1118,8 +1120,10 @@ pub(crate) struct TabPlan {
     /// warnings.
     pub tops_z_mm: Vec<f64>,
     /// The placed tabs cut on a path round a hole, with the hole, and
-    /// whether the tab sits on that path: where placing a request or
-    /// `--count` that asked for tabs on holes puts it (#300).
+    /// whether the tab holds the slug, so does not warn: its
+    /// `holds_slug` (#302), or, unset, whether it sits on that path, where
+    /// placing a request or `--count` that asked for tabs on holes puts it
+    /// (#300).
     pub on_holes: Vec<(TabId, ShapeRef, bool)>,
     /// Every placed tab the operation crosses, in project order.
     pub crossed: Vec<TabId>,
@@ -1253,9 +1257,11 @@ fn plan_tabs(
         }
         crossed.push(tab.id.clone());
         if holes.get(j).copied().unwrap_or(false) {
-            // Only `place` with `on_holes` puts a tab on this path round
-            // a hole, so a tab still on it was asked for (#300).
-            on_holes.push((tab.id.clone(), shape.clone(), near.gap_mm <= EPS_MM));
+            // #302: the tab says whether it holds the slug. A format 14
+            // tab does not; only `place` with `on_holes` put one on this
+            // path round a hole, so one still on it was asked for (#300).
+            let holds_slug = tab.holds_slug.unwrap_or(near.gap_mm <= EPS_MM);
+            on_holes.push((tab.id.clone(), shape.clone(), holds_slug));
         }
     }
 
@@ -5471,6 +5477,7 @@ mod tests {
                     width_mm: 8.0,
                     height_mm: TOP_MM,
                     shape,
+                    holds_slug: Some(false),
                 }];
                 let placed_op = ProfileOp {
                     tabs: None,

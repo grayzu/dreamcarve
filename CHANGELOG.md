@@ -213,6 +213,16 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   `avoid_corners: true` and `start: "auto"`; upgraded projects get
   `false` and `"auto"`, and cut exactly as before. Older DreamCarve
   versions cannot read version 14 files.
+- **Hole tabs that hold their slugs; project format version 15.** Each placed
+  tab records in `holds_slug` whether it is meant to hold the slug of the hole
+  it is on ([#302]). `tabs place --on-holes`, with `--count` or `--at`, and a
+  request with `on_holes` write `true` for the tabs they put on holes, and
+  `check` and `export` no longer warn `tab_on_hole` for those, even when they
+  sit on the hole's outline or the Profile's bit or side has changed; any
+  other tab on a hole still warns on every run. `tabs list` shows the flag in
+  a new `HOLDS_SLUG` column. Upgraded projects get `null`, which warns as
+  before, and cut exactly as before. The flag changes no cut. Older
+  DreamCarve versions cannot read version 15 files.
 - **Post-processor end-to-end plan and motion check.** `docs/testing/post-processor-e2e.md`
   says, for LinuxCNC, Mach3, UCCNC and generic, what is checked automatically,
   what cannot be and why, and the manual and air-cut procedures for the rest.
@@ -518,6 +528,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#337]: https://github.com/grayzu/dreamcarve/issues/337
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
+[#302]: https://github.com/grayzu/dreamcarve/issues/302
 [#306]: https://github.com/grayzu/dreamcarve/issues/306
 [#308]: https://github.com/grayzu/dreamcarve/issues/308
 [#299]: https://github.com/grayzu/dreamcarve/issues/299
