@@ -130,7 +130,7 @@ fn single_region(contour: Contour) -> Option<Region> {
 /// at step-over `2r`, where the two edges meet along a straight wall, no
 /// sliver is left between them; the pieces' rings still sweep the
 /// tolerance-wide strips this leaves out. Pieces thinner than twice the
-/// tolerance are noise ([`is_noise`]). Empty when nothing is
+/// tolerance are noise (`is_noise`). Empty when nothing is
 /// left; at step-over `r` or less nothing ever is.
 ///
 /// Upstream (`appendResidualCoreGuides`) adds one ring inset by the
@@ -255,11 +255,11 @@ impl RingTree {
     /// `radius_mm`, or `None` when it would have more than `max_nodes`
     /// nodes. Each node's children are its [`inset_region`] by the
     /// step-over, then its [`residual_regions`] as residual leaves. An
-    /// inset that is noise at `tolerance_mm` ([`is_noise`]) is not a node
+    /// inset that is noise at `tolerance_mm` (`is_noise`) is not a node
     /// (#235); what it stood for is then in the residual regions. Each
     /// residual node gets its [`Splice`] when a straight link no longer
     /// than one diameter plus the step-over, inside the parent's region,
-    /// joins it to one of the parent's rings ([`splice_of`]).
+    /// joins it to one of the parent's rings (`splice_of`).
     #[must_use]
     pub fn build(
         root: Region,
@@ -552,7 +552,7 @@ fn link_inside(region: &Region, from: Point, to: Point) -> bool {
 /// (the `pocket-offset-rect` golden case links its rings corner to
 /// corner). A point within [`EPS_MM`] of an arc's end is that end, so no
 /// sliver arc is made. Ties go to the earlier segment, points within
-/// [`crate::sequence::NEAREST_TIE_MM`] of the nearest included (#215).
+/// `NEAREST_TIE_MM` of the nearest included (#215).
 #[must_use]
 pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
     let polyline = contour.polyline();

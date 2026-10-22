@@ -35,7 +35,7 @@ use dc_project::{Operation, OperationId, Project, ToolId};
 /// - in the same order, [`Warning::CutInsideTabHeldPart`] for every such
 ///   target that lies inside an outline an earlier Profile cut through the
 ///   stock round with tabs, naming the innermost such outline, when the
-///   later operation cuts deeper than half the stock ([`cuts_deep`]) and
+///   later operation cuts deeper than half the stock (`cuts_deep`) and
 ///   the same earlier operation freed no outline round it (#269);
 /// - [`Warning::ToolChangeAvoidable`] once per tool that the enabled
 ///   operations, in order, use again after a different tool, by the

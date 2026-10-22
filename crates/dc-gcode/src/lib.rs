@@ -6,7 +6,7 @@
 //!
 //! The [`PostProcessor`] type and the bundled definitions live in
 //! `dc-project`, which loads a project's reference to one (#106); this crate
-//! emits G-code with the effective definition. [`emit`] writes a program
+//! emits G-code with the effective definition. [`emit`](fn@emit) writes a program
 //! from toolpaths, then parses it back and checks the safety rules on the
 //! text (`docs/specs/phase-1/design.md`, "Emission").
 

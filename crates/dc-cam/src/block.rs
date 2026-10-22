@@ -4,7 +4,7 @@
 //! Cut blocks (`docs/specs/phase-2/design.md`, "Data model → dc-cam"): what
 //! a generator produces before ordering and linking. One block is one
 //! contour, open path, drill point or relief notch at one pass depth;
-//! [`crate::sequence`] orders the blocks and writes the links between them
+//! [`crate::sequence`](fn@crate::sequence) orders the blocks and writes the links between them
 //! (`docs/research/toolpath-ordering.md`, decision D10).
 
 use crate::error::ShapeRef;

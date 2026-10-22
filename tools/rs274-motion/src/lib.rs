@@ -17,7 +17,7 @@
 //!
 //! The pieces:
 //!
-//! - [`bridge`] rewrites a program for `rs274`: it numbers every line with
+//! - [`bridge`](mod@bridge) rewrites a program for `rs274`: it numbers every line with
 //!   its source line, so each canonical call names the line it came from,
 //!   and it rewrites the few words a dialect has that LinuxCNC does not
 //!   (Mach3 and UCCNC's `G50` and `G69`, UCCNC's millisecond dwells and its
@@ -26,8 +26,8 @@
 //! - [`runner`] runs `rs274`, natively or in a container, with a work
 //!   offset set so a `G53` move is told apart from a work move.
 //! - [`canon`] reads `rs274`'s output.
-//! - [`reference`] reads the original program with `dc-gcode`.
-//! - [`compare`] lines the two up.
+//! - [`reference`](mod@reference) reads the original program with `dc-gcode`.
+//! - [`compare`](mod@compare) lines the two up.
 //! - [`corpus`] is the set of programs the test runs: the committed golden
 //!   and expected programs, and the quick-start plaque exported in-process
 //!   for each controller with canned cycles, a `G53` lift and inches.

@@ -212,7 +212,7 @@ pub(super) fn twins(
 /// their order. Each ends square on the normals through the path's end
 /// vertices, as the last pass's do, so the earlier passes stop where the
 /// last pass stops: neither cuts past an end, and the last pass takes the
-/// allowance off right up to it. The narrowness rule is [`twins`']: where
+/// allowance off right up to it. The narrowness rule is [`twins`]'s: where
 /// `path` fits the bit but not the bit plus the allowance (an arc, a U or
 /// a hairpin on the cut side), the offset loses or gains pieces; and the
 /// last pass takes off what [`cuts_only_corners`] allows, a departure
