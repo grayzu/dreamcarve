@@ -6541,6 +6541,68 @@ mod tests {
         }
     }
 
+    /// #339: with a ramp entry the last pass ramps. The rectangle Outside
+    /// and Inside and the 60 mm line Left and Right, `reverse` off and on:
+    /// no straight move down goes farther than the 1 mm a descent starts
+    /// above the floor it reaches (so none runs through the allowance's
+    /// uncut strip), the last pass ramps below the floor the earlier passes
+    /// cut, and every ramp move below that floor runs in their kerf, its
+    /// tool centre on the allowance path.
+    #[test]
+    fn last_pass_uses_the_configured_entry() {
+        let floor_mm = LAST_PASS_Z_MM[1];
+        let slack_mm = dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM + 1e-6;
+        for (side, drawn) in [
+            (Side::Outside, rect_60x40()),
+            (Side::Inside, rect_60x40()),
+            (Side::Left, line_60()),
+            (Side::Right, line_60()),
+        ] {
+            for reverse in [false, true] {
+                let case = format!("{side:?} reverse {reverse}");
+                let p = last_pass_project_of(vec![drawn.clone()]);
+                let line = at_20_20().apply_polyline(&drawn).unwrap();
+                let op = ProfileOp {
+                    entry: Entry::Ramp { angle_deg: 10.0 },
+                    last_pass: Some(LastPass {
+                        reverse,
+                        ..allowance(ALLOWANCE_MM)
+                    }),
+                    ..last_pass_op(&p, side)
+                };
+                let (tp, _) = generate(&p, &op);
+                let mut at = tp.moves[0].to;
+                let mut ramped = false;
+                for mv in &tp.moves[1..] {
+                    let straight_down =
+                        mv.to.z < at.z - EPS_MM && at.xy().distance_to(mv.to.xy()) <= EPS_MM;
+                    if !mv.is_rapid() && straight_down {
+                        assert!(
+                            at.z - mv.to.z <= crate::entry::ENTRY_CLEARANCE_MM + TOL,
+                            "{case}: a plunge from Z {} to {} at {:?}",
+                            at.z,
+                            mv.to.z,
+                            mv.to.xy()
+                        );
+                    }
+                    let ramp = !mv.is_rapid() && !straight_down && mv.to.z < at.z - EPS_MM;
+                    if ramp && mv.to.z < floor_mm - EPS_MM {
+                        ramped = true;
+                        for q in [middle(at.xy(), mv), mv.to.xy()] {
+                            let gap = gap_mm(&line, q);
+                            assert!(
+                                (gap - (R_MM + ALLOWANCE_MM)).abs() <= slack_mm,
+                                "{case}: the ramp runs {gap} mm from the part at {q:?}"
+                            );
+                        }
+                    }
+                    at = mv.to;
+                }
+                assert!(ramped, "{case}: the last pass ramps below Z {floor_mm}");
+            }
+        }
+    }
+
     /// #311: an open path's tabs are laid on its last pass's path and
     /// carried onto the allowance path as on a closed shape
     /// (`last_pass::twin_tabs`, the #310 review's rule: the issue's
