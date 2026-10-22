@@ -15,27 +15,29 @@ mod migrate;
 mod model;
 mod post_processor;
 mod serialize;
+mod units_input;
 mod validate;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
 pub use history::{History, MAX_UNDO_STEPS};
-pub use ids::{DefinitionId, InstanceId, OperationId, ToolId};
+pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
     ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
-    FeatureDefinition, FeatureInstance, Lead, MachineOrigin, MachiningOrder, Operation, OriginXy,
-    OriginZ, PeckRetract, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement, TabShape,
-    TabSpec, Tool, ToolKind, Units, WallPass,
+    FeatureDefinition, FeatureInstance, Heights, LastPass, Lead, MachineOrigin, MachiningOrder,
+    Operation, OriginXy, OriginZ, ParkXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project,
+    Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,
     DwellUnits, FeedSpeed, MAX_FILE_EXTENSION_CHARS, Motion, NumberFormat, PostProcessor,
-    PostProcessorError, PostProcessorRef, ProgramFormat, RetractMode, SpindleControl, SpindleDwell,
-    Stop, ToolChange, ToolChangeMode, UnitCommands, WorkCoordinates, bundled_definition,
-    bundled_definitions, is_m6_line, is_safe_file_extension, latest_definition, latest_definitions,
+    PostProcessorError, PostProcessorRef, ProgramFormat, ResetReason, RetractMode, SettingReset,
+    SpindleControl, SpindleDwell, Stop, ToolChange, ToolChangeMode, UnitCommands, WorkCoordinates,
+    bundled_definition, bundled_definitions, is_m6_line, is_safe_file_extension, latest_definition,
+    latest_definitions, switch_post,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use validate::{MAX_RATE_MM_MIN, MAX_RPM, MAX_TOOL_DIAMETER_MM, Problem, Severity, validate};

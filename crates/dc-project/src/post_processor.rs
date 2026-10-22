@@ -32,6 +32,7 @@
 //! `Option` field is required too, `null` when unset (#65): serde would
 //! otherwise read a missing one as `None`.
 
+use crate::Units;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 use std::fmt;
@@ -164,6 +165,21 @@ pub struct DecimalPlaces {
     pub inch: u8,
 }
 
+impl DecimalPlaces {
+    /// One unit in the last place a program in `units` writes, mm:
+    /// `10^−places` mm, or `10^−places` in (25.4 times as many mm). The
+    /// safety pass compares written numbers within it, and an entry helix
+    /// whose moves are shorter is not cut (#265).
+    #[must_use]
+    pub fn quantum_mm(self, units: Units) -> f64 {
+        let (places, mm_per_unit) = match units {
+            Units::Mm => (self.mm, 1.0),
+            Units::Inch => (self.inch, 25.4),
+        };
+        10f64.powi(-i32::from(places)) * mm_per_unit
+    }
+}
+
 /// The object form of [`DecimalPlaces`], read strictly.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -251,6 +267,13 @@ pub struct WorkCoordinates {
     /// Command selecting the WCS, for example `G54`; `None` emits nothing.
     #[serde(deserialize_with = "Option::deserialize")]
     pub select_command: Option<String>,
+    /// The non-modal command that makes one move in machine coordinates,
+    /// `G53`, where the controller's documentation or source shows it
+    /// (#283; `definitions/README.md`, "Machine-coordinate moves"). The
+    /// program writes it only as `G53 G0 Z…`, for a project's
+    /// `heights.tool_change_machine_z_mm`; `None` refuses that height.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub machine_command: Option<String>,
 }
 
 /// How arc centres are written.
@@ -619,7 +642,7 @@ type Source = (&'static str, u32, &'static str, &'static str);
 /// never edited or removed (ADR-0004, `definitions/README.md`); a change
 /// that would change emitted bytes is a new version file.
 /// `tests::released_definition_versions_are_unchanged` pins each one.
-const SOURCES: [Source; 8] = [
+const SOURCES: [Source; 16] = [
     (
         "grblhal",
         1,
@@ -631,6 +654,18 @@ const SOURCES: [Source; 8] = [
         2,
         "grblhal/v2.json",
         include_str!("definitions/grblhal/v2.json"),
+    ),
+    (
+        "grblhal",
+        3,
+        "grblhal/v3.json",
+        include_str!("definitions/grblhal/v3.json"),
+    ),
+    (
+        "grblhal",
+        4,
+        "grblhal/v4.json",
+        include_str!("definitions/grblhal/v4.json"),
     ),
     (
         "grbl",
@@ -645,10 +680,22 @@ const SOURCES: [Source; 8] = [
         include_str!("definitions/grbl/v2.json"),
     ),
     (
+        "grbl",
+        3,
+        "grbl/v3.json",
+        include_str!("definitions/grbl/v3.json"),
+    ),
+    (
         "linuxcnc",
         1,
         "linuxcnc/v1.json",
         include_str!("definitions/linuxcnc/v1.json"),
+    ),
+    (
+        "linuxcnc",
+        2,
+        "linuxcnc/v2.json",
+        include_str!("definitions/linuxcnc/v2.json"),
     ),
     (
         "mach3",
@@ -657,10 +704,34 @@ const SOURCES: [Source; 8] = [
         include_str!("definitions/mach3/v1.json"),
     ),
     (
+        "mach3",
+        2,
+        "mach3/v2.json",
+        include_str!("definitions/mach3/v2.json"),
+    ),
+    (
+        "mach3",
+        3,
+        "mach3/v3.json",
+        include_str!("definitions/mach3/v3.json"),
+    ),
+    (
         "uccnc",
         1,
         "uccnc/v1.json",
         include_str!("definitions/uccnc/v1.json"),
+    ),
+    (
+        "uccnc",
+        2,
+        "uccnc/v2.json",
+        include_str!("definitions/uccnc/v2.json"),
+    ),
+    (
+        "uccnc",
+        3,
+        "uccnc/v3.json",
+        include_str!("definitions/uccnc/v3.json"),
     ),
     (
         "generic",
@@ -883,6 +954,101 @@ pub fn latest_definition(id: &str) -> Result<&'static BundledDefinition, PostPro
         .ok_or_else(|| unknown_id(id))
 }
 
+/// A setting [`switch_post`] could not keep: the user had changed it, but
+/// the new definition cannot use the value, so it took the new default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingReset {
+    /// The setting's key in the reference, for example `tool_change_mode`.
+    pub setting: &'static str,
+    /// The value it had, as the `.dcv` writes it (`"m6"`, `true`).
+    pub from: String,
+    /// The value it has now, the new definition's default, written the
+    /// same way.
+    pub to: String,
+    /// Why the new definition cannot use `from`.
+    pub reason: ResetReason,
+}
+
+/// Why [`switch_post`] reset a setting: the rule `validate` would have
+/// broken with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetReason {
+    /// `tool_change_mode: "m6"` on a definition whose tool change has no
+    /// `M6` line.
+    NoM6,
+    /// `use_canned_cycles: true` on a definition without canned cycles.
+    NoCannedCycles,
+}
+
+/// The latest version of `id` with `old`'s settings carried over
+/// (`docs/specs/phase-2/functional.md`, capability 27): what
+/// `export --post <id>` writes. Each setting still at the default of the
+/// version `old` names takes the new version's default; one the user
+/// changed is kept, unless the new definition cannot use it, and then it
+/// takes the new default and is reported. So switching to the project's
+/// own id changes only `definition_version`.
+///
+/// # Errors
+///
+/// As for [`bundled_definition`] for `old`'s definition, and as for
+/// [`latest_definition`] for `id`.
+pub fn switch_post(
+    old: &PostProcessorRef,
+    id: &str,
+) -> Result<(PostProcessorRef, Vec<SettingReset>), PostProcessorError> {
+    let old_default = old.definition()?.default_ref();
+    let target = latest_definition(id)?;
+    let post = target.post_processor();
+    let mut new = target.default_ref();
+    let mut resets = Vec::new();
+
+    if old.file_extension != old_default.file_extension {
+        new.file_extension.clone_from(&old.file_extension);
+    }
+    if old.spindle_control != old_default.spindle_control {
+        new.spindle_control = old.spindle_control;
+    }
+    // Bit equality, not a tolerance: the question is whether the user
+    // changed the number, and an unchanged one is the default's own bits,
+    // read from the same JSON text.
+    if old.spindle_on_dwell_s.to_bits() != old_default.spindle_on_dwell_s.to_bits() {
+        new.spindle_on_dwell_s = old.spindle_on_dwell_s;
+    }
+    if old.decimal_places != old_default.decimal_places {
+        new.decimal_places = old.decimal_places;
+    }
+    if old.tool_change_mode != old_default.tool_change_mode {
+        if old.tool_change_mode == ToolChangeMode::M6 && !post.tool_change.has_m6() {
+            resets.push(SettingReset {
+                setting: "tool_change_mode",
+                from: setting_text(&old.tool_change_mode),
+                to: setting_text(&new.tool_change_mode),
+                reason: ResetReason::NoM6,
+            });
+        } else {
+            new.tool_change_mode = old.tool_change_mode;
+        }
+    }
+    if old.use_canned_cycles != old_default.use_canned_cycles {
+        if old.use_canned_cycles && post.canned_cycles.is_none() {
+            resets.push(SettingReset {
+                setting: "use_canned_cycles",
+                from: setting_text(&old.use_canned_cycles),
+                to: setting_text(&new.use_canned_cycles),
+                reason: ResetReason::NoCannedCycles,
+            });
+        } else {
+            new.use_canned_cycles = old.use_canned_cycles;
+        }
+    }
+    Ok((new, resets))
+}
+
+/// `value` as the `.dcv` writes it: `"m6"`, `true`.
+fn setting_text(value: &impl Serialize) -> String {
+    serde_json::to_string(value).unwrap_or_default()
+}
+
 /// [`PostProcessorError::UnknownId`] for `id`, listing the bundled ids
 /// sorted.
 pub(crate) fn unknown_id(id: &str) -> PostProcessorError {
@@ -936,6 +1102,7 @@ mod tests {
             },
             work_coordinates: WorkCoordinates {
                 select_command: Some("G54".into()),
+                machine_command: None,
             },
             motion: Motion {
                 rapid_command: "G0".into(),
@@ -1176,12 +1343,21 @@ mod tests {
         assert_eq!(text, r#"{"mm":3,"inch":3}"#);
     }
 
+    /// One unit in the last place, mm: 0.001 mm at 3 places, 0.0001 in
+    /// (0.00254 mm) at 4.
+    #[test]
+    fn quantum_is_one_unit_in_the_last_place_in_mm() {
+        let places = DecimalPlaces { mm: 3, inch: 4 };
+        assert!((places.quantum_mm(Units::Mm) - 0.001).abs() < 1e-15);
+        assert!((places.quantum_mm(Units::Inch) - 0.002_54).abs() < 1e-15);
+    }
+
     // #106: a project stores a reference to a bundled definition version
     // and the user's settings, not the definition.
 
     /// A current-version project whose `post_processor` is the GRBL
     /// reference with the default settings.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v8/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v15/sample.dcv");
 
     /// The reference block as the project writes it, keys in order.
     const REFERENCE_BLOCK: &str = r#"{
@@ -1269,7 +1445,7 @@ mod tests {
         assert_eq!(*at, Some(value), "{err}");
         assert!(message.contains("99"), "{err}");
         assert!(message.contains("`grbl`"), "{err}");
-        assert!(message.ends_with("available: 1, 2"), "{err}");
+        assert!(message.ends_with("available: 1, 2, 3"), "{err}");
     }
 
     /// The definition that `id`.json on main parsed to, before #106, kept as
@@ -1285,6 +1461,10 @@ mod tests {
         let mut value: Value = serde_json::from_str(text).unwrap();
         value["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
         value["use_canned_cycles"] = Value::from(false);
+        // #283: both document `G53` (`definitions/README.md`,
+        // "Machine-coordinate moves"); nothing writes it unless a project
+        // sets the height.
+        value["work_coordinates"]["machine_command"] = Value::from("G53");
         if let Some(cycles) = value["canned_cycles"].as_object_mut() {
             cycles.insert("reentry_gap_mm".into(), Value::Null);
         }
@@ -1345,6 +1525,137 @@ mod tests {
         assert!(err.contains("default_settings.line_numbers"), "{err}");
     }
 
+    // #277, functional capability 27: `export --post` keeps the settings
+    // the user changed.
+
+    /// The default reference of `id` at `version`.
+    fn default_at(id: &str, version: u32) -> PostProcessorRef {
+        bundled_definition(id, version).unwrap().default_ref()
+    }
+
+    /// The latest version of `id`.
+    fn latest_version(id: &str) -> u32 {
+        latest_definition(id).unwrap().version
+    }
+
+    /// A raised spin-up dwell, the #73 case, survives an upgrade of grblHAL
+    /// v1 to its latest version, and nothing is reported reset.
+    #[test]
+    fn switch_keeps_changed_dwell() {
+        let mut old = default_at("grblhal", 1);
+        old.spindle_on_dwell_s = 6.0;
+        let (new, resets) = switch_post(&old, "grblhal").unwrap();
+        assert_eq!(new.definition_version, latest_version("grblhal"));
+        assert!(
+            (new.spindle_on_dwell_s - 6.0).abs() < 1e-12,
+            "{}",
+            new.spindle_on_dwell_s
+        );
+        assert_eq!(resets, []);
+    }
+
+    /// A setting still at the old definition's default follows the new
+    /// one: grblHAL's `nc` becomes LinuxCNC's `ngc`.
+    #[test]
+    fn switch_takes_new_default_for_default_extension() {
+        let old = latest_definition("grblhal").unwrap().default_ref();
+        assert_eq!(old.file_extension, "nc");
+        let (new, resets) = switch_post(&old, "linuxcnc").unwrap();
+        assert_eq!(new, latest_definition("linuxcnc").unwrap().default_ref());
+        assert_eq!(new.file_extension, "ngc");
+        assert_eq!(resets, []);
+    }
+
+    /// An extension the user chose is theirs, whatever the new
+    /// definition's default.
+    #[test]
+    fn switch_keeps_changed_extension() {
+        let mut old = latest_definition("grblhal").unwrap().default_ref();
+        old.file_extension = "gcode".into();
+        for id in ["grblhal", "grbl", "linuxcnc", "mach3", "uccnc", "generic"] {
+            let (new, resets) = switch_post(&old, id).unwrap();
+            assert_eq!(new.id, id);
+            assert_eq!(new.file_extension, "gcode", "{id}");
+            assert_eq!(resets, [], "{id}");
+        }
+    }
+
+    /// GRBL's tool change has no `M6` (#57), so a grblHAL project's `"m6"`
+    /// cannot move with it: it is reset to GRBL's default and reported,
+    /// never kept to fail validation.
+    #[test]
+    fn switch_resets_m6_without_m6_line() {
+        let mut old = latest_definition("grblhal").unwrap().default_ref();
+        old.tool_change_mode = ToolChangeMode::M6;
+        let (new, resets) = switch_post(&old, "grbl").unwrap();
+        assert_eq!(new.tool_change_mode, ToolChangeMode::SeparatePrograms);
+        assert_eq!(
+            resets,
+            [SettingReset {
+                setting: "tool_change_mode",
+                from: "\"m6\"".into(),
+                to: "\"separate_programs\"".into(),
+                reason: ResetReason::NoM6,
+            }]
+        );
+        // grblHAL has M6, so the mode stays on an upgrade.
+        let (same, resets) = switch_post(&old, "grblhal").unwrap();
+        assert_eq!(same.tool_change_mode, ToolChangeMode::M6);
+        assert_eq!(resets, []);
+    }
+
+    /// grblHAL's definition has no canned cycles (#117), so LinuxCNC's
+    /// `use_canned_cycles: true` is reset to `false` and reported.
+    #[test]
+    fn switch_resets_canned_cycles_without_them() {
+        let mut old = latest_definition("linuxcnc").unwrap().default_ref();
+        old.use_canned_cycles = true;
+        let (new, resets) = switch_post(&old, "grblhal").unwrap();
+        assert!(!new.use_canned_cycles);
+        assert_eq!(
+            resets,
+            [SettingReset {
+                setting: "use_canned_cycles",
+                from: "true".into(),
+                to: "false".into(),
+                reason: ResetReason::NoCannedCycles,
+            }]
+        );
+        // Mach3 has them, so the setting moves there.
+        let (mach3, resets) = switch_post(&old, "mach3").unwrap();
+        assert!(mach3.use_canned_cycles);
+        assert_eq!(resets, []);
+    }
+
+    /// `export --post` with the project's own id, to upgrade the version,
+    /// changes only the version: from every bundled version, with every
+    /// setting changed to a value that definition accepts, and with every
+    /// setting at its default.
+    #[test]
+    fn switch_same_id_changes_only_version() {
+        for definition in bundled_definitions().unwrap() {
+            let post = definition.post_processor();
+            let mut changed = definition.default_ref();
+            changed.file_extension = "gcode".into();
+            changed.spindle_control = SpindleControl::Manual;
+            changed.spindle_on_dwell_s = 6.5;
+            changed.decimal_places = DecimalPlaces { mm: 2, inch: 3 };
+            changed.tool_change_mode = if post.tool_change.has_m6() {
+                ToolChangeMode::M6
+            } else {
+                ToolChangeMode::SeparatePrograms
+            };
+            changed.use_canned_cycles = post.canned_cycles.is_some();
+            for old in [definition.default_ref(), changed] {
+                let (new, resets) = switch_post(&old, definition.id).unwrap();
+                let mut expected = old.clone();
+                expected.definition_version = latest_version(definition.id);
+                assert_eq!(new, expected, "{}", definition.path);
+                assert_eq!(resets, [], "{}", definition.path);
+            }
+        }
+    }
+
     /// FNV-1a, 64 bit: enough to notice an edit, which is all the pin is
     /// for. It is not a security measure.
     fn fnv1a(bytes: &[u8]) -> u64 {
@@ -1360,19 +1671,36 @@ mod tests {
     #[test]
     fn released_definition_versions_are_unchanged() {
         // Re-pinned in #117 when `spindle_on_dwell.units` and
-        // `default_settings.use_canned_cycles` reached every version (a
-        // schema-wide field; see `definitions/README.md`, "Versions").
-        const PINNED: [(&str, u64); 8] = [
-            ("grblhal/v1.json", 0xac47_0795_847b_c94d),
+        // `default_settings.use_canned_cycles` reached every version, and
+        // in #283 when `work_coordinates.machine_command` did (schema-wide
+        // fields; see `definitions/README.md`, "Versions"). LinuxCNC's
+        // were re-pinned in #306, when its `machine_command` became
+        // `"G53"`: that writes nothing unless a project sets the machine
+        // Z, which both versions refused before.
+        const PINNED: [(&str, u64); 16] = [
+            ("grblhal/v1.json", 0x4069_e336_d88c_fe81),
             // #171: the project name no longer opens a comment.
-            ("grblhal/v2.json", 0x0ee4_d80e_2afc_557c),
-            ("grbl/v1.json", 0x0009_62c1_0e90_a3f3),
-            ("grbl/v2.json", 0x355c_00fe_3f6a_a808),
+            ("grblhal/v2.json", 0xabe7_6c89_c5f8_6bf8),
+            // #279: the header cancels canned-cycle motion and cutter
+            // compensation (`G80`, `G40`).
+            ("grblhal/v3.json", 0x341b_511e_68ea_cdde),
+            // #316: the header cancels scaling (`G50`).
+            ("grblhal/v4.json", 0xeb50_edfd_1a5d_8aa4),
+            ("grbl/v1.json", 0xfa5f_26f9_ddd0_790f),
+            ("grbl/v2.json", 0x3970_4e64_8e3c_4d04),
+            ("grbl/v3.json", 0x5696_f0ba_8779_d54e),
             // Slice 17 (#164).
-            ("linuxcnc/v1.json", 0x9d07_5dad_8ee8_1225),
-            ("mach3/v1.json", 0x5217_9912_0119_4b63),
-            ("uccnc/v1.json", 0x1866_9d4e_236b_e202),
-            ("generic/v1.json", 0xfa66_bbf8_af00_4d46),
+            ("linuxcnc/v1.json", 0x155d_d13d_9406_23a9),
+            // #286: no `G49` in the header.
+            ("linuxcnc/v2.json", 0x0622_7196_706c_b93f),
+            ("mach3/v1.json", 0xeff3_be07_97a2_28bf),
+            ("mach3/v2.json", 0x7604_07ca_afcf_53d5),
+            // #312: the header cancels scaling and rotation (`G50`, `G69`).
+            ("mach3/v3.json", 0xc840_8d2b_7fd4_33a9),
+            ("uccnc/v1.json", 0x1c80_d6fb_1d78_ab36),
+            ("uccnc/v2.json", 0xfae6_efe4_6cee_ccbc),
+            ("uccnc/v3.json", 0x7822_1085_2958_badc),
+            ("generic/v1.json", 0x0fa6_f809_7b33_a95c),
         ];
         let bundled = bundled_definitions().unwrap();
         let paths: Vec<&str> = bundled.iter().map(|d| d.path).collect();

@@ -11,11 +11,17 @@
 //! serde's implicit `None` for a missing field), so a schema change can never
 //! slip in without a migration.
 //!
+//! Every length (`*_mm`) and feed rate (`*_mm_min`) reads through
+//! [`crate::units_input`], so a file may write it with its unit (`"0.5
+//! in"`, `"60 in/min"`; addendum A6). Those helpers keep a field required,
+//! as `Option::deserialize` does. The model holds millimetres either way.
+//!
 //! Geometry is Y-up, Z-up, millimetres (ADR-0001). Stock occupies
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
-use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
+use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::post_processor::PostProcessorRef;
+use crate::units_input;
 use dc_geometry::{Polyline, Transform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -38,21 +44,29 @@ pub struct Project {
     pub display_units: Units,
     /// Maximum deviation, millimetres, when curves are flattened to
     /// polylines. Default [`dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM`].
+    #[serde(deserialize_with = "units_input::mm")]
     pub flatten_tolerance_mm: f64,
     /// Fit arcs to straight runs at export within this deviation,
     /// millimetres (functional spec, capability 24). `None` turns fitting
     /// off. `init` writes 0.01. Read by the arc fitter once it lands
     /// (#117 lists the follow-ups).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub arc_fit_tolerance_mm: Option<f64>,
     /// The material block.
     pub stock: Stock,
     /// Where the machine's work zero sits relative to the stock.
     pub origin: MachineOrigin,
+    /// The clearance, tool-change and park heights (#283; functional
+    /// spec, capability 33). Each is optional; unset, the program is as
+    /// before format version 12.
+    pub heights: Heights,
     /// Tools embedded in the project (ADR-0002).
     pub tools: Vec<Tool>,
     /// Machining operations, in cutting order.
     pub operations: Vec<Operation>,
+    /// Holding tabs placed on the outlines of instances (#105, ADR-0005).
+    /// Every enabled Profile that cuts a tab's outline rises over it.
+    pub tabs: Vec<PlacedTab>,
     /// Placed copies of definitions.
     pub instances: Vec<FeatureInstance>,
     /// The bundled post-processor definition version and the user's
@@ -61,6 +75,61 @@ pub struct Project {
     /// Canonical shapes, keyed by id. Last in the file, since it is the
     /// bulk of it and rarely edited by hand.
     pub definitions: BTreeMap<DefinitionId, FeatureDefinition>,
+}
+
+/// Heights the program moves to between parts, at a tool change and at
+/// the end (#283; `docs/specs/phase-2/design.md`, "Phase 2 addendum
+/// (#73)", A7). After VCarve's Material Setup ("Rapid Z Gaps above
+/// Material", "Home / Start Position") and Fusion's clearance and retract
+/// heights. Every field is `None` until the user sets it, and a project
+/// with all three unset exports what it did before they existed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Heights {
+    /// Above the stock top, millimetres: the height of links between parts
+    /// (feature instances) within an operation, between operations, at a
+    /// tool change and at the end. Each operation's `safe_z_mm` stays the
+    /// retract between passes of one part. At least every enabled
+    /// operation's `safe_z_mm`.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub clearance_mm: Option<f64>,
+    /// Machine Z, millimetres (written in the program's units), that
+    /// `G53 G0 Z…` lifts to before every tool-change stop and at the end
+    /// of every program. Below 0, since grblHAL and GRBL home Z to a
+    /// negative machine position, and only on a definition whose
+    /// `work_coordinates.machine_command` is set. Needs a homed machine.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub tool_change_machine_z_mm: Option<f64>,
+    /// Where the program ends in XY, project coordinates: the bit rises to
+    /// the clearance height, rapids here, then makes the machine-Z lift if
+    /// set. VCarve's Home position without its Z.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub park: Option<ParkXy>,
+}
+
+impl Heights {
+    /// All three unset, as `init` writes them and the version 12
+    /// migration adds them.
+    #[must_use]
+    pub const fn unset() -> Self {
+        Self {
+            clearance_mm: None,
+            tool_change_machine_z_mm: None,
+            park: None,
+        }
+    }
+}
+
+/// A point in project space, millimetres (Y-up): where a program parks.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParkXy {
+    /// X, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub x_mm: f64,
+    /// Y, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub y_mm: f64,
 }
 
 /// Display units for the CLI and new projects.
@@ -79,13 +148,15 @@ pub enum Units {
 #[serde(deny_unknown_fields)]
 pub struct Stock {
     /// Extent along X, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub width_mm: f64,
     /// Extent along Y, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub height_mm: f64,
     /// Extent along Z, millimetres. The material bottom is Z = 0. `None`
     /// until the user measures the material; like a feed, it is never
     /// defaulted, and validation reports it as an error until set (#64).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub thickness_mm: Option<f64>,
 }
 
@@ -117,8 +188,10 @@ pub enum OriginXy {
     /// An arbitrary point in project space.
     Custom {
         /// X, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
         x_mm: f64,
         /// Y, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
         y_mm: f64,
     },
 }
@@ -168,11 +241,11 @@ pub struct FeatureInstance {
     /// until the user sets it; nothing reads it yet, so it is never
     /// guessed (#99). Reserved: validation checks only its range and that
     /// it is not below `z_bottom_mm` (#71).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub z_top_mm: Option<f64>,
     /// Bottom of the feature, millimetres above the material bottom. `None`
     /// until the user sets it, like `z_top_mm`.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub z_bottom_mm: Option<f64>,
 }
 
@@ -195,20 +268,21 @@ pub struct Tool {
     /// read `"kind": {"kind": ...}` (the variant tag is `kind`).
     pub cutter: ToolKind,
     /// Cutting diameter, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub diameter_mm: f64,
     /// Number of flutes.
     pub flutes: u8,
     /// Cutting feed rate, millimetres per minute.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm_min")]
     pub feed_mm_min: Option<f64>,
     /// Plunge feed rate, millimetres per minute.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm_min")]
     pub plunge_mm_min: Option<f64>,
     /// Spindle speed, revolutions per minute.
     #[serde(deserialize_with = "Option::deserialize")]
     pub rpm: Option<u32>,
     /// Default depth per pass, millimetres.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Default step-over as a fraction of the diameter, in (0, 1].
     #[serde(deserialize_with = "Option::deserialize")]
@@ -410,6 +484,7 @@ pub enum Entry {
 #[serde(deny_unknown_fields)]
 pub struct Lead {
     /// Arc radius, millimetres, greater than 0.
+    #[serde(deserialize_with = "units_input::mm")]
     pub radius_mm: f64,
     /// Arc sweep, degrees, in (0, 180]. `init` writes 90.
     pub sweep_deg: f64,
@@ -417,6 +492,7 @@ pub struct Lead {
     pub lead_out: bool,
     /// Distance to continue past the start point before leading out,
     /// millimetres, 0 or more.
+    #[serde(deserialize_with = "units_input::mm")]
     pub overcut_mm: f64,
 }
 
@@ -433,7 +509,8 @@ pub enum CornerRelief {
     TBone,
 }
 
-/// A profile operation: cuts inside, outside or on closed outlines.
+/// A profile operation: cuts inside, outside or on closed outlines, along
+/// open paths, or to the left or right of open paths.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileOp {
@@ -451,19 +528,27 @@ pub struct ProfileOp {
     pub side: Side,
     /// Final depth below the stock top, millimetres. `None` until the user
     /// sets it; never defaulted, and an error in validation until set (#64).
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Climb or conventional milling.
     pub direction: CutDirection,
     /// How far below the stock bottom the cut may go, millimetres. 0 forbids
     /// cutting below the material bottom.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
-    /// Holding tabs, if any.
+    /// A tab request: tabs still to be placed on this operation's
+    /// targets, as a format 10 file set them (#105, ADR-0005). Placed
+    /// tabs are [`Project::tabs`]; a request is not cut data. Generation
+    /// places a request before it cuts, as `dreamcarve tabs place` does,
+    /// so an older file cuts the same; every `tabs` command that saves the
+    /// project places the requests of its enabled Profiles and sets them
+    /// to `null`. Kept for format 11, so older files cut the same.
     #[serde(deserialize_with = "Option::deserialize")]
     pub tabs: Option<TabSpec>,
     /// The order shapes and passes are visited. Migration: full depth
@@ -478,6 +563,67 @@ pub struct ProfileOp {
     /// an Inside cut, the part's concave corners on an Outside cut.
     /// Migration: none.
     pub corner_relief: CornerRelief,
+    /// A finishing pass (#284): every pass but the last leaves
+    /// [`LastPass::allowance_mm`] on the wall and the last cuts it to
+    /// size. Inside and Outside only. `init` and migration: none.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub last_pass: Option<LastPass>,
+    /// Where each closed outline's cut starts (#285, functional spec
+    /// capability 36). `init` and migration: [`StartAt::Auto`], as
+    /// before.
+    pub start: StartAt,
+}
+
+/// Where a Profile's cut starts on each closed outline (#285; VCarve's 2D
+/// Profile "Use vector start point" and "Start At", Fusion's "Entry
+/// Positions"). Saved as `"auto"`, `"first_vertex"`, or `{ "near": {
+/// "x_mm": 0.0, "y_mm": 0.0 } }`. With an explicit start the tabs a
+/// request places are measured from it, a lead arrives there or is
+/// dropped, and an entry with no room there falls back instead of moving.
+/// Open paths ignore it: their start is the end the cut direction sets
+/// (#242).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum StartAt {
+    /// As before: the start follows from the drawing's first vertex, and
+    /// a lead, or an entry with no room beside a tab, may move it.
+    Auto,
+    /// At the point of the bit's path nearest the outline's first vertex
+    /// as drawn, as VCarve's "Use vector start point" plunges at the
+    /// shape's first point.
+    FirstVertex,
+    /// At the point of the bit's path nearest this project point, Y-up.
+    Near {
+        /// X, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        x_mm: f64,
+        /// Y, millimetres.
+        #[serde(deserialize_with = "units_input::mm")]
+        y_mm: f64,
+    },
+}
+
+/// A Profile's last pass allowance (#284, functional spec capability 34;
+/// VCarve's 2D Profile "Last Pass Allowance", Fusion's 2D Contour stock to
+/// leave and finishing pass): every pass but the last runs `allowance_mm`
+/// farther from the part, and the last pass cuts on the part's path, so
+/// it takes an even skin off the whole wall and leaves no step marks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LastPass {
+    /// Material every pass but the last leaves on the wall, millimetres:
+    /// more than 0 and at most a third of the bit's diameter.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub allowance_mm: f64,
+    /// How deep the last pass cuts, millimetres, more than 0 and at most
+    /// `depth_mm` (VCarve's "Set Last Pass Thickness"): the other passes
+    /// step down to `depth_mm − thickness_mm`. `None`: the last pass is the
+    /// last of the usual depth passes.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub thickness_mm: Option<f64>,
+    /// Cut the last pass the other way round (VCarve's "Reverse
+    /// direction"): conventional after climbing passes, and the reverse.
+    pub reverse: bool,
 }
 
 /// How a Pocket clears its region (functional spec, capability 12). Saved
@@ -527,10 +673,10 @@ pub struct PocketOp {
     /// Whether and when the wall pass runs.
     pub wall_pass: WallPass,
     /// Final depth below the stock top, millimetres. `None` until set.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Step-over as a fraction of the tool diameter, in (0, 1]; overrides
     /// [`Tool::step_over_fraction`].
@@ -539,6 +685,7 @@ pub struct PocketOp {
     /// Climb or conventional milling, on every ring and the wall pass.
     pub direction: CutDirection,
     /// Material to leave on the walls, millimetres, 0 or more.
+    #[serde(deserialize_with = "units_input::mm")]
     pub allowance_mm: f64,
     /// An earlier enabled Pocket with the same targets whose tool could
     /// not reach everything: this one clears only what it left
@@ -552,8 +699,10 @@ pub struct PocketOp {
     /// The order shapes and passes are visited.
     pub machining_order: MachiningOrder,
     /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
 }
 
@@ -567,6 +716,7 @@ pub enum PeckRetract {
     /// By a short gap, enough to break the chip.
     ChipBreak {
         /// How far to lift, millimetres, greater than 0.
+        #[serde(deserialize_with = "units_input::mm")]
         gap_mm: f64,
     },
 }
@@ -582,7 +732,7 @@ pub enum DrillCycle {
     Peck {
         /// Depth of each peck, millimetres, greater than 0. `None` takes
         /// the tool's step-down, which must then be set.
-        #[serde(deserialize_with = "Option::deserialize")]
+        #[serde(deserialize_with = "units_input::opt_mm")]
         peck_depth_mm: Option<f64>,
         /// How far to retract between pecks.
         retract: PeckRetract,
@@ -610,14 +760,17 @@ pub struct DrillOp {
     /// dwell. Combinable with any cycle.
     pub dwell_s: f64,
     /// Final depth below the stock top, millimetres. `None` until set.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Height above the hole top to return to between pecks and between
     /// holes, millimetres, 0 or more. `init` writes 1.
+    #[serde(deserialize_with = "units_input::mm")]
     pub retract_mm: f64,
     /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
 }
 
@@ -637,10 +790,10 @@ pub struct EngraveOp {
     /// The tool to cut with. Any cutter.
     pub tool: ToolId,
     /// Final depth below the stock top, millimetres. `None` until set.
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
-    #[serde(deserialize_with = "Option::deserialize")]
+    #[serde(deserialize_with = "units_input::opt_mm")]
     pub step_down_mm: Option<f64>,
     /// Cut successive passes of an open path in opposite directions,
     /// saving a retract per pass.
@@ -648,12 +801,17 @@ pub struct EngraveOp {
     /// The order shapes and passes are visited.
     pub machining_order: MachiningOrder,
     /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
     /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
 }
 
-/// Which side of an outline a profile cuts on.
+/// Which side of an outline a profile cuts on. Inside, Outside and On
+/// line cut closed outlines; On line also cuts open paths along them, and
+/// Left and Right cut open paths beside them (#207, as VCarve's Profile of
+/// an open vector), skipping closed outlines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Side {
@@ -663,6 +821,45 @@ pub enum Side {
     Outside,
     /// Tool centre on the outline.
     OnLine,
+    /// Tool centre one tool radius to the left of an open path, looking
+    /// along it from its first vertex to its last (in Y-up, the normal
+    /// `(−dy, dx)` of a segment's direction `(dx, dy)`). Saved as
+    /// `"left"`; from format version 10.
+    Left,
+    /// Tool centre one tool radius to the right of an open path: Left
+    /// mirrored. Saved as `"right"`; from format version 10.
+    Right,
+}
+
+impl Side {
+    /// True for Left and Right, the sides of an open path: they cut open
+    /// paths only and skip closed outlines.
+    #[must_use]
+    pub const fn is_open_path_side(self) -> bool {
+        matches!(self, Self::Left | Self::Right)
+    }
+
+    /// True for the sides that cut open paths: On line, Left and Right.
+    #[must_use]
+    pub const fn cuts_open_paths(self) -> bool {
+        matches!(self, Self::OnLine | Self::Left | Self::Right)
+    }
+
+    /// True for Inside and Outside, the sides whose cut has a waste area
+    /// beside it for a helix entry, a lead or a relief notch. On line,
+    /// Left and Right remove only their kerf.
+    #[must_use]
+    pub const fn has_waste_area(self) -> bool {
+        matches!(self, Self::Inside | Self::Outside)
+    }
+
+    /// True for the sides that cut one flank of the bit against the part,
+    /// leaving a wall a last pass can take an allowance off (#284, #311):
+    /// Inside, Outside, Left and Right. On line cuts with both flanks.
+    #[must_use]
+    pub const fn has_wall(self) -> bool {
+        !matches!(self, Self::OnLine)
+    }
 }
 
 /// Milling direction relative to the clockwise spindle.
@@ -675,21 +872,78 @@ pub enum CutDirection {
     Conventional,
 }
 
-/// Holding tabs left by a profile.
+/// A holding tab placed on one outline of one instance (#105, ADR-0005):
+/// material a Profile that cuts the outline leaves standing, up to
+/// `height_mm`. Its place is a point in definition space, so it follows
+/// the instance when the instance moves, rotates, mirrors or scales; a
+/// Profile centres the tab at its tool path's point nearest it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacedTab {
+    /// This tab's id.
+    pub id: TabId,
+    /// The instance whose outline holds the tab.
+    pub instance: InstanceId,
+    /// The outline: an index into the instance's definition's
+    /// [`FeatureDefinition::profiles`].
+    pub profile: usize,
+    /// The tab's centre, X in definition space, millimetres: on the
+    /// profile, or on the tool path of the Profile it was placed for.
+    pub x_mm: f64,
+    /// The tab's centre, Y in definition space, millimetres (Y-up).
+    pub y_mm: f64,
+    /// Tab length along the outline, millimetres. A pass below the tab top
+    /// rises over `width_mm` plus the tool diameter of its tool path.
+    pub width_mm: f64,
+    /// Tab top above the stock bottom, millimetres.
+    pub height_mm: f64,
+    /// Tab cross-section.
+    pub shape: TabShape,
+    /// Whether the tab is meant to hold the slug of the hole it is on
+    /// (#302). It changes no cut, only whether `check` and `export` warn
+    /// `tab_on_hole` for it. `Some(true)`: the user asked for it, so they
+    /// do not; `tabs place --on-holes` and a request with `on_holes`
+    /// write it for each tab they put on a hole. `Some(false)`: they do;
+    /// every other placing writes it. `None`: not recorded, as the
+    /// version 15 migration writes it for every tab: they warn as format
+    /// 14 did, except for a tab on the tool path round the hole of the
+    /// Profile that cuts it, where only placing with `on_holes` puts one
+    /// (#300).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub holds_slug: Option<bool>,
+}
+
+/// Holding tabs to place on every outline a Profile cuts (#105, ADR-0005):
+/// a generator of [`PlacedTab`]s with the phase 2 layout rules, as
+/// `dreamcarve tabs place` and `init` use it, and the format 10 tab
+/// setting a format 11 file may still hold as [`ProfileOp::tabs`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TabSpec {
     /// Where the tabs go along the outline.
     pub placement: TabPlacement,
     /// Tab length along the outline, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub width_mm: f64,
     /// Tab top above the stock bottom, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
     pub height_mm: f64,
     /// Tab cross-section.
     pub shape: TabShape,
+    /// Whether holes get tabs too: the outlines nested in another of the
+    /// operation's outlines as holes. Without, a hole is cut free, since
+    /// its slug is waste (#109). `init` writes `false`; the version 9
+    /// migration writes `true`, as every outline had tabs before.
+    pub on_holes: bool,
+    /// Tabs slide off corners (#285, functional spec capability 35): a
+    /// tab whose stretch would lie where the bit's path turns 30° or more
+    /// within one bit diameter moves along the path to the nearest place
+    /// where it does not. `init` writes `true`; the version 14 migration
+    /// writes `false`, so older projects cut as before.
+    pub avoid_corners: bool,
 }
 
-/// Where tabs go along the tool-centre contour.
+/// Where a [`TabSpec`] puts tabs along each tool-centre path.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TabPlacement {
@@ -701,6 +955,7 @@ pub enum TabPlacement {
     /// Tabs centred at the given distances along the contour.
     AtDistances {
         /// Distances along the contour, millimetres, taken modulo its length.
+        #[serde(deserialize_with = "units_input::vec_mm")]
         distances_mm: Vec<f64>,
     },
 }

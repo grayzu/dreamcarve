@@ -92,7 +92,22 @@ intent. The rules are in the phase 1 and phase 2 functional specs
 - [ ] **Tool changes.** `M6` only where the controller documents a stop at
       which the user can fit the bit and set Z zero; otherwise the tool
       change has no `M6`, `"m6"` mode is refused, and each tool run is its
-      own program. No `G43 H`: DreamCarve writes no tool table.
+      own program. No `G43 H`: DreamCarve writes no tool table. No `G49`
+      either, unless the controller's documentation shows that a Z zero
+      set with an offset active does not include it: the user's zero may
+      include an offset, and cancelling it moves every Z (#286; definitions
+      README, "Tool length offset at touch-off").
+- [ ] **Stale modes.** If the controller keeps a mode that changes every
+      coordinate (scaling, rotation, a canned-cycle motion mode, cutter
+      compensation) after the program ends, the header cancels it with the
+      code the documentation gives, on a line the emitter can write again
+      after each stop, and the safety pass accepts that code only from
+      this definition's header (#279, #312, #316; definitions README,
+      "Header modal state", "Scaling and rotation", "Scaling on grblHAL").
+      Never write a code the controller does not document. Where the
+      source is the reference, read what the cancel code actually clears,
+      not only that it is accepted: grblHAL's `G50` misses a scale that
+      leaves X at 1.
 - [ ] **Pauses.** A manual-spindle or tool-change pause is `M0`, with a
       message only in a syntax the controller documents; `export` lists
       every pause either way.
@@ -122,6 +137,43 @@ intent. The rules are in the phase 1 and phase 2 functional specs
       LinuxCNC's interpreter reads, as it reads generic), its golden
       coaster is in `tools/gcode-conformance`'s corpus and the
       `gcode-conformance` CI job passes. Run it locally as below.
+- [ ] For an RS274/NGC-style controller, the definition's programs run
+      through LinuxCNC's `rs274` with the same motion DreamCarve reads:
+      `DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion`
+      (see "End-to-end testing" below). A word the controller has and
+      LinuxCNC does not goes into the bridge in
+      `tools/rs274-motion/src/bridge.rs`, with the reason, and into the
+      manual procedure.
+
+## End-to-end testing
+
+Unit tests show DreamCarve writes what the definition says; they cannot
+show a controller reads it that way. The
+[post-processor end-to-end plan](https://github.com/grayzu/dreamcarve/blob/main/docs/testing/post-processor-e2e.md)
+sets out, for each controller, what is checked automatically, what
+cannot be and why, and the manual procedure for the rest:
+
+- **Automatic.** LinuxCNC's interpreter, `rs274`, must accept the
+  program (the `gcode-conformance` CI job; see
+  [LinuxCNC's interpreter](#linuxcncs-interpreter)). Its motion must
+  also match `dc-gcode`'s reading, line by line (`tools/rs274-motion`). Mach3 and UCCNC programs go
+  through a small, listed bridge.
+- **Manual.** Mach3 in Simulation mode and UCCNC in demo mode on
+  Windows, and LinuxCNC's own AXIS simulator.
+- **A real machine.** The trustworthy layer is an air cut, then foam or
+  scrap, on a real machine: today the maintainer's grblHAL and GRBL.
+
+Record each manual run, on the controller's software or on a machine,
+with the [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml): one issue per run, with the
+program and project attached and the result of each check in the plan's
+procedure for that controller.
+
+To run the automatic check without LinuxCNC installed:
+
+```sh
+podman build -t dreamcarve-rs274 tools/rs274-motion   # or docker build
+DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion -- --nocapture
+```
 
 ## LinuxCNC's interpreter
 
@@ -173,8 +225,9 @@ To check another program too, pass it after `--`, for example
 binaries. The corpus and the probe files are left in
 `target/linux/gcode-conformance/` (CI uploads them when the job fails).
 
-Mach3 and UCCNC have no offline interpreter; run their programs in the
-controller's own simulation before release.
+Mach3 and UCCNC have no offline interpreter of their own:
+`tools/rs274-motion` runs their programs through `rs274` with a listed
+bridge, and the manual procedure in the end-to-end plan covers the rest.
 
 ## Docs
 
@@ -182,4 +235,6 @@ controller's own simulation before release.
       lists the controller in "Choosing one" and "Controllers compared",
       with what was verified, its canned cycles and its tool changes.
 - [ ] "Not yet checked on a real machine" in that chapter names it until
-      a program from it has run on the controller.
+      a passed layer 5 report exists for it: a
+      [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml) issue for a real machine whose result
+      is Pass.

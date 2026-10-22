@@ -6,7 +6,10 @@
 //! "CLI (dreamcarve)": stock = drawing bounds plus a 10 mm margin on each
 //! side; origin bottom-left at the stock top; one placeholder tool "Set me"
 //! (6.35 mm, 2 flutes, no feeds or step-down); one outside climb Profile of
-//! every closed shape, safe Z 5 mm, four 8 × 3 mm rectangular tabs. The
+//! every closed shape, safe Z 5 mm, asking for four 8 × 3 mm rectangular
+//! tabs on each part it cuts and none on its holes: a tab request, cut as
+//! the tabs it places, which `dreamcarve tabs` writes as placed tabs
+//! (#105, ADR-0005). The
 //! format is the file's extension; a DXF takes the DXF-only `--units`
 //! override, `--join-tolerance` and `--layer` (`docs/specs/phase-2/design.md`,
 //! "CLI additions").
@@ -30,9 +33,9 @@ use dc_import::{
 };
 use dc_project::{
     CURRENT_VERSION, CornerRelief, CutDirection, Entry, FeatureDefinition, FeatureInstance,
-    MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PostProcessorRef,
-    ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId,
-    ToolKind, Units, validate,
+    Heights, MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ,
+    PostProcessorRef, ProfileOp, Project, Side, SourceMap, StartAt, Stock, TabPlacement, TabShape,
+    TabSpec, Tool, ToolId, ToolKind, Units, validate,
 };
 
 use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
@@ -290,6 +293,10 @@ fn default_project(
             width_mm: TAB_WIDTH_MM,
             height_mm: TAB_HEIGHT_MM,
             shape: TabShape::Rect,
+            // #109: a hole's slug is waste.
+            on_holes: false,
+            // #285: tabs are weakest, and hardest to clean up, on a corner.
+            avoid_corners: true,
         }),
         machining_order: MachiningOrder::FullDepthFirst,
         entry: Entry::Ramp {
@@ -297,6 +304,8 @@ fn default_project(
         },
         lead: None,
         corner_relief: CornerRelief::None,
+        last_pass: None,
+        start: StartAt::Auto,
     };
     Project {
         version: CURRENT_VERSION,
@@ -313,10 +322,15 @@ fn default_project(
             xy: OriginXy::BottomLeft,
             z: OriginZ::StockTop,
         },
+        // #283: the clearance, tool-change and park heights are the
+        // user's to set, like the thickness; unset, the program is as
+        // before they existed.
+        heights: Heights::unset(),
         definitions,
         instances,
         tools: vec![tool],
         operations: vec![Operation::Profile(profile)],
+        tabs: Vec::new(),
         post_processor,
     }
 }

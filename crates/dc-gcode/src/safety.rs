@@ -17,15 +17,25 @@
 //! as the moves the controller makes for it. The parser expands each one
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
 //! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
-//! the motion the machine makes.
+//! the motion the machine makes. A series of cycles must end with `G80`
+//! before any other motion (#314): the parser models `G98`'s return level
+//! only from one `G80` to the next.
+//!
+//! S16 (#283; `docs/specs/phase-2/functional.md`, "Safety (addendum)"):
+//! the parser reads `G53 G0 Z` lines as machine-coordinate lifts and
+//! refuses any other `G53`; a lift goes to the project's tool-change
+//! machine Z, from at or above safe Z, on a definition that documents
+//! `G53`, and only right before a stop or the end; work Z is unknown after
+//! it.
 //!
 //! S10 (`docs/specs/phase-2/functional.md`): every descending cut falls no
 //! faster than its tool's plunge rate, its slope recomputed from the
-//! written numbers ([`check_descent_rate`]). S9: every cut stays in its
+//! written numbers, with nothing allowed for rounding
+//! ([`check_descent_rate`]). S9: every cut stays in its
 //! operation's own material, worked out from the project
 //! ([`crate::material`]).
 
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::Range;
 
 use dc_cam::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
@@ -37,11 +47,10 @@ use dc_project::{
 
 use crate::ExportError;
 use crate::arcfit::{MIN_RUN_CHORDS, arc_chord_deviation_mm, shallow_arc_midpoint};
-use crate::emit::{changes_tools_in_program, controller_sets_units};
-use crate::format::decimal_places;
-use crate::material::{self, Material};
+use crate::emit::{changes_tools_in_program, code_words, controller_sets_units};
+use crate::material::{self, Material, TabSpine};
 use crate::parse::{
-    Block, CycleModel, MachineMove, MachinePosition, MotionKind, is_code, parse_program_with,
+    Block, CycleModel, MachineMove, MachinePosition, MotionKind, Word, is_code, parse_program_with,
 };
 use crate::transform::{MachineTransform, mm_per_unit};
 
@@ -60,9 +69,24 @@ pub(crate) struct OpSpan<'a> {
     pub toolpath: &'a Toolpath,
     /// The material it may cut, from the project (S9).
     pub material: &'a Material,
+    /// The middles of the tabs it must leave standing, from the project
+    /// (S9, #337).
+    pub tabs: &'a [TabSpine],
     /// 1-based program lines, end exclusive, from the operation's first
     /// motion line to its last.
     pub lines: Range<usize>,
+}
+
+/// The project's heights the program was written for (#283).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct ProgramHeights {
+    /// `heights.tool_change_machine_z_mm`, the only machine Z a `G53` may
+    /// lift to (S16); `None` refuses every `G53`.
+    pub machine_lift_mm: Option<f64>,
+    /// The clearance height, absolute project Z, mm, when set: each
+    /// operation's first move across the work, every move across outside
+    /// the operations (the park move) and every stop are at or above it.
+    pub clearance_z_mm: Option<f64>,
 }
 
 /// How far the program may depart from the toolpath by design.
@@ -77,13 +101,18 @@ pub(crate) struct Tolerances {
 }
 
 /// Checks `text`, emitted with `post` and `transform` for the operations
-/// in `spans`, against S1–S7, S9, S10 and S12, and returns the program's
-/// extents.
+/// in `spans`, against S1–S7, S9, S10, S12 and S16, and returns the
+/// program's extents. `heights` are the project's clearance height and
+/// tool-change machine Z (S2, S16).
 ///
 /// # Errors
 ///
 /// The first violation found, as the matching [`ExportError`].
 #[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the program, how it was written, and what it was written for, each needed"
+)]
 pub(crate) fn check(
     text: &str,
     post: &PostProcessor,
@@ -91,6 +120,7 @@ pub(crate) fn check(
     stock: &Stock,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<Extents, ExportError> {
     check_parsed(
@@ -100,6 +130,7 @@ pub(crate) fn check(
         stock,
         stock_thickness_mm,
         tolerances,
+        heights,
         spans,
     )
     .map(|(extents, _)| extents)
@@ -107,6 +138,10 @@ pub(crate) fn check(
 
 /// [`check`], also returning the blocks the program parsed into, so the
 /// emitter reads its pauses without parsing the program again (#71).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the program, how it was written, and what it was written for, each needed"
+)]
 pub(crate) fn check_parsed(
     text: &str,
     post: &PostProcessor,
@@ -114,9 +149,18 @@ pub(crate) fn check_parsed(
     stock: &Stock,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<(Extents, Vec<Block>), ExportError> {
-    let blocks = check_rules(text, post, transform, stock_thickness_mm, tolerances, spans)?;
+    let blocks = check_rules(
+        text,
+        post,
+        transform,
+        stock_thickness_mm,
+        tolerances,
+        heights,
+        spans,
+    )?;
     // S6: reading the program back reproduces each toolpath.
     for span in spans {
         check_reproduces(span, &blocks, post, transform, tolerances)?;
@@ -286,16 +330,18 @@ fn check_on_stock(
     Ok(())
 }
 
-/// Checks `text` against S1–S5 and S10 and returns its blocks.
+/// Checks `text` against S1–S5, S10 and S16 and returns its blocks.
 fn check_rules(
     text: &str,
     post: &PostProcessor,
     transform: &MachineTransform,
     stock_thickness_mm: f64,
     tolerances: Tolerances,
+    heights: ProgramHeights,
     spans: &[OpSpan<'_>],
 ) -> Result<Vec<Block>, ExportError> {
     check_characters(text)?;
+    let machine_lift_mm = heights.machine_lift_mm;
     // S11: canned cycles are expanded into the moves the controller makes,
     // and every rule below checks those.
     // A controller without units words (UCCNC) reads the program in the
@@ -307,10 +353,15 @@ fn check_rules(
         ..CycleModel::of(post)
     };
     let blocks = parse_program_with(text, &model)?;
+    // S16: `G53` only from a definition that documents it, and only when
+    // the project sets the height it lifts to.
+    let with_g53 = machine_lift_mm.is_some() && post.work_coordinates.machine_command.is_some();
     check_words(
         &blocks,
         changes_tools_in_program(post),
         writes_canned_cycles(post),
+        with_g53,
+        &header_cancel_codes(post),
     )?;
 
     let dwell_s = post.feed_speed.spindle_on_dwell.duration_s;
@@ -329,8 +380,59 @@ fn check_rules(
     let mut cut_to: Option<CutTo> = None;
     // S2 (#214): the cuts of the operation being read.
     let mut floors = Floors::new(stock_thickness_mm, tolerances);
+    // S16: the line of the last machine-coordinate lift, while no motion
+    // has followed it, and whether a stop has come since.
+    let mut lifted: Option<(usize, bool)> = None;
+    // S2 for #283: the span of the last move, and whether it has moved
+    // across the work yet.
+    let mut crossing: (Option<usize>, bool) = (None, false);
     for block in &blocks {
         let line = block.line;
+        // S16 (#283): `G53 G0 Z<v>`, to the project's tool-change machine
+        // Z, from a known Z at or above safe Z, where the bit already is.
+        // Work Z is unknown after it, as after a pause.
+        if let Some(z_mm) = block.machine_lift_mm {
+            let Some(expected_mm) = machine_lift_mm else {
+                return Err(ExportError::ForbiddenWord {
+                    line,
+                    word: "G53".to_owned(),
+                });
+            };
+            let tolerance_mm = quantum_mm(post, transform.output_units()) + EPS_MM;
+            if z_mm >= 0.0 || (z_mm - expected_mm).abs() > tolerance_mm {
+                return Err(ExportError::MachineLiftWrongZ {
+                    line,
+                    z_mm,
+                    expected_mm,
+                });
+            }
+            // From a known Z at or above safe Z, or again right after a stop
+            // that followed a lift, with nothing moved since: the user may
+            // have jogged at that stop (manual spindle control: the
+            // router-off pause, then the tool change).
+            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
+            let relift = matches!(lifted, Some((_, true)));
+            if !(relift || router.at_or_above(safe_z_mm)) {
+                return Err(ExportError::MachineLiftNotAtSafeZ { line });
+            }
+            // S5: the Z word is in the units in force, which a user may
+            // have changed at a pause.
+            if !units_set {
+                return Err(match last_pause {
+                    Some(pause_line) => ExportError::MissingSetupAfterPause {
+                        line,
+                        pause_line,
+                        what: "units (G20 or G21)",
+                    },
+                    None => ExportError::MissingSetup {
+                        what: "units (G20 or G21)",
+                    },
+                });
+            }
+            router.z_mm = None;
+            lifted = Some((line, false));
+            continue;
+        }
         if block.has('G', 20.0) || block.has('G', 21.0) {
             units_set = true;
         }
@@ -357,8 +459,15 @@ fn check_rules(
         // Afterwards Z is unknown: the user may have jogged or set Z zero.
         let changes_tool = block.has('M', 6.0);
         if block.has('M', 0.0) || block.has('M', 1.0) || changes_tool {
-            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm).safe_z_mm;
-            if !router.at_or_above(safe_z_mm) {
+            // #283: a stop is at the clearance height when it is set.
+            let safe_z_mm = Limits::for_line(line, spans, stock_thickness_mm)
+                .safe_z_mm
+                .max(heights.clearance_z_mm.unwrap_or(f64::NEG_INFINITY));
+            // S16: or at the machine-coordinate lift, which nothing has
+            // moved from since.
+            if let Some((_, stopped)) = &mut lifted {
+                *stopped = true;
+            } else if !router.at_or_above(safe_z_mm) {
                 return Err(ExportError::PauseNotAtSafeZ { line });
             }
             if manual {
@@ -448,7 +557,7 @@ fn check_rules(
                 }
             }
             check_feed(mv, &limits, 2.0 * feed_quantum_mm_min(post, mv.units))?;
-            check_descent_rate(mv, &limits, transform, tolerance_mm)?;
+            check_descent_rate(mv, &limits, transform)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
             floors.cut(mv, transform, router.z_mm, z_after);
@@ -471,6 +580,43 @@ fn check_rules(
             check_drill_rapid(mv, below_safe, stock_thickness_mm, cut_to)?;
         } else if !floors.allow_approach(mv, transform, router.z_mm, z_after, limits.safe_z_mm) {
             check_rapid(mv, &limits, router.z_mm, z_after)?;
+        }
+        // S2 as changed for #283: with a clearance height, an operation's
+        // first move across the work and every one outside the operations
+        // run at or above it. Links within an operation are held to the
+        // toolpath by S6, whose sequencer links parts at it.
+        let span = spans.iter().position(|s| s.lines.contains(&line));
+        if crossing.0 != span || span.is_none() {
+            crossing = (span, false);
+        }
+        let crosses = mv.kind == MotionKind::Rapid
+            && (differs(mv.from.x, mv.to.x) || differs(mv.from.y, mv.to.y));
+        if let Some(clearance_z_mm) = heights.clearance_z_mm
+            && crosses
+            && !crossing.1
+        {
+            let below = |z: Option<(f64, f64)>| match z {
+                Some((z_mm, tolerance_mm)) => {
+                    (z_mm < clearance_z_mm - tolerance_mm).then_some(Some(z_mm))
+                }
+                None => Some(None),
+            };
+            if let Some(z_mm) = below(router.z_mm).or_else(|| below(z_after)) {
+                return Err(ExportError::RapidBelowClearance {
+                    line,
+                    z_mm,
+                    clearance_z_mm,
+                });
+            }
+        }
+        if crosses && span.is_some() {
+            crossing.1 = true;
+        }
+        // S16: a lift comes only right before a stop or the end.
+        if let Some((lift_line, stopped)) = lifted.take()
+            && !stopped
+        {
+            return Err(ExportError::MachineLiftNotBeforeStop { line, lift_line });
         }
         router.moved(z_after);
     }
@@ -565,8 +711,8 @@ const WCS_CODES: [f64; 6] = [54.0, 55.0, 56.0, 57.0, 58.0, 59.0];
 /// cannot follow, so it is rejected. This also keeps out the words
 /// DreamCarve never sends to GRBL or grblHAL (`dc-project/src/definitions/README.md`,
 /// "Verification"): `M4` needs a direction pin or laser mode, `M7` is
-/// optional on both, and `G28`, `G30`, and `G53` move in machine
-/// coordinates. `M6` is accepted only from a definition whose tool change
+/// optional on both, and `G28` and `G30` move in machine coordinates.
+/// `G53` is accepted only for S16's lift ([`check_words`]). `M6` is accepted only from a definition whose tool change
 /// uses it and whose tool-change mode is `"m6"` ([`TOOL_CHANGE_M`]).
 ///
 /// Four codes only cancel a mode DreamCarve never turns on, or select the
@@ -594,6 +740,33 @@ const CANNED_G: [f64; 6] = [73.0, 81.0, 82.0, 83.0, 98.0, 99.0];
 /// for them (`use_canned_cycles`) and the definition has them.
 pub(crate) fn writes_canned_cycles(post: &PostProcessor) -> bool {
     post.use_canned_cycles && post.canned_cycles.is_some()
+}
+/// `G53`, accepted on a machine-coordinate lift only (S16).
+const MACHINE_G: [f64; 1] = [53.0];
+/// `G50`, every scale factor back to 1, and `G69`, no coordinate rotation,
+/// as Mach3 and UCCNC define them (#312; Using Mach3Mill 1.84, 10.7.15,
+/// 10.7.20; UCCNC user's manual 1.0047, 4.1.1), and `G50` as grblHAL
+/// defines it (#316; `grblHAL/core` `gcode.c` 1766-1770, 2798-2799). Each
+/// only cancels a mode DreamCarve never turns on, but it is accepted only
+/// from a definition whose header writes it ([`header_cancel_codes`]):
+/// LinuxCNC, GRBL and RS274/NGC do not have them, grblHAL has no `G69`,
+/// and in other dialects `G50` is a different command. `G51` and `G68`, which scale and rotate every
+/// coordinate the program writes, are never accepted: this pass reads the
+/// program as written.
+const HEADER_CANCEL_G: [(&str, f64); 2] = [("G50", 50.0), ("G69", 69.0)];
+
+/// The codes of [`HEADER_CANCEL_G`] that `post`'s header writes.
+fn header_cancel_codes(post: &PostProcessor) -> Vec<f64> {
+    HEADER_CANCEL_G
+        .iter()
+        .filter(|(word, _)| {
+            post.program
+                .header
+                .iter()
+                .any(|line| code_words(line).iter().any(|w| w == word))
+        })
+        .map(|&(_, code)| code)
+        .collect()
 }
 /// The `M` codes of grblHAL's tool change, accepted when the definition's
 /// tool change uses `M6` (#57) and its mode is `"m6"` (#95): `M6` itself, checked like a pause, and
@@ -634,14 +807,38 @@ fn check_characters(text: &str) -> Result<(), ExportError> {
 
 /// Rejects every `G` and `M` code not in [`ALLOWED_G`] or [`ALLOWED_M`].
 /// The codes in [`TOOL_CHANGE_M`] are allowed too when the program may
-/// change tools with `M6` (`with_m6`), and those in [`CANNED_G`] when it
-/// may hold canned cycles (`with_canned`).
-fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(), ExportError> {
+/// change tools with `M6` (`with_m6`), those in [`CANNED_G`] when it
+/// may hold canned cycles (`with_canned`), and `G53` on the lines the
+/// parser read as a machine-coordinate lift when the definition documents
+/// it and the project sets the height (`with_g53`, S16). The definition's
+/// own header cancels, `header_g` ([`header_cancel_codes`]), are allowed
+/// only where [`check_header_cancel`] places them.
+fn check_words(
+    blocks: &[Block],
+    with_m6: bool,
+    with_canned: bool,
+    with_g53: bool,
+    header_g: &[f64],
+) -> Result<(), ExportError> {
     let tool_change: &[f64] = if with_m6 { &TOOL_CHANGE_M } else { &[] };
     let canned: &[f64] = if with_canned { &CANNED_G } else { &[] };
+    // #312: true in the header, before the first move or spindle start,
+    // and again after each stop until the next one: the two places `emit`
+    // writes the setup lines.
+    let mut in_setup = true;
     for block in blocks {
+        let lift: &[f64] = if with_g53 && block.machine_lift_mm.is_some() {
+            &MACHINE_G
+        } else {
+            &[]
+        };
         for word in &block.words {
+            if word.letter == 'G' && header_g.iter().any(|&code| is_code(word.value, code)) {
+                check_header_cancel(block, word, in_setup)?;
+                continue;
+            }
             let (allowed, extra): (&[f64], &[f64]) = match word.letter {
+                'G' if !lift.is_empty() => (&ALLOWED_G, lift),
                 'G' => (&ALLOWED_G, canned),
                 'M' => (&ALLOWED_M, tool_change),
                 _ => continue,
@@ -657,8 +854,39 @@ fn check_words(blocks: &[Block], with_m6: bool, with_canned: bool) -> Result<(),
                 });
             }
         }
+        if block.motion.is_some() || block.machine_lift_mm.is_some() || block.has('M', 3.0) {
+            in_setup = false;
+        }
+        if block.has('M', 0.0) || block.has('M', 1.0) || (with_m6 && block.has('M', 6.0)) {
+            in_setup = true;
+        }
     }
     Ok(())
+}
+
+/// #312: `word`, one of the definition's header cancels (`G50`, `G69`),
+/// is accepted only as `emit` writes it: alone on its line, but for a line
+/// number, so no axis, feed, speed or other value word can ride with it,
+/// and only in the header or in the setup after a stop (`in_setup`). On a
+/// dialect where `G50` takes axis words it is a different command, so
+/// anything else is refused.
+fn check_header_cancel(block: &Block, word: &Word, in_setup: bool) -> Result<(), ExportError> {
+    let alone = block.words.iter().filter(|w| w.letter != 'N').count() == 1;
+    let reason = if !alone {
+        Some("it shares its line with other words")
+    } else if !in_setup {
+        Some("it is outside the header and the setup after a stop")
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(ExportError::MisplacedSetupWord {
+            line: block.line,
+            word: format!("{}{}", word.letter, word.value),
+            reason,
+        }),
+        None => Ok(()),
+    }
 }
 
 /// One output unit in the last written decimal place of a feed, in
@@ -668,10 +896,10 @@ fn feed_quantum_mm_min(post: &PostProcessor, units: Units) -> f64 {
     quantum_mm(post, units)
 }
 
-/// One output unit in the last written decimal place, in mm.
+/// One output unit in the last written decimal place, in mm: the one
+/// `dc_cam::entry` keeps a helix's moves above (#265).
 pub(crate) fn quantum_mm(post: &PostProcessor, units: Units) -> f64 {
-    let places = decimal_places(&post.number_format, units);
-    10f64.powi(-i32::from(places)) * mm_per_unit(units)
+    post.number_format.decimal_places.quantum_mm(units)
 }
 
 /// The rules in force on one line, project space, mm.
@@ -943,12 +1171,13 @@ fn differs(a: Option<f64>, b: Option<f64>) -> bool {
 }
 
 /// S3: a cut has a positive feed, and it is one of its tool's rates. A
-/// straight move that falls while it moves in XY (an entry ramp or helix)
-/// may also run anywhere between the tool's plunge rate and its feed: its
-/// feed is the cutting feed scaled so its vertical rate stays under the
-/// plunge rate (S10's feed scale, `dc_cam::entry`), which lands between
-/// the two. Whether that vertical rate is right is S10's check
-/// ([`check_descent_rate`]).
+/// move that falls while it moves in XY (an entry ramp or helix, a smooth
+/// tab's down slope, or an arc that falls) may also run anywhere between
+/// the tool's plunge rate and its feed: its feed is the cutting feed
+/// scaled so its vertical rate stays under the plunge rate (S10's feed
+/// scale, `dc_cam::entry`), or a tool rate the emitter rounded down for
+/// the same reason (#325), which lands between the two. Whether that
+/// vertical rate is right is S10's check ([`check_descent_rate`]).
 fn check_feed(
     mv: &MachineMove,
     limits: &Limits<'_>,
@@ -980,8 +1209,8 @@ fn check_feed(
     Ok(())
 }
 
-/// True for a `G1` that falls while it moves in XY, every coordinate
-/// known.
+/// True for a `G1`, `G2` or `G3` that falls while it moves in XY, every
+/// coordinate known.
 fn is_descent(mv: &MachineMove) -> bool {
     let (from, to) = (mv.from, mv.to);
     let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
@@ -989,7 +1218,7 @@ fn is_descent(mv: &MachineMove) -> bool {
     else {
         return false;
     };
-    mv.kind == MotionKind::Linear && tz < fz && (tx - fx).hypot(ty - fy) > 0.0
+    mv.kind.is_cut() && tz < fz && (tx - fx).hypot(ty - fy) > 0.0
 }
 
 /// S10: a cutting move that descends falls no faster than its tool's
@@ -997,35 +1226,52 @@ fn is_descent(mv: &MachineMove) -> bool {
 /// the written numbers (`docs/specs/phase-2/functional.md`, S10). Every
 /// descending cut is held to it, whatever made it: an entry ramp or helix,
 /// a smooth tab's down slope (#157), a straight plunge (slope 90°, so its
-/// feed must be at most the plunge rate) or an arc that descends. The
-/// written move may differ from the toolpath's by the rounding of its
-/// numbers, `quantum_mm` (one unit in the last written place, the same
-/// for lengths and feeds): a feed scaled to the plunge rate exactly must
-/// pass, so the check takes the slowest vertical rate those numbers allow,
-/// the feed one unit lower, the drop one unit shorter and the length two
-/// longer. A move whose start is not known is skipped; S2 and S4 keep a
+/// feed must be at most the plunge rate) or an arc that descends. Nothing
+/// above the plunge rate is allowed for rounding (#325): the emitter
+/// writes every feed the toolpath holds to the plunge rate so that the
+/// rate [`descent_rate_mm_min`] reads from the written numbers stays at or
+/// under it. A move whose start is not known is skipped; S2 and S4 keep a
 /// program from cutting from an unknown position.
 fn check_descent_rate(
     mv: &MachineMove,
     limits: &Limits<'_>,
     transform: &MachineTransform,
-    quantum_mm: f64,
 ) -> Result<(), ExportError> {
     let (Some(op), Some(tool)) = (limits.op, limits.tool) else {
         return Ok(());
     };
+    let Some(rate_mm_min) = descent_rate_mm_min(mv, transform) else {
+        return Ok(());
+    };
+    if rate_mm_min > tool.plunge_mm_min.unwrap_or(0.0) {
+        return Err(ExportError::EntryTooSteep {
+            op: op.id().clone(),
+            line: mv.line,
+        });
+    }
+    Ok(())
+}
+
+/// The vertical rate, mm/min, at which the controller runs cutting move
+/// `mv`, from its written numbers alone: its feed times the sine of its
+/// slope, `feed × (drop / length)`, with an arc's length along the arc
+/// its centre words describe. A straight plunge's rate is its feed
+/// exactly. `None` for a rapid, a move that does not fall, or one whose
+/// start is not known. S10 judges every program by it, and the emitter
+/// writes feeds by it (#325).
+pub(crate) fn descent_rate_mm_min(mv: &MachineMove, transform: &MachineTransform) -> Option<f64> {
     let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
         (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
     else {
-        return Ok(());
+        return None;
     };
     let drop_mm = transform.project_z(fz, mv.units) - transform.project_z(tz, mv.units);
     if drop_mm <= 0.0 {
-        return Ok(());
+        return None;
     }
     let scale = mm_per_unit(mv.units);
     let run_mm = match mv.kind {
-        MotionKind::Rapid => return Ok(()),
+        MotionKind::Rapid => return None,
         MotionKind::Linear => (tx - fx).hypot(ty - fy) * scale,
         MotionKind::ArcCw | MotionKind::ArcCcw => {
             let machine_cw = mv.kind == MotionKind::ArcCw;
@@ -1038,16 +1284,8 @@ fn check_descent_rate(
         }
     };
     let feed_mm_min = mv.feed.unwrap_or(0.0) * scale;
-    let slowest_mm_min = (feed_mm_min - quantum_mm).max(0.0) * (drop_mm - quantum_mm).max(0.0)
-        / (run_mm.hypot(drop_mm) + 2.0 * quantum_mm);
-    let plunge_mm_min = tool.plunge_mm_min.unwrap_or(0.0);
-    if slowest_mm_min > plunge_mm_min + EPS_MM {
-        return Err(ExportError::EntryTooSteep {
-            op: op.id().clone(),
-            line: mv.line,
-        });
-    }
-    Ok(())
+    // `drop / length` first: exactly 1 on a straight plunge.
+    Some(feed_mm_min * (drop_mm / run_mm.hypot(drop_mm)))
 }
 
 /// An arc move whose end is its start within half a unit in the last
@@ -1113,7 +1351,11 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 ///
 /// - a rapid by one rapid that ends at its end point, or two whose first
 ///   moves in Z alone or in XY alone towards it (`emit` splits a rapid so
-///   it never travels sideways below either end);
+///   it never travels sideways below either end); in a Drill written as
+///   canned cycles, also by none, or by a rapid in XY alone over it, when
+///   a rapid in Z alone passes through its end point and the toolpath
+///   goes on the same way along that line (#305,
+///   [`match_rapid_on_the_way`]);
 /// - a straight cut by one `G1` that ends at its end point;
 /// - a dwell by a `G4` with the same seconds (within a millisecond, in
 ///   the definition's dwell units) between the motion lines around it;
@@ -1173,10 +1415,11 @@ fn check_reproduces(
     // own (the definition's `reentry_gap_mm`), not the toolpath's, so a
     // rapid in Z alone inside a hole matches within that gap. Every other
     // move matches as for plain moves.
-    let reentry_gap_mm = (matches!(span.op, Operation::Drill(_))
-        && blocks.iter().any(|b| b.synthetic && in_span(b)))
-    .then(|| CycleModel::of(post).reentry_gap_mm)
-    .flatten();
+    let canned =
+        matches!(span.op, Operation::Drill(_)) && blocks.iter().any(|b| b.synthetic && in_span(b));
+    let reentry_gap_mm = canned
+        .then(|| CycleModel::of(post).reentry_gap_mm)
+        .flatten();
     // Where the last straight cut of the toolpath ended, in XY.
     let mut last_cut: Option<Point> = None;
     let mut next_dwell = 0;
@@ -1204,10 +1447,18 @@ fn check_reproduces(
             previous.is_some_and(|p| at(p.xy())) && last_cut.is_some_and(at)
         };
         let consumed = match mv.kind {
-            MoveKind::Rapid => match_rapid(rest, mv.to, already_there).or_else(|| {
-                let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
-                match_in_hole_rapid(rest, mv.to, gap_mm)
-            }),
+            MoveKind::Rapid => match_rapid(rest, mv.to, already_there)
+                .or_else(|| {
+                    let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
+                    match_in_hole_rapid(rest, mv.to, gap_mm)
+                })
+                .or_else(|| {
+                    // #305: a cycle from the clearance height goes through
+                    // safe Z without stopping.
+                    canned
+                        .then(|| match_rapid_on_the_way(rest, mv.to, moves.get(index + 1)))
+                        .flatten()
+                }),
             MoveKind::Dwell { seconds } => {
                 // A `G4` with these seconds after the last motion matched
                 // and before the next; it moves nothing.
@@ -1254,22 +1505,32 @@ fn check_reproduces(
         }
         // S12: an arc where the toolpath has straight moves (or a shallow
         // corner arc a run may take as its chord).
-        let fitted = rest
-            .first()
-            .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
-        let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
-            return Err(mismatch(index));
+        let fitted = (|| {
+            let fitted = rest
+                .first()
+                .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
+            let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
+                return Err(mismatch(index));
+            };
+            if !run_eligible(previous, mv, arc_fit_mm) {
+                return Err(mismatch(index));
+            }
+            match_fitted_arc(rest, moves, index, previous, transform, arc_fit_mm).ok_or_else(|| {
+                ExportError::ArcFitViolation {
+                    op: span.op.id().clone(),
+                    line: read.mv.line,
+                }
+            })
+        })();
+        let (lines, covered) = match fitted {
+            Ok(fitted) => fitted,
+            // An arc of at most a half turn that ends where the controller
+            // already is lies wholly within the rounding of it: `emit`
+            // writes it as nothing, as it does such a straight move. Tried
+            // last, so a fitted run that takes the arc is matched first.
+            Err(_) if already_there && written_as_nothing(previous, mv) => (0, 1),
+            Err(error) => return Err(error),
         };
-        if !run_eligible(previous, mv, arc_fit_mm) {
-            return Err(mismatch(index));
-        }
-        let (lines, covered) = match_fitted_arc(
-            rest, moves, index, previous, transform, arc_fit_mm,
-        )
-        .ok_or_else(|| ExportError::ArcFitViolation {
-            op: span.op.id().clone(),
-            line: read.mv.line,
-        })?;
         cursor += lines;
         index += covered;
         previous = moves.get(index.wrapping_sub(1)).map(|m| m.to);
@@ -1284,6 +1545,19 @@ fn check_reproduces(
     } else {
         Err(mismatch(span.toolpath.moves.len()))
     }
+}
+
+/// Whether toolpath move `mv`, from `previous`, is an arc of at most a
+/// half turn: every point of it lies no further from its start than its
+/// end does, so it is wholly within the rounding when its end is.
+fn written_as_nothing(previous: Option<Point3>, mv: &Move) -> bool {
+    let (MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre }) = mv.kind else {
+        return false;
+    };
+    let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
+    previous
+        .and_then(|start| ToolpathArc::new(start, mv.to, centre, clockwise))
+        .is_some_and(|arc| arc.sweep_rad <= PI)
 }
 
 /// A parsed move with its ends in project space, mm.
@@ -1385,6 +1659,59 @@ fn match_in_hole_rapid(rest: &[ReadMove<'_>], target: Point3, gap_mm: f64) -> Op
         .to_z
         .is_some_and(|z| approx_eq(z, target.z, gap_mm + tolerance));
     (z_only && at_xy && within).then_some(1)
+}
+
+/// S11 (#305): how many of `rest` a rapid to `target` takes when the
+/// controller goes through `target` without stopping there: one rapid of
+/// the controller's in Z alone, at the target's XY, passes through it on
+/// the way to a Z beyond it, and the toolpath goes on the same way along
+/// that line, by a rapid in Z alone (`next`), or the target is the
+/// toolpath's last move and the controller's rapid goes up, the retract
+/// [`check_reproduces`] accepts after the last move. Coming down, a rapid
+/// in XY alone to over the target may come first: the emitter's split of
+/// the move over the first hole, made at the clearance height. The lines
+/// taken are that one, or none; the rapid in Z stays for the next move.
+/// Only for a Drill written as canned cycles, whose `G98` returns each
+/// hole to the clearance height where the toolpath stops at safe Z.
+fn match_rapid_on_the_way(
+    rest: &[ReadMove<'_>],
+    target: Point3,
+    next: Option<&Move>,
+) -> Option<usize> {
+    let rapid = |m: &&ReadMove<'_>| m.mv.kind == MotionKind::Rapid;
+    let first = rest.first().filter(rapid)?;
+    let tolerance = first.tolerance_mm;
+    let over =
+        |p: Point| approx_eq(p.x, target.x, tolerance) && approx_eq(p.y, target.y, tolerance);
+    let xy_only = !differs(first.mv.from.z, first.mv.to.z) && first.to_xy.is_some_and(over);
+    let (taken, along) = if xy_only {
+        (1, rest.get(1).filter(rapid)?)
+    } else {
+        (0, first)
+    };
+    let (from, to) = (along.from?, along.to?);
+    if !(over(from.xy()) && over(to.xy())) {
+        return None;
+    }
+    let up = to.z > from.z;
+    let through = if up {
+        from.z + tolerance < target.z && target.z < to.z - tolerance
+    } else {
+        to.z + tolerance < target.z && target.z < from.z - tolerance
+    };
+    let goes_on = match next {
+        Some(n) => {
+            n.kind == MoveKind::Rapid
+                && over(n.to.xy())
+                && if up {
+                    n.to.z > target.z + tolerance
+                } else {
+                    n.to.z < target.z - tolerance
+                }
+        }
+        None => up && taken == 0,
+    };
+    (through && goes_on && !(xy_only && up)).then_some(taken)
 }
 
 /// How many of `rest` a straight cut to `target` takes, if they match it.
@@ -1571,21 +1898,18 @@ fn match_fitted_arc(
             }
         }
         // #226: the chain stays within the allowance of the move along its
-        // whole length, not only at its ends: over every piece the move
-        // spans, the piece's farthest point from the move's chord (for a
-        // straight move between points on the circle, its sagitta).
+        // whole length, not only at its ends: over the part of every piece
+        // between the move's ends, the farthest point from the move's
+        // chord (for a straight move between points on the circle, its
+        // sagitta). Each end is placed on each piece, not assumed to lie
+        // before or past it (#262): a vertex up to the angle slack past a
+        // piece's end counts as on that piece, and on a circle so small
+        // that the slack is a whole chord it lies inside the next piece,
+        // whose part before it the move does not span.
         for k in first_piece..=piece {
             let current = pieces.get(k)?;
-            let from_rad = if k == first_piece {
-                current.clamped_turn(vertex.xy())
-            } else {
-                0.0
-            };
-            let to_rad = if k == piece {
-                current.clamped_turn(mv.to.xy())
-            } else {
-                current.sweep_rad
-            };
+            let from_rad = current.clamped_turn(vertex.xy());
+            let to_rad = current.clamped_turn(mv.to.xy());
             if to_rad > from_rad
                 && current.deviation_mm(from_rad, to_rad, vertex.xy(), mv.to.xy()) > allowed_mm
             {
@@ -1972,6 +2296,17 @@ mod tests {
         post: PostProcessor,
         control: SpindleControl,
     ) -> Result<(), ExportError> {
+        check_text_lifting(text, post, control, None)
+    }
+
+    /// [`check_text_on`] for a project whose tool-change machine Z is
+    /// `machine_lift_mm` (S16, #283).
+    fn check_text_lifting(
+        text: &str,
+        post: PostProcessor,
+        control: SpindleControl,
+        machine_lift_mm: Option<f64>,
+    ) -> Result<(), ExportError> {
         let (project, op, tool) = fixture();
         let mut post = post;
         post.feed_speed.spindle_control = control;
@@ -1984,6 +2319,7 @@ mod tests {
             tool: &tool,
             toolpath: &toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: 1..lines,
         }];
         check_rules(
@@ -1994,6 +2330,10 @@ mod tests {
             Tolerances {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
+            ProgramHeights {
+                machine_lift_mm,
+                clearance_z_mm: None,
             },
             &spans,
         )
@@ -2137,6 +2477,7 @@ mod tests {
                 tool: &tool,
                 toolpath: &toolpath,
                 material: &Material::Unchecked,
+                tabs: &[],
                 lines: 1..10,
             },
             OpSpan {
@@ -2144,6 +2485,7 @@ mod tests {
                 tool: &tool,
                 toolpath: &toolpath,
                 material: &Material::Unchecked,
+                tabs: &[],
                 lines: 10..text.lines().count() + 1,
             },
         ];
@@ -2156,6 +2498,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: project.arc_fit_tolerance_mm,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .unwrap_err();
@@ -2368,6 +2711,246 @@ mod tests {
         ] {
             assert!(check_text(text).is_ok(), "{text}: {:?}", check_text(text));
         }
+    }
+
+    /// #312: `G50` (scale factors to 1) and `G69` (no rotation) are
+    /// accepted from a definition whose header has them, Mach3 v3 and
+    /// UCCNC v3, and from no other: LinuxCNC, GRBL and RS274/NGC do not
+    /// have them, grblHAL before v4 does not write them, and on other
+    /// dialects `G50` means something else. grblHAL v4 writes `G50` and,
+    /// with no rotation on grblHAL, no `G69` (#316). `G51` and `G68`, which
+    /// scale and rotate what the program writes, are refused everywhere:
+    /// the safety pass reads the program as written.
+    #[test]
+    fn g50_g69_accepted() {
+        let post = |id: &str, version: u32| {
+            dc_project::bundled_definition(id, version)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let cancels = "G21 G90\nG54\nG50\nG69\nG0 Z11\nM30\n";
+        let with_them = [
+            ("mach3 v3", post("mach3", 3)),
+            ("uccnc v3", post("uccnc", 3)),
+        ];
+        let without = [
+            ("mach3 v2", post("mach3", 2)),
+            ("uccnc v2", post("uccnc", 2)),
+            ("linuxcnc v2", post("linuxcnc", 2)),
+            ("grblhal v3", post("grblhal", 3)),
+            ("grbl v3", post("grbl", 3)),
+            ("generic v1", post("generic", 1)),
+        ];
+        for (case, p) in &with_them {
+            let ok = check_text_on(cancels, p.clone(), SpindleControl::Automatic);
+            assert!(ok.is_ok(), "{case}: {ok:?}");
+        }
+        for (case, p) in &without {
+            for word in ["G50", "G69"] {
+                let text = format!("G21 G90\nG54\n{word}\nG0 Z11\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == word),
+                    "{case} {word}: {err:?}"
+                );
+            }
+        }
+        // #316: grblHAL v4's header has `G50` and no `G69`; grblHAL has no
+        // rotation.
+        let grblhal_v4 = post("grblhal", 4);
+        let ok = check_text_on(
+            "G21 G90\nG54\nG50\nG0 Z11\nM30\n",
+            grblhal_v4.clone(),
+            SpindleControl::Automatic,
+        );
+        assert!(ok.is_ok(), "grblhal v4: {ok:?}");
+        let err = check_text_on(
+            "G21 G90\nG54\nG69\nG0 Z11\nM30\n",
+            grblhal_v4.clone(),
+            SpindleControl::Automatic,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ExportError::ForbiddenWord { line: 3, word: w } if w == "G69"),
+            "grblhal v4 G69: {err:?}"
+        );
+        let with_them = [
+            with_them[0].clone(),
+            with_them[1].clone(),
+            ("grblhal v4", grblhal_v4),
+        ];
+        for (case, p) in with_them.iter().chain(&without) {
+            for (code, word) in [("G51 Z-1", "G51"), ("G68", "G68")] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{code}\nM30\n");
+                let err = check_text_on(&text, p.clone(), SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { line: 4, word: w } if w == word),
+                    "{case} {code}: {err:?}"
+                );
+            }
+        }
+    }
+
+    /// #312: on a definition whose header writes them, `G50` and `G69` are
+    /// accepted only as `emit` writes them: alone on a line (a line number
+    /// aside), in the header or in the setup after a stop. With a value
+    /// word, `G50` is another command on some dialects (it would pass a
+    /// check that reads it as a cancel), and anywhere else it is not
+    /// DreamCarve's line, so both are refused with
+    /// [`ExportError::MisplacedSetupWord`]. The real headers pass.
+    #[test]
+    fn g50_g69_only_where_emit_writes_them() {
+        let post = |id: &str| {
+            dc_project::bundled_definition(id, 3)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let mach3_header = "%\nN10 ( Project: x )\nN20 ( Generated by DreamCarve on 2026-10-15 )\n\
+            N30 G90 G94 G17 G40 G80\nN40 G50\nN50 G69\nN60 G91.1\nN70 G21\nN80 G54\n\
+            N90 G0 Z11\nN100 M30\n";
+        let ok = check_text_on(mach3_header, post("mach3"), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "mach3: {ok:?}");
+        let uccnc_header = "( Project: x )\n( Generated by DreamCarve on 2026-10-15 )\n\
+            G90 G17 G40 G80 G94\nG50\nG69\nG54\nG0 Z11\nM30\n";
+        let ok = check_text_on(uccnc_header, post("uccnc"), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "uccnc: {ok:?}");
+        // Again in the setup after a stop.
+        let after_stop =
+            "G21 G90\nG54\nG50\nG69\nG0 Z11\nM0\nG50\nG69\nG21 G90\nG54\nG0 Z11\nM30\n";
+        for id in ["mach3", "uccnc"] {
+            let ok = check_text_on(after_stop, post(id), SpindleControl::Automatic);
+            assert!(ok.is_ok(), "{id} after a stop: {ok:?}");
+        }
+        let misplaced = |id: &str, text: &str, line: usize, word: &str, why: &str| {
+            let err = check_text_on(text, post(id), SpindleControl::Automatic).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::MisplacedSetupWord { line: l, word: w, reason }
+                        if *l == line && w == word && reason.contains(why)
+                ),
+                "{id}: {text}: {err:?}"
+            );
+        };
+        for id in ["mach3", "uccnc"] {
+            // With a value word, in the setup after a stop, where it would
+            // pass alone. `G0` is still the motion mode there, so the
+            // parser reads `G50 X0` as a move as well.
+            for code in [
+                "G50 X0",
+                "G50 Z-1",
+                "G50 F100",
+                "G50 S1000",
+                "G50 P1",
+                "G69 X0",
+                "G69 F100",
+                "G50 G69",
+            ] {
+                let word = &code[..3];
+                let text = format!("G21 G90\nG54\nG0 Z11\nM0\n{code}\nG21 G90\nG54\nG0 Z11\nM30\n");
+                misplaced(id, &text, 5, word, "other words");
+            }
+            // In the header, the value word fails the same way where the
+            // parser reads it.
+            for code in ["G50 F100", "G50 S1000", "G50 P1", "G50 G69"] {
+                let word = &code[..3];
+                let text = format!("G21 G90\nG54\n{code}\nG0 Z11\nM30\n");
+                misplaced(id, &text, 3, word, "other words");
+            }
+            // Alone, but after the first move, with no stop since.
+            for word in ["G50", "G69"] {
+                let text = format!("G21 G90\nG54\nG0 Z11\n{word}\nM30\n");
+                misplaced(id, &text, 4, word, "outside");
+                let spindle = format!("G21 G90\nG54\nM3 S18000\n{word}\nG0 Z11\nM5\nM30\n");
+                misplaced(id, &spindle, 4, word, "outside");
+                let resumed =
+                    format!("G21 G90\nG54\nG0 Z11\nM0\nG21 G90\nG54\nG0 Z11\n{word}\nM30\n");
+                misplaced(id, &resumed, 8, word, "outside");
+            }
+        }
+    }
+
+    /// #316: grblHAL v4 writes `G50` in its header and the setup after a
+    /// stop, and the safety pass holds it to #312's rule: alone on its
+    /// line, only there. On grblHAL `G50` takes the axis-command slot of
+    /// its block (`gcode.c` 1767), so `G1 X5 G50` would drop the move and
+    /// `G50 X5` would drop the axis words; neither is DreamCarve's line.
+    /// The real header passes, and so does the setup after an `M6` in
+    /// mode `"m6"` and after an `M0`.
+    #[test]
+    fn grblhal_v4_g50_only_where_emit_writes_it() {
+        let v4 = || {
+            dc_project::bundled_definition("grblhal", 4)
+                .unwrap()
+                .default_ref()
+                .resolve()
+                .unwrap()
+        };
+        let header = "( Project: x )\n( Generated by DreamCarve on 2026-10-15 )\n\
+            G90\nG17\nG94\nG80\nG40\nG50\nG21\nG54\nG0 Z11\nM30\n";
+        let ok = check_text_on(header, v4(), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "header: {ok:?}");
+        let after_m0 = "G21 G90\nG54\nG50\nG0 Z11\nM0\nG80\nG40\nG50\nG21 G90\nG54\nG0 Z11\nM30\n";
+        let ok = check_text_on(after_m0, v4(), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "after M0: {ok:?}");
+        let mut m6 = v4();
+        m6.tool_change.mode = ToolChangeMode::M6;
+        let after_m6 = "G21 G90\nG54\nG50\nM61 Q1\nG0 Z11\nM5\nT2 M6\nG80\nG40\nG50\nG21 G90\nG54\nG0 Z11\nM30\n";
+        let ok = check_text_on(after_m6, m6.clone(), SpindleControl::Automatic);
+        assert!(ok.is_ok(), "after M6: {ok:?}");
+        let misplaced = |text: &str, line: usize, why: &str| {
+            let err = check_text_on(text, v4(), SpindleControl::Automatic).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ExportError::MisplacedSetupWord { line: l, word: w, reason }
+                        if *l == line && w == "G50" && reason.contains(why)
+                ),
+                "{text}: {err:?}"
+            );
+        };
+        for code in [
+            "G50 X0",
+            "G50 Z-1",
+            "G50 F100",
+            "G50 S1000",
+            "G50 P1",
+            "G1 X5 G50",
+            "G0 G50",
+        ] {
+            let text = format!("G21 G90\nG54\nG0 Z11\nM0\n{code}\nG21 G90\nG54\nG0 Z11\nM30\n");
+            misplaced(&text, 5, "other words");
+        }
+        for code in ["G50 F100", "G50 S1000", "G50 P1", "G90 G50", "G21 G50"] {
+            let text = format!("G21 G90\nG54\n{code}\nG0 Z11\nM30\n");
+            misplaced(&text, 3, "other words");
+        }
+        misplaced("G21 G90\nG54\nG0 Z11\nG50\nM30\n", 4, "outside");
+        misplaced(
+            "G21 G90\nG54\nM3 S18000\nG50\nG0 Z11\nM5\nM30\n",
+            4,
+            "outside",
+        );
+        misplaced(
+            "G21 G90\nG54\nG0 Z11\nM0\nG21 G90\nG54\nG0 Z11\nG50\nM30\n",
+            8,
+            "outside",
+        );
+        // After an `M6`, but past the next move.
+        let err = check_text_on(
+            "G21 G90\nG54\nM61 Q1\nG0 Z11\nM5\nT2 M6\nG21 G90\nG54\nG0 Z11\nG50\nM30\n",
+            m6,
+            SpindleControl::Automatic,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, ExportError::MisplacedSetupWord { line: 10, .. }),
+            "{err:?}"
+        );
     }
 
     /// RS274/NGC (NIST IR 6556, 3.1) and Mach3 (Using Mach3Mill 1.84,
@@ -2862,6 +3445,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &Material::Unchecked,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -2874,6 +3458,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -2891,6 +3476,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -2903,6 +3489,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: None,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -3156,6 +3743,7 @@ mod tests {
                     tool: &tool,
                     toolpath: &a,
                     material: &Material::Unchecked,
+                    tabs: &[],
                     lines: 6..10,
                 },
                 OpSpan {
@@ -3163,6 +3751,7 @@ mod tests {
                     tool: &tool,
                     toolpath: &b,
                     material: &Material::Unchecked,
+                    tabs: &[],
                     lines: 10..text.lines().count() + 1,
                 },
             ];
@@ -3176,6 +3765,7 @@ mod tests {
                     flatten_mm: project.flatten_tolerance_mm,
                     arc_fit_mm: project.arc_fit_tolerance_mm,
                 },
+                ProgramHeights::default(),
                 &spans,
             )
             .map(|_| ())
@@ -3444,6 +4034,47 @@ mod tests {
         }
     }
 
+    /// #262: a move that spans the end of one piece and the start of the
+    /// next is held to the part of both pieces between its ends. A 20°
+    /// chord from 40° to 60° under two `G3` pieces meeting at 50° bows
+    /// 0.15 mm off its arc, so S12 refuses the chain; with that stretch in
+    /// 2° chords too it passes. (Each end of a move is placed on each
+    /// piece; the fix for #262 must not stop measuring across the joint.)
+    #[test]
+    fn chord_across_a_piece_end_is_measured_on_both_pieces() {
+        let on_circle = |deg: f64| {
+            let a = deg.to_radians();
+            Point3::new(50.0 + 10.0 * a.cos(), 50.0 + 10.0 * a.sin(), 5.0)
+        };
+        let toolpath = |long_chord: bool| {
+            let mut moves = vec![
+                Move::rapid(Point3::new(60.0, 50.0, 11.0)),
+                Move::linear(Point3::new(60.0, 50.0, 5.0), 300.0),
+            ];
+            let mut deg = 0_u32;
+            while deg < 90 {
+                deg += if long_chord && deg == 40 { 20 } else { 2 };
+                moves.push(Move::linear(on_circle(f64::from(deg)), 1000.0));
+            }
+            moves.push(Move::rapid(Point3::new(50.0, 60.0, 11.0)));
+            Toolpath { moves }
+        };
+        let joint = on_circle(50.0);
+        let text = chord_run_text(&format!(
+            "G3 X{:.3} Y{:.3} I-10 J0 F1000\nX50 Y60 I{:.3} J{:.3}\n",
+            joint.x,
+            joint.y,
+            50.0 - joint.x,
+            50.0 - joint.y,
+        ));
+        let result = check_against_with(&text, &toolpath(true), Some(0.01));
+        assert!(
+            matches!(result, Err(ExportError::ArcFitViolation { line: 8, .. })),
+            "{result:?}"
+        );
+        check_against_with(&text, &toolpath(false), Some(0.01)).unwrap();
+    }
+
     // S11: canned cycles (`docs/specs/phase-2/design.md`, "S11 expansion").
     // No bundled definition has them yet, so these use a test-only one.
 
@@ -3482,6 +4113,7 @@ mod tests {
             tool: &tool,
             toolpath,
             material: &material,
+            tabs: &[],
             lines: 1..text.lines().count() + 1,
         }];
         check(
@@ -3494,6 +4126,7 @@ mod tests {
                 flatten_mm: project.flatten_tolerance_mm,
                 arc_fit_mm: None,
             },
+            ProgramHeights::default(),
             &spans,
         )
         .map(|_| ())
@@ -3644,6 +4277,229 @@ mod tests {
         }
     }
 
+    /// The fixture's clearance height for the #305 tests: work Z 10,
+    /// absolute 16, above safe Z (work 5, absolute 11).
+    const CLEARANCE_Z_MM: f64 = 16.0;
+
+    /// The whole safety pass on `text` as the fixture's Drill with
+    /// `toolpath`, written for `post`, with the clearance height
+    /// [`CLEARANCE_Z_MM`].
+    fn check_drill_at_clearance(
+        text: &str,
+        toolpath: &Toolpath,
+        post: &PostProcessor,
+    ) -> Result<(), ExportError> {
+        let (project, _, tool) = fixture();
+        let transform = MachineTransform::new(&project, post).unwrap();
+        let op = drill();
+        let material = holes_under(toolpath);
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath,
+            material: &material,
+            tabs: &[],
+            lines: 1..text.lines().count() + 1,
+        }];
+        check(
+            text,
+            post,
+            &transform,
+            &project.stock,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: None,
+            },
+            ProgramHeights {
+                machine_lift_mm: None,
+                clearance_z_mm: Some(CLEARANCE_Z_MM),
+            },
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// The sequencer's Drill toolpath for simple holes at `xs` (Y 50),
+    /// each a part of its own, with the clearance height
+    /// [`CLEARANCE_Z_MM`]: the first hole is reached at safe Z (11); each
+    /// hole goes down to the retract plane (7), plunges to 3 mm and goes
+    /// out to safe Z; between holes the tool rises to `link_z`, crosses
+    /// there and comes down to safe Z again.
+    fn holes_linked_at(xs: &[f64], link_z: f64) -> Toolpath {
+        let mut moves = Vec::new();
+        for (k, &x) in xs.iter().enumerate() {
+            let at = |z: f64| Point3::new(x, 50.0, z);
+            if k > 0 {
+                moves.push(Move::rapid(at(link_z)));
+            }
+            moves.extend([
+                Move::rapid(at(11.0)),
+                Move::rapid(at(7.0)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(11.0)),
+            ]);
+            if k + 1 < xs.len() && link_z > 11.0 {
+                moves.push(Move::rapid(at(link_z)));
+            }
+        }
+        Toolpath { moves }
+    }
+
+    /// A program on the fixture that rises to the clearance height (work
+    /// Z 10), rapids over (50, 50) there, writes `G98`, then `cycles`.
+    fn clearance_cycle_program(cycles: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nG98\n{cycles}G80\nM5\n")
+    }
+
+    /// #305, S11: cycles written from the clearance height. `G98` returns
+    /// each hole to the Z before the first cycle of the series (LinuxCNC
+    /// `interp_cycles.cc` 926-931 and 976; Mach3Mill 10.7.29), work Z 10,
+    /// so the controller rapids from there straight to `R` and from the
+    /// bottom straight back, where the toolpath has two rapids along the
+    /// same vertical line, through safe Z. S6 takes them as one: the
+    /// program passes. A cycle whose `R` or `Z` differs from the toolpath
+    /// still fails, and so does the same program against a toolpath whose
+    /// holes are linked at safe Z, which `G98` from the clearance height
+    /// does not follow.
+    #[test]
+    fn canned_cycles_from_clearance_match_the_toolpath() {
+        let post = canned(Some(0.5));
+        let linked = holes_linked_at(&[50.0, 60.0], CLEARANCE_Z_MM);
+        let g81 = |z: &str, r: &str| {
+            clearance_cycle_program(&format!("G81 X50 Y50 Z{z} R{r} F300\nX60 Y50 Z{z} R{r}\n"))
+        };
+        check_drill_at_clearance(&g81("-3", "1"), &linked, &post).unwrap();
+        for (z, r) in [("-2.5", "1"), ("-3", "2"), ("-3", "0.5")] {
+            let result = check_drill_at_clearance(&g81(z, r), &linked, &post);
+            assert!(
+                matches!(result, Err(ExportError::MotionMismatch { .. })),
+                "Z{z} R{r}: {result:?}"
+            );
+        }
+        let at_safe_z = holes_linked_at(&[50.0, 60.0], 11.0);
+        let result = check_drill_at_clearance(&g81("-3", "1"), &at_safe_z, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "links at safe Z: {result:?}"
+        );
+    }
+
+    /// #305: S6 joins toolpath rapids along one vertical line only where
+    /// they lie on one rapid of the controller's in the same direction,
+    /// and only for a Drill written as canned cycles. A toolpath that goes
+    /// up past safe Z and then back down is not the cycle's one rapid up;
+    /// and a plain program with one `G0 Z` where the toolpath has two
+    /// still fails, as before, while the program that writes both passes.
+    #[test]
+    fn vertical_rapids_join_only_along_a_cycle_rapid() {
+        let post = canned(Some(0.5));
+        let at = |z: f64| Point3::new(50.0, 50.0, z);
+        let back_down = Toolpath {
+            moves: vec![
+                Move::rapid(at(11.0)),
+                Move::rapid(at(7.0)),
+                Move::linear(at(3.0), 300.0),
+                Move::rapid(at(13.0)),
+                Move::rapid(at(11.0)),
+            ],
+        };
+        let text = clearance_cycle_program("G81 X50 Y50 Z-3 R1 F300\n");
+        let result = check_drill_at_clearance(&text, &back_down, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "up past safe Z, then down: {result:?}"
+        );
+
+        let linked = holes_linked_at(&[50.0, 60.0], CLEARANCE_Z_MM);
+        let one_rapid = "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ1\nG1 Z-3 F300\nG0 Z10\nX60 Y50\nZ1\nG1 Z-3\nG0 Z5\nM5\n";
+        let result = check_drill_at_clearance(one_rapid, &linked, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "plain program, one rapid for two: {result:?}"
+        );
+        let both = "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ5\nZ1\nG1 Z-3 F300\nG0 Z5\nZ10\nX60 Y50\nZ5\nZ1\nG1 Z-3\nG0 Z5\nM5\n";
+        check_drill_at_clearance(both, &linked, &post).unwrap();
+    }
+
+    /// The sequencer's Drill toolpath for a hole at X 50, its own part,
+    /// then a part with holes at X 60 and X 70 (Y 50), with the clearance
+    /// height [`CLEARANCE_Z_MM`]: each hole goes down from safe Z (11) to
+    /// the retract plane (7), plunges to 3 mm and goes out to safe Z; the
+    /// tool rises to the clearance height between the parts, comes down
+    /// to safe Z over X 60, and crosses to X 70 at safe Z.
+    fn holes_of_two_parts() -> Toolpath {
+        let at = |x: f64, z: f64| Point3::new(x, 50.0, z);
+        let hole = |x: f64| {
+            [
+                Move::rapid(at(x, 7.0)),
+                Move::linear(at(x, 3.0), 300.0),
+                Move::rapid(at(x, 11.0)),
+            ]
+        };
+        let mut moves = vec![Move::rapid(at(50.0, 11.0))];
+        moves.extend(hole(50.0));
+        moves.extend([
+            Move::rapid(at(50.0, CLEARANCE_Z_MM)),
+            Move::rapid(at(60.0, CLEARANCE_Z_MM)),
+            Move::rapid(at(60.0, 11.0)),
+        ]);
+        moves.extend(hole(60.0));
+        moves.push(Move::rapid(at(70.0, 11.0)));
+        moves.extend(hole(70.0));
+        Toolpath { moves }
+    }
+
+    /// The program `emit` writes for [`holes_of_two_parts`] on the
+    /// fixture (work Z: safe Z 5, clearance 10): a `G98` series per part,
+    /// each from safe Z over its first hole and closed by `G80`, the rise
+    /// to the clearance height between them. `second` is what comes
+    /// between the crossing to X 60 and the second series' first cycle,
+    /// `close` what closes the first series.
+    fn series_per_part_program(close: &str, second: &str) -> String {
+        format!(
+            "G21 G90\nG54\nG0 Z10\nM3 S18000\nG4 P3\nX50 Y50\nZ5\nG98\n\
+             G81 X50 Y50 Z-3 R1 F300\n{close}G0 Z10\nX60\n{second}\
+             G81 X60 Y50 Z-3 R1 F300\nX70 Y50 Z-3 R1\nG80\nG0 Z10\nM5\n"
+        )
+    }
+
+    /// #314, S11: a Drill linked at both heights, written as one `G98`
+    /// series per part. `G80`, and any motion that is not a cycle, ends a
+    /// series, and the next cycle starts a new one from the Z it is at
+    /// (LinuxCNC `interp_convert.cc` 3818-3819, `interp_cycles.cc`
+    /// 926-931), here safe Z, so the second series returns both holes of
+    /// its part to safe Z and crosses between them there. The expansion is
+    /// the toolpath move for move: the program passes. It fails when the
+    /// first series lacks the `G80` before the rise (unparseable: S11
+    /// models no series ended by other motion), when the second series
+    /// starts from the clearance height (no `Z5` before its `G98`: `G98`
+    /// then returns to Z 10, and the pair is crossed there), and with
+    /// `G99`, which returns to `R`, below safe Z.
+    #[test]
+    fn series_per_part_match_the_toolpath() {
+        let post = canned(Some(0.5));
+        let toolpath = holes_of_two_parts();
+        let text = series_per_part_program("G80\n", "Z5\nG98\n");
+        check_drill_at_clearance(&text, &toolpath, &post).unwrap();
+
+        let no_cancel = series_per_part_program("", "Z5\nG98\n");
+        let result = check_drill_at_clearance(&no_cancel, &toolpath, &post);
+        assert!(
+            matches!(result, Err(ExportError::Unparseable { line: 10, .. })),
+            "no G80 before the rise: {result:?}"
+        );
+        let from_clearance = series_per_part_program("G80\n", "G98\n");
+        let result = check_drill_at_clearance(&from_clearance, &toolpath, &post);
+        assert!(
+            matches!(result, Err(ExportError::MotionMismatch { .. })),
+            "second series from the clearance height: {result:?}"
+        );
+        let g99 = series_per_part_program("G80\n", "Z5\nG99\n");
+        let result = check_drill_at_clearance(&g99, &toolpath, &post);
+        assert!(result.is_err(), "G99: {result:?}");
+    }
+
     /// S1 on the expansion: a `G81` whose bottom is below the stock bottom
     /// (Z −6.5 on the 6 mm stock, no allowance) fails on its line.
     #[test]
@@ -3768,6 +4624,27 @@ mod tests {
         );
     }
 
+    /// #325: S10 allows nothing above the plunge rate. A short ramp, 0.3 mm
+    /// down over 0.4 mm across (sin 0.6), at F501.5 falls at 300.9 mm/min
+    /// against the fixture's 300: refused, though a unit off each written
+    /// number would bring it under. Just under the plunge rate, at F499.999,
+    /// it passes, and so does line 7, a straight plunge at exactly F300.
+    #[test]
+    fn s10_refuses_vertical_rate_above_plunge() {
+        let ramp = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z0 F300\nX0.4 Z-0.3 F{f}\nX10 F1000\nG0 Z5\nM5\n"
+            )
+        };
+        let err = check_text(&ramp("501.5")).unwrap_err();
+        assert!(
+            matches!(err, ExportError::EntryTooSteep { line: 8, .. }),
+            "{err:?}"
+        );
+        check_text(&ramp("499.999")).unwrap();
+        check_text(&ramp("400")).unwrap();
+    }
+
     /// A lap at Z 3 along Y 10 with a tab: up 2 mm over 3 mm at the
     /// cutting feed, a hold, then down 2 mm over 3 mm at `down_feed`. At
     /// the 1000 feed the down slope falls at 1000 × 2/√13 = 555 mm/min,
@@ -3820,7 +4697,7 @@ mod tests {
         let rates = descent_rates(&text);
         assert!(!rates.is_empty(), "the tabs' down slopes descend");
         for rate in rates {
-            assert!(rate <= 300.0 * 1.01, "a down slope falls at {rate} mm/min");
+            assert!(rate <= 300.0, "a down slope falls at {rate} mm/min");
         }
     }
 
@@ -3895,7 +4772,7 @@ mod tests {
         assert!(rates.len() > 100, "helices are cut: {}", rates.len());
         // Within the rounding of 0.3 mm chords to three decimals.
         for rate in rates {
-            assert!(rate <= 300.0 * 1.01, "a helix chord falls at {rate} mm/min");
+            assert!(rate <= 300.0, "a helix chord falls at {rate} mm/min");
         }
     }
 
@@ -3980,6 +4857,39 @@ mod tests {
         }
     }
 
+    /// S9 on an offset Pocket at step-over 1.0 (#267): the corner clean-up
+    /// rings are cut from inside the laps of the rings that leave them,
+    /// out from a corner and back, and the program passes, on the rect with
+    /// and without its island, with an allowance too, the wall pass last
+    /// or first, plunging or by helix.
+    #[test]
+    fn offset_corner_cleanups_pass_s9() {
+        for allowance_mm in [0.0, 0.5] {
+            for entry in [dc_project::Entry::Plunge, helix()] {
+                let (island, op) = island_pocket(entry, allowance_mm);
+                let mut plain = island.clone();
+                if let Some(def) = plain.definitions.values_mut().next() {
+                    def.profiles.truncate(1);
+                }
+                for project in [&island, &plain] {
+                    for wall_pass in [dc_project::WallPass::Last, dc_project::WallPass::First] {
+                        let op = dc_project::PocketOp {
+                            step_over_fraction: Some(1.0),
+                            wall_pass,
+                            ..op.clone()
+                        };
+                        let text = emit_pocket(project, &op, None);
+                        assert!(
+                            text.is_ok(),
+                            "{allowance_mm} mm, {:?}, {wall_pass:?}: {text:?}",
+                            op.entry
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// S9 on a raster Pocket whose wall curves inward (#218): an L, whose
     /// reflex corner rounds the tool-centre region by the tool radius, and
     /// a rect with a half-disc bay of radius 15 pushed in from its top.
@@ -4051,12 +4961,14 @@ mod tests {
         let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
         let tool = project.tools[0].clone();
         let material = Material::of(project, op);
+        let tabs = material::tab_spines(project, op);
         let toolpath = Toolpath::default();
         let span = OpSpan {
             op,
             tool: &tool,
             toolpath: &toolpath,
             material: &material,
+            tabs: &tabs,
             lines: 1..text.lines().count() + 1,
         };
         let tolerances = Tolerances {
@@ -4158,6 +5070,63 @@ mod tests {
     /// The sample project's outside Profile (#177).
     fn sample_profile_op() -> Operation {
         sample_project().operations[0].clone()
+    }
+
+    /// #337: S9 refuses a straight plunge into a tab below its top. The
+    /// sample rectangle (X 10 to 60, Y 10 to 40) cut outside with a placed
+    /// 6 mm tab in the middle of its bottom edge, its top 2 mm above the
+    /// stock bottom (program Z -4). Plunging to Z -5 on the bit's path
+    /// (Y 6.825) at the tab's centre, or 2 mm along from it, is refused at
+    /// the plunge; the same plunge to Z -3.5, above the tab, passes, and so
+    /// does one past the tab's stretch, where a rect tab steps down, and
+    /// one far from it. A plunge at the centre of a tab a request places
+    /// is refused too.
+    #[test]
+    fn s9_refuses_a_descent_into_a_tab() {
+        let mut project = sample_project();
+        dc_project::test_support::profile_mut(&mut project).tabs = None;
+        project.tabs = vec![dc_project::PlacedTab {
+            height_mm: 2.0,
+            ..dc_project::test_support::sample_tab("tab1", 25.0, 0.0)
+        }];
+        let op = sample_profile_op_of(&project);
+        let program = |x: f64, y: f64, z: f64| {
+            format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG1 Z{z} F300\nG0 Z5\n")
+        };
+        for (x, z) in [(50.0, -5.0), (35.0, -3.5), (41.175, -5.0)] {
+            check_material_text(&program(x, 6.825, z), &project, &op)
+                .unwrap_or_else(|e| panic!("X{x} Z{z}: {e:?}"));
+        }
+        for x in [35.0, 37.0] {
+            let err = check_material_text(&program(x, 6.825, -5.0), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
+                "X{x}: {err:?}"
+            );
+        }
+
+        // The sample's own request, four 6 × 2 mm tabs: plunge at one.
+        let mut project = sample_project();
+        let op = sample_profile_op_of(&project);
+        let spec = dc_project::test_support::profile_mut(&mut project)
+            .tabs
+            .clone()
+            .unwrap();
+        let placed = dc_cam::placed_tabs::place(&project, op.id(), &spec).unwrap();
+        let tab = &placed.tabs[0];
+        let at = project.instances[0]
+            .transform
+            .apply(Point::new(tab.x_mm, tab.y_mm));
+        let err = check_material_text(&program(at.x, at.y, -5.5), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The Profile of `project`.
+    fn sample_profile_op_of(project: &Project) -> Operation {
+        project.operations[0].clone()
     }
 
     /// S9 for Profile (#177): the sample's outside Profile of the
@@ -4314,6 +5283,44 @@ mod tests {
         assert!(matches!(err, ExportError::OffMaterial { .. }), "{err:?}");
     }
 
+    /// #231: the sample's outside Profile with T-bones of a 60 × 40 mm
+    /// frame at (90, 60) with a 30 × 20 mm hole at (105, 70). The T-bone
+    /// in the hole's corner (105, 70) runs from the miter point
+    /// (108.175, 73.175) to (108.175, 70) on the hole's long wall. Its
+    /// return leg, written from a start the rounding moved 0.0005 mm into
+    /// the part, passes; one starting 0.1 mm inside the part fails: the
+    /// slack S9 judges the side with does not open the part. The tool
+    /// gets to each start by rapids, which S9 does not hold to the
+    /// material, so only the return leg is judged.
+    #[test]
+    fn outside_cut_starting_inside_the_part_is_rejected() {
+        let mut project = sample_project();
+        project.stock = dc_project::Stock {
+            width_mm: 240.0,
+            height_mm: 160.0,
+            thickness_mm: Some(6.0),
+        };
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles = vec![
+                dc_geometry::Polyline::rect(Point::new(0.0, 0.0), 60.0, 40.0),
+                dc_geometry::Polyline::rect(Point::new(15.0, 10.0), 30.0, 20.0),
+            ];
+        }
+        project.instances[0].transform = dc_geometry::Transform::translate(90.0, 60.0);
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.tabs = None;
+        op.corner_relief = dc_project::CornerRelief::TBone;
+        let op = Operation::Profile(op.clone());
+        let program =
+            |y: &str| format!("G21 G90\nG54\nG0 Z5\nX108.175 Y{y}\nZ-1\nG1 Y73.175 F1000\nG0 Z5\n");
+        check_material_text(&program("69.9995"), &project, &op).unwrap();
+        let err = check_material_text(&program("69.9"), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 6 } if at == op.id()),
+            "{err:?}"
+        );
+    }
+
     /// S9 for an inside Profile (#177): the tool centre stays inside the
     /// hole, a radius from its walls, as a Pocket's; a cut that crosses
     /// out of the hole fails.
@@ -4457,6 +5464,160 @@ mod tests {
             matches!(&err, ExportError::OffMaterial { op: at, line: 5 } if at == op.id()),
             "the plunge beside the line: {err:?}"
         );
+    }
+
+    /// #207: a Left or Right Profile's cuts stay on the open path offset
+    /// by the tool radius to the chosen side, and keep the radius from
+    /// every line of the operation and from the strip one radius wide each
+    /// line keeps on its other side. The sample with an open line from
+    /// (10, 60) to (70, 60) cut Left, with its tabs and a ramp: the
+    /// generated program passes, and so does a hand-written cut at Y 63.175
+    /// (the 6.35 mm bit's radius to the left of the line). Cuts on the
+    /// line, at the radius to its right, half a radius off the offset, or
+    /// past the line's end along it fail at their plunge; so does the same
+    /// cut when the line is cut Right. (The cut past the end plunges on
+    /// the path's end and fails at the move beyond it.)
+    #[test]
+    fn left_right_cut_off_its_path_fails_s9() {
+        let with_line = |side: dc_project::Side| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles.push(dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 50.0),
+                        dc_geometry::Vertex::line(60.0, 50.0),
+                    ],
+                    false,
+                ));
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = side;
+            op.entry = dc_project::Entry::Ramp { angle_deg: 15.0 };
+            let op = op.clone();
+            (project, op)
+        };
+        let (project, op) = with_line(dc_project::Side::Left);
+        let (toolpath, _) = generate_profile(&project, &op).unwrap();
+        let op = Operation::Profile(op);
+        emit(
+            &project,
+            &[(op.clone(), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
+        let cut = |from: (f64, f64), to: (f64, f64)| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX{} Y{}\nG1 Z-1 F300\nX{} Y{} F1000\nG0 Z5\n",
+                from.0, from.1, to.0, to.1
+            )
+        };
+        check_material_text(&cut((10.0, 63.175), (70.0, 63.175)), &project, &op).unwrap();
+        for (case, from, to, at_line) in [
+            ("on the line", (10.0, 60.0), (70.0, 60.0), 5),
+            ("to its right", (10.0, 56.825), (70.0, 56.825), 5),
+            ("half a radius off", (10.0, 64.8), (70.0, 64.8), 5),
+            ("past its end", (70.0, 63.175), (80.0, 63.175), 6),
+        ] {
+            let err = check_material_text(&cut(from, to), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op: at, line } if at == op.id() && *line == at_line),
+                "{case}: {err:?}"
+            );
+        }
+        let (right, op) = with_line(dc_project::Side::Right);
+        let op = Operation::Profile(op);
+        check_material_text(&cut((10.0, 56.825), (70.0, 56.825)), &right, &op).unwrap();
+        let err =
+            check_material_text(&cut((10.0, 63.175), (70.0, 63.175)), &right, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+            "the Left cut under Right: {err:?}"
+        );
+    }
+
+    /// #342: S9 holds a Left or Right cut out of the strip a line keeps,
+    /// bounded by the normals through its end vertices, whatever the
+    /// offset does there. The sample with a 30° V notch, tip at (50, 50),
+    /// down a 20 mm arm and up a 2 mm one, cut Left (inside it): its
+    /// offset by the radius (`offset_open`) is one piece beside the first
+    /// arm, stopped only by the circle round the end vertex, past the
+    /// normal there. A hand-written cut along that piece stays on the
+    /// offset and the radius from the line and from its kept edge, which
+    /// S9 alone accepted before #342; but at its end the cutter crosses
+    /// the end normal into the strip the 2 mm arm keeps, so it fails at
+    /// the move that gets there, and its first stretch, more than the
+    /// radius from that strip, passes. Cut Right (round the V), the
+    /// generated program passes.
+    #[test]
+    fn s9_refuses_a_cut_past_an_open_path_end() {
+        let (sin, cos) = 15f64.to_radians().sin_cos();
+        let v = [
+            (40.0 - 20.0 * sin, 40.0 + 20.0 * cos),
+            (40.0, 40.0),
+            (40.0 + 2.0 * sin, 40.0 + 2.0 * cos),
+        ];
+        let with_notch = |side: dc_project::Side| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles.push(dc_geometry::Polyline::new(
+                    v.iter()
+                        .map(|&(x, y)| dc_geometry::Vertex::line(x, y))
+                        .collect(),
+                    false,
+                ));
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = side;
+            op.tabs = None;
+            let op = op.clone();
+            (project, op)
+        };
+        let placed = dc_geometry::Polyline::new(
+            v.iter()
+                .map(|&(x, y)| dc_geometry::Vertex::line(x + 10.0, y + 10.0))
+                .collect(),
+            false,
+        );
+        let pieces = dc_geometry::offset_open(&placed, 6.35 / 2.0);
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        let ends: Vec<dc_geometry::Point> =
+            pieces[0].vertices().iter().map(|v| v.point()).collect();
+        let (start, end) = (ends[0], ends[ends.len() - 1]);
+        let tip = dc_geometry::Point::new(v[2].0 + 10.0, v[2].1 + 10.0);
+        let along = (tip - dc_geometry::Point::new(50.0, 50.0)) * 0.5;
+        assert!(
+            (end - tip).dot(along) > 0.0 && (end.distance_to(tip) - 6.35 / 2.0).abs() < 1e-6,
+            "the piece ends past the end normal, on the circle round the end: {end:?}"
+        );
+        // 2 mm back from its end along the piece.
+        let back = end + (start - end) * (2.0 / start.distance_to(end));
+        let cut = |points: &[dc_geometry::Point]| {
+            let mut text = format!(
+                "G21 G90\nG54\nG0 Z5\nX{:.4} Y{:.4}\nG1 Z-1 F300\n",
+                points[0].x, points[0].y
+            );
+            for p in &points[1..] {
+                text.push_str(&format!("X{:.4} Y{:.4} F1000\n", p.x, p.y));
+            }
+            text.push_str("G0 Z5\n");
+            text
+        };
+        let (project, op) = with_notch(dc_project::Side::Left);
+        let op = Operation::Profile(op);
+        check_material_text(&cut(&[start, back]), &project, &op).unwrap();
+        let err = check_material_text(&cut(&[start, back, end]), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 7 } if at == op.id()),
+            "the cut past the end normal: {err:?}"
+        );
+        let (project, op) = with_notch(dc_project::Side::Right);
+        let (toolpath, _) = generate_profile(&project, &op).unwrap();
+        emit(
+            &project,
+            &[(Operation::Profile(op), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
     }
 
     /// #210: S9 refuses what `generate_profile` refuses. An On line
@@ -4760,6 +5921,41 @@ mod tests {
         .map(|(p, _)| p.text)
     }
 
+    /// #337: the sample's Profile starting under a 3 mm tall tab (its cut
+    /// starts nearest (35, 0), mid-way along the bottom edge, where a tab
+    /// at 0 mm sits) exports with every entry and both tab shapes: the
+    /// passes below the tab top come down onto it, not into it, which
+    /// S9's tab rule would refuse.
+    #[test]
+    fn start_under_a_tab_passes_s9() {
+        for entry in [
+            dc_project::Entry::Plunge,
+            dc_project::Entry::Ramp { angle_deg: 15.0 },
+            dc_project::Entry::Helix {
+                diameter_fraction: 0.8,
+                angle_deg: 5.0,
+            },
+        ] {
+            for shape in [dc_project::TabShape::Rect, dc_project::TabShape::Smooth] {
+                emit_profile(|op| {
+                    op.entry = entry.clone();
+                    op.start = dc_project::StartAt::Near {
+                        x_mm: 35.0,
+                        y_mm: 0.0,
+                    };
+                    if let Some(tabs) = &mut op.tabs {
+                        tabs.placement = dc_project::TabPlacement::AtDistances {
+                            distances_mm: vec![0.0],
+                        };
+                        tabs.height_mm = 3.0;
+                        tabs.shape = shape;
+                    }
+                })
+                .unwrap_or_else(|e| panic!("{entry:?} {shape:?}: {e}"));
+            }
+        }
+    }
+
     /// S9 for Profile (#177) on generated programs: the sample's tabbed
     /// outside Profile, with a ramp, a helix and a lead in and out, and
     /// inside and on the line, all pass the safety pass.
@@ -4795,6 +5991,272 @@ mod tests {
                     op.corner_relief = dc_project::CornerRelief::Dogbone;
                 })
                 .unwrap();
+            }
+        }
+    }
+
+    /// #284 (acceptance 46, S9 with a last pass): the sample made a 60 × 40
+    /// mm rectangle on 12 mm stock, cut 12 mm deep in 4 mm passes with a
+    /// 0.5 mm last pass allowance, passes every rule of the safety pass
+    /// (S1–S16), Inside and Outside; with a plunge, a ramp and lead, and a
+    /// helix, lead and dogbones; with its tab request and with those tabs
+    /// placed; with `thickness_mm: 1` and with `reverse`. Every program
+    /// cuts to the full depth (Z-12 below the stock top) and rises over
+    /// the 5 mm tabs (Z-7) on the last pass too.
+    #[test]
+    fn last_pass_program_passes_s9() {
+        let lead = dc_project::Lead {
+            radius_mm: 4.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 1.0,
+        };
+        let mut base = sample_project();
+        base.stock.thickness_mm = Some(12.0);
+        base.instances[0].z_top_mm = Some(12.0);
+        if let Some(def) = base.definitions.values_mut().next() {
+            def.profiles = vec![dc_geometry::Polyline::rect(
+                Point::new(0.0, 0.0),
+                60.0,
+                40.0,
+            )];
+        }
+        for side in [dc_project::Side::Outside, dc_project::Side::Inside] {
+            for (entry, lead, relief) in [
+                (
+                    dc_project::Entry::Plunge,
+                    None,
+                    dc_project::CornerRelief::None,
+                ),
+                (
+                    dc_project::Entry::Ramp { angle_deg: 10.0 },
+                    Some(lead.clone()),
+                    dc_project::CornerRelief::None,
+                ),
+                (
+                    dc_project::Entry::Helix {
+                        diameter_fraction: 0.8,
+                        angle_deg: 5.0,
+                    },
+                    Some(lead.clone()),
+                    dc_project::CornerRelief::Dogbone,
+                ),
+            ] {
+                for last_pass in [
+                    dc_project::LastPass {
+                        allowance_mm: 0.5,
+                        thickness_mm: None,
+                        reverse: false,
+                    },
+                    dc_project::LastPass {
+                        allowance_mm: 0.5,
+                        thickness_mm: Some(1.0),
+                        reverse: true,
+                    },
+                ] {
+                    for placed in [false, true] {
+                        let mut project = base.clone();
+                        let op = dc_project::test_support::profile_mut(&mut project);
+                        op.side = side;
+                        op.depth_mm = Some(12.0);
+                        op.step_down_mm = Some(4.0);
+                        op.entry = entry.clone();
+                        op.lead = lead.clone();
+                        op.corner_relief = relief;
+                        op.last_pass = Some(last_pass.clone());
+                        if let Some(tabs) = &mut op.tabs {
+                            tabs.height_mm = 5.0;
+                        }
+                        if placed {
+                            project = dc_cam::placed_tabs::place_requests(&project).unwrap().0;
+                            assert_eq!(project.tabs.len(), 4);
+                        }
+                        let case = format!("{side:?} {entry:?} {lead:?} {last_pass:?} {placed}");
+                        let op = project.operations[0].clone();
+                        let Operation::Profile(profile) = &op else {
+                            unreachable!("the sample's operation is a Profile");
+                        };
+                        let (toolpath, _) = generate_profile(&project, profile)
+                            .unwrap_or_else(|e| panic!("{case}: {e}"));
+                        dc_cam::test_support::assert_safe(&toolpath, &project, &op);
+                        let (program, _) = emit(
+                            &project,
+                            &[(op, project.tools[0].clone(), toolpath).into()],
+                            "2026-10-21",
+                        )
+                        .unwrap_or_else(|e| panic!("{case}: {e}"));
+                        for z in ["Z-12.000", "Z-7.000"] {
+                            assert!(program.text.contains(z), "{case}: no {z}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// #311 (S9 with a last pass on an open path): the sample with an open
+    /// line from (10, 60) to (70, 60) and an open L from (10, 80) to
+    /// (70, 80) to (70, 95), cut Left and Right, climb and conventional,
+    /// with a plunge and a ramp, its tab request and those tabs placed,
+    /// and a 0.5 mm last pass, also with `thickness_mm: 1` and `reverse`:
+    /// every program passes the safety pass (S1–S16). S9 holds the
+    /// allowance passes to the open paths offset by `r + a`, and every
+    /// pass to the radius from every line and kept strip; a hand-written
+    /// pass half the allowance off the path fails it.
+    #[test]
+    fn left_right_last_pass_passes_s9() {
+        let mut base = sample_project();
+        if let Some(def) = base.definitions.values_mut().next() {
+            def.profiles = vec![
+                dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 50.0),
+                        dc_geometry::Vertex::line(60.0, 50.0),
+                    ],
+                    false,
+                ),
+                dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 70.0),
+                        dc_geometry::Vertex::line(60.0, 70.0),
+                        dc_geometry::Vertex::line(60.0, 85.0),
+                    ],
+                    false,
+                ),
+            ];
+        }
+        let mut programs = 0;
+        for side in [dc_project::Side::Left, dc_project::Side::Right] {
+            for direction in [
+                dc_project::CutDirection::Climb,
+                dc_project::CutDirection::Conventional,
+            ] {
+                for entry in [
+                    dc_project::Entry::Plunge,
+                    dc_project::Entry::Ramp { angle_deg: 10.0 },
+                ] {
+                    for last_pass in [
+                        dc_project::LastPass {
+                            allowance_mm: 0.5,
+                            thickness_mm: None,
+                            reverse: false,
+                        },
+                        dc_project::LastPass {
+                            allowance_mm: 0.5,
+                            thickness_mm: Some(1.0),
+                            reverse: true,
+                        },
+                    ] {
+                        for placed in [false, true] {
+                            let mut project = base.clone();
+                            let op = dc_project::test_support::profile_mut(&mut project);
+                            op.side = side;
+                            op.direction = direction;
+                            op.entry = entry.clone();
+                            op.last_pass = Some(last_pass.clone());
+                            if placed {
+                                project = dc_cam::placed_tabs::place_requests(&project).unwrap().0;
+                                assert!(!project.tabs.is_empty());
+                            }
+                            let case =
+                                format!("{side:?} {direction:?} {entry:?} {last_pass:?} {placed}");
+                            let op = project.operations[0].clone();
+                            let Operation::Profile(profile) = &op else {
+                                unreachable!("the sample's operation is a Profile");
+                            };
+                            let (toolpath, _) = generate_profile(&project, profile)
+                                .unwrap_or_else(|e| panic!("{case}: {e}"));
+                            dc_cam::test_support::assert_safe(&toolpath, &project, &op);
+                            let (program, _) = emit(
+                                &project,
+                                &[(op, project.tools[0].clone(), toolpath).into()],
+                                "2026-10-21",
+                            )
+                            .unwrap_or_else(|e| panic!("{case}: {e}"));
+                            assert!(program.text.contains("Z-6.000"), "{case}: full depth");
+                            programs += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(programs, 32);
+
+        // By hand: Left of the line, at the allowance path (Y 63.675) and
+        // at half the allowance off it.
+        let mut project = base.clone();
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.side = dc_project::Side::Left;
+        op.last_pass = Some(dc_project::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: false,
+        });
+        let op = Operation::Profile(op.clone());
+        let cut =
+            |y: f64| format!("G21 G90\nG54\nG0 Z5\nX10 Y{y}\nG1 Z-1 F300\nX70 F1000\nG0 Z5\n");
+        check_material_text(&cut(63.175), &project, &op).unwrap();
+        check_material_text(&cut(63.675), &project, &op).unwrap();
+        let err = check_material_text(&cut(63.425), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+            "half the allowance off: {err:?}"
+        );
+    }
+
+    /// #105: programs cut round placed tabs pass the safety pass (S1–S7,
+    /// S9, S10, S12): the sample's tabs placed from its request, with a
+    /// fifth, taller and smooth, on the right-hand edge, on each side, with
+    /// a plunge and with a ramp, and Inside and Outside with a lead. Every
+    /// pass below a tab rises over it: the program holds each tab top.
+    #[test]
+    fn placed_tab_programs_pass_s1_to_s9() {
+        let lead = dc_project::Lead {
+            radius_mm: 4.0,
+            sweep_deg: 90.0,
+            lead_out: true,
+            overcut_mm: 1.0,
+        };
+        for side in [
+            dc_project::Side::Outside,
+            dc_project::Side::Inside,
+            dc_project::Side::OnLine,
+        ] {
+            for entry in [
+                dc_project::Entry::Plunge,
+                dc_project::Entry::Ramp { angle_deg: 10.0 },
+            ] {
+                let mut project = sample_project();
+                let op = dc_project::test_support::profile_mut(&mut project);
+                op.side = side;
+                op.entry = entry.clone();
+                if side != dc_project::Side::OnLine {
+                    op.lead = Some(lead.clone());
+                }
+                let (mut project, _) = dc_cam::placed_tabs::place_requests(&project).unwrap();
+                assert_eq!(project.tabs.len(), 4, "{side:?}");
+                project.tabs.push(dc_project::PlacedTab {
+                    height_mm: 3.5,
+                    shape: dc_project::TabShape::Smooth,
+                    ..dc_project::test_support::sample_tab("tall", 50.0, 15.0)
+                });
+                let op = project.operations[0].clone();
+                let Operation::Profile(profile) = &op else {
+                    unreachable!("the sample's operation is a Profile");
+                };
+                let (toolpath, _) = generate_profile(&project, profile).unwrap();
+                dc_cam::test_support::assert_safe(&toolpath, &project, &op);
+                let (program, _) = emit(
+                    &project,
+                    &[(op, project.tools[0].clone(), toolpath).into()],
+                    "2026-10-21",
+                )
+                .unwrap_or_else(|e| panic!("{side:?} {entry:?}: {e}"));
+                // Machine Z zero is the stock top: tab tops at 2 and 3.5 mm
+                // above the 6 mm stock's bottom are Z-4 and Z-2.5.
+                for top in ["Z-4.000", "Z-2.500"] {
+                    assert!(program.text.contains(top), "{side:?} {entry:?}: no {top}");
+                }
             }
         }
     }
@@ -5075,6 +6537,46 @@ mod tests {
         check_against_with(&text, &toolpath, Some(0.01)).unwrap();
     }
 
+    /// Found by the Pocket property test once #232, #234 and #235 were
+    /// fixed: an offset ring started 0.0017 mm before the end of a round
+    /// corner, leaving an arc piece shorter than a unit of a 4-place inch
+    /// program. `emit` writes such an arc as nothing (its ends round to one
+    /// point, and a G2 there would be a full circle), so S6 must take a
+    /// toolpath arc of at most a half turn that ends where the controller
+    /// already is as reproduced, as it takes such a straight move. Here a
+    /// 0.001 mm arc of radius 0.685 mm, in inches; the same arc in mm is
+    /// written and matched as usual.
+    #[test]
+    fn arc_shorter_than_a_quantum_is_written_as_nothing() {
+        for units in [Units::Inch, Units::Mm] {
+            let (mut project, op, tool) = partless_fixture();
+            project.display_units = units;
+            let centre = Point::new(20.0, 10.685);
+            let turn: f64 = 0.001 / 0.685;
+            let end = Point::new(20.0 + 0.685 * turn.sin(), 10.685 - 0.685 * turn.cos());
+            let toolpath = Toolpath {
+                moves: vec![
+                    Move::rapid(Point3::new(10.0, 10.0, 11.0)),
+                    Move::linear(Point3::new(10.0, 10.0, 3.0), 300.0),
+                    Move::linear(Point3::new(20.0, 10.0, 3.0), 1000.0),
+                    Move {
+                        kind: MoveKind::ArcCcw { centre },
+                        to: Point3::new(end.x, end.y, 3.0),
+                        feed_mm_min: Some(1000.0),
+                    },
+                    Move::linear(Point3::new(30.0, 10.0, 3.0), 1000.0),
+                    Move::rapid(Point3::new(30.0, 10.0, 11.0)),
+                ],
+            };
+            let result = emit(
+                &project,
+                &[(Operation::Profile(op), tool, toolpath).into()],
+                "2026-10-21",
+            );
+            assert!(result.is_ok(), "{units:?}: {result:?}");
+        }
+    }
+
     /// #142: two abutting runs on different circles stay separate chains.
     /// A quarter of the radius 10 circle about (50, 50) from +X to
     /// (50, 60), then a quarter of the radius 15 circle about (50, 45) on
@@ -5102,5 +6604,299 @@ mod tests {
         let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\n");
         let result = check_against_with(&text, &toolpath, Some(0.01));
         assert!(result.is_err(), "{result:?}");
+    }
+
+    // S16 (#283): machine-coordinate moves.
+
+    /// A program that cuts at the fixture's safe Z (work Z 5), then has
+    /// `tail` after its last retract.
+    fn lift_program(tail: &str) -> String {
+        format!("G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG0 Z5\n{tail}")
+    }
+
+    /// [`check_text_lifting`] on the fixture's GRBL definition, which
+    /// documents `G53` (grbl `gcode.c` 154-156, 635-640), with `lift`.
+    fn check_lift(text: &str, lift: Option<f64>) -> Result<(), ExportError> {
+        let (project, _, _) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        assert!(post.work_coordinates.machine_command.is_some());
+        check_text_lifting(text, post, SpindleControl::Automatic, lift)
+    }
+
+    /// S16: the one machine-coordinate move is `G53 G0 Z<v>`, alone on its
+    /// line. A `G53` with an X word, with `G1`, without `G0`, or with
+    /// another word is refused as G-code the check does not model; the
+    /// lift itself, before the end, is accepted.
+    #[test]
+    fn g53_only_z_alone() {
+        check_lift(&lift_program("G53 G0 Z-5\nM5\n"), Some(-5.0)).unwrap();
+        for line in [
+            "G53 G0 X0",
+            "G53 G1 Z-5",
+            "G53 Z-5",
+            "G53 G0 Z-5 X0",
+            "G53 G0 Z-5 F100",
+            "G53 G53 G0 Z-5",
+            "G0 G53 G0 Z-5",
+        ] {
+            let err = check_lift(&lift_program(&format!("{line}\nM5\n")), Some(-5.0)).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::Unparseable { line: 9, reason } if reason.contains("S16")),
+                "{line}: {err:?}"
+            );
+        }
+    }
+
+    /// S16: work Z is unknown after the lift, as after a pause (S4), so an
+    /// XY rapid right after it is refused (S2), and so is any move before
+    /// the stop or the end that the lift is for. After a stop, a retract
+    /// in work coordinates makes the XY rapid safe again.
+    #[test]
+    fn xy_rapid_after_g53_needs_retract() {
+        let err = check_lift(&lift_program("G53 G0 Z-5\nX10 Y10\nM5\n"), Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::RapidBelowSafeZ {
+                    line: 10,
+                    z_mm: None,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let err = check_lift(&lift_program("G53 G0 Z-5\nG0 Z5\nM5\n"), Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MachineLiftNotBeforeStop {
+                    line: 10,
+                    lift_line: 9
+                }
+            ),
+            "{err:?}"
+        );
+        let stopped = lift_program("G53 G0 Z-5\nM5\nM0\nG21 G90 G54\nG0 Z5\nX10 Y10\n");
+        check_lift(&stopped, Some(-5.0)).unwrap();
+        let unretracted = lift_program("G53 G0 Z-5\nM5\nM0\nG21 G90 G54\nX10 Y10\n");
+        let err = check_lift(&unretracted, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowSafeZ { z_mm: None, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S16: the lift starts from a known Z at or above safe Z, and goes to
+    /// the project's tool-change machine Z, below 0; a stop right after it
+    /// is accepted though work Z is unknown there.
+    #[test]
+    fn g53_lifts_from_safe_z_to_the_project_height() {
+        let low = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG53 G0 Z-5\nM5\n";
+        let err = check_lift(low, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftNotAtSafeZ { line: 8 }),
+            "{err:?}"
+        );
+        let err = check_lift(&lift_program("G53 G0 Z-4\nM5\n"), Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftWrongZ { line: 9, .. }),
+            "{err:?}"
+        );
+        let err = check_lift(&lift_program("G53 G0 Z0\nM5\n"), Some(0.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftWrongZ { line: 9, .. }),
+            "{err:?}"
+        );
+        check_lift(&lift_program("G53 G0 Z-5\nM5\nM0\n"), Some(-5.0)).unwrap();
+    }
+
+    /// S16: a `G53` is refused, as before #283, in a program whose project
+    /// sets no tool-change machine Z, and on a definition that documents
+    /// no machine-coordinate move (Mach3, UCCNC, generic; #306), whatever
+    /// the project sets.
+    #[test]
+    fn g53_refused_without_height() {
+        let text = lift_program("G53 G0 Z-5\nM5\n");
+        let err = check_lift(&text, None).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::ForbiddenWord { line: 9, word } if word == "G53"),
+            "{err:?}"
+        );
+        for id in ["mach3", "uccnc", "generic"] {
+            for definition in dc_project::bundled_definitions()
+                .unwrap()
+                .iter()
+                .filter(|d| d.id == id)
+            {
+                let post = definition.post_processor().clone();
+                assert!(
+                    post.work_coordinates.machine_command.is_none(),
+                    "{}",
+                    definition.path
+                );
+                let err = check_text_lifting(&text, post, SpindleControl::Automatic, Some(-5.0))
+                    .unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
+                    "{}: {err:?}",
+                    definition.path
+                );
+            }
+        }
+    }
+
+    /// #306, S16 on LinuxCNC, with the strictness of grblHAL and GRBL:
+    /// both versions accept the lift to the project's machine Z, and
+    /// refuse it without the project's height, to another Z, at or above
+    /// machine Z 0, below safe Z, and in any other form. (The inch lift
+    /// is checked through `emit::machine_lift_on_linuxcnc`, whose programs
+    /// pass this pass.)
+    #[test]
+    fn g53_on_linuxcnc() {
+        for definition in dc_project::bundled_definitions()
+            .unwrap()
+            .iter()
+            .filter(|d| d.id == "linuxcnc")
+        {
+            let post = || definition.post_processor().clone();
+            let check = |text: &str, lift: Option<f64>| {
+                check_text_lifting(text, post(), SpindleControl::Automatic, lift)
+            };
+            let path = definition.path;
+            check(&lift_program("G53 G0 Z-5\nM5\n"), Some(-5.0))
+                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let err = check(&lift_program("G53 G0 Z-5\nM5\n"), None).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::ForbiddenWord { word, .. } if word == "G53"),
+                "{path}: {err:?}"
+            );
+            for (tail, lift) in [("G53 G0 Z-4\nM5\n", -5.0), ("G53 G0 Z0\nM5\n", 0.0)] {
+                let err = check(&lift_program(tail), Some(lift)).unwrap_err();
+                assert!(
+                    matches!(err, ExportError::MachineLiftWrongZ { .. }),
+                    "{path} {tail}: {err:?}"
+                );
+            }
+            let low = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\n\
+                       G53 G0 Z-5\nM5\n";
+            let err = check(low, Some(-5.0)).unwrap_err();
+            assert!(
+                matches!(err, ExportError::MachineLiftNotAtSafeZ { .. }),
+                "{path}: {err:?}"
+            );
+            for line in ["G53 G0 X0", "G53 G1 Z-5", "G53 Z-5", "G53 G0 Z-5 X0"] {
+                let err = check(&lift_program(&format!("{line}\nM5\n")), Some(-5.0)).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::Unparseable { reason, .. } if reason.contains("S16")),
+                    "{path} {line}: {err:?}"
+                );
+            }
+        }
+    }
+
+    /// #304 review, S16: with manual spindle control the user may jog at
+    /// the router-off pause after a lift, so the program lifts again before
+    /// `T<n> M6`. A second lift is accepted right after a stop that came
+    /// after a lift, with nothing moved between, once the units are set
+    /// again; a lift after a stop with no lift before it is still refused,
+    /// since Z is unknown there.
+    #[test]
+    fn g53_again_after_a_stop() {
+        let again = lift_program("G53 G0 Z-5\nM5\nM0\nG21 G90 G54\nG53 G0 Z-5\nM0\n");
+        check_lift(&again, Some(-5.0)).unwrap();
+        let no_units = lift_program("G53 G0 Z-5\nM5\nM0\nG53 G0 Z-5\nM0\n");
+        let err = check_lift(&no_units, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExportError::MissingSetupAfterPause {
+                    line: 12,
+                    pause_line: 11,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let unlifted = lift_program("M5\nM0\nG21 G90 G54\nG53 G0 Z-5\nM0\n");
+        let err = check_lift(&unlifted, Some(-5.0)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::MachineLiftNotAtSafeZ { line: 12 }),
+            "{err:?}"
+        );
+    }
+
+    /// [`check_rules`] on the fixture's GRBL definition with `heights`, the
+    /// operation owning lines `op_lines` and every other line outside it.
+    fn check_heights(
+        text: &str,
+        op_lines: Range<usize>,
+        heights: ProgramHeights,
+    ) -> Result<(), ExportError> {
+        let (project, op, tool) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let toolpath = Toolpath::default();
+        let op = Operation::Profile(op);
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath: &toolpath,
+            material: &Material::Unchecked,
+            tabs: &[],
+            lines: op_lines,
+        }];
+        check_rules(
+            text,
+            &post,
+            &transform,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
+            heights,
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// #304 review, S2 and S6 as changed for #283: with a clearance height
+    /// (here work Z 20 over the fixture's 6 mm stock, absolute 26), an
+    /// operation's first move across the work, every move across outside
+    /// the operations (the park move), and every stop are at or above it;
+    /// moves across inside an operation after its first stay held to safe
+    /// Z (work Z 5). Without a clearance height the same low moves pass.
+    #[test]
+    fn rapids_held_to_the_clearance_height() {
+        let heights = ProgramHeights {
+            machine_lift_mm: None,
+            clearance_z_mm: Some(26.0),
+        };
+        let program = |entry_z: &str, park_z: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z20\nM3 S18000\nG4 P3\nZ{entry_z}\nX0 Y0\nZ5\nG1 Z-1 F300\nG0 Z5\nX10 Y0\nG1 Z-1\nG0 Z20\nZ{park_z}\nX50 Y50\nM5\n"
+            )
+        };
+        // The operation is lines 1 to 13; the park is lines 14 and 15.
+        check_heights(&program("20", "20"), 1..14, heights).unwrap();
+        let err = check_heights(&program("5", "20"), 1..14, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowClearance { line: 7, .. }),
+            "{err:?}"
+        );
+        let err = check_heights(&program("20", "10"), 1..14, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::RapidBelowClearance { line: 15, .. }),
+            "{err:?}"
+        );
+        check_heights(&program("5", "10"), 1..14, ProgramHeights::default()).unwrap();
+        // A stop below the clearance height.
+        let stop = "G21 G90\nG54\nG0 Z20\nM5\nZ5\nM0\n";
+        let err = check_heights(stop, 1..7, heights).unwrap_err();
+        assert!(
+            matches!(err, ExportError::PauseNotAtSafeZ { line: 6 }),
+            "{err:?}"
+        );
+        check_heights(stop, 1..7, ProgramHeights::default()).unwrap();
     }
 }

@@ -3,6 +3,9 @@
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 ( Operation 1: Finish )

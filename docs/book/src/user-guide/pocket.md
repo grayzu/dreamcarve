@@ -37,7 +37,8 @@ Profile. A complete Pocket:
 
 Put a Pocket **before** the Profile that cuts the part out: once the part
 is free, the pocket would be cut in a loose part (`check` warns
-`cut_inside_freed_part`).
+`cut_inside_freed_part`), or with tabs, in a part held only by them
+(`cut_inside_tab_held_part`, for a pocket deeper than half the stock).
 
 ## Settings
 
@@ -190,10 +191,14 @@ A 100 × 50 mm rectangle with a 6.35 mm bit at 40 % stepover and 0° gives
 
 The stepover is the distance from one ring to the next, as a fraction of
 the bit's diameter: 0.4 with a 6.35 mm bit is 2.54 mm. Smaller is slower
-and leaves a smoother floor. Above about 0.7 the corners of neighbouring
-rings are further apart diagonally than the bit is wide, so small ridges
-stay on the floor there. The operation's `step_over_fraction` wins over the
-tool's.
+and leaves a smoother floor. Above 0.5 the rings alone would leave
+material standing: a pin in the middle of the innermost ring, and above
+about 0.85 a small peak in each sharp corner of a ring. DreamCarve finds
+what the rings miss and adds a short clean-up ring round each piece, so
+the floor is cleared at any stepover. The ring next to a piece cuts it
+on its way past, without lifting: it runs in from its corner, round the
+clean-up ring and back out. The operation's
+`step_over_fraction` wins over the tool's.
 
 ## Direction
 
@@ -222,7 +227,10 @@ depth, so it has no entry.
   the pass depth, then moves to that start. The line is the longest
   one through that point that fits in the tool-centre area, kept a tenth
   of the bit's diameter in from its edge so the ramp does not mark the
-  wall, and at most three diameters long.
+  wall, and at most three diameters long. When the depth is a hair over
+  a whole number of legs, the last two legs share what is left, so no
+  leg is too short for the program to write; no leg is steeper than
+  `angle_deg`.
 - `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`: a spiral
   down, `diameter_fraction` of the bit's diameter across (5.08 mm for a
   6.35 mm bit at 0.8), at `angle_deg`, then one flat turn at the pass
@@ -254,8 +262,12 @@ bit diameters wide, falls back to a ramp; a ramp that does not fit, in a
 hole barely wider than the bit, falls back to a plunge. Each fallback
 warns `entry_fallback`, naming the shape and both entries. A very shallow
 angle on a deep pass that would take more than 20 000 moves falls back
-the same way. A shape that can only be plunged warns on every export
-until its `entry` is `"plunge"`.
+the same way, and so does a helix too small for the program to write:
+one whose moves would each fall less than the last decimal place
+(by default 0.001 mm, or 0.0001 in in an inch program), or run less than about
+one and a half of it sideways, as a 5 % helix of a 0.5 mm bit does. A
+shape that can only be plunged warns on every export until its `entry`
+is `"plunge"`.
 
 The ramp or helix is inside the tool-centre area of the pass, and out of
 every island grown by the bit's radius, so the whole bit stays in the
@@ -353,7 +365,9 @@ corner). An island's outward corners are not relieved: the bit already
 cuts round them. Arcs and fillets have no corners, so a circle or a
 rounded rectangle gets no notches. Each edge beside a corner must be at
 least the bit's diameter long, or the notch would not fit; such a corner
-is skipped with `relief_corner_too_tight`.
+is skipped with `relief_corner_too_tight`. So is a corner whose notch
+would come nearer another wall, such as an island's, than the bit's
+radius, since it would cut into that wall too.
 
 **How it is cut.** After all the pocket's passes, the bit visits the
 corners, nearest first from where it finished. At each it plunges where
@@ -397,7 +411,7 @@ walls, nowhere else. If not, export fails and nothing is written.
 | `entry_fallback` | The helix or ramp asked for does not fit a shape; it uses a ramp or a plunge instead. |
 | `helix_diameter_reduced` | The helix fits a shape only smaller than asked; it is cut at the size that fits. |
 | `relief_skipped` | The tool has no `step_down_mm`, so no corner is relieved. |
-| `relief_corner_too_tight` | A corner's edge is shorter than the bit is wide, or the bit cannot reach it; it keeps the bit's radius. |
+| `relief_corner_too_tight` | A corner's edge is shorter than the bit is wide, the bit cannot reach it, or its notch would cut into another wall; it keeps the bit's radius. |
 | `relief_corner_not_cut` | The pocket did not cut to full depth where a corner's notch would start; that corner is skipped. |
 | `rest_of_clears_nothing` | A rest machining Pocket's bit reaches nothing the earlier Pocket left; it cuts nothing. |
 

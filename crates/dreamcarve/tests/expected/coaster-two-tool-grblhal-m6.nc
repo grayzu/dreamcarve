@@ -3,6 +3,9 @@
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 M61 Q1
@@ -50,6 +53,9 @@ T2 M6 (MSG, Fit T2 3mm finisher. Set Z zero, then resume.)
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 G0 Z5.000

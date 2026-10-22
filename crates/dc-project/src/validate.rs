@@ -18,8 +18,9 @@
 //!
 //! Sanity checks (#67) catch values that are valid but dangerous, and look
 //! only at enabled operations and the tools they use. Errors: a feed or
-//! plunge rate above [`MAX_RATE_MM_MIN`], an Outside or Inside Profile cut
-//! with a cutter other than a flat end mill, and an enabled operation with
+//! plunge rate above [`MAX_RATE_MM_MIN`], an Outside, Inside, Left or
+//! Right Profile cut with a cutter other than a flat end mill, and an
+//! enabled operation with
 //! no targets. Warnings: a step-down deeper than the
 //! tool's diameter, a plunge rate above the feed rate, a spindle speed
 //! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
@@ -32,18 +33,24 @@
 //! that is not an earlier enabled Pocket with the same targets; a
 //! step-over fraction outside (0, 1]; a Pocket, Engrave or peck Drill with
 //! no step-down anywhere; lead, entry and raster values out of range; a
-//! helix on an On line Profile; canned cycles on a definition without
+//! helix on an On line, Left or Right Profile; canned cycles on a definition without
 //! them; a Pocket with a cutter that is not a flat end mill. Warnings: a
 //! Drill with a cutter other than a drill or end mill; corner relief on a
 //! tool with no step-down; a V-bit engraving deeper than its cone.
 //!
+//! #283 (design addendum A7) adds the heights. Errors: a clearance height
+//! below an enabled operation's safe Z; a tool-change machine Z of 0 or
+//! more, or on a definition that documents no `G53`; a park point beyond
+//! the coordinate limit.
+//!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
-use crate::ids::{DefinitionId, InstanceId, OperationId, ToolId};
+use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
-    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, Lead, Operation,
-    OriginXy, PeckRetract, PocketOp, ProfileOp, Project, Side, TabPlacement, Tool, ToolKind,
+    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, LastPass, Lead,
+    Operation, OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement,
+    Tool, ToolKind,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -107,6 +114,30 @@ pub enum Problem {
         operation: OperationId,
         /// The missing instance.
         instance: InstanceId,
+    },
+    /// Two placed tabs share an id (#105).
+    DuplicateTabId {
+        /// The repeated id.
+        id: TabId,
+    },
+    /// A placed tab is on an instance that does not exist (#105).
+    TabDanglingInstance {
+        /// The tab.
+        tab: TabId,
+        /// The missing instance.
+        instance: InstanceId,
+    },
+    /// A placed tab is on a profile its instance's definition does not
+    /// have (#105).
+    TabProfileMissing {
+        /// The tab.
+        tab: TabId,
+        /// The instance.
+        instance: InstanceId,
+        /// The profile index asked for.
+        profile: usize,
+        /// How many profiles the definition has.
+        count: usize,
     },
     /// A number is outside the range its field allows.
     OutOfRange {
@@ -174,7 +205,8 @@ pub enum Problem {
     /// A definition's profile is open. Pocket and Inside and Outside
     /// Profile cut only closed shapes, so it is never cut (functional
     /// spec, capability 8). Not reported for a definition an enabled
-    /// Engrave or On line Profile targets, since those cut it (#175).
+    /// Engrave or an On line, Left or Right Profile targets, since those
+    /// cut it (#175, #207).
     OpenProfile {
         /// The definition.
         definition: DefinitionId,
@@ -213,8 +245,9 @@ pub enum Problem {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
-    /// An enabled Outside or Inside Profile cuts with a tool that is not a
-    /// flat end mill (#67). Those sides offset by half the diameter, so any
+    /// An enabled Outside, Inside, Left or Right Profile cuts with a tool
+    /// that is not a flat end mill (#67, #207). Those sides offset by half
+    /// the diameter, so any
     /// other cutter makes the part the wrong size: an error. On the line the
     /// tool centre follows the line, so any cutter is allowed.
     CutterNotFlat {
@@ -294,9 +327,9 @@ pub enum Problem {
         /// The operation named.
         rest_of: OperationId,
     },
-    /// An On line Profile asks for a helix entry (#117, functional spec
-    /// capability 16). A helix sits in material the operation removes,
-    /// and an On line cut removes only its kerf. An error.
+    /// An On line, Left or Right Profile asks for a helix entry (#117,
+    /// functional spec capability 16; #207). A helix sits in material the
+    /// operation removes, and those cuts remove only their kerf. An error.
     HelixNeedsWasteSide {
         /// The operation.
         operation: OperationId,
@@ -338,6 +371,36 @@ pub enum Problem {
         /// The tool's display name.
         tool_name: String,
     },
+    /// The clearance height is below an enabled operation's safe Z (#283):
+    /// a link between parts would run lower than that operation's links
+    /// between passes. An error.
+    ClearanceBelowSafeZ {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `heights.clearance_mm`.
+        clearance_mm: f64,
+        /// The operation's `safe_z_mm`.
+        safe_z_mm: f64,
+    },
+    /// `heights.tool_change_machine_z_mm` is 0 or above, or rounds to 0 in
+    /// the program's decimal places (#283). grblHAL
+    /// and GRBL home Z to the top of its travel at a negative machine
+    /// position (grblHAL `machine_limits.c`, GRBL `limits.c`), so a Z of 0
+    /// or more is past the limit switch. An error.
+    MachineZNotBelowHome {
+        /// The value, mm.
+        machine_z_mm: f64,
+    },
+    /// `heights.tool_change_machine_z_mm` is set, but the post-processor
+    /// documents no machine-coordinate move (`work_coordinates.
+    /// machine_command` is `null`), so the lift cannot be written (#283).
+    /// An error.
+    MachineZNeedsG53 {
+        /// The post-processor's id.
+        post: String,
+    },
     /// An enabled Engrave with a V-bit cuts deeper than the bit's cone is
     /// tall (#117), so the shank, not the cone, would cut. A warning.
     EngraveDeeperThanCone {
@@ -352,6 +415,52 @@ pub enum Problem {
         /// The cone's height, mm: half the diameter over the tangent of
         /// half the included angle.
         cone_height_mm: f64,
+    },
+    /// An enabled Profile's last pass allowance is not more than 0 and at
+    /// most a third of its bit's diameter (#284; VCarve advises keeping it
+    /// well below a third). An error.
+    LastPassAllowance {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool's display name.
+        tool_name: String,
+        /// The allowance set, mm.
+        allowance_mm: f64,
+        /// The bit's diameter, mm.
+        diameter_mm: f64,
+        /// The largest allowance allowed, mm: a third of the diameter.
+        limit_mm: f64,
+    },
+    /// A Profile has a last pass but cuts On line (#284): it cuts with
+    /// both flanks of the bit, so it leaves no wall for the last pass to
+    /// take the allowance off. An error. (changed in #311: Left and Right,
+    /// which cut one flank against the part, take a last pass.)
+    LastPassNeedsSide {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The side it cuts.
+        side: Side,
+    },
+    /// An enabled Profile's last pass is thicker than its step-down in
+    /// effect, the operation's or else the tool's (#310 review): it would
+    /// cut that much in one pass, where every other pass steps down less.
+    /// An error.
+    LastPassThickerThanStepDown {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `last_pass.thickness_mm`.
+        thickness_mm: f64,
+        /// The step-down in effect, mm.
+        step_down_mm: f64,
+        /// Where that step-down is set: `operations[o1].step_down_mm` or
+        /// `tools[t1].step_down_mm`.
+        step_down_field: String,
     },
 }
 
@@ -380,6 +489,9 @@ impl Problem {
             Self::DanglingDefinition { .. } => "dangling_definition",
             Self::DanglingTool { .. } => "dangling_tool",
             Self::DanglingInstance { .. } => "dangling_instance",
+            Self::DuplicateTabId { .. } => "duplicate_tab_id",
+            Self::TabDanglingInstance { .. } => "tab_dangling_instance",
+            Self::TabProfileMissing { .. } => "tab_profile_missing",
             Self::OutOfRange { .. } => "out_of_range",
             Self::NonFinite { .. } => "non_finite",
             Self::OperationDisabled { .. } => "operation_disabled",
@@ -404,6 +516,12 @@ impl Problem {
             Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
             Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
             Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
+            Self::LastPassAllowance { .. } => "last_pass_allowance",
+            Self::LastPassNeedsSide { .. } => "last_pass_needs_side",
+            Self::LastPassThickerThanStepDown { .. } => "last_pass_thicker_than_step_down",
+            Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
+            Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
+            Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
         }
     }
 
@@ -425,7 +543,13 @@ impl Problem {
             | Self::DuplicateToolNumber { .. }
             | Self::RestOfInvalid { .. }
             | Self::HelixNeedsWasteSide { .. }
-            | Self::CannedCyclesUnsupported { .. } => Severity::Error,
+            | Self::CannedCyclesUnsupported { .. }
+            | Self::LastPassAllowance { .. }
+            | Self::LastPassNeedsSide { .. }
+            | Self::LastPassThickerThanStepDown { .. }
+            | Self::ClearanceBelowSafeZ { .. }
+            | Self::MachineZNotBelowHome { .. }
+            | Self::MachineZNeedsG53 { .. } => Severity::Error,
             Self::DefinitionKeyMismatch { .. }
             | Self::DuplicateInstanceId { .. }
             | Self::DuplicateToolId { .. }
@@ -433,6 +557,9 @@ impl Problem {
             | Self::DanglingDefinition { .. }
             | Self::DanglingTool { .. }
             | Self::DanglingInstance { .. }
+            | Self::DuplicateTabId { .. }
+            | Self::TabDanglingInstance { .. }
+            | Self::TabProfileMissing { .. }
             | Self::OutOfRange { .. }
             | Self::NonFinite { .. }
             | Self::ToolValueUnset { .. }
@@ -478,6 +605,10 @@ impl Problem {
             Self::DanglingInstance { operation, .. } => {
                 Some(format!("operations[{operation}].targets"))
             }
+            Self::DuplicateTabId { .. } => None,
+            Self::TabDanglingInstance { tab, .. } => Some(format!("tabs[{tab}].instance")),
+            Self::TabProfileMissing { tab, .. } => Some(format!("tabs[{tab}].profile")),
+
             Self::OutOfRange { field, .. } | Self::NonFinite { field } => Some(field.clone()),
             Self::OperationDisabled { operation } => {
                 Some(format!("operations[{operation}].enabled"))
@@ -526,11 +657,26 @@ impl Problem {
             Self::EngraveDeeperThanCone { operation, .. } => {
                 Some(format!("operations[{operation}].depth_mm"))
             }
+            Self::LastPassAllowance { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass.allowance_mm"))
+            }
+            Self::LastPassNeedsSide { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass"))
+            }
+            Self::LastPassThickerThanStepDown { operation, .. } => {
+                Some(format!("operations[{operation}].last_pass.thickness_mm"))
+            }
+            Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
+            Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
+                Some(MACHINE_Z.to_owned())
+            }
         }
     }
 }
 
 const STOCK_THICKNESS: &str = "stock.thickness_mm";
+const CLEARANCE: &str = "heights.clearance_mm";
+const MACHINE_Z: &str = "heights.tool_change_machine_z_mm";
 
 /// The unit of a value the user must supply, for "is not set" messages.
 fn unset_unit(field: &str) -> &'static str {
@@ -568,6 +714,21 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{operation}` targets instance `{instance}`, which does not exist"
             ),
+            Self::DuplicateTabId { id } => write!(f, "two tabs have the id `{id}`"),
+            Self::TabDanglingInstance { tab, instance } => write!(
+                f,
+                "tab `{tab}` is on instance `{instance}`, which does not exist"
+            ),
+            Self::TabProfileMissing {
+                tab,
+                instance,
+                profile,
+                count,
+            } => write!(
+                f,
+                "tab `{tab}` is on profile {profile} of instance `{instance}`, whose definition has {count} profile(s), numbered from 0"
+            ),
+
             Self::OutOfRange {
                 field,
                 value,
@@ -615,7 +776,7 @@ impl fmt::Display for Problem {
                 profile,
             } => write!(
                 f,
-                "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line Profile or an Engrave cuts an open path"
+                "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line, Left or Right Profile or an Engrave cuts an open path"
             ),
             Self::UnsafeFileExtension { extension } => write!(
                 f,
@@ -645,7 +806,7 @@ impl fmt::Display for Problem {
                 cutter,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; an Inside or Outside Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+                "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
             ),
             Self::OperationHasNoTargets { operation, name } => write!(
                 f,
@@ -689,9 +850,45 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
             ),
+            Self::LastPassAllowance {
+                operation,
+                name,
+                tool_name,
+                allowance_mm,
+                diameter_mm,
+                limit_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has last_pass.allowance_mm {allowance_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
+            ),
+            Self::LastPassNeedsSide {
+                operation,
+                name,
+                side,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the allowance off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line",
+                match side {
+                    Side::OnLine => "on the line",
+                    Side::Left => "to the left of open paths",
+                    Side::Right => "to the right of open paths",
+                    Side::Inside => "inside",
+                    Side::Outside => "outside",
+                }
+            ),
+            Self::LastPassThickerThanStepDown {
+                operation,
+                name,
+                thickness_mm,
+                step_down_mm,
+                step_down_field,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has last_pass.thickness_mm {thickness_mm} mm, more than its {step_down_mm} mm step-down ({step_down_field}); the last pass would cut that deep in one go. Make it at most the step-down, or set it to null for the usual last pass"
+            ),
             Self::HelixNeedsWasteSide { operation, name } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts on the line but asks for a helix entry; a helix sits in material the cut removes, and an on-line cut removes only its kerf. Use \"plunge\" or a ramp"
+                "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
             ),
             Self::CannedCyclesUnsupported { post } => write!(
                 f,
@@ -726,6 +923,23 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) engraves {depth_mm} mm deep with tool `{tool_name}`, whose cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
             ),
+            Self::ClearanceBelowSafeZ {
+                operation,
+                name,
+                clearance_mm,
+                safe_z_mm,
+            } => write!(
+                f,
+                "{CLEARANCE} is {clearance_mm} mm, below the {safe_z_mm} mm safe_z_mm of operation `{name}` (`{operation}`); links between parts would run lower than its links between passes, so raise the clearance to at least {safe_z_mm} mm"
+            ),
+            Self::MachineZNotBelowHome { machine_z_mm } => write!(
+                f,
+                "{MACHINE_Z} is {machine_z_mm} mm, which is not below 0 as the program writes it; grblHAL and GRBL, and LinuxCNC as its configuration tools set it up, home Z at the top of its travel, where machine Z is 0 or just below, so the lift must be below 0, at least the homing pull-off below it"
+            ),
+            Self::MachineZNeedsG53 { post } => write!(
+                f,
+                "{MACHINE_Z} is set, but post-processor `{post}` does not document a machine-coordinate move (G53), so the lift cannot be written; set it to null"
+            ),
         }
     }
 }
@@ -748,6 +962,7 @@ const SWEEP: &str = "an angle greater than 0 and at most 180 degrees";
 const ENTRY_ANGLE: &str = "an angle greater than 0 and at most 45 degrees";
 const RASTER_ANGLE: &str = "an angle of 0 or more and less than 180 degrees";
 const BELOW_Z_TOP: &str = "a value at most the instance's z_top_mm";
+const LAST_PASS_THICKNESS: &str = "a value greater than 0 and at most the operation's depth_mm";
 // The limits below spell out `MAX_COORDINATE_MM`; a test checks they agree.
 const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
 const COORDINATE: &str = "a value from -6000 to 6000 mm";
@@ -774,6 +989,7 @@ impl Validator {
             self.finite("origin.xy.custom.x_mm", x_mm);
             self.finite("origin.xy.custom.y_mm", y_mm);
         }
+        self.heights(p);
 
         // In the order the file holds them (#76): settings, then geometry.
         // Tools an enabled operation cuts with; only their rates are required.
@@ -978,10 +1194,21 @@ impl Validator {
             }
         }
 
+        // #105: placed tabs, after the operations as the file holds them.
+        let mut seen_tabs = BTreeSet::new();
+        for tab in &p.tabs {
+            if !seen_tabs.insert(&tab.id) {
+                self.problems
+                    .push(Problem::DuplicateTabId { id: tab.id.clone() });
+            }
+            self.placed_tab(p, tab);
+        }
+
         // Definitions with a coordinate out of range; their instances are
         // not checked again, so each mistake is reported once.
         let mut out_of_range = BTreeSet::new();
-        // Engrave and On line Profile cut open paths (#175), so a
+        // Engrave and On line, Left and Right Profile cut open paths
+        // (#175, #207), so a
         // definition an enabled one targets is not reported as having
         // paths that are never cut.
         let engraved: BTreeSet<&DefinitionId> = p
@@ -989,7 +1216,7 @@ impl Validator {
             .iter()
             .filter_map(|op| match op {
                 Operation::Engrave(op) if op.enabled => Some(&op.targets),
-                Operation::Profile(op) if op.enabled && op.side == Side::OnLine => {
+                Operation::Profile(op) if op.enabled && op.side.cuts_open_paths() => {
                     Some(&op.targets)
                 }
                 _ => None,
@@ -1187,6 +1414,26 @@ impl Validator {
             (None, Some(step)) => Some((step, format!("tools[{}].step_down_mm", tool.id))),
             (None, None) => None,
         };
+        // #310 review: the last pass is at most one step-down thick.
+        if let Operation::Profile(profile) = op
+            && let Some(thickness_mm) = profile.last_pass.as_ref().and_then(|l| l.thickness_mm)
+            && thickness_mm.is_finite()
+            && thickness_mm > 0.0
+            && profile
+                .depth_mm
+                .is_none_or(|depth_mm| thickness_mm <= depth_mm)
+            && let Some((step_down_mm, field)) = &step
+            && step_down_mm.is_finite()
+            && thickness_mm > *step_down_mm
+        {
+            self.problems.push(Problem::LastPassThickerThanStepDown {
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
+                thickness_mm,
+                step_down_mm: *step_down_mm,
+                step_down_field: field.clone(),
+            });
+        }
         if let Some((step_down_mm, field)) = step
             && step_down_mm.is_finite()
             && tool.diameter_mm.is_finite()
@@ -1218,6 +1465,26 @@ impl Validator {
                 tool: tool.id.clone(),
                 tool_name: tool.name.clone(),
             });
+        }
+        // #284: VCarve advises an allowance well below a third of the bit.
+        if let Operation::Profile(profile) = op
+            && let Some(last_pass) = &profile.last_pass
+            && last_pass.allowance_mm.is_finite()
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0
+        {
+            let limit_mm = tool.diameter_mm / 3.0;
+            let allowance_mm = last_pass.allowance_mm;
+            if allowance_mm <= 0.0 || allowance_mm > limit_mm {
+                self.problems.push(Problem::LastPassAllowance {
+                    operation: op.id().clone(),
+                    name: op.name().to_owned(),
+                    tool_name: tool.name.clone(),
+                    allowance_mm,
+                    diameter_mm: tool.diameter_mm,
+                    limit_mm,
+                });
+            }
         }
         if let (Operation::Engrave(engrave), ToolKind::VBit { included_angle_deg }) =
             (op, &tool.cutter)
@@ -1270,8 +1537,9 @@ impl Validator {
         }
         self.entry(&op.entry, at);
         // #117: a helix needs removed material to sit in (functional spec,
-        // capability 16); an On line cut removes only its kerf.
-        if op.side == Side::OnLine && matches!(op.entry, Entry::Helix { .. }) {
+        // capability 16); an On line, Left or Right cut removes only its
+        // kerf (#207).
+        if !op.side.has_waste_area() && matches!(op.entry, Entry::Helix { .. }) {
             self.problems.push(Problem::HelixNeedsWasteSide {
                 operation: op.id.clone(),
                 name: op.name.clone(),
@@ -1279,6 +1547,35 @@ impl Validator {
         }
         if let Some(lead) = &op.lead {
             self.lead(lead, at);
+        }
+        if let Some(last_pass) = &op.last_pass {
+            self.last_pass(op, last_pass, at);
+        }
+    }
+
+    /// A last pass's values that need no tool (#284): a finite allowance
+    /// (its range needs the bit, [`Self::enabled_operation`]), a thickness
+    /// in (0, depth], and an Inside or Outside side.
+    fn last_pass(&mut self, op: &ProfileOp, last_pass: &LastPass, at: &str) {
+        self.finite(
+            &format!("{at}.last_pass.allowance_mm"),
+            last_pass.allowance_mm,
+        );
+        if let Some(thickness_mm) = last_pass.thickness_mm {
+            let field = format!("{at}.last_pass.thickness_mm");
+            let above_depth = op
+                .depth_mm
+                .is_some_and(|depth_mm| depth_mm.is_finite() && thickness_mm > depth_mm);
+            if self.finite(&field, thickness_mm) && (thickness_mm <= 0.0 || above_depth) {
+                self.out_of_range(field, thickness_mm, LAST_PASS_THICKNESS);
+            }
+        }
+        if !op.side.has_wall() {
+            self.problems.push(Problem::LastPassNeedsSide {
+                operation: op.id.clone(),
+                name: op.name.clone(),
+                side: op.side,
+            });
         }
     }
 
@@ -1407,6 +1704,60 @@ impl Validator {
         self.non_negative(&format!("{at}.lead.overcut_mm"), lead.overcut_mm);
     }
 
+    /// #283, design addendum A7: the clearance height is positive and at
+    /// least every enabled operation's safe Z; the tool-change machine Z is
+    /// below 0 and only on a definition that documents `G53`; the park
+    /// point is within the coordinate limit.
+    fn heights(&mut self, p: &Project) {
+        let heights = &p.heights;
+        if let Some(clearance_mm) = heights.clearance_mm
+            && self.coordinate(CLEARANCE, clearance_mm)
+        {
+            if clearance_mm <= 0.0 {
+                self.out_of_range(CLEARANCE.to_owned(), clearance_mm, POSITIVE);
+            }
+            for op in p.operations.iter().filter(|op| op.enabled()) {
+                let safe_z_mm = op.safe_z_mm();
+                if safe_z_mm.is_finite() && clearance_mm < safe_z_mm {
+                    self.problems.push(Problem::ClearanceBelowSafeZ {
+                        operation: op.id().clone(),
+                        name: op.name().to_owned(),
+                        clearance_mm,
+                        safe_z_mm,
+                    });
+                }
+            }
+        }
+        if let Some(machine_z_mm) = heights.tool_change_machine_z_mm
+            && self.coordinate(MACHINE_Z, machine_z_mm)
+        {
+            // Below 0 as the program writes it: not one that rounds to 0
+            // in its decimal places (#304 review).
+            let half_quantum_mm = p.post_processor.decimal_places.quantum_mm(p.display_units) / 2.0;
+            if machine_z_mm >= -half_quantum_mm {
+                self.problems
+                    .push(Problem::MachineZNotBelowHome { machine_z_mm });
+            }
+            // A reference that names no bundled definition fails to load;
+            // only a project built in code gets here without one.
+            let documents_g53 = p.post_processor.definition().is_ok_and(|d| {
+                d.post_processor()
+                    .work_coordinates
+                    .machine_command
+                    .is_some()
+            });
+            if !documents_g53 {
+                self.problems.push(Problem::MachineZNeedsG53 {
+                    post: p.post_processor.id.clone(),
+                });
+            }
+        }
+        if let Some(park) = heights.park {
+            self.coordinate("heights.park.x_mm", park.x_mm);
+            self.coordinate("heights.park.y_mm", park.y_mm);
+        }
+    }
+
     /// Reports `field` if `value` is not finite; returns whether it is.
     fn finite(&mut self, field: &str, value: f64) -> bool {
         let ok = value.is_finite();
@@ -1436,6 +1787,38 @@ impl Validator {
         if self.finite(field, value) && (value <= 0.0 || value > MAX_COORDINATE_MM) {
             self.out_of_range(field.to_owned(), value, STOCK_SIDE);
         }
+    }
+
+    /// A placed tab: on an instance and profile that exist, at a point
+    /// within the coordinate limit, with a positive width and height.
+    fn placed_tab(&mut self, p: &Project, tab: &PlacedTab) {
+        let at = format!("tabs[{}]", tab.id);
+        let instance = p.instances.iter().find(|i| i.id == tab.instance);
+        let profiles = instance
+            .and_then(|i| p.definitions.get(&i.definition))
+            .map(|d| d.profiles.as_slice());
+        match (instance, profiles) {
+            (None, _) => self.problems.push(Problem::TabDanglingInstance {
+                tab: tab.id.clone(),
+                instance: tab.instance.clone(),
+            }),
+            // A missing definition is reported for the instance.
+            (Some(_), None) => {}
+            (Some(_), Some(profiles)) => {
+                if profiles.get(tab.profile).is_none() {
+                    self.problems.push(Problem::TabProfileMissing {
+                        tab: tab.id.clone(),
+                        instance: tab.instance.clone(),
+                        profile: tab.profile,
+                        count: profiles.len(),
+                    });
+                }
+            }
+        }
+        self.coordinate(&format!("{at}.x_mm"), tab.x_mm);
+        self.coordinate(&format!("{at}.y_mm"), tab.y_mm);
+        self.positive(&format!("{at}.width_mm"), tab.width_mm);
+        self.positive(&format!("{at}.height_mm"), tab.height_mm);
     }
 
     fn positive(&mut self, field: &str, value: f64) {
@@ -1512,12 +1895,98 @@ impl Validator {
 mod tests {
     use super::*;
     use crate::model::{
-        ClearanceStrategy, CornerRelief, DrillCycle, Entry, Lead, Operation, PeckRetract, ToolKind,
+        ClearanceStrategy, CornerRelief, DrillCycle, Entry, LastPass, Lead, Operation, PeckRetract,
+        ToolKind,
     };
     use crate::test_support::{
         profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
     };
     use dc_geometry::{MAX_COORDINATE_MM, Polyline, Transform, Vertex, approx_eq};
+
+    /// #105: a placed tab must name an instance and one of its
+    /// definition's profiles, and its id must be its own.
+    #[test]
+    fn placed_tab_on_a_missing_outline_is_an_error() {
+        use crate::test_support::sample_tab;
+        let mut p = sample_project();
+        p.tabs = vec![
+            sample_tab("tab1", 25.0, 0.0),
+            PlacedTab {
+                instance: InstanceId::new("nope"),
+                ..sample_tab("tab2", 0.0, 0.0)
+            },
+            PlacedTab {
+                profile: 3,
+                ..sample_tab("tab3", 0.0, 0.0)
+            },
+            sample_tab("tab1", 50.0, 15.0),
+        ];
+        let problems = validate(&p);
+        assert!(
+            problems.contains(&Problem::TabDanglingInstance {
+                tab: TabId::new("tab2"),
+                instance: InstanceId::new("nope"),
+            }),
+            "{problems:?}"
+        );
+        assert!(
+            problems.contains(&Problem::TabProfileMissing {
+                tab: TabId::new("tab3"),
+                instance: InstanceId::new("i1"),
+                profile: 3,
+                count: 1,
+            }),
+            "{problems:?}"
+        );
+        assert!(
+            problems.contains(&Problem::DuplicateTabId {
+                id: TabId::new("tab1")
+            }),
+            "{problems:?}"
+        );
+        let dangling = problems
+            .iter()
+            .find(|q| matches!(q, Problem::TabDanglingInstance { .. }))
+            .unwrap();
+        assert!(dangling.is_error());
+        assert_eq!(dangling.field().as_deref(), Some("tabs[tab2].instance"));
+        assert_eq!(
+            dangling.to_string(),
+            "tab `tab2` is on instance `nope`, which does not exist"
+        );
+    }
+
+    /// #105: a placed tab's size must be positive and its point a finite
+    /// coordinate within the limit.
+    #[test]
+    fn placed_tab_size_and_point_are_checked() {
+        use crate::test_support::sample_tab;
+        let mut p = sample_project();
+        p.tabs = vec![
+            PlacedTab {
+                width_mm: 0.0,
+                height_mm: -1.0,
+                ..sample_tab("tab1", 25.0, 0.0)
+            },
+            PlacedTab {
+                x_mm: 1.0e7,
+                ..sample_tab("tab2", 25.0, 0.0)
+            },
+        ];
+        let fields: Vec<String> = errors(&validate(&p))
+            .iter()
+            .filter_map(|q| q.field())
+            .collect();
+        for field in [
+            "tabs[tab1].width_mm",
+            "tabs[tab1].height_mm",
+            "tabs[tab2].x_mm",
+        ] {
+            assert!(fields.iter().any(|f| f == field), "{field}: {fields:?}");
+        }
+        p.tabs = vec![sample_tab("tab1", 25.0, 0.0)];
+        assert_eq!(errors(&validate(&p)), Vec::<&Problem>::new());
+    }
 
     fn errors(problems: &[Problem]) -> Vec<&Problem> {
         problems.iter().filter(|p| p.is_error()).collect()
@@ -2116,6 +2585,11 @@ mod tests {
         );
         profile_mut(&mut p).side = Side::OnLine;
         assert!(open(&p).is_none(), "{:?}", validate(&p));
+        // #207: Left and Right cut open paths too.
+        for side in [Side::Left, Side::Right] {
+            profile_mut(&mut p).side = side;
+            assert!(open(&p).is_none(), "{side:?}: {:?}", validate(&p));
+        }
         profile_mut(&mut p).enabled = false;
         assert!(open(&p).is_some(), "a disabled Profile cuts nothing");
     }
@@ -2445,7 +2919,7 @@ mod tests {
         assert_eq!(problems[0].field().unwrap(), "operations[o1].tool");
         assert_eq!(
             message,
-            "operation `Cut out` (`o1`) cuts with tool `6.35 mm upcut` (`t1`), a V-bit; an Inside or Outside Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
+            "operation `Cut out` (`o1`) cuts with tool `6.35 mm upcut` (`t1`), a V-bit; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
         );
     }
 
@@ -2463,6 +2937,26 @@ mod tests {
                 let message = only_located(&p, &problems, Severity::Error);
                 assert!(message.contains(words), "{message}");
             }
+        }
+    }
+
+    /// #207: Left and Right offset the path by half the diameter, as
+    /// Inside and Outside do, so they need a flat end mill too.
+    #[test]
+    fn v_bit_left_or_right_is_an_error() {
+        for side in [crate::model::Side::Left, crate::model::Side::Right] {
+            let mut p = sample_project();
+            p.tools[0].cutter = ToolKind::VBit {
+                included_angle_deg: 60.0,
+            };
+            op_mut(&mut p).side = side;
+            let problems = validate(&p);
+            assert!(
+                problems
+                    .iter()
+                    .any(|q| matches!(q, Problem::CutterNotFlat { .. })),
+                "{side:?}: {problems:?}"
+            );
         }
     }
 
@@ -3070,6 +3564,22 @@ mod tests {
         );
         assert_eq!(problems[0].severity(), Severity::Error);
         assert_eq!(problems[0].field().as_deref(), Some("operations[o1].entry"));
+        // #207: Left and Right ramp along the offset path and have no
+        // waste area for a helix either.
+        for side in [Side::Left, Side::Right] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.entry = helix.clone();
+            assert_eq!(
+                validate(&p),
+                vec![Problem::HelixNeedsWasteSide {
+                    operation: OperationId::new("o1"),
+                    name: "Cut out".into(),
+                }],
+                "{side:?}"
+            );
+        }
         let mut p = sample_project();
         let op = profile_mut(&mut p);
         op.side = Side::Inside;
@@ -3147,6 +3657,230 @@ mod tests {
                 "{field} {value}"
             );
         }
+    }
+
+    /// The last pass acceptance 46 asks for, on the sample's Outside
+    /// Profile (#284).
+    fn last_pass(allowance_mm: f64) -> LastPass {
+        LastPass {
+            allowance_mm,
+            thickness_mm: None,
+            reverse: false,
+        }
+    }
+
+    /// #284 (capability 34, acceptance 46): the allowance is more than 0
+    /// and at most a third of the bit's diameter, as VCarve advises. 0, a
+    /// negative value and 2.2 mm with the 6.35 mm bit are errors naming the
+    /// diameter and the limit; 0.5 and exactly a third are valid.
+    #[test]
+    fn last_pass_allowance_limit() {
+        let mut p = sample_project();
+        for allowance_mm in [0.5, 6.35 / 3.0] {
+            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
+            assert_eq!(validate(&p), vec![], "{allowance_mm}");
+        }
+        for allowance_mm in [0.0, -0.5, 2.2] {
+            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::LastPassAllowance {
+                    operation: OperationId::new("o1"),
+                    name: "Cut out".into(),
+                    tool_name: "6.35 mm upcut".into(),
+                    allowance_mm,
+                    diameter_mm: 6.35,
+                    limit_mm: 6.35 / 3.0,
+                }],
+                "{allowance_mm}"
+            );
+            let problem = &problems[0];
+            assert!(problem.is_error());
+            assert_eq!(problem.code(), "last_pass_allowance");
+            assert_eq!(
+                problem.field().as_deref(),
+                Some("operations[o1].last_pass.allowance_mm")
+            );
+            let message = problem.to_string();
+            for part in ["6.35 mm", "2.117 mm", "a third"] {
+                assert!(message.contains(part), "{message}");
+            }
+        }
+        profile_mut(&mut p).last_pass = Some(last_pass(f64::NAN));
+        assert_eq!(
+            validate(&p),
+            vec![Problem::NonFinite {
+                field: "operations[o1].last_pass.allowance_mm".into()
+            }]
+        );
+    }
+
+    /// #284: On line has no wall to leave material on: it cuts with both
+    /// flanks. (changed in #311: Left and Right, which cut one flank
+    /// against the part, take a last pass too.)
+    #[test]
+    fn last_pass_on_line_is_error() {
+        let mut p = sample_project();
+        let op = profile_mut(&mut p);
+        op.side = Side::OnLine;
+        op.last_pass = Some(last_pass(0.5));
+        let problems = validate(&p);
+        let expected = Problem::LastPassNeedsSide {
+            operation: OperationId::new("o1"),
+            name: "Cut out".into(),
+            side: Side::OnLine,
+        };
+        assert!(problems.contains(&expected), "{problems:?}");
+        assert!(expected.is_error());
+        assert_eq!(expected.code(), "last_pass_needs_side");
+        assert_eq!(
+            expected.field().as_deref(),
+            Some("operations[o1].last_pass")
+        );
+        let message = expected.to_string();
+        assert!(
+            message.contains("Inside, Outside, Left or Right"),
+            "{message}"
+        );
+        for side in [Side::Inside, Side::Outside] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.last_pass = Some(last_pass(0.5));
+            assert_eq!(validate(&p), vec![], "{side:?}");
+        }
+    }
+
+    /// #311: a Left or Right Profile cuts one flank of the bit against the
+    /// part, as Inside and Outside do, so it takes a last pass: no
+    /// `LastPassNeedsSide`, and the allowance and thickness are checked
+    /// as on Inside and Outside. On line still errors.
+    #[test]
+    fn last_pass_left_right_is_valid() {
+        for side in [Side::Left, Side::Right] {
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.side = side;
+            op.tabs = None;
+            op.last_pass = Some(last_pass(0.5));
+            assert_eq!(validate(&p), vec![], "{side:?}");
+
+            profile_mut(&mut p).last_pass = Some(last_pass(2.2));
+            let problems = validate(&p);
+            assert!(
+                problems
+                    .iter()
+                    .any(|q| matches!(q, Problem::LastPassAllowance { .. })),
+                "{side:?}: {problems:?}"
+            );
+            assert!(
+                !problems
+                    .iter()
+                    .any(|q| matches!(q, Problem::LastPassNeedsSide { .. })),
+                "{side:?}: {problems:?}"
+            );
+        }
+        let mut p = sample_project();
+        let op = profile_mut(&mut p);
+        op.side = Side::OnLine;
+        op.last_pass = Some(last_pass(0.5));
+        assert!(
+            validate(&p)
+                .iter()
+                .any(|q| matches!(q, Problem::LastPassNeedsSide { .. }))
+        );
+    }
+
+    /// #284: `thickness_mm`, the last pass's depth, is more than 0 and at
+    /// most the operation's `depth_mm`.
+    #[test]
+    fn last_pass_thickness_range() {
+        let mut p = sample_project();
+        for thickness_mm in [0.5, 2.0] {
+            profile_mut(&mut p).last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            assert_eq!(validate(&p), vec![], "{thickness_mm}");
+        }
+        for thickness_mm in [0.0, -1.0, 6.5] {
+            profile_mut(&mut p).last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            assert_eq!(
+                validate(&p),
+                vec![Problem::OutOfRange {
+                    field: "operations[o1].last_pass.thickness_mm".into(),
+                    value: thickness_mm,
+                    expected: LAST_PASS_THICKNESS,
+                }],
+                "{thickness_mm}"
+            );
+        }
+        // With the depth unset, only the depth is reported.
+        let op = profile_mut(&mut p);
+        op.depth_mm = None;
+        op.last_pass = Some(LastPass {
+            thickness_mm: Some(6.5),
+            ..last_pass(0.5)
+        });
+        assert!(
+            validate(&p)
+                .iter()
+                .all(|problem| !matches!(problem, Problem::OutOfRange { .. })),
+            "{:?}",
+            validate(&p)
+        );
+    }
+
+    /// #310 review: the last pass is at most one step-down thick, the
+    /// operation's when it sets one, else the tool's: the sample's 2 mm
+    /// tool step-down allows 2 mm and refuses 2.5 and 6, at the thickness;
+    /// with the operation's 4 mm, 3 is fine.
+    #[test]
+    fn last_pass_thickness_at_most_step_down() {
+        let mut p = sample_project();
+        for (thickness_mm, step_down_mm) in [(2.5, None), (6.0, None), (4.5, Some(4.0))] {
+            let op = profile_mut(&mut p);
+            op.step_down_mm = step_down_mm;
+            op.last_pass = Some(LastPass {
+                thickness_mm: Some(thickness_mm),
+                ..last_pass(0.5)
+            });
+            let problems = validate(&p);
+            let (field, step) = match step_down_mm {
+                Some(step) => ("operations[o1].step_down_mm", step),
+                None => ("tools[t1].step_down_mm", 2.0),
+            };
+            let expected = Problem::LastPassThickerThanStepDown {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                thickness_mm,
+                step_down_mm: step,
+                step_down_field: field.into(),
+            };
+            assert_eq!(problems, vec![expected.clone()], "{thickness_mm}");
+            assert!(expected.is_error());
+            assert_eq!(expected.code(), "last_pass_thicker_than_step_down");
+            assert_eq!(
+                expected.field().as_deref(),
+                Some("operations[o1].last_pass.thickness_mm")
+            );
+            let message = expected.to_string();
+            assert!(
+                message.contains(field) && message.contains("step-down"),
+                "{message}"
+            );
+        }
+        let op = profile_mut(&mut p);
+        op.step_down_mm = Some(4.0);
+        op.last_pass = Some(LastPass {
+            thickness_mm: Some(3.0),
+            ..last_pass(0.5)
+        });
+        assert_eq!(validate(&p), vec![]);
     }
 
     /// Functional spec, capability 16: a ramp steeper than 45° is a
@@ -3534,5 +4268,192 @@ mod tests {
                 "{expected} in {kinds:?}"
             );
         }
+    }
+
+    // #283: the clearance, tool-change and park heights.
+
+    /// Design addendum A7: the clearance height is for links between
+    /// parts, so it may not be below an enabled operation's retract
+    /// between passes. `clearance_mm: 3` with the sample Profile's
+    /// `safe_z_mm: 5` names the operation, at the clearance field; 5 is
+    /// valid, and a disabled operation does not count.
+    #[test]
+    fn clearance_below_safe_z_is_error() {
+        let mut p = sample_project();
+        p.heights.clearance_mm = Some(3.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::ClearanceBelowSafeZ {
+                operation: OperationId::new("o1"),
+                name: "Cut out".into(),
+                clearance_mm: 3.0,
+                safe_z_mm: 5.0,
+            }]
+        );
+        assert!(problems[0].is_error());
+        assert_eq!(problems[0].field().as_deref(), Some("heights.clearance_mm"));
+        assert!(
+            problems[0].to_string().contains("Cut out"),
+            "{}",
+            problems[0]
+        );
+        let text = crate::save(&p).unwrap();
+        let map = crate::SourceMap::parse(&text).unwrap();
+        assert!(map.locate("heights.clearance_mm").is_some(), "{text}");
+
+        p.heights.clearance_mm = Some(5.0);
+        assert_eq!(validate(&p), vec![]);
+        p.heights.clearance_mm = Some(3.0);
+        profile_mut(&mut p).enabled = false;
+        assert!(
+            !validate(&p)
+                .iter()
+                .any(|q| matches!(q, Problem::ClearanceBelowSafeZ { .. })),
+            "a disabled operation is not cut"
+        );
+    }
+
+    /// Design addendum A7: grblHAL and GRBL home Z at the top of its
+    /// travel, to a negative machine position (grblHAL `machine_limits.c`
+    /// 116-140, GRBL `limits.c` 382), so a lift to machine Z 0 or above
+    /// goes past the limit switch. `0` and `2` are errors; `-5` is valid.
+    #[test]
+    fn machine_z_must_be_below_zero() {
+        for machine_z_mm in [0.0, 2.0] {
+            let mut p = sample_project();
+            p.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::MachineZNotBelowHome { machine_z_mm }],
+                "{machine_z_mm}"
+            );
+            assert!(problems[0].is_error());
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("heights.tool_change_machine_z_mm")
+            );
+        }
+        let mut p = sample_project();
+        p.heights.tool_change_machine_z_mm = Some(-5.0);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #304 review: the program writes the machine Z to its decimal places
+    /// (3 in mm, 4 in inches), so one that rounds to 0 there is the same
+    /// lift past the limit switch: −0.0004 mm is refused in a mm program,
+    /// −0.001 mm in an inch program (under half of 0.0001 in, 0.00127
+    /// mm), while −0.001 mm and −0.0013 mm write −0.001 and −0.0001.
+    #[test]
+    fn machine_z_rounding_to_zero_is_error() {
+        for (units, machine_z_mm, refused) in [
+            (crate::Units::Mm, -0.0004, true),
+            (crate::Units::Mm, -0.001, false),
+            (crate::Units::Inch, -0.001, true),
+            (crate::Units::Inch, -0.0013, false),
+        ] {
+            let mut p = sample_project();
+            p.display_units = units;
+            p.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+            let problems = validate(&p);
+            let expected = if refused {
+                vec![Problem::MachineZNotBelowHome { machine_z_mm }]
+            } else {
+                vec![]
+            };
+            assert_eq!(problems, expected, "{units:?} {machine_z_mm}");
+        }
+    }
+
+    /// Design addendum A7: the lift is `G53 G0 Z…`, which only a
+    /// definition that documents `G53` may write (`definitions/README.md`,
+    /// "Machine-coordinate moves"). On LinuxCNC, whose documents were not
+    /// checked for it, the setting is an error naming the post-processor;
+    /// on GRBL (the sample's) it is valid.
+    #[test]
+    fn machine_z_needs_g53_definition() {
+        // #306: Mach3, UCCNC and generic document no `G53` that DreamCarve
+        // could check, on any version.
+        for definition in crate::bundled_definitions()
+            .unwrap()
+            .iter()
+            .filter(|d| ["mach3", "uccnc", "generic"].contains(&d.id))
+        {
+            let mut p = sample_project();
+            p.heights.tool_change_machine_z_mm = Some(-5.0);
+            p.post_processor = definition.default_ref();
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::MachineZNeedsG53 {
+                    post: definition.id.into()
+                }],
+                "{}",
+                definition.path
+            );
+            assert!(problems[0].is_error());
+            assert!(
+                problems[0].to_string().contains(definition.id),
+                "{}",
+                problems[0]
+            );
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("heights.tool_change_machine_z_mm")
+            );
+        }
+    }
+
+    /// #306: LinuxCNC documents `G53` (definitions README,
+    /// "Machine-coordinate moves"), so both versions accept a machine Z,
+    /// with the same rule as grblHAL and GRBL: below 0 as written.
+    #[test]
+    fn machine_z_accepted_on_linuxcnc() {
+        for version in [1, 2] {
+            let mut p = sample_project();
+            p.post_processor = crate::PostProcessorRef::latest("linuxcnc").unwrap();
+            p.post_processor.definition_version = version;
+            p.heights.tool_change_machine_z_mm = Some(-5.0);
+            assert_eq!(validate(&p), vec![], "v{version}");
+            for machine_z_mm in [0.0, 5.0, -0.0004] {
+                p.heights.tool_change_machine_z_mm = Some(machine_z_mm);
+                assert_eq!(
+                    validate(&p),
+                    vec![Problem::MachineZNotBelowHome { machine_z_mm }],
+                    "v{version} {machine_z_mm}"
+                );
+            }
+        }
+    }
+
+    /// #283: the park point is a coordinate, within the 6000 mm limit
+    /// (#75); the clearance height is positive.
+    #[test]
+    fn park_and_clearance_are_in_range() {
+        let mut p = sample_project();
+        p.heights.park = Some(crate::ParkXy {
+            x_mm: 7000.0,
+            y_mm: 0.0,
+        });
+        let problems = validate(&p);
+        assert!(
+            matches!(problems.as_slice(), [Problem::OutOfRange { field, .. }] if field == "heights.park.x_mm"),
+            "{problems:?}"
+        );
+        p.heights.park = Some(crate::ParkXy {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        });
+        assert_eq!(validate(&p), vec![]);
+        profile_mut(&mut p).enabled = false;
+        p.heights.clearance_mm = Some(-1.0);
+        let problems = validate(&p);
+        assert!(
+            problems.iter().any(
+                |q| matches!(q, Problem::OutOfRange { field, .. } if field == "heights.clearance_mm")
+            ),
+            "{problems:?}"
+        );
     }
 }

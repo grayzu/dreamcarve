@@ -10,7 +10,8 @@
 //! with `M6` tool changes; `--programs-per-tool` and `--one-program`
 //! override it for one export without saving it (functional spec,
 //! capability 19). Nothing is written unless every step succeeds:
-//! every program (and, with `--post`, the updated project) is staged in a
+//! every program (with `--preview`, the toolpath picture of addendum A5,
+//! and with `--post`, the updated project) is staged in a
 //! temporary file, and all are renamed into place at the end. If one
 //! rename fails, the files already moved are put back as they were.
 //!
@@ -24,7 +25,8 @@
 //! link to that line and column (#76). Every warning carries its stable
 //! `snake_case` code and prints as `warning: <code>: <message>` (functional
 //! spec, capability 25); the Warnings chapter lists the codes. After
-//! generation, `dc_cam::order::check` adds the operation-order warnings.
+//! generation, `dc_cam::order::check` adds the operation-order warnings,
+//! and `dc_cam::placed_tabs::check` the tabs no Profile cuts round (#105).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -32,17 +34,25 @@ use std::process::ExitCode;
 
 use dc_cam::{
     Toolpath, generate_drill, generate_engrave, generate_pocket, generate_profile, order,
+    placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{AxisRange, EmitOp, ExportWarning, Program, ProgramSplit, emit_programs};
+use dc_gcode::{
+    AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs,
+    machine_lift_limits_note, scaling_note,
+};
 use dc_project::{
-    Operation, PostProcessorRef, Project, Severity, SourceMap, ToolChangeMode, Units, validate,
+    Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap, Tool,
+    ToolChangeMode, Units, validate,
 };
 
-use crate::cli::{ExportArgs, Failure, StagedFile, commit_all, lookup_post, read_file, today_utc};
-use crate::config;
+use crate::cli::{
+    ExportArgs, Failure, StagedFile, commit_all, lookup_post, read_file, switch_post, today_utc,
+};
+use crate::config::{self, EstimateConfig};
 use crate::output::{errln, outln};
+use crate::preview;
 
 /// One error or warning.
 #[derive(Debug)]
@@ -125,6 +135,10 @@ pub struct Built {
     pub programs: Vec<Program>,
     /// Errors and warnings.
     pub findings: Findings,
+    /// Every enabled operation's generated toolpath, with its tool, when
+    /// every one of them generated, even if emitting the programs then
+    /// failed; `None` when one did not. What `--preview` draws.
+    pub generated: Option<Vec<EmitOp>>,
 }
 
 /// Validates `project`, generates every enabled operation's toolpath, and
@@ -151,6 +165,7 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         return Built {
             programs: Vec::new(),
             findings,
+            generated: None,
         };
     }
 
@@ -203,19 +218,23 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         .iter()
         .map(|entry| (&entry.op, &entry.toolpath))
         .collect();
-    findings
-        .warnings
-        .extend(order::check(project, &generated).iter().map(|w| {
-            let message = match w.op() {
-                Some(op) => format!("operation `{op}`: {w}"),
-                None => w.to_string(),
-            };
-            Finding::coded(w.code().as_str(), message)
-        }));
+    // #105: a placed tab no enabled Profile cuts round holds nothing.
+    let project_warnings = order::check(project, &generated)
+        .into_iter()
+        .chain(placed_tabs::check(project, &generated));
+    findings.warnings.extend(project_warnings.map(|w| {
+        let message = match w.op() {
+            Some(op) => format!("operation `{op}`: {w}"),
+            None => w.to_string(),
+        };
+        Finding::coded(w.code().as_str(), message)
+    }));
     if !findings.errors.is_empty() {
+        // An operation did not generate.
         return Built {
             programs: Vec::new(),
             findings,
+            generated: None,
         };
     }
 
@@ -226,13 +245,18 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                     .iter()
                     .map(|w| Finding::coded(w.code(), describe_export_warning(w))),
             );
-            Built { programs, findings }
+            Built {
+                programs,
+                findings,
+                generated: Some(ops),
+            }
         }
         Err(e) => {
             findings.errors.push(Finding::plain(e.to_string()));
             Built {
                 programs: Vec::new(),
                 findings,
+                generated: Some(ops),
             }
         }
     }
@@ -287,20 +311,43 @@ pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> 
 /// Runs `export`.
 pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     let (mut project, mut file) = load_project(&args.dcv)?;
+    // Read before anything is written, so a bad value stops the export
+    // with nothing changed. It is used for the printed estimate only.
+    let estimate_settings = config::estimate_settings()?;
     // `--post` is how a project changes post-processor or upgrades to a
     // newer version of its own (#106): an explicit action, reported below.
-    let mut switched_from = None;
+    let mut switched = None;
     if let Some(id) = &args.post {
-        let mut latest = lookup_post(id)?;
-        // The new settings are the definition's defaults with the user's
-        // configured ones on top, as `init` writes them.
-        config::seed_post(&mut latest)?;
-        switched_from = Some(std::mem::replace(&mut project.post_processor, latest));
+        let (new, resets) = if args.reset_settings {
+            // The definition's defaults with the user's configured ones on
+            // top, as `init` writes them.
+            let mut latest = lookup_post(id)?;
+            config::seed_post(&mut latest)?;
+            (latest, None)
+        } else {
+            // #277: the user's settings carry over; the config's
+            // `tool_change_mode` applies only where the mode was reset
+            // (functional spec, capability 27).
+            let (mut new, resets) = switch_post(&project.post_processor, id)?;
+            if resets.iter().any(|r| r.setting == "tool_change_mode") {
+                config::seed_post(&mut new)?;
+            }
+            (new, Some(resets))
+        };
+        let old = std::mem::replace(&mut project.post_processor, new);
+        switched = Some(Switched { old, resets });
         file.post_replaced = true;
     }
     let date = args.date.clone().unwrap_or_else(today_utc);
 
-    let Built { programs, findings } = build(&project, args.split(), &date);
+    if let Some(preview) = &args.preview {
+        check_preview_path(preview, &args.dcv)?;
+    }
+    let Built {
+        programs,
+        findings,
+        generated,
+    } = build(&project, args.split(), &date);
     for warning in &findings.warnings {
         errln!("{}", file.describe("warning", warning));
     }
@@ -314,12 +361,15 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         )));
     }
 
-    let outputs = output_paths(args, &programs)?;
+    let outputs = output_paths(args.output.as_deref(), &args.dcv, &programs)?;
     if outputs.iter().any(|output| same_file(output, &args.dcv)) {
         return Err(Failure::error(format!(
             "refusing to write the program over the project file {}",
             args.dcv.display()
         )));
+    }
+    if let Some(preview) = &args.preview {
+        check_preview_not_program(preview, &outputs)?;
     }
     // Stage everything before moving anything into place. A failed write
     // drops the files staged so far, which removes them.
@@ -328,6 +378,15 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         .zip(&programs)
         .map(|(output, program)| StagedFile::write(output, program.text.as_bytes()))
         .collect::<Result<Vec<_>, _>>()?;
+    // The preview goes with the programs: all or none (addendum A5).
+    // `build` generated every operation, since it emitted programs.
+    let staged_preview = match (&args.preview, &generated) {
+        (Some(path), Some(generated)) => Some(StagedFile::write(
+            path,
+            preview_svg(&project, generated).as_bytes(),
+        )?),
+        _ => None,
+    };
     let staged_project = match &args.post {
         Some(_) => {
             let text = dc_project::save(&project).map_err(Failure::error)?;
@@ -337,26 +396,263 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     };
     // All or nothing: a program in place beside a project that failed to
     // move, or the reverse, would not match what was reported.
-    commit_all(staged_programs.into_iter().chain(staged_project).collect())?;
+    commit_all(
+        staged_programs
+            .into_iter()
+            .chain(staged_preview)
+            .chain(staged_project)
+            .collect(),
+    )?;
 
+    // The programs are written; the estimate only reads them.
+    let estimates = Estimates::new(&project, &programs, estimate_settings);
     match (programs.as_slice(), outputs.as_slice()) {
-        ([program], [output]) => report(&project, program, output, args, switched_from.as_ref())?,
-        _ => report_runs(&project, &programs, &outputs, args, switched_from.as_ref())?,
+        ([program], [output]) => report(
+            &project,
+            program,
+            output,
+            args,
+            switched.as_ref(),
+            &estimates,
+        )?,
+        _ => report_runs(
+            &project,
+            &programs,
+            &outputs,
+            args,
+            switched.as_ref(),
+            &estimates,
+        )?,
+    }
+    if let Some(preview) = &args.preview {
+        outln!("Wrote preview {}.", preview.display())?;
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// Where each program goes. One program goes to `-o`, or to the project's
-/// path with the post-processor's extension. Programs of tool runs (#95)
-/// go beside it, named `<stem>-<k>-T<n>.<ext>`: `<k>` the run's place,
-/// `<n>` its tool's number, `<stem>` and `<ext>` those of that one path.
-fn output_paths(args: &ExportArgs, programs: &[Program]) -> Result<Vec<PathBuf>, Failure> {
-    let single = match (&args.output, programs.first()) {
-        (Some(path), _) => path.clone(),
+/// The preview SVG of the generated operations (addendum A5).
+pub fn preview_svg(project: &Project, generated: &[EmitOp]) -> String {
+    let ops: Vec<(&Operation, &Tool, &Toolpath)> = generated
+        .iter()
+        .map(|entry| (&entry.op, &entry.tool, &entry.toolpath))
+        .collect();
+    preview::render(project, &ops)
+}
+
+/// Refuses a `--preview` path that is not an `.svg` file, that is the
+/// project file, or that is an existing file other than an earlier
+/// preview, such as the drawing the project came from (addendum A5).
+/// Runs before anything is built.
+pub fn check_preview_path(preview: &Path, dcv: &Path) -> Result<(), Failure> {
+    let svg = preview
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
+    if !svg {
+        return Err(Failure::error(format!(
+            "--preview must name an .svg file, not {}",
+            preview.display()
+        )));
+    }
+    if same_path(preview, dcv) {
+        return Err(Failure::error(format!(
+            "--preview {} is the project file; refusing to write over it",
+            preview.display()
+        )));
+    }
+    if std::fs::symlink_metadata(preview).is_ok() && !is_preview(preview) {
+        return Err(Failure::error(format!(
+            "--preview {} exists and is not a DreamCarve preview (your drawing?); refusing to write over it",
+            preview.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Whether the file at `path` starts as [`preview::render`] writes it:
+/// its first kilobyte holds [`preview::MARKER`].
+fn is_preview(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = Vec::new();
+    if file.take(1024).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    String::from_utf8_lossy(&head).contains(preview::MARKER)
+}
+
+/// Refuses a `--preview` path that is one of the program paths `outputs`.
+pub fn check_preview_not_program(preview: &Path, outputs: &[PathBuf]) -> Result<(), Failure> {
+    match outputs.iter().find(|output| same_path(preview, output)) {
+        Some(output) => Err(Failure::error(format!(
+            "--preview {} is where the program {} goes; refusing to write over it",
+            preview.display(),
+            output.display()
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// True if `a` and `b` name one file, whether or not it exists yet: the
+/// same path, the same existing file, or the same name in the same
+/// directory.
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b || same_file(a, b) {
+        return true;
+    }
+    matches!((resolved(a), resolved(b)), (Some(a), Some(b)) if a == b)
+}
+
+/// `path` with its directory resolved, so `./x.svg` and `x.svg` compare
+/// equal before either exists; `None` when the directory does not exist.
+fn resolved(path: &Path) -> Option<PathBuf> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    Some(std::fs::canonicalize(parent).ok()?.join(path.file_name()?))
+}
+
+/// The cycle-time estimate of each program (functional spec, capability
+/// 30), with the user's `[estimate]` settings to print them with. It reads
+/// the programs and changes nothing.
+pub struct Estimates {
+    /// Each program's estimate, in program order, or why there is none.
+    per_program: Vec<Result<Estimate, String>>,
+    settings: EstimateConfig,
+}
+
+impl Estimates {
+    /// The estimates of `programs`, emitted from `project`.
+    pub fn new(project: &Project, programs: &[Program], settings: EstimateConfig) -> Self {
+        let post = project.post_processor.resolve().map_err(|e| e.to_string());
+        let per_program = programs
+            .iter()
+            .map(|program| {
+                let post = post.as_ref().map_err(Clone::clone)?;
+                dc_gcode::estimate(program, post).map_err(|e| e.to_string())
+            })
+            .collect();
+        Self {
+            per_program,
+            settings,
+        }
+    }
+
+    /// The `Estimated time: …` line of program `k`.
+    pub fn program_line(&self, k: usize) -> String {
+        match self.per_program.get(k) {
+            Some(Ok(estimate)) => describe_estimate("Estimated time", estimate, &self.settings),
+            Some(Err(reason)) => format!("Estimated time: not available ({reason})."),
+            None => "Estimated time: not available.".to_owned(),
+        }
+    }
+
+    /// The `Estimated total time: …` line over every program, when there
+    /// is more than one.
+    pub fn total_line(&self) -> Option<String> {
+        if self.per_program.len() < 2 {
+            return None;
+        }
+        let total = self
+            .per_program
+            .iter()
+            .try_fold(Estimate::default(), |sum, e| {
+                e.as_ref().ok().map(|e| sum + *e)
+            });
+        Some(match total {
+            Some(total) => describe_estimate("Estimated total time", &total, &self.settings),
+            None => "Estimated total time: not available.".to_owned(),
+        })
+    }
+}
+
+/// `estimate` as one line, as capability 30 shows it: the total, then the
+/// cutting and dwell times, the rapids' time when the user has given a
+/// rapid rate or else their distance and how to include it, the scale
+/// factor when it is not 1, and what is left out: acceleration, and the
+/// time at each pause and tool change, counted. Every time is multiplied
+/// by the scale factor.
+fn describe_estimate(label: &str, estimate: &Estimate, settings: &EstimateConfig) -> String {
+    let scale = settings.scale_factor;
+    let cutting_s = estimate.feed_s * scale;
+    let dwells_s = estimate.dwell_s * scale;
+    let rapids = settings
+        .rapid_mm_min
+        .map(|rate| (estimate.rapid_mm / rate * SECONDS_PER_MINUTE * scale, rate));
+    let total_s = cutting_s + dwells_s + rapids.map_or(0.0, |(s, _)| s);
+    let mut parts = format!(
+        "cutting {}, dwells {}",
+        duration(cutting_s),
+        duration(dwells_s)
+    );
+    if let Some((rapids_s, rate)) = rapids {
+        parts.push_str(&format!(", rapids {} at {rate} mm/min", duration(rapids_s)));
+    }
+    if (scale - 1.0).abs() > f64::EPSILON {
+        parts.push_str(&format!("; scale factor {scale}"));
+    }
+    let mut line = format!("{label}: {} ({parts})", duration(total_s));
+    if rapids.is_none() && estimate.rapid_mm > 0.0 {
+        line.push_str(&format!(
+            "; {} of rapids not included: set [estimate] rapid_mm_min in config.toml",
+            distance(estimate.rapid_mm)
+        ));
+    }
+    line.push_str(". Excludes acceleration");
+    match estimate.stops {
+        0 => {}
+        1 => line.push_str(" and 1 pause"),
+        n => line.push_str(&format!(" and {n} pauses")),
+    }
+    line.push('.');
+    line
+}
+
+const SECONDS_PER_MINUTE: f64 = 60.0;
+
+/// `seconds`, rounded to the second, as `1 h 2 min 3 s`, `14 min 5 s` or
+/// `13 s`.
+fn duration(seconds: f64) -> String {
+    let total = seconds.max(0.0).round();
+    let hours = (total / 3600.0).floor();
+    let minutes = ((total - hours * 3600.0) / 60.0).floor();
+    let secs = total - hours * 3600.0 - minutes * 60.0;
+    if hours > 0.0 {
+        format!("{hours:.0} h {minutes:.0} min {secs:.0} s")
+    } else if minutes > 0.0 {
+        format!("{minutes:.0} min {secs:.0} s")
+    } else {
+        format!("{secs:.0} s")
+    }
+}
+
+/// `mm` as `50 mm`, or from a metre up as `4.3 m`.
+fn distance(mm: f64) -> String {
+    if mm < 1000.0 {
+        format!("{mm:.0} mm")
+    } else {
+        format!("{:.1} m", mm / 1000.0)
+    }
+}
+
+/// Where each program of the project `dcv` goes. One program goes to
+/// `output` (`-o`), or to the project's path with the post-processor's
+/// extension. Programs of tool runs (#95) go beside it, named
+/// `<stem>-<k>-T<n>.<ext>`: `<k>` the run's place, `<n>` its tool's
+/// number, `<stem>` and `<ext>` those of that one path.
+pub fn output_paths(
+    output: Option<&Path>,
+    dcv: &Path,
+    programs: &[Program],
+) -> Result<Vec<PathBuf>, Failure> {
+    let single = match (output, programs.first()) {
+        (Some(path), _) => path.to_path_buf(),
         // `build` validated the extension of the post-processor it emitted
         // with, so it is safe to append (`is_safe_file_extension`).
-        (None, Some(program)) => args.dcv.with_extension(&program.extension),
-        (None, None) => args.dcv.clone(),
+        (None, Some(program)) => dcv.with_extension(&program.extension),
+        (None, None) => dcv.to_path_buf(),
     };
     if programs.len() < 2 {
         return Ok(vec![single]);
@@ -388,16 +684,18 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Prints the export summary of one program: the file written, one line
-/// per exported operation, the program's extents (#62), the tool to fit and
-/// set work zero with before starting (#57), then every pause and tool
-/// change with its line number and message, because the controller or
-/// sender may not show the message (design step 8).
+/// per exported operation, the program's extents (#62), its estimated run
+/// time (capability 30), the tool to fit and set work zero with before
+/// starting (#57), then every pause and tool change with its line number
+/// and message, because the controller or sender may not show the message
+/// (design step 8).
 fn report(
     project: &Project,
     program: &Program,
     output: &Path,
     args: &ExportArgs,
-    switched_from: Option<&PostProcessorRef>,
+    switched: Option<&Switched>,
+    estimates: &Estimates,
 ) -> Result<(), Failure> {
     outln!(
         "Wrote {} ({} lines, post-processor {}).",
@@ -405,16 +703,27 @@ fn report(
         program.text.lines().count(),
         project.post_processor.id
     )?;
-    report_post_and_operations(project, args, switched_from)?;
+    report_post_and_operations(project, args, switched)?;
     for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
         outln!("{line}")?;
     }
+    outln!("{}", estimates.program_line(0))?;
     // #57: the program does not stop for the first tool.
     outln!(
         "Before you start: fit T{}{} and set work zero with it.",
         program.first_tool.number,
         name_suffix(&program.first_tool.name)
     )?;
+    // #283: `G53` moves to a machine position, which is right only on a
+    // homed machine; the program cannot check that.
+    if let Some(z) = &program.machine_lift {
+        outln!(
+            "Before you start: home the machine; this program moves to machine Z {z} (G53).{}",
+            limits_note(project)
+        )?;
+    }
+    report_tool_length_offset(project)?;
+    report_scaling(project)?;
     report_pauses(program, "")?;
     // #95: the user chose one program with M6, in the project or with
     // `--one-program`; it stops only if the sender lets M6 through or
@@ -434,15 +743,25 @@ fn report(
     Ok(())
 }
 
+/// #308: the post-processor's condition for a `G53` lift outside the
+/// travel to stop before it moves, with a leading space, or nothing.
+fn limits_note(project: &Project) -> String {
+    machine_lift_limits_note(&project.post_processor.id)
+        .map(|note| format!(" {note}"))
+        .unwrap_or_default()
+}
+
 /// Prints the export summary of the programs of tool runs (#95): the files
 /// in the order to run them, with what to do before each, then one line
-/// per exported operation, then each program's extents (#62) and pauses.
+/// per exported operation, then each program's extents (#62), estimated
+/// run time and pauses, then the total run time (capability 30).
 fn report_runs(
     project: &Project,
     programs: &[Program],
     outputs: &[PathBuf],
     args: &ExportArgs,
-    switched_from: Option<&PostProcessorRef>,
+    switched: Option<&Switched>,
+    estimates: &Estimates,
 ) -> Result<(), Failure> {
     outln!("Wrote {} programs; run them in this order:", programs.len())?;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
@@ -461,9 +780,18 @@ fn report_runs(
             output.display()
         )?;
     }
+    // #283: every program of the export ends with the same lift.
+    if let Some(z) = programs.iter().find_map(|p| p.machine_lift.as_ref()) {
+        outln!(
+            "Before you start: home the machine; each program moves to machine Z {z} (G53).{}",
+            limits_note(project)
+        )?;
+    }
+    report_tool_length_offset(project)?;
+    report_scaling(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
-    report_post_and_operations(project, args, switched_from)?;
-    for (program, output) in programs.iter().zip(outputs) {
+    report_post_and_operations(project, args, switched)?;
+    for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
         outln!(
             "{} ({} lines):",
             output.display(),
@@ -472,32 +800,63 @@ fn report_runs(
         for line in describe_extents(project, program, tool_radius_mm(project, program)) {
             outln!("  {line}")?;
         }
+        outln!("  {}", estimates.program_line(k))?;
         report_pauses(program, "  ")?;
+    }
+    if let Some(total) = estimates.total_line() {
+        outln!("{total}")?;
     }
     Ok(())
 }
 
+/// What `--post` replaced: the old reference, and the settings the switch
+/// reset (`None` with `--reset-settings`, which resets them all).
+pub struct Switched {
+    /// The reference the project had.
+    old: PostProcessorRef,
+    /// The settings the new definition could not use (#277).
+    resets: Option<Vec<SettingReset>>,
+}
+
 /// Prints that `--post` updated the project, from which post-processor
-/// version to which (`grblhal v1 → v2`, #106), then one line per exported
-/// operation.
+/// version to which (`grblhal v1 → v2`, #106), whether it kept the user's
+/// settings, and each one it reset and why (#277); then one line per
+/// exported operation.
 fn report_post_and_operations(
     project: &Project,
     args: &ExportArgs,
-    switched_from: Option<&PostProcessorRef>,
+    switched: Option<&Switched>,
 ) -> Result<(), Failure> {
-    if let Some(old) = switched_from {
+    if let Some(Switched { old, resets }) = switched {
         let new = &project.post_processor;
         let to = if new.id == old.id {
             format!("v{}", new.definition_version)
         } else {
             format!("{} v{}", new.id, new.definition_version)
         };
+        let settings = match resets {
+            Some(_) => "keeping your settings",
+            None => "with its default settings",
+        };
         outln!(
-            "Updated {}: post-processor {} v{} → {to}, with its default settings.",
+            "Updated {}: post-processor {} v{} → {to}, {settings}.",
             args.dcv.display(),
             old.id,
             old.definition_version
         )?;
+        for reset in resets.iter().flatten() {
+            let why = match reset.reason {
+                ResetReason::NoM6 => "has no M6 tool change",
+                ResetReason::NoCannedCycles => "has no canned cycles",
+            };
+            outln!(
+                "  Reset {} {} → {}: post-processor {} {why}.",
+                reset.setting,
+                reset.from,
+                reset.to,
+                new.id
+            )?;
+        }
     }
     for op in project.operations.iter().filter(|op| op.enabled()) {
         let tool = project
@@ -508,14 +867,70 @@ fn report_post_and_operations(
         // Validation refuses an unset depth, so an exported one is set.
         let depth = op
             .depth_mm()
-            .map_or_else(|| "?".to_owned(), |d| d.to_string());
+            .map_or_else(|| "? mm".to_owned(), |d| describe_length(project, d));
         outln!(
-            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} mm deep",
+            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} deep",
             op.id(),
             op.name(),
             op.tool(),
             op.targets().len(),
         )?;
+    }
+    Ok(())
+}
+
+/// `length_mm` as the summary states a length (addendum A6): in the
+/// project's display units, with the post-processor's decimal places for
+/// them, then the unit: `12.000 mm`, `0.5000 in`, as VCarve states lengths
+/// in its job units.
+fn describe_length(project: &Project, length_mm: f64) -> String {
+    let units = project.display_units;
+    let value = length_mm / mm_per_unit(units);
+    let unit = match units {
+        Units::Mm => "mm",
+        Units::Inch => "in",
+    };
+    // The project was exported with this post-processor, so it resolves.
+    let number = project
+        .post_processor
+        .resolve()
+        .ok()
+        .and_then(|post| format_number(value, &post.number_format, units).ok())
+        .unwrap_or_else(|| value.to_string());
+    format!("{number} {unit}")
+}
+
+/// The post-processors whose programs leave the tool length offset
+/// (`G43.1`) alone: grblHAL and GRBL fold an active offset into the work
+/// zero the user sets (`G10 L20`), so a `G49` after the user zeroes Z
+/// would move every Z by it (#279; `dc-project/src/definitions/README.md`,
+/// "Header modal state").
+const KEEPS_TOOL_LENGTH_OFFSET: [&str; 2] = ["grblhal", "grbl"];
+
+/// Prints, for a program that leaves the tool length offset alone, when
+/// to set one (functional spec, capability 29).
+fn report_tool_length_offset(project: &Project) -> Result<(), Failure> {
+    if KEEPS_TOOL_LENGTH_OFFSET.contains(&project.post_processor.id.as_str()) {
+        outln!(
+            "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero."
+        )?;
+    }
+    Ok(())
+}
+
+/// Prints, for a grblHAL program whose header cancels scaling with `G50`,
+/// that grblHAL's `G50` misses a scale that leaves X at 1, so to soft-reset
+/// after any `G51` and check `$G` (#320; [`scaling_note`]). It is printed,
+/// not written into the program.
+fn report_scaling(project: &Project) -> Result<(), Failure> {
+    // The project was exported with this post-processor, so it resolves.
+    let note = project
+        .post_processor
+        .resolve()
+        .ok()
+        .and_then(|post| scaling_note(&post));
+    if let Some(note) = note {
+        outln!("{note}")?;
     }
     Ok(())
 }
@@ -667,8 +1082,9 @@ mod tests {
     fn first_tool_radius_is_found_by_id_not_number() {
         for numbers in [[None, None], [Some(9), Some(4)], [Some(2), Some(1)]] {
             let project = two_tool_project(numbers);
-            let Built { programs, findings } =
-                build(&project, ProgramSplit::ProgramPerTool, "2026-01-01");
+            let Built {
+                programs, findings, ..
+            } = build(&project, ProgramSplit::ProgramPerTool, "2026-01-01");
             assert!(findings.errors.is_empty(), "{numbers:?}: {findings:?}");
             let radii: Vec<f64> = programs
                 .iter()

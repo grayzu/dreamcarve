@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 15,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -12,6 +12,11 @@
   "origin": {
     "xy": "bottom_left",
     "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
   },
   "tools": [
     {
@@ -128,12 +133,16 @@
         "placement": { "kind": "count", "count": 4 },
         "width_mm": 8.0,
         "height_mm": 3.0,
-        "shape": "rect"
+        "shape": "rect",
+        "on_holes": false,
+        "avoid_corners": true
       },
       "machining_order": "full_depth_first",
       "entry": { "ramp": { "angle_deg": 15.0 } },
       "lead": { "radius_mm": 3.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 1.0 },
-      "corner_relief": "none"
+      "corner_relief": "none",
+      "last_pass": null,
+      "start": "auto"
     },
     {
       "kind": "engrave",
@@ -150,6 +159,7 @@
       "safe_z_mm": 15.0
     }
   ],
+  "tabs": [],
   "instances": [
     {
       "id": "i1",
@@ -324,7 +334,7 @@
   ],
   "post_processor": {
     "id": "grblhal",
-    "definition_version": 2,
+    "definition_version": 4,
     "file_extension": "nc",
     "spindle_control": "automatic",
     "spindle_on_dwell_s": 3.0,

@@ -62,7 +62,7 @@ pub enum LoadError {
         supported: u32,
     },
     /// A migration step could not rewrite the file.
-    #[error("migration from version {from} to {to} failed: {message}")]
+    #[error("migration from version {from} to {to} failed{}: {message}", schema_where("", *at))]
     Migration {
         /// Version migrated from.
         from: u32,
@@ -70,6 +70,11 @@ pub enum LoadError {
         to: u32,
         /// What went wrong.
         message: String,
+        /// Where in the file's text the value the message names first
+        /// is (`operations[0].last_pass`, in backquotes), when [`load`]
+        /// read it from text and the file has that value. `None` from
+        /// [`crate::migrate`], which has no text.
+        at: Option<TextPosition>,
     },
     /// The JSON does not match the project schema (unknown or missing
     /// field, wrong type).
@@ -160,7 +165,7 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         message: e.to_string(),
     })?;
     let version = read_version(&root)?;
-    let root = migrate(root, version)?;
+    let root = migrate(root, version).map_err(|err| locate_migration(err, bytes))?;
     let project = deserialize_project(&root, bytes)?;
     check_post_processor(&project, bytes)?;
     let problems = validate(&project);
@@ -170,6 +175,34 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         return Err(LoadError::NonFinite { field });
     }
     Ok(Loaded { project, problems })
+}
+
+/// `err` with the position of the first field its message names, in
+/// backquotes as `operations[0].last_pass`, when it is a
+/// [`LoadError::Migration`] and `bytes` has a value there (#310 review),
+/// as [`LoadError::Schema`] gives one.
+fn locate_migration(err: LoadError, bytes: &[u8]) -> LoadError {
+    let LoadError::Migration {
+        from,
+        to,
+        message,
+        at: None,
+    } = err
+    else {
+        return err;
+    };
+    let at = message.split('`').skip(1).step_by(2).find_map(|field| {
+        std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| SourceMap::parse(text).ok())
+            .and_then(|map| map.locate(field))
+    });
+    LoadError::Migration {
+        from,
+        to,
+        message,
+        at,
+    }
 }
 
 /// The serde error that stopped a deserialization, with the path to it.
@@ -355,7 +388,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v8/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v15/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -382,6 +415,55 @@ mod tests {
         op.depth_mm = None;
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert_eq!(loaded.project, p);
+    }
+
+    /// Addendum A6: a value written with its unit is read as millimetres,
+    /// and a save writes the millimetre number back, not the string.
+    #[test]
+    fn save_writes_numbers_after_unit_input() {
+        let mut root = serde_json::to_value(sample_project()).unwrap();
+        root["operations"][0]["depth_mm"] = json!("0.5 in");
+        root["tools"][0]["feed_mm_min"] = json!("60 in/min");
+        let text = serde_json::to_string_pretty(&root).unwrap();
+        let saved = save(&load(text.as_bytes()).unwrap().project).unwrap();
+        assert!(saved.contains("\"depth_mm\": 12.7,"), "{saved}");
+        assert!(saved.contains("\"feed_mm_min\": 1524.0,"), "{saved}");
+        assert!(!saved.contains(" in"), "{saved}");
+        // And the saved numbers load back to the same project.
+        let reloaded = load(saved.as_bytes()).unwrap().project;
+        assert_eq!(save(&reloaded).unwrap(), saved);
+    }
+
+    /// #105: placed tabs save after the operations, every field in
+    /// declaration order, and load back equal.
+    #[test]
+    fn placed_tabs_round_trip() {
+        let mut p = sample_project();
+        profile_mut(&mut p).tabs = None;
+        p.tabs = vec![
+            crate::test_support::sample_tab("tab1", 25.0, -3.175),
+            crate::PlacedTab {
+                shape: crate::TabShape::Smooth,
+                height_mm: 3.5,
+                ..crate::test_support::sample_tab("tab2", 50.0, 15.0)
+            },
+        ];
+        let text = save(&p).unwrap();
+        let compact: String = text.split_whitespace().collect();
+        assert!(
+            compact.contains(
+                "\"tabs\":[{\"id\":\"tab1\",\"instance\":\"i1\",\"profile\":0,\"x_mm\":25.0,\"y_mm\":-3.175,\"width_mm\":6.0,\"height_mm\":2.0,\"shape\":\"rect\",\"holds_slug\":false}"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.find("\"operations\"") < text.find("\"tabs\": [")
+                && text.find("\"tabs\": [") < text.find("\"instances\""),
+            "{text}"
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(loaded.problems, vec![]);
     }
 
     #[test]
@@ -792,6 +874,7 @@ mod tests {
         &["units", "mm_command"],
         &["units", "inch_command"],
         &["work_coordinates", "select_command"],
+        &["work_coordinates", "machine_command"],
         &["canned_cycles"],
         &["canned_cycles", "drill_command"],
         &["canned_cycles", "drill_with_dwell_command"],
@@ -811,6 +894,8 @@ mod tests {
         // The fixture predates the phase 2 definition fields (#117).
         post["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
         post["use_canned_cycles"] = Value::from(false);
+        // And the one #283 added.
+        post["work_coordinates"]["machine_command"] = Value::from("G53");
         // grblHAL has no canned cycles; fill them so their options are there
         // to remove.
         post["canned_cycles"] = serde_json::json!({

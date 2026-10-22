@@ -75,6 +75,15 @@ impl Transform {
         self.0.as_coeffs()
     }
 
+    /// The transform that undoes this one, or `None` when it is singular
+    /// (its determinant below the area of a square [`EPS_MM`] on a side).
+    #[must_use]
+    pub fn inverse(self) -> Option<Transform> {
+        let [a, b, c, d, _, _] = self.0.as_coeffs();
+        let det = a * d - b * c;
+        (det.is_finite() && det.abs() >= MIN_DETERMINANT).then(|| Self(self.0.inverse()))
+    }
+
     /// The transformed point.
     #[must_use]
     pub fn apply(self, p: Point) -> Point {
@@ -135,6 +144,19 @@ mod tests {
     use crate::assert_approx_eq;
 
     use std::f64::consts::PI;
+
+    /// #105: a tab's point goes into definition space and back unchanged.
+    #[test]
+    fn inverse_undoes_the_transform() {
+        let t = Transform::scale(-2.0, 2.0)
+            .then(Transform::rotate(0.7))
+            .then(Transform::translate(12.5, -3.0));
+        let p = Point::new(3.25, -7.5);
+        let back = t.inverse().unwrap().apply(t.apply(p));
+        assert_approx_eq!(back.x, p.x, 1e-12);
+        assert_approx_eq!(back.y, p.y, 1e-12);
+        assert_eq!(Transform::scale(1.0, 0.0).inverse(), None);
+    }
 
     #[test]
     fn translate_then_rotate_composes_in_order() {

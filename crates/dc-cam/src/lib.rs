@@ -10,6 +10,8 @@
 //! order of operations cuts inside a part an earlier one freed. Phase 2
 //! also adds Pocket ([`generate_pocket`]), Drill ([`generate_drill`]) and
 //! Engrave ([`generate_engrave`]), and entries, leads and corner relief.
+//! Tabs are placed on the project's outlines ([`placed_tabs`], #105,
+//! ADR-0005), and every Profile that cuts a tab's outline rises over it.
 //!
 //! Toolpaths use the project's absolute frame: Y-up, Z-up, millimetres
 //! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.
@@ -24,6 +26,7 @@ mod lead;
 pub mod order;
 mod overlap;
 pub mod passes;
+pub mod placed_tabs;
 pub mod pocket;
 mod profile;
 mod relief;
@@ -43,11 +46,11 @@ pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use footprint::footprint;
 pub use pocket::generate_pocket;
 pub use profile::{Wall, generate_profile, traversal_is_ccw};
-pub use sequence::{SequenceInput, plan, sequence};
+pub use sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
-pub use tabs::tab_centres_mm;
+pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};
 pub use toolpath::{Move, MoveKind, Toolpath};
 pub use warning::{
     IslandNeighbour, LeadDroppedReason, OpenPathReason, ReliefCornerReason, ReliefSkippedReason,
-    TabsRangeReason, Warning, WarningCode,
+    TabOnCornerReason, TabsRangeReason, Warning, WarningCode,
 };

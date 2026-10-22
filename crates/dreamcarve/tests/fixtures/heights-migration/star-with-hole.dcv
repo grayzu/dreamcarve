@@ -1,0 +1,182 @@
+{
+  "version": 11,
+  "name": "Sample",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 160.0,
+    "height_mm": 160.0,
+    "thickness_mm": 12.0
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm upcut",
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1000.0,
+      "plunge_mm_min": 300.0,
+      "rpm": 18000,
+      "step_down_mm": 2.0,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "kind": "profile",
+      "id": "o1",
+      "name": "Cut out",
+      "enabled": true,
+      "targets": [
+        "i1",
+        "i2"
+      ],
+      "tool": "t1",
+      "side": "outside",
+      "depth_mm": 12.0,
+      "step_down_mm": 4.0,
+      "direction": "climb",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 5.0,
+      "tabs": null,
+      "machining_order": "full_depth_first",
+      "entry": "plunge",
+      "lead": null,
+      "corner_relief": "none"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "tab1",
+      "instance": "i1",
+      "profile": 0,
+      "x_mm": 24.953672975573568,
+      "y_mm": 18.4435554787497,
+      "width_mm": 6.0,
+      "height_mm": 3.0,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab2",
+      "instance": "i1",
+      "profile": 0,
+      "x_mm": 26.642439984932494,
+      "y_mm": -31.766080810045523,
+      "width_mm": 6.0,
+      "height_mm": 3.0,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab3",
+      "instance": "i1",
+      "profile": 0,
+      "x_mm": -25.975026341411336,
+      "y_mm": -25.174298488681416,
+      "width_mm": 6.0,
+      "height_mm": 3.0,
+      "shape": "smooth"
+    },
+    {
+      "id": "tab4",
+      "instance": "i1",
+      "profile": 0,
+      "x_mm": -18.47827328671528,
+      "y_mm": 19.845780144536462,
+      "width_mm": 6.0,
+      "height_mm": 3.0,
+      "shape": "smooth"
+    }
+  ],
+  "instances": [
+    {
+      "id": "i1",
+      "definition": "d1",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        80.0,
+        80.0
+      ],
+      "name": "Star 1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12.0,
+      "z_bottom_mm": 0.0
+    },
+    {
+      "id": "i2",
+      "definition": "d2",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        80.0,
+        100.0
+      ],
+      "name": "Hole 2",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12.0,
+      "z_bottom_mm": 0.0
+    }
+  ],
+  "post_processor": {
+    "id": "grbl",
+    "definition_version": 1,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3.0,
+    "tool_change_mode": "separate_programs",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d1": {
+      "id": "d1",
+      "name": "Star",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 2.4492935982947065e-15, "y": 40.0, "bulge": 0.0 },
+            { "x": -12.931275550434407, "y": 17.798373876248846, "bulge": 0.0 },
+            { "x": -38.04226065180614, "y": 12.3606797749979, "bulge": 0.0 },
+            { "x": -20.92324335849338, "y": -6.79837387624884, "bulge": 0.0 },
+            { "x": -23.51141009169893, "y": -32.36067977499789, "bulge": 0.0 },
+            { "x": -4.0413344371862654e-15, "y": -22.0, "bulge": 0.0 },
+            { "x": 23.511410091698917, "y": -32.360679774997905, "bulge": 0.0 },
+            { "x": 20.923243358493377, "y": -6.798373876248849, "bulge": 0.0 },
+            { "x": 38.042260651806146, "y": 12.360679774997887, "bulge": 0.0 },
+            { "x": 12.931275550434414, "y": 17.79837387624884, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d2": {
+      "id": "d2",
+      "name": "Hole",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 3.5, "y": 0.0, "bulge": 1.0 },
+            { "x": -3.5, "y": 0.0, "bulge": 1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

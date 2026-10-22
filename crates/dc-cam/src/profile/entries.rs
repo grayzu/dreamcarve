@@ -27,7 +27,7 @@ use crate::pocket::rings::inset_region;
 use crate::tabs::{PathTabs, Tabs};
 use crate::toolpath::{Move, Toolpath};
 use dc_geometry::{EPS_MM, Point, Point3, Polyline, Region, area_mm2, difference};
-use dc_project::{Entry, ProfileOp, Side, Stock};
+use dc_project::{CutDirection, Entry, ProfileOp, Side, Stock};
 
 /// What [`path_entries`] and [`wall_domains`] need from the generator.
 pub(super) struct EntrySetup<'a, 'b> {
@@ -46,6 +46,14 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub start_z_mm: f64,
     pub entry_tool: &'a dyn Fn(Wall) -> EntryTool,
     pub tolerance_mm: f64,
+    /// How much farther than the radius each path runs from its wall: a
+    /// last pass allowance (#284), 0 for the part's own path. Missing
+    /// entries are 0.
+    pub allowances: &'a [f64],
+    /// The paths cut against `op.direction` (#284: a reversed last
+    /// pass), whose entries turn the other way. Missing entries are
+    /// false.
+    pub reversed: &'a [bool],
 }
 
 /// One domain a path's entries and leads are placed in: its regions (for
@@ -120,7 +128,9 @@ pub(super) fn path_entries(
     let n = setup.paths.len();
     match (op.side, &op.entry) {
         (_, Entry::Plunge) => (0..n).map(|_| None).collect(),
-        (Side::OnLine, Entry::Ramp { angle_deg }) => setup
+        // #207: Left and Right ramp along their offset path as On line
+        // ramps along its line.
+        (Side::OnLine | Side::Left | Side::Right, Entry::Ramp { angle_deg }) => setup
             .layouts
             .iter()
             .map(|layout| {
@@ -135,7 +145,9 @@ pub(super) fn path_entries(
             })
             .collect(),
         // Refused before this is reached; a plunge if it ever is.
-        (Side::OnLine, Entry::Helix { .. }) => (0..n).map(|_| None).collect(),
+        (Side::OnLine | Side::Left | Side::Right, Entry::Helix { .. }) => {
+            (0..n).map(|_| None).collect()
+        }
         (Side::Inside | Side::Outside, _) => (0..n)
             .map(|i| {
                 let (domain, target) = (domains.get(i)?, targets.get(i)?);
@@ -154,8 +166,9 @@ pub(super) fn path_entries(
 
 /// #176: where each closed path of `setup` should start so its ramp or
 /// helix fits clear of the tabs, as a distance along it from its start;
-/// `None` keeps the start. Only a path cut without a lead (`led` false)
-/// whose passes below the tab top would plunge at its start is moved:
+/// `None` keeps the start. Only a path whose seam is free (`kept` false:
+/// no lead, and no explicit start, #285, which wins over the entry) whose
+/// passes below the tab top would plunge at its start is moved:
 /// its start under a tab span, or so near one that the entry has no room
 /// in the waste domain less the tab keep-outs (Inside, Outside) or before
 /// the first tab (On line). The candidates are the middles of the
@@ -167,7 +180,7 @@ pub(super) fn path_entries(
 pub(super) fn tab_seams(
     setup: &EntrySetup<'_, '_>,
     domains: &[PathDomain],
-    led: &[bool],
+    kept: &[bool],
 ) -> Vec<Option<f64>> {
     let none = || setup.paths.iter().map(|_| None).collect();
     let Some(tabs) = setup.tabs else {
@@ -190,8 +203,8 @@ pub(super) fn tab_seams(
         return none();
     }
     let along = match (setup.op.side, &setup.op.entry) {
-        (Side::OnLine, Entry::Ramp { angle_deg }) => Some(*angle_deg),
-        (Side::OnLine, _) => return none(),
+        (Side::OnLine | Side::Left | Side::Right, Entry::Ramp { angle_deg }) => Some(*angle_deg),
+        (Side::OnLine | Side::Left | Side::Right, _) => return none(),
         _ => None,
     };
     setup
@@ -203,7 +216,7 @@ pub(super) fn tab_seams(
                 Some(Some((layout, _))) if path.is_closed() => layout,
                 _ => return None,
             };
-            if led.get(i).copied().unwrap_or(false) {
+            if kept.get(i).copied().unwrap_or(false) {
                 return None;
             }
             let tool = tool_for(setup, i);
@@ -257,17 +270,30 @@ pub(super) fn tab_seams(
         .collect()
 }
 
-/// The entry tool of path `i`.
-fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
+/// The entry tool of path `i`: cutting the other way on a reversed path
+/// (#284).
+pub(super) fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
     let wall = setup.walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
-    (setup.entry_tool)(wall)
+    let tool = (setup.entry_tool)(wall);
+    if setup.reversed.get(i).copied().unwrap_or(false) {
+        EntryTool {
+            direction: match tool.direction {
+                CutDirection::Climb => CutDirection::Conventional,
+                CutDirection::Conventional => CutDirection::Climb,
+            },
+            ..tool
+        }
+    } else {
+        tool
+    }
 }
 
 /// Inside and Outside: each path's waste domain ([`waste::domains`]) and,
 /// when some pass is below the tab top, that domain less every path's tab
-/// keep-outs ([`waste::tab_keep_out`]). Empty for On line.
+/// keep-outs ([`waste::tab_keep_out`]). Empty for On line, Left and
+/// Right, which have no waste area.
 pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
-    if setup.op.side == Side::OnLine {
+    if !setup.op.side.has_waste_area() {
         return Vec::new();
     }
     let radius_mm = tool_for(setup, 0).diameter_mm / 2.0;
@@ -276,9 +302,11 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
         .paths
         .iter()
         .zip(setup.walls)
-        .map(|((path, _), (_, region))| WallPath {
+        .enumerate()
+        .map(|(i, ((path, _), (_, region)))| WallPath {
             path,
             region: *region,
+            allowance_mm: setup.allowances.get(i).copied().unwrap_or(0.0),
         })
         .collect();
     let domains = waste::domains(

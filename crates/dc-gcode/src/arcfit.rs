@@ -1780,6 +1780,8 @@ mod tests {
             width_mm: 8.0,
             height_mm: 3.0,
             shape: TabShape::Rect,
+            on_holes: false,
+            avoid_corners: false,
         });
         project
     }
@@ -1996,5 +1998,182 @@ mod tests {
             assert_approx_eq!(arc.start.z, 3.0, 1e-9);
             assert_approx_eq!(arc.end.z, 3.0, 1e-9);
         }
+    }
+
+    /// One turn of a tiny helix ending at `end_angle_rad` round `centre`
+    /// at `floor_z_mm`, each of its 48 chords falling `drop_mm`, then its
+    /// flat revolution back to where it ended, as `dc_cam::entry` writes
+    /// them; plunged into at the helix start from `safe_z_mm` and left by
+    /// a rapid up to it.
+    struct TinyHelix {
+        centre: Point,
+        radius_mm: f64,
+        end_angle_rad: f64,
+        ccw: bool,
+        floor_z_mm: f64,
+        drop_mm: f64,
+    }
+
+    impl TinyHelix {
+        fn toolpath(
+            &self,
+            feed_mm_min: f64,
+            plunge_mm_min: f64,
+            safe_z_mm: f64,
+        ) -> dc_cam::Toolpath {
+            let n = dc_cam::entry::HELIX_SEGMENTS_PER_REV;
+            let sense = if self.ccw { 1.0 } else { -1.0 };
+            let at = |angle: f64| {
+                self.centre + dc_geometry::Vec2::new(angle.cos(), angle.sin()) * self.radius_mm
+            };
+            let endpoint = at(self.end_angle_rad);
+            let start_angle = self.end_angle_rad - sense * TAU;
+            let start_z = self.floor_z_mm + self.drop_mm * n as f64;
+            let from = at(start_angle);
+            let mut moves = vec![
+                Move::rapid(pt(from.x, from.y, safe_z_mm)),
+                Move::linear(pt(from.x, from.y, start_z), plunge_mm_min),
+            ];
+            let mut current = pt(from.x, from.y, start_z);
+            for k in 1..=n {
+                let next = if k == n {
+                    pt(endpoint.x, endpoint.y, self.floor_z_mm)
+                } else {
+                    let t = k as f64 / n as f64;
+                    let p = at(start_angle + sense * TAU * t);
+                    pt(p.x, p.y, start_z - self.drop_mm * n as f64 * t)
+                };
+                let (dx, dy, dz) = (next.x - current.x, next.y - current.y, current.z - next.z);
+                let length = (dx * dx + dy * dy + dz * dz).sqrt();
+                moves.push(Move::linear(
+                    next,
+                    feed_mm_min.min(plunge_mm_min * length / dz),
+                ));
+                current = next;
+            }
+            for k in 1..=n {
+                let p = if k == n {
+                    endpoint
+                } else {
+                    at(self.end_angle_rad + sense * TAU * k as f64 / n as f64)
+                };
+                moves.push(Move::linear(pt(p.x, p.y, self.floor_z_mm), feed_mm_min));
+            }
+            moves.push(Move::rapid(pt(endpoint.x, endpoint.y, safe_z_mm)));
+            dc_cam::Toolpath { moves }
+        }
+    }
+
+    /// The sample project on 240 × 160 × `thickness_mm` stock with
+    /// `origin`, written for `post` in `units` with arc fitting at
+    /// 0.01 mm, its tool cutting at `feed` and plunging at `plunge`; its
+    /// one operation the sample Pocket of a 220 × 140 mm rectangle at
+    /// (10, 10), so a helix anywhere near (40, 40) is in its material.
+    fn tiny_helix_project(
+        thickness_mm: f64,
+        origin: dc_project::MachineOrigin,
+        post: &str,
+        units: dc_project::Units,
+        (feed, plunge): (f64, f64),
+    ) -> Project {
+        let mut project = sample_project();
+        project.stock = Stock {
+            width_mm: 240.0,
+            height_mm: 160.0,
+            thickness_mm: Some(thickness_mm),
+        };
+        project.origin = origin;
+        project.display_units = units;
+        project.arc_fit_tolerance_mm = Some(0.01);
+        project.post_processor = PostProcessorRef::latest(post).unwrap();
+        project.tools[0].feed_mm_min = Some(feed);
+        project.tools[0].plunge_mm_min = Some(plunge);
+        if let Some(definition) = project.definitions.values_mut().next() {
+            definition.profiles = vec![Polyline::rect(Point::new(0.0, 0.0), 220.0, 140.0)];
+        }
+        for instance in &mut project.instances {
+            instance.z_top_mm = Some(thickness_mm);
+        }
+        project.operations = vec![Operation::Pocket(dc_project::test_support::sample_pocket())];
+        project
+    }
+
+    /// #262, from the Pocket property's committed seed (`9cea68b9…`) and
+    /// `PROPTEST_RNG_SEED=105`: a helix 0.17 mm across and its flat
+    /// revolution. The flat revolution is fitted as a closed run of four
+    /// 90° arcs, which S12 refused: its chords are 7.5° and its pieces'
+    /// angle slack (the tolerance over the radius) as much, so a vertex
+    /// one chord past a piece's end counted as on that piece, and the
+    /// next chord's deviation was measured from the start of the next
+    /// piece, not from that vertex: over arc the chord does not span,
+    /// 0.011023 mm off it against 0.011001 allowed. Both cases export in
+    /// inch and in mm.
+    #[test]
+    fn small_helix_flat_revolution_in_inches_exports() {
+        use dc_project::{MachineOrigin, OriginXy, OriginZ, Units};
+        // The seed `9cea68b9…`: LinuxCNC, top left and stock top, inch;
+        // its moves 23720 to 23816.
+        let inch_case = (
+            TinyHelix {
+                centre: Point::new(40.206_913_519_649_284, 39.550_644_954_268_115),
+                radius_mm: 40.293_501_470_256 - 40.206_913_519_649_284,
+                end_angle_rad: 0.0,
+                ccw: true,
+                floor_z_mm: 1.252_841_074_242_111_2,
+                drop_mm: 0.001_689_111_677_942_3,
+            },
+            5.872_515_626_754_48,
+            MachineOrigin {
+                xy: OriginXy::TopLeft,
+                z: OriginZ::StockTop,
+            },
+            "linuxcnc",
+            (1_787.111_112_547_554_7, 2_136.427_614_162_320_4),
+        );
+        // `PROPTEST_RNG_SEED=105`: Mach3, bottom left and stock bottom, mm.
+        let mm_case = (
+            TinyHelix {
+                centre: Point::new(43.157_111_168_893_31, 47.102_805_434_202_09),
+                radius_mm: 43.240_669_225_108_84 - 43.157_111_168_893_31,
+                end_angle_rad: 0.0,
+                ccw: false,
+                floor_z_mm: 3.145_858_777_472_146_7,
+                drop_mm: 0.008_047_045_301_816,
+            },
+            3.980_585_106_286_197_7,
+            MachineOrigin {
+                xy: OriginXy::BottomLeft,
+                z: OriginZ::StockBottom,
+            },
+            "mach3",
+            (942.682_590_680_295_1, 2_284.956_191_250_548_7),
+        );
+        let mut failures = Vec::new();
+        for (helix, thickness_mm, origin, post, rates) in [inch_case, mm_case] {
+            for units in [Units::Inch, Units::Mm] {
+                let project = tiny_helix_project(thickness_mm, origin.clone(), post, units, rates);
+                let op = project.operations[0].clone();
+                let toolpath = helix.toolpath(rates.0, rates.1, thickness_mm + op.safe_z_mm());
+                let tool = project.tools[0].clone();
+                let result = emit(&project, &[(op, tool, toolpath).into()], "2026-10-21");
+                let program = match result {
+                    Ok((program, _)) => program,
+                    Err(e) => {
+                        failures.push(format!("{post} in {units:?}: {e:?}"));
+                        continue;
+                    }
+                };
+                let arcs = parse_motion(&program.text)
+                    .unwrap()
+                    .iter()
+                    .filter(|m| matches!(m.kind, MotionKind::ArcCw | MotionKind::ArcCcw))
+                    .count();
+                assert!(
+                    arcs > 0,
+                    "{post} in {units:?}: the flat revolution is fitted"
+                );
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 }

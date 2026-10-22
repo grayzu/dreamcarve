@@ -29,7 +29,8 @@ use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
     CornerRelief, DefinitionId, DrillCycle, EngraveOp, Entry, FeatureDefinition, FeatureInstance,
     InstanceId, Lead, Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp,
-    Project, Side, SpindleControl, TabPlacement, ToolChangeMode, ToolId, ToolKind, load, save,
+    Project, Side, SpindleControl, StartAt, TabPlacement, TabShape, TabSpec, ToolChangeMode,
+    ToolId, ToolKind, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -130,6 +131,19 @@ fn as_profile_mut(op: &mut Operation) -> &mut ProfileOp {
     match op {
         Operation::Profile(op) => op,
         other => panic!("a Profile operation, not {other:?}"),
+    }
+}
+
+/// `init`'s tab request (#105): four 8 × 3 mm rect tabs, none on holes.
+fn init_tab_request() -> TabSpec {
+    TabSpec {
+        placement: TabPlacement::Count { count: 4 },
+        width_mm: 8.0,
+        height_mm: 3.0,
+        shape: TabShape::Rect,
+        on_holes: false,
+        // #285: off corners.
+        avoid_corners: true,
     }
 }
 
@@ -675,11 +689,11 @@ fn export_refuses_feed_above_limit_with_location() {
     assert_eq!(out.status.code(), Some(1), "an error exits 1");
     let stderr = stderr(&out);
     assert!(
-        stderr.contains("coaster.dcv:24:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
+        stderr.contains("coaster.dcv:29:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("coaster.dcv:26:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        stderr.contains("coaster.dcv:31:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
         "{stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
@@ -1085,18 +1099,197 @@ mod golden {
     }
 }
 
+/// The filled-in coaster with post-processor `id` at version 1, as a
+/// project saved before #286 names it.
+fn coaster_at_v1(dir: &Path, id: &str) {
+    coaster_at(dir, id, 1);
+}
+
+/// The filled-in coaster with post-processor `id` at `version`.
+fn coaster_at(dir: &Path, id: &str, version: u32) {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::bundled_definition(id, version)
+        .expect("the version is bundled")
+        .default_ref();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+}
+
+/// `program`'s lines without Mach3's `N` line numbers, which shift when a
+/// header line is added.
+fn unnumbered(program: &str) -> Vec<String> {
+    program
+        .lines()
+        .map(|l| match l.split_once(' ') {
+            Some((n, rest))
+                if n.len() > 1
+                    && n.starts_with('N')
+                    && n[1..].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                rest.to_owned()
+            }
+            _ => l.to_owned(),
+        })
+        .collect()
+}
+
+/// `lines` with `G50` and `G69` after the header's modal line, the one
+/// with `G80`: what version 3 of Mach3 and UCCNC adds (#312).
+fn with_scale_rotate_cancel(mut lines: Vec<String>) -> Vec<String> {
+    let modal = lines
+        .iter()
+        .position(|l| l.split_whitespace().any(|w| w == "G80"))
+        .expect("the header has a G80 line");
+    lines.splice(modal + 1..modal + 1, ["G50".to_owned(), "G69".to_owned()]);
+    lines
+}
+
+/// Whether Mach3 line numbers run `N10`, `N20`, ... with no gap, every
+/// line but `%` numbered.
+fn numbered_in_tens(program: &str) -> bool {
+    program
+        .lines()
+        .filter(|l| *l != "%")
+        .enumerate()
+        .all(|(i, l)| l.starts_with(&format!("N{} ", (i + 1) * 10)))
+}
+
+/// #312, ADR-0004: a project that names version 2 of Mach3 exports the
+/// bytes it did before version 3 added `G50` and `G69` to the header
+/// (`tests/expected/coaster-mach3-v2.tap`, the golden program as it was
+/// captured with version 2).
+#[test]
+fn mach3_v2_project_still_exports_byte_identically() {
+    let dir = work_dir("mach3_v2_project_still_exports_byte_identically");
+    coaster_at(&dir, "mach3", 2);
+    assert_exports_match(&dir, &[], &[("coaster.tap", "coaster-mach3-v2.tap")]);
+}
+
+/// #312: the same for UCCNC.
+#[test]
+fn uccnc_v2_project_still_exports_byte_identically() {
+    let dir = work_dir("uccnc_v2_project_still_exports_byte_identically");
+    coaster_at(&dir, "uccnc", 2);
+    assert_exports_match(&dir, &[], &[("coaster.txt", "coaster-uccnc-v2.txt")]);
+}
+
+/// #312: `export --post` upgrades a version 2 Mach3 or UCCNC project to
+/// version 3, and the only change is a `G50` line and a `G69` line after
+/// the header's modal line (Mach3 numbers every line, so the numbers
+/// after them move on by 20).
+#[test]
+fn mach3_and_uccnc_v2_projects_upgrade_to_v3() {
+    for (id, program) in [("mach3", "coaster.tap"), ("uccnc", "coaster.txt")] {
+        let dir = work_dir(&format!("v2_project_upgrades_to_v3_{id}"));
+        coaster_at(&dir, id, 2);
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let v2 = std::fs::read_to_string(dir.join(program)).expect("program written");
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v2 → v3,")),
+            "{id}: {report}"
+        );
+        let v3 = std::fs::read_to_string(dir.join(program)).expect("program rewritten");
+        assert_eq!(
+            unnumbered(&v3),
+            with_scale_rotate_cancel(unnumbered(&v2)),
+            "{id}: only G50 and G69 join the program"
+        );
+        if id == "mach3" {
+            assert!(numbered_in_tens(&v3), "{v3}");
+        }
+    }
+}
+
+/// #286, ADR-0004: a project that names version 1 of LinuxCNC exports the
+/// bytes it did before version 2 took `G49` out of the header
+/// (`tests/expected/coaster-linuxcnc-v1.ngc`, the golden program as it was
+/// captured with version 1).
+#[test]
+fn linuxcnc_v1_project_still_exports_byte_identically() {
+    let dir = work_dir("linuxcnc_v1_project_still_exports_byte_identically");
+    coaster_at_v1(&dir, "linuxcnc");
+    assert_exports_match(&dir, &[], &[("coaster.ngc", "coaster-linuxcnc-v1.ngc")]);
+}
+
+/// #286: the same for Mach3 and UCCNC, whose version 2 also drops `G49`.
+#[test]
+fn mach3_and_uccnc_v1_projects_still_export_byte_identically() {
+    for (id, program, expected) in [
+        ("mach3", "coaster.tap", "coaster-mach3-v1.tap"),
+        ("uccnc", "coaster.txt", "coaster-uccnc-v1.txt"),
+    ] {
+        let dir = work_dir(&format!("v1_project_still_exports_byte_identically_{id}"));
+        coaster_at_v1(&dir, id);
+        assert_exports_match(&dir, &[], &[(program, expected)]);
+    }
+}
+
+/// #286: `export --post` upgrades a version 1 LinuxCNC, Mach3 or UCCNC
+/// project to the latest version, and the header's modal line loses
+/// `G49`. On LinuxCNC (version 2) nothing else changes. Mach3 and UCCNC go
+/// to version 3, which also adds `G50` and `G69` (#312).
+#[test]
+fn slice17_v1_project_upgrades_to_latest_without_g49() {
+    for (id, program, latest) in [
+        ("linuxcnc", "coaster.ngc", 2),
+        ("mach3", "coaster.tap", 3),
+        ("uccnc", "coaster.txt", 3),
+    ] {
+        let dir = work_dir(&format!("slice17_v1_project_upgrades_{id}"));
+        coaster_at_v1(&dir, id);
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let v1 = std::fs::read_to_string(dir.join(program)).expect("program written");
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "{id}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v1 → v{latest},")),
+            "{id}: {report}"
+        );
+        let upgraded = std::fs::read_to_string(dir.join(program)).expect("program rewritten");
+        assert!(!upgraded.contains("G49"), "{id}:\n{upgraded}");
+        let without_g49 = v1.replace(" G49", "");
+        let expected = if latest == 3 {
+            with_scale_rotate_cancel(unnumbered(&without_g49))
+        } else {
+            unnumbered(&without_g49)
+        };
+        assert_eq!(
+            unnumbered(&upgraded),
+            expected,
+            "{id}: only G49 leaves the program"
+        );
+        assert_ne!(v1, upgraded, "{id}: v1 had G49");
+    }
+}
+
 // Phase 2, #117: format version 8.
 
 /// A fresh project carries every phase 2 field at the value that cuts as
 /// phase 1 did: it plunges (the ramp generator lands in a later slice),
 /// has no lead or corner relief, no tool number, canned cycles off, and
-/// arc fitting at 0.01 mm.
+/// arc fitting at 0.01 mm. Its tabs leave holes untabbed (#109, format
+/// version 9).
 #[test]
 fn init_writes_phase_2_defaults() {
     let dir = work_dir("init_writes_phase_2_defaults");
     let dcv = init_coaster(&dir);
     let text = std::fs::read_to_string(&dcv).expect("dcv readable");
-    assert!(text.contains("\"version\": 8,"), "{text}");
+    let version = format!("\"version\": {},", dc_project::CURRENT_VERSION);
+    assert!(text.contains(&version), "{text}");
+    assert!(text.contains("\"on_holes\": false"), "{text}");
     assert!(text.contains("\"arc_fit_tolerance_mm\": 0.01,"), "{text}");
     assert!(text.contains("\"number\": null,"), "{text}");
     assert!(text.contains("\"lead\": null,"), "{text}");
@@ -1147,7 +1340,7 @@ fn init_writes_ramp_entry() {
 /// The spec's `v6_fixture_exports_phase_1_bytes_with_fitting_off`, for
 /// the version this repository is at: a phase 1 project opened by this
 /// build exports the same program whether it is still a version 7 file or
-/// has been saved as version 8. (Arc fitting does not exist yet, so the
+/// has been saved at the current version. (Arc fitting does not exist yet, so the
 /// tolerance the migration writes changes nothing.)
 #[test]
 fn v7_project_exports_the_same_program() {
@@ -1169,7 +1362,8 @@ fn v7_project_exports_the_same_program() {
     let v8 = dir.join("v8.dcv");
     std::fs::write(&v8, save(&project).expect("project saves")).expect("dcv written");
     let saved = std::fs::read_to_string(&v8).expect("dcv readable");
-    assert!(saved.contains("\"version\": 8,"), "{saved}");
+    let version = format!("\"version\": {},", dc_project::CURRENT_VERSION);
+    assert!(saved.contains(&version), "{saved}");
     let out = run(&dir, &["export", "v8.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export v8: {}", stderr(&out));
     let from_v8 = std::fs::read_to_string(dir.join("v8.nc")).expect("v8.nc written");
@@ -1572,14 +1766,16 @@ fn pocket_helix_entry_exports_and_passes_safety() {
     );
     // 100 / sin 5° = 1147 mm/min, a little less on the chords. The
     // Profile's 15° ramp (init's entry) is plunge-limited too, at
-    // 100 / sin 15° = 386 mm/min.
+    // 100 / sin 15° = 386.37 mm/min, rounded down where the rounded
+    // coordinates make a move a little steeper (#325).
     assert!(
         scaled.iter().any(|f| (1100.0..1150.0).contains(f)),
         "the helix is cut: {scaled:?}"
     );
     for f in scaled {
         assert!(
-            (1100.0..1150.0).contains(&f) || (f - 100.0 / 15f64.to_radians().sin()).abs() < 0.01,
+            (1100.0..1150.0).contains(&f)
+                || (0.0..0.05).contains(&(100.0 / 15f64.to_radians().sin() - f)),
             "helix or ramp feed {f}"
         );
     }
@@ -1701,7 +1897,9 @@ fn drill_exports_and_passes_safety() {
     drill.dwell_s = 0.25;
     drill.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
     drill.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
-    project.operations.push(Operation::Drill(drill));
+    // Drilled before the tabbed cut-out, while the stock still holds the
+    // coaster: after it, the hole would be cut in a tab-held part (#269).
+    project.operations.insert(0, Operation::Drill(drill));
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
     let check = run(&dir, &["check", "coaster.dcv"]);
@@ -1892,6 +2090,13 @@ fn warnings_are_readable() {
     for op in project.operations.iter_mut().map(as_profile_mut) {
         if let Some(tabs) = &mut op.tabs {
             tabs.height_mm = thickness_mm + 1.0;
+            // Two tabs 5 mm apart overlap on every outline; with the
+            // third they would cover most of the small hole, which then
+            // keeps the first two (#109).
+            tabs.placement = TabPlacement::AtDistances {
+                distances_mm: vec![10.0, 15.0, 40.0],
+            };
+            tabs.on_holes = true;
         }
     }
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
@@ -1909,7 +2114,7 @@ fn warnings_are_readable() {
         "same outline",
         "does not fit",
         "overlap",
-        "may not cut free",
+        "would not cut free",
         "stock top",
     ] {
         assert!(
@@ -2121,7 +2326,8 @@ fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
 /// on it run again against the new one. A tool with no spindle speed is
 /// fine while the router is switched by hand; switching to grblHAL, which
 /// sets the speed with `S`, must report validation's missing-rpm problem,
-/// fail, and write nothing.
+/// fail, and write nothing. `--reset-settings` drops the manual control,
+/// which a plain `--post` keeps (#277).
 #[test]
 fn post_override_revalidates() {
     let dir = work_dir("post_override_revalidates");
@@ -2139,7 +2345,16 @@ fn post_override_revalidates() {
     assert_eq!(out.status.code(), Some(0), "manual post passes: {report}");
 
     let before = std::fs::read(&dcv).expect("dcv readable");
-    let out = run(&dir, &["export", "coaster.dcv", "--post", "grblhal"]);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--reset-settings",
+        ],
+    );
     let stderr = stderr(&out);
     assert_eq!(out.status.code(), Some(1), "exits 1: {stderr}");
     assert!(
@@ -2156,7 +2371,10 @@ fn post_override_revalidates() {
 
 /// #61, the reverse: a problem that only the embedded post-processor
 /// causes (here an extension that would overwrite the project) fails
-/// `check`, but `export --post grblhal` replaces that post and exports.
+/// `check`, but `export --post grblhal --reset-settings` replaces that
+/// post and its settings and exports. A plain `--post` keeps the
+/// extension the user set (#277), so it fails the same check and writes
+/// nothing.
 #[test]
 fn post_override_to_valid_post_succeeds() {
     let dir = work_dir("post_override_to_valid_post_succeeds");
@@ -2170,6 +2388,21 @@ fn post_override_to_valid_post_succeeds() {
     let report = format!("{}{}", stdout(&out), stderr(&out));
     assert_eq!(out.status.code(), Some(1), "embedded post fails: {report}");
 
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--post", "grblhal"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "kept extension: {}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("`dcv`"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(&dcv).expect("dcv readable"),
+        before,
+        "the .dcv is untouched"
+    );
+
     let out = run(
         &dir,
         &[
@@ -2177,6 +2410,7 @@ fn post_override_to_valid_post_succeeds() {
             "coaster.dcv",
             "--post",
             "grblhal",
+            "--reset-settings",
             "--date",
             FIXED_DATE,
         ],
@@ -2840,15 +3074,19 @@ fn init_writes_post_processor_reference() {
     );
 }
 
-/// #171: `init` writes grblHAL version 2, whose program opens with fixed
-/// text, so the project name never starts a comment.
+/// #171: `init` writes the latest grblHAL version, whose program opens
+/// with fixed text, so the project name never starts a comment.
 #[test]
-fn init_writes_grblhal_v2() {
-    let dir = work_dir("init_writes_grblhal_v2");
+fn init_writes_latest_grblhal() {
+    let dir = work_dir("init_writes_latest_grblhal");
     let dcv = init_coaster(&dir);
     let block = post_processor_block(&dcv);
+    let latest = dc_project::latest_definition("grblhal").expect("grblHAL is bundled");
     assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
-    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
+    assert_eq!(
+        block.get("definition_version"),
+        Some(&serde_json::json!(latest.version))
+    );
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
@@ -2856,12 +3094,69 @@ fn init_writes_grblhal_v2() {
     assert_eq!(program.lines().next(), Some("( Project: coaster )"));
 }
 
-/// #171, ADR-0004: a project that names version 1 of grblHAL or GRBL
-/// exports the bytes it did before version 2 existed
+/// The lines of an older grblHAL or GRBL program as version 3 writes
+/// them: the first line `first`, and `G80`, `G40` after `G94` (#279).
+fn as_v3(program: &str, first: &str) -> Vec<String> {
+    let mut lines: Vec<String> = program.lines().map(str::to_owned).collect();
+    if let Some(line) = lines.first_mut() {
+        first.clone_into(line);
+    }
+    let g94 = lines
+        .iter()
+        .position(|l| l == "G94")
+        .expect("the header has G94");
+    lines.splice(g94 + 1..g94 + 1, ["G80".to_owned(), "G40".to_owned()]);
+    lines
+}
+
+/// `lines` with `G50` after every line that is `G40`: what grblHAL
+/// version 4 adds to version 3, in the header and in the setup after a
+/// stop (#316).
+fn with_g50(lines: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len() + 1);
+    for line in lines {
+        let g40 = line == "G40";
+        out.push(line);
+        if g40 {
+            out.push("G50".to_owned());
+        }
+    }
+    out
+}
+
+/// The lines of an older program of `id` as the latest version of `id`
+/// writes them, and that version: GRBL version 3 ([`as_v3`]), grblHAL
+/// version 4 (version 3 [`with_g50`]).
+fn as_latest(id: &str, program: &str, first: &str) -> (u32, Vec<String>) {
+    let v3 = as_v3(program, first);
+    if id == "grblhal" {
+        (4, with_g50(v3))
+    } else {
+        (3, v3)
+    }
+}
+
+/// Writes the coaster project in `dir`, filled in as the quick start does,
+/// naming version `version` of `id`'s definition with its default
+/// settings.
+fn coaster_at_version(dir: &Path, id: &str, version: u32) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = dc_project::bundled_definition(id, version)
+        .expect("the version is bundled")
+        .default_ref();
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// #171, #279, ADR-0004: a project that names version 1 of grblHAL or
+/// GRBL exports the bytes it did before version 2 existed
 /// (`tests/expected/coaster-<id>-v1.nc`, committed before #171; its ramp
 /// re-captured in #214, which changed the motion, not the format) until the
-/// user runs `export --post <id>`. That upgrades it to version 2, says so,
-/// and changes only the program's first line.
+/// user runs `export --post <id>`. That upgrades it to the latest version,
+/// says so, and changes only the program's first line and the header's
+/// `G80`, `G40` (and on grblHAL, version 4, `G50`, #316).
 #[test]
 fn v1_project_exports_v1_bytes_until_upgraded() {
     for (id, expected, first) in [
@@ -2869,13 +3164,7 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
         ("grbl", "coaster-grbl-v1.nc", "; Project: coaster"),
     ] {
         let dir = work_dir(&format!("v1_project_exports_v1_bytes_{id}"));
-        let dcv = init_coaster(&dir);
-        fill_in(&dcv, 1500.0, 500.0, 18000);
-        let mut project = load_file(&dcv).project;
-        project.post_processor = dc_project::bundled_definition(id, 1)
-            .expect("version 1 is bundled")
-            .default_ref();
-        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let dcv = coaster_at_version(&dir, id, 1);
         assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
         let v1 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
 
@@ -2884,20 +3173,250 @@ fn v1_project_exports_v1_bytes_until_upgraded() {
             &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
         );
         assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let (latest, expected) = as_latest(id, &v1, first);
         let report = stdout(&out);
         assert!(
-            report.contains(&format!("post-processor {id} v1 → v2,")),
+            report.contains(&format!("post-processor {id} v1 → v{latest},")),
             "{report}"
         );
         let block = post_processor_block(&dcv);
-        assert_eq!(block.get("definition_version"), Some(&serde_json::json!(2)));
-        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
-        assert_eq!(v2.lines().next(), Some(first), "{id}");
+        assert_eq!(
+            block.get("definition_version"),
+            Some(&serde_json::json!(latest))
+        );
+        let upgraded =
+            std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
         assert!(
-            v2.lines().skip(1).eq(v1.lines().skip(1)),
-            "{id}: only the first line changes\nv1:\n{v1}\nv2:\n{v2}"
+            upgraded.lines().eq(expected.iter().map(String::as_str)),
+            "{id}: only the first line and G80, G40 (and on grblHAL G50) change\n\
+             v1:\n{v1}\nv{latest}:\n{upgraded}"
         );
     }
+}
+
+/// #279, acceptance 41, ADR-0004: a project that names version 2 of
+/// grblHAL or GRBL exports the bytes it did before version 3 existed
+/// (`tests/expected/coaster-<id>-v2.nc`, committed before #279) until
+/// `export --post <id>` upgrades it, which adds only `G80` and `G40`
+/// after `G94` (and on grblHAL, version 4, `G50` after them, #316).
+#[test]
+fn v2_project_exports_v2_bytes() {
+    for (id, expected, first) in [
+        ("grblhal", "coaster-grblhal-v2.nc", "( Project: coaster )"),
+        ("grbl", "coaster-grbl-v2.nc", "; Project: coaster"),
+    ] {
+        let dir = work_dir(&format!("v2_project_exports_v2_bytes_{id}"));
+        let dcv = coaster_at_version(&dir, id, 2);
+        assert_exports_match(&dir, &[], &[("coaster.nc", expected)]);
+        let v2 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+        assert!(!v2.lines().any(|l| l == "G80" || l == "G40"), "{id}: {v2}");
+
+        let out = run(
+            &dir,
+            &["export", "coaster.dcv", "--post", id, "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+        let (latest, expected) = as_latest(id, &v2, first);
+        let report = stdout(&out);
+        assert!(
+            report.contains(&format!("post-processor {id} v2 → v{latest},")),
+            "{report}"
+        );
+        let block = post_processor_block(&dcv);
+        assert_eq!(
+            block.get("definition_version"),
+            Some(&serde_json::json!(latest))
+        );
+        let upgraded =
+            std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+        assert!(
+            upgraded.lines().eq(expected.iter().map(String::as_str)),
+            "{id}: only G80, G40 (and on grblHAL G50) are added\n\
+             v2:\n{v2}\nv{latest}:\n{upgraded}"
+        );
+    }
+}
+
+/// #316, ADR-0004: `init` writes grblHAL version 4, and a project that
+/// names version 3 exports the bytes it did before version 4 added `G50`
+/// to the header (`tests/expected/coaster-grblhal-v3.nc`, the golden
+/// program as version 3 wrote it).
+#[test]
+fn grblhal_v3_project_still_exports_byte_identically() {
+    let dir = work_dir("grblhal_v3_project_still_exports_byte_identically_init");
+    let dcv = init_coaster(&dir);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(4)));
+
+    let dir = work_dir("grblhal_v3_project_still_exports_byte_identically");
+    coaster_at_version(&dir, "grblhal", 3);
+    assert_exports_match(&dir, &[], &[("coaster.nc", "coaster-grblhal-v3.nc")]);
+    let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(!v3.lines().any(|l| l == "G50"), "{v3}");
+}
+
+/// #316: `export --post grblhal` upgrades a version 3 project to version
+/// 4, says so, and the only change is a `G50` line after the header's
+/// `G40`.
+#[test]
+fn grblhal_v3_project_upgrades_to_v4() {
+    let dir = work_dir("grblhal_v3_project_upgrades_to_v4");
+    let dcv = coaster_at_version(&dir, "grblhal", 3);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let v3 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert!(
+        report.contains("post-processor grblhal v3 → v4,"),
+        "{report}"
+    );
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(4)));
+    let v4 = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+    let expected = with_g50(v3.lines().map(str::to_owned).collect());
+    assert!(
+        v4.lines().eq(expected.iter().map(String::as_str)),
+        "only G50 is added\nv3:\n{v3}\nv4:\n{v4}"
+    );
+}
+
+/// The note `export` prints for grblHAL and GRBL programs (functional
+/// capability 29): the program leaves the tool length offset alone.
+const TOOL_LENGTH_NOTE: &str = "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.";
+
+/// #279: grblHAL and GRBL fold an active tool length offset into the work
+/// zero the user sets, so their programs leave it alone and `export` says
+/// so, once, for one program and for one program per tool run. The note
+/// names grblHAL's and GRBL's `G43.1`, so it is not printed for LinuxCNC
+/// (functional spec, capability 29).
+#[test]
+fn export_grblhal_prints_tool_length_note() {
+    for (post, notes) in [("grblhal", 1), ("grbl", 1), ("linuxcnc", 0)] {
+        let dir = work_dir(&format!("export_tool_length_note_{post}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "coaster.dcv",
+                "--post",
+                post,
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{post}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert_eq!(
+            report.matches(TOOL_LENGTH_NOTE).count(),
+            notes,
+            "{post}: {report}"
+        );
+    }
+    let dir = work_dir("export_tool_length_note_runs");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains("Wrote 2 programs"), "{report}");
+    assert_eq!(report.matches(TOOL_LENGTH_NOTE).count(), 1, "{report}");
+}
+
+/// The note `export` prints for a grblHAL program whose definition writes
+/// `G50` (#320): grblHAL's `G50` does not clear a scale that leaves X at 1
+/// (`definitions/README.md`, "Scaling on grblHAL").
+const SCALING_NOTE: &str = "If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.";
+
+/// #320: a grblHAL v4 export prints the scaling note once, for one program
+/// and for one program per tool run, after the tool length note. The note
+/// is printed, not written: the programs are the committed ones.
+#[test]
+fn export_grblhal_v4_prints_scaling_note() {
+    let dir = work_dir("export_grblhal_v4_prints_scaling_note");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let block = post_processor_block(&dcv);
+    assert_eq!(block.get("id"), Some(&serde_json::json!("grblhal")));
+    assert_eq!(block.get("definition_version"), Some(&serde_json::json!(4)));
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(report.matches(SCALING_NOTE).count(), 1, "{report}");
+    assert!(
+        report.contains(&format!("{TOOL_LENGTH_NOTE}\n{SCALING_NOTE}\n")),
+        "the scaling note follows the tool length note:\n{report}"
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(
+        program == include_str!("expected/coaster-grblhal.nc"),
+        "program bytes changed:\n{program}"
+    );
+
+    let dir = work_dir("export_grblhal_v4_prints_scaling_note_runs");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains("Wrote 2 programs"), "{report}");
+    assert_eq!(report.matches(SCALING_NOTE).count(), 1, "{report}");
+    assert!(
+        report.contains(&format!("{TOOL_LENGTH_NOTE}\n{SCALING_NOTE}\n")),
+        "the scaling note follows the tool length note:\n{report}"
+    );
+    assert_exports_match(
+        &dir,
+        &[],
+        &[
+            ("coaster-1-T1.nc", "coaster-two-tool-grblhal-1-T1.nc"),
+            ("coaster-2-T2.nc", "coaster-two-tool-grblhal-2-T2.nc"),
+        ],
+    );
+}
+
+/// #320: the scaling note is only for a grblHAL definition that writes
+/// `G50`. GRBL and LinuxCNC have no scaling, Mach3's and UCCNC's `G50`
+/// clears every factor, and grblHAL v3 writes no `G50`.
+#[test]
+fn export_without_g50_prints_no_scaling_note() {
+    for post in ["grbl", "linuxcnc", "mach3", "uccnc"] {
+        let dir = work_dir(&format!("export_without_g50_prints_no_scaling_note_{post}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "coaster.dcv",
+                "--post",
+                post,
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{post}: {}", stderr(&out));
+        let report = stdout(&out);
+        assert!(!report.contains("G51"), "{post}: {report}");
+    }
+    let dir = work_dir("export_without_g50_prints_no_scaling_note_grblhal_v3");
+    coaster_at_version(&dir, "grblhal", 3);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "grblhal v3: {}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains(TOOL_LENGTH_NOTE), "grblhal v3: {report}");
+    assert!(!report.contains("G51"), "grblhal v3: {report}");
 }
 
 /// The motion of `program`: every move, as where it goes, at what feed,
@@ -2911,21 +3430,23 @@ fn motion(program: &str) -> Vec<String> {
 }
 
 /// #106, acceptance test 13: `export --post grbl` rewrites the reference
-/// to GRBL's latest version with the default settings, as switching always
-/// did, and the program has the same motion as grblHAL's.
+/// to GRBL's latest version, and the program has the same motion as
+/// grblHAL's. The settings the user changed (an extension, manual spindle
+/// control) are kept (#277, acceptance 39); the others take GRBL's
+/// defaults.
 #[test]
 fn export_post_switch_writes_reference() {
     let dir = work_dir("export_post_switch_writes_reference");
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
-    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
-    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
-    let grblhal = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
-
     let mut project = load_file(&dcv).project;
     project.post_processor.file_extension = "tap".into();
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     set_spindle_control(&dcv, SpindleControl::Manual);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let grblhal = std::fs::read_to_string(dir.join("coaster.tap")).expect("coaster.tap written");
+
     let out = run(
         &dir,
         &[
@@ -2948,15 +3469,15 @@ fn export_post_switch_writes_reference() {
         serde_json::json!({
             "id": "grbl",
             "definition_version": latest.version,
-            "file_extension": "nc",
-            "spindle_control": "automatic",
+            "file_extension": "tap",
+            "spindle_control": "manual",
             "spindle_on_dwell_s": 3.0,
             "tool_change_mode": "separate_programs",
             "decimal_places": { "mm": 3, "inch": 4 },
             "use_canned_cycles": false
         })
     );
-    let grbl = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc rewritten");
+    let grbl = std::fs::read_to_string(dir.join("coaster.tap")).expect("coaster.tap rewritten");
     assert_ne!(grbl, grblhal, "the dialects differ");
     assert_eq!(motion(&grbl), motion(&grblhal));
 }
@@ -3338,10 +3859,12 @@ fn written_tool_change_mode(dcv: &Path) -> String {
 }
 
 /// Acceptance 33: the user config's `tool_change_mode` is what `init` and
-/// `export --post` write into a new post-processor reference; nothing else
-/// reads it, so a plain `export` leaves the project's mode alone. A `"m6"`
-/// default on GRBL, which has no `M6`, is refused naming the config file
-/// and the post-processor, so a bad default never lands in a project.
+/// `export --post --reset-settings` write into a new post-processor
+/// reference; nothing else reads it, so a plain `export` leaves the
+/// project's mode alone (a plain `--post` applies it only to a setting it
+/// resets, #277). A `"m6"` default on GRBL, which has no `M6`, is refused
+/// naming the config file and the post-processor, so a bad default never
+/// lands in a project.
 #[test]
 fn config_tool_change_mode_seeds_init() {
     let dir = work_dir("config_tool_change_mode_seeds_init");
@@ -3354,7 +3877,8 @@ fn config_tool_change_mode_seeds_init() {
     assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
     assert_eq!(written_tool_change_mode(&dir.join("m6.dcv")), "m6");
 
-    // `export --post` writes the configured mode with the new settings.
+    // `export --post --reset-settings` writes the configured mode with the
+    // new settings.
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let out = run(
         &dir,
@@ -3363,6 +3887,7 @@ fn config_tool_change_mode_seeds_init() {
             "coaster.dcv",
             "--post",
             "grblhal",
+            "--reset-settings",
             "--date",
             FIXED_DATE,
         ],
@@ -3400,7 +3925,16 @@ fn config_tool_change_mode_seeds_init() {
     );
     assert!(!dir.join("grbl.dcv").exists(), "nothing written");
     let before = std::fs::read_to_string(&dcv).expect("dcv readable");
-    let out = run(&dir, &["export", "coaster.dcv", "--post", "grbl"]);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grbl",
+            "--reset-settings",
+        ],
+    );
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -3416,6 +3950,184 @@ fn config_tool_change_mode_seeds_init() {
         std::fs::read_to_string(&dcv).expect("dcv readable"),
         before,
         "the project is untouched"
+    );
+}
+
+/// The filled-in coaster with its post-processor set to `post`, saved.
+fn coaster_with_post(dir: &Path, post: dc_project::PostProcessorRef) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.post_processor = post;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// The bundled reference `id` v`version` with its default settings.
+fn default_post(id: &str, version: u32) -> dc_project::PostProcessorRef {
+    dc_project::bundled_definition(id, version)
+        .expect("definition is bundled")
+        .default_ref()
+}
+
+/// The latest reference of `id` with its default settings, as JSON.
+fn latest_default_block(id: &str) -> serde_json::Value {
+    let latest = dc_project::latest_definition(id).expect("definition is bundled");
+    serde_json::to_value(latest.default_ref()).expect("reference serializes")
+}
+
+/// Acceptance 39 (#277): a grblHAL v1 project with a raised spin-up dwell,
+/// exported with `--post grblhal`, is saved at the latest grblHAL version
+/// with the dwell kept and every other setting unchanged, its program
+/// dwells for it, and the summary says the settings were kept.
+#[test]
+fn export_post_keeps_dwell() {
+    let dir = work_dir("export_post_keeps_dwell");
+    let mut post = default_post("grblhal", 1);
+    post.spindle_on_dwell_s = 6.0;
+    let dcv = coaster_with_post(&dir, post);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut expected = latest_default_block("grblhal");
+    expected["spindle_on_dwell_s"] = serde_json::json!(6.0);
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        expected
+    );
+    let latest = dc_project::latest_definition("grblhal").expect("grblHAL is bundled");
+    let report = stdout(&out);
+    assert!(
+        report.contains(&format!(
+            "Updated coaster.dcv: post-processor grblhal v1 → v{}, keeping your settings.",
+            latest.version
+        )),
+        "{report}"
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(
+        program.lines().any(|l| l.trim() == "G4 P6.000"),
+        "{program}"
+    );
+}
+
+/// #277: a setting the new post-processor cannot use is reset to its
+/// default, never kept to fail, and the summary names it, both values and
+/// why: GRBL has no `M6` tool change (#57).
+#[test]
+fn export_post_reports_reset_setting() {
+    let dir = work_dir("export_post_reports_reset_setting");
+    let mut post = dc_project::latest_definition("grblhal")
+        .expect("grblHAL is bundled")
+        .default_ref();
+    post.tool_change_mode = ToolChangeMode::M6;
+    let dcv = coaster_with_post(&dir, post);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grbl",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+    let report = stdout(&out);
+    let line = report
+        .lines()
+        .find(|l| l.contains("tool_change_mode"))
+        .unwrap_or_else(|| panic!("a line names the reset setting: {report}"));
+    assert!(
+        line.contains("\"m6\" → \"separate_programs\""),
+        "both values: {line}"
+    );
+    assert!(
+        line.contains("grbl") && line.contains("no M6"),
+        "why: {line}"
+    );
+}
+
+/// #277: `--reset-settings` keeps the old way: every setting from the new
+/// definition's defaults, with the user config's `tool_change_mode` on
+/// top. It needs `--post`.
+#[test]
+fn export_post_reset_settings_restores_defaults() {
+    let dir = work_dir("export_post_reset_settings_restores_defaults");
+    let mut post = default_post("grblhal", 1);
+    post.spindle_on_dwell_s = 6.0;
+    post.file_extension = "gcode".into();
+    post.spindle_control = SpindleControl::Manual;
+    let dcv = coaster_with_post(&dir, post);
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--reset-settings",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut expected = latest_default_block("grblhal");
+    expected["tool_change_mode"] = serde_json::json!("m6");
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        expected
+    );
+    let report = stdout(&out);
+    assert!(report.contains("with its default settings."), "{report}");
+
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["export", "coaster.dcv", "--reset-settings"]);
+    assert_eq!(out.status.code(), Some(2), "usage error: {}", stdout(&out));
+    assert!(stderr(&out).contains("--post"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        before,
+        "the project is untouched"
+    );
+}
+
+/// #277, functional capability 27: the user config's `tool_change_mode`
+/// applies only to a setting `--post` resets, so a configured `"m6"` does
+/// not override a project's kept `"separate_programs"`.
+#[test]
+fn export_post_config_applies_only_to_reset_settings() {
+    let dir = work_dir("export_post_config_applies_only_to_reset_settings");
+    let dcv = coaster_with_post(&dir, default_post("grbl", 1));
+    write_config(&dir, "[export]\ntool_change_mode = \"m6\"\n");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "coaster.dcv",
+            "--post",
+            "grblhal",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(written_tool_change_mode(&dcv), "separate_programs");
+    assert_eq!(
+        serde_json::Value::Object(post_processor_block(&dcv)),
+        latest_default_block("grblhal")
     );
 }
 
@@ -4602,13 +5314,107 @@ fn check_reports_order_warnings() {
     }
 }
 
+/// #269: the plaque engraves 1 mm deep after its tabbed cut-out, a light
+/// cut on a tab-held part that is normal practice, so `check` gives it no
+/// order warning: its five warnings are the unused tool and the four
+/// drilled holes, as the quick start shows.
+#[test]
+fn plaque_engrave_after_tabbed_cut_out_is_quiet() {
+    let dir = work_dir("plaque_engrave_after_tabbed_cut_out_is_quiet");
+    copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    assert!(
+        !report.contains("cut_inside_tab_held_part"),
+        "the engrave is light: {report}"
+    );
+    assert!(report.contains("0 error(s), 5 warning(s)"), "{report}");
+}
+
+/// #269: the maintainer's two-operation star from before format v9
+/// (`tests/manual/star_with_hole`): op1 cuts the star `outside` through
+/// the stock with `init`'s tabs, then op2 cuts its hole `inside`. The hole
+/// is cut in a star held only by its tabs, so `check` and `export` warn
+/// `cut_inside_tab_held_part` once, naming both operations and both
+/// shapes, and `check` still exits 0. The tabs hold the star, so it is not
+/// `cut_inside_freed_part`. The hole first, or the star and its hole in
+/// `init`'s one operation (#109), is quiet.
+#[test]
+fn check_warns_hole_cut_in_tab_held_star() {
+    let dir = work_dir("check_warns_hole_cut_in_tab_held_star");
+    let dcv = init_star(&dir, STAR_AND_HOLE_SVG);
+    let mut project = load_file(&dcv).project;
+    let one_operation = project.operations.clone();
+    let star = instance_named(&project, "star").id.clone();
+    let hole = instance_named(&project, "hole").id.clone();
+    let mut star_op = as_profile(&project.operations[0]).clone();
+    star_op.name = "Star".into();
+    star_op.targets = vec![star];
+    star_op.side = Side::Outside;
+    assert!(star_op.tabs.is_some(), "init gives the profile tabs");
+    let mut hole_op = star_op.clone();
+    hole_op.id = OperationId::new("op2");
+    hole_op.name = "Hole".into();
+    hole_op.targets = vec![hole];
+    hole_op.side = Side::Inside;
+    hole_op.tabs = None;
+    let order_codes = ["cut_inside_tab_held_part", "cut_inside_freed_part"];
+    let order_lines = |report: &str| -> Vec<String> {
+        warning_lines(report)
+            .into_iter()
+            .filter(|l| warning_code(l).is_some_and(|c| order_codes.contains(&c)))
+            .map(str::to_owned)
+            .collect()
+    };
+
+    project.operations = vec![
+        Operation::Profile(star_op.clone()),
+        Operation::Profile(hole_op.clone()),
+    ];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "star.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "warnings exit 0: {report}");
+    let found = order_lines(&report);
+    assert_eq!(found.len(), 1, "one order warning: {report}");
+    let line = &found[0];
+    assert_eq!(
+        warning_code(line),
+        Some("cut_inside_tab_held_part"),
+        "{line}"
+    );
+    for needle in ["`op1`", "`op2`", "`hole`", "`star`"] {
+        assert!(line.contains(needle), "names {needle}: {line}");
+    }
+    let out = run(&dir, &["export", "star.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert_eq!(order_lines(&stderr(&out)), found, "export prints it too");
+
+    for (what, operations) in [
+        (
+            "the hole first",
+            vec![Operation::Profile(hole_op), Operation::Profile(star_op)],
+        ),
+        ("one operation", one_operation),
+    ] {
+        project.operations = operations;
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let out = run(&dir, &["check", "star.dcv"]);
+        let report = stdout(&out);
+        assert_eq!(out.status.code(), Some(0), "{what}: {report}");
+        assert!(order_lines(&report).is_empty(), "{what} is quiet: {report}");
+    }
+}
+
 /// Capability 25: every warning `check` and `export` print is
 /// `warning: <code>: <message>`, the code a stable `snake_case` word,
 /// after the file position when the warning is about one value. The
 /// project raises toolpath warnings (an open path, a duplicate, a hole the
 /// bit does not fit, tabs that overlap, cover most of a hole and sit above
-/// the stock top), an order warning, and a validation warning (an unused
-/// tool), and each code is the one the Warnings chapter lists.
+/// the stock top), order warnings (a hole cut after the tabbed op1 and
+/// after the untabbed op2), and a validation warning (an unused tool), and
+/// each code is the one the Warnings chapter lists.
 #[test]
 fn warnings_print_code_and_message() {
     let dir = work_dir("warnings_print_code_and_message");
@@ -4635,6 +5441,13 @@ fn warnings_print_code_and_message() {
     let first = as_profile_mut(&mut project.operations[0]);
     if let Some(tabs) = &mut first.tabs {
         tabs.height_mm = thickness_mm + 1.0;
+        // Two tabs 5 mm apart overlap on every outline; with the third,
+        // they would cover more than half of the small hole's path, so
+        // the hole keeps the first two (#109).
+        tabs.placement = TabPlacement::AtDistances {
+            distances_mm: vec![10.0, 15.0, 40.0],
+        };
+        tabs.on_holes = true;
     }
     let mut outline_op = first.clone();
     outline_op.id = OperationId::new("op2");
@@ -4685,6 +5498,7 @@ fn warnings_print_code_and_message() {
             "tabs_cover_most_of_contour",
             "tabs_outside_cut_range",
             "cut_inside_freed_part",
+            "cut_inside_tab_held_part",
             "unused_tool",
         ] {
             assert!(
@@ -5179,4 +5993,2546 @@ fn tools_import_twice_is_already_present() {
         std::fs::read(library_file(&dir)).expect("library readable"),
         first
     );
+}
+
+// ── #105: placed tabs ──
+
+/// The repository's corpus of version 9 projects with tab settings, and
+/// the programs they exported before tabs were placed objects (#105).
+fn tabs_migration_corpus() -> Vec<(String, PathBuf)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tabs-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// Every program `export` writes for the project `name.dcv` in `dir`,
+/// with the expected file each is compared with.
+fn exported_programs(dir: &Path, name: &str) -> Vec<(String, String)> {
+    let mut programs: Vec<(String, String)> = std::fs::read_dir(dir)
+        .expect("dir readable")
+        .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "nc"))
+        .filter_map(|p| {
+            let file = p.file_name()?.to_string_lossy().into_owned();
+            (file == format!("{name}.nc") || file.starts_with(&format!("{name}-")))
+                .then(|| (file, std::fs::read_to_string(&p).expect("program readable")))
+        })
+        .collect();
+    programs.sort();
+    programs
+}
+
+/// Asserts the programs `name` exported in `dir` are byte for byte the
+/// committed `tests/expected/tabs-migration/` ones.
+fn assert_corpus_programs(dir: &Path, name: &str, case: &str) {
+    let expected_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/tabs-migration");
+    let programs = exported_programs(dir, name);
+    assert!(!programs.is_empty(), "{case}: {name} exported nothing");
+    for (file, text) in programs {
+        let expected = std::fs::read_to_string(expected_dir.join(&file))
+            .unwrap_or_else(|e| panic!("{case}: expected {file}: {e}"));
+        assert!(
+            text == expected,
+            "{case}: {file} differs from the program before #105:\n{text}"
+        );
+    }
+}
+
+/// #105, the issue's first test, on every project of the corpus (13 cut
+/// for this, the plaque fixtures and a phase 1 grblHAL file): a version 9
+/// file with tab settings exports byte-identical G-code, both as it is
+/// (its settings are tab requests, placed when it is cut) and after
+/// `tabs place` has written them as placed tabs and saved the file. The
+/// expected programs were exported by the build before #105, with the
+/// feeds of six of them since rounded down so no cut falls faster than the
+/// plunge rate as written (#325).
+#[test]
+fn version_9_tab_settings_export_byte_identical_programs() {
+    let dir = work_dir("version_9_tab_settings_export_byte_identical_programs");
+    for (name, path) in tabs_migration_corpus() {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(text.contains("\"tabs\": {"), "{name} has a tab setting");
+
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "as loaded");
+
+        let project = load_file(&dir.join(&file)).project;
+        let op = project
+            .operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::Profile(p) if p.enabled && p.tabs.is_some() => Some(p.id.clone()),
+                _ => None,
+            })
+            .expect("a Profile with tabs");
+        let out = run(&dir, &["tabs", "place", &file, op.as_str()]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let placed = load_file(&dir.join(&file)).project;
+        assert!(!placed.tabs.is_empty(), "{name}: tabs placed");
+        assert!(
+            placed.operations.iter().all(|op| match op {
+                Operation::Profile(p) => !p.enabled || p.tabs.is_none(),
+                _ => true,
+            }),
+            "{name}: every enabled request is placed"
+        );
+        for entry in std::fs::read_dir(&dir).expect("dir readable") {
+            let path = entry.expect("entry").path();
+            if path.extension().is_some_and(|x| x == "nc") {
+                std::fs::remove_file(path).expect("program removed");
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "placed");
+    }
+}
+
+// ── #284: the last pass allowance ──
+
+/// #284 (`migrate::v12_to_v13_adds_null_last_pass`): every project of
+/// the corpus saved at format 12 (the #105 corpus without its version 6
+/// file, six golden Profile and Pocket projects, and the `dc-project`
+/// sample fixture) migrates to format 13 with `last_pass: null` on every
+/// Profile and exports byte for byte the programs the build before #284
+/// wrote, committed under `tests/expected/last-pass-migration/`, with the
+/// feeds #325 rounds down.
+#[test]
+fn version_12_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_12_projects_export_byte_identical_programs");
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/last-pass-migration");
+    let expected_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/last-pass-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&corpus)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 22, "{names:?}");
+    for (name, path) in names {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 12"),
+            "{name} is a version 12 file"
+        );
+        assert!(!text.contains("last_pass"), "{name} has no last pass");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        for op in &project.operations {
+            if let Operation::Profile(p) = op {
+                assert_eq!(p.last_pass, None, "{name}: {}", p.id);
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let programs = exported_programs(&dir, &name);
+        assert!(!programs.is_empty(), "{name} exported nothing");
+        for (program, text) in programs {
+            let expected = std::fs::read_to_string(expected_dir.join(&program))
+                .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{name}: {program} differs from the program before #284:\n{text}"
+            );
+        }
+    }
+}
+
+/// #284 (acceptance 46) from the CLI: the coaster with a 0.5 mm last pass
+/// exports; every pass but the last runs 0.5 mm farther out, and the last
+/// on the phase 1 path, which the program without a last pass cuts on
+/// every pass. A 2.2 mm allowance with the 6.35 mm bit, or a last pass on
+/// an On line Profile, fails `check` and `export` naming the setting.
+#[test]
+fn last_pass_exports_and_refuses_what_cannot_work() {
+    let dir = work_dir("last_pass_exports_and_refuses_what_cannot_work");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let plain = std::fs::read_to_string(dir.join("coaster.nc")).expect("program");
+
+    let set_last_pass = |side: Side, allowance_mm: f64| {
+        let mut project = load_file(&dcv).project;
+        for op in &mut project.operations {
+            if let Operation::Profile(p) = op {
+                p.side = side;
+                p.last_pass = Some(dc_project::LastPass {
+                    allowance_mm,
+                    thickness_mm: None,
+                    reverse: false,
+                });
+            }
+        }
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    };
+    set_last_pass(Side::Outside, 0.5);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let with = std::fs::read_to_string(dir.join("coaster.nc")).expect("program");
+    assert_ne!(with, plain);
+    assert!(
+        load_file(&dcv).project.version == dc_project::CURRENT_VERSION,
+        "saved at the current version"
+    );
+
+    for (side, allowance_mm, needle) in [
+        (Side::Outside, 2.2, "a third of the bit"),
+        (Side::OnLine, 0.5, "Inside, Outside, Left or Right"),
+    ] {
+        set_last_pass(side, allowance_mm);
+        if dir.join("coaster.nc").exists() {
+            std::fs::remove_file(dir.join("coaster.nc")).expect("program removed");
+        }
+        for args in [
+            &["check", "coaster.dcv"][..],
+            &["export", "coaster.dcv", "--date", FIXED_DATE],
+        ] {
+            let out = run(&dir, args);
+            let report = format!("{}{}", stdout(&out), stderr(&out));
+            assert_eq!(out.status.code(), Some(1), "{args:?}: {report}");
+            assert!(report.contains(needle), "{args:?}: {report}");
+            assert!(report.contains("last_pass"), "{args:?}: {report}");
+        }
+        assert!(!dir.join("coaster.nc").exists(), "export wrote nothing");
+    }
+}
+
+/// #311: two Left and Right Profiles of open paths saved at format 12,
+/// with no last pass (the line and arc of `open-path-on-line-climb` cut
+/// Left, climb, with a ramp and smooth tabs; a square of four separate
+/// lines cut Right, conventional, pass first, with a rect tab) export
+/// byte for byte the programs the build before #311 wrote, committed
+/// under `tests/expected/side-last-pass/`. With a 0.5 mm last pass each
+/// passes `check` and exports a different program; with `reverse` and
+/// `thickness_mm: 1` too.
+#[test]
+fn left_right_last_pass_exports_and_without_is_byte_identical() {
+    let dir = work_dir("left_right_last_pass_exports_and_without_is_byte_identical");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let corpus = root.join("tests/fixtures/side-last-pass");
+    let expected_dir = root.join("tests/expected/side-last-pass");
+    for name in ["left-climb-ramp-tabs", "right-square-of-lines-conventional"] {
+        let file = format!("{name}.dcv");
+        std::fs::copy(corpus.join(&file), dir.join(&file)).expect("fixture copied");
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let program = format!("{name}.nc");
+        let plain = std::fs::read_to_string(dir.join(&program)).expect("program written");
+        let expected = std::fs::read_to_string(expected_dir.join(&program))
+            .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+        assert!(
+            plain == expected,
+            "{name}: differs from the program before #311:\n{plain}"
+        );
+
+        for (thickness_mm, reverse) in [(None, false), (Some(1.0), true)] {
+            let mut project = load_file(&dir.join(&file)).project;
+            let op = as_profile_mut(&mut project.operations[0]);
+            assert!(matches!(op.side, Side::Left | Side::Right), "{name}");
+            op.last_pass = Some(dc_project::LastPass {
+                allowance_mm: 0.5,
+                thickness_mm,
+                reverse,
+            });
+            let with = format!("{name}-last.dcv");
+            std::fs::write(dir.join(&with), save(&project).expect("project saves"))
+                .expect("dcv written");
+            let check = run(&dir, &["check", &with]);
+            let report = format!("{}{}", stdout(&check), stderr(&check));
+            assert_eq!(check.status.code(), Some(0), "{name}: {report}");
+            assert!(report.contains("0 error(s)"), "{name}: {report}");
+            let out = run(&dir, &["export", &with, "--date", FIXED_DATE]);
+            assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+            let text = std::fs::read_to_string(dir.join(format!("{name}-last.nc")))
+                .expect("program written");
+            assert_ne!(text, plain, "{name}: the last pass changes the program");
+        }
+    }
+}
+
+/// #105: `init` asks for four tabs on each part with a tab request and
+/// places none: its one Profile cuts every closed shape, which the user
+/// then cuts with operations of their own. `tabs place` with no count
+/// writes the request as four placed tabs on the coaster, each 8 × 3 mm
+/// rect, and sets the request to `null`.
+#[test]
+fn init_asks_for_four_tabs_that_tabs_place_writes() {
+    let dir = work_dir("init_asks_for_four_tabs_that_tabs_place_writes");
+    let dcv = init_coaster(&dir);
+    let project = load_file(&dcv).project;
+    assert!(project.tabs.is_empty(), "{:?}", project.tabs);
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.tabs, Some(init_tab_request()));
+    }
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 4, "{:?}", project.tabs);
+    for tab in &project.tabs {
+        assert_eq!(tab.instance.as_str(), "i1");
+        assert_approx_eq!(tab.width_mm, 8.0, 1e-12);
+        assert_approx_eq!(tab.height_mm, 3.0, 1e-12);
+        assert_eq!(tab.shape, TabShape::Rect);
+    }
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.tabs, None);
+    }
+}
+
+/// #105: `tabs place --count` places tabs with the phase 2 rules and
+/// saves them; `tabs list` shows each with the operation that cuts round
+/// it; `tabs clear` removes them all.
+#[test]
+fn tabs_place_list_and_clear() {
+    let dir = work_dir("tabs_place_list_and_clear");
+    let dcv = init_coaster(&dir);
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Removed 4 tab(s)"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(load_file(&dcv).project.tabs.is_empty());
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "3",
+            "--width",
+            "6",
+            "--height",
+            "2.5",
+            "--shape",
+            "smooth",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert_eq!(printed.matches("Placed `tab").count(), 3, "{printed}");
+    assert!(
+        printed.contains("6 mm wide, top 2.5 mm above the stock bottom, smooth"),
+        "{printed}"
+    );
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 3);
+    assert!(project.tabs.iter().all(|t| t.shape == TabShape::Smooth));
+
+    let out = run(&dir, &["tabs", "list", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let listed = stdout(&out);
+    let lines: Vec<&str> = listed.lines().collect();
+    assert!(lines[0].starts_with("ID"), "{listed}");
+    assert!(lines[0].contains("CUT_BY"), "{listed}");
+    assert_eq!(lines.len(), 4, "{listed}");
+    for line in &lines[1..] {
+        assert!(line.ends_with("op1"), "cut round by op1: {line}");
+        assert!(line.contains("smooth"), "{line}");
+    }
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "--tab", "tab2"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let ids: Vec<String> = load_file(&dcv)
+        .project
+        .tabs
+        .iter()
+        .map(|t| t.id.to_string())
+        .collect();
+    assert_eq!(ids, ["tab1", "tab3"]);
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(load_file(&dcv).project.tabs.is_empty());
+    let out = run(&dir, &["tabs", "list", "coaster.dcv"]);
+    assert!(stdout(&out).contains("has no tabs"), "{}", stdout(&out));
+}
+
+/// #105: `tabs place --at` puts a tab at each distance along the
+/// outline from its first vertex. The coaster's circle, centred at
+/// (55, 55), starts at its rightmost point, (100, 55), and runs clockwise
+/// as the SVG draws it, 282.74 mm round, so a quarter of the way is its
+/// bottom, (55, 10): a chord of 45√2 mm from the start.
+#[test]
+fn tabs_place_at_puts_tabs_along_the_outline() {
+    let dir = work_dir("tabs_place_at_puts_tabs_along_the_outline");
+    let dcv = init_coaster(&dir);
+    run(&dir, &["tabs", "clear", "coaster.dcv"]);
+    let quarter = format!("{}", std::f64::consts::PI * 90.0 / 4.0);
+    let at = format!("0,{quarter}");
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1", "--at", &at]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 2, "{:?}", project.tabs);
+    let instance = &project.instances[0];
+    let points: Vec<Point> = project
+        .tabs
+        .iter()
+        .map(|t| instance.transform.apply(Point::new(t.x_mm, t.y_mm)))
+        .collect();
+    let first = project.definitions[&instance.definition].profiles[0].vertices()[0];
+    let start = instance.transform.apply(Point::new(first.x, first.y));
+    assert!(points[0].distance_to(start) < 1e-9, "{points:?}");
+    assert!(
+        (points[1].distance_to(start) - 45.0 * std::f64::consts::SQRT_2).abs() < 1e-6,
+        "a quarter turn on: {points:?}"
+    );
+}
+
+/// #105: `tabs place` names the operation it needs: one the project does
+/// not have, one that is not a Profile, or a Profile with no request when
+/// neither --count nor --at is given, all fail and change nothing.
+#[test]
+fn tabs_place_refuses_what_it_cannot_place() {
+    let dir = work_dir("tabs_place_refuses_what_it_cannot_place");
+    let dcv = init_coaster(&dir);
+    // Placed and cleared: the Profile has no tab request left.
+    run(&dir, &["tabs", "clear", "coaster.dcv"]);
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op9", "--count", "2"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("operation `op9` is not in"),
+        "{}",
+        stderr(&out)
+    );
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("has no tab request"),
+        "{}",
+        stderr(&out)
+    );
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "--tab", "tab9"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("tab `tab9` is not in"),
+        "{}",
+        stderr(&out)
+    );
+    // No count of 0, and no size or shape with nothing to place.
+    for args in [
+        &["--count", "0"][..],
+        &["--width", "5"][..],
+        &["--height", "2"][..],
+        &["--shape", "smooth"][..],
+        &["--on-holes"][..],
+    ] {
+        let mut all = vec!["tabs", "place", "coaster.dcv", "op1"];
+        all.extend_from_slice(args);
+        let out = run(&dir, &all);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+    }
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+}
+
+/// #105: `check` warns `tab_not_crossed` for a tab no enabled Profile
+/// cuts round, here once the coaster's Profile is disabled.
+#[test]
+fn check_warns_tab_not_crossed() {
+    let dir = work_dir("check_warns_tab_not_crossed");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_not_crossed"), "{report}");
+    let mut project = load_file(&dcv).project;
+    for op in &mut project.operations {
+        as_profile_mut(op).enabled = false;
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_not_crossed:").count(),
+        4,
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "tab `tab1` on `coaster` (instance `i1`, profile 0) is crossed by no enabled Profile operation"
+        ),
+        "{report}"
+    );
+}
+
+/// #300, the issue's second test: `tabs list` shows how far each tab's
+/// point is from its outline, as cut, in `OFF_MM`. The coaster's request
+/// places its four tabs on the tool path, a bit radius (3.175 mm) off the
+/// circle. A tab put by hand 20 mm out from the circle's first vertex, its
+/// rightmost point, lists 20, and `check` warns `tab_off_outline` for it
+/// alone.
+#[test]
+fn tabs_list_shows_how_far_each_tab_is_off_its_outline() {
+    let dir = work_dir("tabs_list_shows_how_far_each_tab_is_off_its_outline");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mut project = load_file(&dcv).project;
+    let instance = &project.instances[0];
+    let first = project.definitions[&instance.definition].profiles[0].vertices()[0];
+    let mut far = project.tabs[0].clone();
+    far.id = dc_project::TabId::new("far");
+    far.x_mm = first.x + 20.0;
+    far.y_mm = first.y;
+    project.tabs.push(far);
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["tabs", "list", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let listed = stdout(&out);
+    let rows: Vec<Vec<&str>> = listed
+        .lines()
+        .map(|l| l.split_whitespace().collect())
+        .collect();
+    let column = rows[0]
+        .iter()
+        .position(|h| *h == "OFF_MM")
+        .unwrap_or_else(|| panic!("an OFF_MM column: {listed}"));
+    assert_eq!(rows[0][column - 1], "AT_MM", "{listed}");
+    let off: Vec<(&str, &str)> = rows[1..].iter().map(|r| (r[0], r[column])).collect();
+    assert_eq!(
+        off,
+        [
+            ("tab1", "3.175"),
+            ("tab2", "3.175"),
+            ("tab3", "3.175"),
+            ("tab4", "3.175"),
+            ("far", "20"),
+        ],
+        "{listed}"
+    );
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_off_outline:").count(),
+        1,
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "tab `far` on `coaster` (instance `i1`, profile 0) is 20 mm from that outline"
+        ),
+        "{report}"
+    );
+}
+
+/// #300, the issue's third test: a version 8 file whose part has a hole
+/// migrates with `"on_holes": true` (#109), so `tabs place` puts tabs on
+/// the hole as the file asked. It warns `tab_on_hole` once for each, as it
+/// places them; `export` then warns none, so a user who keeps the tabs is
+/// not told on every export. A tab put on the hole's outline by hand, which
+/// no placing asked for, still warns. The fixture is the tabs-migration
+/// corpus's square with a hole, written back as version 8.
+#[test]
+fn placed_v8_hole_tabs_export_without_tab_on_hole() {
+    let dir = work_dir("placed_v8_hole_tabs_export_without_tab_on_hole");
+    let v9 = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tabs-migration/square-with-hole-on-holes.dcv"),
+    )
+    .expect("fixture readable");
+    let v8 = v9
+        .replacen("\"version\": 9,", "\"version\": 8,", 1)
+        .replacen(",\n        \"on_holes\": true", "", 1);
+    assert!(
+        !v8.contains("on_holes") && v8.contains("\"version\": 8,"),
+        "{v8}"
+    );
+    std::fs::write(dir.join("square.dcv"), v8).expect("v8 written");
+
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dir.join("square.dcv")).project;
+    let hole_tabs = project.tabs.iter().filter(|t| t.profile == 1).count();
+    assert!(hole_tabs > 0, "{:?}", project.tabs);
+    assert_eq!(
+        stderr(&out).matches("warning: tab_on_hole:").count(),
+        hole_tabs,
+        "{}",
+        stderr(&out)
+    );
+
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_on_hole"), "{report}");
+
+    // By hand, on the middle of the hole's bottom edge.
+    let mut project = load_file(&dir.join("square.dcv")).project;
+    let mut by_hand = project.tabs[0].clone();
+    by_hand.id = dc_project::TabId::new("by-hand");
+    by_hand.profile = 1;
+    by_hand.x_mm = 0.0;
+    by_hand.y_mm = -15.0;
+    project.tabs.push(by_hand);
+    std::fs::write(
+        dir.join("square.dcv"),
+        save(&project).expect("project saves"),
+    )
+    .expect("dcv written");
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(
+        report.matches("warning: tab_on_hole:").count(),
+        1,
+        "{report}"
+    );
+    assert!(report.contains("tab `by-hand` is on"), "{report}");
+}
+
+/// #293 with #300: `tabs place --replace --on-holes` warns `tab_on_hole`
+/// once for each new tab it puts on the square's hole, and none for the
+/// tabs it removed; `export` then warns none. Both parts keep tabs, so
+/// there is no note that a part comes loose. Replacing again without
+/// `--on-holes` leaves the hole with no tabs: nothing warns, and the hole's
+/// slug coming free is no part coming loose, so there is no note either.
+#[test]
+fn tabs_place_replace_onto_a_hole_warns_once() {
+    let dir = work_dir("tabs_place_replace_onto_a_hole_warns_once");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tabs-migration/square-with-hole-on-holes.dcv"),
+        dir.join("square.dcv"),
+    )
+    .expect("fixture copied");
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = load_file(&dir.join("square.dcv")).project.tabs;
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--width",
+            "4",
+            "--on-holes",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    let project = load_file(&dir.join("square.dcv")).project;
+    let hole_tabs: Vec<&dc_project::PlacedTab> =
+        project.tabs.iter().filter(|t| t.profile == 1).collect();
+    assert_eq!(hole_tabs.len(), 2, "{:?}", project.tabs);
+    assert!(
+        printed.contains(&format!("{} tab(s) removed and 4 placed", first.len())),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let warned = stderr(&out);
+    assert_eq!(
+        warned.matches("warning: tab_on_hole:").count(),
+        2,
+        "{warned}"
+    );
+    for tab in &hole_tabs {
+        assert_eq!(
+            warned.matches(&format!("tab `{}` is on", tab.id)).count(),
+            1,
+            "{warned}"
+        );
+    }
+    let out = run(&dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!report.contains("tab_on_hole"), "{report}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "2",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("tab_on_hole"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("Note:"), "{}", stdout(&out));
+    let project = load_file(&dir.join("square.dcv")).project;
+    assert!(
+        project.tabs.iter().all(|t| t.profile == 0),
+        "{:?}",
+        project.tabs
+    );
+}
+
+/// #207: an SVG line from (20, 30) to (80, 30), drawn left to right, cut
+/// Left: the cut runs on the side the drawing shows as the line's left
+/// (up the page), which after the importer's flip to Y-up (ADR-0001) is
+/// one bit radius above the placed line. `check` reports nothing about the
+/// open path, `export` passes the safety pass (S9 holds the cut to its
+/// offset path), and climb starts at the end beside the first vertex,
+/// keeping the part (below the line) on the right of travel (#287).
+#[test]
+fn left_profile_of_an_svg_line_exports_on_its_left() {
+    let dir = work_dir("left_profile_of_an_svg_line_exports_on_its_left");
+    std::fs::write(
+        dir.join("edge.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <path id="edge" d="M 20 30 L 80 30"/>
+</svg>
+"#,
+    )
+    .expect("svg written");
+    let out = run(&dir, &["init", "edge.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("edge.dcv");
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let targets = project.instances.iter().map(|i| i.id.clone()).collect();
+    let op = as_profile_mut(&mut project.operations[0]);
+    // `init` targets closed outlines only.
+    op.targets = targets;
+    op.side = Side::Left;
+    op.direction = dc_project::CutDirection::Climb;
+    op.tabs = None;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let line = placed_vertices(&project, "edge");
+    let [(x0, y0), (x1, y1)] = line[..] else {
+        panic!("a two-point line: {line:?}");
+    };
+    assert!(
+        x0 < x1 && (y0 - y1).abs() <= 1e-9,
+        "still drawn left to right: {line:?}"
+    );
+
+    let check = run(&dir, &["check", "edge.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "check: {report}");
+    assert!(report.contains("0 error(s)"), "{report}");
+    assert!(!report.contains("open_profile"), "{report}");
+    let out = run(&dir, &["export", "edge.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("edge.nc")).expect("edge.nc written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let cuts: Vec<&MachineMove> = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && moves_xy(m))
+        .collect();
+    assert!(!cuts.is_empty(), "the program cuts: {program}");
+    for m in &cuts {
+        let (x, y) = (m.to.x.expect("X known"), m.to.y.expect("Y known"));
+        assert!(
+            (y - (y0 + BIT_RADIUS_MM)).abs() <= 1e-3,
+            "cut off the line's left: {m:?}"
+        );
+        assert!(
+            x >= x0 - 1e-3 && x <= x1 + 1e-3,
+            "cut past the line's ends: {m:?}"
+        );
+    }
+    let first = cuts[0];
+    assert!(
+        (first.from.x.expect("X known") - x0).abs() <= 1e-3,
+        "climb starts beside the first vertex: {first:?}"
+    );
+}
+
+/// #105 review: `tabs clear <dcv> <op>` removes only the tabs that Profile
+/// cuts round, refuses an operation that is not a Profile, and says when
+/// the tabs it removed leave a part a through cut frees with no tab. The
+/// coaster's four tabs are crossed by its cut-out `op1`; a 1 mm On line
+/// score pass `op3` stops above the tab tops, so it crosses none and
+/// removes none; clearing `op1` removes all four and names the part.
+#[test]
+fn tabs_clear_op_removes_only_the_tabs_it_cuts_round() {
+    let dir = work_dir("tabs_clear_op_removes_only_the_tabs_it_cuts_round");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let mut project = load_file(&dcv).project;
+    let mut score = as_profile(&project.operations[0]).clone();
+    score.id = OperationId::new("op3");
+    score.side = Side::OnLine;
+    score.depth_mm = Some(1.0);
+    score.through_cut_allowance_mm = 0.0;
+    project.operations.push(Operation::Pocket(sample_pocket()));
+    project.operations.push(Operation::Profile(score));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "o2"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("only a Profile"), "{}", stderr(&out));
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op3"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Removed 0 tab(s)"),
+        "{}",
+        stdout(&out)
+    );
+    assert_eq!(load_file(&dcv).project.tabs.len(), 4);
+
+    let out = run(&dir, &["tabs", "clear", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert!(printed.contains("Removed 4 tab(s)"), "{printed}");
+    assert!(
+        printed.contains("`coaster` (instance `i1`, profile 0)") && printed.contains("no tab"),
+        "names the part op1 now cuts free: {printed}"
+    );
+}
+
+/// The tab points of the project at `dcv`, by id.
+fn tab_points(dcv: &Path) -> Vec<(String, Point)> {
+    load_file(dcv)
+        .project
+        .tabs
+        .iter()
+        .map(|t| (t.id.to_string(), Point::new(t.x_mm, t.y_mm)))
+        .collect()
+}
+
+/// #293, the issue's first test: `tabs place --replace` swaps the tabs
+/// the operation cuts round (the set `tabs clear <dcv> <op>` removes) for
+/// the new ones in one save, and prints both. Four tabs on the coaster,
+/// then six with `--replace`: the file holds the six, at none of the first
+/// four's points and with fresh ids, so an id read off an earlier `tabs
+/// list` names no new tab. The part keeps tabs, so there is no note that
+/// it comes loose. `--replace` with nothing to place is a usage error.
+#[test]
+fn tabs_place_replace_swaps_the_operations_tabs() {
+    let dir = work_dir("tabs_place_replace_swaps_the_operations_tabs");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let first = tab_points(&dcv);
+    assert_eq!(first.len(), 4, "{first:?}");
+
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "6",
+            "--replace",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert_eq!(printed.matches("Removed `tab").count(), 4, "{printed}");
+    assert_eq!(printed.matches("Placed `tab").count(), 6, "{printed}");
+    assert!(
+        printed.contains("4 tab(s) removed and 6 placed; coaster.dcv saved with 6 tab(s)."),
+        "{printed}"
+    );
+    assert!(!printed.contains("Note:"), "{printed}");
+    let second = tab_points(&dcv);
+    assert_eq!(second.len(), 6, "{second:?}");
+    for (id, point) in &second {
+        assert!(
+            first.iter().all(|(old, _)| old != id),
+            "new tab reuses id {id}: {second:?}"
+        );
+        assert!(
+            first.iter().all(|(_, old)| old.distance_to(*point) > 1e-6),
+            "new tab {id} at an old tab's point: {second:?}"
+        );
+    }
+
+    let before = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1", "--replace"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("--replace needs --count or --at"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(std::fs::read_to_string(&dcv).expect("dcv readable"), before);
+}
+
+/// #293, the issue's second test: without `--replace`, `tabs place` keeps
+/// adding: four tabs then six leave ten on the coaster (none of the six
+/// lands on one of the four), and it notes that the outline already had
+/// tabs and how to swap them instead.
+#[test]
+fn tabs_place_without_replace_notes_existing_tabs() {
+    let dir = work_dir("tabs_place_without_replace_notes_existing_tabs");
+    init_coaster(&dir);
+    let dcv = dir.join("coaster.dcv");
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "6"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(load_file(&dcv).project.tabs.len(), 10);
+    let printed = stdout(&out);
+    assert!(
+        printed.contains(
+            "Note: `coaster` (instance `i1`, profile 0) already had 4 tab(s); this adds 6 more. To swap them instead, give --replace."
+        ),
+        "{printed}"
+    );
+}
+
+/// One open, straight line 98 mm long.
+const ESTIMATE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="120mm" height="40mm" viewBox="0 0 120 40">
+  <path id="line" d="M 10 20 L 108 20"/>
+</svg>
+"#;
+
+/// A project whose program is, besides setup lines, acceptance test 42's:
+/// one Engrave of a 98 mm line, 1 mm deep in one pass, at safe Z 25 mm,
+/// feed and plunge 600 mm/min and the 3 s spin-up dwell. So the program
+/// feeds 100 mm (the 2 mm plunge from 1 mm above the stock, then the
+/// line), 10 s, and rapids 50 mm: 24 mm down to 1 mm above the stock and
+/// 26 mm back up. The first rapid starts where the machine was left, so it
+/// has no length.
+fn estimate_project(dir: &Path) -> PathBuf {
+    std::fs::write(dir.join("line.svg"), ESTIMATE_SVG).expect("svg written");
+    let out = run(dir, &["init", "line.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let dcv = dir.join("line.dcv");
+    fill_in(&dcv, 600.0, 600.0, 18000);
+    let mut project = load_file(&dcv).project;
+    project.operations = vec![Operation::Engrave(EngraveOp {
+        id: OperationId::new("op1"),
+        name: "Engrave".into(),
+        enabled: true,
+        targets: project.instances.iter().map(|i| i.id.clone()).collect(),
+        tool: project
+            .tools
+            .first()
+            .expect("init writes a tool")
+            .id
+            .clone(),
+        depth_mm: Some(1.0),
+        step_down_mm: Some(1.0),
+        alternate_direction: false,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 25.0,
+    })];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// The line `export` prints for [`estimate_project`] with no `[estimate]`.
+const ESTIMATE_LINE: &str = "Estimated time: 13 s (cutting 10 s, dwells 3 s); 50 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.";
+
+/// The line of `report` that starts with `prefix`, trimmed.
+fn line_starting<'a>(report: &'a str, prefix: &str) -> Option<&'a str> {
+    report
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with(prefix))
+}
+
+/// Capability 30 on the quick start's coaster, whose program is pinned in
+/// `tests/expected/coaster-grblhal.nc`: its estimate is pinned with it.
+/// The rapids are the 4 mm down to the ramp's start and the 17 mm back up
+/// to safe Z. With manual spindle control the program pauses twice, to
+/// turn the router on and off, and the line says those are left out.
+#[test]
+fn coaster_prints_estimate() {
+    let dir = work_dir("coaster_prints_estimate");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration."
+        ),
+        "{report}"
+    );
+    set_spindle_control(&dcv, SpindleControl::Manual);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    let line = line_starting(&report, "Estimated time:")
+        .unwrap_or_else(|| panic!("an estimate: {report}"));
+    assert!(
+        line.ends_with("Excludes acceleration and 2 pauses."),
+        "{line}"
+    );
+}
+
+/// Acceptance 42 (functional capability 30): a program of 100 mm of feed
+/// at F600, a 3 s spin-up dwell and 50 mm of rapids is estimated at 10 s
+/// cutting and 3 s dwell, and with no rapid rate configured the 50 mm is
+/// named and left out, with how to include it. `check` prints the same
+/// line once the program builds.
+#[test]
+fn export_prints_estimate() {
+    let dir = work_dir("export_prints_estimate");
+    estimate_project(&dir);
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(ESTIMATE_LINE),
+        "{report}"
+    );
+    let check = run(&dir, &["check", "line.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "check: {}", stdout(&check));
+    let report = stdout(&check);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(ESTIMATE_LINE),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: with `rapid_mm_min = 3000`, the 50 mm of rapids take
+/// 1 s, which the estimate adds.
+#[test]
+fn estimate_with_rapid_rate() {
+    let dir = work_dir("estimate_with_rapid_rate");
+    estimate_project(&dir);
+    write_config(&dir, "[estimate]\nrapid_mm_min = 3000\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 14 s (cutting 10 s, dwells 3 s, rapids 1 s at 3000 mm/min). Excludes acceleration."
+        ),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: `scale_factor = 2` doubles every time, the rapids' too.
+#[test]
+fn estimate_scale_factor_multiplies() {
+    let dir = work_dir("estimate_scale_factor_multiplies");
+    estimate_project(&dir);
+    write_config(&dir, "[estimate]\nscale_factor = 2\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 26 s (cutting 20 s, dwells 6 s; scale factor 2); 50 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration."
+        ),
+        "{report}"
+    );
+    write_config(&dir, "[estimate]\nscale_factor = 2\nrapid_mm_min = 3000\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    assert_eq!(
+        line_starting(&report, "Estimated time:"),
+        Some(
+            "Estimated time: 28 s (cutting 20 s, dwells 6 s, rapids 2 s at 3000 mm/min; scale factor 2). Excludes acceleration."
+        ),
+        "{report}"
+    );
+}
+
+/// Acceptance 42: the estimate never changes a program. The bytes are the
+/// same with and without `[estimate]`. A bad `[estimate]` value fails the
+/// export at its line and column, and nothing is written.
+#[test]
+fn estimate_config_does_not_change_program() {
+    let dir = work_dir("estimate_config_does_not_change_program");
+    estimate_project(&dir);
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let without = std::fs::read(dir.join("line.nc")).expect("line.nc written");
+    write_config(&dir, "[estimate]\nrapid_mm_min = 3000\nscale_factor = 2\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let with = std::fs::read(dir.join("line.nc")).expect("line.nc written");
+    assert!(with == without, "the program changed with [estimate]");
+
+    std::fs::remove_file(dir.join("line.nc")).expect("line.nc removed");
+    let config = write_config(&dir, "[estimate]\nrapid_mm_min = 0\n");
+    let out = run(&dir, &["export", "line.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let message = stderr(&out);
+    assert!(
+        message.contains(&format!("{}:2:16:", config.display())),
+        "{message}"
+    );
+    assert!(!dir.join("line.nc").exists(), "nothing is written");
+}
+
+/// Capability 30: one program per tool run gets an estimate each, then
+/// the total of them.
+#[test]
+fn estimate_per_program_and_total() {
+    let dir = work_dir("estimate_per_program_and_total");
+    two_tool_coaster(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let report = stdout(&out);
+    let lines: Vec<&str> = report
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("Estimated time:"))
+        .collect();
+    assert_eq!(lines.len(), 2, "one per program: {report}");
+    let total = line_starting(&report, "Estimated total time:")
+        .unwrap_or_else(|| panic!("a total: {report}"));
+    assert!(total.contains("rapids not included"), "{total}");
+    // The total is the programs' sum, to the second.
+    let seconds = |line: &str| -> u64 {
+        let time = line
+            .split(':')
+            .nth(1)
+            .and_then(|rest| rest.split('(').next())
+            .unwrap_or_else(|| panic!("a time in {line}"))
+            .trim();
+        let mut words = time.split_whitespace();
+        let mut sum = 0;
+        while let (Some(n), Some(unit)) = (words.next(), words.next()) {
+            let n: u64 = n.parse().unwrap_or_else(|_| panic!("{line}"));
+            sum += n * match unit {
+                "h" => 3600,
+                "min" => 60,
+                "s" => 1,
+                other => panic!("unit {other} in {line}"),
+            };
+        }
+        sum
+    };
+    let parts: u64 = lines.iter().map(|l| seconds(l)).sum();
+    assert!(
+        seconds(total).abs_diff(parts) <= 1,
+        "{total} is not the sum of {lines:?}"
+    );
+}
+
+/// The text of every element of `svg` whose `class` is `class`, from its
+/// name to its closing `>`.
+fn svg_elements<'a>(svg: &'a str, class: &str) -> Vec<&'a str> {
+    let wanted = format!(" class=\"{class}\"");
+    svg.split('<').filter(|e| e.contains(&wanted)).collect()
+}
+
+/// The value of attribute `name` in `element`.
+fn svg_attr<'a>(element: &'a str, name: &str) -> &'a str {
+    let key = format!(" {name}=\"");
+    let (_, rest) = element.split_once(&key).expect("attribute present");
+    rest.split('"').next().expect("attribute closed")
+}
+
+/// The end point of each command of SVG path data `d` written as the
+/// preview writes it: `M x y`, `L x y`, `A rx ry rot large sweep x y`.
+fn svg_path_points(d: &str) -> Vec<(f64, f64)> {
+    let mut tokens = d.split_whitespace();
+    let mut points = Vec::new();
+    let number = |t: Option<&str>| -> f64 {
+        t.expect("a number follows")
+            .parse()
+            .expect("path numbers parse")
+    };
+    while let Some(command) = tokens.next() {
+        match command {
+            "M" | "L" => {}
+            "A" => {
+                for _ in 0..5 {
+                    tokens.next();
+                }
+            }
+            other => panic!("unexpected path command {other} in {d}"),
+        }
+        let x = number(tokens.next());
+        let y = number(tokens.next());
+        points.push((x, y));
+    }
+    points
+}
+
+/// Acceptance test 43: the coaster's preview is one SVG framed by the
+/// stock whose cut paths pass through every point of the toolpath, Y
+/// flipped, within 0.001 mm; one tab mark per tab on the one pass below
+/// the tab top, one start circle per pass, and the same bytes twice.
+#[test]
+fn export_preview_coaster() {
+    let dir = work_dir("export_preview_coaster");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let args = [
+        "export",
+        "coaster.dcv",
+        "--preview",
+        "preview.svg",
+        "--date",
+        FIXED_DATE,
+    ];
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    assert!(stdout(&out).contains("preview.svg"), "{}", stdout(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    assert!(program == include_str!("expected/coaster-grblhal.nc"));
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+
+    let project = load_file(&dcv).project;
+    let (width, height) = (project.stock.width_mm, project.stock.height_mm);
+    assert!(
+        svg.contains(&format!(" viewBox=\"0 0 {width:.3} {height:.3}\"")),
+        "{svg}"
+    );
+    assert!(!svg.contains("transform"), "{svg}");
+
+    let drawn: Vec<(f64, f64)> = svg_elements(&svg, "cut")
+        .iter()
+        .flat_map(|cut| svg_path_points(svg_attr(cut, "d")))
+        .collect();
+    let (toolpath, _) =
+        dc_cam::generate_profile(&project, as_profile(&project.operations[0])).expect("generates");
+    let mut at: Option<(f64, f64)> = None;
+    let mut checked = 0;
+    for m in &toolpath.moves {
+        let to = (m.to.x, m.to.y);
+        let moved = at.is_some_and(|(x, y)| (to.0 - x).hypot(to.1 - y) > 1e-9);
+        if m.is_cut() && moved {
+            let flipped = (to.0, height - to.1);
+            assert!(
+                drawn
+                    .iter()
+                    .any(|p| (p.0 - flipped.0).abs() <= 1e-3 && (p.1 - flipped.1).abs() <= 1e-3),
+                "toolpath point {to:?} not drawn at {flipped:?}"
+            );
+            checked += 1;
+        }
+        at = Some(to);
+    }
+    assert!(checked > 10, "the coaster cuts: {checked}");
+    // The 12 mm cut in 4 mm passes rises over the 4 tabs on its last pass
+    // only: the tabs stand 3 mm, above the 8 mm pass's floor.
+    assert_eq!(svg_elements(&svg, "tab").len(), 4, "{svg}");
+    let starts = svg_elements(&svg, "start");
+    assert_eq!(starts.len(), 3, "one per pass: {svg}");
+    assert_eq!(svg_attr(starts[0], "r"), "3.175");
+
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let again = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+    assert!(again == svg, "the preview changed between exports");
+}
+
+/// Addendum A5: `check --preview` writes the picture and no program.
+#[test]
+fn check_preview_writes_file() {
+    let dir = work_dir("check_preview_writes_file");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let out = run(&dir, &["check", "coaster.dcv", "--preview", "preview.svg"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+    assert!(stdout(&out).contains("preview.svg"), "{}", stdout(&out));
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+    assert!(svg.starts_with("<?xml"), "{svg}");
+    assert_eq!(svg_elements(&svg, "tab").len(), 4, "{svg}");
+    assert!(!dir.join("coaster.nc").exists(), "check wrote a program");
+    assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+
+    // An operation that cannot generate: no preview.
+    let fresh = work_dir("check_preview_writes_file_fresh");
+    init_coaster(&fresh);
+    let out = run(
+        &fresh,
+        &["check", "coaster.dcv", "--preview", "preview.svg"],
+    );
+    assert_eq!(out.status.code(), Some(1), "check: {}", stdout(&out));
+    assert!(
+        !fresh.join("preview.svg").exists(),
+        "preview of a project with errors"
+    );
+}
+
+/// Addendum A5: `--preview` naming the project or a program is refused,
+/// and nothing is written.
+#[test]
+fn export_preview_refuses_dcv_path() {
+    let dir = work_dir("export_preview_refuses_dcv_path");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+    let names_before = {
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    for (command, preview) in [
+        ("export", "coaster.dcv"),
+        ("export", "coaster.nc"),
+        ("export", "other.dcv"),
+        ("check", "coaster.dcv"),
+        ("check", "coaster.nc"),
+        // The drawing the project came from: an SVG, but not a preview.
+        ("export", "coaster.svg"),
+        ("check", "coaster.svg"),
+    ] {
+        let out = run(&dir, &[command, "coaster.dcv", "--preview", preview]);
+        assert_eq!(out.status.code(), Some(1), "{command} --preview {preview}");
+        let err = stderr(&out);
+        assert!(err.contains("--preview"), "{command} {preview}: {err}");
+        assert_eq!(std::fs::read(&dcv).expect("dcv readable"), before);
+        assert_eq!(
+            std::fs::read(dir.join("coaster.svg")).expect("drawing readable"),
+            std::fs::read(repo_fixture("coaster.svg")).expect("fixture readable"),
+            "{command} --preview {preview} changed the drawing"
+        );
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, names_before, "{command} --preview {preview} wrote");
+    }
+    // The program's own `-o` path is refused too.
+    let args = [
+        "export",
+        "coaster.dcv",
+        "-o",
+        "part.svg",
+        "--preview",
+        "part.svg",
+    ];
+    let out = run(&dir, &args);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!dir.join("part.svg").exists());
+}
+
+/// The coaster in an inch project, every value set as the quick start
+/// sets it but in inches: `(field, inch string, the same value in mm)`,
+/// the millimetres being the product the loader computes (addendum A6).
+const COASTER_INCH_VALUES: [(&str, &str, f64); 7] = [
+    ("thickness_mm", "1/2 in", 0.5 * 25.4),
+    ("depth_mm", "1/2 in", 0.5 * 25.4),
+    ("through_cut_allowance_mm", "1/64 in", (1.0 / 64.0) * 25.4),
+    ("feed_mm_min", "60 in/min", 60.0 * 25.4),
+    ("plunge_mm_min", "20 in/min", 20.0 * 25.4),
+    ("step_down_mm", "1/8 in", 0.125 * 25.4),
+    ("safe_z_mm", "0.2 in", 0.2 * 25.4),
+];
+
+/// The millimetres [`COASTER_INCH_VALUES`] lists for `field`.
+fn coaster_inch_mm(field: &str) -> f64 {
+    COASTER_INCH_VALUES
+        .iter()
+        .find(|(f, _, _)| *f == field)
+        .map(|(_, _, mm)| *mm)
+        .expect("value listed")
+}
+
+/// The inch string [`COASTER_INCH_VALUES`] lists for `field`, as JSON.
+fn coaster_inch_string(field: &str) -> serde_json::Value {
+    COASTER_INCH_VALUES
+        .iter()
+        .find(|(f, _, _)| *f == field)
+        .map(|(_, text, _)| serde_json::Value::String((*text).to_owned()))
+        .expect("value listed")
+}
+
+/// `init --units inch` on the coaster, then its values filled in twice:
+/// `coaster-mm.dcv` with the millimetre numbers and `coaster-in.dcv` with
+/// the inch strings of [`COASTER_INCH_VALUES`]. Returns the two paths.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "indexing a JSON object inserts the key; a saved project has these"
+)]
+fn coaster_inch_twins(dir: &Path) -> (PathBuf, PathBuf) {
+    std::fs::copy(repo_fixture("coaster.svg"), dir.join("coaster.svg")).expect("svg copied");
+    let out = run(dir, &["init", "coaster.svg", "--units", "inch"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let mut project = load_file(&dir.join("coaster.dcv")).project;
+    project.stock.thickness_mm = Some(coaster_inch_mm("thickness_mm"));
+    for tool in &mut project.tools {
+        tool.feed_mm_min = Some(coaster_inch_mm("feed_mm_min"));
+        tool.plunge_mm_min = Some(coaster_inch_mm("plunge_mm_min"));
+        tool.rpm = Some(18000);
+        tool.step_down_mm = Some(coaster_inch_mm("step_down_mm"));
+    }
+    for op in project.operations.iter_mut().map(as_profile_mut) {
+        op.depth_mm = Some(coaster_inch_mm("depth_mm"));
+        op.through_cut_allowance_mm = coaster_inch_mm("through_cut_allowance_mm");
+        op.safe_z_mm = coaster_inch_mm("safe_z_mm");
+    }
+    let text = save(&project).expect("project saves");
+    let mm_path = dir.join("coaster-mm.dcv");
+    std::fs::write(&mm_path, &text).expect("dcv written");
+
+    // The same project with the values as strings.
+    let mut root: serde_json::Value = serde_json::from_str(&text).expect("json");
+    root["stock"]["thickness_mm"] = coaster_inch_string("thickness_mm");
+    for tool in root["tools"].as_array_mut().expect("tools") {
+        for field in ["feed_mm_min", "plunge_mm_min", "step_down_mm"] {
+            tool[field] = coaster_inch_string(field);
+        }
+    }
+    for op in root["operations"].as_array_mut().expect("operations") {
+        for field in ["depth_mm", "through_cut_allowance_mm", "safe_z_mm"] {
+            op[field] = coaster_inch_string(field);
+        }
+    }
+    let in_path = dir.join("coaster-in.dcv");
+    let text = serde_json::to_string_pretty(&root).expect("json written");
+    std::fs::write(&in_path, text).expect("dcv written");
+    (mm_path, in_path)
+}
+
+/// Acceptance test 44: a project whose lengths and feeds are written in
+/// inches exports the program its millimetre twin exports, byte for byte.
+#[test]
+fn inch_input_exports_same_program() {
+    let dir = work_dir("inch_input_exports_same_program");
+    let (mm_path, in_path) = coaster_inch_twins(&dir);
+    let in_text = std::fs::read_to_string(&in_path).expect("dcv readable");
+    assert!(in_text.contains("\"1/2 in\""), "{in_text}");
+    assert!(in_text.contains("\"60 in/min\""), "{in_text}");
+    let export = |dcv: &Path, nc: &str| {
+        let dcv = dcv.to_str().expect("utf-8 path");
+        let out = run(&dir, &["export", dcv, "-o", nc, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "export {dcv}: {}", stderr(&out));
+        std::fs::read_to_string(dir.join(nc)).expect("program written")
+    };
+    let from_mm = export(&mm_path, "from-mm.nc");
+    let from_in = export(&in_path, "from-in.nc");
+    assert!(from_mm.contains("G20"), "an inch program: {from_mm}");
+    assert!(
+        from_in == from_mm,
+        "programs differ:\n{from_in}\n---\n{from_mm}"
+    );
+    // `check` reads the strings too, and finds nothing wrong.
+    let out = run(&dir, &["check", in_path.to_str().expect("utf-8 path")]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+}
+
+/// Addendum A6: export's summary states each operation's depth in the
+/// project's display units, with that unit's decimal places.
+#[test]
+fn inch_project_summary_in_inches() {
+    let dir = work_dir("inch_project_summary_in_inches");
+    let (_, in_path) = coaster_inch_twins(&dir);
+    let dcv = in_path.to_str().expect("utf-8 path");
+    let out = run(&dir, &["export", dcv, "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(summary.contains(", 0.5000 in deep"), "{summary}");
+    assert!(!summary.contains("mm deep"), "{summary}");
+
+    // A millimetre project keeps millimetres, at their decimal places.
+    let dir = work_dir("inch_project_summary_in_inches_mm");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let summary = stdout(&out);
+    assert!(summary.contains(", 12.000 mm deep"), "{summary}");
+}
+
+// ── #283: clearance, tool-change and park heights ──
+
+/// The plaque (`tests/fixtures/plaque.dcv`) copied into `dir`, saved with
+/// `heights` set, as `plaque.dcv`.
+fn plaque_with_heights(dir: &Path, heights: dc_project::Heights) -> PathBuf {
+    let dcv = copy_fixture(dir, "plaque.dcv", "plaque.dcv");
+    let mut project = load_file(&dcv).project;
+    project.heights = heights;
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// Acceptance 45's heights: clearance 20 mm, machine Z −5 mm, park (0, 0).
+fn acceptance_45_heights() -> dc_project::Heights {
+    dc_project::Heights {
+        clearance_mm: Some(20.0),
+        tool_change_machine_z_mm: Some(-5.0),
+        park: Some(dc_project::ParkXy {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        }),
+    }
+}
+
+/// Each line of `program` with code, comments removed, with its 1-based
+/// line number and the operation whose header comment it follows.
+fn code_by_operation(program: &str) -> Vec<(usize, Option<usize>, String)> {
+    let mut op = None;
+    let mut out = Vec::new();
+    for (i, line) in program.lines().enumerate() {
+        if let Some(rest) = line.strip_prefix("( Operation ") {
+            op = rest.split(':').next().and_then(|n| n.parse().ok());
+            continue;
+        }
+        let code = match line.find('(') {
+            Some(at) => line[..at].trim(),
+            None => line.trim(),
+        };
+        if !code.is_empty() {
+            out.push((i + 1, op, code.to_owned()));
+        }
+    }
+    out
+}
+
+/// Acceptance 45 (#283, functional capability 33): the two-tool plaque on
+/// grblHAL in one program, with `clearance_mm: 20`,
+/// `tool_change_machine_z_mm: -5` and `park: (0, 0)`. Every move in XY
+/// between parts and between operations is at Z 20 (work zero at the
+/// stock top), and between passes of one part at its safe Z of 15: the
+/// four drilled holes, each its own part, are crossed at 20; the Cut out
+/// Profile's passes at 15. The tool change is the rise to 20, `G53 G0
+/// Z-5.000`, `M5`, `T2 M6`; the program ends with a rapid to the park
+/// point at Z 20, then the lift, then the footer. Nothing goes below the
+/// material bottom less the through-cut allowance (S1), and the export
+/// says to home the machine.
+#[test]
+fn heights_plaque_one_program() {
+    let dir = work_dir("heights_plaque_one_program");
+    plaque_with_heights(&dir, acceptance_45_heights());
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plaque.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("plaque.nc")).expect("program written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let op_of: Vec<(usize, Option<usize>, String)> = code_by_operation(&program);
+    let op_at = |line: usize| {
+        op_of
+            .iter()
+            .find(|(l, ..)| *l == line)
+            .and_then(|(_, op, _)| *op)
+    };
+
+    // S1: the plaque is 11.8 mm thick, cut through with 0.2 mm allowance.
+    for mv in &moves {
+        if let Some(z) = mv.to.z {
+            assert!(
+                z >= -12.0 - 1e-9,
+                "line {} below the floor: {mv:?}",
+                mv.line
+            );
+        }
+    }
+    // Every rapid in XY, by operation, at the clearance or safe Z.
+    let xy_rapids: Vec<(usize, Option<usize>, f64)> = moves
+        .iter()
+        .filter(|m| m.kind == dc_gcode::parse::MotionKind::Rapid)
+        .filter(|m| m.to.x.is_some() && (m.from.x != m.to.x || m.from.y != m.to.y))
+        .map(|m| (m.line, op_at(m.line), m.to.z.expect("Z known")))
+        .collect();
+    for &(line, _, z) in &xy_rapids {
+        assert!(
+            (z - 20.0).abs() < 1e-9 || (z - 15.0).abs() < 1e-9,
+            "line {line}: XY rapid at Z {z}"
+        );
+    }
+    // Into each operation at the clearance height.
+    for op in 1..=5 {
+        let first = xy_rapids
+            .iter()
+            .find(|(_, o, _)| *o == Some(op))
+            .unwrap_or_else(|| panic!("operation {op} has an XY rapid"));
+        assert!(
+            (first.2 - 20.0).abs() < 1e-9,
+            "into operation {op}: {first:?}"
+        );
+    }
+    // Drill: four holes, four parts, each reached at 20.
+    let drill: Vec<f64> = xy_rapids
+        .iter()
+        .filter(|(_, o, _)| *o == Some(3))
+        .map(|r| r.2)
+        .collect();
+    assert!(
+        drill.len() == 4 && drill.iter().all(|z| (z - 20.0).abs() < 1e-9),
+        "{xy_rapids:?}"
+    );
+    // Cut out: one part, its passes linked at 15.
+    let cut_out: Vec<f64> = xy_rapids
+        .iter()
+        .filter(|(_, o, _)| *o == Some(4))
+        .map(|r| r.2)
+        .skip(1)
+        .collect();
+    assert!(
+        !cut_out.is_empty() && cut_out.iter().all(|&z| (z - 15.0).abs() < 1e-9),
+        "{cut_out:?}"
+    );
+
+    let code: Vec<&str> = op_of.iter().map(|(_, _, c)| c.as_str()).collect();
+    let change = code
+        .iter()
+        .position(|c| c.starts_with("T2 M6"))
+        .expect("a tool change");
+    assert!(
+        ["Z20.000", "G0 Z20.000"].contains(&code[change - 3]),
+        "{:?}",
+        &code[change - 3..=change]
+    );
+    assert_eq!(code[change - 2..=change], ["G53 G0 Z-5.000", "M5", "T2 M6"]);
+    let n = code.len();
+    assert_eq!(
+        code[n - 5..],
+        ["Z20.000", "X0.000 Y0.000", "G53 G0 Z-5.000", "M5", "M30"],
+        "{program}"
+    );
+    assert!(
+        stdout(&out).contains(
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53)."
+        ),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Acceptance 45, the errors: on Mach3, whose manual does not establish
+/// what its `G53` does with a tool length offset (#306), the machine Z is
+/// an error naming the setting at its place in the file; a clearance
+/// below an enabled operation's safe Z (15 on the plaque) is an error
+/// naming the operation. With all three unset the version 11 plaque
+/// exports the programs it did before #283.
+#[test]
+fn heights_errors_and_unset_heights() {
+    let dir = work_dir("heights_errors_and_unset_heights");
+    let dcv = plaque_with_heights(&dir, acceptance_45_heights());
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("mach3").expect("mach3 is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        text.contains("error: heights.tool_change_machine_z_mm is set, but post-processor `mach3`"),
+        "{text}"
+    );
+    assert!(text.contains("plaque.dcv:"), "located: {text}");
+
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            clearance_mm: Some(10.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains(
+            "heights.clearance_mm is 10 mm, below the 15 mm safe_z_mm of operation `Panel`"
+        ),
+        "{}",
+        stderr(&out)
+    );
+
+    // The plaque as the build before #283 saved it (version 11, grblHAL
+    // v2), against the expected programs of that build.
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/heights-migration/plaque.dcv"),
+        &dcv,
+    )
+    .expect("corpus plaque copied");
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_corpus_programs(&dir, "plaque", "heights unset");
+    assert!(
+        !stdout(&out).contains("home the machine"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// #306: acceptance 45's heights on LinuxCNC. `check` accepts the
+/// machine Z, and `export` writes one program per tool run (LinuxCNC has
+/// no `M6`), each ending with the rise to the clearance height, the park
+/// rapid, `G53 G0 Z-5.000`, then the footer `M5`, `M2`, and says to home
+/// the machine.
+#[test]
+fn heights_on_linuxcnc() {
+    let dir = work_dir("heights_on_linuxcnc");
+    let dcv = plaque_with_heights(&dir, acceptance_45_heights());
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export: {}", stderr(&out));
+    let mut programs: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("dir readable")
+        .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "ngc"))
+        .collect();
+    programs.sort();
+    assert_eq!(programs.len(), 2, "{programs:?}");
+    for path in &programs {
+        let program = std::fs::read_to_string(path).expect("program written");
+        let code: Vec<String> = code_by_operation(&program)
+            .into_iter()
+            .map(|(_, _, c)| c)
+            .collect();
+        let n = code.len();
+        assert_eq!(
+            code[n - 5..],
+            ["Z20.000", "X0.000 Y0.000", "G53 G0 Z-5.000", "M5", "M2"],
+            "{program}"
+        );
+        assert_eq!(
+            code.iter().filter(|c| c.contains("G53")).count(),
+            1,
+            "{program}"
+        );
+    }
+    assert_eq!(
+        stdout(&out)
+            .matches(
+                "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53)."
+            )
+            .count(),
+        1,
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Design addendum A7: `export` says to home the machine when its
+/// programs lift with `G53`, since a machine position means nothing on an
+/// unhomed machine and DreamCarve cannot check; with one program per tool
+/// run, once for all of them. Without the setting it says nothing.
+#[test]
+fn export_prints_home_note() {
+    let dir = work_dir("export_prints_home_note");
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert_eq!(
+        text.matches(
+            "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53)."
+        )
+        .count(),
+        1,
+        "{text}"
+    );
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plaque.dcv",
+            "--one-program",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains(
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53)."
+        ),
+        "{}",
+        stdout(&out)
+    );
+    plaque_with_heights(&dir, dc_project::Heights::unset());
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        !stdout(&out).contains("home the machine"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// #308 on LinuxCNC (#306): `$20` is GRBL's, so the export note names
+/// LinuxCNC's condition: its soft limits apply only once the machine is
+/// homed, which it enforces unless `[TRAJ] NO_FORCE_HOMING` is set
+/// (definitions README, "Machine-coordinate moves").
+#[test]
+fn export_machine_z_note_on_linuxcnc() {
+    let dir = work_dir("export_machine_z_note_on_linuxcnc");
+    let dcv = plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    let mut project = load_file(&dcv).project;
+    project.post_processor =
+        dc_project::PostProcessorRef::latest("linuxcnc").expect("linuxcnc is bundled");
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    let note = "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53). \
+                LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.";
+    assert_eq!(text.lines().filter(|l| *l == note).count(), 1, "{text}");
+    assert!(!text.contains("$20"), "{text}");
+}
+
+/// #308: on a machine that homes Z downward every negative machine Z is
+/// below the travel (GRBL `system.c` 340-344, grblHAL `machine_limits.c`
+/// 129-131), and only soft limits stop the lift from driving Z down, so
+/// the export note names them, `$20=1`, for one program and for a run per
+/// tool. Unset, it says nothing about them.
+#[test]
+fn export_machine_z_note_names_soft_limits() {
+    let dir = work_dir("export_machine_z_note_names_soft_limits");
+    plaque_with_heights(
+        &dir,
+        dc_project::Heights {
+            tool_change_machine_z_mm: Some(-5.0),
+            ..dc_project::Heights::unset()
+        },
+    );
+    for (args, note) in [
+        (
+            &["export", "plaque.dcv", "--date", FIXED_DATE][..],
+            "Before you start: home the machine; each program moves to machine Z -5.000 mm (G53). \
+             Z must home upward, or soft limits must be on ($20=1).",
+        ),
+        (
+            &[
+                "export",
+                "plaque.dcv",
+                "--one-program",
+                "--date",
+                FIXED_DATE,
+            ][..],
+            "Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). \
+             Z must home upward, or soft limits must be on ($20=1).",
+        ),
+    ] {
+        let out = run(&dir, args);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let text = stdout(&out);
+        assert_eq!(
+            text.lines().filter(|l| *l == note).count(),
+            1,
+            "{args:?}\n{text}"
+        );
+        assert_eq!(text.matches("$20=1").count(), 1, "{args:?}\n{text}");
+    }
+    plaque_with_heights(&dir, dc_project::Heights::unset());
+    let out = run(&dir, &["export", "plaque.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("$20"), "{}", stdout(&out));
+}
+
+/// #283: the repository's corpus of version 11 projects, saved with
+/// placed tabs by the build before #283 (`tabs place` on each project of
+/// the tabs-migration corpus), with the programs they export.
+fn heights_migration_corpus() -> Vec<(String, PathBuf)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/heights-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// #283, design addendum A7: every version 11 project of the corpus
+/// migrates to version 12 with its heights unset and exports byte for
+/// byte the programs the build before #283 exported (the tabs-migration
+/// expected programs, which that build reproduced), as loaded and after
+/// it is saved at version 12.
+#[test]
+fn version_11_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_11_projects_export_byte_identical_programs");
+    let corpus = heights_migration_corpus();
+    assert_eq!(corpus.len(), 16, "{corpus:?}");
+    for (name, path) in corpus {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(text.contains("\"version\": 11,"), "{name} is version 11");
+        assert!(!text.contains("\"heights\""), "{name} has no heights");
+
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "version 11");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        assert_eq!(project.heights, dc_project::Heights::unset(), "{name}");
+        std::fs::write(dir.join(&file), save(&project).expect("saves")).expect("dcv written");
+        for entry in std::fs::read_dir(&dir).expect("dir readable") {
+            let path = entry.expect("entry").path();
+            if path.extension().is_some_and(|x| x == "nc") {
+                std::fs::remove_file(path).expect("program removed");
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        assert_corpus_programs(&dir, &name, "version 12");
+    }
+}
+
+// ── #285: tabs off corners, and the start point ──
+
+/// #285 (`migrate::v13_to_v14_adds_corner_and_start_defaults`): every
+/// project of the #284 corpus saved at format 13 (the 22 projects of
+/// `tests/fixtures/last-pass-migration/` with `last_pass: null` added)
+/// migrates to format 14 with `avoid_corners: false` on every tab request
+/// and `start: "auto"` on every Profile, and exports byte for byte the
+/// programs the build before #285 wrote. Those are the #284 corpus's
+/// programs, committed under `tests/expected/last-pass-migration/`: the
+/// build before #285 exported the format 13 files to the same bytes.
+#[test]
+fn version_13_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_13_projects_export_byte_identical_programs");
+    let corpus =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corners-start-migration");
+    let expected_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/last-pass-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&corpus)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 22, "{names:?}");
+    let mut requests = 0;
+    for (name, path) in names {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 13"),
+            "{name} is a version 13 file"
+        );
+        assert!(!text.contains("avoid_corners"), "{name}");
+        assert!(!text.contains("\"start\""), "{name}");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        for op in &project.operations {
+            if let Operation::Profile(p) = op {
+                assert_eq!(p.start, StartAt::Auto, "{name}: {}", p.id);
+                if let Some(tabs) = &p.tabs {
+                    assert!(!tabs.avoid_corners, "{name}: {}", p.id);
+                    requests += 1;
+                }
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let programs = exported_programs(&dir, &name);
+        assert!(!programs.is_empty(), "{name} exported nothing");
+        for (program, text) in programs {
+            let expected = std::fs::read_to_string(expected_dir.join(&program))
+                .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{name}: {program} differs from the program before #285:\n{text}"
+            );
+        }
+    }
+    assert!(requests > 10, "the corpus holds tab requests: {requests}");
+}
+
+/// The cutting moves of `program` held at `z_mm` while they move in XY.
+fn held_at(program: &str, z_mm: f64) -> Vec<MachineMove> {
+    dc_gcode::parse_motion(program)
+        .expect("program parses")
+        .into_iter()
+        .filter(|m| {
+            m.kind.is_cut()
+                && m.from.z.is_some_and(|z| (z - z_mm).abs() <= 1e-3)
+                && m.to.z.is_some_and(|z| (z - z_mm).abs() <= 1e-3)
+                && (m.from.x != m.to.x || m.from.y != m.to.y)
+        })
+        .collect()
+}
+
+/// Whether `m` is an arc, `G2` or `G3`.
+fn is_arc(m: &MachineMove) -> bool {
+    !matches!(
+        m.kind,
+        dc_gcode::parse::MotionKind::Linear | dc_gcode::parse::MotionKind::Rapid
+    )
+}
+
+/// #285, acceptance 47 from the CLI: `init` writes `avoid_corners: true`
+/// and `start: "auto"`, and the coaster's program is byte-identical with
+/// `avoid_corners` on and off. The coaster redrawn as a 50 mm square
+/// rotated 45°, cut outside with init's four tabs and `start: {near:
+/// {x_mm: 0, y_mm: 0}}`, checks with no error and exports, so the full
+/// safety pass (S1–S16) accepted it: every move held at the tab top is
+/// straight, on a side, where without `avoid_corners` the tabs sit on the
+/// arcs round the corners; and the first pass reaches its depth at the
+/// path's point nearest the origin. `tabs place --count` places tabs off
+/// the corners too, and `--allow-corners` places them as before.
+#[test]
+fn corners_and_start_rotated_square() {
+    let dir = work_dir("corners_and_start_rotated_square");
+    let dcv = init_coaster(&dir);
+    let project = load_file(&dcv).project;
+    let op = as_profile(&project.operations[0]);
+    assert_eq!(op.start, StartAt::Auto);
+    assert!(op.tabs.as_ref().expect("init's request").avoid_corners);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+
+    let export = |name: &str| {
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        std::fs::read_to_string(dir.join("coaster.nc")).expect("program")
+    };
+    let edit = |f: &dyn Fn(&mut Project)| {
+        let mut project = load_file(&dcv).project;
+        f(&mut project);
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    };
+    let set_avoid = |avoid: bool| {
+        edit(&|p: &mut Project| {
+            for op in p.operations.iter_mut().map(as_profile_mut) {
+                if let Some(tabs) = &mut op.tabs {
+                    tabs.avoid_corners = avoid;
+                }
+            }
+        });
+    };
+    let on = export("coaster on");
+    set_avoid(false);
+    let off = export("coaster off");
+    assert!(on == off, "the coaster's tabs never move");
+
+    edit(&|p: &mut Project| {
+        for def in p.definitions.values_mut() {
+            def.profiles = vec![Polyline::rect(Point::new(-25.0, -25.0), 50.0, 50.0)];
+        }
+        for instance in &mut p.instances {
+            instance.transform = Transform::rotate(std::f64::consts::FRAC_PI_4)
+                .then(Transform::translate(50.0, 50.0));
+        }
+        for op in p.operations.iter_mut().map(as_profile_mut) {
+            op.start = StartAt::Near {
+                x_mm: 0.0,
+                y_mm: 0.0,
+            };
+        }
+    });
+    let tab_z_mm = 3.0 - MEASURED_THICKNESS_MM;
+    let off = export("square off");
+    assert!(
+        held_at(&off, tab_z_mm).iter().any(is_arc),
+        "without avoid_corners the tabs sit on the corners:\n{off}"
+    );
+    set_avoid(true);
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(" 0 error(s)"), "{report}");
+    assert!(!report.contains("tab_on_corner"), "{report}");
+    let on = export("square on");
+    let held = held_at(&on, tab_z_mm);
+    assert!(!held.is_empty(), "{on}");
+    for m in &held {
+        assert!(!is_arc(m), "line {}: a tab on a corner:\n{on}", m.line);
+    }
+    // The cut starts at the middle of the side nearest the origin, a
+    // tool radius out: the first pass's ramp ends there.
+    let off_side =
+        25.0 * std::f64::consts::SQRT_2 / 2.0 + 6.35 / 2.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let start = Point::new(50.0 - off_side, 50.0 - off_side);
+    let moves = dc_gcode::parse_motion(&on).expect("program parses");
+    let first_depth = -STEP_DOWN_MM;
+    let xy = |m: &MachineMove| Point::new(m.to.x.expect("X"), m.to.y.expect("Y"));
+    let at_depth = |m: &MachineMove| m.to.z.is_some_and(|z| (z - first_depth).abs() <= 1e-3);
+    let reached = moves
+        .iter()
+        .position(|m| m.kind.is_cut() && at_depth(m))
+        .expect("the first pass is cut");
+    let arrived = moves
+        .iter()
+        .skip(reached)
+        .position(|m| m.kind.is_cut() && at_depth(m) && xy(m).distance_to(start) <= 2e-3)
+        .expect("the first pass's ramp ends at the start");
+    // Between the two, the ramp stays beside the start.
+    for m in moves.iter().skip(reached).take(arrived + 1) {
+        assert!(xy(m).distance_to(start) <= 3.0 * 6.35, "line {}", m.line);
+    }
+
+    // `tabs place --count` keeps the tabs off the corners; with
+    // `--allow-corners` it places them as before.
+    edit(&|p: &mut Project| {
+        for op in p.operations.iter_mut().map(as_profile_mut) {
+            op.tabs = None;
+        }
+    });
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let placed = export("placed");
+    assert!(!held_at(&placed, tab_z_mm).is_empty());
+    assert!(!held_at(&placed, tab_z_mm).iter().any(is_arc), "{placed}");
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "4",
+            "--replace",
+            "--allow-corners",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let allowed = export("allowed");
+    assert!(held_at(&allowed, tab_z_mm).iter().any(is_arc), "{allowed}");
+    assert!(allowed == off, "placed as the request laid them");
+}
+
+// ── #302: hole tabs that hold their slugs ──
+
+/// The #285 corpus's 60 mm square with a 30 mm hole (Outside, `o1`, a
+/// 6.35 mm bit, tabs 6 × 2 mm), copied into `dir` as `square.dcv` with its
+/// request placed and every tab cleared, ready for `tabs place`.
+fn bare_square_with_hole(dir: &Path) -> PathBuf {
+    let dcv = dir.join("square.dcv");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/corners-start-migration/square-with-hole-on-holes.dcv"),
+        &dcv,
+    )
+    .expect("fixture copied");
+    let out = run(dir, &["tabs", "clear", "square.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert!(project.tabs.is_empty(), "{:?}", project.tabs);
+    let op = project.operations.first().map(as_profile);
+    assert!(op.is_some_and(|op| op.tabs.is_none()), "{op:?}");
+    dcv
+}
+
+/// `export` then `check` of `square.dcv` in `dir`, each as stdout and
+/// stderr together; both must succeed.
+fn export_and_check(dir: &Path) -> [String; 2] {
+    let export = run(dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(export.status.code(), Some(0), "{}", stderr(&export));
+    let check = run(dir, &["check", "square.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "{}", stdout(&check));
+    [export, check].map(|out| format!("{}{}", stdout(&out), stderr(&out)))
+}
+
+/// The tabs of `project` on the square's hole, profile 1.
+fn hole_tabs(project: &Project) -> Vec<&dc_project::PlacedTab> {
+    project.tabs.iter().filter(|t| t.profile == 1).collect()
+}
+
+/// #302, the issue's second test: `tabs place --at 5 --on-holes` on the
+/// square with a hole puts a tab 5 mm along each outline. The one on the
+/// hole is saved with `holds_slug: true`, the one on the part with
+/// `false`. Placing warns `tab_on_hole` once, for the hole's tab, and
+/// `export` and `check` then warn none, though the tab is on the hole's
+/// outline rather than on the Profile's path (#300 warned on every
+/// export). The same tab saved `false`, as a hand edit or a tab placed
+/// without the flag is, warns on every `export` and `check`.
+#[test]
+fn tabs_place_at_on_holes_exports_without_tab_on_hole() {
+    let dir = work_dir("tabs_place_at_on_holes_exports_without_tab_on_hole");
+    let dcv = bare_square_with_hole(&dir);
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--at",
+            "5",
+            "--on-holes",
+            "--width",
+            "6",
+            "--height",
+            "2",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let warned = stderr(&out);
+    assert_eq!(
+        warned.matches("warning: tab_on_hole:").count(),
+        1,
+        "{warned}"
+    );
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 2, "{:?}", project.tabs);
+    for tab in &project.tabs {
+        assert_eq!(tab.holds_slug, Some(tab.profile == 1), "{tab:?}");
+    }
+    let hole = hole_tabs(&project)[0].id.clone();
+    assert!(warned.contains(&format!("tab `{hole}` is on")), "{warned}");
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+    }
+
+    let mut project = project;
+    for tab in &mut project.tabs {
+        tab.holds_slug = Some(false);
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    for _ in 0..2 {
+        for report in export_and_check(&dir) {
+            assert_eq!(
+                report.matches("warning: tab_on_hole:").count(),
+                1,
+                "{report}"
+            );
+            assert!(report.contains(&format!("tab `{hole}` is on")), "{report}");
+        }
+    }
+}
+
+/// #302: `tabs place --count 4 --on-holes` saves the tabs it puts on the
+/// hole with `holds_slug: true` and those on the part with `false`. It
+/// keeps them off corners (#285), and `export` and `check` warn no
+/// `tab_on_hole` for them: as placed, after the Profile gains a last pass
+/// and a start point (#284, #285), and after its bit changes, which takes
+/// its path off the tabs' points (#300 warned for them then). Placed
+/// without `--on-holes`, no tab is on the hole and every tab is `false`.
+#[test]
+fn tabs_place_count_on_holes_holds_slugs() {
+    let dir = work_dir("tabs_place_count_on_holes_holds_slugs");
+    let dcv = bare_square_with_hole(&dir);
+    let place = |extra: &[&str]| {
+        let mut args = vec![
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "4",
+            "--width",
+            "6",
+            "--height",
+            "2",
+            "--replace",
+        ];
+        args.extend_from_slice(extra);
+        let out = run(&dir, &args);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        out
+    };
+    let out = place(&[]);
+    assert!(!stderr(&out).contains("tab_on_hole"), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert!(hole_tabs(&project).is_empty(), "{:?}", project.tabs);
+    assert!(
+        project.tabs.iter().all(|t| t.holds_slug == Some(false)),
+        "{:?}",
+        project.tabs
+    );
+
+    let out = place(&["--on-holes"]);
+    let project = load_file(&dcv).project;
+    let on_hole = hole_tabs(&project);
+    assert!(!on_hole.is_empty(), "{:?}", project.tabs);
+    assert_eq!(
+        stderr(&out).matches("warning: tab_on_hole:").count(),
+        on_hole.len(),
+        "{}",
+        stderr(&out)
+    );
+    for tab in &project.tabs {
+        assert_eq!(tab.holds_slug, Some(tab.profile == 1), "{tab:?}");
+    }
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+        assert!(!report.contains("tab_on_corner"), "{report}");
+    }
+
+    let edit = |f: &dyn Fn(&mut Project)| {
+        let mut project = load_file(&dcv).project;
+        f(&mut project);
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    };
+    edit(&|p: &mut Project| {
+        let op = as_profile_mut(&mut p.operations[0]);
+        op.last_pass = Some(dc_project::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: false,
+        });
+        op.start = StartAt::Near {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        };
+    });
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+    }
+    edit(&|p: &mut Project| p.tools[0].diameter_mm = 3.175);
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+    }
+}
+
+/// #302: `tabs list` shows in `HOLDS_SLUG`, after `SHAPE`, whether each
+/// tab is meant to hold its slug: `yes` for one placed on a hole with
+/// `--on-holes`, `no` for the others, and `-` for a tab of a format 14
+/// file, which recorded neither.
+#[test]
+fn tabs_list_shows_whether_each_tab_holds_its_slug() {
+    let dir = work_dir("tabs_list_shows_whether_each_tab_holds_its_slug");
+    let dcv = bare_square_with_hole(&dir);
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--at",
+            "5",
+            "--on-holes",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let list = |file: &str| -> Vec<(String, String, String)> {
+        let out = run(&dir, &["tabs", "list", file]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let listed = stdout(&out);
+        let rows: Vec<Vec<&str>> = listed
+            .lines()
+            .map(|l| l.split_whitespace().collect())
+            .collect();
+        let column = rows[0]
+            .iter()
+            .position(|h| *h == "HOLDS_SLUG")
+            .unwrap_or_else(|| panic!("a HOLDS_SLUG column: {listed}"));
+        assert_eq!(rows[0][column - 1], "SHAPE", "{listed}");
+        assert_eq!(rows[0][column + 1], "CUT_BY", "{listed}");
+        rows[1..]
+            .iter()
+            .map(|r| (r[0].to_owned(), r[2].to_owned(), r[column].to_owned()))
+            .collect()
+    };
+    let project = load_file(&dcv).project;
+    let expected: Vec<(String, String, String)> = project
+        .tabs
+        .iter()
+        .map(|t| {
+            let flag = if t.profile == 1 { "yes" } else { "no" };
+            (t.id.to_string(), t.profile.to_string(), flag.to_owned())
+        })
+        .collect();
+    assert_eq!(expected.len(), 2);
+    assert_eq!(list("square.dcv"), expected);
+
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/holds-slug-migration/square-with-hole-on-holes.dcv"),
+        dir.join("v14.dcv"),
+    )
+    .expect("fixture copied");
+    let listed = list("v14.dcv");
+    assert!(!listed.is_empty());
+    for (id, _, flag) in &listed {
+        assert_eq!(flag, "-", "{id}");
+    }
+}
+
+/// #302: a hand-edited `holds_slug` that is not `true`, `false` or `null`
+/// fails `check` and `export` with the field's path and where its value
+/// is in the file, and nothing is exported.
+#[test]
+fn hand_edited_holds_slug_is_refused_with_its_place() {
+    let dir = work_dir("hand_edited_holds_slug_is_refused_with_its_place");
+    let dcv = bare_square_with_hole(&dir);
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1", "--at", "5"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let at = text.find("\"holds_slug\": false").expect("a tab's flag");
+    let line = text[..at].lines().count();
+    let column = at - text[..at].rfind('\n').expect("a line") + "\"holds_slug\": ".len();
+    let edited = text.replacen("\"holds_slug\": false", "\"holds_slug\": \"yes\"", 1);
+    std::fs::write(&dcv, edited).expect("dcv written");
+    for command in ["check", "export"] {
+        let out = run(&dir, &[command, "square.dcv"]);
+        assert_eq!(out.status.code(), Some(1), "{command}: {}", stdout(&out));
+        let report = stderr(&out);
+        assert!(
+            report.contains(&format!(
+                "at `tabs[0].holds_slug` (line {line}, column {column})"
+            )),
+            "{command}: {report}"
+        );
+    }
+    assert!(!dir.join("square.nc").exists(), "nothing exported");
+}
+
+/// #302 (`migrate::v14_placed_tabs_migrate_with_holds_slug_unset`): every
+/// project of `tests/fixtures/holds-slug-migration/`, saved at format 14
+/// by the build before #302, migrates to format 15 with `holds_slug: null`
+/// on every placed tab, and exports byte for byte the programs that build
+/// wrote, with the same warnings from `export` and `check`. Sixteen are
+/// the tabbed projects of the #285 corpus with their requests placed by
+/// `tabs place`, whose programs are the #284 corpus's (placing changes no
+/// cut, #105). Three are the square with a hole, its programs committed
+/// beside the warnings: tabs placed with `--at --on-holes` on the hole's
+/// outline, which warn `tab_on_hole` on every export; tabs placed for the
+/// cut, then the bit changed, which warn too; and `--count --on-holes`
+/// tabs, off corners, on a Profile with a last pass and a start point,
+/// which sit on the path and do not.
+#[test]
+fn version_14_projects_export_byte_identical_programs_and_warnings() {
+    let dir = work_dir("version_14_projects_export_byte_identical_programs_and_warnings");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let corpus = root.join("tests/fixtures/holds-slug-migration");
+    let expected_dir = root.join("tests/expected/holds-slug-migration");
+    let earlier_dir = root.join("tests/expected/last-pass-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&corpus)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 19, "{names:?}");
+    let (mut hole_warnings, mut quiet_hole_tabs) = (0, 0);
+    for (name, path) in names {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 14"),
+            "{name} is a version 14 file"
+        );
+        assert!(!text.contains("holds_slug"), "{name}");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        assert!(!project.tabs.is_empty(), "{name} has placed tabs");
+        assert!(
+            project.tabs.iter().all(|t| t.holds_slug.is_none()),
+            "{name}: {:?}",
+            project.tabs
+        );
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let programs = exported_programs(&dir, &name);
+        assert!(!programs.is_empty(), "{name} exported nothing");
+        for (program, text) in programs {
+            let committed = expected_dir.join(&program);
+            let expected_path = if committed.exists() {
+                committed
+            } else {
+                earlier_dir.join(&program)
+            };
+            let expected = std::fs::read_to_string(&expected_path)
+                .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{name}: {program} differs from the program before #302:\n{text}"
+            );
+        }
+        let warnings = std::fs::read_to_string(expected_dir.join(format!("{name}.warnings")))
+            .unwrap_or_else(|e| panic!("{name}: expected warnings: {e}"));
+        assert_eq!(stderr(&out), warnings, "{name}: export's warnings");
+        let check = run(&dir, &["check", &file]);
+        assert_eq!(check.status.code(), Some(0), "{name}: {}", stdout(&check));
+        let checked: String = format!("{}{}", stdout(&check), stderr(&check))
+            .lines()
+            .filter(|l| l.contains("warning: "))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(checked, warnings, "{name}: check's warnings");
+
+        let warned = warnings.matches("warning: tab_on_hole:").count();
+        hole_warnings += warned;
+        if warned == 0 {
+            quiet_hole_tabs += hole_tabs(&project).len();
+        }
+    }
+    assert!(hole_warnings >= 5, "the corpus warns for hole tabs");
+    assert!(quiet_hole_tabs >= 6, "and holds slugs without a warning");
 }

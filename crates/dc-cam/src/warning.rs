@@ -7,7 +7,8 @@
 
 use std::fmt;
 
-use dc_project::{CornerRelief, OperationId, ToolId};
+use dc_geometry::EPS_MM;
+use dc_project::{CornerRelief, OperationId, TabId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
 use crate::error::ShapeRef;
@@ -20,6 +21,10 @@ pub enum WarningCode {
     /// Outside Profile cannot cut, or an open path with no length on an On
     /// line Profile (#175); it was skipped.
     OpenPathSkipped,
+    /// A target shape is a closed outline, which a Left or Right Profile
+    /// does not cut: those are sides of an open path (#207). It was
+    /// skipped.
+    SideNeedsOpenPath,
     /// The tool does not fit: the tool-centre offset of a shape vanished,
     /// so that shape was not cut.
     ToolTooLarge,
@@ -33,10 +38,28 @@ pub enum WarningCode {
     /// goes below it (the tabs change nothing), or it is above the stock
     /// top (the tabs still apply).
     TabsOutsideCutRange,
-    /// The tab spans on one tool-centre contour cover more than half of its
-    /// length, so the part or hole may not cut free. The tabs are cut as
-    /// set.
+    /// The tab spans on one tool-centre contour would cover more than half
+    /// of its length, so the part or hole would not cut free. The contour
+    /// gets the most tabs that cover at most half, down to none (#109);
+    /// placed tabs are cut as placed (#105).
     TabsCoverMostOfContour,
+    /// A placed tab is on an outline this Profile cuts as a hole, so it
+    /// holds the hole's slug, which is usually waste (#105). It is cut.
+    TabOnHole,
+    /// No enabled Profile crosses a placed tab: none cuts its outline, or
+    /// every path that does runs too far from it, so it holds nothing
+    /// (#105).
+    TabNotCrossed,
+    /// A placed tab's point is farther from its outline than its width
+    /// plus the widest bit that cuts round it, so it is cut at the
+    /// outline's nearest point, which may not be where the user meant
+    /// (#300).
+    TabOffOutline,
+    /// A tab of a request with `avoid_corners` lies on a corner, where
+    /// the bit's path turns 30° or more within one bit diameter, and has
+    /// nowhere off it within half the gap to its neighbours that is not
+    /// on another tab, so it is cut where it is (#285).
+    TabOnCorner,
     /// The tool path of one shape cuts into material another shape in the
     /// same operation keeps. The shapes are cut as drawn.
     ToolpathsOverlap,
@@ -76,6 +99,9 @@ pub enum WarningCode {
     /// tab over it, or no wall pass), so the notch would plunge into
     /// uncut material.
     ReliefCornerNotCut,
+    /// A Profile has a last pass, but its cut is one pass deep, so that
+    /// pass is the last and no pass leaves the allowance (#310 review).
+    LastPassUnused,
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped.
     EngravePathDegenerate,
@@ -84,6 +110,12 @@ pub enum WarningCode {
     /// part (`docs/specs/phase-2/design.md`, "Operation-order warnings";
     /// research O8).
     CutInsideFreedPart,
+    /// A target of this operation lies inside an outline an earlier
+    /// Profile cuts through the stock round with tabs, so the cut would
+    /// run in a part held only by those tabs, which can flex, chatter or
+    /// break one (`docs/specs/phase-2/design.md`, "Operation-order
+    /// warnings"; #269).
+    CutInsideTabHeldPart,
     /// A tool is used by operations that do not run one after another, so
     /// it is fitted more than once. Operations are never reordered (D7);
     /// this is a hint.
@@ -113,11 +145,16 @@ impl WarningCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::OpenPathSkipped => "open_path_skipped",
+            Self::SideNeedsOpenPath => "side_needs_open_path",
             Self::ToolTooLarge => "tool_too_large",
             Self::DuplicateShapeDropped => "duplicate_shape_dropped",
             Self::TabsOverlap => "tabs_overlap",
             Self::TabsOutsideCutRange => "tabs_outside_cut_range",
             Self::TabsCoverMostOfContour => "tabs_cover_most_of_contour",
+            Self::TabOnHole => "tab_on_hole",
+            Self::TabNotCrossed => "tab_not_crossed",
+            Self::TabOffOutline => "tab_off_outline",
+            Self::TabOnCorner => "tab_on_corner",
             Self::ToolpathsOverlap => "toolpaths_overlap",
             Self::PocketNoRoom => "pocket_no_room",
             Self::PocketIslandTooClose => "pocket_island_too_close",
@@ -128,8 +165,10 @@ impl WarningCode {
             Self::ReliefSkipped => "relief_skipped",
             Self::ReliefCornerTooTight => "relief_corner_too_tight",
             Self::ReliefCornerNotCut => "relief_corner_not_cut",
+            Self::LastPassUnused => "last_pass_unused",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
+            Self::CutInsideTabHeldPart => "cut_inside_tab_held_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
             Self::DrillTargetNotCircle => "drill_target_not_circle",
             Self::DrillToolWiderThanHole => "drill_tool_wider_than_hole",
@@ -154,6 +193,18 @@ pub enum OpenPathReason {
     NoSide,
     /// An On line Profile's open path has no length (#175).
     NoLength,
+}
+
+/// Why a tab stays on a corner ([`Warning::TabOnCorner`], #285).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabOnCornerReason {
+    /// The bit's path is a corner wherever the tab could go: it turns 30°
+    /// or more within one bit diameter all along it, as round a circle
+    /// smaller than about two bit diameters.
+    Everywhere,
+    /// The places off the corner are more than half way to a neighbouring
+    /// tab, on another tab, or past an open path's end.
+    NoRoom,
 }
 
 /// Where the tab top lies outside the cut ([`Warning::TabsOutsideCutRange`]).
@@ -186,6 +237,9 @@ pub enum LeadDroppedReason {
     /// An On line Profile has no waste side for a lead, so the operation
     /// cuts without one.
     OnLine,
+    /// A Left or Right Profile cuts open paths, which VCarve gives no lead
+    /// either (#207), so the operation cuts without one.
+    OpenPath,
 }
 
 /// Why an operation's corner relief was not cut at all
@@ -196,6 +250,9 @@ pub enum ReliefSkippedReason {
     NoStepDown,
     /// An On line Profile has no waste side to put a notch in.
     OnLine,
+    /// A Left or Right Profile cuts open paths, whose corners have no
+    /// inside or outside to relieve (#207).
+    OpenPath,
 }
 
 /// Why a corner's notch does not fit it ([`Warning::ReliefCornerTooTight`]).
@@ -205,6 +262,10 @@ pub enum ReliefCornerReason {
     ShortEdge,
     /// The tool-centre path does not turn the corner within reach.
     NoWallPath,
+    /// The notch would bring the cutter nearer another wall than its
+    /// radius, cutting into the material past that wall too: past a part
+    /// thinner there than the notch is deep, or into an island (#322).
+    NearOtherWall,
 }
 
 /// Something the user should know about that still yields a safe toolpath:
@@ -220,6 +281,11 @@ pub enum Warning {
         shape: ShapeRef,
         /// Why it cannot be cut.
         reason: OpenPathReason,
+    },
+    /// [`WarningCode::SideNeedsOpenPath`].
+    SideNeedsOpenPath {
+        /// The closed outline.
+        shape: ShapeRef,
     },
     /// [`WarningCode::ToolTooLarge`].
     ToolTooLarge {
@@ -273,7 +339,7 @@ pub enum Warning {
         shape: Option<ShapeRef>,
         /// The contour's length.
         path_length_mm: f64,
-        /// How many tabs are on it.
+        /// How many tabs the placement asked for on it.
         tab_count: usize,
         /// The tab width as set.
         tab_width_mm: f64,
@@ -283,12 +349,56 @@ pub enum Warning {
         tab_span_mm: f64,
         /// `tab_count` times `tab_span_mm`.
         tab_total_mm: f64,
-        /// The most tabs of this width that cover at most half: a whole
-        /// number.
-        max_count: f64,
-        /// The widest tab at this count that covers at most half; `None`
+        /// How many tabs are cut on it: the most that cover at most half,
+        /// fewer than `tab_count`, possibly none.
+        cut_count: usize,
+        /// The widest tab at `tab_count` that covers at most half; `None`
         /// when none fits.
         max_width_mm: Option<f64>,
+        /// The tabs are placed tabs, all cut as placed (#105), rather than
+        /// a tab request cut down.
+        placed: bool,
+    },
+    /// [`WarningCode::TabOnHole`].
+    TabOnHole {
+        /// The operation.
+        op: OperationId,
+        /// The tab.
+        tab: TabId,
+        /// The hole it is on.
+        shape: ShapeRef,
+    },
+    /// [`WarningCode::TabNotCrossed`].
+    TabNotCrossed {
+        /// The tab.
+        tab: TabId,
+        /// The outline it is placed on.
+        shape: ShapeRef,
+    },
+    /// [`WarningCode::TabOffOutline`].
+    TabOffOutline {
+        /// The tab.
+        tab: TabId,
+        /// The outline it is placed on.
+        shape: ShapeRef,
+        /// How far the tab's point is from the outline, mm in project
+        /// space.
+        off_mm: f64,
+        /// The distance past which it warns, mm: the tab's width plus the
+        /// widest bit of the Profiles that cross it.
+        limit_mm: f64,
+    },
+    /// [`WarningCode::TabOnCorner`].
+    TabOnCorner {
+        /// The operation.
+        op: OperationId,
+        /// The outline the tab is on.
+        shape: ShapeRef,
+        /// Where the tab is centred, mm along the bit's path from its
+        /// start (from its first vertex as drawn on an open path).
+        distance_mm: f64,
+        /// Why it could not move off.
+        reason: TabOnCornerReason,
     },
     /// [`WarningCode::ToolpathsOverlap`].
     ToolpathsOverlap {
@@ -426,6 +536,11 @@ pub enum Warning {
         /// The corner's Y.
         y_mm: f64,
     },
+    /// [`WarningCode::LastPassUnused`].
+    LastPassUnused {
+        /// The operation.
+        op: OperationId,
+    },
     /// [`WarningCode::EngravePathDegenerate`].
     EngravePathDegenerate {
         /// The operation.
@@ -443,6 +558,18 @@ pub enum Warning {
         shape: ShapeRef,
         /// The outline the earlier operation frees.
         freed: ShapeRef,
+    },
+    /// [`WarningCode::CutInsideTabHeldPart`].
+    CutInsideTabHeldPart {
+        /// This operation.
+        op: OperationId,
+        /// The earlier Profile whose tabs alone hold the part.
+        earlier_op: OperationId,
+        /// The shape this operation cuts.
+        shape: ShapeRef,
+        /// The innermost outline round `shape` that the earlier Profile
+        /// cuts through the stock with tabs.
+        held: ShapeRef,
     },
     /// [`WarningCode::ToolChangeAvoidable`].
     ToolChangeAvoidable {
@@ -508,11 +635,16 @@ impl Warning {
     pub const fn code(&self) -> WarningCode {
         match self {
             Self::OpenPathSkipped { .. } => WarningCode::OpenPathSkipped,
+            Self::SideNeedsOpenPath { .. } => WarningCode::SideNeedsOpenPath,
             Self::ToolTooLarge { .. } => WarningCode::ToolTooLarge,
             Self::DuplicateShapeDropped { .. } => WarningCode::DuplicateShapeDropped,
             Self::TabsOverlap { .. } => WarningCode::TabsOverlap,
             Self::TabsOutsideCutRange { .. } => WarningCode::TabsOutsideCutRange,
             Self::TabsCoverMostOfContour { .. } => WarningCode::TabsCoverMostOfContour,
+            Self::TabOnHole { .. } => WarningCode::TabOnHole,
+            Self::TabNotCrossed { .. } => WarningCode::TabNotCrossed,
+            Self::TabOffOutline { .. } => WarningCode::TabOffOutline,
+            Self::TabOnCorner { .. } => WarningCode::TabOnCorner,
             Self::ToolpathsOverlap { .. } => WarningCode::ToolpathsOverlap,
             Self::PocketNoRoom { .. } => WarningCode::PocketNoRoom,
             Self::PocketIslandTooClose { .. } => WarningCode::PocketIslandTooClose,
@@ -523,8 +655,10 @@ impl Warning {
             Self::ReliefSkipped { .. } => WarningCode::ReliefSkipped,
             Self::ReliefCornerTooTight { .. } => WarningCode::ReliefCornerTooTight,
             Self::ReliefCornerNotCut { .. } => WarningCode::ReliefCornerNotCut,
+            Self::LastPassUnused { .. } => WarningCode::LastPassUnused,
             Self::EngravePathDegenerate { .. } => WarningCode::EngravePathDegenerate,
             Self::CutInsideFreedPart { .. } => WarningCode::CutInsideFreedPart,
+            Self::CutInsideTabHeldPart { .. } => WarningCode::CutInsideTabHeldPart,
             Self::ToolChangeAvoidable { .. } => WarningCode::ToolChangeAvoidable,
             Self::DrillTargetNotCircle { .. } => WarningCode::DrillTargetNotCircle,
             Self::DrillToolWiderThanHole { .. } => WarningCode::DrillToolWiderThanHole,
@@ -541,6 +675,8 @@ impl Warning {
             Self::TabsOverlap { op, .. }
             | Self::TabsOutsideCutRange { op, .. }
             | Self::TabsCoverMostOfContour { op, .. }
+            | Self::TabOnHole { op, .. }
+            | Self::TabOnCorner { op, .. }
             | Self::PocketNoRoom { op, .. }
             | Self::PocketIslandTooClose { op, .. }
             | Self::EntryFallback { op, .. }
@@ -550,16 +686,21 @@ impl Warning {
             | Self::ReliefSkipped { op, .. }
             | Self::ReliefCornerTooTight { op, .. }
             | Self::ReliefCornerNotCut { op, .. }
+            | Self::LastPassUnused { op }
             | Self::EngravePathDegenerate { op, .. }
             | Self::CutInsideFreedPart { op, .. }
+            | Self::CutInsideTabHeldPart { op, .. }
             | Self::DrillTargetNotCircle { op, .. }
             | Self::DrillToolWiderThanHole { op, .. }
             | Self::DrillPeckDeeperThanHole { op, .. }
             | Self::DrillRetractBelowStockTop { op, .. }
             | Self::RestOfClearsNothing { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
+            | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
             | Self::DuplicateShapeDropped { .. }
+            | Self::TabNotCrossed { .. }
+            | Self::TabOffOutline { .. }
             | Self::ToolpathsOverlap { .. }
             | Self::ToolChangeAvoidable { .. } => None,
         }
@@ -611,25 +752,57 @@ const fn relief_name(relief: CornerRelief) -> &'static str {
     }
 }
 
-/// The suggestion for tabs that cover most of a contour: `tab_count` tabs,
-/// at most `max_count` of which cover at most half, or tabs at most
-/// `max_width_mm` wide.
-fn coverage_advice(tab_count: usize, max_count: f64, max_width_mm: Option<f64>) -> String {
-    let max_count = rounded(max_count, 0);
-    let fewer = if max_count == "0" {
-        "even one tab this wide covers more than half".to_owned()
-    } else {
-        format!("use at most {max_count} tab(s) this wide")
+/// What is cut instead of `tab_count` tabs that would cover most of a
+/// contour (`cut_count` of them; `kept_covers_most` when that is the one
+/// tab a part keeps and it still covers more than half; `placed` when
+/// they are placed tabs, all cut as placed, #105), and the width at which
+/// all of them would fit, `max_width_mm`.
+fn coverage_advice(
+    tab_count: usize,
+    cut_count: usize,
+    kept_covers_most: bool,
+    max_width_mm: Option<f64>,
+    placed: bool,
+) -> String {
+    if placed {
+        let (cut, them) = if tab_count == 1 {
+            ("It is cut, as placed", "it")
+        } else {
+            ("All of them are cut, as placed", "them")
+        };
+        let cut = format!("{cut}, so the part or hole may need cutting free by hand");
+        return match max_width_mm {
+            Some(width_mm) => format!(
+                "{cut}. To let it cut free, make {them} at most {} mm wide.",
+                mm(width_mm)
+            ),
+            None => format!("{cut}. To let it cut free, remove tabs or use a smaller bit."),
+        };
+    }
+    let cut = match (cut_count, kept_covers_most) {
+        (0, _) => "No tab is cut there".to_owned(),
+        (1, true) if tab_count == 1 => "Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
+        (1, true) => "Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand".to_owned(),
+        (1, false) => "Only 1 of them is cut there".to_owned(),
+        (n, _) => format!("Only {n} of them are cut there"),
     };
     match max_width_mm {
-        Some(width_mm) => format!(
-            "To let it cut free, {fewer}, or make the {tab_count} tab(s) at most {} mm wide.",
+        Some(width_mm) if tab_count == 1 && cut_count == 1 => format!(
+            "{cut}. To let it cut free, make it at most {} mm wide.",
             mm(width_mm)
         ),
-        None if max_count == "0" => format!(
-            "To let it cut free, {fewer}: this outline is too short for tabs with this bit, so consider removing them."
+        Some(width_mm) if tab_count == 1 => format!(
+            "{cut}. To keep it, make it at most {} mm wide.",
+            mm(width_mm)
         ),
-        None => format!("To let it cut free, {fewer}."),
+        Some(width_mm) => format!(
+            "{cut}. To keep all {tab_count}, make them at most {} mm wide.",
+            mm(width_mm)
+        ),
+        None if cut_count == 0 => {
+            format!("{cut}: this outline is too short for tabs with this bit.")
+        }
+        None => format!("{cut}."),
     }
 }
 
@@ -649,7 +822,11 @@ impl fmt::Display for Warning {
                 reason: OpenPathReason::NoSide,
             } => write!(
                 f,
-                "{shape} is an open path, which has no inside or outside, so it is not cut; an On line Profile or an Engrave cuts along it"
+                "{shape} is an open path, which has no inside or outside, so it is not cut; an On line, Left or Right Profile or an Engrave cuts along it"
+            ),
+            Self::SideNeedsOpenPath { shape } => write!(
+                f,
+                "{shape} is a closed outline, and Left and Right are sides of an open path, so it is not cut; cut it Inside, Outside or On line"
             ),
             Self::ToolTooLarge {
                 shape,
@@ -711,8 +888,9 @@ impl fmt::Display for Warning {
                 diameter_mm,
                 tab_span_mm,
                 tab_total_mm,
-                max_count,
+                cut_count,
                 max_width_mm,
+                placed,
                 ..
             } => {
                 let share = if *path_length_mm > 0.0 {
@@ -739,11 +917,56 @@ impl fmt::Display for Warning {
                 };
                 write!(
                     f,
-                    "tabs on {} cover more than half of its tool path: {tabs}, so the part or hole may not cut free. {} The tabs are cut as set.",
+                    "tabs on {} would cover more than half of its tool path: {tabs}, so the part or hole would not cut free. {}",
                     shape_or_contour(shape.as_ref(), *contour),
-                    coverage_advice(*tab_count, *max_count, *max_width_mm)
+                    coverage_advice(
+                        *tab_count,
+                        *cut_count,
+                        *cut_count == 1 && 2.0 * tab_span_mm > *path_length_mm + EPS_MM,
+                        *max_width_mm,
+                        *placed
+                    )
                 )
             }
+            Self::TabOnHole { tab, shape, .. } => write!(
+                f,
+                "tab `{tab}` is on {shape}, which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear <dcv> --tab {tab}`) unless you mean to keep the slug"
+            ),
+            Self::TabNotCrossed { tab, shape } => write!(
+                f,
+                "tab `{tab}` on {shape} is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab {tab}`)"
+            ),
+            Self::TabOffOutline {
+                tab,
+                shape,
+                off_mm,
+                limit_mm,
+            } => write!(
+                f,
+                "tab `{tab}` on {shape} is {} mm from that outline, more than its width plus the widest bit that cuts round it ({} mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`",
+                mm(*off_mm),
+                mm(*limit_mm)
+            ),
+            Self::TabOnCorner {
+                shape,
+                distance_mm,
+                reason: TabOnCornerReason::NoRoom,
+                ..
+            } => write!(
+                f,
+                "the tab {} mm along the bit's path round {shape} is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab, onto another tab or past the path's end, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
+                mm(*distance_mm)
+            ),
+            Self::TabOnCorner {
+                shape,
+                distance_mm,
+                reason: TabOnCornerReason::Everywhere,
+                ..
+            } => write!(
+                f,
+                "the tab {} mm along the bit's path round {shape} is on a corner, and so is every place it could go: the path turns 30° or more within one bit diameter all along it, as round a part small for the bit, so it is cut where it is; use a smaller bit, or place it by hand (`dreamcarve tabs place --at`)",
+                mm(*distance_mm)
+            ),
             Self::ToolpathsOverlap {
                 shape,
                 other,
@@ -815,6 +1038,9 @@ impl fmt::Display for Warning {
                     FallbackReason::NoRoom => {
                         format!("there is no room for a `{requested}` entry in")
                     }
+                    FallbackReason::TooSmall => format!(
+                        "a `{requested}` entry this small has moves too short for the program's decimal places in"
+                    ),
                 };
                 let (used, advice) = match used {
                     EntryKind::Ramp => ("a zigzag ramp", ""),
@@ -863,6 +1089,10 @@ impl fmt::Display for Warning {
                         f,
                         "operation `{op}` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside"
                     ),
+                    LeadDroppedReason::OpenPath => write!(
+                        f,
+                        "operation `{op}` cuts beside open paths, which take no lead, so it cuts without one; remove the lead"
+                    ),
                     LeadDroppedReason::Exit => write!(
                         f,
                         "there is no room for a lead-out arc where the cut on {shape} ends, so it stops on the outline"
@@ -882,6 +1112,10 @@ impl fmt::Display for Warning {
                         f,
                         "corner relief `{requested}` is skipped: an On line Profile has no waste side to cut a notch into, so no corners were relieved"
                     ),
+                    ReliefSkippedReason::OpenPath => write!(
+                        f,
+                        "corner relief `{requested}` is skipped: a Left or Right Profile cuts open paths, whose corners have no inside or outside to relieve, so no corners were relieved"
+                    ),
                     ReliefSkippedReason::NoStepDown => write!(
                         f,
                         "corner relief `{requested}` is skipped because the tool has no step_down_mm, which the relief pass steps down at, so no corners were relieved; set the tool's step-down"
@@ -900,6 +1134,9 @@ impl fmt::Display for Warning {
                     ReliefCornerReason::ShortEdge => {
                         "an edge beside it is shorter than the bit is wide"
                     }
+                    ReliefCornerReason::NearOtherWall => {
+                        "its notch would come nearer another wall than the bit's radius and cut through the material there"
+                    }
                 };
                 write!(
                     f,
@@ -916,6 +1153,9 @@ impl fmt::Display for Warning {
                 mm(*x_mm),
                 mm(*y_mm)
             ),
+            Self::LastPassUnused { .. } => f.write_str(
+                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
+            ),
             Self::EngravePathDegenerate { shape, .. } => write!(
                 f,
                 "{shape} has fewer than two distinct points, so there is nothing to engrave; it is skipped"
@@ -928,6 +1168,15 @@ impl fmt::Display for Warning {
             } => write!(
                 f,
                 "{shape} lies inside {freed}, which operation `{earlier_op}` cuts free of the stock first, so this cut would run in a loose part; move this operation before `{earlier_op}`, or hold that part with tabs"
+            ),
+            Self::CutInsideTabHeldPart {
+                earlier_op,
+                shape,
+                held,
+                ..
+            } => write!(
+                f,
+                "{shape} lies inside {held}, which operation `{earlier_op}` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `{earlier_op}`, or, for a hole, cut it in the same operation as its part, which cuts holes first"
             ),
             Self::ToolChangeAvoidable { tool_id, tool, ops } => {
                 let ops = ops
@@ -1001,11 +1250,74 @@ mod tests {
     fn message_fixtures() -> Vec<(Warning, &'static str)> {
         vec![
             (
+                Warning::TabOnHole {
+                    op: op(),
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                },
+                "tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`) unless you mean to keep the slug",
+            ),
+            (
+                Warning::TabNotCrossed {
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                },
+                "tab `tab3` on `Shape` (instance `i1`, profile 2) is crossed by no enabled Profile operation, so it holds nothing; cut that outline with a Profile, or remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`)",
+            ),
+            (
+                Warning::TabOffOutline {
+                    tab: TabId::new("tab3"),
+                    shape: shape(),
+                    off_mm: 20.000_000_000_4,
+                    limit_mm: 12.350_000_000_1,
+                },
+                "tab `tab3` on `Shape` (instance `i1`, profile 2) is 20 mm from that outline, more than its width plus the widest bit that cuts round it (12.35 mm), so it is cut where the outline is nearest it; move it back onto the outline, or check where it lands with `dreamcarve tabs list <dcv>`",
+            ),
+            (
+                Warning::TabOnCorner {
+                    op: op(),
+                    shape: shape(),
+                    distance_mm: 54.600_002_2,
+                    reason: TabOnCornerReason::NoRoom,
+                },
+                "the tab 54.6 mm along the bit's path round `Shape` (instance `i1`, profile 2) is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab, onto another tab or past the path's end, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)",
+            ),
+            (
+                Warning::TabOnCorner {
+                    op: op(),
+                    shape: shape(),
+                    distance_mm: 9.999_999_9,
+                    reason: TabOnCornerReason::Everywhere,
+                },
+                "the tab 10 mm along the bit's path round `Shape` (instance `i1`, profile 2) is on a corner, and so is every place it could go: the path turns 30° or more within one bit diameter all along it, as round a part small for the bit, so it is cut where it is; use a smaller bit, or place it by hand (`dreamcarve tabs place --at`)",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 60.0,
+                    tab_count: 3,
+                    tab_width_mm: 6.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 12.35,
+                    tab_total_mm: 37.05,
+                    cut_count: 3,
+                    max_width_mm: Some(3.65),
+                    placed: true,
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 3 tabs is 6 mm wide, and with the 6.35 mm bit each one keeps 12.35 mm of the tool path raised, 37.05 mm in total on a 60 mm path (61.7%), so the part or hole would not cut free. All of them are cut, as placed, so the part or hole may need cutting free by hand. To let it cut free, make them at most 3.65 mm wide.",
+            ),
+            (
                 Warning::OpenPathSkipped {
                     shape: shape(),
                     reason: OpenPathReason::NoSide,
                 },
-                "`Shape` (instance `i1`, profile 2) is an open path, which has no inside or outside, so it is not cut; an On line Profile or an Engrave cuts along it",
+                "`Shape` (instance `i1`, profile 2) is an open path, which has no inside or outside, so it is not cut; an On line, Left or Right Profile or an Engrave cuts along it",
+            ),
+            (
+                Warning::SideNeedsOpenPath { shape: shape() },
+                "`Shape` (instance `i1`, profile 2) is a closed outline, and Left and Right are sides of an open path, so it is not cut; cut it Inside, Outside or On line",
             ),
             (
                 Warning::OpenPathSkipped {
@@ -1083,10 +1395,11 @@ mod tests {
                     diameter_mm: 6.35,
                     tab_span_mm: 16.35,
                     tab_total_mm: 65.4,
-                    max_count: 3.0,
+                    cut_count: 3,
                     max_width_mm: Some(6.15),
+                    placed: false,
                 },
-                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole may not cut free. To let it cut free, use at most 3 tab(s) this wide, or make the 4 tab(s) at most 6.15 mm wide. The tabs are cut as set.",
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 10 mm wide, and with the 6.35 mm bit each one keeps 16.35 mm of the tool path raised, 65.4 mm in total on a 100 mm path (65.4%), so the part or hole would not cut free. Only 3 of them are cut there. To keep all 4, make them at most 6.15 mm wide.",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1099,10 +1412,11 @@ mod tests {
                     diameter_mm: 8.0,
                     tab_span_mm: 13.0,
                     tab_total_mm: 26.0,
-                    max_count: 1.0,
+                    cut_count: 1,
                     max_width_mm: None,
+                    placed: false,
                 },
-                "tabs on contour 2 in cut order cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole may not cut free. To let it cut free, use at most 1 tab(s) this wide. The tabs are cut as set.",
+                "tabs on contour 2 in cut order would cover more than half of its tool path: each of the 2 tabs is 5 mm wide, and with the 8 mm bit each one keeps 13 mm of the tool path raised, 26 mm in total on a 30 mm path (86.7%), so the part or hole would not cut free. Only 1 of them is cut there.",
             ),
             (
                 Warning::TabsCoverMostOfContour {
@@ -1115,10 +1429,62 @@ mod tests {
                     diameter_mm: 3.175,
                     tab_span_mm: 6.175,
                     tab_total_mm: 6.175,
-                    max_count: 0.0,
+                    cut_count: 0,
                     max_width_mm: None,
+                    placed: false,
                 },
-                "tabs on `Shape` (instance `i1`, profile 2) cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole may not cut free. To let it cut free, even one tab this wide covers more than half: this outline is too short for tabs with this bit, so consider removing them. The tabs are cut as set.",
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 3.175 mm bit it keeps 6.17 mm of the tool path raised on a 10 mm path (61.8%), so the part or hole would not cut free. No tab is cut there: this outline is too short for tabs with this bit.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 6.5,
+                    tab_count: 1,
+                    tab_width_mm: 3.0,
+                    diameter_mm: 1.5,
+                    tab_span_mm: 4.5,
+                    tab_total_mm: 4.5,
+                    cut_count: 0,
+                    max_width_mm: Some(1.75),
+                    placed: false,
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 3 mm wide, and with the 1.5 mm bit it keeps 4.5 mm of the tool path raised on a 6.5 mm path (69.2%), so the part or hole would not cut free. No tab is cut there. To keep it, make it at most 1.75 mm wide.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 20.0,
+                    tab_count: 1,
+                    tab_width_mm: 8.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 14.35,
+                    tab_total_mm: 14.35,
+                    cut_count: 1,
+                    max_width_mm: Some(3.65),
+                    placed: false,
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: its one tab is 8 mm wide, and with the 6.35 mm bit it keeps 14.35 mm of the tool path raised on a 20 mm path (71.8%), so the part or hole would not cut free. Its one tab is kept, as a part keeps at least one, so the part may need cutting free by hand. To let it cut free, make it at most 3.65 mm wide.",
+            ),
+            (
+                Warning::TabsCoverMostOfContour {
+                    op: op(),
+                    contour: 0,
+                    shape: Some(shape()),
+                    path_length_mm: 20.0,
+                    tab_count: 4,
+                    tab_width_mm: 8.0,
+                    diameter_mm: 6.35,
+                    tab_span_mm: 14.35,
+                    tab_total_mm: 57.4,
+                    cut_count: 1,
+                    max_width_mm: None,
+                    placed: false,
+                },
+                "tabs on `Shape` (instance `i1`, profile 2) would cover more than half of its tool path: each of the 4 tabs is 8 mm wide, and with the 6.35 mm bit each one keeps 14.35 mm of the tool path raised, 57.4 mm in total on a 20 mm path (287%), so the part or hole would not cut free. Only 1 of them is cut there, as a part keeps at least one, so the part may need cutting free by hand.",
             ),
             (
                 Warning::ToolpathsOverlap {
@@ -1197,6 +1563,16 @@ mod tests {
                 "a `ramp` entry at this angle would take too many moves to reach depth in `Shape` (instance `i1`, profile 2), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning",
             ),
             (
+                Warning::EntryFallback {
+                    op: op(),
+                    shape: shape(),
+                    requested: EntryKind::Helix,
+                    used: EntryKind::Ramp,
+                    reason: FallbackReason::TooSmall,
+                },
+                "a `helix` entry this small has moves too short for the program's decimal places in `Shape` (instance `i1`, profile 2), so its passes start with a zigzag ramp instead",
+            ),
+            (
                 Warning::HelixDiameterReduced {
                     op: op(),
                     shape: shape(),
@@ -1241,6 +1617,14 @@ mod tests {
                 "operation `o1` cuts on the line, which has no waste side for a lead, so it cuts without one; remove the lead or cut Inside or Outside",
             ),
             (
+                Warning::LeadDropped {
+                    op: op(),
+                    shape: None,
+                    reason: LeadDroppedReason::OpenPath,
+                },
+                "operation `o1` cuts beside open paths, which take no lead, so it cuts without one; remove the lead",
+            ),
+            (
                 Warning::ReliefSkipped {
                     op: op(),
                     requested: CornerRelief::Dogbone,
@@ -1255,6 +1639,14 @@ mod tests {
                     reason: ReliefSkippedReason::OnLine,
                 },
                 "corner relief `t_bone` is skipped: an On line Profile has no waste side to cut a notch into, so no corners were relieved",
+            ),
+            (
+                Warning::ReliefSkipped {
+                    op: op(),
+                    requested: CornerRelief::Dogbone,
+                    reason: ReliefSkippedReason::OpenPath,
+                },
+                "corner relief `dogbone` is skipped: a Left or Right Profile cuts open paths, whose corners have no inside or outside to relieve, so no corners were relieved",
             ),
             (
                 Warning::ReliefCornerTooTight {
@@ -1277,6 +1669,16 @@ mod tests {
                 "the corner of `Shape` (instance `i1`, profile 2) at (1.5, 2.25) mm is not relieved: the tool path does not turn it within reach, so it keeps the bit's radius",
             ),
             (
+                Warning::ReliefCornerTooTight {
+                    op: op(),
+                    shape: shape(),
+                    x_mm: 4.617,
+                    y_mm: 4.195,
+                    reason: ReliefCornerReason::NearOtherWall,
+                },
+                "the corner of `Shape` (instance `i1`, profile 2) at (4.62, 4.2) mm is not relieved: its notch would come nearer another wall than the bit's radius and cut through the material there, so it keeps the bit's radius",
+            ),
+            (
                 Warning::ReliefCornerNotCut {
                     op: op(),
                     shape: shape(),
@@ -1284,6 +1686,10 @@ mod tests {
                     y_mm: 40.125,
                 },
                 "the corner of `Shape` (instance `i1`, profile 2) at (-3, 40.12) mm is not relieved because the main passes did not cut to full depth where its notch starts (a tab over it, or no wall pass), and a notch must not plunge into uncut material; it keeps the bit's radius",
+            ),
+            (
+                Warning::LastPassUnused { op: op() },
+                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
             ),
             (
                 Warning::EngravePathDegenerate {
@@ -1304,6 +1710,19 @@ mod tests {
                     },
                 },
                 "`Shape` (instance `i1`, profile 2) lies inside `Outline` (instance `i0`, profile 0), which operation `o0` cuts free of the stock first, so this cut would run in a loose part; move this operation before `o0`, or hold that part with tabs",
+            ),
+            (
+                Warning::CutInsideTabHeldPart {
+                    op: op(),
+                    earlier_op: "o0".into(),
+                    shape: shape(),
+                    held: ShapeRef {
+                        instance: "i0".into(),
+                        instance_name: "Outline".to_owned(),
+                        profile: 0,
+                    },
+                },
+                "`Shape` (instance `i1`, profile 2) lies inside `Outline` (instance `i0`, profile 0), which operation `o0` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab; move this operation before `o0`, or, for a hole, cut it in the same operation as its part, which cuts holes first",
             ),
             (
                 Warning::ToolChangeAvoidable {
@@ -1369,12 +1788,17 @@ mod tests {
     const fn next_code(code: WarningCode) -> Option<WarningCode> {
         use WarningCode as C;
         Some(match code {
-            C::OpenPathSkipped => C::ToolTooLarge,
+            C::OpenPathSkipped => C::SideNeedsOpenPath,
+            C::SideNeedsOpenPath => C::ToolTooLarge,
             C::ToolTooLarge => C::DuplicateShapeDropped,
             C::DuplicateShapeDropped => C::TabsOverlap,
             C::TabsOverlap => C::TabsOutsideCutRange,
             C::TabsOutsideCutRange => C::TabsCoverMostOfContour,
-            C::TabsCoverMostOfContour => C::ToolpathsOverlap,
+            C::TabsCoverMostOfContour => C::TabOnHole,
+            C::TabOnHole => C::TabNotCrossed,
+            C::TabNotCrossed => C::TabOffOutline,
+            C::TabOffOutline => C::TabOnCorner,
+            C::TabOnCorner => C::ToolpathsOverlap,
             C::ToolpathsOverlap => C::PocketNoRoom,
             C::PocketNoRoom => C::PocketIslandTooClose,
             C::PocketIslandTooClose => C::EntryFallback,
@@ -1384,9 +1808,11 @@ mod tests {
             C::LeadDropped => C::ReliefSkipped,
             C::ReliefSkipped => C::ReliefCornerTooTight,
             C::ReliefCornerTooTight => C::ReliefCornerNotCut,
-            C::ReliefCornerNotCut => C::EngravePathDegenerate,
+            C::ReliefCornerNotCut => C::LastPassUnused,
+            C::LastPassUnused => C::EngravePathDegenerate,
             C::EngravePathDegenerate => C::CutInsideFreedPart,
-            C::CutInsideFreedPart => C::ToolChangeAvoidable,
+            C::CutInsideFreedPart => C::CutInsideTabHeldPart,
+            C::CutInsideTabHeldPart => C::ToolChangeAvoidable,
             C::ToolChangeAvoidable => C::DrillTargetNotCircle,
             C::DrillTargetNotCircle => C::DrillToolWiderThanHole,
             C::DrillToolWiderThanHole => C::DrillPeckDeeperThanHole,
@@ -1411,8 +1837,11 @@ mod tests {
             let names_op = !matches!(
                 c,
                 WarningCode::OpenPathSkipped
+                    | WarningCode::SideNeedsOpenPath
                     | WarningCode::ToolTooLarge
                     | WarningCode::DuplicateShapeDropped
+                    | WarningCode::TabNotCrossed
+                    | WarningCode::TabOffOutline
                     | WarningCode::ToolpathsOverlap
                     | WarningCode::ToolChangeAvoidable
             );
@@ -1426,7 +1855,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 24);
+        assert_eq!(count, 31);
     }
 
     #[test]

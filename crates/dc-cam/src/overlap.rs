@@ -29,7 +29,10 @@
 //! every other shape, and with itself (#224): where two of its stretches
 //! far apart along it come closer than the radius, as in a tight spiral or
 //! a hairpin, it warns as two separate paths there would. Engrave takes no part: it cuts every line as drawn,
-//! so lines that cross or meet are the design, not shapes too close.
+//! so lines that cross or meet are the design, not shapes too close. Nor
+//! does a Left or Right Profile (#207): a cut of one that comes within the
+//! radius of another line is `generate_profile`'s error, since the line's
+//! other side is the part.
 
 use crate::error::ShapeRef;
 use crate::profile::MEETING_REACH_DIAMETERS;
@@ -56,7 +59,15 @@ pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 /// later paths. Its sharp corners and the points where it touches or
 /// crosses itself are set aside as `generate_profile`'s band check sets
 /// them aside (#221).
+///
+/// `paths` include a Profile's allowance paths (#284), which run
+/// `allowance_mm` farther from their lines than the radius, so the gap
+/// the warning says two shapes need grows by it.
 #[must_use]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every argument is one fact about the cut; a struct would only rename them"
+)]
 pub(crate) fn overlap_warnings(
     paths: &[CutPath<'_>],
     shapes: &[(ShapeRef, Contour)],
@@ -64,6 +75,7 @@ pub(crate) fn overlap_warnings(
     regions: &[Region],
     side: Side,
     tool: &Tool,
+    allowance_mm: f64,
     tolerance_mm: f64,
 ) -> Vec<Warning> {
     let radius_mm = tool.diameter_mm / 2.0;
@@ -99,7 +111,7 @@ pub(crate) fn overlap_warnings(
         tool: tool.name.clone(),
         tool_id: tool.id.clone(),
         diameter_mm: tool.diameter_mm,
-        needed_mm: needed_gap_mm(side, tool.diameter_mm),
+        needed_mm: needed_gap_mm(side, tool.diameter_mm) + allowance_mm,
     };
     let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
     let mut warnings = Vec::new();
@@ -174,7 +186,7 @@ fn boxes_within(a: Rect, b: Rect, reach_mm: f64) -> bool {
 /// tools run between them on Outside, half of each on the line.
 fn needed_gap_mm(side: Side, diameter_mm: f64) -> f64 {
     match side {
-        Side::Outside | Side::Inside => diameter_mm,
+        Side::Outside | Side::Inside | Side::Left | Side::Right => diameter_mm,
         Side::OnLine => diameter_mm / 2.0,
     }
 }
@@ -260,6 +272,8 @@ mod tests {
             entry: Entry::Plunge,
             lead: None,
             corner_relief: CornerRelief::None,
+            last_pass: None,
+            start: dc_project::StartAt::Auto,
         }
     }
 

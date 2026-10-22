@@ -1,0 +1,551 @@
+{
+  "version": 9,
+  "name": "plaque",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 170.0,
+    "height_mm": 120.0,
+    "thickness_mm": 11.8
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "Set me",
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": null,
+      "plunge_mm_min": null,
+      "rpm": null,
+      "step_down_mm": null,
+      "step_over_fraction": null
+    },
+    {
+      "id": "t2",
+      "name": "1/4 end mill",
+      "number": 1,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1500.0,
+      "plunge_mm_min": 500.0,
+      "rpm": 18000,
+      "step_down_mm": 4.0,
+      "step_over_fraction": 0.4
+    },
+    {
+      "id": "t3",
+      "name": "1/8 end mill",
+      "number": 2,
+      "cutter": "end_mill",
+      "diameter_mm": 3.175,
+      "flutes": 2,
+      "feed_mm_min": 1000.0,
+      "plunge_mm_min": 300.0,
+      "rpm": 18000,
+      "step_down_mm": 2.0,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "kind": "pocket",
+      "id": "op1",
+      "name": "Panel",
+      "enabled": true,
+      "targets": [ "i2", "i3" ],
+      "tool": "t2",
+      "strategy": { "raster": { "angle_deg": 0.0 } },
+      "wall_pass": "last",
+      "depth_mm": 4.0,
+      "step_down_mm": null,
+      "step_over_fraction": null,
+      "direction": "climb",
+      "allowance_mm": 0.0,
+      "rest_of": null,
+      "entry": { "helix": { "diameter_fraction": 0.8, "angle_deg": 15.0 } },
+      "corner_relief": "none",
+      "machining_order": "full_depth_first",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 15.0
+    },
+    {
+      "kind": "pocket",
+      "id": "op2",
+      "name": "Square recess",
+      "enabled": true,
+      "targets": [ "i4" ],
+      "tool": "t2",
+      "strategy": "offset",
+      "wall_pass": "last",
+      "depth_mm": 6.0,
+      "step_down_mm": null,
+      "step_over_fraction": null,
+      "direction": "climb",
+      "allowance_mm": 0.0,
+      "rest_of": null,
+      "entry": { "ramp": { "angle_deg": 15.0 } },
+      "corner_relief": "dogbone",
+      "machining_order": "full_depth_first",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 15.0
+    },
+    {
+      "kind": "drill",
+      "id": "op3",
+      "name": "Screw holes",
+      "enabled": true,
+      "targets": [ "i5", "i6", "i7", "i8" ],
+      "tool": "t2",
+      "cycle": { "peck": { "peck_depth_mm": 4.0, "retract": "full" } },
+      "dwell_s": 0.0,
+      "depth_mm": 12.0,
+      "retract_mm": 1.0,
+      "through_cut_allowance_mm": 0.2,
+      "safe_z_mm": 15.0
+    },
+    {
+      "kind": "profile",
+      "id": "op4",
+      "name": "Cut out",
+      "enabled": true,
+      "targets": [ "i1" ],
+      "tool": "t2",
+      "side": "outside",
+      "depth_mm": 12.0,
+      "step_down_mm": null,
+      "direction": "climb",
+      "through_cut_allowance_mm": 0.2,
+      "safe_z_mm": 15.0,
+      "tabs": {
+        "placement": { "kind": "count", "count": 4 },
+        "width_mm": 8.0,
+        "height_mm": 3.0,
+        "shape": "rect",
+        "on_holes": false
+      },
+      "machining_order": "full_depth_first",
+      "entry": { "ramp": { "angle_deg": 15.0 } },
+      "lead": { "radius_mm": 3.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 1.0 },
+      "corner_relief": "none"
+    },
+    {
+      "kind": "engrave",
+      "id": "op5",
+      "name": "Border and squiggle",
+      "enabled": true,
+      "targets": [ "i9", "i10" ],
+      "tool": "t3",
+      "depth_mm": 1.0,
+      "step_down_mm": 1.0,
+      "alternate_direction": false,
+      "machining_order": "full_depth_first",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 15.0
+    }
+  ],
+  "instances": [
+    {
+      "id": "i1",
+      "definition": "d1",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "outline",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i2",
+      "definition": "d2",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "pocket",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i3",
+      "definition": "d3",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "island",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i4",
+      "definition": "d4",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "square",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i5",
+      "definition": "d5",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "holes-1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i6",
+      "definition": "d6",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "holes-2",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i7",
+      "definition": "d7",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "holes-3",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i8",
+      "definition": "d8",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "holes-4",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i9",
+      "definition": "d9",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "border",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i10",
+      "definition": "d10",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "squiggle",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 2,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3.0,
+    "tool_change_mode": "separate_programs",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d1": {
+      "id": "d1",
+      "name": "outline",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 10.00000027815501, "y": 100.00000076293945, "bulge": 0.0 },
+            { "x": 140.00000389417013, "y": 100.00000076293945, "bulge": -0.4142135623730951 },
+            { "x": 150.00000417232516, "y": 90.00000048478444, "bulge": 0.0 },
+            { "x": 150.00000417232516, "y": 9.999998259544356, "bulge": -0.4142135623730951 },
+            { "x": 140.00000389417013, "y": -2.0186106581832064e-6, "bulge": 0.0 },
+            { "x": 10.00000027815501, "y": -2.0186106581832064e-6, "bulge": -0.4142135623730949 },
+            { "x": 0.0, "y": 9.999998259544356, "bulge": 0.0 },
+            { "x": 0.0, "y": 90.00000048478444, "bulge": -0.41421356237309515 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d10": {
+      "id": "d10",
+      "name": "squiggle",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 95.0000026424726, "y": 11.999998315175361, "bulge": 0.0 },
+            { "x": 95.4257297202299, "y": 12.937716709100696, "bulge": 0.0 },
+            { "x": 95.8444515925499, "y": 13.784823941262623, "bulge": 0.0 },
+            { "x": 96.25595388484152, "y": 14.547427641056498, "bulge": 0.0 },
+            { "x": 96.67831864391786, "y": 15.262879240497753, "bulge": 0.0 },
+            { "x": 97.09743696118493, "y": 15.911737659305334, "bulge": 0.0 },
+            { "x": 97.50915336805001, "y": 16.491874239756523, "bulge": 0.0 },
+            { "x": 97.92728873338693, "y": 17.025503806851823, "bulge": 0.0 },
+            { "x": 98.35248183969938, "y": 17.516722102243488, "bulge": 0.0 },
+            { "x": 98.77087179218952, "y": 17.951533781756048, "bulge": 0.0 },
+            { "x": 99.1858430689487, "y": 18.33652291714427, "bulge": 0.0 },
+            { "x": 99.62498750144388, "y": 18.698351881008772, "bulge": 0.0 },
+            { "x": 100.05885521728875, "y": 19.013091571615377, "bulge": 0.0 },
+            { "x": 100.48817321912841, "y": 19.283694290246636, "bulge": 0.0 },
+            { "x": 100.93956968992399, "y": 19.526821604880382, "bulge": 0.0 },
+            { "x": 101.39951567411305, "y": 19.735814427544355, "bulge": 0.0 },
+            { "x": 101.85766742759928, "y": 19.90615448838439, "bulge": 0.0 },
+            { "x": 102.3320658377494, "y": 20.044093364437867, "bulge": 0.0 },
+            { "x": 102.8313779501942, "y": 20.15246704191318, "bulge": 0.0 },
+            { "x": 103.33226367311742, "y": 20.224949075300085, "bulge": 0.0 },
+            { "x": 103.85231400348809, "y": 20.262924150640647, "bulge": 0.0 },
+            { "x": 104.40963904390944, "y": 20.26749733399351, "bulge": 0.0 },
+            { "x": 104.9720266304401, "y": 20.236377166439567, "bulge": 0.0 },
+            { "x": 105.57627117961798, "y": 20.164930820903102, "bulge": 0.0 },
+            { "x": 106.21928606381022, "y": 20.053160923367464, "bulge": 0.0 },
+            { "x": 106.87713723334534, "y": 19.902181955151303, "bulge": 0.0 },
+            { "x": 107.6410413439151, "y": 19.68827784492484, "bulge": 0.0 },
+            { "x": 108.41498860386277, "y": 19.435034206201756, "bulge": 0.0 },
+            { "x": 109.38244796226945, "y": 19.07709043781564, "bulge": 0.0 },
+            { "x": 110.51990780400592, "y": 18.612445629084075, "bulge": 0.0 },
+            { "x": 112.32513729182223, "y": 17.826754318136636, "bulge": 0.0 },
+            { "x": 114.12341847465193, "y": 17.05054530241134, "bulge": 0.0 },
+            { "x": 115.22682942559635, "y": 16.609525365898318, "bulge": 0.0 },
+            { "x": 116.10830814886869, "y": 16.292635013788235, "bulge": 0.0 },
+            { "x": 116.91034483293217, "y": 16.037674323030622, "bulge": 0.0 },
+            { "x": 117.62759279150427, "y": 15.845711767711304, "bulge": 0.0 },
+            { "x": 118.31622727926758, "y": 15.695870829160505, "bulge": 0.0 },
+            { "x": 118.93111076738876, "y": 15.596813586696506, "bulge": 0.0 },
+            { "x": 119.53942457682855, "y": 15.534298184941218, "bulge": 0.0 },
+            { "x": 120.1047133427694, "y": 15.509656426953313, "bulge": 0.0 },
+            { "x": 120.64365937336818, "y": 15.521814045364552, "bulge": 0.0 },
+            { "x": 121.17926664857649, "y": 15.569479636128097, "bulge": 0.0 },
+            { "x": 121.6795912412058, "y": 15.648055369114086, "bulge": 0.0 },
+            { "x": 122.16577014237669, "y": 15.760709701913594, "bulge": 0.0 },
+            { "x": 122.65203284651587, "y": 15.910102610097093, "bulge": 0.0 },
+            { "x": 123.11757042064698, "y": 16.088944209989435, "bulge": 0.0 },
+            { "x": 123.56726838471711, "y": 16.29964031773592, "bulge": 0.0 },
+            { "x": 124.02017418673292, "y": 16.550911991560568, "bulge": 0.0 },
+            { "x": 124.46967913004086, "y": 16.8399819675706, "bulge": 0.0 },
+            { "x": 124.89557453980201, "y": 17.154502387272217, "bulge": 0.0 },
+            { "x": 125.32706294400641, "y": 17.516142230616346, "bulge": 0.0 },
+            { "x": 125.76475634862072, "y": 17.92824394550854, "bulge": 0.0 },
+            { "x": 126.18397609898074, "y": 18.368373883536982, "bulge": 0.0 },
+            { "x": 126.60388020582543, "y": 18.85856816322758, "bulge": 0.0 },
+            { "x": 127.03114043299215, "y": 19.40956776973064, "bulge": 0.0 },
+            { "x": 127.4551030795465, "y": 20.01033194655874, "bulge": 0.0 },
+            { "x": 127.87141865117147, "y": 20.65851466846705, "bulge": 0.0 },
+            { "x": 128.29539039242403, "y": 21.380952834060487, "bulge": 0.0 },
+            { "x": 128.72413516462572, "y": 22.177689005529466, "bulge": 0.0 },
+            { "x": 129.1422654377422, "y": 23.02503674707745, "bulge": 0.0 },
+            { "x": 129.56764497071, "y": 23.963662309024603, "bulge": 0.0 },
+            { "x": 130.00000361601514, "y": 24.99999867677687, "bulge": 0.0 }
+          ],
+          "closed": false
+        }
+      ]
+    },
+    "d2": {
+      "id": "d2",
+      "name": "pocket",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 30.00000083446503, "y": 92.00000054041544, "bulge": 0.0 },
+            { "x": 120.00000333786012, "y": 92.00000054041544, "bulge": -0.4142135623730951 },
+            { "x": 125.00000347693762, "y": 87.00000040133794, "bulge": 0.0 },
+            { "x": 125.00000347693762, "y": 46.999999288717895, "bulge": -0.4142135623730951 },
+            { "x": 120.00000333786012, "y": 41.99999914964039, "bulge": 0.0 },
+            { "x": 30.00000083446503, "y": 41.99999914964039, "bulge": -0.4142135623730951 },
+            { "x": 25.000000695387527, "y": 46.999999288717895, "bulge": 0.0 },
+            { "x": 25.000000695387527, "y": 87.00000040133794, "bulge": -0.4142135623730951 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d3": {
+      "id": "d3",
+      "name": "island",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 85.00000236431758, "y": 66.99999984502792, "bulge": -1.0 },
+            { "x": 65.00000180800755, "y": 66.99999984502792, "bulge": -1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d4": {
+      "id": "d4",
+      "name": "square",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 60.00000166893006, "y": 37.99999903837839, "bulge": 0.0 },
+            { "x": 90.0000025033951, "y": 37.99999903837839, "bulge": 0.0 },
+            { "x": 90.0000025033951, "y": 7.999998203913364, "bulge": 0.0 },
+            { "x": 60.00000166893006, "y": 7.999998203913364, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d5": {
+      "id": "d5",
+      "name": "holes-1",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 19.50000054240227, "y": 16.99999845425286, "bulge": -1.0 },
+            { "x": 14.50000040332477, "y": 16.99999845425286, "bulge": -1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d6": {
+      "id": "d6",
+      "name": "holes-2",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 135.5000037690004, "y": 16.99999845425286, "bulge": -1.0 },
+            { "x": 130.50000362992284, "y": 16.99999845425286, "bulge": -1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d7": {
+      "id": "d7",
+      "name": "holes-3",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 135.5000037690004, "y": 83.00000029007593, "bulge": -1.0 },
+            { "x": 130.50000362992284, "y": 83.00000029007593, "bulge": -1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d8": {
+      "id": "d8",
+      "name": "holes-4",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 19.50000054240227, "y": 83.00000029007593, "bulge": -1.0 },
+            { "x": 14.50000040332477, "y": 83.00000029007593, "bulge": -1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d9": {
+      "id": "d9",
+      "name": "border",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 10.00000027815501, "y": 95.00000062386195, "bulge": 0.0 },
+            { "x": 140.00000389417013, "y": 95.00000062386195, "bulge": -0.4142135623730951 },
+            { "x": 145.00000403324765, "y": 90.00000048478444, "bulge": 0.0 },
+            { "x": 145.00000403324765, "y": 9.999998259544356, "bulge": -0.4142135623730951 },
+            { "x": 140.00000389417013, "y": 4.999998120466856, "bulge": 0.0 },
+            { "x": 10.00000027815501, "y": 4.999998120466856, "bulge": -0.4142135623730951 },
+            { "x": 5.000000139077505, "y": 9.999998259544356, "bulge": 0.0 },
+            { "x": 5.000000139077505, "y": 90.00000048478444, "bulge": -0.4142135623730951 }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

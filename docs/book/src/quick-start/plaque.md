@@ -59,11 +59,11 @@ Wrote plaque.dcv: stock 170.00 × 120.00 mm, post-processor grblhal, 9 shape(s) 
 1 shape(s) are open paths and are not cut; `dreamcarve check` lists them.
 Values to set; export refuses until every one is set:
 plaque.dcv:10:21: stock.thickness_mm is not set (mm)
-plaque.dcv:24:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-plaque.dcv:25:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-plaque.dcv:26:14: tools[t1].rpm is not set (RPM) for tool `Set me`
-plaque.dcv:27:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-plaque.dcv:50:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
+plaque.dcv:29:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+plaque.dcv:30:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+plaque.dcv:31:14: tools[t1].rpm is not set (RPM) for tool `Set me`
+plaque.dcv:32:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
+plaque.dcv:55:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
 Next: edit plaque.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check plaque.dcv`.
 ```
 
@@ -296,12 +296,16 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
       "placement": { "kind": "count", "count": 4 },
       "width_mm": 8.0,
       "height_mm": 3.0,
-      "shape": "rect"
+      "shape": "rect",
+      "on_holes": false,
+      "avoid_corners": true
     },
     "machining_order": "full_depth_first",
     "entry": { "ramp": { "angle_deg": 15.0 } },
     "lead": { "radius_mm": 3.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 1.0 },
-    "corner_relief": "none"
+    "corner_relief": "none",
+    "last_pass": null,
+    "start": "auto"
   },
   {
     "kind": "engrave",
@@ -349,7 +353,7 @@ dreamcarve check plaque.dcv
 ```
 
 ```text
-plaque.dcv:17:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+plaque.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
@@ -357,9 +361,12 @@ warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider 
 Program 1 (T1):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
+  Estimated time: 3 min 2 s (cutting 2 min 59 s, dwells 3 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 2 (T2):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 35 s (cutting 3 min 29 s, dwells 6 s); 1.6 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 plaque.dcv: 0 error(s), 5 warning(s)
 ```
 
@@ -383,7 +390,7 @@ dreamcarve export plaque.dcv
 ```
 
 ```text
-plaque.dcv:17:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+plaque.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
 warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
@@ -391,24 +398,32 @@ warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider 
 Wrote 2 programs; run them in this order:
   1. plaque-1-T1.nc  Before you start: fit T1 1/4 end mill and set work zero (X, Y and Z) with it.
   2. plaque-2-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
+This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
+If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.
 Post-processor grblhal.
-  op1 `Panel`: tool `t2` (1/4 end mill), 2 target(s), 4 mm deep
-  op2 `Square recess`: tool `t2` (1/4 end mill), 1 target(s), 6 mm deep
-  op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12 mm deep
-  op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12 mm deep
-  op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1 mm deep
-plaque-1-T1.nc (514 lines):
+  op1 `Panel`: tool `t2` (1/4 end mill), 2 target(s), 4.000 mm deep
+  op2 `Square recess`: tool `t2` (1/4 end mill), 1 target(s), 6.000 mm deep
+  op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12.000 mm deep
+  op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12.000 mm deep
+  op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1.000 mm deep
+plaque-1-T1.nc (517 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
-plaque-2-T2.nc (49 lines):
+  Estimated time: 3 min 2 s (cutting 2 min 59 s, dwells 3 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+plaque-2-T2.nc (52 lines):
   Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
     The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 35 s (cutting 3 min 29 s, dwells 6 s); 1.6 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 ```
 
 The project uses two bits, so export writes two programs, one per bit,
 numbered in the order to run them: `plaque-1-T1.nc` with the 6.35 mm bit
 (the two pockets, the holes and the cut-out), then `plaque-2-T2.nc` with
 the 3.175 mm bit (the engraving). `T1` and `T2` are the tools' numbers.
+Each program's estimated time, and the total, leave out the rapids and
+the bit change between programs; see
+[Estimated run time](../user-guide/configuration.md#estimated-run-time).
 
 The **Before you start** line of each program says what to do before you
 press start:
@@ -441,6 +456,9 @@ which work with any sender.
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 ( Operation 1: Panel )
@@ -510,6 +528,9 @@ Then it rises to safe Z for the next hole.
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 ( Operation 1: Border and squiggle )

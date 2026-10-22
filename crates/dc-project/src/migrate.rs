@@ -50,6 +50,34 @@
 //!   `use_canned_cycles: false` to the post-processor settings: the values
 //!   that keep a phase 1 project cutting the same. Pocket, Drill and
 //!   Engrave operations exist from this version on.
+//! - **9**: adds `on_holes` to each Profile's `tabs`, set to `true` by the
+//!   migration (#109): a Profile now leaves its holes without tabs unless
+//!   `on_holes` is set, and every outline had tabs before.
+//! - **10**: a Profile's `side` may be `"left"` or `"right"` (#207), which
+//!   cut open paths beside them. No version 9 file holds either, so the
+//!   migration changes only the version; the bump makes an older reader
+//!   refuse a file that uses them.
+//! - **11**: adds the project's placed tabs, `tabs: []` after
+//!   `operations` (#105, ADR-0005). A Profile's `tabs` setting stays as a
+//!   tab request: placing it needs the Profile's tool paths, which only
+//!   `dc-cam` builds, so generation places it before it cuts, and each
+//!   `dreamcarve tabs` command that saves the project writes it as placed
+//!   tabs.
+//! - **12**: adds the project's `heights` after `origin` (#283):
+//!   `clearance_mm`, `tool_change_machine_z_mm` and `park`, all `null`,
+//!   which exports what an earlier file did.
+//! - **13**: adds each Profile's last pass allowance, `last_pass: null`
+//!   after `corner_relief` (#284): every pass cuts on the part's path, as
+//!   before.
+//! - **14**: adds `avoid_corners: false` at the end of each Profile's
+//!   non-null `tabs` request and `start: "auto"` after its `last_pass`
+//!   (#285): tabs stay where they were laid and each cut starts where it
+//!   did, so the file exports what it did.
+//! - **15**: adds `holds_slug: null` at the end of each placed tab (#302):
+//!   whether the tab is meant to hold the slug of the hole it is on, which
+//!   format 14 did not record. Telling needs the Profile's tool paths, so
+//!   the migration leaves it unset, and an unset tab warns `tab_on_hole`
+//!   as format 14 did; cuts never depend on it.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -60,7 +88,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 8;
+pub const CURRENT_VERSION: u32 = 15;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -77,6 +105,13 @@ fn step(from: u32) -> Option<Step> {
         5 => Some(v5_to_v6),
         6 => Some(v6_to_v7),
         7 => Some(v7_to_v8),
+        8 => Some(v8_to_v9),
+        9 => Some(v9_to_v10),
+        10 => Some(v10_to_v11),
+        11 => Some(v11_to_v12),
+        12 => Some(v12_to_v13),
+        13 => Some(v13_to_v14),
+        14 => Some(v14_to_v15),
         _ => None,
     }
 }
@@ -107,8 +142,14 @@ pub fn migrate(root: Value, from_version: u32) -> Result<Value, LoadError> {
             from,
             to,
             message: "no migration step is defined".into(),
+            at: None,
         })?;
-        obj = step(obj).map_err(|message| LoadError::Migration { from, to, message })?;
+        obj = step(obj).map_err(|message| LoadError::Migration {
+            from,
+            to,
+            message,
+            at: None,
+        })?;
     }
     obj.insert("version".into(), Value::from(CURRENT_VERSION));
     Ok(Value::Object(obj))
@@ -313,7 +354,8 @@ fn v6_to_v7(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> 
 /// gained since, with the values of its time, so it compares equal to the
 /// bundled version 1 it was made from (#117): the dwell word was always
 /// seconds on GRBL and grblHAL, and no controller then documented a
-/// chip-break re-entry gap. These are definition facts, so they never
+/// chip-break re-entry gap; both document `G53` (#283). These are
+/// definition facts, so they never
 /// appear in a version 7 or later project; the comparison is the only
 /// place a version 6 copy meets them.
 fn upgrade_embedded_copy(copy: &mut Value) -> Result<(), String> {
@@ -329,6 +371,27 @@ fn upgrade_embedded_copy(copy: &mut Value) -> Result<(), String> {
         );
     }
     dwell.insert("units".into(), Value::from("seconds"));
+    // #283: the machine-coordinate command is a fact of the controller,
+    // not of the copy, so it is the bundled version 1's (`"G53"` on
+    // grblHAL and GRBL, the only definitions a version 6 file held), and
+    // nothing writes it unless a project sets the height.
+    let machine_command = copy
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| bundled_definition(id, V6_DEFINITION_VERSION).ok())
+        .and_then(|d| d.post_processor().work_coordinates.machine_command.clone())
+        .map_or(Value::Null, Value::from);
+    let work_coordinates = copy
+        .get_mut("work_coordinates")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "`post_processor.work_coordinates` is missing".to_owned())?;
+    if work_coordinates.contains_key("machine_command") {
+        return Err(
+            "a version 6 file has no `post_processor.work_coordinates.machine_command`, but this one does"
+                .into(),
+        );
+    }
+    work_coordinates.insert("machine_command".into(), machine_command);
     if let Some(cycles) = copy.get_mut("canned_cycles").and_then(Value::as_object_mut) {
         if cycles.contains_key("reentry_gap_mm") {
             return Err(
@@ -401,6 +464,200 @@ fn v7_to_v8(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
         );
     }
     post.insert("use_canned_cycles".into(), Value::from(false));
+    Ok(root)
+}
+
+/// Version 8 → 9 (#109): `on_holes: true` at the end of each Profile's
+/// `tabs` object, so a project whose holes had tabs keeps them. A Profile
+/// with `tabs: null` and the other operations are unchanged. Fails if the
+/// key is already there: that is not a version 8 file.
+fn v8_to_v9(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Some(tabs) = op.get_mut("tabs").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if tabs.contains_key("on_holes") {
+            return Err(format!(
+                "a version 8 file has no `operations[{i}].tabs.on_holes`, but this one does"
+            ));
+        }
+        tabs.insert("on_holes".into(), Value::from(true));
+    }
+    Ok(root)
+}
+
+/// Version 9 → 10 (#207): Left and Right are new values of an existing
+/// field, so a version 9 file is already a version 10 one.
+fn v9_to_v10(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    Ok(root)
+}
+
+/// Version 10 → 11 (#105): `tabs: []` after `operations`, the project's
+/// placed tabs, none yet. Each Profile's `tabs` setting is left as it is:
+/// it is now a tab request, placed when the project is cut or saved by
+/// `dreamcarve tabs` (ADR-0005). Fails if the project already has `tabs`: that is
+/// not a version 10 file.
+fn v10_to_v11(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    if root.contains_key("tabs") {
+        return Err("a version 10 file has no `tabs`, but this one does".into());
+    }
+    let mut out = Map::with_capacity(root.len() + 1);
+    let mut inserted = false;
+    for (key, value) in root {
+        let after_this = key == "operations";
+        out.insert(key, value);
+        if after_this {
+            out.insert("tabs".into(), Value::Array(Vec::new()));
+            inserted = true;
+        }
+    }
+    if !inserted {
+        out.insert("tabs".into(), Value::Array(Vec::new()));
+    }
+    Ok(out)
+}
+
+/// Version 11 → 12 (#283): `heights` after `origin`, with the clearance
+/// height, the tool-change machine Z and the park point all `null`, so the
+/// project exports what it did. Fails if the project already has
+/// `heights`: that is not a version 11 file.
+fn v11_to_v12(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    if root.contains_key("heights") {
+        return Err("a version 11 file has no `heights`, but this one does".into());
+    }
+    let mut heights = Map::with_capacity(3);
+    for key in ["clearance_mm", "tool_change_machine_z_mm", "park"] {
+        heights.insert(key.into(), Value::Null);
+    }
+    let mut out = Map::with_capacity(root.len() + 1);
+    let mut heights = Some(Value::Object(heights));
+    for (key, value) in root {
+        let after_this = key == "origin";
+        out.insert(key, value);
+        if after_this && let Some(heights) = heights.take() {
+            out.insert("heights".into(), heights);
+        }
+    }
+    if let Some(heights) = heights {
+        out.insert("heights".into(), heights);
+    }
+    Ok(out)
+}
+
+/// Version 12 → 13 (#284): `last_pass: null` right after each Profile's
+/// `corner_relief`, so every pass cuts on the part's path as before. Other
+/// operations are unchanged. Fails if a Profile already has the key: that
+/// is not a version 12 file.
+fn v12_to_v13(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("last_pass") {
+            return Err(format!(
+                "a version 12 file has no `operations[{i}].last_pass`, but this one does"
+            ));
+        }
+        let mut out = Map::with_capacity(fields.len() + 1);
+        let mut inserted = false;
+        for (key, value) in fields {
+            let after_this = key == "corner_relief";
+            out.insert(key, value);
+            if after_this {
+                out.insert("last_pass".into(), Value::Null);
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("last_pass".into(), Value::Null);
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
+/// Version 13 → 14 (#285): `avoid_corners: false` at the end of each
+/// Profile's non-null `tabs` request, so its tabs are laid where they
+/// were, and `start: "auto"` right after its `last_pass`, so each cut
+/// starts where it did. Other operations are unchanged. Fails if a Profile
+/// already has either key: that is not a version 13 file.
+fn v13_to_v14(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("profile") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("start") {
+            return Err(format!(
+                "a version 13 file has no `operations[{i}].start`, but this one does"
+            ));
+        }
+        let mut out = Map::with_capacity(fields.len() + 1);
+        let mut inserted = false;
+        for (key, mut value) in fields {
+            if key == "tabs"
+                && let Value::Object(tabs) = &mut value
+            {
+                if tabs.contains_key("avoid_corners") {
+                    return Err(format!(
+                        "a version 13 file has no `operations[{i}].tabs.avoid_corners`, but this one does"
+                    ));
+                }
+                tabs.insert("avoid_corners".into(), Value::Bool(false));
+            }
+            let after_this = key == "last_pass";
+            out.insert(key, value);
+            if after_this {
+                out.insert("start".into(), Value::from("auto"));
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("start".into(), Value::from("auto"));
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
+/// Version 14 → 15 (#302): `holds_slug: null` at the end of each placed
+/// tab. Whether a format 14 hole tab was placed to hold its slug shows
+/// only in where it sits against the tool path of the Profile that cuts
+/// it (#300), which only `dc-cam` builds, so the step records nothing and
+/// generation keeps that rule for an unset tab: the file warns as it did.
+/// Fails if a tab already has the key: that is not a version 14 file.
+fn v14_to_v15(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(tabs) = root.get_mut("tabs").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, tab) in tabs.iter_mut().enumerate() {
+        let Value::Object(fields) = tab else {
+            return Err(format!("`tabs[{i}]` is not an object"));
+        };
+        if fields.contains_key("holds_slug") {
+            return Err(format!(
+                "a version 14 file has no `tabs[{i}].holds_slug`, but this one does"
+            ));
+        }
+        fields.insert("holds_slug".into(), Value::Null);
+    }
     Ok(root)
 }
 
@@ -548,7 +805,7 @@ fn untag(value: Value, path: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
     use crate::test_support::sample_project;
-    use crate::{OriginXy, SpindleControl, ToolChangeMode, ToolKind, load, save};
+    use crate::{OriginXy, Side, SpindleControl, ToolChangeMode, ToolKind, load, save};
     use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
     use serde_json::json;
 
@@ -564,6 +821,37 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 15 {
+            for tab in root["tabs"].as_array_mut().unwrap() {
+                tab.as_object_mut().unwrap().shift_remove("holds_slug");
+            }
+        }
+        if version < 14 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                op.as_object_mut().unwrap().shift_remove("start");
+                if let Some(tabs) = op["tabs"].as_object_mut() {
+                    tabs.shift_remove("avoid_corners");
+                }
+            }
+        }
+        if version < 13 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                op.as_object_mut().unwrap().shift_remove("last_pass");
+            }
+        }
+        if version < 12 {
+            root.as_object_mut().unwrap().shift_remove("heights");
+        }
+        if version < 11 {
+            root.as_object_mut().unwrap().shift_remove("tabs");
+        }
+        if version < 9 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                if let Some(tabs) = op["tabs"].as_object_mut() {
+                    tabs.shift_remove("on_holes");
+                }
+            }
+        }
         if version < 8 {
             // `shift_remove`: `remove` swaps the last key in, which would
             // scramble the order the tests compare.
@@ -742,7 +1030,7 @@ mod tests {
             root["instances"][0][key] = Value::Null;
             let err = migrate(root, 5).unwrap_err();
             assert!(
-                matches!(&err, LoadError::Migration { from: 5, to: 6, message }
+                matches!(&err, LoadError::Migration { from: 5, to: 6, message, .. }
                     if message.contains(&format!("instances[0].{key}"))),
                 "{err:?}"
             );
@@ -898,7 +1186,7 @@ mod tests {
         root.as_object_mut().unwrap().remove("post_processor");
         let err = migrate(root, 6).unwrap_err();
         assert!(
-            matches!(&err, LoadError::Migration { from: 6, to: 7, message }
+            matches!(&err, LoadError::Migration { from: 6, to: 7, message, .. }
                 if message.contains("post_processor")),
             "{err:?}"
         );
@@ -967,6 +1255,7 @@ mod tests {
                 from: 6,
                 to: 7,
                 message,
+                ..
             }) => message,
             other => panic!("a migration error from 6 to 7: {other:?}"),
         }
@@ -1061,7 +1350,12 @@ mod tests {
     /// file saves with the same layout as a new one.
     #[test]
     fn v7_to_v8_writes_the_defaults() {
-        let migrated = migrate(sample_root_at(7), 7).unwrap();
+        // The one step: `migrate` would go on to the current version.
+        let Value::Object(root) = sample_root_at(7) else {
+            panic!("the sample is an object");
+        };
+        let mut migrated = Value::Object(v7_to_v8(root).unwrap());
+        migrated["version"] = Value::from(8);
         assert_eq!(migrated, sample_root_at(8));
         assert_eq!(
             serde_json::to_string_pretty(&migrated).unwrap(),
@@ -1095,11 +1389,644 @@ mod tests {
             edit(&mut root);
             let err = migrate(root, 7).unwrap_err();
             assert!(
-                matches!(&err, LoadError::Migration { from: 7, to: 8, message }
+                matches!(&err, LoadError::Migration { from: 7, to: 8, message, .. }
                     if message.contains(key)),
                 "{key}: {err:?}"
             );
         }
+    }
+
+    // Version 8 → 9 (#109): holes get no tabs unless `tabs.on_holes` is
+    // set, so a project from before keeps them on its holes.
+
+    const V8_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v8/sample.dcv");
+
+    #[test]
+    fn version_8_fixture_loads() {
+        let loaded = load(V8_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #109: a version 8 Profile put its tabs on every outline it cut,
+    /// holes included. The migration writes `on_holes: true` into every
+    /// Profile's tabs, so the project cuts the same; a Profile with no
+    /// tabs stays `null`. The key lands where a version 9 file writes it.
+    #[test]
+    fn v8_tabs_keep_their_holes_tabbed() {
+        let root: Value = serde_json::from_slice(V8_FIXTURE).unwrap();
+        let migrated = migrate(root, 8).unwrap();
+        assert_eq!(migrated["operations"][0]["tabs"]["on_holes"], json!(true));
+
+        let migrated = migrate(sample_root_at(8), 8).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
+            "key order"
+        );
+
+        let mut untabbed = sample_root_at(8);
+        untabbed["operations"][0]["tabs"] = Value::Null;
+        let migrated = migrate(untabbed, 8).unwrap();
+        assert_eq!(migrated["operations"][0]["tabs"], Value::Null);
+    }
+
+    #[test]
+    fn v8_with_on_holes_already_present_fails() {
+        let mut root = sample_root_at(8);
+        root["operations"][0]["tabs"]["on_holes"] = json!(false);
+        let err = migrate(root, 8).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 8, to: 9, message, .. }
+                if message.contains("on_holes")),
+            "{err:?}"
+        );
+    }
+
+    // Version 10 → 11 (#105): placed tabs. The tab setting stays as a
+    // request, which `dreamcarve` places when it loads the project.
+
+    const V9_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v9/sample.dcv");
+    const V10_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v10/sample.dcv");
+
+    #[test]
+    fn version_9_fixture_loads() {
+        let loaded = load(V9_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    #[test]
+    fn version_10_fixture_loads() {
+        let loaded = load(V10_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #105: a version 10 project gains an empty list of placed tabs right
+    /// after its operations; each Profile keeps its tab setting, now a
+    /// request, so the project cuts the same.
+    #[test]
+    fn v10_project_gains_an_empty_tab_list() {
+        let root: Value = serde_json::from_slice(V10_FIXTURE).unwrap();
+        let mut tabs_before = root["operations"][0]["tabs"].clone();
+        let migrated = migrate(root, 10).unwrap();
+        assert_eq!(migrated["tabs"], json!([]));
+        // Version 14 (#285) adds `avoid_corners: false` to the request.
+        tabs_before["avoid_corners"] = json!(false);
+        assert_eq!(migrated["operations"][0]["tabs"], tabs_before);
+        let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
+        let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+        assert_eq!(at("tabs"), at("operations") + 1, "{keys:?}");
+        assert_eq!(
+            migrate(sample_root_at(10), 10).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+    }
+
+    #[test]
+    fn v10_with_tabs_already_present_fails() {
+        let mut root = sample_root_at(10);
+        root["tabs"] = json!([]);
+        let err = migrate(root, 10).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 10, to: 11, message, .. }
+                if message.contains("tabs")),
+            "{err:?}"
+        );
+    }
+
+    /// #207: version 10 only adds the `left` and `right` sides, so the
+    /// migration changes nothing but the version: every version 9 file
+    /// cuts the same. The bump makes a reader of version 9 refuse a file
+    /// that uses the new sides, instead of failing on an unknown side.
+    #[test]
+    fn v9_to_v10_changes_only_the_version() {
+        let root: Value = serde_json::from_slice(V9_FIXTURE).unwrap();
+        let stepped = v9_to_v10(root.as_object().unwrap().clone()).unwrap();
+        assert_eq!(Value::Object(stepped), root);
+        for side in ["inside", "outside", "on_line"] {
+            let mut root = sample_root_at(9);
+            root["operations"][0]["side"] = json!(side);
+            let migrated = migrate(root, 9).unwrap();
+            assert_eq!(migrated["operations"][0]["side"], json!(side));
+        }
+        assert_eq!(
+            migrate(sample_root_at(9), 9).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+    }
+
+    /// #207: the new sides save as `"left"` and `"right"` and load back.
+    #[test]
+    fn left_and_right_sides_round_trip() {
+        for (side, text) in [(Side::Left, "\"left\""), (Side::Right, "\"right\"")] {
+            assert_eq!(serde_json::to_string(&side).unwrap(), text);
+            assert_eq!(serde_json::from_str::<Side>(text).unwrap(), side);
+            let mut p = sample_project();
+            crate::test_support::profile_mut(&mut p).side = side;
+            assert_eq!(load(save(&p).unwrap().as_bytes()).unwrap().project, p);
+        }
+    }
+
+    // Version 11 → 12 (#283): the clearance, tool-change and park heights.
+
+    const V11_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v11/sample.dcv");
+
+    /// #283, design addendum A7: a version 11 project gains `heights`
+    /// right after `origin`, with its three fields `null`, which exports
+    /// what the file did; everything else is unchanged.
+    #[test]
+    fn v11_to_v12_adds_null_heights() {
+        let root: Value = serde_json::from_slice(V11_FIXTURE).unwrap();
+        let Value::Object(map) = root.clone() else {
+            panic!("the fixture is an object");
+        };
+        // The one step: `migrate` would go on to the current version.
+        let mut migrated = Value::Object(v11_to_v12(map).unwrap());
+        migrated["version"] = Value::from(12);
+        assert_eq!(
+            migrated["heights"],
+            json!({ "clearance_mm": null, "tool_change_machine_z_mm": null, "park": null })
+        );
+        let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
+        let heights_keys: Vec<&String> = migrated["heights"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            heights_keys,
+            ["clearance_mm", "tool_change_machine_z_mm", "park"],
+            "{heights_keys:?}"
+        );
+        let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+        assert_eq!(at("heights"), at("origin") + 1, "{keys:?}");
+        let mut without = migrated.clone();
+        without.as_object_mut().unwrap().shift_remove("heights");
+        without["version"] = Value::from(11);
+        assert_eq!(without, root, "nothing else changes");
+        assert_eq!(
+            migrate(sample_root_at(11), 11).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+
+        let mut already = sample_root_at(11);
+        already["heights"] = json!({});
+        let err = migrate(already, 11).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 11, to: 12, message, .. }
+                if message.contains("heights")),
+            "{err:?}"
+        );
+    }
+
+    // Version 12 → 13 (#284): the Profile last pass allowance.
+
+    const V12_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v12/sample.dcv");
+
+    #[test]
+    fn version_12_fixture_loads() {
+        let loaded = load(V12_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #284: every Profile of a version 12 file gains `last_pass: null`
+    /// right after `corner_relief`, so each pass cuts on the line as
+    /// before; other operations are unchanged. The fixture then loads as
+    /// the sample, whose program `dreamcarve`'s migration corpus test
+    /// holds byte for byte.
+    #[test]
+    fn v12_to_v13_adds_null_last_pass() {
+        let mut root: Value = serde_json::from_slice(V12_FIXTURE).unwrap();
+        let profile = root["operations"][0].clone();
+        let mut second = profile.clone();
+        second["id"] = json!("o2");
+        let pocket = serde_json::to_value(crate::Operation::Pocket(
+            crate::test_support::sample_pocket(),
+        ))
+        .unwrap();
+        let operations = root["operations"].as_array_mut().unwrap();
+        operations.push(second);
+        operations.push(pocket.clone());
+        let migrated = migrate(root, 12).unwrap();
+        let operations = migrated["operations"].as_array().unwrap();
+        for op in operations.iter().take(2) {
+            assert_eq!(op["last_pass"], Value::Null, "{op}");
+            let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
+            let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+            assert_eq!(at("last_pass"), at("corner_relief") + 1, "{keys:?}");
+            // Version 14 (#285) adds `start` after it.
+            assert_eq!(keys.len(), at("last_pass") + 2, "{keys:?}");
+        }
+        assert_eq!(operations[2], pocket, "a Pocket has no last pass");
+
+        let migrated = migrate(sample_root_at(12), 12).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
+            "key order"
+        );
+        let mut loaded = load(V12_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(
+            crate::test_support::profile_mut(&mut loaded.project).last_pass,
+            None
+        );
+    }
+
+    #[test]
+    fn v12_with_last_pass_already_present_fails() {
+        let mut root = sample_root_at(12);
+        root["operations"][0]["last_pass"] = Value::Null;
+        let err = migrate(root, 12).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 12, to: 13, message, .. }
+                if message.contains("last_pass")),
+            "{err:?}"
+        );
+    }
+
+    /// #310 review: loaded from a file, a migration that fails on a key
+    /// the file should not have says where that key is, as a schema error
+    /// does.
+    #[test]
+    fn v12_with_last_pass_says_where() {
+        let text = String::from_utf8(V12_FIXTURE.to_vec()).unwrap().replacen(
+            "\"corner_relief\": \"none\"",
+            "\"corner_relief\": \"none\",\n      \"last_pass\": null",
+            1,
+        );
+        let line = text
+            .lines()
+            .position(|l| l.contains("\"last_pass\""))
+            .unwrap()
+            + 1;
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 12, to: 13, at: Some(at), .. }
+                if at.line == line && at.column == 20),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("(line {line}, column 20)")),
+            "{err}"
+        );
+    }
+
+    /// #284: a last pass saves with every field and loads back.
+    #[test]
+    fn last_pass_round_trips() {
+        let mut p = sample_project();
+        crate::test_support::profile_mut(&mut p).last_pass = Some(crate::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: Some(1.0),
+            reverse: true,
+        });
+        let text = save(&p).unwrap();
+        assert!(
+            text.contains(
+                "\"last_pass\": {\n        \"allowance_mm\": 0.5,\n        \"thickness_mm\": 1.0,\n        \"reverse\": true\n      }"
+            ),
+            "{text}"
+        );
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+    }
+
+    // Version 13 → 14 (#285): tabs off corners, and the start point.
+
+    const V13_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v13/sample.dcv");
+
+    #[test]
+    fn version_13_fixture_loads() {
+        let loaded = load(V13_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// #285: every Profile of a version 13 file gains `start: "auto"`
+    /// right after `last_pass`, and its tab request, when it has one,
+    /// `avoid_corners: false` at its end, so its tabs are laid and its
+    /// cuts start where they were; a Profile without a request and other
+    /// operations are otherwise unchanged. The fixture then loads as the
+    /// sample, whose program `dreamcarve`'s migration corpus test holds
+    /// byte for byte.
+    #[test]
+    fn v13_to_v14_adds_corner_and_start_defaults() {
+        let mut root: Value = serde_json::from_slice(V13_FIXTURE).unwrap();
+        let profile = root["operations"][0].clone();
+        let mut untabbed = profile.clone();
+        untabbed["id"] = json!("o2");
+        untabbed["tabs"] = Value::Null;
+        let pocket = serde_json::to_value(crate::Operation::Pocket(
+            crate::test_support::sample_pocket(),
+        ))
+        .unwrap();
+        let operations = root["operations"].as_array_mut().unwrap();
+        operations.push(untabbed);
+        operations.push(pocket.clone());
+        let migrated = migrate(root, 13).unwrap();
+        let operations = migrated["operations"].as_array().unwrap();
+        for op in operations.iter().take(2) {
+            assert_eq!(op["start"], json!("auto"), "{op}");
+            let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
+            let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
+            assert_eq!(at("start"), at("last_pass") + 1, "{keys:?}");
+            assert_eq!(keys.len(), at("start") + 1, "{keys:?}");
+        }
+        let tabs = operations[0]["tabs"].as_object().unwrap();
+        assert_eq!(tabs["avoid_corners"], json!(false));
+        assert_eq!(
+            tabs.keys().next_back().map(String::as_str),
+            Some("avoid_corners")
+        );
+        assert_eq!(operations[1]["tabs"], Value::Null, "no request, no key");
+        assert_eq!(operations[2], pocket, "a Pocket has neither");
+
+        let migrated = migrate(sample_root_at(13), 13).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&sample_root_at(CURRENT_VERSION)).unwrap(),
+            "key order"
+        );
+        let mut loaded = load(V13_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        let op = crate::test_support::profile_mut(&mut loaded.project);
+        assert_eq!(op.start, crate::StartAt::Auto);
+        assert!(!op.tabs.as_ref().unwrap().avoid_corners);
+    }
+
+    #[test]
+    fn v13_with_start_already_present_fails() {
+        let mut root = sample_root_at(13);
+        root["operations"][0]["start"] = json!("auto");
+        let err = migrate(root, 13).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 13, to: 14, message, .. }
+                if message.contains("start")),
+            "{err:?}"
+        );
+        let mut root = sample_root_at(13);
+        root["operations"][0]["tabs"]["avoid_corners"] = json!(true);
+        let err = migrate(root, 13).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 13, to: 14, message, .. }
+                if message.contains("tabs.avoid_corners")),
+            "{err:?}"
+        );
+    }
+
+    /// #285: each start saves as the spec writes it and loads back; a
+    /// `near` point takes inch input as every length does.
+    #[test]
+    fn start_round_trips() {
+        for (start, text) in [
+            (crate::StartAt::Auto, "\"start\": \"auto\""),
+            (crate::StartAt::FirstVertex, "\"start\": \"first_vertex\""),
+            (
+                crate::StartAt::Near {
+                    x_mm: 0.0,
+                    y_mm: 12.5,
+                },
+                "\"start\": {\n        \"near\": {\n          \"x_mm\": 0.0,\n          \"y_mm\": 12.5\n        }\n      }",
+            ),
+        ] {
+            let mut p = sample_project();
+            let op = crate::test_support::profile_mut(&mut p);
+            op.start = start;
+            op.tabs.as_mut().unwrap().avoid_corners = true;
+            let saved = save(&p).unwrap();
+            assert!(saved.contains(text), "{saved}");
+            assert!(saved.contains("\"avoid_corners\": true"), "{saved}");
+            assert_eq!(load(saved.as_bytes()).unwrap().project, p);
+        }
+        let inches = String::from_utf8(V13_FIXTURE.to_vec())
+            .unwrap()
+            .replace("\"version\": 13", "\"version\": 14")
+            .replace(
+                "\"last_pass\": null",
+                "\"last_pass\": null,\n      \"start\": { \"near\": { \"x_mm\": \"1 in\", \"y_mm\": 2 } }",
+            )
+            .replace(
+                "\"on_holes\": true",
+                "\"on_holes\": true,\n        \"avoid_corners\": true",
+            );
+        let mut loaded = load(inches.as_bytes()).unwrap();
+        assert_eq!(
+            crate::test_support::profile_mut(&mut loaded.project).start,
+            crate::StartAt::Near {
+                x_mm: 25.4,
+                y_mm: 2.0
+            }
+        );
+    }
+
+    // Version 14 → 15 (#302): whether a placed tab holds its slug.
+
+    const V14_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v14/sample.dcv");
+
+    #[test]
+    fn version_14_fixture_loads() {
+        let loaded = load(V14_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// The sample at `version` with two placed tabs, its request placed:
+    /// one on the rectangle's bottom edge and one a tool radius below it.
+    fn v14_root_with_tabs() -> Value {
+        let mut root = sample_root_at(14);
+        root["operations"][0]["tabs"] = Value::Null;
+        root["tabs"] = json!([
+            {
+                "id": "tab1",
+                "instance": "i1",
+                "profile": 0,
+                "x_mm": 25.0,
+                "y_mm": 0.0,
+                "width_mm": 6.0,
+                "height_mm": 2.0,
+                "shape": "rect"
+            },
+            {
+                "id": "tab2",
+                "instance": "i1",
+                "profile": 0,
+                "x_mm": 25.0,
+                "y_mm": -3.175,
+                "width_mm": 6.0,
+                "height_mm": 2.0,
+                "shape": "smooth"
+            }
+        ]);
+        root
+    }
+
+    /// #302: every placed tab of a version 14 file gains `holds_slug:
+    /// null` at its end, and nothing else changes. A migration step
+    /// rewrites JSON only, so it cannot tell whether a tab sits on the
+    /// tool path a Profile cuts round a hole, which is how format 14 told
+    /// a hole tab placed with `on_holes` from one placed by hand (#300).
+    /// `null` keeps that rule for the tab, so the file warns and cuts as
+    /// it did (`dc-cam`'s
+    /// `placed_tabs::v14_hole_tabs_on_the_path_hold_their_slugs`, and
+    /// `dreamcarve`'s corpus test of format 14 projects).
+    #[test]
+    fn v14_placed_tabs_migrate_with_holds_slug_unset() {
+        let migrated = migrate(v14_root_with_tabs(), 14).unwrap();
+        assert_eq!(migrated["version"], json!(CURRENT_VERSION));
+        let tabs = migrated["tabs"].as_array().unwrap();
+        assert_eq!(tabs.len(), 2);
+        let before = v14_root_with_tabs();
+        for (i, tab) in tabs.iter().enumerate() {
+            let fields = tab.as_object().unwrap();
+            assert_eq!(fields["holds_slug"], Value::Null, "{tab}");
+            let keys: Vec<&String> = fields.keys().collect();
+            assert_eq!(
+                keys.last().map(|k| k.as_str()),
+                Some("holds_slug"),
+                "{keys:?}"
+            );
+            let mut rest = fields.clone();
+            rest.shift_remove("holds_slug");
+            assert_eq!(Value::Object(rest), before["tabs"][i], "tab {i}");
+        }
+        let text = serde_json::to_string_pretty(&v14_root_with_tabs()).unwrap();
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.problems, vec![]);
+        assert!(
+            loaded.project.tabs.iter().all(|t| t.holds_slug.is_none()),
+            "{:?}",
+            loaded.project.tabs
+        );
+
+        // A file with no tabs changes only its version.
+        let migrated = migrate(sample_root_at(14), 14).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+    }
+
+    #[test]
+    fn v14_with_holds_slug_already_present_fails() {
+        let mut root = v14_root_with_tabs();
+        root["tabs"][1]["holds_slug"] = json!(true);
+        let err = migrate(root, 14).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 14, to: 15, message, .. }
+                if message.contains("`tabs[1].holds_slug`")),
+            "{err:?}"
+        );
+    }
+
+    /// #302: loaded from a file, the version 14 file with a
+    /// `holds_slug` it should not have says where that key is.
+    #[test]
+    fn v14_with_holds_slug_says_where() {
+        let mut root = v14_root_with_tabs();
+        root["tabs"][0]["holds_slug"] = json!(false);
+        let text = serde_json::to_string_pretty(&root).unwrap();
+        let line = text
+            .lines()
+            .position(|l| l.contains("\"holds_slug\""))
+            .unwrap()
+            + 1;
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 14, to: 15, at: Some(at), .. }
+                if at.line == line && at.column == 21),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("(line {line}, column 21)")),
+            "{err}"
+        );
+    }
+
+    /// #302: each value saves as written, at the end of the tab, and
+    /// loads back.
+    #[test]
+    fn holds_slug_round_trips() {
+        for (holds_slug, text) in [
+            (Some(true), "\"holds_slug\": true"),
+            (Some(false), "\"holds_slug\": false"),
+            (None, "\"holds_slug\": null"),
+        ] {
+            let mut p = sample_project();
+            p.tabs = vec![crate::PlacedTab {
+                holds_slug,
+                ..crate::test_support::sample_tab("tab1", 25.0, 0.0)
+            }];
+            let saved = save(&p).unwrap();
+            assert!(
+                saved.contains(&format!("\"shape\": \"rect\",\n      {text}\n    }}")),
+                "{saved}"
+            );
+            assert_eq!(load(saved.as_bytes()).unwrap().project, p);
+        }
+    }
+
+    /// #302: a hand-edited `holds_slug` that is not `true`, `false` or
+    /// `null`, or one left out, fails to load, naming the field and
+    /// where it is in the file.
+    #[test]
+    fn invalid_holds_slug_says_where() {
+        let mut p = sample_project();
+        p.tabs = vec![
+            crate::test_support::sample_tab("tab1", 25.0, 0.0),
+            crate::test_support::sample_tab("tab2", 50.0, 15.0),
+        ];
+        let saved = save(&p).unwrap();
+        // The second tab's flag, the last in the file.
+        let at = saved.rfind("\"holds_slug\": false").unwrap();
+        let line = saved[..at].lines().count();
+        for bad in ["\"yes\"", "1", "[]"] {
+            let text = format!(
+                "{}\"holds_slug\": {bad}{}",
+                &saved[..at],
+                &saved[at + "\"holds_slug\": false".len()..]
+            );
+            let err = load(text.as_bytes()).unwrap_err();
+            let LoadError::Schema {
+                path,
+                at: Some(pos),
+                message,
+            } = &err
+            else {
+                panic!("{bad}: a schema error with its place, not {err:?}");
+            };
+            assert_eq!(path, "tabs[1].holds_slug", "{bad}: {err}");
+            assert_eq!(pos.line, line, "{bad}: {err}");
+            assert!(message.contains("expected a boolean"), "{bad}: {message}");
+        }
+        let text = format!(
+            "{}{}",
+            saved[..at].trim_end().trim_end_matches(','),
+            &saved[at + "\"holds_slug\": false".len()..]
+        );
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Schema { path, at: Some(_), message }
+                if path == "tabs[1]" && message.contains("missing field `holds_slug`")),
+            "{err:?}"
+        );
+    }
+
+    /// #283: the version 11 fixture loads as the sample project, whose
+    /// heights are unset, so it exports what it did before version 12.
+    #[test]
+    fn version_11_fixture_loads() {
+        let loaded = load(V11_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project.heights, crate::Heights::unset());
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
     }
 
     #[test]

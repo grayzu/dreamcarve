@@ -315,10 +315,11 @@ fn grblhal_and_grbl_differ_only_in_dialect() {
         let (program, _) = crate::emit(&project, &ops, "2026-10-15").unwrap();
         texts.push(program.text);
     }
+    // grblHAL's header also cancels scaling, which GRBL lacks (#316).
     let strip = |text: &str| -> Vec<String> {
         text.lines()
             .map(|l| words(l).join(" "))
-            .filter(|l| !l.is_empty() && l != "G54")
+            .filter(|l| !l.is_empty() && l != "G54" && l != "G50")
             .collect()
     };
     let (hal, grbl) = (strip(&texts[0]), strip(&texts[1]));
@@ -667,9 +668,7 @@ fn grbl_v2_project_comment_opens_with_fixed_text() {
         ("grblhal", "( Project: {programName} )"),
         ("grbl", "; Project: {programName}"),
     ] {
-        let latest = latest_definition(id).unwrap();
-        assert_eq!(latest.version, 2, "{id}");
-        let v2 = latest.post_processor();
+        let v2 = bundled_definition(id, 2).unwrap().post_processor();
         assert_eq!(
             v2.program.header.first().map(String::as_str),
             Some(first),
@@ -678,6 +677,222 @@ fn grbl_v2_project_comment_opens_with_fixed_text() {
         let mut v1 = bundled_definition(id, 1).unwrap().post_processor().clone();
         v1.program.header[0] = first.to_owned();
         assert_eq!(&v1, v2, "{id}: only the first header line changes");
+    }
+}
+
+/// #279 (functional capability 29, design addendum A3): version 3 of
+/// grblHAL and GRBL is version 2 with `G80` (cancel canned-cycle motion)
+/// and then `G40` (cancel cutter compensation) right after `G94`, and
+/// nothing else changed. `G80` comes first: on grblHAL with cutter
+/// compensation compiled in, `G40` fails while a canned cycle is active
+/// (`definitions/README.md`, "Header modal state").
+#[test]
+fn grbl_v3_header_cancels_modes() {
+    assert_eq!(latest_definition("grbl").unwrap().version, 3);
+    for id in ["grblhal", "grbl"] {
+        let v3 = bundled_definition(id, 3).unwrap().post_processor();
+        let mut v2 = bundled_definition(id, 2).unwrap().post_processor().clone();
+        let g94 = v2
+            .program
+            .header
+            .iter()
+            .position(|l| l == "G94")
+            .unwrap_or_else(|| panic!("{id} v2 has a G94 line"));
+        v2.program
+            .header
+            .splice(g94 + 1..g94 + 1, ["G80".to_owned(), "G40".to_owned()]);
+        assert_eq!(&v2, v3, "{id}: v3 is v2 with G80, G40 after G94");
+    }
+}
+
+/// #279: no version of grblHAL or GRBL changes the tool length offset.
+/// Both fold the active offset into the work zero the user sets
+/// (`G10 L20`), so a `G49` after the user zeroes Z would move every Z by
+/// the offset (`definitions/README.md`, "Header modal state"). `G43` and
+/// `G43.2` need a tool table, and `G43.1` sets an offset.
+#[test]
+fn no_header_cancels_tool_length_offset() {
+    let mut checked = 0;
+    for definition in bundled_definitions().unwrap() {
+        if !["grblhal", "grbl"].contains(&definition.id) {
+            continue;
+        }
+        checked += 1;
+        for line in every_line(definition.post_processor()) {
+            for word in words(&line) {
+                assert!(
+                    !(word == "G49" || word.starts_with("G43")),
+                    "{}: {line}",
+                    definition.path
+                );
+            }
+        }
+    }
+    assert!(checked >= 7, "grblHAL v1 to v4 and GRBL v1 to v3");
+}
+
+/// #286: the user sets Z zero with the bit in the spindle, and on
+/// LinuxCNC, Mach3 and UCCNC that zero includes a tool length offset
+/// active at the time (`definitions/README.md`, "Tool length offset at
+/// touch-off"). A `G49` at program start would cancel it and move every Z
+/// by the offset, so version 2 of `id` is version 1 with `G49` taken out
+/// of the header and nothing else changed; no line of it can set or
+/// cancel an offset (`G43`, `G44`, `G49`), so the offset the user zeroed
+/// with stays in force for the whole program. Later versions keep it out
+/// too (Mach3 and UCCNC v3, #312).
+fn assert_v2_header_has_no_g49(id: &str) {
+    let v2 = bundled_definition(id, 2).unwrap().post_processor();
+    let latest = latest_definition(id).unwrap();
+    for (version, post) in [(2, v2), (latest.version, latest.post_processor())] {
+        for line in every_line(post) {
+            for word in words(&line) {
+                assert!(
+                    !["G43", "G44", "G49"].iter().any(|g| word.starts_with(g)),
+                    "{id} v{version}: {line}"
+                );
+            }
+        }
+    }
+    let mut v1 = bundled_definition(id, 1).unwrap().post_processor().clone();
+    let modal = v1
+        .program
+        .header
+        .iter_mut()
+        .find(|line| words(line).iter().any(|w| w == "G49"))
+        .unwrap_or_else(|| panic!("{id} v1 has G49 in its header"));
+    *modal = modal.replace(" G49", "");
+    assert_eq!(&v1, v2, "{id}: only G49 leaves the header");
+}
+
+#[test]
+fn linuxcnc_v2_header_has_no_g49() {
+    assert_v2_header_has_no_g49("linuxcnc");
+}
+
+#[test]
+fn mach3_v2_header_has_no_g49() {
+    assert_v2_header_has_no_g49("mach3");
+}
+
+#[test]
+fn uccnc_v2_header_has_no_g49() {
+    assert_v2_header_has_no_g49("uccnc");
+}
+
+/// The codes that set or cancel axis scaling (`G50`, `G51`) and
+/// coordinate rotation (`G68`, `G69`) on Mach3 and UCCNC.
+const SCALE_ROTATE_CODES: [&str; 4] = ["G50", "G51", "G68", "G69"];
+
+/// #312: Mach3 and UCCNC keep a `G51` scale factor and a `G68` rotation
+/// until they are cancelled, and neither `M2` nor `M30` cancels them
+/// (`definitions/README.md`, "Scaling and rotation"). So version 3 of `id`
+/// is version 2 with `G50` (all scale factors to 1) and then `G69` (no
+/// rotation), each on a line of its own, right after the modal line that
+/// holds `G80`, and nothing else changed.
+fn assert_v3_header_cancels_scaling_and_rotation(id: &str) {
+    let latest = latest_definition(id).unwrap();
+    assert_eq!(latest.version, 3, "{id}");
+    let v3 = latest.post_processor();
+    let mut v2 = bundled_definition(id, 2).unwrap().post_processor().clone();
+    let modal = v2
+        .program
+        .header
+        .iter()
+        .position(|line| words(line).iter().any(|w| w == "G80"))
+        .unwrap_or_else(|| panic!("{id} v2 has a G80 line"));
+    v2.program
+        .header
+        .splice(modal + 1..modal + 1, ["G50".to_owned(), "G69".to_owned()]);
+    assert_eq!(&v2, v3, "{id}: v3 is v2 with G50, G69 after the modal line");
+    // No line of v3 sets a scale or a rotation.
+    for line in every_line(v3) {
+        for word in words(&line) {
+            assert!(word != "G51" && word != "G68", "{id} v3: {line}");
+        }
+    }
+}
+
+#[test]
+fn mach3_v3_header_cancels_scaling_and_rotation() {
+    assert_v3_header_cancels_scaling_and_rotation("mach3");
+}
+
+#[test]
+fn uccnc_v3_header_cancels_scaling_and_rotation() {
+    assert_v3_header_cancels_scaling_and_rotation("uccnc");
+}
+
+/// #312, #316: LinuxCNC has no `G50`, `G51`, `G68` or `G69` (rs274ngc
+/// reports "Unknown g code used"), RS274/NGC has none of them, and GRBL
+/// has none either, so no version of those definitions writes one.
+/// grblHAL has `G50` and `G51` and no rotation, so its version 4 may write
+/// `G50` and no other of the four. Mach3 and UCCNC had none before
+/// version 3, and grblHAL none before version 4.
+#[test]
+fn scaling_and_rotation_words_only_where_supported() {
+    let mut checked = 0;
+    for definition in bundled_definitions().unwrap() {
+        let supported = ["mach3", "uccnc"].contains(&definition.id) && definition.version >= 3;
+        if supported {
+            continue;
+        }
+        let allowed: &[&str] = if definition.id == "grblhal" && definition.version >= 4 {
+            &["G50"]
+        } else {
+            &[]
+        };
+        checked += 1;
+        for line in every_line(definition.post_processor()) {
+            for word in words(&line) {
+                assert!(
+                    !SCALE_ROTATE_CODES.contains(&word.as_str())
+                        || allowed.contains(&word.as_str()),
+                    "{}: {line}",
+                    definition.path
+                );
+            }
+        }
+    }
+    assert!(checked >= 12, "{checked}");
+    let v4 = bundled_definition("grblhal", 4).unwrap().post_processor();
+    assert!(
+        every_line(v4).iter().any(|l| words(l) == ["G50"]),
+        "grblhal v4 writes G50"
+    );
+}
+
+/// #316: grblHAL keeps a `G51` scale until `G50`, a soft reset, or a
+/// `G28`/`G30`, and `M2`/`M30` leave it (`definitions/README.md`,
+/// "Scaling on grblHAL"). So version 4 is version 3 with `G50` on a line
+/// of its own right after `G40`, and nothing else changed. `G50` comes
+/// after `G40` because on a build with cutter compensation, `G50` fails
+/// while compensation is on.
+#[test]
+fn grblhal_v4_header_cancels_scaling() {
+    let latest = latest_definition("grblhal").unwrap();
+    assert_eq!(latest.version, 4);
+    let v4 = latest.post_processor();
+    let mut v3 = bundled_definition("grblhal", 3)
+        .unwrap()
+        .post_processor()
+        .clone();
+    let g40 = v3
+        .program
+        .header
+        .iter()
+        .position(|l| l == "G40")
+        .expect("grblhal v3 has a G40 line");
+    v3.program.header.insert(g40 + 1, "G50".to_owned());
+    assert_eq!(&v3, v4, "grblhal v4 is v3 with G50 after G40");
+    // No line of v4 sets a scale, and none rotates: grblHAL has no
+    // `G68` or `G69`.
+    for line in every_line(v4) {
+        for word in words(&line) {
+            assert!(
+                !["G51", "G68", "G69"].contains(&word.as_str()),
+                "grblhal v4: {line}"
+            );
+        }
     }
 }
 
@@ -734,4 +949,120 @@ fn dialect_facts_per_controller() {
     );
     assert!(latest("uccnc").units.mm_command.is_none());
     assert!(latest("uccnc").units.inch_command.is_none());
+}
+
+/// The README section on `work_coordinates.machine_command`, up to the
+/// next `## ` heading.
+fn machine_command_section() -> &'static str {
+    let start = README
+        .find("\n## Machine-coordinate moves (`work_coordinates.machine_command`)")
+        .expect("the README has a machine-coordinate moves section")
+        + 1;
+    let rest = &README[start..];
+    let end = rest[3..].find("\n## ").map_or(rest.len(), |i| i + 4);
+    &rest[..end]
+}
+
+/// #283, AGENTS.md ("Reference implementation"): a controller-facing
+/// command is verified against the controller's source and cited. Every
+/// version with a `machine_command` has a row in the README's
+/// machine-coordinate section naming its file and the command, with a
+/// source citation (`gcode.c` for grblHAL and GRBL, the `rs274ngc`
+/// interpreter for LinuxCNC, or "As" the version it repeats); a version
+/// without one has a `null` row that cites the document checked and says
+/// why (#306). Every such definition maps Z to Z, since the lift writes
+/// machine Z as it is, and only grblHAL, GRBL and LinuxCNC have one.
+#[test]
+fn machine_command_cited() {
+    let section = machine_command_section();
+    let rows: Vec<&str> = section.lines().filter(|l| l.starts_with("| `")).collect();
+    for definition in bundled_definitions().unwrap() {
+        let post = definition.post_processor();
+        let path = format!("`{}`", definition.path);
+        let row = rows
+            .iter()
+            .find(|r| {
+                r.split(" | ")
+                    .next()
+                    .is_some_and(|cell| cell.contains(&path))
+            })
+            .unwrap_or_else(|| panic!("{path} has no row in the machine-coordinate section"));
+        match &post.work_coordinates.machine_command {
+            Some(command) => {
+                assert_eq!(command, "G53", "{path}");
+                assert!(row.contains(&format!("| `{command}` |")), "{path}: {row}");
+                assert!(
+                    row.contains("gcode.c") || row.contains("interp_") || row.contains("| As `"),
+                    "{path} cites no source: {row}"
+                );
+                assert!(
+                    ["grblhal", "grbl", "linuxcnc"].contains(&definition.id),
+                    "{path}"
+                );
+                assert_eq!(post.coordinate_system.z_axis, dc_project::Axis::Z, "{path}");
+            }
+            None => {
+                assert!(row.contains("| `null` |"), "{path}: {row}");
+                // #306: the reason, from the document that was checked.
+                let source = match definition.id {
+                    "mach3" => "[MILL]",
+                    "uccnc" => "[UM]",
+                    "generic" => "[NIST]",
+                    other => panic!("{other} has no `G53` and no reason"),
+                };
+                assert!(row.contains(source), "{path} cites no source: {row}");
+                assert!(!row.contains("Not checked"), "{path}: {row}");
+            }
+        }
+    }
+    for source in [
+        "machine_limits.c",
+        "limits.c",
+        "system.c",
+        // #304 review: the downward-homing case and the soft-limit check
+        // that makes it fail safe.
+        "HOMING_FORCE_SET_ORIGIN",
+        "motion_control.c",
+        "4ec1ae44b857a70d2f9298344feac4b43ed0eb6b",
+        "bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e",
+        // #306: LinuxCNC's interpreter, the motion module's limit check,
+        // the forced homing, and where the configuration tools put Z.
+        "a33293f46575c809e082e0806e79ab996f982513",
+        "interp_find.cc",
+        "interp_check.cc",
+        "interp_array.cc",
+        "command.c",
+        "emctaskmain.cc",
+        "stepconf.py",
+        "#gcode:g53",
+    ] {
+        assert!(section.contains(source), "the section cites {source}");
+    }
+}
+
+/// #320: `export`'s scaling note is for grblHAL definitions whose header
+/// writes `G50`, version 4 and later, and for no other definition or
+/// version. It names the soft reset and `$G`, the two checks the
+/// definitions README gives ("Scaling on grblHAL").
+#[test]
+fn scaling_note_only_for_grblhal_with_g50() {
+    let mut noted = 0;
+    for definition in bundled_definitions().unwrap() {
+        let note = crate::scaling_note(definition.post_processor());
+        let expected = definition.id == "grblhal" && definition.version >= 4;
+        assert_eq!(
+            note.is_some(),
+            expected,
+            "{} v{}",
+            definition.id,
+            definition.version
+        );
+        if let Some(note) = note {
+            noted += 1;
+            for word in ["soft-reset", "$G", "G50", "G51", "X at 1"] {
+                assert!(note.contains(word), "{note}: {word}");
+            }
+        }
+    }
+    assert!(noted >= 1, "grblhal v4 has the note");
 }

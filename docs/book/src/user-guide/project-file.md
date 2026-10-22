@@ -19,14 +19,52 @@ layout.
 - Every field must be present. A field DreamCarve does not know is an
   error, so a typo in a name is caught instead of ignored.
 - An unset value is `null`, never left out.
-- Every length is in millimetres and every feed in millimetres per minute,
-  even in an inch project. The unit is in each field's name: `depth_mm`,
-  `feed_mm_min`.
+- A number in a length or a feed is in the unit in the field's name:
+  millimetres for `depth_mm`, millimetres per minute for `feed_mm_min`,
+  even in an inch project. To use another unit, write the value as a
+  string with its unit; see [Values with units](#values-with-units).
 - JSON has no comments, and no comma after the last item in a list or
   object.
 - Run `dreamcarve check` after each edit. It names the field and the value
   it does not accept, and where it is in the file (see
   [Finding a value](#finding-a-value)).
+
+## Values with units
+
+Any length (a field ending `_mm`) or feed (ending `_mm_min`) may be written
+as a string with its unit, whatever the project's `display_units`:
+
+```json
+"depth_mm": "0.5 in",
+"step_down_mm": "1/8 in",
+"safe_z_mm": "5 mm",
+"feed_mm_min": "60 in/min",
+"plunge_mm_min": "500 mm/min",
+```
+
+- The number is a decimal (`0.5`, `-2`, `.25`), a fraction (`1/4`) or a
+  whole number and a fraction (`1 1/4`). No exponent, no space around the
+  `/`.
+- A length takes `mm` or `in`; a feed takes `mm/min` or `in/min`. The space
+  before the unit is optional. A length unit on a feed, or a feed unit on a
+  length, is an error.
+- A bare number is still in the field's unit: `"depth_mm": 12.7` and
+  `"depth_mm": "12.7 mm"` are the same. A string without a unit is an
+  error.
+- Inches are converted to millimetres when the file is read, exactly
+  (`× 25.4`): `"0.5 in"` is 12.7 mm, `"1 1/4 in"` 31.75 mm, and
+  `"60 in/min"` 1524 mm/min. Every check and every program is the same as
+  with those numbers.
+- Fields in other units take numbers only: `angle_deg`,
+  `step_over_fraction`, `rpm`, `dwell_s`, and the vertices of the shapes.
+- A tool library file takes units in its tools' fields too.
+
+A command that saves the project, `export --post` or `tools add`, writes the
+millimetre numbers back: `"0.5 in"` becomes `12.7`. Keep a copy if you want
+your inch values.
+
+An older DreamCarve does not read a value with a unit: it stops at that
+field, naming its line and column.
 
 ## Finding a value
 
@@ -35,7 +73,7 @@ file, the line and the column of that value:
 
 ```text
 coaster.dcv:10:21: error: stock.thickness_mm is not set (mm)
-coaster.dcv:24:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:29:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
 ```
 
 Line 10, column 21 is where the value starts, here the `null` to replace.
@@ -57,14 +95,14 @@ names where it is, as keys and list positions counted from 0, and its line
 and column:
 
 ```text
-error: cannot load coaster.dcv: file does not match the project format at `operations[0].tabs.placement` (line 48, column 32): unknown field `bogus`, expected `count`
+error: cannot load coaster.dcv: file does not match the project format at `operations[0].tabs.placement` (line 53, column 32): unknown field `bogus`, expected `count`
 ```
 
 A missing field is reported at the object it belongs in, here
 `post_processor`:
 
 ```text
-error: cannot load coaster.dcv: file does not match the project format at `post_processor` (line 75, column 21): missing field `spindle_on_dwell_s`
+error: cannot load coaster.dcv: file does not match the project format at `post_processor` (line 80, column 21): missing field `spindle_on_dwell_s`
 ```
 
 ## Coordinates
@@ -89,15 +127,17 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `8`. |
+| `version` | Format version. This build writes `15`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
-| `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`). The values in this file stay in millimetres either way. |
+| `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
 | `arc_fit_tolerance_mm` | How far, at most, an arc written in place of a run of short straight moves may stray from their corners. `init` writes 0.01; `null` turns arc fitting off. See [Arc fitting](#arc-fitting). |
 | `stock` | The block of material. |
 | `origin` | Where work zero is on the stock. |
+| `heights` | The clearance, tool-change and park heights, each `null` until you set it. See [`heights`](#heights). |
 | `tools` | The tools. |
 | `operations` | The operations, in cutting order. |
+| `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
 | `instances` | Placed copies of the shapes. |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
 | `definitions` | The shapes, keyed by id. Last, because it is most of the file. |
@@ -186,6 +226,29 @@ Work zero: the point you set as X0 Y0 Z0 on the machine.
 `z` is `"stock_top"` (the default) or `"stock_bottom"`. With
 `"stock_top"`, cutting moves have negative Z.
 
+## `heights`
+
+Where the program crosses between parts, changes tools and ends. `init`
+writes all three as `null`, and a project with all three `null` exports
+as it did before format version 12.
+
+```json
+"heights": {
+  "clearance_mm": 20.0,
+  "tool_change_machine_z_mm": -5.0,
+  "park": { "x_mm": 0.0, "y_mm": 0.0 }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `clearance_mm` | Millimetres above the stock top. Moves between parts and between operations, a tool change, and the end rise to it; moves between the passes of one part stay at the operation's `safe_z_mm`. At least every enabled operation's `safe_z_mm`, or `check` reports `clearance_below_safe_z`. `null`: each operation's `safe_z_mm`, as before. |
+| `tool_change_machine_z_mm` | Millimetres, machine coordinates. Before each tool-change stop and at the end of each program, the program lifts to it with `G53 G0 Z…`. Below 0 (`machine_z_not_below_home`), and only on a post-processor that documents `G53`: grblHAL, GRBL and LinuxCNC (`machine_z_needs_g53` on Mach3, UCCNC and generic). Needs a homed machine. |
+| `park` | `{ "x_mm": …, "y_mm": … }`, project coordinates. Where the program ends, at the clearance height (or the highest safe Z), before the lift. `null`: the program ends over the last cut. |
+
+See [Post-processors](post-processors.md#heights-clearance-tool-change-and-park)
+for what the program does with them and how to choose the machine Z.
+
 ## `definitions` and `instances`
 
 A **definition** is a shape as it was drawn. An **instance** places a
@@ -222,7 +285,8 @@ millimetres and a `bulge`: 0 for a straight line to the next vertex, or the
 tangent of a quarter of the arc's sweep angle, positive for
 counter-clockwise. `closed` says whether the outline returns to its start;
 Pocket and an Inside or Outside Profile cut only closed outlines, an On
-line Profile and an Engrave cut open ones too.
+line Profile and an Engrave cut open ones too, and a Left or Right
+Profile cuts only open ones.
 
 | Instance field | Meaning |
 | --- | --- |
@@ -258,7 +322,7 @@ To move a shape on the stock, change `e` and `f`.
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
 | `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. Set it to match your machine's tool table: with `5`, programs write `T5` (`M61 Q5`, `T5 M6`, the `( Tool 5: … )` comment, `Fit T5`) and, with one program per tool run, name its programs `<stem>-<k>-T5.nc`. |
-| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside or Inside Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
+| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside, Inside, Left or Right Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
 | `diameter_mm` | Cutting diameter. Profile and Pocket offset the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used yet. |
 | `feed_mm_min` | Feed rate while cutting. **Required.** At most 20 000. |
@@ -300,30 +364,51 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
     "placement": { "kind": "count", "count": 4 },
     "width_mm": 8.0,
     "height_mm": 3.0,
-    "shape": "rect"
+    "shape": "rect",
+    "on_holes": false,
+    "avoid_corners": true
   },
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
-  "corner_relief": "none"
+  "corner_relief": "none",
+  "last_pass": null,
+  "start": "auto"
 }
 ```
 
-Each field is explained in [Profile operation](profile.md), and `tabs` in
-[Tabs](tabs.md). `init` leaves `depth_mm` as `null`; export refuses until
+Each field is explained in [Profile operation](profile.md). `side` is
+`"outside"`, `"inside"` or `"on_line"`, or, from format version 10,
+`"left"` or `"right"`, which cut beside open paths (see
+[Left and right](profile.md#left-and-right)). A Profile's
+`tabs` is a **tab request**: tabs to place on every outline it cuts, or
+`null` for none. It is cut as the tabs it places, and the first
+`dreamcarve tabs` command that saves the project writes them into the
+project's [`tabs`](#tabs) list and sets the request to `null`
+([Tabs: tab requests](tabs.md#tab-requests)). `tabs.on_holes` came with
+format version 9: `false`
+leaves the holes among the operation's outlines without tabs, which is
+what `init` writes; a project upgraded from version 8 gets `true`, so its
+holes keep their tabs. `tabs.avoid_corners` came with format version 14:
+`true`, as `init` writes it, slides each tab off a corner of the bit's
+path; a project upgraded from version 13 gets `false`, so its tabs stay
+where they were ([Tabs: tabs off corners](tabs.md#tabs-off-corners)). `init` leaves `depth_mm` as `null`; export refuses until
 you set it. It also leaves `step_down_mm` as `null`, so the operation uses
 the tool's depth per pass; set it only to override the tool's.
 
-The last four fields came with format version 8 and are shared with the
-other kinds. This build reads and checks them. A Profile cuts
-`machining_order`, `entry`, `lead` and `corner_relief` as set:
+`machining_order`, `entry`, `lead` and `corner_relief` came with format
+version 8 and are shared with the other kinds; `last_pass`, Profile only,
+came with format version 13, and `start`, Profile only, with version 14. This build reads and checks them all, and a
+Profile cuts them as set:
 
 | Field | Values |
 | --- | --- |
 | `machining_order` | `"full_depth_first"` (each shape to full depth before the next) or `"pass_first"` (each pass across every shape before the next, deeper pass). |
-| `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
-| `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line. See [Leads](profile.md#leads). |
+| `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line, Left or Right Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
+| `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line, Left or Right. See [Leads](profile.md#leads). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each internal corner a round tool cannot reach. Pocket and Profile. Steps down at the tool's `step_down_mm`, so that must be set. See [Pocket: corner relief](pocket.md#corner-relief) and [Profile: corner relief](profile.md#corner-relief). |
+| `last_pass` | `null`, or `{ "allowance_mm": 0.5, "thickness_mm": null, "reverse": false }`: every pass but the last leaves `allowance_mm` on the wall (more than 0, at most a third of the bit's diameter), and the last pass cuts to size at full depth. `thickness_mm` is `null` for the usual last pass, or how deep the last pass cuts (more than 0, at most `depth_mm`); It may be no thicker than the step-down in effect. `reverse` cuts the last pass the other way round. All three keys are needed. Inside, Outside, Left and Right Profiles; not On line. `init` writes `null`, and a project upgraded from version 12 gets `null`, so it cuts as before. See [Last pass](profile.md#last-pass). |
+| `start` | `"auto"`, `"first_vertex"` or `{ "near": { "x_mm": 0.0, "y_mm": 0.0 } }`: where each closed outline's cut starts, at the point of the bit's path nearest the outline's first vertex as drawn or nearest that project point. Tabs a request lays are measured from there, a lead arrives there or is dropped, and an entry with no room there falls back rather than moving. Open paths ignore it. `init` writes `"auto"`, and a project upgraded from version 13 gets `"auto"`, so it cuts as before. Profile only. See [Start point](profile.md#start-point). |
 
 A Pocket, Drill or Engrave has `kind`, `id`, `name`, `enabled`, `targets`,
 `tool`, `depth_mm`, `through_cut_allowance_mm` and `safe_z_mm` with the
@@ -338,6 +423,42 @@ same meaning, plus its own fields:
 Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md)
 and [Engrave](engrave.md).
 
+## `tabs`
+
+The project's placed tabs: short stretches of material left uncut on a
+part's outline to hold it in the stock. `init` writes an empty list, `[]`; `dreamcarve
+tabs place` fills it. Each tab names one outline of one instance and a
+point, and every enabled Profile that cuts that outline rises over it:
+
+```json
+"tabs": [
+  {
+    "id": "tab1",
+    "instance": "i1",
+    "profile": 0,
+    "x_mm": 84.0648714595208,
+    "y_mm": 15.935129303418655,
+    "width_mm": 8.0,
+    "height_mm": 3.0,
+    "shape": "rect",
+    "holds_slug": false
+  }
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The tab's id, used by `tabs clear --tab`. Two tabs may not share one. |
+| `instance` | The id of the instance whose outline holds the tab. It must exist. |
+| `profile` | Which of that instance's definition's `profiles`, counted from 0. It must exist. |
+| `x_mm`, `y_mm` | The tab's point, in the definition's coordinates, before the instance's `transform`: the tab moves with the instance. A Profile centres the tab at the point of its tool path nearest this point. |
+| `width_mm` | Length of the tab along the outline. More than 0. |
+| `height_mm` | Height of the tab top above the stock bottom. More than 0. |
+| `shape` | `"rect"` (square shoulders) or `"smooth"` (a triangle). |
+| `holds_slug` | Whether the tab is meant to hold the slug of the hole it is on: `true`, `false` or `null`. It changes no cut, only the `tab_on_hole` warning. `tabs place --on-holes`, and a tab request with `on_holes`, write `true` for each tab they put on a hole, and `check` and `export` then do not warn for it; every other tab they place gets `false`, and a `false` tab on a hole warns on every `check` and `export`. `null` is what a project upgraded from version 14 gets: such a tab warns as it did before, unless it lies on the bit's path round the hole of the Profile that cuts it, where only placing with `on_holes` put one. Set it to `true` by hand to keep a hole's slug without the warning. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
+
+[Tabs](tabs.md) explains placing, listing and removing them.
+
 ## `post_processor`
 
 Which bundled post-processor the project uses, and your settings for it:
@@ -345,7 +466,7 @@ Which bundled post-processor the project uses, and your settings for it:
 ```json
 "post_processor": {
   "id": "grblhal",
-  "definition_version": 2,
+  "definition_version": 4,
   "file_extension": "nc",
   "spindle_control": "automatic",
   "spindle_on_dwell_s": 3.0,
@@ -368,8 +489,8 @@ rather than editing `id` or `definition_version`. Each field is explained in
 
 `version` is the format version. When this build of DreamCarve opens an
 older file, it upgrades it in memory; the file on disk changes only when
-DreamCarve saves it (`export --post`). A file from a newer DreamCarve is
-refused.
+DreamCarve saves it (`export --post`, `tools add`, or a `tabs` command
+that changes the project). A file from a newer DreamCarve is refused.
 
 | Version | Change |
 | --- | --- |
@@ -382,6 +503,13 @@ refused.
 | 6 | Lets each instance's `z_top_mm` and `z_bottom_mm` be `null` (not set), which is how `init` writes them. The upgrade keeps the values an older file holds, so a file `init` wrote before keeps its placeholder `z_top_mm` of 12.0 until you change it. Phase 1 ignores both. |
 | 7 | `post_processor` names a bundled post-processor and its version, and holds only your five settings, instead of a full copy of the definition. The upgrade keeps your settings, and works only when the rest of the copy is exactly version 1 of the bundled definition; otherwise the file is not loaded, and the message lists each difference and the block to paste instead. See [Post-processors](post-processors.md#files-from-before-version-7). |
 | 8 | Phase 2. Adds `arc_fit_tolerance_mm` (set to 0.01 on upgrade), each tool's `number` (`null`), each Profile's `machining_order` (`"full_depth_first"`), `entry` (`"plunge"`), `lead` (`null`) and `corner_relief` (`"none"`), and `post_processor.use_canned_cycles` (`false`): the values that make an upgraded project cut exactly as before. Adds the `"pocket"`, `"drill"` and `"engrave"` operation kinds. |
+| 9 | Adds `on_holes` to each Profile's `tabs`, set to `true` on upgrade (#109). A Profile now cuts its holes without tabs unless `on_holes` is `true`; before, every outline it cut had tabs, so the upgrade keeps them. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
+| 10 | Adds the `"left"` and `"right"` values of a Profile's `side` (#207), which cut beside open paths. An older file holds neither, so the upgrade changes nothing else; an older DreamCarve refuses a version 10 file rather than misread a side it does not know. See [Left and right](profile.md#left-and-right). |
+| 11 | Adds `tabs`, the project's placed tabs, empty on upgrade (#105). A Profile's `tabs` setting stays as a tab request: it is cut as before, and the next `dreamcarve tabs` command that saves the project places it. See [Tabs](tabs.md). |
+| 12 | Adds `heights` after `origin`, with `clearance_mm`, `tool_change_machine_z_mm` and `park` all `null` on upgrade (#283), so the project exports as before. See [`heights`](#heights). |
+| 13 | Adds each Profile's `last_pass`, `null` on upgrade (#284), so every pass cuts on the part's path as before. See [Last pass](profile.md#last-pass). |
+| 14 | Adds `avoid_corners` to each Profile's tab request, `false` on upgrade, and each Profile's `start`, `"auto"` on upgrade (#285), so the tabs are laid and each cut starts where it did. See [Tabs: tabs off corners](tabs.md#tabs-off-corners) and [Profile: start point](profile.md#start-point). |
+| 15 | Adds `holds_slug` to each placed tab, `null` on upgrade (#302): whether a tab on a hole is meant to hold its slug. A version 14 file did not record it, so `null` keeps the warnings it gave, and the program does not change. See [`tabs`](#tabs). |
 
 ## What `check` reports
 
@@ -389,24 +517,27 @@ Errors stop export. Warnings do not.
 
 | Errors | Warnings |
 | --- | --- |
-| Two tools, instances or operations with the same id | An operation is disabled |
-| An id that refers to nothing | An open path that no enabled Engrave or On line Profile targets |
+| Two tools, instances, operations or tabs with the same id | An operation is disabled |
+| An id that refers to nothing, or a tab on an outline its instance does not have | An open path that no enabled Engrave or On line, Left or Right Profile targets |
 | A value you must set that is `null`: the stock's `thickness_mm`, an operation's `depth_mm`, and for a tool an enabled operation uses, its `feed_mm_min` and `plunge_mm_min`, and its `rpm` unless spindle control is manual | A tool no enabled operation uses (its unset values are not reported) |
 | A size, depth, rate, safe Z, or tab size that is 0 or less where it must be more | |
-| A value that is not a number | Any [toolpath warning](warnings.md#toolpath-generation): a shape the tool does not fit, an entry or lead that does not fit, a duplicate shape, tabs that overlap or do nothing |
+| A value that is not a number | Any [toolpath warning](warnings.md#toolpath-generation): a shape the tool does not fit, an entry or lead that does not fit, a duplicate shape, tabs that overlap or do nothing, a tab on a hole or one no enabled Profile cuts round |
 | A coordinate, transform number or stock side beyond 6000 mm (see [Coordinates](#coordinates)) | |
 | `post_processor.tool_change_mode` is `"m6"` but the post-processor has no `M6` (every one but grblHAL) | |
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A Profile whose tool does not fit between two lines of one shape, Inside or On line, or that would remove a whole part narrower than the bit On line ([Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)) | |
+| A Left or Right Profile whose cut would cross another of its lines or reach the part side of one, or one whose path ends in a segment too short for the bit, or for the bit plus the last pass allowance, on the inside of the turn before it ([Left and right](profile.md#left-and-right)) | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
-| An Outside or Inside Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
+| An Outside, Inside, Left or Right Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
 | An enabled operation with no `targets` | A spindle speed above 60 000 RPM |
 | Two tools used by enabled operations with the same number, set or by position; a tool `number` of 0 | A tool diameter above 50 mm |
 | A Pocket's `rest_of` that is not an earlier enabled Pocket with the same `targets` | A Drill whose cutter is not `"drill"` or `"end_mill"` |
 | A `step_over_fraction`, lead, entry, raster angle, dwell, retract, peck or chip-break value outside its range (see [`operations`](#operations)) | `corner_relief` on a tool with no `step_down_mm` (the relief is skipped) |
-| A helix `entry` on an On line Profile | An Engrave with a V-bit deeper than the bit's cone |
+| A helix `entry` on an On line, Left or Right Profile | An Engrave with a V-bit deeper than the bit's cone |
+| A `last_pass` on an On line Profile; a `last_pass.thickness_mm` that is 0 or less, deeper than `depth_mm` or (for an enabled Profile) thicker than its step-down; a `last_pass.allowance_mm` that is 0 or less or more than a third of the tool's diameter | |
+| A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the allowance on both sides, a tip so narrow that the last pass would take off more than a third of the bit, or an allowance pass that would come within the bit's radius of another part or run inside it; on a Left or Right Profile, an allowance pass that would come within the bit's radius plus the allowance of another line or the strip it keeps ([Last pass](profile.md#last-pass)) | |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at

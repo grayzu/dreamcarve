@@ -6,14 +6,16 @@
 //   src/engine/toolpaths/tabs.ts
 
 //! Holding tabs on Profile passes (`docs/specs/phase-1/design.md`,
-//! "Algorithms → Profile contour", step 7).
+//! "Algorithms → Profile contour", step 7; `docs/specs/phase-2/design.md`,
+//! "Placed tabs").
 //!
 //! PureCutCNC places tabs as rectangles in the world and grows each by the
 //! tool radius before clipping the path against it (`toolCentreContours`,
-//! `expandedTabFootprints`). DreamCarve places tabs by distance along the
-//! tool-centre contour instead, so that growth becomes a span of
-//! `width + diameter` along the path: the cutter's full width must clear
-//! the tab. World-placed tabs arrive with the GUI in phase 5.
+//! `expandedTabFootprints`). DreamCarve places a tab on one outline of
+//! one instance (#105, ADR-0005, [`crate::placed_tabs`]), and centres it
+//! on the tool path at the path's point nearest the tab, so the growth
+//! becomes a span of `width + diameter` along the path: the cutter's full
+//! width must clear the tab.
 //!
 //! A smooth tab leaves a triangular bridge: base `width`, peak `height`
 //! above the cut floor (#66). For a flat bit of radius r the tool centre
@@ -22,11 +24,33 @@
 //! PureCutCNC's raised cosine (`tabProfile.ts`) over the same span touches
 //! the tab top at a single point, which leaves only about 60% of the height
 //! under a 6.35 mm bit; it is not ported.
+//!
+//! Each tab has its own width, height and shape, as PureCutCNC's do; a
+//! pass rises over a tab only when it is below that tab's top. Spans that
+//! overlap merge into one, which holds the highest top and is smooth only
+//! when all its tabs are.
+//!
+//! A tab request ([`TabSpec`], [`Request`]) lays tabs per tool-centre
+//! path ([`Request::fit`], #109): a hole gets none unless
+//! [`TabSpec::on_holes`], and a path whose spans would cover more than
+//! half of it gets the most that cover at most half, so it cuts free
+//! between its tabs. A part's outline keeps at least one tab even then
+//! ([`Least::One`]): a loose part can be thrown by the bit. PureCutCNC
+//! sizes tabs per feature in its auto-tab command (`autoTabs.ts`, a 15%
+//! free-path rule); that command writes placed tabs and waits for the
+//! GUI. The half-path threshold here is the coverage warning's.
+//!
+//! A request with [`TabSpec::avoid_corners`] moves each tab it lays on a
+//! corner off it before the half-path rule is applied ([`corners`], #285).
+
+mod corners;
+
+pub use corners::TAB_CORNER_TURN_DEG;
 
 use crate::entry::plunge_limited_feed_mm_min;
 use crate::error::{CamError, ShapeRef};
 use crate::toolpath::{Move, MoveKind};
-use crate::warning::{TabsRangeReason, Warning};
+use crate::warning::{TabOnCornerReason, TabsRangeReason, Warning};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Polyline, Segment};
 use dc_project::{OperationId, TabPlacement, TabShape, TabSpec};
 
@@ -69,167 +93,249 @@ pub(crate) struct LapRates {
     pub plunge_mm_min: f64,
 }
 
-/// One operation's tab settings, checked.
+/// One tab as one tool path cuts it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TabCut {
+    /// Where the tab is centred along the path, mm: from the start of a
+    /// closed path, from the first vertex as drawn of an open one.
+    pub centre_mm: f64,
+    /// Tab width, mm.
+    pub width_mm: f64,
+    /// Tab top above the stock bottom, mm.
+    pub top_z_mm: f64,
+    /// Tab cross-section.
+    pub shape: TabShape,
+}
+
+/// What every tab one operation cuts shares: the tool that cuts them, the
+/// chord tolerance of smooth ramps on arcs, and the highest tab top, below
+/// which a pass is "below the tabs" for entries and leads.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Tabs {
+    /// The highest tab top of the operation's tabs.
+    top_z_mm: f64,
+    /// Diameter of the tool that cuts the tabs.
+    diameter_mm: f64,
+    chord_tolerance_mm: f64,
+}
+
+/// One operation's tab request, checked (#105: a [`TabSpec`] places
+/// tabs; it is not cut data).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Request {
     placement: TabPlacement,
     shape: TabShape,
     top_z_mm: f64,
     /// Width of one tab as left on the part.
     width_mm: f64,
-    /// Diameter of the tool that cuts the tabs.
-    diameter_mm: f64,
     /// Length of path one tab raises: tab width plus tool diameter.
     span_mm: f64,
-    chord_tolerance_mm: f64,
+    /// Holes get tabs too (#109).
+    on_holes: bool,
+    /// Tabs move off corners (#285).
+    avoid_corners: bool,
+    /// Diameter of the tool that cuts the tabs.
+    diameter_mm: f64,
+}
+
+/// The tabs a request lays on one path ([`Request::fit`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Fit {
+    /// The tabs cut on it.
+    pub cuts: Vec<TabCut>,
+    /// What was asked and what is cut, when they would cover more than
+    /// half of it.
+    pub reduced: Option<Reduced>,
+    /// Where each tab left on a corner is centred (#285), mm along the
+    /// path as tabs are measured on it, and why it stays.
+    pub on_corners_mm: Vec<(f64, TabOnCornerReason)>,
+}
+
+/// Which way a path runs, for laying tabs on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathEnds {
+    /// A closed path: tabs are measured from its start, and a span may
+    /// run through it.
+    Closed,
+    /// An open path, tabs measured from its first vertex as drawn and
+    /// each span cut short at its ends (#175). `reversed`: it is cut from
+    /// its last vertex.
+    Open {
+        /// The path is cut from its last vertex.
+        reversed: bool,
+    },
+}
+
+/// The fewest tabs [`Request::fit`] may leave on a path that asked for
+/// some.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Least {
+    /// A part's outline: cut free, a small part can be thrown by the bit,
+    /// so it keeps one tab even when that covers most of it.
+    One,
+    /// A hole (with `on_holes`) or an open path: its slug or slot may
+    /// come loose, so it may get none.
+    Zero,
+}
+
+/// The tabs one path asked for and the tabs cut on it, when they cover
+/// more than half of it ([`Request::fit`], #109).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Reduced {
+    /// How many tabs the placement puts on the path.
+    pub asked: usize,
+    /// How many are cut.
+    pub cut: usize,
+    /// They are placed tabs, cut as placed (#105), not a request cut down.
+    pub placed: bool,
+}
+
+/// Fails with [`CamError::InvalidTab`] for operation `op` when a tab's
+/// width or height, named `field` and `value_mm`, is not a positive
+/// number.
+pub(crate) fn check_size(op: &OperationId, field: &str, value_mm: f64) -> Result<(), CamError> {
+    if value_mm.is_finite() && value_mm > 0.0 {
+        Ok(())
+    } else {
+        Err(CamError::InvalidTab {
+            op: op.clone(),
+            field: field.to_owned(),
+            value_mm,
+        })
+    }
 }
 
 impl Tabs {
-    /// Checks `spec` for operation `op` cut with a tool `diameter_mm` wide.
-    /// `chord_tolerance_mm` bounds how far the chords of a smooth ramp on an
-    /// arc stray from the path in XY; a value that is not positive falls
-    /// back to [`FLATTEN_TOLERANCE_DEFAULT_MM`].
-    ///
-    /// Fails with [`CamError::InvalidTab`] when the width or height is not
-    /// a positive number or a distance is not finite.
-    pub(crate) fn new(
-        op: &OperationId,
-        spec: &TabSpec,
-        diameter_mm: f64,
-        chord_tolerance_mm: f64,
-    ) -> Result<Self, CamError> {
-        let invalid = |field: String, value_mm: f64| CamError::InvalidTab {
-            op: op.clone(),
-            field,
-            value_mm,
-        };
-        for (field, value_mm) in [("width_mm", spec.width_mm), ("height_mm", spec.height_mm)] {
-            if !(value_mm.is_finite() && value_mm > 0.0) {
-                return Err(invalid(field.to_owned(), value_mm));
-            }
-        }
-        if let TabPlacement::AtDistances { distances_mm } = &spec.placement
-            && let Some((i, d)) = distances_mm
-                .iter()
-                .enumerate()
-                .find(|(_, d)| !d.is_finite())
-        {
-            return Err(invalid(format!("distances_mm[{i}]"), *d));
-        }
-        Ok(Self {
-            placement: spec.placement.clone(),
-            shape: spec.shape,
-            top_z_mm: spec.height_mm,
-            width_mm: spec.width_mm,
+    /// The tabs of an operation cut with a tool `diameter_mm` wide whose
+    /// highest tab top is `top_z_mm`. `chord_tolerance_mm` bounds how far
+    /// the chords of a smooth ramp on an arc stray from the path in XY; a
+    /// value that is not positive falls back to
+    /// [`FLATTEN_TOLERANCE_DEFAULT_MM`].
+    pub(crate) fn new(top_z_mm: f64, diameter_mm: f64, chord_tolerance_mm: f64) -> Self {
+        Self {
+            top_z_mm,
             diameter_mm,
-            span_mm: spec.width_mm + diameter_mm,
             chord_tolerance_mm: if chord_tolerance_mm > 0.0 {
                 chord_tolerance_mm
             } else {
                 FLATTEN_TOLERANCE_DEFAULT_MM
             },
-        })
+        }
     }
 
-    /// The raised spans on a closed path `path_length_mm` long, and whether
-    /// any of them overlapped (or touched, or one alone covers the whole
-    /// path), which merges them.
+    /// The raised spans of `cuts` on a path `path_length_mm` long, and
+    /// whether any of them overlapped (or touched, or one alone covers the
+    /// whole path), which merges them.
     ///
-    /// Each tab raises `width + diameter` of path centred on its distance
-    /// (PureCutCNC grows each tab footprint by the tool radius on every
-    /// side; along the path that is the same length). Spans are circular:
-    /// one may run through the path start.
-    pub(crate) fn layout(&self, path_length_mm: f64) -> (PathTabs, bool) {
+    /// Each tab raises its `width` plus the tool diameter of path centred
+    /// on it (PureCutCNC grows each tab footprint by the tool radius on
+    /// every side; along the path that is the same length). On a closed
+    /// path spans are circular: one may run through the path start. On an
+    /// open path ([`PathEnds::Open`], #175) they are measured from its
+    /// first vertex as drawn and cut short at its ends; `reversed`, the
+    /// path is cut from its last vertex, and the spans are measured from
+    /// there, so the tabs stay where they were drawn.
+    pub(crate) fn layout(
+        &self,
+        cuts: &[TabCut],
+        path_length_mm: f64,
+        ends: PathEnds,
+    ) -> (PathTabs, bool) {
+        match ends {
+            PathEnds::Closed => self.layout_closed(cuts, path_length_mm),
+            PathEnds::Open { reversed } => self.layout_open(cuts, path_length_mm, reversed),
+        }
+    }
+
+    /// The span `cut` raises on a closed path `path_length_mm` long, its
+    /// start in `[0, L)` and its end possibly beyond `L`.
+    fn closed_span(&self, cut: &TabCut, path_length_mm: f64) -> Raw {
+        let span_mm = cut.width_mm + self.diameter_mm;
+        let start_mm = (cut.centre_mm - span_mm / 2.0).rem_euclid(path_length_mm);
+        Raw::of(cut, start_mm, start_mm + span_mm)
+    }
+
+    fn layout_closed(&self, cuts: &[TabCut], path_length_mm: f64) -> (PathTabs, bool) {
         let l = path_length_mm;
         let mut layout = PathTabs {
             length_mm: l,
             spans: Vec::new(),
             full: false,
             closed: true,
+            tab_count: cuts.len(),
         };
-        let centres = tab_centres_mm(&self.placement, l);
-        if centres.is_empty() {
+        if cuts.is_empty() {
             return (layout, false);
         }
-        let half = self.span_mm / 2.0;
-        let mut starts: Vec<f64> = centres.iter().map(|c| (c - half).rem_euclid(l)).collect();
-        starts.sort_by(f64::total_cmp);
-        let mut overlap = self.span_mm >= l - EPS_MM;
-
-        // (start, end) with end possibly beyond L, merged in order.
-        let mut merged: Vec<(f64, f64)> = Vec::new();
-        for start in starts {
-            let end = start + self.span_mm;
-            match merged.last_mut() {
-                Some(last) if start <= last.1 + EPS_MM => {
-                    overlap = true;
-                    last.1 = last.1.max(end);
-                }
-                _ => merged.push((start, end)),
-            }
-        }
-        // The last span may run past L into the first.
-        while merged.len() > 1 {
-            let (Some(&first), Some(&last)) = (merged.first(), merged.last()) else {
-                break;
-            };
-            if last.1 - l < first.0 - EPS_MM {
-                break;
-            }
-            overlap = true;
-            merged.remove(0);
-            if let Some(last) = merged.last_mut() {
-                last.1 = last.1.max(first.1 + l);
-            }
-        }
-        layout.full = merged.iter().any(|(s, e)| e - s >= l - EPS_MM);
-        layout.spans = merged
-            .into_iter()
-            .map(|(start_mm, end)| Span {
-                start_mm,
-                length_mm: end - start_mm,
-            })
-            .collect();
+        // One span alone over the whole path overlaps another only when
+        // there is another; a single tab covering it warns its coverage.
+        let mut overlap = cuts.len() > 1
+            && cuts
+                .iter()
+                .any(|cut| cut.width_mm + self.diameter_mm >= l - EPS_MM);
+        let spans: Vec<Raw> = cuts.iter().map(|cut| self.closed_span(cut, l)).collect();
+        let (merged, merges) = merge_closed(spans, l);
+        overlap |= merges;
+        layout.full = merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM);
+        layout.spans = merged.iter().map(Raw::span).collect();
         (layout, overlap)
     }
 
-    /// [`Tabs::layout`] for an open path `path_length_mm` long (#175),
-    /// tabs centred at distances from the path's first vertex as drawn.
-    /// Spans do not wrap: each is cut short at the path's ends. With
-    /// `reversed`, the path is cut from its last vertex, and the spans are
-    /// measured from there, so the tabs stay where they were drawn.
-    pub(crate) fn layout_open(&self, path_length_mm: f64, reversed: bool) -> (PathTabs, bool) {
+    fn layout_open(
+        &self,
+        cuts: &[TabCut],
+        path_length_mm: f64,
+        reversed: bool,
+    ) -> (PathTabs, bool) {
         let l = path_length_mm;
         let mut layout = PathTabs {
             length_mm: l,
             spans: Vec::new(),
             full: false,
             closed: false,
+            tab_count: cuts.len(),
         };
-        let half = self.span_mm / 2.0;
-        let mut ranges: Vec<(f64, f64)> = tab_centres_mm(&self.placement, l)
-            .into_iter()
-            .map(|c| ((c - half).max(0.0), (c + half).min(l)))
+        let mut spans: Vec<Raw> = cuts
+            .iter()
+            .map(|cut| {
+                let half = (cut.width_mm + self.diameter_mm) / 2.0;
+                Raw::of(
+                    cut,
+                    (cut.centre_mm - half).max(0.0),
+                    (cut.centre_mm + half).min(l),
+                )
+            })
             .collect();
-        ranges.sort_by(|a, b| a.0.total_cmp(&b.0));
+        spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
         let mut overlap = false;
-        let mut merged: Vec<(f64, f64)> = Vec::new();
-        for (start, end) in ranges {
+        let mut merged: Vec<Raw> = Vec::new();
+        for span in spans {
             match merged.last_mut() {
-                Some(last) if start <= last.1 + EPS_MM => {
+                Some(last) if span.start_mm <= last.end_mm + EPS_MM => {
                     overlap = true;
-                    last.1 = last.1.max(end);
+                    last.absorb(&span);
                 }
-                _ => merged.push((start, end)),
+                _ => merged.push(span),
             }
         }
-        layout.full = merged.iter().any(|(s, e)| *s <= EPS_MM && *e >= l - EPS_MM);
-        overlap |= layout.full;
+        layout.full = merged
+            .iter()
+            .any(|s| s.start_mm <= EPS_MM && s.end_mm >= l - EPS_MM);
+        overlap |= layout.full && cuts.len() > 1;
         layout.spans = merged
-            .into_iter()
-            .map(|(start, end)| Span {
-                start_mm: if reversed { l - end } else { start },
-                length_mm: end - start,
+            .iter()
+            .map(|s| {
+                let span = s.span();
+                if reversed {
+                    Span {
+                        start_mm: l - s.end_mm,
+                        ramp_in_mm: span.ramp_out_mm,
+                        ramp_out_mm: span.ramp_in_mm,
+                        ..span
+                    }
+                } else {
+                    span
+                }
             })
             .collect();
         if reversed {
@@ -238,26 +344,310 @@ impl Tabs {
         (layout, overlap)
     }
 
-    /// The tab top, mm above the stock bottom: a pass below it rises over
-    /// the tabs.
+    /// The highest tab top, mm above the stock bottom: a pass below it
+    /// rises over some tab.
+    pub(crate) fn top_z_mm(&self) -> f64 {
+        self.top_z_mm
+    }
+}
+
+impl Request {
+    /// Checks `spec` for operation `op` cut with a tool `diameter_mm` wide.
+    ///
+    /// Fails with [`CamError::InvalidTab`] when the width or height is not
+    /// a positive number or a distance is not finite.
+    pub(crate) fn new(
+        op: &OperationId,
+        spec: &TabSpec,
+        diameter_mm: f64,
+    ) -> Result<Self, CamError> {
+        check_size(op, "width_mm", spec.width_mm)?;
+        check_size(op, "height_mm", spec.height_mm)?;
+        if let TabPlacement::AtDistances { distances_mm } = &spec.placement
+            && let Some((i, d)) = distances_mm
+                .iter()
+                .enumerate()
+                .find(|(_, d)| !d.is_finite())
+        {
+            return Err(CamError::InvalidTab {
+                op: op.clone(),
+                field: format!("distances_mm[{i}]"),
+                value_mm: *d,
+            });
+        }
+        Ok(Self {
+            placement: spec.placement.clone(),
+            shape: spec.shape,
+            top_z_mm: spec.height_mm,
+            width_mm: spec.width_mm,
+            span_mm: spec.width_mm + diameter_mm,
+            on_holes: spec.on_holes,
+            avoid_corners: spec.avoid_corners,
+            diameter_mm,
+        })
+    }
+
+    /// Whether holes get tabs too ([`TabSpec::on_holes`]).
+    pub(crate) fn on_holes(&self) -> bool {
+        self.on_holes
+    }
+
+    /// The tab top the request asks for, mm above the stock bottom.
     pub(crate) fn top_z_mm(&self) -> f64 {
         self.top_z_mm
     }
 
-    /// The length of path a smooth ramp rises or falls over: half the tab
-    /// width, so the bridge left is a triangle `width` wide at its base.
-    fn ramp_mm(&self) -> f64 {
-        self.width_mm / 2.0
+    /// The tab width the request asks for, mm.
+    pub(crate) fn width_mm(&self) -> f64 {
+        self.width_mm
+    }
+
+    /// A tab of this request centred at `centre_mm`.
+    fn cut(&self, centre_mm: f64) -> TabCut {
+        TabCut {
+            centre_mm,
+            width_mm: self.width_mm,
+            top_z_mm: self.top_z_mm,
+            shape: self.shape,
+        }
+    }
+
+    /// The tabs this request puts on `path`, laid out by `tabs`
+    /// ([`Tabs::layout`]). With `avoid_corners` each one on a corner moves
+    /// off it first, where it can ([`corners`], #285); one that cannot
+    /// stays, and is in [`Fit::on_corners_mm`]. When their spans would cover
+    /// more than half the path, so the part or hole would not cut free,
+    /// the path gets the most tabs that cover at most half (#109), but
+    /// never fewer than `least` allows: `count` tabs re-spaced evenly, or
+    /// the first of `at_distances` in their order, moved off corners as
+    /// before. What was asked and what is cut are in [`Reduced`], which is
+    /// given whenever the asked tabs covered more than half, even when one
+    /// kept tab is all that was asked.
+    pub(crate) fn fit(&self, tabs: &Tabs, path: &Polyline, ends: PathEnds, least: Least) -> Fit {
+        let l = path.length_mm();
+        let half_mm = l / 2.0 + EPS_MM;
+        // Tabs on an open path are measured from its first vertex as
+        // drawn, so its corners are found along the path as drawn.
+        let corners = self.avoid_corners.then(|| {
+            let drawn = match ends {
+                PathEnds::Open { reversed: true } => path.reversed(),
+                PathEnds::Closed | PathEnds::Open { reversed: false } => path.clone(),
+            };
+            corners::Corners::of(&drawn, self.diameter_mm, self.span_mm)
+        });
+        let lay = |centres: Vec<f64>| -> (Vec<TabCut>, Vec<(f64, TabOnCornerReason)>) {
+            let (centres, on_corners) = match &corners {
+                Some(corners) => {
+                    let (moved, blocked) = corners::avoid(&centres, corners, self.span_mm);
+                    let on: Vec<(f64, TabOnCornerReason)> = blocked
+                        .iter()
+                        .filter_map(|&(i, why)| moved.get(i).map(|&c| (c, why)))
+                        .collect();
+                    (moved, on)
+                }
+                None => (centres, Vec::new()),
+            };
+            (
+                centres.into_iter().map(|c| self.cut(c)).collect(),
+                on_corners,
+            )
+        };
+        let covered = |cuts: &[TabCut]| tabs.layout(cuts, l, ends).0.covered_mm();
+        let centres = tab_centres_mm(&self.placement, l);
+        let asked = centres.len();
+        let (all, on_corners) = lay(centres.clone());
+        if covered(&all) <= half_mm {
+            return Fit {
+                cuts: all,
+                reduced: None,
+                on_corners_mm: on_corners,
+            };
+        }
+        // `asked` is at least 1 here: no tabs cover nothing.
+        let fewest = match least {
+            Least::One => 1,
+            Least::Zero => 0,
+        };
+        let (kept, on_corners) = match &self.placement {
+            // Evenly spaced spans that fit in half the path never overlap.
+            TabPlacement::Count { count } => {
+                let fits = (0..*count)
+                    .rev()
+                    .find(|&n| f64::from(n) * self.span_mm <= half_mm)
+                    .unwrap_or(0)
+                    .max(fewest);
+                lay(tab_centres_mm(&TabPlacement::Count { count: fits }, l))
+            }
+            TabPlacement::AtDistances { .. } => {
+                let first = |k: usize| lay(centres.iter().take(k).copied().collect());
+                (usize::from(fewest)..asked)
+                    .rev()
+                    .map(first)
+                    .find(|(kept, _)| covered(kept) <= half_mm)
+                    .unwrap_or_else(|| first(usize::from(fewest)))
+            }
+        };
+        let cut = kept.len();
+        Fit {
+            cuts: kept,
+            reduced: Some(Reduced {
+                asked,
+                cut,
+                placed: false,
+            }),
+            on_corners_mm: on_corners,
+        }
     }
 }
 
-/// One raised stretch of a closed path, after merging.
+/// One raised stretch of a path, after merging.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Span {
     /// Distance along the path where the span starts, in `[0, L)`.
     start_mm: f64,
     /// Length of the span; `start_mm + length_mm` may exceed `L`.
     length_mm: f64,
+    /// The highest tab top in the span.
+    top_z_mm: f64,
+    /// Smooth only when every tab in the span is.
+    shape: TabShape,
+    /// The length a smooth span rises over at its start: half the width
+    /// of its first tab, so the bridge left is a triangle that wide at its
+    /// base.
+    ramp_in_mm: f64,
+    /// The length a smooth span falls over at its end: half the width of
+    /// its last tab.
+    ramp_out_mm: f64,
+}
+
+impl Span {
+    /// Where the span ends, unwrapped.
+    fn end_mm(&self) -> f64 {
+        self.start_mm + self.length_mm
+    }
+}
+
+/// A span while spans are merged, by its ends.
+#[derive(Debug, Clone, Copy)]
+struct Raw {
+    start_mm: f64,
+    end_mm: f64,
+    top_z_mm: f64,
+    shape: TabShape,
+    ramp_in_mm: f64,
+    ramp_out_mm: f64,
+}
+
+impl Raw {
+    /// The span of `cut` from `start_mm` to `end_mm`.
+    fn of(cut: &TabCut, start_mm: f64, end_mm: f64) -> Self {
+        let ramp_mm = cut.width_mm / 2.0;
+        Self {
+            start_mm,
+            end_mm,
+            top_z_mm: cut.top_z_mm,
+            shape: cut.shape,
+            ramp_in_mm: ramp_mm,
+            ramp_out_mm: ramp_mm,
+        }
+    }
+
+    /// Merges `next`, which starts at or before this span's end, into it.
+    fn absorb(&mut self, next: &Raw) {
+        if next.end_mm > self.end_mm {
+            self.end_mm = next.end_mm;
+            self.ramp_out_mm = next.ramp_out_mm;
+        }
+        self.top_z_mm = self.top_z_mm.max(next.top_z_mm);
+        if next.shape == TabShape::Rect {
+            self.shape = TabShape::Rect;
+        }
+    }
+
+    fn span(&self) -> Span {
+        Span {
+            start_mm: self.start_mm,
+            length_mm: self.end_mm - self.start_mm,
+            top_z_mm: self.top_z_mm,
+            shape: self.shape,
+            ramp_in_mm: self.ramp_in_mm,
+            ramp_out_mm: self.ramp_out_mm,
+        }
+    }
+}
+
+/// The spans of a closed path `l` long (each start in `[0, L)`, its end
+/// possibly beyond `L`) merged where they overlap or touch, including the
+/// last into the first through the path start, in start order; and
+/// whether any merged.
+fn merge_closed(mut spans: Vec<Raw>, l: f64) -> (Vec<Raw>, bool) {
+    let mut overlap = false;
+    spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
+
+    // Spans whose end may lie beyond L, merged in order.
+    let mut merged: Vec<Raw> = Vec::new();
+    for span in spans {
+        match merged.last_mut() {
+            Some(last) if span.start_mm <= last.end_mm + EPS_MM => {
+                overlap = true;
+                last.absorb(&span);
+            }
+            _ => merged.push(span),
+        }
+    }
+    // The last span may run past L into the first.
+    while merged.len() > 1 {
+        let (Some(first), Some(last)) = (merged.first().copied(), merged.last()) else {
+            break;
+        };
+        if last.end_mm - l < first.start_mm - EPS_MM {
+            break;
+        }
+        overlap = true;
+        merged.remove(0);
+        if let Some(last) = merged.last_mut() {
+            last.absorb(&Raw {
+                start_mm: first.start_mm + l,
+                end_mm: first.end_mm + l,
+                ..first
+            });
+        }
+    }
+    (merged, overlap)
+}
+
+/// Spans of an open path, each within it, merged in start order where
+/// they overlap or touch (#311, [`PathTabs::from_spans`]).
+fn merge_open(mut spans: Vec<Raw>) -> Vec<Raw> {
+    spans.sort_by(|a, b| a.start_mm.total_cmp(&b.start_mm));
+    let mut merged: Vec<Raw> = Vec::new();
+    for span in spans {
+        match merged.last_mut() {
+            Some(last) if span.start_mm <= last.end_mm + EPS_MM => last.absorb(&span),
+            _ => merged.push(span),
+        }
+    }
+    merged
+}
+
+/// One raised stretch of a path for [`PathTabs::from_spans`]: from
+/// `start_mm` along it, `length_mm` long (it may run through the start),
+/// at `top_z_mm`; a smooth one rises over `ramp_in_mm` and falls over
+/// `ramp_out_mm`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RaisedSpan {
+    /// Where it starts, mm along the path.
+    pub start_mm: f64,
+    /// How long it is, mm.
+    pub length_mm: f64,
+    /// Its top, mm above the stock bottom.
+    pub top_z_mm: f64,
+    /// Rect holds the top over it all; smooth ramps.
+    pub shape: TabShape,
+    /// A smooth span's rise, mm.
+    pub ramp_in_mm: f64,
+    /// A smooth span's fall, mm.
+    pub ramp_out_mm: f64,
 }
 
 /// The merged tab spans on one tool-centre path.
@@ -268,20 +658,23 @@ pub(crate) struct PathTabs {
     /// The spans cover the whole path.
     full: bool,
     /// The path is closed, so a span may run through its start. An open
-    /// path's spans lie within it ([`Tabs::layout_open`]).
+    /// path's spans lie within it ([`Tabs::layout`]).
     closed: bool,
+    /// How many tabs the spans were laid for, before merging.
+    tab_count: usize,
 }
 
 /// Where a point along a tabbed path lies.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Zone {
-    /// Outside every span: the pass Z.
+    /// Outside every span, or in one whose top the pass is not below: the
+    /// pass Z.
     Clear,
     /// On a smooth ramp, `f` of the way up from the pass Z (0) to the tab
-    /// top (1).
-    Ramp(f64),
-    /// At the tab top.
-    Hold,
+    /// top `top_z_mm` (1).
+    Ramp(f64, f64),
+    /// At the tab top `top_z_mm`.
+    Hold(f64),
 }
 
 impl PathTabs {
@@ -301,11 +694,226 @@ impl PathTabs {
                     } else {
                         s.start_mm
                     },
-                    length_mm: s.length_mm,
+                    ..*s
                 })
                 .collect(),
             full: self.full,
             closed: self.closed,
+            tab_count: self.tab_count,
+        }
+    }
+
+    /// These spans, laid on a closed path, carried onto another closed
+    /// path `length_mm` long that runs beside it (#284, design A8 step 3):
+    /// `along` maps a distance along this path to the distance along the
+    /// other of the point nearest it. Each span runs on the other path
+    /// from where its start lands to where its end lands (from its end to
+    /// its start when `reversed`: the other path runs the other way, so
+    /// its ramps swap too), widened by `widen_mm` at both ends, and its
+    /// smooth ramps lengthened by as much, so that at every point it is
+    /// at least as high as this one where it lands. Spans that then
+    /// overlap merge; spans that cover the path cover the other.
+    pub(crate) fn carried(
+        &self,
+        length_mm: f64,
+        along: impl Fn(f64) -> f64,
+        reversed: bool,
+        widen_mm: f64,
+    ) -> Self {
+        let l = length_mm;
+        let mut carried = Self {
+            length_mm: l,
+            spans: Vec::new(),
+            full: self.full,
+            closed: true,
+            tab_count: self.tab_count,
+        };
+        if self.full || l <= EPS_MM || self.length_mm <= EPS_MM {
+            carried.spans = self
+                .spans
+                .iter()
+                .map(|s| Span {
+                    start_mm: 0.0,
+                    length_mm: l,
+                    ..*s
+                })
+                .collect();
+            return carried;
+        }
+        let spans: Vec<Raw> = self
+            .spans
+            .iter()
+            .map(|s| {
+                let (from_mm, to_mm) = if reversed {
+                    (along(s.end_mm()), along(s.start_mm))
+                } else {
+                    (along(s.start_mm), along(s.end_mm()))
+                };
+                let (ramp_in_mm, ramp_out_mm) = if reversed {
+                    (s.ramp_out_mm, s.ramp_in_mm)
+                } else {
+                    (s.ramp_in_mm, s.ramp_out_mm)
+                };
+                // The other path is about as long as this one here: a
+                // span that would wrap most of the way round is a short
+                // one whose ends landed out of order.
+                let expected_mm = s.length_mm * l / self.length_mm;
+                let mut run_mm = (to_mm - from_mm).rem_euclid(l);
+                if run_mm - expected_mm > l / 2.0 {
+                    run_mm -= l;
+                }
+                let start_mm = (from_mm - widen_mm).rem_euclid(l);
+                Raw {
+                    start_mm,
+                    end_mm: start_mm + run_mm.max(0.0) + 2.0 * widen_mm,
+                    top_z_mm: s.top_z_mm,
+                    shape: s.shape,
+                    ramp_in_mm: ramp_in_mm + widen_mm,
+                    ramp_out_mm: ramp_out_mm + widen_mm,
+                }
+            })
+            .collect();
+        let (merged, _) = merge_closed(spans, l);
+        carried.full = merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM);
+        carried.spans = merged.iter().map(Raw::span).collect();
+        carried
+    }
+
+    /// The raised stretches `spans` on a path `length_mm` long, laid for
+    /// `tab_count` tabs, merged where they overlap or touch (#310 review:
+    /// an allowance path's spans, found from the tabs' material). On a
+    /// `closed` path a span may run through its start; on an open one
+    /// (#311) each is cut short at the path's ends.
+    pub(crate) fn from_spans(
+        length_mm: f64,
+        tab_count: usize,
+        spans: &[RaisedSpan],
+        closed: bool,
+    ) -> Self {
+        let l = length_mm;
+        let raw: Vec<Raw> = spans
+            .iter()
+            .map(|s| {
+                let (start_mm, end_mm) = if !closed {
+                    (s.start_mm.max(0.0), (s.start_mm + s.length_mm).min(l))
+                } else if l > 0.0 {
+                    let start_mm = s.start_mm.rem_euclid(l);
+                    (start_mm, start_mm + s.length_mm.max(0.0))
+                } else {
+                    (s.start_mm, s.start_mm + s.length_mm.max(0.0))
+                };
+                Raw {
+                    start_mm,
+                    end_mm: end_mm.max(start_mm),
+                    top_z_mm: s.top_z_mm,
+                    shape: s.shape,
+                    ramp_in_mm: s.ramp_in_mm,
+                    ramp_out_mm: s.ramp_out_mm,
+                }
+            })
+            .collect();
+        let merged = if closed {
+            merge_closed(raw, l).0
+        } else {
+            merge_open(raw)
+        };
+        let full = if closed {
+            merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM)
+        } else {
+            merged
+                .iter()
+                .any(|s| s.start_mm <= EPS_MM && s.end_mm >= l - EPS_MM)
+        };
+        Self {
+            length_mm: l,
+            full,
+            spans: merged.iter().map(Raw::span).collect(),
+            closed,
+            tab_count,
+        }
+    }
+
+    /// These spans, laid on an open path, measured from its other end:
+    /// the layout of the path run backwards (#311, a reversed last pass),
+    /// so the tabs stay where they are. Each span's ramps swap. A closed
+    /// path's layout is returned as it is; [`PathTabs::carried`] reverses
+    /// one.
+    pub(crate) fn reversed_open(&self) -> Self {
+        if self.closed {
+            return self.clone();
+        }
+        let l = self.length_mm;
+        let mut spans: Vec<Span> = self
+            .spans
+            .iter()
+            .map(|s| Span {
+                start_mm: (l - s.end_mm()).max(0.0),
+                ramp_in_mm: s.ramp_out_mm,
+                ramp_out_mm: s.ramp_in_mm,
+                ..*s
+            })
+            .collect();
+        spans.reverse();
+        Self {
+            spans,
+            ..self.clone()
+        }
+    }
+
+    /// The Z, mm, a pass at `base_z_mm` cuts at `distance_mm` along the
+    /// path: `base_z_mm`, or higher over a tab.
+    pub(crate) fn z_at_mm(&self, distance_mm: f64, base_z_mm: f64) -> f64 {
+        self.z_at(distance_mm, base_z_mm)
+    }
+
+    /// The top and shape of the span over `distance_mm` along the path,
+    /// or `None` where no span raises it.
+    pub(crate) fn span_at(&self, distance_mm: f64) -> Option<(f64, TabShape)> {
+        if self.full {
+            let top = self
+                .spans
+                .iter()
+                .map(|s| s.top_z_mm)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let shape = if self.spans.iter().all(|s| s.shape == TabShape::Smooth) {
+                TabShape::Smooth
+            } else {
+                TabShape::Rect
+            };
+            return Some((top, shape));
+        }
+        self.spans.iter().find_map(|span| {
+            let t = if self.closed {
+                (distance_mm - span.start_mm).rem_euclid(self.length_mm)
+            } else {
+                distance_mm - span.start_mm
+            };
+            (0.0..span.length_mm)
+                .contains(&t)
+                .then_some((span.top_z_mm, span.shape))
+        })
+    }
+
+    /// True when no tab stands on the path: its last pass cuts free.
+    pub(crate) fn is_untabbed(&self) -> bool {
+        self.spans.is_empty() && !self.full
+    }
+
+    /// How many tabs the spans were laid for, before merging.
+    pub(crate) fn tab_count(&self) -> usize {
+        self.tab_count
+    }
+
+    /// How much of the path the spans raise, mm: at most its length.
+    pub(crate) fn covered_mm(&self) -> f64 {
+        if self.full {
+            self.length_mm
+        } else {
+            self.spans
+                .iter()
+                .map(|s| s.length_mm)
+                .sum::<f64>()
+                .min(self.length_mm)
         }
     }
 
@@ -319,8 +927,7 @@ impl PathTabs {
         }
         let mut clear = self.length_mm;
         for span in &self.spans {
-            let end = span.start_mm + span.length_mm;
-            let wraps = self.closed && end >= self.length_mm - EPS_MM;
+            let wraps = self.closed && span.end_mm() >= self.length_mm - EPS_MM;
             if span.start_mm <= EPS_MM || wraps {
                 return 0.0;
             }
@@ -350,7 +957,7 @@ impl PathTabs {
             .iter()
             .zip(spans.iter().cycle().skip(1))
             .map(|(a, b)| {
-                let end = a.start_mm + a.length_mm;
+                let end = a.end_mm();
                 let length = (b.start_mm - end).rem_euclid(l);
                 (end.rem_euclid(l), length)
             })
@@ -376,16 +983,24 @@ impl PathTabs {
         self.spans
             .iter()
             .filter(|s| s.length_mm > 2.0 * radius)
-            .map(|s| (s.start_mm + radius, s.start_mm + s.length_mm - radius))
+            .map(|s| (s.start_mm + radius, s.end_mm() - radius))
             .collect()
     }
 
-    /// The zone at `distance_mm` along the path.
-    fn zone(&self, tabs: &Tabs, distance_mm: f64) -> Zone {
+    /// The zone at `distance_mm` along the path for a pass at `base_z_mm`.
+    fn zone(&self, distance_mm: f64, base_z_mm: f64) -> Zone {
         if self.full {
-            return Zone::Hold;
+            let top = self
+                .spans
+                .iter()
+                .map(|s| s.top_z_mm)
+                .fold(f64::NEG_INFINITY, f64::max);
+            return if base_z_mm < top - EPS_MM {
+                Zone::Hold(top)
+            } else {
+                Zone::Clear
+            };
         }
-        let ramp_mm = tabs.ramp_mm();
         for span in &self.spans {
             let t = if self.closed {
                 (distance_mm - span.start_mm).rem_euclid(self.length_mm)
@@ -395,46 +1010,53 @@ impl PathTabs {
             if !(0.0..span.length_mm).contains(&t) {
                 continue;
             }
-            return match tabs.shape {
-                TabShape::Rect => Zone::Hold,
+            if base_z_mm >= span.top_z_mm - EPS_MM {
+                return Zone::Clear;
+            }
+            let top = span.top_z_mm;
+            return match span.shape {
+                TabShape::Rect => Zone::Hold(top),
                 // A smooth span rises over its first half tab width and
                 // falls over its last, holding the top between: one bit
                 // diameter on a single tab, longer on a merged span.
-                TabShape::Smooth if t < ramp_mm => Zone::Ramp(t / ramp_mm),
-                TabShape::Smooth if t > span.length_mm - ramp_mm => {
-                    Zone::Ramp((span.length_mm - t) / ramp_mm)
+                TabShape::Smooth if t < span.ramp_in_mm => Zone::Ramp(t / span.ramp_in_mm, top),
+                TabShape::Smooth if t > span.length_mm - span.ramp_out_mm => {
+                    Zone::Ramp((span.length_mm - t) / span.ramp_out_mm, top)
                 }
-                TabShape::Smooth => Zone::Hold,
+                TabShape::Smooth => Zone::Hold(top),
             };
         }
         Zone::Clear
     }
 
     /// Z at `distance_mm` along the path for a pass at `base_z_mm`.
-    fn z_at(&self, tabs: &Tabs, distance_mm: f64, base_z_mm: f64) -> f64 {
-        match self.zone(tabs, distance_mm) {
+    fn z_at(&self, distance_mm: f64, base_z_mm: f64) -> f64 {
+        match self.zone(distance_mm, base_z_mm) {
             Zone::Clear => base_z_mm,
-            // Laps at or above the tab top never get here (`lap_cuts`).
-            Zone::Ramp(f) => base_z_mm + (tabs.top_z_mm - base_z_mm) * f,
-            Zone::Hold => tabs.top_z_mm,
+            Zone::Ramp(f, top) => base_z_mm + (top - base_z_mm) * f,
+            Zone::Hold(top) => top,
         }
     }
 
-    /// Distances where the lap must have a vertex: span boundaries and,
-    /// for smooth tabs, the ends of each straight ramp.
-    fn breakpoints_mm(&self, tabs: &Tabs) -> Vec<f64> {
+    /// Distances where a lap at `base_z_mm` must have a vertex: the
+    /// boundaries of the spans it rises over and, for smooth ones, the
+    /// ends of each straight ramp.
+    fn breakpoints_mm(&self, base_z_mm: f64) -> Vec<f64> {
         if self.full {
             return Vec::new();
         }
-        let ramp_mm = tabs.ramp_mm();
         let mut out = Vec::new();
-        for span in &self.spans {
-            let end = span.start_mm + span.length_mm;
+        for span in self
+            .spans
+            .iter()
+            .filter(|s| base_z_mm < s.top_z_mm - EPS_MM)
+        {
+            let end = span.end_mm();
             out.push(span.start_mm);
             out.push(end);
-            if tabs.shape == TabShape::Smooth {
-                out.push(span.start_mm + ramp_mm);
-                out.push(end - ramp_mm);
+            if span.shape == TabShape::Smooth {
+                out.push(span.start_mm + span.ramp_in_mm);
+                out.push(end - span.ramp_out_mm);
             }
         }
         if self.closed {
@@ -446,32 +1068,40 @@ impl PathTabs {
     }
 }
 
-/// The warnings about where the tab top lies relative to the cut
-/// (PureCutCNC `applyTabWarnings`): [`Warning::TabsOutsideCutRange`]
-/// when no pass of `pass_z_mm` lies below the tab top, so the tabs change
-/// nothing, or when the tab top is above the stock top `thickness_mm`.
+/// The warnings about where the tab tops lie relative to the cut
+/// (PureCutCNC `applyTabWarnings`), for an operation whose tabs have tops
+/// `tops_z_mm`: [`Warning::TabsOutsideCutRange`] when no pass of
+/// `pass_z_mm` lies below the lowest tab top, so that tab changes
+/// nothing, or when the highest tab top is above the stock top
+/// `thickness_mm`.
 pub(crate) fn cut_range_warnings(
     op: &OperationId,
-    tabs: &Tabs,
+    tops_z_mm: &[f64],
     pass_z_mm: &[f64],
     thickness_mm: f64,
 ) -> Vec<Warning> {
     let Some(deepest_z_mm) = pass_z_mm.iter().copied().reduce(f64::min) else {
         return Vec::new();
     };
-    let warning = |reason| Warning::TabsOutsideCutRange {
+    let (Some(lowest_mm), Some(highest_mm)) = (
+        tops_z_mm.iter().copied().reduce(f64::min),
+        tops_z_mm.iter().copied().reduce(f64::max),
+    ) else {
+        return Vec::new();
+    };
+    let warning = |reason, tab_top_mm| Warning::TabsOutsideCutRange {
         op: op.clone(),
         reason,
-        tab_top_mm: tabs.top_z_mm,
+        tab_top_mm,
         deepest_pass_z_mm: deepest_z_mm,
         stock_top_mm: thickness_mm,
     };
     let mut warnings = Vec::new();
-    if tabs.top_z_mm > thickness_mm + EPS_MM {
-        warnings.push(warning(TabsRangeReason::AboveStockTop));
+    if highest_mm > thickness_mm + EPS_MM {
+        warnings.push(warning(TabsRangeReason::AboveStockTop, highest_mm));
     }
-    if deepest_z_mm >= tabs.top_z_mm - EPS_MM {
-        warnings.push(warning(TabsRangeReason::CutStopsAboveTab));
+    if deepest_z_mm >= lowest_mm - EPS_MM {
+        warnings.push(warning(TabsRangeReason::CutStopsAboveTab, lowest_mm));
     }
     warnings
 }
@@ -492,46 +1122,39 @@ pub(crate) fn overlap_warning(
     }
 }
 
-/// [`Warning::TabsCoverMostOfContour`] when the merged spans of
-/// `layout` cover more than half of contour `contour` (0-based, in cut
-/// order), so the part or hole may not cut free. The tabs are not changed:
-/// the user may want them, and they never make motion unsafe.
+/// [`Warning::TabsCoverMostOfContour`] for contour `contour` (0-based, in
+/// cut order), `path_length_mm` long and cut with a tool `diameter_mm`
+/// wide, on which `reduced.asked` tabs of widths `widths_mm` (one per tab
+/// asked) would have covered more than half, so the part or hole would
+/// not cut free, and `reduced.cut` are cut: fewer when a request was cut
+/// down ([`Request::fit`], #109), all when placed tabs are cut as placed.
 pub(crate) fn coverage_warning(
     op: &OperationId,
     contour: usize,
     shape: Option<&ShapeRef>,
-    tabs: &Tabs,
-    layout: &PathTabs,
-) -> Option<Warning> {
-    let l = layout.length_mm;
-    let covered_mm = if layout.full {
-        l
-    } else {
-        layout.spans.iter().map(|s| s.length_mm).sum::<f64>().min(l)
-    };
-    let half_mm = l / 2.0;
-    if covered_mm <= half_mm + EPS_MM {
-        return None;
-    }
-    let centres = tab_centres_mm(&tabs.placement, l);
-    let count_f: f64 = centres.iter().map(|_| 1.0).sum();
-    // Evenly spaced tabs that fit in half the path never overlap.
-    let max_count = ((half_mm + EPS_MM) / tabs.span_mm).floor();
+    (diameter_mm, widths_mm): (f64, &[f64]),
+    path_length_mm: f64,
+    reduced: Reduced,
+) -> Warning {
+    let asked_f: f64 = (0..reduced.asked).map(|_| 1.0).sum();
+    let width_mm = widths_mm.iter().copied().fold(0.0, f64::max);
+    let total_mm: f64 = widths_mm.iter().map(|w| w + diameter_mm).sum();
     // Rounded down to 0.01 mm so the suggested width does fit.
-    let max_width_mm = ((half_mm / count_f - tabs.diameter_mm) * 100.0).floor() / 100.0;
-    Some(Warning::TabsCoverMostOfContour {
+    let max_width_mm = ((path_length_mm / 2.0 / asked_f - diameter_mm) * 100.0).floor() / 100.0;
+    Warning::TabsCoverMostOfContour {
         op: op.clone(),
         contour,
         shape: shape.cloned(),
-        path_length_mm: l,
-        tab_count: centres.len(),
-        tab_width_mm: tabs.width_mm,
-        diameter_mm: tabs.diameter_mm,
-        tab_span_mm: tabs.span_mm,
-        tab_total_mm: tabs.span_mm * count_f,
-        max_count,
+        path_length_mm,
+        tab_count: reduced.asked,
+        tab_width_mm: width_mm,
+        diameter_mm,
+        tab_span_mm: width_mm + diameter_mm,
+        tab_total_mm: total_mm,
+        cut_count: reduced.cut,
         max_width_mm: (max_width_mm > 0.0).then_some(max_width_mm),
-    })
+        placed: reduced.placed,
+    }
 }
 
 /// One move of a lap, before the vertical step that may precede it.
@@ -557,7 +1180,7 @@ pub(crate) struct LapCuts {
 /// One lap of `path` at `z_mm`, from the path start at
 /// [`LapCuts::start_z_mm`] back to the path start (to its last vertex for
 /// an open path, #175). Where `tabs` is given
-/// and `z_mm` lies below the tab top, the lap rises over each tab span:
+/// and `z_mm` lies below a tab's top, the lap rises over that tab's span:
 /// rect tabs with a vertical lift, a traverse at the tab top, and a
 /// vertical descent; smooth tabs along straight ramps either side of a hold
 /// at the tab top. Every vertical move is at the plunge rate; every move
@@ -618,7 +1241,7 @@ fn lap_pieces(path: &Polyline, z_mm: f64, tabs: Option<(&Tabs, &PathTabs)>) -> V
             })
             .collect();
     };
-    let mut breakpoints = layout.breakpoints_mm(tabs);
+    let mut breakpoints = layout.breakpoints_mm(z_mm);
     breakpoints.sort_by(f64::total_cmp);
 
     let lap = Lap {
@@ -669,10 +1292,10 @@ impl Lap<'_> {
         b: f64,
     ) {
         let mid = segment_start_mm + (a + b) / 2.0;
-        let level_z_mm = match self.layout.zone(self.tabs, mid) {
+        let level_z_mm = match self.layout.zone(mid, self.base_z_mm) {
             Zone::Clear => Some(self.base_z_mm),
-            Zone::Hold => Some(self.tabs.top_z_mm),
-            Zone::Ramp(_) => None,
+            Zone::Hold(top) => Some(top),
+            Zone::Ramp(..) => None,
         };
         if let Some(z) = level_z_mm {
             let end = point_on(segment, b);
@@ -701,10 +1324,7 @@ impl Lap<'_> {
             }
             None => 1,
         };
-        let z_at = |d: f64| {
-            self.layout
-                .z_at(self.tabs, segment_start_mm + d, self.base_z_mm)
-        };
+        let z_at = |d: f64| self.layout.z_at(segment_start_mm + d, self.base_z_mm);
         let at = |k: u32| {
             if k == chords {
                 b
@@ -852,6 +1472,8 @@ mod tests {
             entry: Entry::Plunge,
             lead: None,
             corner_relief: CornerRelief::None,
+            last_pass: None,
+            start: dc_project::StartAt::Auto,
         };
         p.operations = vec![Operation::Profile(op.clone())];
         (p, op)
@@ -863,6 +1485,8 @@ mod tests {
             width_mm: TAB_WIDTH_MM,
             height_mm: TAB_Z_MM,
             shape,
+            on_holes: false,
+            avoid_corners: false,
         }
     }
 
@@ -1051,6 +1675,8 @@ mod tests {
                     width_mm,
                     height_mm: TAB_Z_MM,
                     shape: TabShape::Rect,
+                    on_holes: false,
+                    avoid_corners: false,
                 }),
             )
         };
@@ -1070,9 +1696,9 @@ mod tests {
             assert_approx_eq!(run.length_mm, span_mm, TOL);
         }
 
-        // Four tabs all but cover it (port of "four tabs cover a circle"),
-        // yet leave a gap to cut through, so nothing overlaps. They cover
-        // most of the path, which warns but changes nothing.
+        // Four tabs would all but cover it (port of "four tabs cover a
+        // circle"): they cover most of the path, so only the two that fit
+        // in half of it are cut, and that warns (#109).
         let (p, op) = small(4);
         let (tp, warnings) = generate(&p, &op);
         assert_eq!(
@@ -1081,12 +1707,12 @@ mod tests {
             "{warnings:?}"
         );
         let lap = final_lap(&tp);
+        assert_eq!(raised_runs(&lap).len(), 2, "{lap:?}");
         let free: f64 = runs(&lap, |m| m.at_z(0.0))
             .iter()
             .map(|r| r.length_mm)
             .sum();
-        assert_approx_eq!(free, path_mm - 4.0 * span_mm, TOL);
-        assert!(free / path_mm < 0.05 && free > 0.0, "free {free}");
+        assert_approx_eq!(free, path_mm - 2.0 * span_mm, TOL);
 
         // And on the coaster each tab spans 8 + 6.35 mm.
         let (p, op) = coaster(Some(four_rect_tabs()));
@@ -1274,21 +1900,30 @@ mod tests {
         assert_approx_eq!(held, 8.0 + DIAMETER_MM, TOL);
         assert_no_vertical_step_in_final_pass(&tp);
 
-        // Tabs wide enough to cover the whole path merge into one: the
-        // final pass rides the tab top all the way round.
+        // Four tabs wide enough to cover the whole path would merge into
+        // one; only the one that fits in half of it is cut (#109), so
+        // nothing overlaps.
         let mut spec = four_rect_tabs();
         spec.width_mm = 80.0;
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
-        assert_eq!(
-            codes(&warnings),
-            vec![
-                WarningCode::TabsOverlap,
-                WarningCode::TabsCoverMostOfContour
-            ]
+        assert_eq!(codes(&warnings), vec![WarningCode::TabsCoverMostOfContour]);
+        let raised = raised_runs(&final_lap(&tp));
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert_approx_eq!(raised[0].length_mm, 80.0 + DIAMETER_MM, TOL);
+
+        // Distances so close the tabs overlap, but in less than half the
+        // path, are cut as set: merged, with a warning.
+        let spec = tab_spec(
+            TabPlacement::AtDistances {
+                distances_mm: vec![100.0, 104.0, 108.0],
+            },
+            TabShape::Rect,
         );
-        let lap = final_lap(&tp);
-        assert!(lap.iter().all(|m| m.at_z(TAB_Z_MM)), "{lap:?}");
+        let (p, op) = coaster(Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!(codes(&warnings), vec![WarningCode::TabsOverlap]);
+        assert_eq!(raised_runs(&final_lap(&tp)).len(), 1);
 
         // Spaced-out tabs do not warn.
         let (p, op) = coaster(Some(four_rect_tabs()));
@@ -1335,11 +1970,19 @@ mod tests {
             .collect()
     }
 
+    /// [`four_rect_tabs`] on the holes too.
+    fn four_rect_tabs_on_holes() -> TabSpec {
+        TabSpec {
+            on_holes: true,
+            ..four_rect_tabs()
+        }
+    }
+
     #[test]
     fn tabs_covering_most_of_contour_warn() {
         // Default tabs (4 × 8 mm, 6.35 mm bit) on a 20 mm square hole:
         // 57.4 mm of tab on a 54.6 mm tool path.
-        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs()));
+        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs_on_holes()));
         let (_, warnings) = generate(&p, &op);
         let cover = coverage_warnings(&warnings);
         assert_eq!(cover.len(), 1, "only the hole: {warnings:?}");
@@ -1352,7 +1995,7 @@ mod tests {
             tab_count,
             tab_span_mm,
             tab_total_mm,
-            max_count,
+            cut_count,
             max_width_mm: Some(max_width_mm),
             ..
         } = w
@@ -1370,21 +2013,23 @@ mod tests {
         assert_approx_eq!(*path_length_mm, path_mm, TOL);
         assert_approx_eq!(*tab_span_mm, span_mm, TOL);
         assert_approx_eq!(*tab_total_mm, 4.0 * span_mm, TOL);
-        // One 14.35 mm tab covers at most half of 54.6 mm; four tabs fit
-        // in half only if each is at most 27.3 / 4 − 6.35 = 0.475 mm wide.
-        assert_approx_eq!(*max_count, 1.0, TOL);
+        // One 14.35 mm tab covers at most half of 54.6 mm, so one is cut
+        // (#109); four tabs fit in half only if each is at most
+        // 27.3 / 4 − 6.35 = 0.475 mm wide.
+        assert_eq!(*cut_count, 1);
         assert!(*max_width_mm <= path_mm / 2.0 / 4.0 - DIAMETER_MM);
 
         // The text names the shape, the path, the tab total and the share,
-        // says what may happen, and suggests changes, in rounded values.
+        // says what would happen and what is cut instead, and suggests a
+        // width, in rounded values.
         let text = w.to_string();
         for needle in [
             "`Square 1`",
             "54.6 mm",
             "57.4 mm",
             "105.1%",
-            "may not cut free",
-            "at most 1 tab",
+            "would not cut free",
+            "Only 1 of them is cut",
             "0.47 mm",
         ] {
             assert!(text.contains(needle), "{needle:?} in {text:?}");
@@ -1406,7 +2051,13 @@ mod tests {
             width_mm: 3.0,
             ..four_rect_tabs()
         };
-        let (mut p, op) = square_with_hole(13.175, Some(spec));
+        let (mut p, op) = square_with_hole(
+            13.175,
+            Some(TabSpec {
+                on_holes: true,
+                ..spec
+            }),
+        );
         p.tools[0].diameter_mm = 3.175;
         let (_, warnings) = generate(&p, &op);
         let cover = coverage_warnings(&warnings);
@@ -1444,31 +2095,168 @@ mod tests {
         assert!(!text.contains("tab(s) of 6.17 mm each"), "{text}");
     }
 
+    /// #109: a hole's slug is waste, so by default only the part's
+    /// outline gets tabs: the 40 mm hole of the 60 mm square is cut free
+    /// all the way round on its last pass, while the square rises over
+    /// its four tabs. Nothing warns.
     #[test]
-    fn tabs_are_not_changed_when_they_warn() {
-        // Eleven 14.35 mm spans on the 302.7 mm coaster path cover 52%:
-        // a warning, and still eleven tabs exactly as set.
+    fn holes_get_no_tabs_by_default() {
+        let (p, op) = square_with_hole(40.0, Some(four_rect_tabs()));
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let laps = final_laps_by_contour(&tp);
+        assert_eq!(laps.len(), 2, "the hole, then the square");
+        assert!(
+            laps[0].iter().all(|m| m.at_z(0.0)),
+            "the hole has no tabs: {:?}",
+            laps[0]
+        );
+        let square = runs(&laps[1], |m| m.at_z(TAB_Z_MM));
+        assert_eq!(square.len(), 4, "the square keeps its tabs: {square:?}");
+        assert!(laps[1].iter().all(|m| m.at_z(0.0) || m.at_z(TAB_Z_MM)));
+    }
+
+    /// #109: with `on_holes` the hole is held too, by the same four tabs
+    /// as its part, as every outline was before version 9 (a 134.6 mm
+    /// hole path; four 14.35 mm spans cover 43% of it, so all are cut).
+    #[test]
+    fn on_holes_opt_in_keeps_hole_tabs() {
+        let (p, op) = square_with_hole(40.0, Some(four_rect_tabs_on_holes()));
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let laps = final_laps_by_contour(&tp);
+        assert_eq!(laps.len(), 2, "the hole, then the square");
+        for (name, lap) in ["hole", "square"].iter().zip(&laps) {
+            let raised = runs(lap, |m| m.at_z(TAB_Z_MM));
+            assert_eq!(raised.len(), 4, "{name}: {raised:?}");
+        }
+    }
+
+    /// The tabs asked and cut, and the text, of the one coverage warning
+    /// in `warnings`.
+    fn cover_of(warnings: &[Warning]) -> (usize, usize, String) {
+        let cover = coverage_warnings(warnings);
+        assert_eq!(cover.len(), 1, "{warnings:?}");
+        let Warning::TabsCoverMostOfContour {
+            tab_count,
+            cut_count,
+            ..
+        } = cover[0]
+        else {
+            panic!("{:?}", cover[0]);
+        };
+        (*tab_count, *cut_count, cover[0].to_string())
+    }
+
+    /// #109: an outline too short for its tabs gets the most that keep
+    /// them to half of its tool path (the coverage threshold), and the
+    /// coverage warning names the shape and says how many are cut.
+    /// `count` tabs are re-spaced evenly; of `at_distances`, the first in
+    /// the list are kept. A hole with `on_holes` may get none; a part
+    /// keeps at least one ([`short_part_outline_keeps_at_least_one_tab`]).
+    #[test]
+    fn too_short_outline_gets_fewer_tabs_and_warns() {
+        let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
+
+        // Eleven 14.35 mm spans would cover 52% of the coaster's 302.7 mm
+        // path; ten (47%) are cut, evenly spaced.
         let spec = tab_spec(TabPlacement::Count { count: 11 }, TabShape::Rect);
         let (p, op) = coaster(Some(spec));
         let (tp, warnings) = generate(&p, &op);
-        assert_eq!(
-            codes(&warnings),
-            vec![WarningCode::TabsCoverMostOfContour],
-            "{warnings:?}"
-        );
+        assert_eq!(codes(&warnings), vec![WarningCode::TabsCoverMostOfContour]);
+        let (asked, cut, text) = cover_of(&warnings);
+        assert_eq!((asked, cut), (11, 10));
+        assert!(text.contains("`Coaster 1`"), "names the shape: {text}");
+        assert!(text.contains("Only 10 of them are cut"), "{text}");
         let raised = raised_runs(&final_lap(&tp));
-        assert_eq!(raised.len(), 11, "{raised:?}");
+        assert_eq!(raised.len(), 10, "{raised:?}");
+        let tenth = coaster_path_mm() / 10.0;
+        for pair in raised.windows(2) {
+            assert_approx_eq!(pair[1].start_mm - pair[0].start_mm, tenth, TOL);
+        }
         for run in &raised {
-            assert_approx_eq!(run.length_mm, TAB_WIDTH_MM + DIAMETER_MM, TOL);
+            assert_approx_eq!(run.length_mm, span_mm, TOL);
         }
 
-        // Tabs that cover a whole hole are kept too: its final lap rides
-        // the tab top all the way round.
-        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs()));
-        let (tp, _) = generate(&p, &op);
+        // Twelve distances 25 mm apart would cover 57%; the first ten are
+        // cut, the last two (250 and 275 mm) are not.
+        let distances_mm: Vec<f64> = (0..12).map(|k| 25.0 * f64::from(k)).collect();
+        let spec = tab_spec(TabPlacement::AtDistances { distances_mm }, TabShape::Rect);
+        let (p, op) = coaster(Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!((cover_of(&warnings).0, cover_of(&warnings).1), (12, 10));
+        let l = coaster_path_mm();
+        let mut centres: Vec<f64> = raised_runs(&final_lap(&tp))
+            .iter()
+            .map(|r| (r.start_mm + r.length_mm / 2.0).rem_euclid(l))
+            .map(|c| if c > l - 1.0 { c - l } else { c })
+            .collect();
+        centres.sort_by(f64::total_cmp);
+        assert_eq!(centres.len(), 10, "{centres:?}");
+        for (k, c) in centres.iter().enumerate() {
+            assert_approx_eq!(*c, 25.0 * k as f64, TOL);
+        }
+
+        // A 20 mm square hole with hole tabs on: one of the four fits
+        // its 54.6 mm path. The square keeps all four.
+        let (p, op) = square_with_hole(20.0, Some(four_rect_tabs_on_holes()));
+        let (tp, warnings) = generate(&p, &op);
+        let (asked, cut, text) = cover_of(&warnings);
+        assert_eq!((asked, cut), (4, 1));
+        assert!(text.contains("`Square 1`"), "{text}");
+        let laps = final_laps_by_contour(&tp);
+        assert_eq!(runs(&laps[0], |m| m.at_z(TAB_Z_MM)).len(), 1);
+        assert_eq!(runs(&laps[1], |m| m.at_z(TAB_Z_MM)).len(), 4);
+
+        // A 13 mm square hole with hole tabs on has a 26.6 mm path: even
+        // one 14.35 mm span covers more than half, so the hole gets none
+        // and its slug cuts free. The square keeps its four.
+        let (p, op) = square_with_hole(13.0, Some(four_rect_tabs_on_holes()));
+        let (tp, warnings) = generate(&p, &op);
+        let (asked, cut, text) = cover_of(&warnings);
+        assert_eq!((asked, cut), (4, 0));
+        assert!(text.contains("No tab is cut"), "{text}");
         let laps = final_laps_by_contour(&tp);
         assert_eq!(laps.len(), 2);
-        assert!(laps[0].iter().all(|m| m.at_z(TAB_Z_MM)), "{:?}", laps[0]);
+        assert!(laps[0].iter().all(|m| m.at_z(0.0)), "{:?}", laps[0]);
+        assert_eq!(runs(&laps[1], |m| m.at_z(TAB_Z_MM)).len(), 4);
+    }
+
+    /// #109: a part that asked for tabs keeps at least one, however short
+    /// its outline: cut free, a small part can be thrown by the bit,
+    /// which is worse than one held by a tab that covers most of it. A
+    /// 12 mm circle cut inside has a 17.7 mm path, and one 14.35 mm span
+    /// covers 81% of it: the one tab is cut, and the warning says the
+    /// part may need cutting free by hand.
+    #[test]
+    fn short_part_outline_keeps_at_least_one_tab() {
+        for (count, asked) in [(4, 4), (1, 1)] {
+            let spec = tab_spec(TabPlacement::Count { count }, TabShape::Rect);
+            let (p, op) = circle_job(6.0, Side::Inside, Some(spec));
+            let (tp, warnings) = generate(&p, &op);
+            let (tab_count, cut, text) = cover_of(&warnings);
+            assert_eq!((tab_count, cut), (asked, 1), "count {count}");
+            assert!(text.contains("by hand"), "{text}");
+            let laps = final_laps_by_contour(&tp);
+            assert_eq!(laps.len(), 1);
+            let raised = runs(&laps[0], |m| m.at_z(TAB_Z_MM));
+            assert_eq!(raised.len(), 1, "count {count}: {raised:?}");
+        }
+
+        // Of `at_distances`, the first is the one kept.
+        let spec = tab_spec(
+            TabPlacement::AtDistances {
+                distances_mm: vec![9.0, 0.0],
+            },
+            TabShape::Rect,
+        );
+        let (p, op) = circle_job(6.0, Side::Inside, Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!((cover_of(&warnings).0, cover_of(&warnings).1), (2, 1));
+        let lap = final_lap(&tp);
+        let raised = raised_runs(&lap);
+        assert_eq!(raised.len(), 1, "{raised:?}");
+        assert_approx_eq!(raised[0].start_mm + raised[0].length_mm / 2.0, 9.0, TOL);
     }
 
     #[test]
@@ -1804,5 +2592,353 @@ mod tests {
         )));
         let err = generate_profile(&p, &op).unwrap_err();
         assert!(matches!(err, CamError::InvalidTab { .. }), "{err:?}");
+    }
+
+    // ── #285: tabs off corners ──
+
+    /// A request for rect tabs `width_mm` wide at `placement`, off corners
+    /// when `avoid_corners`.
+    fn corner_spec(placement: TabPlacement, width_mm: f64, avoid_corners: bool) -> TabSpec {
+        TabSpec {
+            width_mm,
+            avoid_corners,
+            ..tab_spec(placement, TabShape::Rect)
+        }
+    }
+
+    /// Acceptance 47's part: a 50 mm square rotated 45° about its centre
+    /// at (60, 60), cut outside.
+    fn rotated_square(tabs: Option<TabSpec>) -> (Project, ProfileOp) {
+        let (mut p, op) = job(
+            "Square",
+            vec![Polyline::rect(Point::new(-25.0, -25.0), 50.0, 50.0)],
+            Side::Outside,
+            tabs,
+        );
+        p.instances[0].transform =
+            Transform::rotate(std::f64::consts::FRAC_PI_4).then(Transform::translate(60.0, 60.0));
+        (p, op)
+    }
+
+    /// A 50 mm square cut on the line, so its tool path has four sharp
+    /// 90° corners 50 mm apart.
+    fn on_line_square(tabs: Option<TabSpec>) -> (Project, ProfileOp) {
+        job(
+            "Square",
+            vec![Polyline::rect(Point::new(-25.0, -25.0), 50.0, 50.0)],
+            Side::OnLine,
+            tabs,
+        )
+    }
+
+    /// Where each raised run of `lap` is centred, mm along it, in order.
+    fn run_centres(lap: &[XyMove]) -> Vec<f64> {
+        let l: f64 = lap.iter().map(|m| m.length_mm).sum();
+        let mut centres: Vec<f64> = raised_runs(lap)
+            .iter()
+            .map(|r| (r.start_mm + r.length_mm / 2.0).rem_euclid(l))
+            .collect();
+        centres.sort_by(f64::total_cmp);
+        centres
+    }
+
+    /// Where `lap`, made of straight moves, turns: the distance along it
+    /// of each move's start whose direction differs from the move
+    /// before's (the lap's start counts when it turns there).
+    fn turns_at(lap: &[XyMove]) -> Vec<f64> {
+        let dir = |m: &XyMove| (m.mv.to.xy() - m.from.xy()).normalized().unwrap();
+        let mut at = Vec::new();
+        let mut walked = 0.0;
+        for (k, m) in lap.iter().enumerate() {
+            let before = &lap[(k + lap.len() - 1) % lap.len()];
+            if dir(before).cross(dir(m)).abs() > 1e-9 {
+                at.push(walked);
+            }
+            walked += m.length_mm;
+        }
+        at
+    }
+
+    /// The `tab_on_corner` warnings, as `(instance name, distance)`.
+    fn on_corner(warnings: &[Warning]) -> Vec<(String, f64)> {
+        warnings
+            .iter()
+            .filter_map(|w| match w {
+                Warning::TabOnCorner {
+                    shape, distance_mm, ..
+                } => Some((shape.instance_name.clone(), *distance_mm)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Acceptance 47 (#285): a 50 mm square rotated 45°, cut outside with
+    /// four evenly spaced rect tabs, its cut starting nearest the origin
+    /// (mid-side, so each tab is centred 27.5 mm along, in the middle of
+    /// the arc round the next corner). Without `avoid_corners` the tabs sit
+    /// on those arcs. With it, every tab stretch lies on a straight side:
+    /// no move at the tab top is an arc, and each of the four stretches is
+    /// still its tab's width plus the bit's diameter, at the tab's height,
+    /// with the cut at full depth between them. Three tabs from the
+    /// path's own start put one on a corner too, and it moves off.
+    #[test]
+    fn rotated_square_tabs_leave_corners() {
+        let span_mm = TAB_WIDTH_MM + DIAMETER_MM;
+        let near_origin = dc_project::StartAt::Near {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        };
+        for (count, start) in [(4, near_origin), (3, dc_project::StartAt::Auto)] {
+            let placement = || TabPlacement::Count { count };
+            let (p, mut op) = rotated_square(Some(corner_spec(placement(), TAB_WIDTH_MM, false)));
+            op.start = start;
+            let (before, _) = generate(&p, &op);
+            let lap = final_lap(&before);
+            assert!(
+                lap.iter()
+                    .any(|m| m.at_z(TAB_Z_MM) && !matches!(m.mv.kind, MoveKind::Linear)),
+                "{count}: without avoid_corners a tab sits on a corner arc: {lap:?}"
+            );
+
+            let (p, mut op) = rotated_square(Some(corner_spec(placement(), TAB_WIDTH_MM, true)));
+            op.start = start;
+            let (tp, warnings) = generate(&p, &op);
+            assert!(on_corner(&warnings).is_empty(), "{count}: {warnings:?}");
+            let lap = final_lap(&tp);
+            for m in lap.iter().filter(|m| m.at_z(TAB_Z_MM)) {
+                assert!(
+                    matches!(m.mv.kind, MoveKind::Linear),
+                    "{count}: on a corner: {m:?}"
+                );
+            }
+            let raised = raised_runs(&lap);
+            assert_eq!(raised.len(), usize::from(count), "{raised:?}");
+            for run in &raised {
+                assert_approx_eq!(run.length_mm, span_mm, TOL);
+            }
+            // Between the tabs the last pass cuts at full depth, every arc
+            // round a corner among it.
+            let arcs: Vec<&XyMove> = lap
+                .iter()
+                .filter(|m| !matches!(m.mv.kind, MoveKind::Linear))
+                .collect();
+            assert!(arcs.len() >= 4, "{count}: {arcs:?}");
+            assert!(arcs.iter().all(|m| m.at_z(0.0)), "{count}: {arcs:?}");
+            assert!(lap.iter().all(|m| m.at_z(0.0) || m.at_z(TAB_Z_MM)));
+        }
+    }
+
+    /// #285: a circle turns `D / R` per bit diameter, under 30° for a
+    /// radius above 1.91 D, so the coaster's tabs never move: its
+    /// toolpath is the same with `avoid_corners` on and off, with no
+    /// `tab_on_corner`. A circle whose path radius is 1.5 D turns 38° per
+    /// diameter, a corner everywhere: its one tab stays, and warns.
+    #[test]
+    fn circle_tabs_never_move() {
+        let toolpath = |avoid: bool| {
+            let spec = corner_spec(TabPlacement::Count { count: 4 }, TAB_WIDTH_MM, avoid);
+            let (p, op) = coaster(Some(spec));
+            generate(&p, &op)
+        };
+        let ((off, _), (on, warnings)) = (toolpath(false), toolpath(true));
+        assert_eq!(on, off);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let spec = corner_spec(TabPlacement::Count { count: 1 }, 2.0, true);
+        let (p, op) = circle_job(DIAMETER_MM, Side::Outside, Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        assert_eq!(on_corner(&warnings).len(), 1, "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| matches!(
+                w,
+                Warning::TabOnCorner {
+                    reason: crate::warning::TabOnCornerReason::Everywhere,
+                    ..
+                }
+            )),
+            "{warnings:?}"
+        );
+        assert_eq!(raised_runs(&final_lap(&tp)).len(), 1);
+    }
+
+    /// #285: a tab on a corner moves at most half the gap to each of its
+    /// neighbours. On the line, a 50 mm square's path turns 90° at each
+    /// corner; a 2 mm tab's stretch, 8.35 mm with the 6.35 mm bit, is off
+    /// the corner at 50 mm once its centre is 7.35 mm or more away. A tab
+    /// at 49 mm would come off it soonest going back, to 42.65 mm, but its
+    /// neighbour at 40 mm lets it go back only 4.5 mm, so it goes forward
+    /// to 57.35 mm, within half its 31 mm gap to the tab at 80. Those two
+    /// stay. The cut keeps every tab's width and height.
+    #[test]
+    fn tab_never_moves_past_half_gap() {
+        let at = |avoid: bool| {
+            let spec = corner_spec(
+                TabPlacement::AtDistances {
+                    distances_mm: vec![40.0, 49.0, 80.0],
+                },
+                2.0,
+                avoid,
+            );
+            let (p, op) = on_line_square(Some(spec));
+            let (tp, warnings) = generate(&p, &op);
+            (final_lap(&tp), warnings)
+        };
+        let (lap, _) = at(false);
+        assert_eq!(turns_at(&lap), vec![0.0, 50.0, 100.0, 150.0]);
+        let before = run_centres(&lap);
+        let (lap, warnings) = at(true);
+        assert!(on_corner(&warnings).is_empty(), "{warnings:?}");
+        let after = run_centres(&lap);
+        assert_eq!(before.len(), 3, "{before:?}");
+        assert_eq!(after.len(), 3, "{after:?}");
+        for (c, e) in before.iter().zip([40.0, 49.0, 80.0]) {
+            assert_approx_eq!(*c, e, TOL);
+        }
+        for (c, e) in after.iter().zip([40.0, 57.35, 80.0]) {
+            assert_approx_eq!(*c, e, 1e-3);
+        }
+        // Half the gap to each neighbour, both ways round.
+        let l = 200.0;
+        for (k, (b, a)) in before.iter().zip(&after).enumerate() {
+            let prev = before[(k + 2) % 3];
+            let next = before[(k + 1) % 3];
+            let back = (b - prev).rem_euclid(l) / 2.0;
+            let ahead = (next - b).rem_euclid(l) / 2.0;
+            let moved = a - b;
+            assert!(
+                moved <= ahead + TOL && -moved <= back + TOL,
+                "{k}: {b} → {a}"
+            );
+        }
+        for run in raised_runs(&lap) {
+            assert_approx_eq!(run.length_mm, 2.0 + DIAMETER_MM, TOL);
+        }
+    }
+
+    /// #285: a tab on a corner with nowhere to go, its neighbours too
+    /// close both ways, stays where it is with `tab_on_corner` naming the
+    /// outline and its distance along the path, and is cut at its full
+    /// width and height. The #109 floor holds too: an 8 mm square cut
+    /// outside, too short for its four tabs and a corner everywhere,
+    /// keeps the one tab #109 leaves it, warned both ways.
+    #[test]
+    fn blocked_tab_warns_tab_on_corner() {
+        let spec = corner_spec(
+            TabPlacement::AtDistances {
+                distances_mm: vec![40.0, 49.0, 60.0],
+            },
+            2.0,
+            true,
+        );
+        let (p, op) = on_line_square(Some(spec));
+        let (tp, warnings) = generate(&p, &op);
+        let blocked = on_corner(&warnings);
+        assert_eq!(blocked.len(), 1, "{warnings:?}");
+        assert_eq!(blocked[0].0, "Square 1");
+        assert_approx_eq!(blocked[0].1, 49.0, TOL);
+        let text = warnings
+            .iter()
+            .find(|w| w.code() == WarningCode::TabOnCorner)
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(text.contains("49 mm along"), "{text}");
+        assert!(text.contains("half way to the next tab"), "{text}");
+        let lap = final_lap(&tp);
+        let centres = run_centres(&lap);
+        assert_eq!(centres.len(), 3, "{centres:?}");
+        for (c, e) in centres.iter().zip([40.0, 49.0, 60.0]) {
+            assert_approx_eq!(*c, e, TOL);
+        }
+        for run in raised_runs(&lap) {
+            assert_approx_eq!(run.length_mm, 2.0 + DIAMETER_MM, TOL);
+        }
+
+        let spec = corner_spec(TabPlacement::Count { count: 4 }, TAB_WIDTH_MM, true);
+        let (p, op) = job(
+            "Small",
+            vec![Polyline::rect(Point::new(-4.0, -4.0), 8.0, 8.0)],
+            Side::Outside,
+            Some(spec),
+        );
+        let (tp, warnings) = generate(&p, &op);
+        let (asked, cut, _) = cover_of(&warnings);
+        assert_eq!((asked, cut), (4, 1));
+        assert_eq!(on_corner(&warnings).len(), 1, "{warnings:?}");
+        let raised = raised_runs(&final_lap(&tp));
+        assert_eq!(raised.len(), 1, "the part keeps its tab: {raised:?}");
+        assert_approx_eq!(raised[0].length_mm, TAB_WIDTH_MM + DIAMETER_MM, TOL);
+    }
+
+    /// #285: on an open path a tab never moves past an end. A line 50 mm
+    /// along, then 6 mm up, cut on the line: a 2 mm tab at 53 mm is on the
+    /// corner at 50. Off it ahead would be 57.35 mm, past the 56 mm end,
+    /// so it goes back to 42.65 mm, whichever end the cut starts at.
+    #[test]
+    fn open_path_tab_stops_at_end() {
+        for direction in [CutDirection::Conventional, CutDirection::Climb] {
+            let spec = corner_spec(
+                TabPlacement::AtDistances {
+                    distances_mm: vec![53.0],
+                },
+                2.0,
+                true,
+            );
+            let (p, mut op) = job(
+                "Hook",
+                vec![Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(-25.0, 0.0),
+                        dc_geometry::Vertex::line(25.0, 0.0),
+                        dc_geometry::Vertex::line(25.0, 6.0),
+                    ],
+                    false,
+                )],
+                Side::OnLine,
+                Some(spec),
+            );
+            op.direction = direction;
+            let (tp, warnings) = generate(&p, &op);
+            assert!(
+                on_corner(&warnings).is_empty(),
+                "{direction:?}: {warnings:?}"
+            );
+            // The tab top is held 4.175 mm either side of 42.65 mm along
+            // the line as drawn, which starts at x = 35.
+            let held: Vec<Point3> = final_lap(&tp)
+                .iter()
+                .filter(|m| m.at_z(TAB_Z_MM))
+                .flat_map(|m| [m.from, m.mv.to])
+                .collect();
+            assert!(!held.is_empty(), "{direction:?}");
+            assert!(held.iter().all(|q| (q.y - 60.0).abs() <= TOL), "{held:?}");
+            let lo = held.iter().map(|q| q.x).fold(f64::MAX, f64::min);
+            let hi = held.iter().map(|q| q.x).fold(f64::MIN, f64::max);
+            let half_mm = (2.0 + DIAMETER_MM) / 2.0;
+            assert_approx_eq!(lo, 35.0 + 42.65 - half_mm, 1e-3);
+            assert_approx_eq!(hi, 35.0 + 42.65 + half_mm, 1e-3);
+        }
+    }
+
+    /// #285: `avoid_corners: false` lays the tabs as before: on the
+    /// rotated square, four tabs centred an eighth, three eighths, five
+    /// eighths and seven eighths of the way along the path from its
+    /// start, whatever the corners.
+    #[test]
+    fn avoid_corners_false_is_byte_identical() {
+        let (p, op) = rotated_square(Some(corner_spec(
+            TabPlacement::Count { count: 4 },
+            TAB_WIDTH_MM,
+            false,
+        )));
+        let (tp, warnings) = generate(&p, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lap = final_lap(&tp);
+        let l: f64 = lap.iter().map(|m| m.length_mm).sum();
+        assert_approx_eq!(l, 200.0 + TAU * DIAMETER_MM / 2.0, 1e-6);
+        let centres = run_centres(&lap);
+        assert_eq!(centres.len(), 4);
+        for (k, c) in centres.iter().enumerate() {
+            assert_approx_eq!(*c, l * (2.0 * k as f64 + 1.0) / 8.0, TOL);
+        }
     }
 }

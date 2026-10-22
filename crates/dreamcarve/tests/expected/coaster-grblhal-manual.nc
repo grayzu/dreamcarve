@@ -3,6 +3,9 @@
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 ( Operation 1: Profile )
@@ -12,6 +15,9 @@ M0 (MSG, Turn the router ON. Speed 18000 RPM. Resume to start cutting.)
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 G0 Z5.000

@@ -8,6 +8,7 @@
 tests/golden/** text eol=lf
 *.nc text eol=lf
 *.ngc text eol=lf
+crates/dreamcarve/tests/expected/** text eol=lf
 # Bundled post-processor definitions are pinned by hash (#106).
 crates/dc-project/src/definitions/**/*.json text eol=lf
 # The Fusion fixture's JSON is zipped byte for byte into sample.tools, and a

@@ -64,7 +64,8 @@ _Avoid_: Job, cut, pass (a pass is one depth step inside an operation)
 **Profile**:
 An operation that cuts along a closed shape's outline, inside, outside or on
 the line, optionally leaving holding tabs. On the line it also cuts open
-paths.
+paths, and Left or Right it cuts beside them: one tool radius to the left
+or right looking from the path's first vertex to its last.
 _Avoid_: Contour, edge route, outline cut
 _PureCutCNC_: Edge Route
 
@@ -87,6 +88,18 @@ Material a Pocket leaves on its walls and round its islands, `allowance_mm`
 Allowance, which is depth below the stock.
 _Avoid_: Stock to leave, offset, finish allowance
 _PureCutCNC_: stockToLeaveRadial
+
+**Last Pass Allowance**:
+Material every pass of a Profile but the last leaves on the wall,
+`last_pass.allowance_mm` (more than 0, at most a third of the bit), so the
+last pass, on the part's path at full depth, takes an even skin off the
+whole wall and leaves no step marks. The passes before it run on the
+**allowance path**, the part's path that much farther into the waste.
+VCarve's "Last Pass Allowance"; Fusion's radial stock to leave with a
+finishing pass.
+_Avoid_: Finishing pass (it is the same operation's last pass), Pocket
+Allowance (a Pocket's, left for another operation), stock to leave
+_PureCutCNC_: none (a separate operation with stockToLeaveRadial)
 
 **Corner Relief**:
 A short out-and-back notch a Pocket or Profile cuts into each inside corner
@@ -146,8 +159,9 @@ _PureCutCNC_: `machiningOrder`; `feature_first` is Full Depth First,
 
 **Link**:
 The tool motion inside an operation between the end of one cut and the start
-of the next: a retract to Safe Z, a rapid and a plunge, or a move that stays
-down in material the operation has already cut.
+of the next: a retract to Safe Z (to the Clearance Height between parts),
+a rapid and a plunge, or a move that stays down in material the operation
+has already cut.
 _Avoid_: Transition, traverse, keep-tool-down
 
 **Entry**:
@@ -170,10 +184,41 @@ _Avoid_: Entry (that is the descent), approach, lead line (straight leads
 are out of scope)
 _PureCutCNC_: xyLead
 
+**Start Point**:
+Where a Profile's cut starts on each closed outline (`start`): `auto`, or
+the point of the bit's path nearest the outline's first vertex as drawn
+(`first_vertex`) or nearest a project point (`near`). An explicit start
+point wins: a Tab Request's distances count from it, a Lead arrives there
+or is dropped, and an Entry with no room there falls back rather than
+moving it. VCarve's "Use vector start point" and "Start At"; Fusion's
+"Entry Positions".
+_Avoid_: Seam (the internal point a path is re-seamed at), entry point
+(the Entry ends there, it is not the Entry)
+_PureCutCNC_: none
+
 **Tab**:
 A short bridge of material left uncut on a Profile so the part stays attached
 to the stock.
 _Avoid_: Bridge, holding tab, clamp (a clamp is a workholding obstacle)
+
+**Placed Tab**:
+A tab as the project holds it: on one outline of one feature instance, at a
+point in its definition's space, with its own width, height and shape. Every
+enabled Profile that cuts that outline rises over it (ADR-0005). A placed
+tab on a hole that the user asked for (`--on-holes`, a request's
+`on_holes`) **holds its slug**, the waste the hole would free, and records
+it in `holds_slug`, so `tab_on_hole` is not repeated for it (#302).
+_Avoid_: Tab footprint, tab rectangle (PureCutCNC's world-space form)
+_PureCutCNC_: Tab
+
+**Tab Request**:
+A Profile's tab setting (count or distances, size, shape, holes or not):
+tabs the operation asks for, which are placed on its targets' outlines
+with the layout rules before anything is cut, or written as placed tabs by
+`dreamcarve tabs`. It is not cut data. With `avoid_corners` each tab it
+lays on a **corner**, where the bit's path turns 30° or more within one
+bit diameter of the tab's stretch, slides off it.
+_Avoid_: Tab spec, tab setting (in prose), auto tabs
 
 **Tool**:
 A cutter with geometry (diameter, type, angle, flutes) and feeds for a given
@@ -208,8 +253,29 @@ a part can be freed into a spoilboard. Zero unless the user sets it.
 _Avoid_: Overcut, extra depth, cut-through
 
 **Safe Z**:
-The height above the stock at which rapid moves between cuts travel.
-_Avoid_: Clearance height; not the Retract Height, a Drill's lower plane (retract alone is the per-move lift)
+An operation's height above the stock (`safe_z_mm`) at which rapid moves
+between the cuts of one part travel. Without a Clearance Height, moves
+between parts and operations travel at it too. Fusion calls it the
+retract height.
+_Avoid_: not the Clearance Height; not the Retract Height, a Drill's lower plane (retract alone is the per-move lift)
+
+**Clearance Height**:
+The project's height above the stock (`heights.clearance_mm`) for moves
+between parts, between operations, at a tool change and at the end; at
+least every enabled operation's Safe Z (#283). VCarve's Clearance gap (Z1).
+_Avoid_: Safe height, rapid height
+
+**Tool-change Machine Z**:
+A height in machine coordinates (`heights.tool_change_machine_z_mm`), below
+0, that the program lifts to with `G53 G0 Z` before each tool-change stop
+and at the end, on grblHAL, GRBL (#283) and LinuxCNC (#306). Needs a homed machine.
+_Avoid_: Home Z, tool-change height (that is a sender's setting)
+
+**Park Point**:
+Where the program ends in XY (`heights.park`), reached at the Clearance
+Height before the Tool-change Machine Z lift (#283). VCarve's Home
+position without its Z.
+_Avoid_: Home position (VCarve's has a Z), end point
 
 **Retract Height**:
 In a Drill, the height `retract_mm` above the stock top, capped at Safe Z,

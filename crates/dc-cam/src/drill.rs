@@ -27,7 +27,7 @@
 use crate::block::CutBlock;
 use crate::error::{CamError, FeedField, ShapeRef};
 use crate::passes::pass_z_mm;
-use crate::sequence::{SequenceInput, plan, sequence};
+use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
@@ -280,6 +280,7 @@ pub fn generate_drill(
         order: MachiningOrder::FullDepthFirst,
         containment: &[],
         safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
         stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,

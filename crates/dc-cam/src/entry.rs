@@ -68,6 +68,12 @@ pub const MIN_BOUNDARY_SAFETY_MM: f64 = 1e-4;
 /// A ramp run is at most this many tool diameters long: a local zigzag
 /// near the entry point, not a traverse of the pocket.
 pub const MAX_RAMP_RUN_DIAMETERS: f64 = 3.0;
+/// The least a zigzag or On line ramp's last leg may fall, mm (#234): five
+/// units of the coarsest place a post-processor may write in mm, and two
+/// in inches, so its ends never round to one Z. A last leg that would
+/// fall less is not cut as it stands (see `EntryPlan::emit_ramp` and
+/// [`along_path`]).
+pub const RAMP_MIN_LAST_DROP_MM: f64 = 0.05;
 /// Most descending moves one descent may have; an entry that needs more
 /// falls back to the next in the chain.
 pub const MAX_DESCENT_MOVES: usize = 20_000;
@@ -181,15 +187,20 @@ pub enum FallbackReason {
     /// It fits, but at its angle the depth would take more than
     /// [`MAX_DESCENT_MOVES`] moves.
     TooManyMoves,
+    /// A helix whose descending moves the program cannot write: each
+    /// would fall less than one unit in its last place, or run less than
+    /// √2 units in XY, so its ends round to one Z or one XY (#265).
+    TooSmall,
 }
 
 impl FallbackReason {
-    /// The name warnings use: `no_room`, `too_many_moves`.
+    /// The name warnings use: `no_room`, `too_many_moves`, `too_small`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoRoom => "no_room",
             Self::TooManyMoves => "too_many_moves",
+            Self::TooSmall => "too_small",
         }
     }
 }
@@ -270,6 +281,12 @@ pub struct EntryTool {
     pub direction: CutDirection,
     /// Inside a wall or outside a boss, for the helix sense.
     pub side: CutSide,
+    /// One unit in the last place the program writes, mm (the project's
+    /// decimal places in its display units,
+    /// `DecimalPlaces::quantum_mm`). A helix whose descending moves would
+    /// fall less than this, or run less than √2 of it in XY, is not cut
+    /// (#265).
+    pub quantum_mm: f64,
 }
 
 /// Requested and used helix diameters, mm (the diameter of the path the
@@ -418,8 +435,10 @@ impl EntryPlan {
     /// the target if the helix does not end on it), else the ramp (zigzag,
     /// the last run cut short at `z_mm`, then the handoff), else a plunge.
     /// A placed helix or ramp that would need more than
-    /// [`MAX_DESCENT_MOVES`] descending moves falls through too. With no
-    /// depth to descend the descent is empty.
+    /// [`MAX_DESCENT_MOVES`] descending moves falls through too, and so
+    /// does a helix whose chords the program cannot write
+    /// ([`FallbackReason::TooSmall`]). With no depth to descend the
+    /// descent is empty.
     #[must_use]
     pub fn descend(&self, start_z_mm: f64, z_mm: f64) -> Descent {
         self.descend_with(start_z_mm, z_mm, None)
@@ -452,6 +471,17 @@ impl EntryPlan {
         } else if self.requested == EntryKind::Helix {
             match self.helix {
                 Some(h) => match helix_move_count(depth_mm, h.radius_mm, self.angle_deg) {
+                    Some(n)
+                        if !helix_writable(
+                            depth_mm,
+                            h.radius_mm,
+                            self.angle_deg,
+                            n,
+                            self.tool.quantum_mm,
+                        ) =>
+                    {
+                        reason = Some(FallbackReason::TooSmall);
+                    }
                     Some(n) => {
                         let (from, moves) = self.emit_helix(&h, n, start_z_mm, z_mm);
                         descent.from = from;
@@ -549,17 +579,35 @@ impl EntryPlan {
 
     /// The zigzag of upstream `emitRamp`: `n` runs alternating between the
     /// placement's ends, each falling `run × tan(angle)`, the last cut
-    /// short at `z_mm`; then the handoff to the target.
+    /// short at `z_mm`; then the handoff to the target. When that last run
+    /// would fall less than [`RAMP_MIN_LAST_DROP_MM`], the last two runs
+    /// share their depth instead: each falls half of it at the angle, the
+    /// first cut short and the second back to where the first began. A
+    /// ramp of one such run runs the whole run, shallower. So no run is a
+    /// fragment, and none is steeper than asked. (Changed in #234: a depth
+    /// a sliver over a whole number of runs left a last run a few
+    /// micrometres long, whose ends the program writes at one Z, a level
+    /// move at the ramp's plunge-limited feed, which S3 refuses.)
     fn emit_ramp(&self, r: &RampPlacement, n: usize, start_z_mm: f64, z_mm: f64) -> Vec<Move> {
         let drop_mm = r.start.distance_to(r.end) * self.angle_deg.to_radians().tan();
+        let rest_mm = start_z_mm - z_mm - n.saturating_sub(1) as f64 * drop_mm;
+        let short_last = rest_mm < RAMP_MIN_LAST_DROP_MM;
         let mut moves = Vec::with_capacity(n + 1);
         let mut current = Point3::new(r.start.x, r.start.y, start_z_mm);
         let mut towards = r.end;
         for k in 1..=n {
             let next = if k == n {
-                let ratio = ((current.z - z_mm) / drop_mm).min(1.0);
+                let ratio = if short_last {
+                    1.0
+                } else {
+                    ((current.z - z_mm) / drop_mm).min(1.0)
+                };
                 let p = current.xy() + (towards - current.xy()) * ratio;
                 Point3::new(p.x, p.y, z_mm)
+            } else if short_last && k + 1 == n {
+                let ratio = (drop_mm + rest_mm) / (2.0 * drop_mm);
+                let p = current.xy() + (towards - current.xy()) * ratio;
+                Point3::new(p.x, p.y, current.z - drop_mm * ratio)
             } else {
                 Point3::new(towards.x, towards.y, current.z - drop_mm)
             };
@@ -668,6 +716,30 @@ fn helix_move_count(depth_mm: f64, radius_mm: f64, angle_deg: f64) -> Option<usi
         return None;
     }
     count_within_cap(depth_mm.max(0.0) / pitch_mm * HELIX_SEGMENTS_PER_REV as f64)
+}
+
+/// Whether a helix of `radius_mm` at `angle_deg` cut in `n` chords over
+/// `depth_mm` can be written by a program whose last place is
+/// `quantum_mm`: every chord falls at least one unit and runs at least
+/// √2 units in XY (#265). Two numbers a unit or more apart round apart, so
+/// each chord's ends are written at two Z values and two XY points, and
+/// the move keeps its slope: written level, it would run at the
+/// plunge-limited feed, which is neither of the tool's rates (S3);
+/// written straight down, faster than the plunge rate (S10). A helix that
+/// small removes nothing a ramp or plunge would not.
+fn helix_writable(
+    depth_mm: f64,
+    radius_mm: f64,
+    angle_deg: f64,
+    n: usize,
+    quantum_mm: f64,
+) -> bool {
+    let pitch_mm = helix_pitch_mm(2.0 * radius_mm, angle_deg);
+    let steps = n as f64;
+    let drop_mm = depth_mm / steps;
+    let turn_rad = depth_mm / pitch_mm * TAU / steps;
+    let run_mm = 2.0 * radius_mm * (turn_rad / 2.0).sin();
+    drop_mm >= quantum_mm && run_mm >= std::f64::consts::SQRT_2 * quantum_mm
 }
 
 /// Runs of the ramp `r` over `depth_mm`, or `None` over
@@ -798,8 +870,16 @@ fn reachable_helix(
 
 /// Upstream `findSafeHelixEndpoint`: the point of the circle nearest the
 /// target's direction, then alternately either side of it, whose segment
-/// to the target stays inside the region.
+/// to the target stays inside the region. Only the piece that reaches the
+/// target may leave the flattened rings, and by no more than the target
+/// itself does, at most the target slack (#213): a target on a round
+/// boundary lies on the arc, outside its chords. (Changed in #272: the
+/// slack held along the whole handoff let one to a target on an island's
+/// chord run 0.005 mm inside the chords, 0.015 mm inside the island's
+/// tool-centre circle, past the flatten tolerance S9 allows.)
 fn safe_endpoint(area: &Area, centre: Point, radius: f64, target: Point) -> Option<Point> {
+    let outside_mm = (-area.signed_distance(target)).clamp(0.0, area.tolerance_mm);
+    let end_slack_mm = outside_mm + ON_BOUNDARY_MM;
     let to_target = target - centre;
     let preferred = to_target.y.atan2(to_target.x);
     let step = TAU / HELIX_ENDPOINT_ANGLE_SAMPLES as f64;
@@ -809,7 +889,7 @@ fn safe_endpoint(area: &Area, centre: Point, radius: f64, target: Point) -> Opti
         let offset = if i % 2 == 0 { -offset } else { offset };
         let angle = preferred + offset * step;
         let endpoint = centre + Vec2::new(angle.cos(), angle.sin()) * radius;
-        area.segment_inside(endpoint, target, area.target_slack_mm())
+        area.segment_inside_ending(endpoint, target, ON_BOUNDARY_MM, end_slack_mm)
             .then_some(endpoint)
     })
 }
@@ -1137,6 +1217,18 @@ impl Area {
     /// any boundary edge, has every piece's midpoint in the region (or at
     /// most `slack_mm` outside it).
     fn segment_inside(&self, from: Point, to: Point, slack_mm: f64) -> bool {
+        self.segment_inside_ending(from, to, slack_mm, slack_mm)
+    }
+
+    /// [`Area::segment_inside`], the last piece (the one ending at `to`)
+    /// held to `end_slack_mm` and every other piece to `slack_mm`.
+    fn segment_inside_ending(
+        &self,
+        from: Point,
+        to: Point,
+        slack_mm: f64,
+        end_slack_mm: f64,
+    ) -> bool {
         let mut ts = vec![0.0, 1.0];
         ts.extend(
             self.edges()
@@ -1144,8 +1236,12 @@ impl Area {
         );
         ts.sort_by(f64::total_cmp);
         ts.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
-        ts.windows(2).all(|w| match w {
-            [a, b] => self.contains_within(from + (to - from) * ((a + b) / 2.0), slack_mm),
+        let last = ts.len().saturating_sub(2);
+        ts.windows(2).enumerate().all(|(i, w)| match w {
+            [a, b] => self.contains_within(
+                from + (to - from) * ((a + b) / 2.0),
+                if i == last { end_slack_mm } else { slack_mm },
+            ),
             _ => true,
         })
     }
@@ -1391,7 +1487,8 @@ mod tests {
     use super::*;
     use crate::toolpath::MoveKind;
     use dc_geometry::{
-        Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point3, Polyline, assert_approx_eq, nest,
+        Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point3, Polyline, Vertex, assert_approx_eq,
+        nest,
     };
     use std::f64::consts::PI;
 
@@ -1434,6 +1531,7 @@ mod tests {
             plunge_mm_min: PLUNGE,
             direction: CutDirection::Conventional,
             side: CutSide::Internal,
+            quantum_mm: 0.001,
         }
     }
 
@@ -1786,6 +1884,170 @@ mod tests {
         assert_ends_at_target(&d, (100.0, 100.0), -2.0);
     }
 
+    /// The drop of every descending move of `d` from `start_z`.
+    fn drops(d: &Descent, start_z: f64) -> Vec<f64> {
+        steps(d, start_z)
+            .into_iter()
+            .filter(|(from, mv)| descends(*from, mv))
+            .map(|(from, mv)| from.z - mv.to.z)
+            .collect()
+    }
+
+    /// #234 (found by the dc-gcode property test): a ramp over 7.0018
+    /// legs' depth ended with an eighth leg falling 0.0019 mm over
+    /// 0.02 mm, which the program writes level at the ramp's
+    /// plunge-limited feed (S3). Now the last two legs share their
+    /// 1.0519 mm: each runs 50.09 % of the 12 mm run at 5°, out and back.
+    /// With 7.6 legs' depth the last leg falls 0.63 mm, more than
+    /// [`RAMP_MIN_LAST_DROP_MM`], and is cut short at 60 % of the run as
+    /// upstream's. Either way every leg runs at 5°, none falls less than
+    /// the least drop, and the drops sum to the depth.
+    #[test]
+    fn ramp_has_no_fragment_leg() {
+        let ramp = Entry::Ramp { angle_deg: 5.0 };
+        let tan = 5.0_f64.to_radians().tan();
+        let run_mm = 3.0 * D_MM;
+        let full_mm = run_mm * tan;
+        let shared = (1.0 + 0.0018) / 2.0 * run_mm;
+        let cases = [
+            (
+                7.0018,
+                [
+                    run_mm, run_mm, run_mm, run_mm, run_mm, run_mm, shared, shared,
+                ],
+            ),
+            (
+                7.6,
+                [
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    run_mm,
+                    0.6 * run_mm,
+                ],
+            ),
+        ];
+        for (legs, runs) in cases {
+            let depth_mm = legs * full_mm;
+            let d = entry(
+                rectangle(200.0, 200.0),
+                &ramp,
+                (100.0, 100.0),
+                depth_mm,
+                0.0,
+            );
+            assert_eq!(d.used, EntryKind::Ramp);
+            let sloped: Vec<(f64, f64)> = steps(&d, depth_mm)
+                .into_iter()
+                .filter(|(from, mv)| descends(*from, mv))
+                .map(|(from, mv)| (xy_len(from, mv.to), from.z - mv.to.z))
+                .collect();
+            assert_eq!(sloped.len(), runs.len(), "{legs}: {sloped:?}");
+            for (i, ((run, drop), want_mm)) in sloped.iter().zip(runs).enumerate() {
+                assert!(
+                    (run - want_mm).abs() <= 1e-9
+                        && (drop - run * tan).abs() <= 1e-9
+                        && *drop >= RAMP_MIN_LAST_DROP_MM,
+                    "{legs}: leg {i} falls {drop} mm over {run} mm, not {want_mm} mm at 5°"
+                );
+            }
+            let total: f64 = sloped.iter().map(|(_, drop)| drop).sum();
+            assert_approx_eq!(total, depth_mm, 1e-9);
+            assert_ends_at_target(&d, (100.0, 100.0), 0.0);
+        }
+    }
+
+    /// #234's helix half: its `ceil` count of chords splits the depth
+    /// evenly already (Z linear in the angle), so a depth a sliver over a
+    /// whole number of chords leaves no fragment either: every chord drops
+    /// the same, and the drops sum to the depth.
+    #[test]
+    fn helix_has_no_fragment_segment() {
+        let chord_mm = helix_pitch_mm(3.2, 5.0) / HELIX_SEGMENTS_PER_REV as f64;
+        let depth_mm = 100.0018 * chord_mm;
+        let d = entry(
+            rectangle(20.0, 20.0),
+            &upstream_helix(),
+            (10.0, 10.0),
+            depth_mm,
+            0.0,
+        );
+        assert_eq!(d.used, EntryKind::Helix);
+        let drops = drops(&d, depth_mm);
+        assert_eq!(drops.len(), 101, "{drops:?}");
+        for (i, drop) in drops.iter().enumerate() {
+            assert!(
+                (drop - depth_mm / 101.0).abs() <= 1e-9,
+                "chord {i} drops {drop} mm of {depth_mm} mm"
+            );
+        }
+        assert_approx_eq!(drops.iter().sum::<f64>(), depth_mm, 1e-9);
+    }
+
+    /// #265 (found by the dc-gcode Profile property, `PROPTEST_RNG_SEED=108`):
+    /// a 0.05 helix of a 0.5508 mm tool is 0.0275 mm across; at 14.14°
+    /// each of its chords falls 0.00045 mm over 0.0018 mm, less than one
+    /// unit of a 3-place mm program either way, so most are written level
+    /// at the plunge-limited feed, which S3 refuses. Such a helix is not
+    /// cut: the chain falls back to the ramp, reason `too_small`. The same
+    /// tool's 0.8 helix (0.44 mm across) is a helix, every chord of it
+    /// falling at least a unit and running at least √2 units in XY, so its
+    /// ends round apart on both counts.
+    #[test]
+    fn tiny_helix_chords_are_writable() {
+        let quantum_mm = 0.001;
+        let small = EntryTool {
+            diameter_mm: 0.550_832_666_619_620_7,
+            feed_mm_min: 3_840.280_223_564_292_6,
+            plunge_mm_min: 645.988_501_885_48,
+            ..tool()
+        };
+        let domain = EntryDomain::new(
+            &[rectangle(20.0, 20.0)],
+            small.diameter_mm,
+            FLATTEN_TOLERANCE_DEFAULT_MM,
+        );
+        let target = Point::new(10.0, 10.0);
+        let (start_z, z) = (1.436_449_925_824_323_2, 0.0);
+        let d = synthesize(
+            &domain,
+            &helix(0.05, 14.137_048_663_595_39),
+            target,
+            start_z,
+            z,
+            &small,
+        );
+        assert_eq!(d.used, EntryKind::Ramp, "{:?}", d.reason);
+        assert!(d.fell_back());
+        assert_eq!(d.reason.map(FallbackReason::as_str), Some("too_small"));
+        assert_ends_at_target(&d, (10.0, 10.0), z);
+
+        let d = synthesize(
+            &domain,
+            &helix(0.8, 14.137_048_663_595_39),
+            target,
+            start_z,
+            z,
+            &small,
+        );
+        assert_eq!(d.used, EntryKind::Helix, "{:?}", d.reason);
+        let sloped: Vec<(Point3, Move)> = steps(&d, start_z)
+            .into_iter()
+            .filter(|(from, mv)| descends(*from, mv))
+            .collect();
+        assert!(!sloped.is_empty());
+        for (i, (from, mv)) in sloped.iter().enumerate() {
+            let (drop, run) = (from.z - mv.to.z, xy_len(*from, mv.to));
+            assert!(
+                drop >= quantum_mm && run >= std::f64::consts::SQRT_2 * quantum_mm,
+                "chord {i} falls {drop} mm over {run} mm"
+            );
+        }
+    }
+
     /// Entry must not score the wall the finish pass leaves, so every ramp
     /// point stays a real standoff (0.1 · D) inside the boundary.
     #[test]
@@ -1838,6 +2100,61 @@ mod tests {
             assert!(
                 away <= D_MM * 2.0 + 1e-6,
                 "helix strayed {away} mm from the cut start: {p:?}"
+            );
+        }
+    }
+
+    /// #272 (the Pocket property, `PROPTEST_RNG_SEED=108`): the
+    /// tool-centre region of a ring pocket (outer 13.7528 mm, island
+    /// 6.8532 mm, by a 3.2349 mm tool, rotated −5.49°), entered by a 0.976
+    /// helix at 9.316° at a raster start on the island's flattened circle.
+    /// The reachable placement's handoff to it was checked with the target
+    /// slack (#213) along its whole length, so it ran 0.0051 mm inside the
+    /// island's chords, 0.0151 mm inside its circle: past the flatten
+    /// tolerance S9 allows, into the island. The slack is for the piece
+    /// that ends on the target; the rest of the handoff stays in the
+    /// flattened region, so it keeps the island's radius less the
+    /// tolerance.
+    #[test]
+    fn helix_handoff_keeps_out_of_the_island() {
+        let d_mm = 3.234_923_320_453_882;
+        let (c, along) = (
+            Point::new(40.0, 120.0),
+            Vec2::new(0.995_419_341_093_451_9, -0.095_605_101_208_450_6),
+        );
+        let circle = |r: f64| {
+            let (a, b) = (c + along * -r, c + along * r);
+            Polyline::new(
+                vec![Vertex::new(a.x, a.y, -1.0), Vertex::new(b.x, b.y, -1.0)],
+                true,
+            )
+        };
+        let island_mm = 6.853_196_837_408_963 + d_mm / 2.0;
+        let ring = region(
+            circle(13.752_766_298_916_859 - d_mm / 2.0),
+            vec![circle(island_mm)],
+        );
+        let tool = EntryTool {
+            diameter_mm: d_mm,
+            direction: CutDirection::Climb,
+            ..tool()
+        };
+        let target = Point::new(31.983_307, 117.293_382);
+        let domain = EntryDomain::new(&[ring], d_mm, FLATTEN_TOLERANCE_DEFAULT_MM);
+        let d = synthesize(
+            &domain,
+            &helix(0.976_100_214_112_066_5, 9.315_963_293_422_808),
+            target,
+            21.9,
+            17.765,
+            &tool,
+        );
+        assert_eq!(d.used, EntryKind::Helix);
+        for (i, (from, mv)) in steps(&d, 21.9).iter().enumerate() {
+            let near = segment_distance_sq(c, from.xy(), mv.to.xy()).sqrt();
+            assert!(
+                near >= island_mm - FLATTEN_TOLERANCE_DEFAULT_MM - 1e-9,
+                "move {i} passes {near} mm from the island's centre: {mv:?}"
             );
         }
     }

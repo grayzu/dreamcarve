@@ -355,6 +355,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "grbl-sim-motion"
+version = "0.1.1"
+dependencies = [
+ "dc-gcode",
+ "dc-geometry",
+ "dc-project",
+ "rs274-motion",
+ "thiserror",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -598,6 +609,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rs274-motion"
+version = "0.1.1"
+dependencies = [
+ "dc-cam",
+ "dc-gcode",
+ "dc-geometry",
+ "dc-project",
+ "thiserror",
 ]
 
 [[package]]

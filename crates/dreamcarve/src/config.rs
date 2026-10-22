@@ -4,11 +4,15 @@
 //! The user config file and directory (`docs/specs/phase-2/design.md`,
 //! "User config (CLI only)") and `dreamcarve config path`.
 //!
-//! `<config dir>/config.toml` holds the defaults a user sets once. Today
-//! that is `[export] tool_change_mode`, which `init` and `export --post`
-//! write into a new post-processor reference (functional spec, capability
-//! 19). Nothing else reads the file: a plain `export` works from the
-//! project alone, so a project exports the same on every machine.
+//! `<config dir>/config.toml` holds the defaults a user sets once:
+//! `[export] tool_change_mode`, which `init` and `export --post
+//! --reset-settings` write into a new post-processor reference (functional
+//! spec, capability 19), and a plain `export --post` only where it resets
+//! the project's mode (capability 27, #277); and `[estimate]`, the
+//! machine's rapid rate and a scale factor for the cycle-time estimate
+//! `export` and `check` print (capability 30). No program depends on the
+//! file: a plain `export` reads only `[estimate]`, for the printed
+//! estimate, so a project exports the same bytes on every machine.
 //! `<config dir>/tools.json` is the tool library (slice 20). `<config dir>`
 //! is `DREAMCARVE_CONFIG_DIR` when that is set; otherwise the platform's
 //! usual place, read from the environment with std alone (no crate for
@@ -43,11 +47,69 @@ pub const LIBRARY_FILE_NAME: &str = "tools.json";
 
 /// The user config file. Every table and key is optional and defaults to
 /// what the bundled definitions default to; unknown ones are errors.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     /// Defaults for new post-processor settings.
     pub export: ExportConfig,
+    /// The machine facts the printed cycle-time estimate needs.
+    pub estimate: EstimateConfig,
+}
+
+/// The `[estimate]` table: facts about the user's machine that the
+/// cycle-time estimate `export` and `check` print uses, and nothing else
+/// (functional spec, capability 30). No program depends on it.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct EstimateConfig {
+    /// The machine's rapid rate, mm/min, finite and above 0. Unset, rapids
+    /// are reported as a distance and left out of the time, rather than
+    /// guessed.
+    #[serde(deserialize_with = "positive_some")]
+    pub rapid_mm_min: Option<f64>,
+    /// What every time is multiplied by, as VCarve's "Scale Factor": the
+    /// user's correction for acceleration and the like. Finite and above
+    /// 0; 1 unless set.
+    #[serde(deserialize_with = "positive")]
+    pub scale_factor: f64,
+}
+
+impl Default for EstimateConfig {
+    fn default() -> Self {
+        Self {
+            rapid_mm_min: None,
+            scale_factor: 1.0,
+        }
+    }
+}
+
+/// A number that is finite and above 0; anything else is an error at the
+/// value, which [`parse`] locates.
+fn positive<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    let value = f64::deserialize(deserializer)?;
+    if value.is_finite() && value > 0.0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "must be a number above 0, not {value}"
+        )))
+    }
+}
+
+/// [`positive`], for a key that may be left out.
+fn positive_some<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    positive(deserializer).map(Some)
+}
+
+/// Reads the `[estimate]` table of the user config: the only part of the
+/// file a plain `export` or `check` reads, for the printed estimate alone
+/// (design spec, addendum A4). A bad value anywhere in the file is an
+/// error, as for `init`.
+pub fn estimate_settings() -> Result<EstimateConfig, Failure> {
+    let paths = Paths::from_env()?;
+    Ok(load_from(&paths)?.estimate)
 }
 
 /// The `[export]` table.
@@ -288,6 +350,51 @@ mod tests {
         let config = parse("[export]\ntool_change_mode = \"m6\"\n", path).unwrap();
         assert_eq!(config.export.tool_change_mode, ToolChangeMode::M6);
         assert_eq!(parse("", path).unwrap(), Config::default());
+    }
+
+    /// `[estimate]` (functional spec, capability 30): `rapid_mm_min` and
+    /// `scale_factor` parse, integers too; unset, there is no rapid rate
+    /// and the scale factor is 1. A rate or factor that is 0, negative or
+    /// not finite is an error at the value's line and column, never a
+    /// silent default.
+    #[test]
+    fn estimate_rejects_non_positive_rate() {
+        let path = Path::new("/somewhere/config.toml");
+        let config = parse(
+            "[estimate]\nrapid_mm_min = 3000\nscale_factor = 1.5\n",
+            path,
+        )
+        .unwrap();
+        assert_eq!(config.estimate.rapid_mm_min, Some(3000.0));
+        assert!((config.estimate.scale_factor - 1.5).abs() < 1e-12);
+        let defaults = parse("", path).unwrap().estimate;
+        assert_eq!(defaults.rapid_mm_min, None);
+        assert!((defaults.scale_factor - 1.0).abs() < 1e-12);
+        for (text, key) in [
+            ("[estimate]\nrapid_mm_min = 0\n", "rapid_mm_min"),
+            ("[estimate]\nrapid_mm_min = -3000.0\n", "rapid_mm_min"),
+            ("[estimate]\nrapid_mm_min = inf\n", "rapid_mm_min"),
+            ("[estimate]\nscale_factor = 0.0\n", "scale_factor"),
+            ("[estimate]\nscale_factor = nan\n", "scale_factor"),
+        ] {
+            let err = parse(text, path).unwrap_err();
+            assert!(
+                err.message.starts_with("/somewhere/config.toml:2:"),
+                "{text}: {}",
+                err.message
+            );
+            assert!(err.message.contains("above 0"), "{text}: {}", err.message);
+            let column: usize = err
+                .message
+                .trim_start_matches("/somewhere/config.toml:2:")
+                .split(':')
+                .next()
+                .and_then(|c| c.parse().ok())
+                .unwrap_or_else(|| panic!("{text}: no column in {}", err.message));
+            assert_eq!(column, key.len() + 4, "{text}: at the value");
+        }
+        let err = parse("[estimate]\nrapid_rate = 3000\n", path).unwrap_err();
+        assert!(err.message.contains("rapid_rate"), "{}", err.message);
     }
 
     /// `DREAMCARVE_CONFIG_DIR` replaces the platform directory, and the

@@ -55,20 +55,20 @@ dev-dependencies only.
 | `region.rs` | `Region` and `nest`: loose contours to parts with holes. See [Shapes, holes, and islands](../user-guide/shapes-and-holes.md). |
 | `boolean.rs` | Union, difference and intersection of regions (i_overlay), for pockets, rest machining and coverage. Arcs are flattened first; results are canonical (outers CCW, holes CW, a fixed start vertex and order). |
 | `circle.rs` | `as_circle`, whether a closed outline is a drillable hole within a tolerance; `fit_circle_kasa`, the least-squares fit arc fitting starts from. |
-| `distance.rs` | Shortest distances between points, segments and polylines, following arcs exactly. |
+| `distance.rs` | Shortest distances between points, segments and polylines, following arcs exactly; `nearest_point`, the point of a polyline nearest a point and how far along it that is. |
 
 ### `dc-project` (`crates/dc-project/src/`)
 
 | Module | Contents |
 | --- | --- |
-| `model.rs` | `Project` and everything in it: `Stock`, `MachineOrigin`, `FeatureDefinition`, `FeatureInstance`, `Tool` (with its `number`), `Operation` and `ProfileOp`, `PocketOp`, `DrillOp`, `EngraveOp`; `TabSpec`, `Entry`, `Lead`, `CornerRelief`, `MachiningOrder`. |
+| `model.rs` | `Project` and everything in it: `Stock`, `MachineOrigin`, `FeatureDefinition`, `FeatureInstance`, `Tool` (with its `number`), `Operation` and `ProfileOp`, `PocketOp`, `DrillOp`, `EngraveOp`; `PlacedTab` (the project's `tabs`), `TabSpec` (a Profile's tab request), `Entry`, `Lead`, `CornerRelief`, `MachiningOrder`. |
 | `post_processor.rs` | `PostProcessor`, the controller dialect; `PostProcessorRef`, what a project stores (a bundled definition's id and version, and the user's settings such as `tool_change_mode` and `use_canned_cycles`); and the bundled definitions, by id and version. |
 | `definitions/` | `<id>/v<n>.json` for grblHAL, GRBL, LinuxCNC, Mach3, UCCNC and generic, one file per definition version, compiled in and never edited once released, and a README with their verification against controller sources. |
-| `ids.rs` | `DefinitionId`, `InstanceId`, `ToolId`, `OperationId` newtypes. |
+| `ids.rs` | `DefinitionId`, `InstanceId`, `ToolId`, `OperationId`, `TabId` newtypes. |
 | `serialize.rs` | `save`, `load` (strict: unknown and missing fields fail), `Loaded`, `LoadError`. |
 | `layout.rs` | The saved file's layout: serde_json's pretty printing with each vertex on one line (#76). |
 | `locate.rs` | `SourceMap`: the line and column of every value in a `.dcv`'s text, so messages read `plaque.dcv:10:21:` (#76). |
-| `migrate.rs` | `CURRENT_VERSION` (8) and the raw-JSON migration steps from older versions. |
+| `migrate.rs` | `CURRENT_VERSION` (11) and the raw-JSON migration steps from older versions. |
 | `validate.rs` | `validate`, `Problem`, `Severity`: every problem at once, errors and warnings. |
 | `history.rs` | `History`: snapshot undo and redo. Nothing drives it until the GUI. |
 | `test_support.rs` | Fixture builders such as `sample_project()` (`test-support` feature). |
@@ -95,7 +95,7 @@ dev-dependencies only.
 | `lib.rs` | The crate's public surface: the four `generate_*` functions, `sequence`, `footprint`, the toolpath and warning types. |
 | `block.rs` | `CutBlock`: one contour, open path, drill point or relief notch at one pass depth, what a generator produces before ordering (D10). |
 | `sequence.rs` | `sequence`: orders blocks by machining order, containment precedence and nearest neighbour, writes the links (stay down or retract), and produces the `Toolpath`. |
-| `order.rs` | `order::check`: the `cut_inside_freed_part` and `tool_change_avoidable` warnings between operations. Never reorders. |
+| `order.rs` | `order::check`: the `cut_inside_freed_part`, `cut_inside_tab_held_part` and `tool_change_avoidable` warnings between operations. Never reorders. |
 | `profile.rs` | `generate_profile` on blocks; the direction rule `traversal_is_ccw`. |
 | `profile/entries.rs` | Each Profile pass's entry, placed in the waste domain, with and without the tab keep-outs. |
 | `profile/waste.rs` | The Profile waste domain: where an entry or lead may go because the material there is cut away anyway. |
@@ -113,7 +113,8 @@ dev-dependencies only.
 | `passes.rs` | `pass_z_mm`: depth pass levels; refuses cuts below the stock bottom plus allowance. |
 | `overlap.rs` | The check that two shapes' tool paths in one Profile do not cut into each other (D6). |
 | `stock.rs` | `swept_bounds`, `stock_overhang`: does the cutter stay on the stock (#62). |
-| `tabs.rs` | Tab placement along the tool-centre path, rect and smooth laps. |
+| `tabs.rs` | Tab spans along the tool-centre path, each tab with its own width, height and shape; merging; rect and smooth laps. |
+| `placed_tabs.rs` | Placed tabs (#105): `place` (a tab request's layout as placed tabs), `place_on_outlines` (`tabs place --at`), `place_requests`, `crossed_by`, `on_holes`, `off_outline_mm`, and `check`, the `tab_not_crossed` and `tab_off_outline` (#300) warnings. |
 | `toolpath.rs` | `Toolpath`, `Move`, `MoveKind` (including `Dwell`): project-space output. |
 | `error.rs`, `warning.rs` | `CamError`; `Warning` with a stable `WarningCode`. |
 | `test_support.rs` | `assert_safe`, the shared emitted-motion safety assertions (`test-support` feature). |
@@ -133,6 +134,7 @@ the code they test.
 | `parse.rs` | Reads a program back as a controller would, canned cycles expanded into their moves. |
 | `safety.rs` | Checks S1–S7 and S9–S12, S14 and S15 on the parsed program and measures its extents. Every violation is an error. (S8 is validation's warnings; S13, the order invariants, is tested in `dc-cam`.) |
 | `material.rs` | S9: every operation's cuts stay in its own material, worked out from the project. |
+| `estimate.rs` | `estimate`: a program's cycle-time estimate (feed time, dwells, rapid distance, stops), read from its text as `parse.rs` reads it. |
 | `post.rs` | Tests of every bundled definition version against the controller facts. |
 | `error.rs` | `ExportError`. |
 
@@ -153,10 +155,12 @@ the code they test.
 | `cli.rs` | Arguments (clap), exit codes, staged file writes, the date. |
 | `output.rs` | `outln!`, `out!`, `errln!`: all printing; a closed stdout pipe stops output and keeps the exit code (#216). |
 | `init.rs` | `init`: SVG or DXF import and the default project; the DXF-only `--units`, `--join-tolerance` and `--layer`. |
-| `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`. |
-| `check.rs` | `check`. |
-| `config.rs` | The user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's), `config.toml`, and `config path`. |
+| `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`, `--preview`; the printed run-time estimate (`Estimates`). |
+| `check.rs` | `check`, and its `--preview`. |
+| `preview.rs` | The toolpath preview SVG of `--preview`: a pure function of the project and the generated toolpaths, ported from PureCutCNC `src/engine/designPrint/svg.ts`. |
+| `config.rs` | The user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's), `config.toml` (`[export]`, `[estimate]`), and `config path`. |
 | `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: reads and writes `tools.json` and, for `add`, the project. |
+| `tabs.rs` | `tabs place`, `list`, `clear`: the project's placed tabs. |
 | `clock.rs` | UTC dates from the system clock, with no date crate; `build.rs` includes it for `--version`. |
 
 Behaviour tests for the binary are in `crates/dreamcarve/tests/`: `cli.rs`
@@ -175,6 +179,10 @@ read from the chapters themselves.
 - `tools/gcode-conformance`: runs the LinuxCNC and generic programs
   through LinuxCNC's `rs274` interpreter, in the `gcode-conformance` CI
   job. See [Verifying a post-processor](post-processor-checklist.md#linuxcncs-interpreter).
+- `tools/rs274-motion`: runs the LinuxCNC, Mach3, UCCNC and generic
+  programs through LinuxCNC's `rs274` interpreter, and compares its
+  motion with `dc-gcode`'s reading. Needs `rs274` or a container; see
+  [Verifying a post-processor](post-processor-checklist.md).
 - `tools/parity/`: a Node script, not a Cargo crate, that drives a local
   PureCutCNC checkout to capture golden outputs. Not needed to build or
   test DreamCarve. See [Golden corpus](golden-corpus.md).

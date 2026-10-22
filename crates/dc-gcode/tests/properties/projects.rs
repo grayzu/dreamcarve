@@ -18,10 +18,10 @@ use dc_geometry::{Point, Polyline, Transform, Vertex};
 use dc_project::test_support::sample_project;
 use dc_project::{
     ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, DrillCycle, DrillOp, EngraveOp,
-    Entry, FeatureDefinition, FeatureInstance, InstanceId, Lead, MachineOrigin, MachiningOrder,
-    Operation, OperationId, OriginXy, OriginZ, PeckRetract, PocketOp, ProfileOp, Project, Side,
-    Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units, WallPass,
-    latest_definitions,
+    Entry, FeatureDefinition, FeatureInstance, InstanceId, LastPass, Lead, MachineOrigin,
+    MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PeckRetract, PocketOp, ProfileOp,
+    Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units,
+    WallPass, latest_definitions,
 };
 use proptest::prelude::*;
 use std::collections::BTreeMap;
@@ -416,8 +416,9 @@ fn step_down() -> impl Strategy<Value = Option<f64>> {
     prop::option::of(0.3..6.0_f64)
 }
 
-/// Tabs as (placement, width mm, height as a fraction of the stock, shape).
-fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape)>> {
+/// Tabs as (placement, width mm, height as a fraction of the stock, shape,
+/// whether holes get them too).
+fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape, bool, bool)>> {
     prop::option::of((
         prop_oneof![
             (1_u8..=6).prop_map(|count| TabPlacement::Count { count }),
@@ -427,7 +428,37 @@ fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape)>> {
         1.0..10.0_f64,
         0.05..0.8_f64,
         prop_oneof![Just(TabShape::Rect), Just(TabShape::Smooth)],
+        any::<bool>(),
+        // #285: tabs off corners.
+        any::<bool>(),
     ))
+}
+
+/// Where each closed outline's cut starts (#285): as before, at the
+/// point nearest its first vertex, or nearest a point on or off the stock.
+fn start() -> impl Strategy<Value = StartAt> {
+    prop_oneof![
+        Just(StartAt::Auto),
+        Just(StartAt::FirstVertex),
+        (-20.0..320.0_f64, -20.0..320.0_f64).prop_map(|(x_mm, y_mm)| StartAt::Near { x_mm, y_mm }),
+    ]
+}
+
+/// A last pass (#284) where the side has a wall to leave it on (Left and
+/// Right too since #311), as
+/// (allowance as a fraction of a third of the bit, thickness as a fraction
+/// of the depth, reverse).
+fn last_pass(wall: bool) -> BoxedStrategy<Option<(f64, Option<f64>, bool)>> {
+    if wall {
+        prop::option::of((
+            0.05..=1.0_f64,
+            prop::option::of(0.05..=1.0_f64),
+            any::<bool>(),
+        ))
+        .boxed()
+    } else {
+        Just(None).boxed()
+    }
 }
 
 fn lead() -> impl Strategy<Value = Option<Lead>> {
@@ -446,7 +477,23 @@ fn lead() -> impl Strategy<Value = Option<Lead>> {
 /// A random valid Profile project.
 pub fn profile_project() -> impl Strategy<Value = Project> {
     let side = prop_oneof![Just(Side::Inside), Just(Side::Outside), Just(Side::OnLine)];
-    (setup(end_mill(), false), side)
+    profile_project_of(side.boxed(), false)
+}
+
+/// A random valid Left or Right Profile project (#207), of closed outlines
+/// (which it skips) and open paths with arcs.
+pub fn open_side_profile_project() -> impl Strategy<Value = Project> {
+    let side = prop_oneof![Just(Side::Left), Just(Side::Right)];
+    profile_project_of(side.boxed(), true)
+}
+
+/// A random valid Profile project on one of `sides`, with open paths in
+/// its drawing when `with_open_paths`.
+fn profile_project_of(
+    sides: BoxedStrategy<Side>,
+    with_open_paths: bool,
+) -> impl Strategy<Value = Project> {
+    (setup(end_mill(), with_open_paths), sides)
         .prop_flat_map(|(setup, side)| {
             (
                 Just(setup),
@@ -455,9 +502,11 @@ pub fn profile_project() -> impl Strategy<Value = Project> {
                 (
                     tabs(),
                     order(),
-                    entry(side != Side::OnLine),
+                    entry(side.has_waste_area()),
                     lead(),
                     relief(),
+                    last_pass(side != Side::OnLine),
+                    start(),
                 ),
             )
         })
@@ -466,9 +515,10 @@ pub fn profile_project() -> impl Strategy<Value = Project> {
                 setup,
                 side,
                 (depth, step_down_mm, direction, safe_z_mm),
-                (tabs, order, entry, lead, relief),
+                (tabs, order, entry, lead, relief, last_pass, start),
             )| {
                 project(setup, |s, targets| {
+                    let depth_mm = depth.depth_mm(s.thickness_mm);
                     Operation::Profile(ProfileOp {
                         id: OperationId::new("o1"),
                         name: "Profile".into(),
@@ -476,21 +526,39 @@ pub fn profile_project() -> impl Strategy<Value = Project> {
                         targets,
                         tool: s.tool.id.clone(),
                         side,
-                        depth_mm: Some(depth.depth_mm(s.thickness_mm)),
+                        depth_mm: Some(depth_mm),
                         step_down_mm,
                         direction,
                         through_cut_allowance_mm: depth.allowance_mm,
                         safe_z_mm,
-                        tabs: tabs.map(|(placement, width_mm, height, shape)| TabSpec {
-                            placement,
-                            width_mm,
-                            height_mm: height * s.thickness_mm,
-                            shape,
-                        }),
+                        tabs: tabs.map(
+                            |(placement, width_mm, height, shape, on_holes, avoid_corners)| {
+                                TabSpec {
+                                    placement,
+                                    width_mm,
+                                    height_mm: height * s.thickness_mm,
+                                    shape,
+                                    on_holes,
+                                    avoid_corners,
+                                }
+                            },
+                        ),
                         machining_order: order,
                         entry,
                         lead,
                         corner_relief: relief,
+                        last_pass: last_pass.map(|(allowance, thickness, reverse)| LastPass {
+                            allowance_mm: allowance * s.tool.diameter_mm / 3.0,
+                            // At most the depth and the step-down in
+                            // effect (#310 review).
+                            thickness_mm: thickness.map(|t| {
+                                let step_mm =
+                                    step_down_mm.or(s.tool.step_down_mm).unwrap_or(depth_mm);
+                                t * depth_mm.min(step_mm)
+                            }),
+                            reverse,
+                        }),
+                        start,
                     })
                 })
             },

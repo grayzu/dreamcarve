@@ -17,10 +17,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use dc_gcode::ProgramSplit;
-use dc_project::{PostProcessorError, PostProcessorRef};
+use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
 
 use crate::output::{self, errln, outln};
-use crate::{check, clock, config, export, init, tools};
+use crate::{check, clock, config, export, init, tabs, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -46,6 +46,99 @@ pub enum Command {
     Config(ConfigArgs),
     /// Manage the tool library and copy its tools into projects.
     Tools(ToolsArgs),
+    /// Place, list and remove a project's holding tabs.
+    Tabs(TabsArgs),
+}
+
+/// Arguments of `tabs`.
+#[derive(Debug, clap::Args)]
+pub struct TabsArgs {
+    /// What to do.
+    #[command(subcommand)]
+    pub command: TabsCommand,
+}
+
+/// The `tabs` subcommands. Each one that changes the project first places
+/// the tab request of every enabled Profile, as `tabs place` would, and
+/// saves the project through `dc_project::save`.
+#[derive(Debug, Subcommand)]
+pub enum TabsCommand {
+    /// Place tabs on the outlines a Profile operation cuts, and save the
+    /// project. With neither --count nor --at, places the operation's own
+    /// tab request. Adds to the tabs already there unless --replace.
+    Place(TabsPlaceArgs),
+    /// List the project's tabs, and the operations that cut round each.
+    List {
+        /// The project.
+        dcv: PathBuf,
+    },
+    /// Remove tabs and save the project: every tab, those one Profile
+    /// operation cuts round, or those named with --tab.
+    Clear {
+        /// The project.
+        dcv: PathBuf,
+        /// Remove only the tabs this Profile operation cuts round.
+        op: Option<String>,
+        /// Remove this tab; repeat for several.
+        #[arg(long = "tab", value_name = "ID", conflicts_with = "op")]
+        tabs: Vec<String>,
+    },
+}
+
+/// Arguments of `tabs place`.
+#[derive(Debug, clap::Args)]
+pub struct TabsPlaceArgs {
+    /// The project.
+    pub dcv: PathBuf,
+    /// The Profile operation whose outlines get the tabs.
+    pub op: String,
+    /// Space this many tabs evenly along each tool path, as phase 2 laid
+    /// `count` tabs: fewer on an outline too short for them.
+    #[arg(long, conflicts_with = "at", value_parser = clap::value_parser!(u8).range(1..))]
+    pub count: Option<u8>,
+    /// Put a tab at each of these distances along every outline, in mm
+    /// from its first vertex as drawn: `--at 10,55.5`.
+    #[arg(long, value_delimiter = ',', value_name = "MM,...")]
+    pub at: Option<Vec<f64>>,
+    /// Tab width along the outline, mm [default: 8].
+    #[arg(long, value_name = "MM")]
+    pub width: Option<f64>,
+    /// Tab top above the stock bottom, mm [default: 3].
+    #[arg(long, value_name = "MM")]
+    pub height: Option<f64>,
+    /// Tab cross-section [default: rect].
+    #[arg(long, value_enum)]
+    pub shape: Option<TabShapeArg>,
+    /// Put tabs on holes too, to hold their slugs.
+    #[arg(long)]
+    pub on_holes: bool,
+    /// With --count, leave tabs where the spacing puts them, on corners
+    /// too. Without it each tab on a corner slides off it, as a request
+    /// with `avoid_corners` does.
+    #[arg(long, requires = "count")]
+    pub allow_corners: bool,
+    /// Remove the tabs the operation cuts round (those `tabs clear <dcv>
+    /// <op>` removes) and place the new ones instead, in one save.
+    #[arg(long)]
+    pub replace: bool,
+}
+
+/// `--shape` values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TabShapeArg {
+    /// Square-shouldered.
+    Rect,
+    /// A triangular bridge.
+    Smooth,
+}
+
+impl From<TabShapeArg> for dc_project::TabShape {
+    fn from(shape: TabShapeArg) -> Self {
+        match shape {
+            TabShapeArg::Rect => Self::Rect,
+            TabShapeArg::Smooth => Self::Smooth,
+        }
+    }
 }
 
 /// Arguments of `tools`.
@@ -146,10 +239,15 @@ pub struct ExportArgs {
     #[arg(short, long, value_name = "NC")]
     pub output: Option<PathBuf>,
     /// Switch the project to the latest version of this post-processor,
-    /// with its default settings, and save the project, before exporting.
-    /// The project's own id upgrades it to the latest version.
+    /// keeping the settings you changed that it can use, and save the
+    /// project, before exporting. The project's own id upgrades it to the
+    /// latest version.
     #[arg(long, value_name = "ID")]
     pub post: Option<String>,
+    /// With --post: take every setting from the new post-processor's
+    /// defaults (and your configured ones) instead of keeping yours.
+    #[arg(long, requires = "post")]
+    pub reset_settings: bool,
     /// Write one program with T<n> M6 tool changes, whatever the project's
     /// tool_change_mode says. Needs a post-processor with M6 (grblHAL).
     /// Not saved to the project.
@@ -159,6 +257,10 @@ pub struct ExportArgs {
     /// tool_change_mode says. Not saved to the project.
     #[arg(long)]
     pub programs_per_tool: bool,
+    /// Also write a picture of every operation's toolpath over the stock
+    /// and the shapes to this .svg file, with the programs.
+    #[arg(long, value_name = "SVG")]
+    pub preview: Option<PathBuf>,
     /// The date written in the program header instead of today's (UTC).
     /// For reproducible output in tests.
     #[arg(long, hide = true, value_name = "YYYY-MM-DD")]
@@ -183,6 +285,10 @@ impl ExportArgs {
 pub struct CheckArgs {
     /// The project to check.
     pub dcv: PathBuf,
+    /// Write a picture of every operation's toolpath over the stock and
+    /// the shapes to this .svg file, when every operation generates.
+    #[arg(long, value_name = "SVG")]
+    pub preview: Option<PathBuf>,
 }
 
 /// `--units` values.
@@ -257,6 +363,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Command::Posts => posts(),
         Command::Config(args) => config::run(&args.command),
         Command::Tools(args) => tools::run(&args.command),
+        Command::Tabs(args) => tabs::run(&args.command),
     };
     // The command's own exit code stands even when stdout was a pipe its
     // reader closed (#216, `output`).
@@ -290,6 +397,21 @@ fn posts() -> Result<ExitCode, Failure> {
 pub fn lookup_post(id: &str) -> Result<PostProcessorRef, Failure> {
     match PostProcessorRef::latest(id) {
         Ok(reference) => Ok(reference),
+        Err(err @ PostProcessorError::UnknownId { .. }) => Err(Failure::usage(err.to_string())),
+        Err(err) => Err(Failure::error(err)),
+    }
+}
+
+/// [`PostProcessorRef`] `old` switched to the latest version of `id`,
+/// keeping the user's settings (#277, [`dc_project::switch_post`]), with
+/// the settings it reset; an unknown id is a usage error, as for
+/// [`lookup_post`].
+pub fn switch_post(
+    old: &PostProcessorRef,
+    id: &str,
+) -> Result<(PostProcessorRef, Vec<SettingReset>), Failure> {
+    match dc_project::switch_post(old, id) {
+        Ok(switched) => Ok(switched),
         Err(err @ PostProcessorError::UnknownId { .. }) => Err(Failure::usage(err.to_string())),
         Err(err) => Err(Failure::error(err)),
     }
