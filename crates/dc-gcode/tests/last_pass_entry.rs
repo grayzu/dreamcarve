@@ -218,6 +218,10 @@ struct Cut {
     from: Point3,
     to: Point3,
     feed: f64,
+    /// An arc's radius, mm, as written.
+    radius_mm: Option<f64>,
+    /// An arc's centre, project space.
+    centre: Option<Point>,
     samples: Vec<Point3>,
 }
 
@@ -305,6 +309,8 @@ fn program(project: &Project) -> Option<(String, Vec<Cut>)> {
             from,
             to,
             feed: mv.feed.expect("a cut has a feed"),
+            radius_mm: arc.as_ref().map(|a| a.radius_mm),
+            centre: arc.as_ref().map(|a| a.centre),
             samples,
         });
     }
@@ -313,15 +319,24 @@ fn program(project: &Project) -> Option<(String, Vec<Cut>)> {
 
 /// A heightfield over the drawing's neighbourhood: the lowest Z cut over
 /// each lattice point, the stock top where nothing is.
+#[derive(Clone)]
 struct Heights {
     origin: Point,
     nx: usize,
     ny: usize,
+    /// The lattice step, mm.
+    step: f64,
     z: Vec<f64>,
 }
 
 impl Heights {
     fn new(outline: &Polyline) -> Self {
+        Self::with(outline, LATTICE_MM, MARGIN_MM)
+    }
+
+    /// Over the drawing `outline` and `margin_mm` round it, on a lattice
+    /// of `step_mm`.
+    fn with(outline: &Polyline, step_mm: f64, margin_mm: f64) -> Self {
         let (mut lo, mut hi) = (
             Point::new(f64::MAX, f64::MAX),
             Point::new(f64::MIN, f64::MIN),
@@ -331,22 +346,23 @@ impl Heights {
             hi = Point::new(hi.x.max(v.x), hi.y.max(v.y));
         }
         // A circle's two vertices span only one axis; pad by the span.
-        let pad = (hi.x - lo.x).max(hi.y - lo.y) / 2.0 + MARGIN_MM;
+        let pad = (hi.x - lo.x).max(hi.y - lo.y) / 2.0 + margin_mm;
         let origin = Point::new(lo.x - pad, lo.y - pad);
-        let nx = ((hi.x - lo.x + 2.0 * pad) / LATTICE_MM).ceil() as usize + 1;
-        let ny = ((hi.y - lo.y + 2.0 * pad) / LATTICE_MM).ceil() as usize + 1;
+        let nx = ((hi.x - lo.x + 2.0 * pad) / step_mm).ceil() as usize + 1;
+        let ny = ((hi.y - lo.y + 2.0 * pad) / step_mm).ceil() as usize + 1;
         Self {
             origin,
             nx,
             ny,
+            step: step_mm,
             z: vec![STOCK_MM; nx * ny],
         }
     }
 
     fn point(&self, i: usize, j: usize) -> Point {
         Point::new(
-            self.origin.x + i as f64 * LATTICE_MM,
-            self.origin.y + j as f64 * LATTICE_MM,
+            self.origin.x + i as f64 * self.step,
+            self.origin.y + j as f64 * self.step,
         )
     }
 
@@ -357,21 +373,20 @@ impl Heights {
     /// The index of every lattice point within `radius_mm` of `p`.
     fn disc(&self, p: Point, radius_mm: f64) -> Vec<usize> {
         let mut out = Vec::new();
-        let j0 = ((p.y - radius_mm - self.origin.y) / LATTICE_MM)
+        let j0 = ((p.y - radius_mm - self.origin.y) / self.step)
             .ceil()
             .max(0.0) as usize;
         let j1 =
-            (((p.y + radius_mm - self.origin.y) / LATTICE_MM).floor() as usize).min(self.ny - 1);
+            (((p.y + radius_mm - self.origin.y) / self.step).floor() as usize).min(self.ny - 1);
         for j in j0..=j1 {
-            let dy = self.origin.y + j as f64 * LATTICE_MM - p.y;
+            let dy = self.origin.y + j as f64 * self.step - p.y;
             let reach = radius_mm * radius_mm - dy * dy;
             if reach < 0.0 {
                 continue;
             }
             let half = reach.sqrt();
-            let i0 = ((p.x - half - self.origin.x) / LATTICE_MM).ceil().max(0.0) as usize;
-            let i1 =
-                (((p.x + half - self.origin.x) / LATTICE_MM).floor() as usize).min(self.nx - 1);
+            let i0 = ((p.x - half - self.origin.x) / self.step).ceil().max(0.0) as usize;
+            let i1 = (((p.x + half - self.origin.x) / self.step).floor() as usize).min(self.nx - 1);
             out.extend((i0..=i1).map(|i| j * self.nx + i));
         }
         out
@@ -646,6 +661,146 @@ fn last_pass_entry_starting_on_a_tab() {
                 }
             }
         }
+    }
+}
+
+/// The layer the last pass's load is measured at, mm above the stock
+/// bottom (#335): above every earlier pass's floor, so only the
+/// allowance stands there for the last pass to take.
+const LOAD_LAYER_MM: f64 = 6.0;
+
+/// How hard the last pass's lap works in one program (#335).
+struct Load {
+    /// The fastest its cutting edge moves at the wall, as a multiple of
+    /// the tool's feed: an arc's written feed times the wall's radius over
+    /// the tool centre's.
+    edge: f64,
+    /// The material it removes per minute at [`LOAD_LAYER_MM`], as a
+    /// multiple of what a straight wall's last pass removes there at the
+    /// tool's feed, `feed × allowance` mm² per minute.
+    removal: f64,
+}
+
+/// [`Load`] of `case`'s emitted G-code: its lap is every cut whose samples
+/// all run `r` from the outline, the material on a 0.05 mm lattice;
+/// `None` when the generator refuses the drawing.
+fn load(case: &Case) -> Option<Load> {
+    let project = case.project(true);
+    let (_, cuts) = program(&project)?;
+    let feed_mm_min = project.tools[0].feed_mm_min.unwrap();
+    let outline = case.drawing.placed();
+    let gap = |p: Point| nearest_point(&outline, p).map_or(f64::INFINITY, |n| n.gap_mm);
+    let on_lap = |c: &Cut| {
+        c.samples
+            .iter()
+            .all(|p| (gap(p.xy()) - RADIUS_MM).abs() <= SLACK_MM)
+    };
+    let first = cuts.iter().position(on_lap)?;
+    let last = cuts.iter().rposition(on_lap)?;
+    let mut before = Heights::with(&outline, 0.05, 8.0);
+    for cut in &cuts[..first] {
+        before.sweep(cut, RADIUS_MM);
+    }
+    let mut after = before.clone();
+    let (mut edge, mut minutes): (f64, f64) = (0.0, 0.0);
+    for cut in cuts[first..=last].iter().filter(|c| on_lap(c)) {
+        after.sweep(cut, RADIUS_MM);
+        let length_mm: f64 = cut
+            .samples
+            .windows(2)
+            .map(|w| w[0].xy().distance_to(w[1].xy()))
+            .sum();
+        minutes += length_mm / cut.feed;
+        if let (Some(rho), Some(centre)) = (cut.radius_mm, cut.centre)
+            && (cut.from.z - cut.to.z).abs() <= 1e-9
+        {
+            // The wall the cut runs beside: round the centre, its radius
+            // `r` more than the tool centre's inside a hole, less round a
+            // part's corner.
+            let wall_mm = gap(centre);
+            edge = edge.max(cut.feed * wall_mm / rho / feed_mm_min);
+        } else if cut.from.xy().distance_to(cut.to.xy()) > 1e-9 {
+            edge = edge.max(cut.feed / feed_mm_min);
+        }
+    }
+    let removed = (0..after.z.len())
+        .filter(|&k| before.z[k] > LOAD_LAYER_MM && after.z[k] <= LOAD_LAYER_MM)
+        .count();
+    let area_mm2 = removed as f64 * 0.05 * 0.05;
+    let removal = area_mm2 / minutes / (feed_mm_min * case.allowance_mm);
+    Some(Load { edge, removal })
+}
+
+/// #335: in the round holes of 8, 10 and 15 mm cut Inside with a 6.35 mm
+/// bit, with every entry and allowances of 0.2, 0.5 and 2 mm (the 8 and
+/// 10 mm holes refuse 2 mm), the last pass's cutting edge never moves
+/// faster than the feed, and its lap removes no more per minute at a
+/// layer the earlier passes left the allowance on than a straight wall's
+/// last pass does at the feed (within the lattice's 5%). Before #335 the
+/// edge in the 8 mm hole moved at 4.8 times the feed and removed 4.5
+/// times as much. The checks of
+/// [`last_pass_entry_never_plunges_deeper_than_step_down`] hold too.
+#[test]
+fn last_pass_small_hole_load() {
+    let mut measured = 0;
+    for diameter_mm in [8.0, 10.0, 15.0] {
+        for entering in ENTERINGS {
+            for allowance_mm in [0.2, 0.5, 2.0] {
+                let case = Case {
+                    drawing: hole("hole", diameter_mm),
+                    side: Side::Inside,
+                    direction: CutDirection::Climb,
+                    entering,
+                    allowance_mm,
+                    thickness_mm: None,
+                    reverse: false,
+                    tabs: None,
+                };
+                let name = format!("{diameter_mm} mm {}", case.name());
+                let Some(load) = load(&case) else {
+                    assert!(diameter_mm < 6.35 + 2.0 * allowance_mm, "{name} is refused");
+                    continue;
+                };
+                assert!(check(&case).is_some(), "{name}");
+                println!(
+                    "{name}: edge {:.3} × feed, removal {:.3} × a straight wall's",
+                    load.edge, load.removal
+                );
+                assert!(
+                    load.edge <= 1.0 + 1e-6,
+                    "{name}: the cutting edge moves at {} times the feed",
+                    load.edge
+                );
+                assert!(
+                    load.removal <= 1.05,
+                    "{name}: the last pass removes {} times a straight wall's",
+                    load.removal
+                );
+                measured += 1;
+            }
+        }
+    }
+    assert_eq!(measured, 5 * 7);
+    // For reference: the rectangle, whose straight walls run at the feed.
+    for side in [Side::Inside, Side::Outside] {
+        let case = Case {
+            drawing: rect(),
+            side,
+            direction: CutDirection::Climb,
+            entering: Entering::Plunge,
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: false,
+            tabs: None,
+        };
+        let load = load(&case).expect("cut");
+        println!(
+            "{}: edge {:.3} × feed, removal {:.3} × a straight wall's",
+            case.name(),
+            load.edge,
+            load.removal
+        );
+        assert!(load.edge <= 1.0 + 1e-6, "{}", case.name());
     }
 }
 
