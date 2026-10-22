@@ -68,6 +68,47 @@ jobs:
       - name: License texts cover the shipped crates
         run: cargo test --locked -p third-party-licenses --test ci -- --ignored --exact third_party_licenses_cover_lockfile
 
+  # Runs the LinuxCNC and generic programs through LinuxCNC's own
+  # interpreter, rs274 (issue #173; tools/gcode-conformance). Its own job:
+  # it installs linuxcnc-uspace, which the Ubuntu runners' archives do not
+  # have, so it runs in a Debian 12 container with LinuxCNC's official apt
+  # repository (tools/gcode-conformance/install-rs274.sh cites it).
+  gcode-conformance:
+    name: gcode-conformance
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    timeout-minutes: 30
+    steps:
+      # The image is minimal: checkout needs git, rustup needs curl, and
+      # linking needs a C toolchain.
+      - name: Install prerequisites
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates curl git gcc libc6-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install LinuxCNC's rs274
+        run: tools/gcode-conformance/install-rs274.sh
+      # The toolchain rust-toolchain.toml pins (issue #151).
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" toolchain install
+          "$HOME/.cargo/bin/rustc" --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build dreamcarve
+        run: cargo build --locked -p dreamcarve
+      - name: Run the programs through rs274
+        run: cargo run --locked -p gcode-conformance
+      - name: Upload the corpus on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gcode-conformance
+          path: target/gcode-conformance
+          retention-days: 7
+
   docs:
     name: docs
     runs-on: ubuntu-latest

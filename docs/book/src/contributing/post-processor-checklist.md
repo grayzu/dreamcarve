@@ -133,6 +133,10 @@ intent. The rules are in the phase 1 and phase 2 functional specs
 - [ ] A project still exports the bytes it did before: the phase 1
       expected programs in `crates/dreamcarve/tests/expected/` and every
       golden case are unchanged unless the change is a new version.
+- [ ] For a LinuxCNC-dialect definition (LinuxCNC itself, or one
+      LinuxCNC's interpreter reads, as it reads generic), its golden
+      coaster is in `tools/gcode-conformance`'s corpus and the
+      `gcode-conformance` CI job passes. Run it locally as below.
 - [ ] For an RS274/NGC-style controller, the definition's programs run
       through LinuxCNC's `rs274` with the same motion DreamCarve reads:
       `DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion`
@@ -150,8 +154,9 @@ sets out, for each controller, what is checked automatically, what
 cannot be and why, and the manual procedure for the rest:
 
 - **Automatic.** LinuxCNC's interpreter, `rs274`, must accept the
-  program (PR #264). Its motion must also match `dc-gcode`'s reading,
-  line by line (`tools/rs274-motion`). Mach3 and UCCNC programs go
+  program (the `gcode-conformance` CI job; see
+  [LinuxCNC's interpreter](#linuxcncs-interpreter)). Its motion must
+  also match `dc-gcode`'s reading, line by line (`tools/rs274-motion`). Mach3 and UCCNC programs go
   through a small, listed bridge.
 - **Manual.** Mach3 in Simulation mode and UCCNC in demo mode on
   Windows, and LinuxCNC's own AXIS simulator.
@@ -169,6 +174,60 @@ To run the automatic check without LinuxCNC installed:
 podman build -t dreamcarve-rs274 tools/rs274-motion   # or docker build
 DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion -- --nocapture
 ```
+
+## LinuxCNC's interpreter
+
+The `gcode-conformance` CI job (#173) runs DreamCarve's LinuxCNC and
+generic programs through LinuxCNC's own standalone interpreter, `rs274`,
+and fails on any error or warning it reports, or a program it does not
+read to its `M2`/`M30`. The corpus is the two golden coasters, the
+canned-cycle coaster pinned in
+`crates/dreamcarve/tests/expected/coaster-holes-linuxcnc-canned.ngc`,
+and the quick-start plaque (`tests/fixtures/plaque.dcv`) exported for
+both posts by the `dreamcarve` binary.
+
+Before it trusts `rs274`, the tool runs probe programs, following
+PureCutCNC's harness: a trivial program and a valid arc it must accept,
+and an arc 1 mm off its circle and `G90.1` followed by an arc with
+incremental centres that it must reject. If a probe goes the wrong way,
+the tool exits 2 and says the interpreter setup is wrong; a rejected
+DreamCarve program exits 1.
+
+`rs274` comes from the `linuxcnc-uspace` package. It has no macOS or
+Windows build, and Ubuntu 22.04 and 24.04 do not package it, so
+`tools/gcode-conformance/install-rs274.sh` installs the pinned release
+(2.9.10) on Debian 12 from LinuxCNC's official apt repository, the way
+LinuxCNC's
+[install guide](https://linuxcnc.org/docs/stable/html/getting-started/getting-linuxcnc.html)
+does. On any other system, run it in a `debian:bookworm` container. From
+the repository root, with Docker or Podman:
+
+```sh
+docker run --rm -it -v "$PWD":/src -w /src debian:bookworm bash
+```
+
+Then, inside the container:
+
+```sh
+apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gcc libc6-dev
+tools/gcode-conformance/install-rs274.sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+. "$HOME/.cargo/env"
+rustup toolchain install               # the one rust-toolchain.toml pins
+export CARGO_TARGET_DIR=target/linux   # keep the host's target/ apart
+cargo build -p dreamcarve
+cargo run -p gcode-conformance
+```
+
+To check another program too, pass it after `--`, for example
+`cargo run -p gcode-conformance -- my-export.ngc`. `--rs274` and
+`--dreamcarve` (or `RS274_BIN` and `DREAMCARVE_BIN`) point at other
+binaries. The corpus and the probe files are left in
+`target/linux/gcode-conformance/` (CI uploads them when the job fails).
+
+Mach3 and UCCNC have no offline interpreter of their own:
+`tools/rs274-motion` runs their programs through `rs274` with a listed
+bridge, and the manual procedure in the end-to-end plan covers the rest.
 
 ## Docs
 

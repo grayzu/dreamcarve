@@ -1040,9 +1040,18 @@ motion, or a `G53` lift, while a cycle is the motion mode
 
 Not checked on a real LinuxCNC: whether a configuration with a
 spindle-at-speed signal (`spindle.0.at-speed`) makes the 3 s dwell
-unnecessary, and whether 3 s is enough without one. PureCutCNC validated its LinuxCNC output with the
-`rs274` standalone interpreter (`scripts/gcode-conformance/README.md`);
-DreamCarve's has not been run through it yet.
+unnecessary, and whether 3 s is enough without one.
+
+Run through LinuxCNC's standalone interpreter, `rs274` from
+`linuxcnc-uspace` 2.9.10 (LinuxCNC's official apt repository), by the
+`gcode-conformance` CI job (#173, `tools/gcode-conformance`, ported from
+PureCutCNC's `scripts/gcode-conformance/`): the golden coaster, the
+canned-cycle coaster `cli::canned_cycles_linuxcnc_opt_in` pins
+(`G98`, `G81`, `G80`), and the quick-start plaque, with no error or
+warning. The job also checks that `rs274` rejects `G90.1` followed by an
+arc with incremental centres, the program a header without `G91.1` could
+run. `rs274 -g` checks arc radii more loosely than GRBL (PureCutCNC
+measured 0.028 mm), so the emitter's own check stays the stricter one.
 
 ## Mach3 (`mach3/v1.json`, `mach3/v2.json`, `mach3/v3.json`)
 
@@ -1223,6 +1232,12 @@ while it is in progress", and a basic controller's behaviour is unknown),
 controller has, as PureCutCNC did), coolant (upstream has none), and
 `G50`/`G69`: RS274/NGC has no scaling or rotation codes (tables 4 and 5;
 see "Scaling and rotation").
+
+The golden coaster and the quick-start plaque on this definition also run
+through LinuxCNC's `rs274` in CI (`gcode-conformance`, see "LinuxCNC"),
+with no error or warning. LinuxCNC is one RS274/NGC interpreter, not the
+standard, so this shows the program parses as RS274/NGC there, not on
+every controller that claims it.
 
 ### Changed from PureCutCNC
 
