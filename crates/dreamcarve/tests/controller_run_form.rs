@@ -21,9 +21,13 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// The file at `relative`, with `\r\n` read as `\n`: a Windows checkout
+/// may give the form CRLF line ends.
 fn read(relative: &str) -> String {
     let path = repo_root().join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        .replace("\r\n", "\n")
 }
 
 fn indent(line: &str) -> usize {
