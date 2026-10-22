@@ -749,3 +749,164 @@ fn left_right_last_pass_keeps_tabs_at_the_ends() {
     }
     assert_eq!(cut, cases, "every case is cut");
 }
+
+/// The lattice points of `heights` on the kept side of `line`, cut on the
+/// side of `sign` (+1 Left, −1 Right), that it has cut, with how deep: at
+/// most a radius from the line on its other side, past its ends included
+/// (judged there by the end segment's direction).
+fn cuts_on_kept_side(heights: &Heights, line: &[Point], sign: f64) -> Vec<(Point, f64)> {
+    let mut found = Vec::new();
+    for j in 0..heights.ny {
+        for i in 0..heights.nx {
+            let q = heights.point(i, j);
+            let at = place(line, q);
+            if at.signed_mm * sign < -SLACK_MM
+                && at.gap_mm <= RADIUS_MM
+                && heights.at(i, j) < STOCK_MM
+            {
+                found.push((q, STOCK_MM - heights.at(i, j)));
+            }
+        }
+    }
+    found
+}
+
+/// #342: a V notch `angle_deg` across its tip, drawn down a 20 mm arm
+/// from its first vertex to the tip at (0, 0) and up the other arm for
+/// `last_mm`: it turns left at the tip, so Left is its inside and Right
+/// its outside.
+fn notch(angle_deg: f64, last_mm: f64) -> Vec<(f64, f64)> {
+    let (sin, cos) = (angle_deg / 2.0).to_radians().sin_cos();
+    vec![
+        (-20.0 * sin, 20.0 * cos),
+        (0.0, 0.0),
+        (last_mm * sin, last_mm * cos),
+    ]
+}
+
+/// #342: an open path whose last segment is shorter than the bit radius
+/// never cuts the strip it keeps at its end. V notches of 30°, 45° and
+/// 60° with last segments of 1, 2 and 3 mm, placed at (60, 40), cut 12 mm
+/// deep in 4 mm passes with the 6.35 mm bit, Left (inside the V) and
+/// Right (round it), with and without a 0.5 mm last pass, and without and
+/// with 4 × 6 mm tabs 3 mm from each end of the last pass's path.
+///
+/// Inside the V the last segment has no room for the bit: a cut beside
+/// it starts `r·cot(θ/2)` along it from the tip, 5.5 mm at 60°. The cut
+/// beside the first arm then ran on until the circle of radius `r` round
+/// the end vertex stopped it, past the normal through that vertex, and
+/// cut into the strip the path keeps there (about 0.05 mm² at 30° and
+/// 2 mm, the issue's repro) or the part past the end. Each is refused
+/// with `EndSegmentHasNoRoom`, located at the last vertex, the bit (not
+/// the allowance) having no room. Round the V every case is cut, and a
+/// material heightfield of its emitted G-code shows no cut on the kept
+/// side within a radius of the path, past either end included, while the
+/// cut reaches both end normals.
+#[test]
+fn open_path_short_end_segment_keeps_the_kept_strip() {
+    let at = (60.0, 40.0);
+    let (mut refused, mut cut) = (0, 0);
+    for angle_deg in [30.0, 45.0, 60.0] {
+        for last_mm in [1.0, 2.0, 3.0] {
+            let points = notch(angle_deg, last_mm);
+            let line: Vec<Point> = points
+                .iter()
+                .map(|&(x, y)| Point::new(x + at.0, y + at.1))
+                .collect();
+            let total_mm: f64 = line.windows(2).map(|w| w[0].distance_to(w[1])).sum();
+            for side in [Side::Left, Side::Right] {
+                let inside = side == Side::Left;
+                let length_mm = last_path_length_mm(&points, at, side);
+                for last_pass in [false, true] {
+                    for tabs in [false, true] {
+                        let case = format!(
+                            "{angle_deg}° {last_mm} mm {side:?} last pass {last_pass} tabs {tabs}"
+                        );
+                        let direction = if tabs {
+                            CutDirection::Conventional
+                        } else {
+                            CutDirection::Climb
+                        };
+                        let project = project_of(&points, at, side, direction, |op| {
+                            if !last_pass {
+                                op.last_pass = None;
+                            }
+                            if tabs {
+                                op.tabs = Some(TabSpec {
+                                    placement: TabPlacement::AtDistances {
+                                        distances_mm: vec![3.0, length_mm - 3.0],
+                                    },
+                                    width_mm: 4.0,
+                                    height_mm: 6.0,
+                                    shape: TabShape::Rect,
+                                    on_holes: false,
+                                    avoid_corners: false,
+                                });
+                            }
+                        });
+                        let Operation::Profile(op) = &project.operations[0] else {
+                            unreachable!("a Profile");
+                        };
+                        match generate_profile(&project, op) {
+                            Err(dc_cam::CamError::EndSegmentHasNoRoom {
+                                vertex,
+                                length_mm,
+                                allowance_mm,
+                                ..
+                            }) if inside => {
+                                assert_eq!(vertex, 2, "{case}: the last vertex");
+                                assert!(
+                                    (length_mm - last_mm).abs() < 1e-9,
+                                    "{case}: {length_mm} mm"
+                                );
+                                assert_eq!(allowance_mm, None, "{case}: the bit has no room");
+                                refused += 1;
+                                continue;
+                            }
+                            Ok(_) if !inside => {}
+                            Ok(_) => {
+                                // Before #342: cut. Show what it takes.
+                                let passes = passes(&project).expect("cut");
+                                let all: Vec<Cut> =
+                                    passes.iter().flatten().map(clone_cut).collect();
+                                let mut heights = Heights::new(&line);
+                                heights.sweep(&all, RADIUS_MM);
+                                let kept = cuts_on_kept_side(&heights, &line, 1.0);
+                                panic!(
+                                    "{case}: cut, {} kept points cut, first {:?}",
+                                    kept.len(),
+                                    kept.first()
+                                );
+                            }
+                            Err(e) => panic!("{case}: {e}"),
+                        }
+                        let passes = passes(&project).expect("cut");
+                        let all: Vec<Cut> = passes.iter().flatten().map(clone_cut).collect();
+                        let mut heights = Heights::new(&line);
+                        heights.sweep(&all, RADIUS_MM);
+                        let kept = cuts_on_kept_side(&heights, &line, -1.0);
+                        assert!(
+                            kept.is_empty(),
+                            "{case}: {} kept points cut, first {:?}",
+                            kept.len(),
+                            kept.first()
+                        );
+                        let along: Vec<f64> = all
+                            .iter()
+                            .flat_map(|c| &c.samples)
+                            .filter(|p| p.z < STOCK_MM)
+                            .map(|p| place(&line, p.xy()).along_mm)
+                            .collect();
+                        assert!(
+                            along.iter().any(|&a| a <= 1e-6)
+                                && along.iter().any(|&a| a >= total_mm - 1e-6),
+                            "{case}: the cut reaches both end normals"
+                        );
+                        cut += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!((refused, cut), (36, 36), "refused and cut");
+}
