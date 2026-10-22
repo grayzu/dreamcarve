@@ -24,13 +24,15 @@ bit's centre on it without an entry or tabs, use [Engrave](engrave.md).
     "width_mm": 8.0,
     "height_mm": 3.0,
     "shape": "rect",
-    "on_holes": false
+    "on_holes": false,
+    "avoid_corners": true
   },
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
   "corner_relief": "none",
-  "last_pass": null
+  "last_pass": null,
+  "start": "auto"
 }
 ```
 
@@ -57,7 +59,8 @@ This is the Profile `init` writes, with `depth_mm` and
 | `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
 | `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
 | `corner_relief` | `"none"` (as `init` writes it), `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
-| `last_pass` | `null` (as `init` writes it), or a last pass allowance: every pass but the last leaves a thin skin on the wall, and the last pass cuts it off at full depth. Inside and Outside only. See [Last pass](#last-pass). |
+| `last_pass` | `null` (as `init` writes it), or a last pass allowance: every pass but the last leaves a thin skin on the wall, and the last pass cuts it off at full depth. Inside, Outside, Left and Right; not On line. See [Last pass](#last-pass). |
+| `start` | Where each closed outline's cut starts: `"auto"` (as `init` writes it), `"first_vertex"`, or `{ "near": { "x_mm": …, "y_mm": … } }`. See [Start point](#start-point). |
 
 ## Side
 
@@ -336,10 +339,30 @@ kept.
   vertex and reaches one radius past it on the cut side only, so the
   part side is never touched past the end. VCarve's manual does not say
   how its open cut ends; this keeps the part as drawn.
+- **A short end segment.** Inside a turn the bit cannot cut beside the
+  start of the next segment: it stops where its two passes meet, which
+  is the bit's radius times `cot(θ/2)` along each segment, for a turn
+  whose two segments meet at θ (3.175 mm at 90° with a 6.35 mm bit,
+  11.8 mm at 30°). When the path's last segment, or its first, is
+  shorter than that, the bit has no room beside it: the cut beside the
+  segment before it would run on past the line through the end vertex,
+  into the part. That is an error, and nothing is exported:
+
+  ``operation `o1` cuts beside `Edge` (instance `i1`, profile 0), but the
+  segment ending at its vertex 2 is 2.000 mm long, too short for its
+  6.35 mm tool to cut beside it: the cut would reach past the path's
+  end into the part; ...``
+
+  Vertices count from 0 in the order you drew them. Lengthen or remove
+  that segment, cut the path on its other side, or use a smaller bit. A
+  30° V drawn with a 2 mm last segment is refused cut inside and cut
+  round its outside.
 - **Direction** is climb or conventional milling, as on an outline (see
   [Direction](#direction)): `"left"` climb and `"right"` conventional
   start beside the first vertex, `"left"` conventional and `"right"`
   climb beside the last.
+- **Last pass.** A [last pass](#last-pass-beside-an-open-path) works
+  here too.
 - **Ramps and tabs** are as for `on_line` above, along the path the
   bit's centre follows: a ramp runs back and forth from the start; tabs
   are measured from the end beside the first vertex, whichever end the
@@ -352,7 +375,9 @@ kept.
   operation.
 - **Lines too close.** The bit must not cross another of the operation's
   lines, nor reach the strip one bit radius wide that a line keeps on its
-  part side. A cut that would is an error, and nothing is exported:
+  part side, past its ends included: the strip ends square at each end
+  vertex, like the cut. A cut that would is an error, and nothing is
+  exported:
 
   ``operation `o1` cuts beside `Edge` (instance `i1`, profile 0) and
   `Edge` (instance `i1`, profile 1), but a cut comes within the 6.35 mm
@@ -418,6 +443,8 @@ quarters; the place with the least turning within one bit diameter
 either way wins, so a rectangle starts partway along a side, away from its
 corners; among places as straight as each other, the one nearest where
 the previous outline ended; after that, the first along the outline.
+With a [start point](#start-point) set, the lead arrives there or not at
+all.
 
 **When it does not fit.** The arc is tried at `radius_mm`, then at ¾, ½
 and ¼ of it, each at `sweep_deg` and then at 60° and 45° (when smaller).
@@ -582,12 +609,114 @@ so is refused, naming the shapes, and nothing is exported:
   allowance but no nearer than the radius only cuts that part's skin,
   which its own last pass takes off anyway, and is allowed.
 
-Make `allowance_mm` smaller, or set `last_pass` to `null`. An On line,
-Left or Right Profile has no wall for the allowance, so a `last_pass`
-there is an error; so is an allowance of 0 or less or above a third of
-the bit, or a `thickness_mm` of 0 or less, deeper than `depth_mm` or
-thicker than the step-down. A cut of only one pass is the last pass, on
-the part's path, and warns `last_pass_unused`.
+Make `allowance_mm` smaller, or set `last_pass` to `null`. An On line
+Profile cuts with both sides of the bit and has no wall for the
+allowance, so a `last_pass` there is an error; so is an allowance of 0
+or less or above a third of the bit, or a `thickness_mm` of 0 or less,
+deeper than `depth_mm` or thicker than the step-down. A cut of only one
+pass is the last pass, on the part's path, and warns `last_pass_unused`.
+
+### Last pass beside an open path
+
+A [Left or Right](#left-and-right) Profile cuts one side of the bit
+against the part, as an outline cut does, so it takes a last pass too,
+as VCarve's Profile of an open vector does. The earlier passes run the
+allowance farther to the cut side, and the last pass on the bit's usual
+path beside the line.
+
+A 60 mm line from (20, 20) to (80, 20) cut `"left"`, 12 mm deep in 4 mm
+passes with a 6.35 mm bit and a 0.5 mm allowance: the first two passes
+run at Y 23.675 and the third at Y 23.175, the path it cuts with no last
+pass. Every pass runs from X 20 to X 80.
+
+- **Ends.** Every pass ends square on the same lines through the path's
+  end vertices, square to the path. The earlier passes are neither
+  shorter nor longer than the last: none cuts past an end on the part
+  side, and the earlier passes leave the allowance standing right up to
+  each end, where the last pass takes it off.
+- **Direction.** The earlier passes and the last run the way
+  [Direction](#direction) says, from the same end. With `reverse` the
+  last pass starts at the other end, where the earlier passes finished,
+  and mills the other way: conventional after climbing passes, or climb
+  after conventional ones.
+- **Ramps, tabs and leads.** Each pass ramps along its own path. Tabs are
+  laid on the last pass's path, measured from the end beside the first
+  vertex as always, and each earlier pass rises over every point where
+  its cutter could reach them, as on an outline; a tab at an end of the
+  path is held at its height right to that end. There is still no lead
+  and no corner relief.
+- **Corners.** Inside a turn the last pass takes the wedge between the
+  earlier passes' two arms, as in a sharp corner of an outline: a 60° V
+  cut inside is cut at 0.5 mm, a 20° one only at 0.2 mm. Round a turn it
+  takes an even skin.
+- **When it does not fit.** The rules above apply to the path: a U, slot
+  or notch the bit fits but the bit plus the allowance does not (the
+  inside of a U 7 mm wide, with a 6.35 mm bit and 0.5 mm), a tip whose
+  wedge is thicker than a third of the bit, or a stretch at an end that
+  the earlier passes stop short of, is refused naming the path. So is an
+  end segment with room for the bit but not for the bit plus the
+  allowance (see [A short end segment](#left-and-right)): the error
+  says "too short for its 6.35 mm tool and its 0.5 mm last pass
+  allowance". An L 3.4 mm long on its last leg, cut inside its corner,
+  is cut at 0.2 mm and refused at 0.5 mm. The
+  earlier passes must also keep the bit's radius plus the allowance from
+  every other line of the operation and from the strip each line keeps,
+  so they never take another line's skin: two lines 6.85 mm apart cut
+  towards each other, which the bit alone fits, are refused at 0.5 mm
+  and cut at 0.2 mm.
+
+  ``operation `o1` cuts beside `Edge` (instance `i1`, profile 0) and
+  `Edge` (instance `i1`, profile 1) with a 0.5 mm last pass allowance,
+  but a pass before the last comes within the 6.35 mm tool's radius plus
+  the allowance of one of them or of the material it keeps, ...``
+
+  A part drawn as four separate lines and cut on its outside, whose
+  lines meet at its corners, is cut.
+
+## Start point
+
+Each closed outline's cut starts somewhere on the bit's path round it, and
+that is where the bit comes down, where a mark is most likely, and where
+`at_distances` tabs are measured from. `start` says where (VCarve's 2D
+Profile "Use vector start point" and "Start At"; Fusion's "Entry
+Positions"):
+
+| Value | Where each outline's cut starts |
+| --- | --- |
+| `"auto"` | As DreamCarve chooses: from the outline's first vertex, moved by a [lead](#leads) to a straight stretch, or by a ramp or helix that has no room beside a tab. `init` writes this, and files from before format version 14 open with it. |
+| `"first_vertex"` | At the point of the bit's path nearest the outline's first vertex as you drew it, as VCarve's "Use vector start point" plunges at the shape's first point. Cut outside, a corner's path turns round it on an arc, and the cut starts in the middle of that arc. |
+| `{ "near": { "x_mm": 0.0, "y_mm": 0.0 } }` | At the point of each outline's bit path nearest that point, in [project coordinates](project-file.md#coordinates) (the stock's bottom left corner is 0, 0). A point off the stock is fine; inch input works as for any length. |
+
+```json
+"start": { "near": { "x_mm": 0.0, "y_mm": 0.0 } }
+```
+
+With `"first_vertex"` or `"near"`, the start you set wins over the
+conveniences `"auto"` allows:
+
+- A tab request's `at_distances` count from the start, and `count` spaces
+  its tabs from it: the first of four is an eighth of the way round
+  ([Tabs: tab requests](tabs.md#tab-requests)). Tabs already placed stay
+  where they are.
+- A [lead](#leads) arrives at the start, at the largest size that fits
+  there, or is left off with `lead_dropped` (reason `no_room`); it is not
+  moved to where it would fit.
+- A ramp or helix [entry](#entry) that has no room at the start falls
+  back to a ramp, then a plunge, with `entry_fallback`, instead of the
+  start moving. On a start under a tab, the first pass below the tab top
+  plunges only to the tab's top there, and later passes start on the tab
+  where the one before ended. Each pass gets down to its depth past the
+  tab's end, as it leaves every tab (a rect tab's step down, a smooth
+  tab's slope), so no pass cuts into the tab.
+- A [last pass](#last-pass)'s earlier passes start at their own path's
+  point nearest the same place, and a reversed last pass starts where the
+  others do.
+
+Each pass of an outline starts at the same place. Open paths ignore
+`start`: their cut starts at the end the `direction` sets
+([Open paths](#open-paths)). Draw the toolpath with `dreamcarve check
+part.dcv --preview part-preview.svg` to see each start, a circle the size
+of the bit ([Toolpath preview](overview.md#toolpath-preview)).
 
 ## Order of operations
 

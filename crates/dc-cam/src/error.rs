@@ -412,11 +412,12 @@ pub enum CamError {
         /// The allowed range, as the user reads it.
         range: String,
     },
-    /// A Profile that cuts On line, Left or Right has a last pass (#284):
-    /// only Inside and Outside leave a wall to take the allowance off.
-    /// Validation rejects it; the generator refuses it too.
+    /// A Profile that cuts On line has a last pass (#284): it cuts with
+    /// both flanks, so it leaves no wall to take the allowance off.
+    /// Validation rejects it; the generator refuses it too. (changed in
+    /// #311: Left and Right take a last pass.)
     #[error(
-        "operation `{op}` has a last_pass but does not cut Inside or Outside; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside or Outside"
+        "operation `{op}` has a last_pass but cuts on the line; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside, Outside, Left or Right"
     )]
     LastPassNeedsSide {
         /// The operation.
@@ -493,6 +494,59 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
+    /// #311: a Left or Right Profile's passes before the last, `allowance_mm`
+    /// farther from each open path than its last pass, come within the
+    /// tool radius plus the allowance of another line of the operation,
+    /// or of the strip one radius wide that a line keeps on its part side:
+    /// they would take that line's skin, which its own last pass is to cut,
+    /// or cut into the part. This is [`CamError::CutsIntoKeptSide`]'s rule
+    /// with the radius grown by the allowance, as Inside's band rule needs
+    /// `diameter + 2 · allowance` ([`CamError::BandNarrowerThanAllowance`]).
+    /// `shape` and `other` are in drawing order and may be the same path;
+    /// `other` is boxed to keep the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape} and {other} with a {allowance_mm} mm last pass allowance, but a pass before the last comes within the {diameter_mm} mm tool's radius plus the allowance of one of them or of the material it keeps, so it would cut the skin that line's last pass takes off, or the part; move the lines apart, make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    AllowanceCutsIntoKeptSide {
+        /// The operation.
+        op: OperationId,
+        /// One of the two paths, the one drawn first.
+        shape: ShapeRef,
+        /// The other path.
+        other: Box<ShapeRef>,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+    },
+    /// #342: a Left or Right Profile's cut beside an open path has no room
+    /// at one of the path's ends. The segment that ends there is too short
+    /// for the tool, plus the last pass allowance when `allowance_mm` is
+    /// set, to cut beside it: on the inside of the turn before it, the cut
+    /// beside the earlier segment reaches past the normal through the end
+    /// vertex, where every cut must stop (A8, "Ends"), and into the strip
+    /// the path keeps or the part past its end. `shape` is boxed to keep
+    /// the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape}, but the segment ending at its vertex {vertex} is {length_mm:.3} mm long, too short for its {diameter_mm} mm tool{} to cut beside it: the cut would reach past the path's end into the part; lengthen or remove that segment, cut the other side, or use a smaller tool; no toolpath was produced",
+        with_allowance(*.allowance_mm)
+    )]
+    EndSegmentHasNoRoom {
+        /// The operation.
+        op: OperationId,
+        /// The open path.
+        shape: Box<ShapeRef>,
+        /// The end vertex, 0-based in the path as drawn: 0 for its first,
+        /// one less than its vertex count for its last.
+        vertex: usize,
+        /// The length of the segment that ends there, mm.
+        length_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm, when only the passes before the
+        /// last have no room.
+        allowance_mm: Option<f64>,
+    },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
     #[error("shape {shape} cannot be cut: {source}")]
@@ -560,4 +614,12 @@ pub enum CamError {
     /// Any other geometry failure.
     #[error(transparent)]
     Geometry(#[from] GeometryError),
+}
+
+/// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
+/// allowance: none without one.
+fn with_allowance(allowance_mm: Option<f64>) -> String {
+    allowance_mm.map_or_else(String::new, |a| {
+        format!(" and its {a} mm last pass allowance")
+    })
 }

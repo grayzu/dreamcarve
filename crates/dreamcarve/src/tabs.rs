@@ -11,8 +11,8 @@
 //!   already there, and notes an outline that had some; `--replace` first
 //!   removes the tabs the operation cuts round, as `tabs clear <dcv> <op>`
 //!   does (#293).
-//! - `tabs list <dcv>` prints every tab and the enabled Profiles that cut
-//!   round it.
+//! - `tabs list <dcv>` prints every tab, whether it holds its slug
+//!   (#302), and the enabled Profiles that cut round it.
 //! - `tabs clear <dcv> [<op> | --tab <id>…]` removes tabs.
 //!
 //! A command that changes the project first places the tab request of
@@ -146,6 +146,7 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
                     height_mm: size.height_mm,
                     shape: size.shape,
                     on_holes: args.on_holes,
+                    avoid_corners: !args.allow_corners,
                 },
             ),
         }
@@ -223,8 +224,9 @@ fn place_command(args: &TabsPlaceArgs) -> Result<(), Failure> {
 
 /// Warns `tab_on_hole` once for each of `new` that an enabled Profile of
 /// `project` cuts as a hole (#300). Generation does not warn again for a
-/// tab placed on the hole for that cut, so this is where the user hears
-/// that it holds the slug.
+/// tab placed on the hole with `--on-holes` or a request's `on_holes`,
+/// which saves it with `holds_slug: true` (#302), so this is where the
+/// user hears that it holds the slug.
 fn warn_on_holes(project: &Project, new: &[&PlacedTab]) {
     let mut warnings = Vec::new();
     for op in &project.operations {
@@ -338,8 +340,18 @@ const fn shape_name(shape: TabShape) -> &'static str {
     }
 }
 
-/// `tabs list`: a table of every tab, with the enabled Profiles that cut
-/// round it.
+/// Whether a tab holds its slug, as `tabs list` shows it (#302): `-` for
+/// a format 14 tab, which did not record it.
+const fn holds_slug_name(holds_slug: Option<bool>) -> &'static str {
+    match holds_slug {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "-",
+    }
+}
+
+/// `tabs list`: a table of every tab, whether it holds its slug, and the
+/// enabled Profiles that cut round it.
 fn list(dcv: &Path) -> Result<(), Failure> {
     let (project, requests, _) = load_placed(dcv)?;
     if project.tabs.is_empty() {
@@ -367,10 +379,11 @@ fn list(dcv: &Path) -> Result<(), Failure> {
         "WIDTH_MM",
         "HEIGHT_MM",
         "SHAPE",
+        "HOLDS_SLUG",
         "CUT_BY",
     ]
     .map(str::to_owned);
-    let rows: Vec<[String; 11]> = project
+    let rows: Vec<[String; 12]> = project
         .tabs
         .iter()
         .map(|tab| {
@@ -390,6 +403,7 @@ fn list(dcv: &Path) -> Result<(), Failure> {
                 mm(tab.width_mm),
                 mm(tab.height_mm),
                 shape_name(tab.shape).to_owned(),
+                holds_slug_name(tab.holds_slug).to_owned(),
                 if cut_by.is_empty() {
                     "-".to_owned()
                 } else {

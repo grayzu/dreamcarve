@@ -388,7 +388,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v13/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v15/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -452,7 +452,7 @@ mod tests {
         let compact: String = text.split_whitespace().collect();
         assert!(
             compact.contains(
-                "\"tabs\":[{\"id\":\"tab1\",\"instance\":\"i1\",\"profile\":0,\"x_mm\":25.0,\"y_mm\":-3.175,\"width_mm\":6.0,\"height_mm\":2.0,\"shape\":\"rect\"}"
+                "\"tabs\":[{\"id\":\"tab1\",\"instance\":\"i1\",\"profile\":0,\"x_mm\":25.0,\"y_mm\":-3.175,\"width_mm\":6.0,\"height_mm\":2.0,\"shape\":\"rect\",\"holds_slug\":false}"
             ),
             "{text}"
         );

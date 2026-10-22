@@ -83,7 +83,7 @@ use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::ascii;
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
-use crate::material::Material;
+use crate::material::{self, Material, TabSpine};
 use crate::parse::{ArcWords, Block, MachineMove, MachinePosition, MotionKind};
 use crate::safety::{self, DWELL_TOLERANCE_S, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
@@ -894,17 +894,25 @@ fn emit_enabled(
         .iter()
         .map(|&(op, ..)| Material::of(project, op))
         .collect();
+    // #337: and the tabs each must leave standing.
+    let tabs: Vec<Vec<TabSpine>> = planned
+        .iter()
+        .map(|&(op, ..)| material::tab_spines(project, op))
+        .collect();
     let spans: Vec<OpSpan<'_>> = planned
         .iter()
         .zip(lines)
-        .zip(&materials)
-        .map(|((&(op, tool, toolpath, ..), lines), material)| OpSpan {
-            op,
-            tool,
-            toolpath,
-            material,
-            lines,
-        })
+        .zip(materials.iter().zip(&tabs))
+        .map(
+            |((&(op, tool, toolpath, ..), lines), (material, tabs))| OpSpan {
+                op,
+                tool,
+                toolpath,
+                material,
+                tabs,
+                lines,
+            },
+        )
         .collect();
     let (extents, blocks) = safety::check_parsed(
         &text,

@@ -45,11 +45,16 @@ Placed `tab4` on `coaster` (instance `i1`, profile 0) 247.4 mm along it: 8 mm wi
 | `--height MM` | Height of the tab top above the stock bottom. A rect tab is this thick all along; a smooth tab is this thick at its middle. Default 3. |
 | `--shape rect\|smooth` | `rect` (square shoulders, the default) or `smooth` (a triangle: straight ramps up and down). See [What the bit does over a tab](#what-the-bit-does-over-a-tab). |
 | `--on-holes` | Put tabs on holes too. Without it holes get none. See [Parts with holes](#parts-with-holes). |
+| `--allow-corners` | With `--count`, leave each tab where the even spacing puts it, on a corner too. Without it a tab on a corner slides off it, as a request with `avoid_corners` does. See [Tabs off corners](#tabs-off-corners). |
 | `--replace` | Remove the tabs the operation cuts round first, as `tabs clear <dcv> <op>` does, and place the new ones instead. See [Changing an operation's tabs](#changing-an-operations-tabs). |
 
-`--count` follows the rules below: no tabs on holes unless `--on-holes`,
-and fewer tabs on an outline too short for them, but at least one on a
-part ([Outlines too short for the tabs](#outlines-too-short-for-the-tabs)).
+`--count` follows the rules below: tabs slide off corners unless
+`--allow-corners` ([Tabs off corners](#tabs-off-corners)), no tabs on holes
+unless `--on-holes`, and fewer tabs on an outline too short for them, but
+at least one on a part ([Outlines too short for the
+tabs](#outlines-too-short-for-the-tabs)). The spacing starts from where
+the Profile's cut starts, its [start point](profile.md#start-point) when
+it sets one.
 The tabs are placed for that Profile's bit and side: each one is on the
 tool path, the bit's radius off the outline for an Inside or Outside cut.
 
@@ -77,7 +82,7 @@ round; on an open path it stops at the ends. Holes are skipped unless
 `--count`.
 
 These tabs are on the outline itself, and they are cut as placed: none is
-dropped because the outline is short. `tabs place` warns when they touch
+dropped because the outline is short, and none moves off a corner. `tabs place` warns when they touch
 or overlap (`tabs_overlap`) or cover more than half of a tool path
 (`tabs_cover_most_of_contour`). The coaster's circle starts at its
 rightmost point, so the two tabs above go there and a quarter of the way
@@ -158,11 +163,11 @@ dreamcarve tabs list coaster.dcv
 ```
 
 ```text
-ID    INSTANCE  PROFILE  AT_MM    OFF_MM  X_MM    Y_MM    WIDTH_MM  HEIGHT_MM  SHAPE  CUT_BY
-tab1  i1        0        35.343   3.175   84.065  15.935  8         3          rect   op1
-tab2  i1        0        106.029  3.175   15.935  15.935  8         3          rect   op1
-tab3  i1        0        176.715  3.175   15.935  84.065  8         3          rect   op1
-tab4  i1        0        247.4    3.175   84.065  84.065  8         3          rect   op1
+ID    INSTANCE  PROFILE  AT_MM    OFF_MM  X_MM    Y_MM    WIDTH_MM  HEIGHT_MM  SHAPE  HOLDS_SLUG  CUT_BY
+tab1  i1        0        35.343   3.175   84.065  15.935  8         3          rect   no          op1
+tab2  i1        0        106.029  3.175   15.935  15.935  8         3          rect   no          op1
+tab3  i1        0        176.715  3.175   15.935  84.065  8         3          rect   no          op1
+tab4  i1        0        247.4    3.175   84.065  84.065  8         3          rect   no          op1
 1 operation(s) hold a tab request, listed as the tabs it places; any `tabs` command that saves the project writes them.
 ```
 
@@ -174,6 +179,7 @@ tab4  i1        0        247.4    3.175   84.065  84.065  8         3          r
 | `OFF_MM` | How far the tab's point is from the outline, as cut (after the instance's transform): 0 for a tab placed with `--at`, the bit's radius for one placed with `--count` or from a request. More than the tab's width plus the bit warns `tab_off_outline` ([A placed tab in the file](#a-placed-tab-in-the-file)). |
 | `X_MM`, `Y_MM` | The tab's point, in the shape's own coordinates (its definition), not the stock's. |
 | `WIDTH_MM`, `HEIGHT_MM`, `SHAPE` | The tab's size and shape. |
+| `HOLDS_SLUG` | `yes` for a tab placed on a hole with `--on-holes` or from a request with `on_holes`, which `check` and `export` do not warn `tab_on_hole` for; `no` for the others; `-` for a tab from a version 14 file, which did not record it ([Parts with holes](#parts-with-holes)). |
 | `CUT_BY` | The enabled Profiles that rise over the tab, or `-` for none. |
 
 The last line appears when an enabled Profile still holds a tab request,
@@ -217,7 +223,8 @@ Note: operation `op1` now cuts `coaster` (instance `i1`, profile 0) through the 
     "y_mm": 15.935129303418655,
     "width_mm": 8.0,
     "height_mm": 3.0,
-    "shape": "rect"
+    "shape": "rect",
+    "holds_slug": false
   }
 ]
 ```
@@ -231,6 +238,7 @@ Note: operation `op1` now cuts `coaster` (instance `i1`, profile 0) through the 
 | `width_mm` | Length of the tab along the outline. More than 0. |
 | `height_mm` | Height of the tab top above the stock bottom. More than 0. |
 | `shape` | `"rect"` or `"smooth"`. |
+| `holds_slug` | `true` when the tab is meant to hold the slug of the hole it is on, so `check` and `export` do not warn `tab_on_hole` for it; `false` otherwise; `null` in a project from version 14. It changes no cut. See [Parts with holes](#parts-with-holes). |
 
 You can edit a tab in the file: change its size or shape, or move its
 point. The point need not be exactly on the outline. A Profile centres the
@@ -261,7 +269,8 @@ outline the Profile cuts. `init` writes one:
   "width_mm": 8.0,
   "height_mm": 3.0,
   "shape": "rect",
-  "on_holes": false
+  "on_holes": false,
+  "avoid_corners": true
 }
 ```
 
@@ -278,10 +287,14 @@ place it by name with `tabs place <dcv> <op>`. `check`, `export`,
 | `placement` | `{ "kind": "count", "count": 4 }` spaces that many tabs evenly along each tool path (1 to 255), as `--count` does. `{ "kind": "at_distances", "distances_mm": [10.0, 60.0] }` puts a tab centred at each distance along the bit's path from where the path starts; a distance longer than the path wraps around. |
 | `width_mm`, `height_mm`, `shape` | As for a placed tab. |
 | `on_holes` | `false`: holes get no tabs, so each hole's slug comes loose. `true`: holes get the tabs too. `init` writes `false`. |
+| `avoid_corners` | `true`: each tab on a corner of the bit's path slides off it ([Tabs off corners](#tabs-off-corners)). `false`: tabs stay where the placement puts them. `init` writes `true`; a project from before format version 14 opens with `false`, so its tabs stay where they were. |
 
-`at_distances` measures along the bit's path, not the outline, from a
-start DreamCarve chooses. To see where that start is and where the tabs
-land, draw the toolpath with `dreamcarve check part.dcv --preview
+`at_distances` measures along the bit's path, not the outline, from where
+the path starts: a start DreamCarve chooses, or the Profile's [start
+point](profile.md#start-point) when it sets one, so that a distance lands
+where you expect. A ramp, helix or lead that moves an `"auto"` start
+leaves the tabs where they were. To see where that start is and where the
+tabs land, draw the toolpath with `dreamcarve check part.dcv --preview
 part-preview.svg` ([Toolpath preview](overview.md#toolpath-preview)):
 each pass starts at a circle the size of the bit, its tick pointing the
 way the cut goes, and each tab shows as a heavy mark on every pass that
@@ -290,6 +303,50 @@ path cut `on_line` ([Profile: open paths](profile.md#open-paths)) it
 measures from the path's first vertex as drawn, whichever end the cut
 starts at. To put tabs at known places, use `tabs place --at`, which
 measures along the outline from its first vertex.
+
+## Tabs off corners
+
+A tab on a corner holds the part where its outline turns, which is where
+the tab is hardest to cut off cleanly and where a stub spoils the shape
+most. With `avoid_corners`, as `init` writes it, each tab a request lays
+or `tabs place --count` places that sits on a corner slides along the
+bit's path to the nearest place off it.
+
+A tab is **on a corner** when the bit's path turns 30° or more within
+one bit diameter anywhere on its stretch (its width plus the bit's
+diameter) or within half a diameter either side of it. The turn counts
+each sharp corner's angle and each arc's sweep, so the arc an Outside
+path turns round a square corner (90° in about 5 mm with a 6.35 mm bit)
+is a corner, and so is the sharp corner of an Inside path. A circle turns
+evenly: one with a path radius above about 1.91 bit diameters (12.1 mm
+with a 6.35 mm bit) turns less than 30° per diameter anywhere, so a
+coaster's tabs never move. A smaller circle is a corner all the way
+round.
+
+A tab on a corner moves to the nearest place, along the path, that is off
+every corner, forward along the cut if both ways are as near. It moves at
+most half the gap to the next tab each way, and never onto another tab's
+stretch; on an open path its whole stretch stays within the path's ends. Four evenly spaced tabs
+on a 50 mm square turned 45°, whose cut starts in the middle of a side,
+land in the middle of the arcs round its corners; with `avoid_corners`
+each one slides about 11 mm onto the next side, and every tab stretch is
+on a straight side, its width and height unchanged.
+
+A tab that has nowhere to go stays where it is, and `check`, `export` and
+`tabs place` warn `tab_on_corner` with how far along the bit's path it
+is: its neighbours, another tab or an open path's end are in the way, or
+the outline is so small for the bit that it is a corner everywhere, which
+the warning says. No tab is dropped for being on a corner: a part keeps
+the tabs the [rules for short outlines](#outlines-too-short-for-the-tabs)
+leave it.
+
+```text
+warning: tab_on_corner: operation `op1`: the tab 49 mm along the bit's path round `Square` (instance `i1`, profile 0) is on a corner, where the path turns 30° or more within one bit diameter, and cannot slide off it without coming more than half way to the next tab, onto another tab or past the path's end, so it is cut on the corner; use fewer or narrower tabs, or place this one by hand (`dreamcarve tabs place --at`)
+```
+
+Tabs you place with `--at` or by their point stay where you put them;
+only a request or `--count` moves tabs off corners. VCarve documents no
+corner rule for its tabs; the 30° rule is DreamCarve's.
 
 ## Which cuts rise over a tab
 
@@ -445,18 +502,29 @@ from the middle of a ring. Each hole then gets the tabs, or as many as fit
 ([Outlines too short for the tabs](#outlines-too-short-for-the-tabs)).
 A placed tab on a hole is always cut, however it was placed. A held slug
 is usually waste you then have to free by hand, so `tabs place` warns
-`tab_on_hole` once for each tab it puts on a hole. After that, `check`
-and `export` stay quiet about the tabs placed on a hole for the cut that
-holds it, with `--count --on-holes` or from a request with `on_holes`,
-because you asked for them. They still warn about any other tab on a
-hole, such as one you added by hand, one placed with `--at --on-holes`
-(it sits on the outline, where a hand edit could also put it), or one
-whose Profile's bit or side changed since it was placed. If you did not
-mean to keep the slug, remove the tab:
+`tab_on_hole` once for each tab it puts on a hole. It saves those tabs
+with `"holds_slug": true`, because you asked for them, with `--count
+--on-holes`, `--at --on-holes` or a request with `on_holes`. After that,
+`check` and `export` stay quiet about them, even after you change the
+Profile's bit or side. They still warn on every run about a tab on a
+hole with `"holds_slug": false`, such as one you added by hand or one
+placed without `--on-holes` on an outline that another operation cuts as
+a hole. To keep a slug without the warning, set the tab's `holds_slug`
+to `true` in the file. If you did not mean to keep the slug, remove the
+tab:
 
 ```text
 warning: tab_on_hole: operation `op1`: tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`) unless you mean to keep the slug
 ```
+
+A project from format version 14 or before has no `holds_slug`, so its
+tabs open with `"holds_slug": null` (`-` in `tabs list`), and warn as
+they did: quiet for a tab on the bit's path round the hole, where only
+`--count --on-holes` or a request with `on_holes` put one, and on every
+run for any other tab on a hole, such as one placed with `--at
+--on-holes` or one whose Profile's bit or side has changed since. Set
+`holds_slug` to `true` or `false` to decide, or place the tabs again
+with `tabs place --replace`.
 
 A project from before format version 9 opens with `"on_holes": true` in
 its request, because every outline had tabs then, so it cuts as it did.
@@ -491,6 +559,7 @@ prints those it finds while placing.
 | "the tab top is ... but the deepest pass stops at ..." | No pass goes below the tab top, so the tabs change nothing. The cut is shallower than the stock, or the tabs are taller than the depth reaches. |
 | "the tab top is ... higher than the ... stock top" | The tab top is above the stock top. The tabs still apply: over each tab, every pass lifts clear of the stock, leaving its full thickness. |
 | "tab ... is on ..., which this operation cuts as a hole" (`tab_on_hole`) | A tab is on a hole, so it holds the slug. See [Parts with holes](#parts-with-holes). |
+| "the tab ... mm along the bit's path round ... is on a corner" (`tab_on_corner`) | A tab a request or `--count` laid is on a corner and has nowhere to slide to, so it is cut there. See [Tabs off corners](#tabs-off-corners). |
 | "tab ... on ... is ... mm from that outline" (`tab_off_outline`) | The tab's point is farther from its outline than its width plus the widest bit that cuts round it. It is cut where the outline is nearest it. See [A placed tab in the file](#a-placed-tab-in-the-file). |
 | "tab ... on ... is crossed by no enabled Profile operation" (`tab_not_crossed`) | No enabled Profile rises over the tab, so it holds nothing: no enabled Profile cuts that outline (it is cut only by a Pocket or a disabled Profile, or not at all), or every one that does runs too far from the tab or stops above its top. Cut the outline with a Profile, move the tab, or remove it with `dreamcarve tabs clear <dcv> --tab <id>`. |
 

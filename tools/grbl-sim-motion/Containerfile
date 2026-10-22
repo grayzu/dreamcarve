@@ -1,0 +1,90 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# An image with the grblHAL Simulator and grbl-sim, for
+# `cargo run -p grbl-sim-motion` and its tests (issue #329):
+#
+#   podman build -t dreamcarve-grbl-sim tools/grbl-sim-motion
+#   DREAMCARVE_GRBL_SIM=podman:dreamcarve-grbl-sim cargo test -p grbl-sim-motion
+#
+# `docker build` works the same way. Both simulators are GPL-3.0. They are
+# cloned and built here at pinned commits, run as separate programs, and
+# nothing of them enters DreamCarve. This file is DreamCarve's own recipe.
+#
+# Pins (checked 2026-10-21):
+#
+# - grblHAL/Simulator 150e3f935e4b7cab7b90263b6b90b78912d9158d (master,
+#   2026-10-15). Its src/grbl submodule is grblHAL/core
+#   4ec1ae44b857a70d2f9298344feac4b43ed0eb6b, the commit the definitions
+#   README cites; the build checks that it is.
+# - gnea/grbl bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e (v1.1h, the commit
+#   the definitions README cites), with grbl/grbl-sim
+#   9bdd1654c7eb6cacf03e35340b38c962bcebe013 (master, 2018) inside it, where
+#   its README says to put it.
+#
+# The grblHAL Simulator is built as it is. grbl-sim gets three changes to
+# its own harness, each made with sed and checked, none to GRBL's code:
+#
+# - `platform_ns` (platform_LINUX.c) stored `tv_sec*1e9+tv_nsec`,
+#   a double far past 2^32, in a uint32_t. That is undefined; x86 happens to
+#   wrap it, arm64 saturates it, and there the simulated clock never moves
+#   and grbl-sim prints nothing. It is computed in 64-bit integers instead.
+# - The Makefile needs `-fcommon` on GCC 10 and later, which it is given
+#   on the command line.
+# - Its serial emulation (serial.c) sends bytes only while GRBL's "data
+#   register empty" interrupt flag is set. GRBL sets that flag from one
+#   thread and clears it from the simulated interrupt on the other,
+#   unlocked, so a lost update could leave bytes queued with the flag off,
+#   and GRBL then never got its `ok` out. It sends while any byte is queued
+#   as well. The harness also pins grbl-sim to one CPU (`taskset`), which
+#   narrows the other races in that hand-off to a preemption.
+
+FROM docker.io/library/debian:trixie AS build
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates git build-essential cmake \
+ && rm -r -f /var/lib/apt/lists/*
+
+ARG SIMULATOR_COMMIT=150e3f935e4b7cab7b90263b6b90b78912d9158d
+ARG CORE_COMMIT=4ec1ae44b857a70d2f9298344feac4b43ed0eb6b
+ARG GRBL_COMMIT=bfb67f0c7963fe3ce4aaf8a97f9009ea5a8db36e
+ARG GRBL_SIM_COMMIT=9bdd1654c7eb6cacf03e35340b38c962bcebe013
+
+WORKDIR /src
+RUN git clone https://github.com/grblHAL/Simulator.git \
+ && git -C Simulator checkout --quiet "$SIMULATOR_COMMIT" \
+ && git -C Simulator submodule update --init --quiet \
+ && test "$(git -C Simulator/src/grbl rev-parse HEAD)" = "$CORE_COMMIT"
+
+RUN cd Simulator \
+ && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build build -j 4 \
+ && install -m 0755 build/grblHAL_sim build/grblHAL_validator /usr/local/bin/
+
+RUN git clone https://github.com/gnea/grbl.git \
+ && git -C grbl checkout --quiet "$GRBL_COMMIT" \
+ && git clone https://github.com/grbl/grbl-sim.git grbl/grbl/grbl-sim \
+ && git -C grbl/grbl/grbl-sim checkout --quiet "$GRBL_SIM_COMMIT"
+
+RUN cd grbl/grbl/grbl-sim \
+ && grep -q 'timestamp = ts.tv_sec\*1e9+ts.tv_nsec;' platform_LINUX.c \
+ && sed -i 's|timestamp = ts.tv_sec\*1e9+ts.tv_nsec;|timestamp = (uint32_t)((uint64_t)ts.tv_sec*1000000000u + (uint64_t)ts.tv_nsec);|' platform_LINUX.c \
+ && grep -q '(uint64_t)ts.tv_sec' platform_LINUX.c \
+ && grep -q 'while (UCSR0B & (1<<UDRIE0)){' serial.c \
+ && sed -i 's|while (UCSR0B & (1<<UDRIE0)){|while ((UCSR0B \& (1<<UDRIE0)) \|\| serial_get_tx_buffer_count() > 0){|' serial.c \
+ && grep -q 'serial_get_tx_buffer_count() > 0' serial.c \
+ && make -j 4 all FLAGS="-g -O3 -fcommon" \
+ && install -m 0755 grbl_sim.exe /usr/local/bin/grbl_sim \
+ && install -m 0755 gvalidate.exe /usr/local/bin/grbl_validator
+
+FROM docker.io/library/debian:trixie
+
+COPY --from=build /usr/local/bin/grblHAL_sim /usr/local/bin/grblHAL_validator \
+     /usr/local/bin/grbl_sim /usr/local/bin/grbl_validator /usr/local/bin/
+
+# The simulators read and write only the mounted work directory (their
+# EEPROM.DAT, the program, the logs).
+RUN useradd --create-home grbl
+USER grbl
+WORKDIR /work

@@ -1,0 +1,362 @@
+{
+  "version": 13,
+  "name": "order-pass-first",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 150,
+    "height_mm": 100,
+    "thickness_mm": 12
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm 2-flute upcut",
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1500,
+      "plunge_mm_min": 500,
+      "rpm": 18000,
+      "step_down_mm": 4,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "enabled": true,
+      "through_cut_allowance_mm": 0,
+      "safe_z_mm": 5,
+      "kind": "profile",
+      "direction": "climb",
+      "tabs": null,
+      "machining_order": "pass_first",
+      "entry": "plunge",
+      "lead": null,
+      "corner_relief": "none",
+      "last_pass": null,
+      "id": "o1",
+      "name": "Holes",
+      "targets": [
+        "hole1",
+        "hole2",
+        "hole3"
+      ],
+      "tool": "t1",
+      "side": "inside",
+      "depth_mm": 12,
+      "step_down_mm": 4
+    },
+    {
+      "enabled": true,
+      "through_cut_allowance_mm": 0,
+      "safe_z_mm": 5,
+      "kind": "profile",
+      "direction": "climb",
+      "tabs": null,
+      "machining_order": "pass_first",
+      "entry": "plunge",
+      "lead": null,
+      "corner_relief": "none",
+      "last_pass": null,
+      "id": "o2",
+      "name": "Parts",
+      "targets": [
+        "part1",
+        "part2",
+        "part3"
+      ],
+      "tool": "t1",
+      "side": "outside",
+      "depth_mm": 12,
+      "step_down_mm": 4
+    }
+  ],
+  "tabs": [],
+  "instances": [
+    {
+      "id": "part1",
+      "definition": "d-part1",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        10,
+        35
+      ],
+      "name": "part1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "part2",
+      "definition": "d-part2",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        60,
+        35
+      ],
+      "name": "part2",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "part3",
+      "definition": "d-part3",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        110,
+        35
+      ],
+      "name": "part3",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "hole1",
+      "definition": "d-hole1",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        25,
+        50
+      ],
+      "name": "hole1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "hole2",
+      "definition": "d-hole2",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        75,
+        50
+      ],
+      "name": "hole2",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    },
+    {
+      "id": "hole3",
+      "definition": "d-hole3",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        125,
+        50
+      ],
+      "name": "hole3",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 2,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3,
+    "tool_change_mode": "m6",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d-part1": {
+      "id": "d-part1",
+      "name": "part1",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 0,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 30,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 30,
+              "y": 30,
+              "bulge": 0
+            },
+            {
+              "x": 0,
+              "y": 30,
+              "bulge": 0
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-part2": {
+      "id": "d-part2",
+      "name": "part2",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 0,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 30,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 30,
+              "y": 30,
+              "bulge": 0
+            },
+            {
+              "x": 0,
+              "y": 30,
+              "bulge": 0
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-part3": {
+      "id": "d-part3",
+      "name": "part3",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 0,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 30,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 30,
+              "y": 30,
+              "bulge": 0
+            },
+            {
+              "x": 0,
+              "y": 30,
+              "bulge": 0
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-hole1": {
+      "id": "d-hole1",
+      "name": "hole1",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 6,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -6,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-hole2": {
+      "id": "d-hole2",
+      "name": "hole2",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 6,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -6,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d-hole3": {
+      "id": "d-hole3",
+      "name": "hole3",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 6,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -6,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

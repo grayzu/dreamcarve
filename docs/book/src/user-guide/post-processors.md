@@ -545,10 +545,24 @@ instead of `$20=1`:
 Before you start: home the machine; this program moves to machine Z -5.000 mm (G53). LinuxCNC applies soft limits only once homed: leave [TRAJ] NO_FORCE_HOMING unset.
 ( Lifts to machine Z with G53: home the machine before running. Soft limits apply only once homed: leave NO_FORCE_HOMING unset )
 ```
- Once homed, its soft limits
-(`[AXIS_Z] MIN_LIMIT`, `MAX_LIMIT`) always apply, and a lift outside them
-stops the program with "Linear move on line … would exceed Z's … limit"
-before the machine moves.
+
+Once homed, its soft limits (`[AXIS_Z] MIN_LIMIT`, `MAX_LIMIT`) always
+apply, and a lift outside them stops the program with "Linear move on
+line … would exceed Z's … limit". The program stops before the lift, but
+not before the machine moves. LinuxCNC reads the program ahead of the
+machine and refuses the lift as soon as it reads ahead to it, so the run
+stops wherever the machine has got to by then: possibly part-way through
+the job, with the bit in the stock. In LinuxCNC 2.9.4's simulator, a
+program whose lift was on line 530 stopped on line 119, mid-cut. That
+can happen on any line, even close to the start. This is why the machine
+Z must come from the machine itself, as the next paragraphs say.
+
+AXIS, LinuxCNC's usual screen, can catch it before anything moves: when
+you press Run, a program that goes outside the soft limits opens a
+"Program exceeds machine limits" warning, such as "Program exceeds
+machine maximum on axis Z". Choose Cancel and fix the machine Z, not Run
+Anyway. AXIS checks against the work offsets it had when it loaded the
+file, so if you touched off since, choose Re-Check, which reloads it.
 
 **Choosing the machine Z.** grblHAL and GRBL home Z to the top of its
 travel and call that just below machine Z 0: `−pulloff` (`$27`), or 0
