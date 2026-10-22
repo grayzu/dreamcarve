@@ -13,6 +13,7 @@ members = [
     "crates/dreamcarve",
     "tools/check-headers",
     "tools/doc-figures",
+    "tools/grbl-sim-motion",
     "tools/rs274-motion",
     "tools/third-party-licenses",
 ]

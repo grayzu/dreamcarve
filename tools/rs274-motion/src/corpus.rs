@@ -229,7 +229,12 @@ fn variants(plaque: &Project, id: &str) -> Result<Vec<(&'static str, Project)>, 
 /// Generates every enabled operation of `project` and emits its programs,
 /// as `dreamcarve export` does (`crates/dreamcarve/src/export.rs`,
 /// `build`), without its validation and reporting.
-fn export(project: &Project) -> Result<Vec<String>, String> {
+///
+/// # Errors
+///
+/// What failed, when an operation has no tool or does not generate or
+/// emit.
+pub fn export(project: &Project) -> Result<Vec<String>, String> {
     let mut ops = Vec::new();
     for operation in project.operations.iter().filter(|o| o.enabled()) {
         let tool = project
