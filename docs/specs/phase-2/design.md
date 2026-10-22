@@ -1688,7 +1688,8 @@ bit radius over. Issue #207's design comment is the source of these
 rules; the strip rule was added in implementation, because a cut that
 only keeps `r` from other lines still passes when it lies wholly on
 another line's kept side, as a line drawn twice in opposite directions
-shows.)
+shows. Changed in #311: a Left or Right Profile takes a last pass; see
+A8, "Left and Right".)
 
 ### Corner relief (dc-cam::relief)
 
@@ -3241,7 +3242,8 @@ above the step-down in effect, the operation's or else the tool's, is
 `Problem::LastPassThickerThanStepDown`, located at the thickness and
 naming the step-down's field, so a last pass is never thicker than a
 pass; and a cut of only one pass, whose allowance nothing leaves, warns
-`last_pass_unused`.)
+`last_pass_unused`. Changed in #311: Left and Right take a last pass, so
+`LastPassNeedsSide` is On line only, `Side::has_wall`.)
 
 **Algorithm** (`dc-cam::profile`).
 
@@ -3336,6 +3338,89 @@ target region, the operation's other parts included, and the generator
 holds the allowance passes to `r` from those, and outside them. Between
 `r` and `r + a` of another part an allowance pass cuts only that part's
 skin, which its own last pass removes, and is allowed.)
+
+**Left and Right** (added in #311; VCarve's Last Pass Allowance applies
+to its Profile of an open vector cut to the left or right, the A8 page;
+PureCutCNC has neither). A Left or Right Profile cuts one flank of the
+bit against the part, so it takes a last pass as Inside and Outside do.
+
+1. **Side.** The allowance path is the open path offset by `r + a` to
+   the cut side, `offset_open(path, ±(r + a))`, the same call as the
+   last pass's with the larger distance (`last_pass::open_twins`). It
+   runs the way the last pass's path runs (`open_runs_reversed`, the
+   #287 spindle rule), so the earlier passes and the last mill alike.
+2. **Ends.** Both offsets end square on the normals through the path's
+   end vertices, so the earlier passes end where the last pass ends:
+   neither is shortened nor extended. No pass reaches the part side past
+   an end (the cutter's edge touches the end vertex only on the last
+   pass, and stays `a` off it on the others); the earlier passes leave
+   the `a` skin standing up to each end normal and the last pass takes it
+   off there. Shortening the earlier passes would leave the last pass a
+   full-width cut at each end; extending them would cut past the end.
+3. **Narrowness and corners.** The pieces of the two offsets must pair
+   one for one (an arc, U or hairpin on the cut side that fits the bit
+   but not the bit plus the allowance makes the larger offset vanish or
+   split), and the last pass is held to `cuts_only_corners` as on an
+   outline, scanned from the path's start to its end with no wrap; a
+   departure that reaches an end of the path is no corner, so it may be
+   no thicker than a square corner's. Either is
+   `ShapeNarrowerThanAllowance`. So the thickness cap
+   `max(D/3, √2·a + 0.05)` applies to a V cut inside its tip.
+4. **Neighbours.** `check_kept_sides` runs on the allowance paths with
+   the reach `r + a` (the kept edges stay `r` off their lines): an
+   allowance path within `r + a` of another line of the operation, or of
+   any line's kept edge, would take that line's skin, which its own last
+   pass is to cut, or cut its kept strip. That is
+   `CamError::AllowanceCutsIntoKeptSide { op, shape, other, diameter_mm,
+   allowance_mm }`, the counterpart of Inside's `D + 2a` band rule. Two
+   lines cut towards each other need `D + 2a` between them; a cut towards
+   another line's kept side needs `3r + 2a`. Lines that meet at an outer
+   corner keep exactly `r + a` and are cut. Closed targets are skipped,
+   so they are no neighbours.
+5. **Tabs** are laid on the last pass's path (`PathEnds::Open`, from the
+   end beside the first vertex) and carried onto the allowance path by
+   `last_pass::twin_tabs`, its raised stretches cut short at the path's
+   ends (`PathTabs::from_spans` with `closed: false`); a smooth stretch
+   an end cuts short has no ramp at that end and holds the tab's top to it
+   (changed in the #311 review: its ramp there was nearly zero long, so
+   the pass fell to its own depth inside the tab in the last fraction of
+   a millimetre). `twin_tabs` also
+   samples each raised cut's reach all round it, just inside it
+   (`RING_INSET_MM`): where the last pass rises onto a tab, the tab's
+   foot at the far side of its kerf is a cusp thinner than the `r/12`
+   lattice, which the allowance pass, `a` nearer that side, reaches up to
+   `√(2ar − a²)` before the rise. This applies to outlines too, whose
+   rises it lengthens by at most a lattice step.
+6. **Entries, leads, relief.** A pass whose lap starts on a tab
+   descends no lower than the tab there (#337, which this relies on: a
+   reversed last pass, or an allowance pass, can start on a tab at a
+   path's end). Each pass ramps along its own path
+   (`entry::along_path`); a helix stays `HelixNeedsWasteSide`. No lead
+   and no relief, as without a last pass. The last pass plunges through
+   the column the earlier passes cleared, as on an outline (step 4).
+7. **`reverse`** runs the last pass's path backwards (`Polyline::reversed`)
+   from the other end, where the earlier passes end, with its layout
+   measured from there (`PathTabs::reversed_open`), so the tabs stay put
+   and the milling mode flips, as it does on an outline.
+8. **S9** (`Material::SideProfile`): with a last pass the open paths
+   offset by `r + a` to the side are tool-centre paths too; every cut
+   still keeps `r` from every open path and kept edge.
+
+Tests: `profile::last_pass_left_offsets_earlier_passes`,
+`profile::last_pass_left_right_tabs_cover_same_stretch` (the rise is
+`√(2ar − a²)`, the #310 review's rule, not the issue's "widened by a"),
+`profile::last_pass_left_right_tabs_keep_off_the_tab_material`,
+`profile::last_pass_left_right_reverse_runs_from_the_other_end`,
+`profile::last_pass_left_right_refuses_what_the_earlier_passes_cannot_follow`,
+`profile::last_pass_left_right_allows_sharp_corners`,
+`validate::last_pass_left_right_is_valid`,
+`safety::left_right_last_pass_passes_s9`, the G-code heightfield checks
+`side_last_pass::left_right_last_pass_keeps_the_kept_side_and_cuts_to_the_ends`
+`side_last_pass::left_right_last_pass_keeps_the_tabs` and
+`side_last_pass::left_right_last_pass_keeps_tabs_at_the_ends` (`dc-gcode`),
+and `cli::left_right_last_pass_exports_and_without_is_byte_identical`,
+whose projects without a last pass export the programs the build before
+#311 wrote. The Left and Right property projects get random last passes.
 
 Tests: `migrate::v12_to_v13_adds_null_last_pass`,
 `validate::last_pass_allowance_limit`, `validate::last_pass_on_line_is_error`,

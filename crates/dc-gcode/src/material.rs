@@ -86,7 +86,9 @@
 //!     one radius wide that a line keeps, as `dc_cam` refuses
 //!     (`CamError::CutsIntoKeptSide`). Closed targets are not cut. The
 //!     ramp and the tabs run along the offset path; there is no lead or
-//!     notch.
+//!     notch. With a last pass (#311) the path offset by the radius plus
+//!     the allowance is a tool-centre path too, for the passes before the
+//!     last; the kept edges stay one radius off.
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
 //!     it on its waste side, passes even where an outline of another
 //!     region comes nearer than the radius. That cut is the outline's
@@ -577,7 +579,8 @@ impl Material {
                             } else {
                                 -radius_mm
                             };
-                            side_profile(&paths, left_mm)
+                            let allowance_mm = profile.last_pass.as_ref().map(|l| l.allowance_mm);
+                            side_profile(&paths, left_mm, allowance_mm)
                         }
                         _ => Self::Unresolved,
                     },
@@ -637,15 +640,26 @@ impl Material {
 /// The material of a Left or Right Profile of `paths` (#207): the open
 /// ones with length, offset by `left_mm` (positive to the left) to give
 /// the tool-centre paths, and offset the other way to give their kept
-/// edges.
-fn side_profile(paths: &[Polyline], left_mm: f64) -> Material {
+/// edges. With a last pass `allowance_mm` (#311) each is offset by
+/// `left_mm` plus the allowance, to the same side, too: the path every
+/// pass but the last cuts. The kept edges stay one radius off.
+fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> Material {
     let open: Vec<&Polyline> = paths
         .iter()
         .filter(|p| !p.is_closed() && p.length_mm() > EPS_MM)
         .collect();
+    let allowance_left_mm = allowance_mm
+        .filter(|a| a.is_finite() && *a > 0.0)
+        .map(|a| (left_mm.abs() + a).copysign(left_mm));
     let centres = open
         .iter()
-        .flat_map(|p| offset_open(p, left_mm))
+        .flat_map(|p| {
+            let mut paths = offset_open(p, left_mm);
+            if let Some(far_mm) = allowance_left_mm {
+                paths.extend(offset_open(p, far_mm));
+            }
+            paths
+        })
         .flat_map(|c| edges_of(&c).collect::<Vec<_>>())
         .collect();
     let kept = open.iter().flat_map(|p| offset_open(p, -left_mm));

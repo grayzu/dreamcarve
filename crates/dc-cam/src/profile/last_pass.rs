@@ -10,7 +10,8 @@
 //! Every pass but the last runs on the allowance path, `r + a` from the
 //! part on the waste side, and the last on the part's path at `r`. Each
 //! allowance path is the same offset as the part's path with the larger
-//! distance; this module makes it, refuses a drawing it cannot follow,
+//! distance, for a closed outline and, Left or Right, for an open path
+//! (#311); this module makes it, refuses a drawing it cannot follow,
 //! and carries the part path's tabs onto it.
 
 use super::{Offset, check_band, region_shapes};
@@ -20,13 +21,15 @@ use crate::passes::pass_z_mm;
 use crate::tabs::{PathTabs, RaisedSpan};
 use dc_geometry::{
     Contour, EPS_MM, Point, Polyline, Region, Vec2, Vertex, distance_mm, nearest_point, offset,
+    offset_open,
 };
 use dc_project::{LastPass, ProfileOp, Side, TabShape, Tool};
 use std::collections::BTreeMap;
 
 /// Refuses a last pass the generator cannot cut (validation reports each
-/// first): one on a side with no wall to leave material on
-/// ([`CamError::LastPassNeedsSide`]), an allowance that is not more than
+/// first): one On line, which has no wall to leave material on
+/// ([`CamError::LastPassNeedsSide`]; Left and Right have one since #311),
+/// an allowance that is not more than
 /// 0 and at most a third of the tool's `diameter_mm`, or a thickness that
 /// is not more than 0 and at most `depth_mm` and the `step_down_mm` in
 /// effect (#310 review: the last pass is never thicker than a step)
@@ -38,7 +41,7 @@ pub(super) fn check(
     depth_mm: f64,
     step_down_mm: f64,
 ) -> Result<(), CamError> {
-    if !op.side.has_waste_area() {
+    if !op.side.has_wall() {
         return Err(CamError::LastPassNeedsSide { op: op.id.clone() });
     }
     let limit_mm = diameter_mm / 3.0;
@@ -192,37 +195,98 @@ pub(super) fn twins(
         shapes,
         tolerance_mm,
     )?;
-    // Each part path with the allowance path nearest it, never one twice.
-    let mut left: Vec<Option<Contour>> = found.into_iter().map(Some).collect();
+    paired(
+        outline.centres.iter().map(Contour::polyline),
+        found,
+        Contour::polyline,
+        allowance_mm,
+        tool.diameter_mm,
+    )
+    .ok_or_else(narrow)
+}
+
+/// The allowance paths of one open path `path` cut Left or Right (#311):
+/// `path` offset by the radius plus `allowance_mm` to the side of
+/// `left_mm` (positive to the left, the last pass's offset) with
+/// [`offset_open`], one for each of the last pass's pieces `centres`, in
+/// their order. Each ends square on the normals through the path's end
+/// vertices, as the last pass's do, so the earlier passes stop where the
+/// last pass stops: neither cuts past an end, and the last pass takes the
+/// allowance off right up to it. The narrowness rule is [`twins`']: where
+/// `path` fits the bit but not the bit plus the allowance (an arc, a U or
+/// a hairpin on the cut side), the offset loses or gains pieces; and the
+/// last pass takes off what [`cuts_only_corners`] allows, a departure
+/// that reaches an end of the path counting as no corner. Either is
+/// [`CamError::ShapeNarrowerThanAllowance`].
+pub(super) fn open_twins(
+    op: &ProfileOp,
+    tool: &Tool,
+    (shape, path): (&ShapeRef, &Polyline),
+    centres: &[Polyline],
+    left_mm: f64,
+    allowance_mm: f64,
+) -> Result<Vec<Polyline>, CamError> {
+    let reach_mm = tool.diameter_mm / 2.0 + allowance_mm;
+    fn itself(p: &Polyline) -> &Polyline {
+        p
+    }
+    let found = offset_open(path, reach_mm.copysign(left_mm));
+    paired(
+        centres.iter(),
+        found,
+        itself,
+        allowance_mm,
+        tool.diameter_mm,
+    )
+    .ok_or_else(|| CamError::ShapeNarrowerThanAllowance {
+        op: op.id.clone(),
+        shape: shape.clone(),
+        diameter_mm: tool.diameter_mm,
+        allowance_mm,
+    })
+}
+
+/// Each of the last pass's paths `centres` with an allowance path of
+/// `found`, in `centres`' order; `None` when the two are not one for one,
+/// or the last pass on a path would take off more than
+/// [`cuts_only_corners`] allows after the allowance path paired with it.
+/// `line` gives an allowance path's polyline. The pairing is greedy, each
+/// path in turn taking the nearest allowance path not yet taken, so it
+/// can pair a path with the wrong one; [`cuts_only_corners`] then finds
+/// the last pass far from its allowance path somewhere and the shape is
+/// refused, unless that allowance path runs beside it within the same
+/// bounds, when it serves as well.
+fn paired<'c, T>(
+    centres: impl ExactSizeIterator<Item = &'c Polyline>,
+    found: Vec<T>,
+    line: impl Fn(&T) -> &Polyline,
+    allowance_mm: f64,
+    diameter_mm: f64,
+) -> Option<Vec<T>> {
+    if found.len() != centres.len() {
+        return None;
+    }
+    let mut left: Vec<Option<T>> = found.into_iter().map(Some).collect();
     let mut twins = Vec::with_capacity(left.len());
-    for centre in outline.centres {
+    for centre in centres {
         let nearest = left
             .iter()
             .enumerate()
-            .filter_map(|(k, t)| {
-                t.as_ref()
-                    .map(|t| (k, distance_mm(centre.polyline(), t.polyline())))
-            })
+            .filter_map(|(k, t)| t.as_ref().map(|t| (k, distance_mm(centre, line(t)))))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(k, _)| k);
-        let Some(twin) = nearest.and_then(|k| left.get_mut(k)).and_then(Option::take) else {
-            return Err(narrow());
-        };
+        let twin = nearest
+            .and_then(|k| left.get_mut(k))
+            .and_then(Option::take)?;
         // The last pass takes off at most how far its path runs from the
         // allowance path's (its cutter reaches no farther past theirs).
-        let step_mm = (radius_mm / 8.0).min(0.25);
-        if !cuts_only_corners(
-            centre.polyline(),
-            twin.polyline(),
-            allowance_mm,
-            tool.diameter_mm,
-            step_mm,
-        ) {
-            return Err(narrow());
+        let step_mm = (diameter_mm / 16.0).min(0.25);
+        if !cuts_only_corners(centre, line(&twin), allowance_mm, diameter_mm, step_mm) {
+            return None;
         }
         twins.push(twin);
     }
-    Ok(twins)
+    Some(twins)
 }
 
 /// #284: an allowance path `twin` of `shape`, an outline of region
@@ -344,7 +408,8 @@ impl Departure {
 ///   they meet, so the last pass takes only the wedge between. A stretch
 ///   that turns back, or turns as far as a U-turn, goes into a notch,
 ///   slot or inlet that the earlier passes bridge and skip, and the last
-///   pass would cut it whole, as wide as the bit, at full depth.
+///   pass would cut it whole, as wide as the bit, at full depth. On an
+///   open path (#311) a stretch that reaches either end is no corner.
 fn cuts_only_corners(
     path: &Polyline,
     twin: &Polyline,
@@ -380,13 +445,33 @@ fn cuts_only_corners(
     let away = |gap_mm: f64| gap_mm > allowance_mm + THICKNESS_SLACK_MM;
     let n = samples.len();
     // Start at a sample beside the allowance path, so no stretch wraps the
-    // scan; a path nowhere beside it is one long stretch, no corner.
-    let Some(beside) = samples.iter().position(|(gap_mm, _)| !away(*gap_mm)) else {
-        return false;
+    // scan; a path nowhere beside it is one long stretch, no corner. An
+    // open path (#311) is scanned from its start to its end, and a
+    // stretch that reaches either end is no corner: the allowance path
+    // stops short of the end, which the last pass would cut whole.
+    let closed = path.is_closed();
+    let order: Vec<usize> = if closed {
+        let Some(beside) = samples.iter().position(|(gap_mm, _)| !away(*gap_mm)) else {
+            return false;
+        };
+        (1..=n).map(|offset| (beside + offset) % n).collect()
+    } else {
+        (0..n).collect()
     };
+    if !closed {
+        // The stretches at the ends: no corners, so no thicker than a
+        // square corner's.
+        let mut at_ends = samples
+            .iter()
+            .take_while(|(gap_mm, _)| away(*gap_mm))
+            .chain(samples.iter().rev().take_while(|(gap_mm, _)| away(*gap_mm)));
+        if at_ends.any(|(gap_mm, _)| *gap_mm > square_mm) {
+            return false;
+        }
+    }
     let mut stretch: Option<Departure> = None;
-    for offset in 1..=n {
-        let Some(&(gap_mm, heading)) = samples.get((beside + offset) % n) else {
+    for k in order {
+        let Some(&(gap_mm, heading)) = samples.get(k) else {
             continue;
         };
         if away(gap_mm) {
@@ -532,10 +617,14 @@ impl<T: Copy> Buckets<T> {
 /// pass before the last cuts any of it, however the two paths turn: at a
 /// sharp corner the allowance path runs past the corner beside the far
 /// edge's tabs, which an arc length along it does not see. The heights are
-/// sampled every [`tab_step_mm`], the stock on a lattice of that step;
-/// the cutter is taken that much wider and each raised stretch that much
-/// longer at both ends, so the lattice and sampling never let a cut
-/// through. A stretch is rect if any tab it carries is, else smooth, its
+/// sampled every [`tab_step_mm`], the stock on a lattice of that step
+/// and, all round each raised cut, just inside its reach (#311: where the
+/// last pass rises onto a tab, the tab's foot at the far side of its kerf
+/// is a cusp thinner than the lattice, which the allowance pass reaches
+/// first); the cutter is taken that much wider and each raised stretch
+/// that much longer at both ends, so the lattice and sampling never let a
+/// cut through. On an open path (#311) the stretches stop at its ends. A
+/// stretch is rect if any tab it carries is, else smooth, its
 /// ramps no longer than keeps it at or above every height sampled under
 /// them. Each earlier pass at `z` cuts a smooth stretch's fraction `f` of
 /// the way from `z` up to its top; the heights are the last pass's, at
@@ -549,7 +638,8 @@ pub(super) fn twin_tabs(
     floor_z_mm: f64,
 ) -> PathTabs {
     let twin_mm = twin.length_mm();
-    let none = || PathTabs::from_spans(twin_mm, layout.tab_count(), &[]);
+    let closed = twin.is_closed();
+    let none = || PathTabs::from_spans(twin_mm, layout.tab_count(), &[], closed);
     if layout.is_untabbed() || twin_mm <= EPS_MM || path.length_mm() <= EPS_MM {
         return none();
     }
@@ -586,7 +676,7 @@ pub(super) fn twin_tabs(
             }
         }
     }
-    let material: Vec<(Point, (f64, f64, TabShape))> = lattice
+    let mut material: Vec<(Point, (f64, f64, TabShape))> = lattice
         .into_iter()
         .filter_map(|((i, j), (top, shape))| {
             let p = lattice_point(i, j, step_mm);
@@ -594,6 +684,25 @@ pub(super) fn twin_tabs(
             raised(height).then_some((p, (height, top, shape)))
         })
         .collect();
+    // #311: the tabs' edges too, all round each raised cut just inside
+    // its reach. Where the last pass rises onto a tab, the tab's foot at
+    // the far side of its kerf is a cusp thinner than the lattice, between
+    // the circles of reach of the last cut below and the first above, and
+    // the allowance pass `a` nearer that side reaches it first.
+    let ring = ring_offsets(radius_mm - RING_INSET_MM, step_mm);
+    for &(c, z, span) in &last {
+        let Some((top, shape)) = span.filter(|_| raised(z)) else {
+            continue;
+        };
+        for &u in &ring {
+            let p = c + u;
+            if let Some(height) = cuts.near(p, radius_mm).reduce(f64::min)
+                && raised(height)
+            {
+                material.push((p, (height, top, shape)));
+            }
+        }
+    }
     if material.is_empty() {
         return none();
     }
@@ -616,8 +725,34 @@ pub(super) fn twin_tabs(
             (d, under)
         })
         .collect();
-    let spans = raised_runs(&need, twin_mm, step_mm, floor_z_mm);
-    PathTabs::from_spans(twin_mm, layout.tab_count(), &spans)
+    let spans = raised_runs(&need, twin_mm, step_mm, floor_z_mm, closed);
+    PathTabs::from_spans(twin_mm, layout.tab_count(), &spans, closed)
+}
+
+/// How far inside a raised cut's reach [`twin_tabs`] looks for a tab's
+/// edge, mm: less than a sample's spacing squared over the diameter, so
+/// the edge beside the first cut above a rise lies beyond the reach of the
+/// last cut below it.
+const RING_INSET_MM: f64 = 1e-4;
+
+/// Offsets `radius_mm` long all round, at most `step_mm` apart along the
+/// circle, for [`twin_tabs`]' tab edges.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "a count of steps round a circle of a tool's radius"
+)]
+fn ring_offsets(radius_mm: f64, step_mm: f64) -> Vec<Vec2> {
+    let n = (std::f64::consts::TAU * radius_mm / step_mm)
+        .ceil()
+        .max(8.0) as usize;
+    (0..n)
+        .map(|k| {
+            let angle = std::f64::consts::TAU * k as f64 / n as f64;
+            Vec2::new(angle.cos(), angle.sin()) * radius_mm
+        })
+        .collect()
 }
 
 /// How many lattice steps of `step_mm` reach past the radius.
@@ -654,16 +789,29 @@ fn lattice_point(i: i64, j: i64, step_mm: f64) -> Point {
 /// heights `need` sampled along it every half `step_mm` ([`twin_tabs`]):
 /// each run of samples that must keep above `floor_z_mm`, a step longer
 /// at both ends, at the highest top under it, rect unless every tab under
-/// it is smooth.
-fn raised_runs(need: &[Need], length_mm: f64, step_mm: f64, floor_z_mm: f64) -> Vec<RaisedSpan> {
+/// it is smooth. On a `closed` path a run may go through its start; on
+/// an open one (#311) runs stop at its ends.
+fn raised_runs(
+    need: &[Need],
+    length_mm: f64,
+    step_mm: f64,
+    floor_z_mm: f64,
+    closed: bool,
+) -> Vec<RaisedSpan> {
     let up = |k: usize| {
         need.get(k)
             .and_then(|(_, n)| *n)
             .filter(|(h, _, _)| *h > floor_z_mm + EPS_MM)
     };
     let n = need.len();
-    // Start at a sample that stands clear, so no run wraps the scan.
-    let Some(first_clear) = (0..n).find(|&k| up(k).is_none()) else {
+    // Start at a sample that stands clear, so no run wraps the scan; an
+    // open path's scan runs from its start, and ends any run at its end.
+    let first_clear = if closed {
+        (0..n).find(|&k| up(k).is_none())
+    } else {
+        (0..n).any(|k| up(k).is_none()).then_some(n - 1)
+    };
+    let Some(first_clear) = first_clear else {
         let top = need
             .iter()
             .filter_map(|(_, n)| n.map(|(_, t, _)| t))
@@ -688,10 +836,14 @@ fn raised_runs(need: &[Need], length_mm: f64, step_mm: f64, floor_z_mm: f64) -> 
         let k = (first_clear + offset) % n;
         if up(k).is_some() {
             run.push(k);
-            continue;
+            if closed || k + 1 < n {
+                continue;
+            }
         }
         if !run.is_empty() {
-            spans.push(raised_span(need, &run, length_mm, step_mm, floor_z_mm));
+            spans.push(raised_span(
+                need, &run, length_mm, step_mm, floor_z_mm, closed,
+            ));
             run.clear();
         }
     }
@@ -699,19 +851,32 @@ fn raised_runs(need: &[Need], length_mm: f64, step_mm: f64, floor_z_mm: f64) -> 
 }
 
 /// The raised stretch over the samples `run` of `need`, in order along
-/// the path (possibly through its start), for [`raised_runs`].
+/// the path (possibly through its start, when `closed`), for
+/// [`raised_runs`]. An open path's stretch stops at its ends.
 fn raised_span(
     need: &[Need],
     run: &[usize],
     length_mm: f64,
     step_mm: f64,
     floor_z_mm: f64,
+    closed: bool,
 ) -> RaisedSpan {
     let at = |k: usize| need.get(k).map_or(0.0, |(d, _)| *d);
     let first = run.first().map_or(0.0, |&k| at(k));
     let last = run.last().map_or(first, |&k| at(k));
-    let start_mm = first - step_mm;
-    let run_mm = (last - first).rem_euclid(length_mm) + 2.0 * step_mm;
+    // #311 review: a stretch an open path's end cuts short has no room for
+    // its ramp there, so it holds the top right to that end.
+    let at_start = !closed && first - step_mm <= EPS_MM;
+    let at_end = !closed && last + step_mm >= length_mm - EPS_MM;
+    let (start_mm, run_mm) = if closed {
+        (
+            first - step_mm,
+            (last - first).rem_euclid(length_mm) + 2.0 * step_mm,
+        )
+    } else {
+        let start_mm = (first - step_mm).max(0.0);
+        (start_mm, (last + step_mm).min(length_mm) - start_mm)
+    };
     let samples: Vec<(f64, f64)> = run
         .iter()
         .filter_map(|&k| need.get(k).and_then(|(_, n)| n.map(|(h, _, _)| (at(k), h))))
@@ -752,7 +917,11 @@ fn raised_span(
         length_mm: run_mm,
         top_z_mm: top,
         shape: TabShape::Smooth,
-        ramp_in_mm: ramp_in_mm.max(EPS_MM),
-        ramp_out_mm: ramp_out_mm.max(EPS_MM),
+        ramp_in_mm: if at_start {
+            0.0
+        } else {
+            ramp_in_mm.max(EPS_MM)
+        },
+        ramp_out_mm: if at_end { 0.0 } else { ramp_out_mm.max(EPS_MM) },
     }
 }

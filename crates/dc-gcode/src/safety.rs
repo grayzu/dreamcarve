@@ -6009,6 +6009,116 @@ mod tests {
         }
     }
 
+    /// #311 (S9 with a last pass on an open path): the sample with an open
+    /// line from (10, 60) to (70, 60) and an open L from (10, 80) to
+    /// (70, 80) to (70, 95), cut Left and Right, climb and conventional,
+    /// with a plunge and a ramp, its tab request and those tabs placed,
+    /// and a 0.5 mm last pass, also with `thickness_mm: 1` and `reverse`:
+    /// every program passes the safety pass (S1–S16). S9 holds the
+    /// allowance passes to the open paths offset by `r + a`, and every
+    /// pass to the radius from every line and kept strip; a hand-written
+    /// pass half the allowance off the path fails it.
+    #[test]
+    fn left_right_last_pass_passes_s9() {
+        let mut base = sample_project();
+        if let Some(def) = base.definitions.values_mut().next() {
+            def.profiles = vec![
+                dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 50.0),
+                        dc_geometry::Vertex::line(60.0, 50.0),
+                    ],
+                    false,
+                ),
+                dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 70.0),
+                        dc_geometry::Vertex::line(60.0, 70.0),
+                        dc_geometry::Vertex::line(60.0, 85.0),
+                    ],
+                    false,
+                ),
+            ];
+        }
+        let mut programs = 0;
+        for side in [dc_project::Side::Left, dc_project::Side::Right] {
+            for direction in [
+                dc_project::CutDirection::Climb,
+                dc_project::CutDirection::Conventional,
+            ] {
+                for entry in [
+                    dc_project::Entry::Plunge,
+                    dc_project::Entry::Ramp { angle_deg: 10.0 },
+                ] {
+                    for last_pass in [
+                        dc_project::LastPass {
+                            allowance_mm: 0.5,
+                            thickness_mm: None,
+                            reverse: false,
+                        },
+                        dc_project::LastPass {
+                            allowance_mm: 0.5,
+                            thickness_mm: Some(1.0),
+                            reverse: true,
+                        },
+                    ] {
+                        for placed in [false, true] {
+                            let mut project = base.clone();
+                            let op = dc_project::test_support::profile_mut(&mut project);
+                            op.side = side;
+                            op.direction = direction;
+                            op.entry = entry.clone();
+                            op.last_pass = Some(last_pass.clone());
+                            if placed {
+                                project = dc_cam::placed_tabs::place_requests(&project).unwrap().0;
+                                assert!(!project.tabs.is_empty());
+                            }
+                            let case =
+                                format!("{side:?} {direction:?} {entry:?} {last_pass:?} {placed}");
+                            let op = project.operations[0].clone();
+                            let Operation::Profile(profile) = &op else {
+                                unreachable!("the sample's operation is a Profile");
+                            };
+                            let (toolpath, _) = generate_profile(&project, profile)
+                                .unwrap_or_else(|e| panic!("{case}: {e}"));
+                            dc_cam::test_support::assert_safe(&toolpath, &project, &op);
+                            let (program, _) = emit(
+                                &project,
+                                &[(op, project.tools[0].clone(), toolpath).into()],
+                                "2026-10-21",
+                            )
+                            .unwrap_or_else(|e| panic!("{case}: {e}"));
+                            assert!(program.text.contains("Z-6.000"), "{case}: full depth");
+                            programs += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(programs, 32);
+
+        // By hand: Left of the line, at the allowance path (Y 63.675) and
+        // at half the allowance off it.
+        let mut project = base.clone();
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.side = dc_project::Side::Left;
+        op.last_pass = Some(dc_project::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: false,
+        });
+        let op = Operation::Profile(op.clone());
+        let cut =
+            |y: f64| format!("G21 G90\nG54\nG0 Z5\nX10 Y{y}\nG1 Z-1 F300\nX70 F1000\nG0 Z5\n");
+        check_material_text(&cut(63.175), &project, &op).unwrap();
+        check_material_text(&cut(63.675), &project, &op).unwrap();
+        let err = check_material_text(&cut(63.425), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+            "half the allowance off: {err:?}"
+        );
+    }
+
     /// #105: programs cut round placed tabs pass the safety pass (S1–S7,
     /// S9, S10, S12): the sample's tabs placed from its request, with a
     /// fifth, taller and smooth, on the right-hand edge, on each side, with

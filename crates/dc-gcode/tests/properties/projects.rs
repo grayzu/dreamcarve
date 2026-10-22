@@ -444,7 +444,8 @@ fn start() -> impl Strategy<Value = StartAt> {
     ]
 }
 
-/// A last pass (#284) where the side has a wall to leave it on, as
+/// A last pass (#284) where the side has a wall to leave it on (Left and
+/// Right too since #311), as
 /// (allowance as a fraction of a third of the bit, thickness as a fraction
 /// of the depth, reverse).
 fn last_pass(wall: bool) -> BoxedStrategy<Option<(f64, Option<f64>, bool)>> {
@@ -504,7 +505,7 @@ fn profile_project_of(
                     entry(side.has_waste_area()),
                     lead(),
                     relief(),
-                    last_pass(side.has_waste_area()),
+                    last_pass(side != Side::OnLine),
                     start(),
                 ),
             )
