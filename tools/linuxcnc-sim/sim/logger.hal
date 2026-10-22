@@ -1,0 +1,10 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# motion-logger stands in for the motion module, as in LinuxCNC's own
+# tests/motion-logger: it writes every command task sends to motion,
+# with its end point in machine coordinates and its source line, to
+# out.motion-logger. It moves nothing and checks no limits.
+
+loadusr -W motion-logger out.motion-logger
+setp iocontrol.0.emc-enable-in 1

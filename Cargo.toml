@@ -14,6 +14,7 @@ members = [
     "tools/check-headers",
     "tools/doc-figures",
     "tools/grbl-sim-motion",
+    "tools/linuxcnc-sim",
     "tools/rs274-motion",
     "tools/third-party-licenses",
 ]

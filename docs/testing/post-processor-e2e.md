@@ -19,12 +19,12 @@ Each layer checks something the one below it cannot.
 | 0. Unit, golden and safety tests | DreamCarve writes what its definitions say. Its own reading of the program (`dc-gcode/src/parse.rs`) passes S1-S16. The motion is the same on all six controllers (`post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect`). Golden programs are byte for byte. | `cargo test --all` | Every PR |
 | 1. Reference interpreter accepts it | LinuxCNC's own interpreter runs the LinuxCNC and generic programs to `M2`/`M30` with no error or warning. | `rs274 -g`: PR #264, `tools/gcode-conformance` | CI once #264 merges |
 | 2. Same motion as the reference interpreter | The moves `rs274` makes are the moves DreamCarve's reading says: kind, end point, arc centre, feed, dwell, canned-cycle expansion and `G53` lifts. The safety pass checks DreamCarve's reading, so this checks that the pass checks the real motion. Covers LinuxCNC, generic, Mach3 and UCCNC, with the bridge below. | `tools/rs274-motion` (this issue) | Locally now; CI proposed on #264 |
-| 3. Full controller simulation | LinuxCNC's task and motion layers, beyond the interpreter: `M0` pauses, soft limits on a `G53` lift, INI units. | `linuxcnc -r` with a sim INI and `motion-logger`, headless (follow-up issue) | Locally, then CI |
+| 3. Full controller simulation | LinuxCNC's task and motion layers, beyond the interpreter: the motion task sends to motion, `M0` pauses, homing, soft limits on a `G53` lift, INI units and startup codes, the end position. | `tools/linuxcnc-sim` (#328): `linuxcnc -r` with a sim INI, headless, with `motion-logger` and with the motion module | Locally; CI proposed on #264 |
 | 4. The controller's own software | Mach3 and UCCNC read the program as their manuals say. | Manual, in each product's documented demo or simulation mode, on Windows | Before a release, by a person |
 | 5. A real machine | It cuts what the preview shows. | Air cut, then foam or scrap, on grblHAL and GRBL. Other controllers need a user with one. | Before a release, by a person |
 
-Layers 0 to 2 are automatic. Layer 3 can be automated. Layers 4 and 5
-are manual. Each manual run is recorded on its own issue, with the
+Layers 0 to 3 are automatic; layer 3 runs locally for now. Layers 4
+and 5 are manual. Each manual run is recorded on its own issue, with the
 [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml)
 (`.github/ISSUE_TEMPLATE/controller-run.yml`): the controller and its
 version, the sender, the DreamCarve version and commit, the program and
@@ -53,17 +53,42 @@ a failed layer 5 run, does not lift it.
   each it compares `rs274`'s canonical calls with DreamCarve's reading,
   source line by source line. The parameter file sets a G54 offset of
   (25.4, 50.8, -76.2) mm. Under it a `G53` move lands at work Z 71.2, so
-  the check sees `rs274` go to machine Z -5, not work Z -5.
+  the check sees `rs274` go to machine Z -5, not work Z -5. A sixth
+  variant adds manual spindle control, so the program has `M0` pauses,
+  one right after the lift.
+- Layer 3: `rs274` is the interpreter only. It does not run LinuxCNC's
+  task layer or trajectory planner, so it does not apply soft limits,
+  does not stop at `M0` (it prints `PROGRAM_STOP()` and carries on), and
+  needs no homing. `linuxcnc-sim` runs the same LinuxCNC and generic
+  programs under `linuxcnc -r`, headless. In place of a GUI, a driver
+  script talks to LinuxCNC's documented command server, `linuxcncrsh`,
+  over TCP, and reads HAL pins with `halcmd`. It imports no LinuxCNC
+  module: both are separate LinuxCNC programs, as the licence rule
+  requires. The INI is a three-axis mill in mm with the same G54 offset.
+  Three sessions run:
+  - With `motion-logger` in place of the motion module, every move task
+    sends to motion is compared with DreamCarve's reading, line by line,
+    with `rs274-motion`'s comparison. Inch programs go through the mm
+    INI.
+  - The same, for the LinuxCNC programs, under the startup code
+    `G20 G91 G90.1 G18 G93 G55 G99`, which the header must override.
+  - With the motion module on a homed machine, each program must run to
+    completion. Each `M0` must pause, with the machine where DreamCarve
+    reads it, until the UI resumes it. The run must end where DreamCarve
+    reads it.
+
+  Tests add a machine whose Z travel ends at machine -20 mm, where the
+  lift to -5 must end the run with LinuxCNC's soft-limit error, and an
+  unhomed machine, which must refuse to run.
 
 **Not automatic, and why.**
 
-- `rs274` is the interpreter only. It does not run LinuxCNC's task layer
-  or trajectory planner, so it does not apply soft limits and does not
-  stop at `M0` (it prints `PROGRAM_STOP()` and carries on). It also needs
-  no homing. Layer 3 covers these.
-- The machine's own INI (units, limits, `[RS274NGC]` startup codes) is
-  the user's. The header resets the modes the definitions README lists,
-  but a startup code DreamCarve does not reset is not modelled.
+- The machine's own INI is the user's. Layer 3 covers units and the
+  modes the header resets, under a startup code that sets each of them.
+  Other state the user's machine may carry, such as a `G92` offset in
+  the parameter file or a tool length offset, is not modelled.
+- Real-time behaviour (following error, servo timing) is not simulated:
+  each joint's command is looped back as its feedback.
 
 **Manual procedure (layer 4/5 stand-in).** Use LinuxCNC's own simulator,
 which is free:
@@ -305,7 +330,7 @@ Existing tools that expand cycles are not authorities for this either:
 | Option | Licence | Fidelity to these dialects | Decision |
 | --- | --- | --- | --- |
 | LinuxCNC `rs274`, the standalone interpreter in `linuxcnc-uspace` | GPL-2.0 (run as a separate process) | It is LinuxCNC's interpreter. It expands canned cycles (G73 and G83 back off 0.254 mm), handles `G53`, `G98`/`G99`, comments and `N` words. Mach3 and UCCNC need the bridge. | **Used**: layers 1 and 2 |
-| LinuxCNC full sim, `linuxcnc -r <ini>` with `motion-logger` and the Python `linuxcnc` module, no display | GPL-2.0 | Adds the task layer, planner and soft limits. LinuxCNC's own tests (`tests/motion-logger/basic`) run it headless with `DISPLAY` unset, and its CI runs them in `debian:bookworm` containers. | Follow-up issue (layer 3) |
+| LinuxCNC full sim, `linuxcnc -r <ini>` with `motion-logger`, driven through `linuxcncrsh` and `halcmd`, no display | GPL-2.0 | Adds the task layer, planner and soft limits. LinuxCNC's own tests (`tests/motion-logger/basic`) run it headless with `DISPLAY` unset, and its CI runs them in `debian:bookworm` containers. | **Used**: layer 3, `tools/linuxcnc-sim` (#328), in the `rs274-motion` image |
 | LinuxCNC Docker images | `jeffersonjhunt/linuxcnc` and `meri/linuxcnc` state no licence and were last updated 6 and 10 years ago. There is no official image. | | **Not used.** `tools/rs274-motion/Containerfile` installs Debian 13's own `linuxcnc-uspace` 2.9.4, signed by Debian. #264 pins 2.9.10 from linuxcnc.org. |
 | CAMotics 1.2 (`planner`, `gcodetool`, `camsim` CLIs) | GPL-2.0+ | "A subset of LinuxCNC GCode" (<https://camotics.org/gcode.html>). Its own list of missing codes includes G73 and G83. | Not used. `rs274` is LinuxCNC itself. CAMotics could later check the cut stock (`camsim` writes an STL), which is a different question. |
 | grblHAL Simulator, grbl-sim | GPL-3.0 (run as separate processes) | The real firmware core: grblHAL at the commit the definitions README cites, GRBL 1.1h. No limit switches, so no homing or soft limits. | **Used** for grblHAL and GRBL: `tools/grbl-sim-motion` (#329) |
@@ -330,7 +355,35 @@ controller and feature always runs. More in
 [`tools/rs274-motion/README.md`](../../tools/rs274-motion/README.md).
 
 On 2026-10-21 all 31 corpus programs agreed with `rs274` 2.9.4. A
-deliberately deepened cut was reported on its line.
+deliberately deepened cut was reported on its line. With the
+manual-spindle variant added for layer 3, all 33 agreed.
+
+## Running layer 3
+
+```sh
+podman build -t dreamcarve-rs274 tools/rs274-motion   # the same image
+DREAMCARVE_LINUXCNC=podman:dreamcarve-rs274 cargo test -p linuxcnc-sim -- --nocapture
+cargo run -p linuxcnc-sim -- --linuxcnc podman:dreamcarve-rs274       # the corpus, with a report
+```
+
+Containers run with `--security-opt no-new-privileges`, so the setuid
+`rtapi_app` runs as the user, in LinuxCNC's non-realtime mode. Without
+`DREAMCARVE_LINUXCNC` the tests that need LinuxCNC skip with a message;
+nothing is looked up on `PATH`, since a session starts a whole LinuxCNC.
+The test that guards the program set always runs. More in
+[`tools/linuxcnc-sim/README.md`](../../tools/linuxcnc-sim/README.md).
+
+On 2026-10-21, with LinuxCNC 2.9.4, all 17 LinuxCNC and generic programs
+agreed in every session: 4879 logged moves, 4 `M0` pauses and every end
+position. The corpus takes three to seven minutes, depending on the
+host's load. Most of it is `motion-logger`, which answers about one
+command per 10 ms. Under the short Z travel the
+lift was refused with "Linear move on line 530 would exceed Z's positive
+limit". Motion refuses a move when task queues it, and task reads ahead,
+so the program stopped mid-cut, with the bit in the stock, long before
+the lift (line 119 in one run, line 51 in another). It did stop before
+the lift. #336 corrected the post-processors chapter, which had said
+"before the machine moves".
 
 ## CI
 
@@ -341,9 +394,18 @@ also run `cargo test -p rs274-motion` with `DREAMCARVE_RS274` unset, since
 second workflow PR, because it is one step in that job. Agents cannot
 merge either: the token has no `workflow` scope.
 
+Layer 3 needs a non-root user, which a job container does not have by
+default (LinuxCNC refuses to run as root), and several minutes. So it is
+proposed on #264 as its own job on the runner itself: install
+`linuxcnc-uspace`, then run `cargo test -p linuxcnc-sim` with
+`DREAMCARVE_LINUXCNC=/usr/bin/linuxcnc`. The `rs274-motion` image with
+podman is the fallback; it has been run only through podman machine on
+macOS.
+
 ## Follow-up issues
 
-- LinuxCNC full simulation, headless (layer 3).
+- LinuxCNC full simulation, headless (layer 3): #328, `tools/linuxcnc-sim`.
+  CI for it is proposed on #264. The doc fix it found is #336, done.
 - grblHAL Simulator and grbl-sim for the grblHAL and GRBL corpus: #329,
   `tools/grbl-sim-motion`. CI for it is proposed on #264. The simulator
   faults it found are #344.
