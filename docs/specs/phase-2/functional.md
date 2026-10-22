@@ -295,9 +295,14 @@ above its top), and
 `tab_on_hole` for a tab on an outline a Profile cuts as a hole: the tab
 is cut and holds the slug. `tabs place` warns `tab_on_hole` once for each
 tab it places on a hole; `check` and `export` do not warn again for a
-tab placed there for that cut (`--count --on-holes` or a request with
-`on_holes`, such as a version 8 file's migrated one), only for others
-(changed in #300: every hole tab warned on every export). A crossed tab
+tab placed there with `--on-holes` (`--count` or `--at`) or from a
+request with `on_holes`, such as a version 8 file's migrated one, which
+is saved with `holds_slug: true`, only for others (changed in #300:
+every hole tab warned on every export; changed in #302: a tab placed
+with `--at --on-holes`, or whose Profile changed its bit or side, warned
+on every export). Format version 15 adds `holds_slug` to each placed tab
+(`true`, `false`, or `null` from the migration, which warns as format 14
+did), and `tabs list` shows it as `HOLDS_SLUG`. A crossed tab
 whose point is farther from its outline than its width plus the widest
 bit that cuts round it warns `tab_off_outline`, project-level, with the
 distance; it is cut at the outline's nearest point (#300). The CLI gains `dreamcarve tabs place <dcv>

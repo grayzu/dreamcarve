@@ -8121,7 +8121,8 @@ fn bare_square_with_hole(dir: &Path) -> PathBuf {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let project = load_file(&dcv).project;
     assert!(project.tabs.is_empty(), "{:?}", project.tabs);
-    assert!(as_profile(&project.operations[0]).tabs.is_none());
+    let op = project.operations.first().map(as_profile);
+    assert!(op.is_some_and(|op| op.tabs.is_none()), "{op:?}");
     dcv
 }
 

@@ -127,7 +127,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `14`. |
+| `version` | Format version. This build writes `15`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -440,7 +440,8 @@ point, and every enabled Profile that cuts that outline rises over it:
     "y_mm": 15.935129303418655,
     "width_mm": 8.0,
     "height_mm": 3.0,
-    "shape": "rect"
+    "shape": "rect",
+    "holds_slug": false
   }
 ]
 ```
@@ -454,6 +455,7 @@ point, and every enabled Profile that cuts that outline rises over it:
 | `width_mm` | Length of the tab along the outline. More than 0. |
 | `height_mm` | Height of the tab top above the stock bottom. More than 0. |
 | `shape` | `"rect"` (square shoulders) or `"smooth"` (a triangle). |
+| `holds_slug` | Whether the tab is meant to hold the slug of the hole it is on: `true`, `false` or `null`. It changes no cut, only the `tab_on_hole` warning. `tabs place --on-holes`, and a tab request with `on_holes`, write `true` for each tab they put on a hole, and `check` and `export` then do not warn for it; every other tab they place gets `false`, and a `false` tab on a hole warns on every `check` and `export`. `null` is what a project upgraded from version 14 gets: such a tab warns as it did before, unless it lies on the bit's path round the hole of the Profile that cuts it, where only placing with `on_holes` put one. Set it to `true` by hand to keep a hole's slug without the warning. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
 
 [Tabs](tabs.md) explains placing, listing and removing them.
 
@@ -507,6 +509,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 12 | Adds `heights` after `origin`, with `clearance_mm`, `tool_change_machine_z_mm` and `park` all `null` on upgrade (#283), so the project exports as before. See [`heights`](#heights). |
 | 13 | Adds each Profile's `last_pass`, `null` on upgrade (#284), so every pass cuts on the part's path as before. See [Last pass](profile.md#last-pass). |
 | 14 | Adds `avoid_corners` to each Profile's tab request, `false` on upgrade, and each Profile's `start`, `"auto"` on upgrade (#285), so the tabs are laid and each cut starts where it did. See [Tabs: tabs off corners](tabs.md#tabs-off-corners) and [Profile: start point](profile.md#start-point). |
+| 15 | Adds `holds_slug` to each placed tab, `null` on upgrade (#302): whether a tab on a hole is meant to hold its slug. A version 14 file did not record it, so `null` keeps the warnings it gave, and the program does not change. See [`tabs`](#tabs). |
 
 ## What `check` reports
 

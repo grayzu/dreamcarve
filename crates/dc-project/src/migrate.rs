@@ -73,6 +73,11 @@
 //!   non-null `tabs` request and `start: "auto"` after its `last_pass`
 //!   (#285): tabs stay where they were laid and each cut starts where it
 //!   did, so the file exports what it did.
+//! - **15**: adds `holds_slug: null` at the end of each placed tab (#302):
+//!   whether the tab is meant to hold the slug of the hole it is on, which
+//!   format 14 did not record. Telling needs the Profile's tool paths, so
+//!   the migration leaves it unset, and an unset tab warns `tab_on_hole`
+//!   as format 14 did; cuts never depend on it.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -83,7 +88,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 14;
+pub const CURRENT_VERSION: u32 = 15;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -106,6 +111,7 @@ fn step(from: u32) -> Option<Step> {
         11 => Some(v11_to_v12),
         12 => Some(v12_to_v13),
         13 => Some(v13_to_v14),
+        14 => Some(v14_to_v15),
         _ => None,
     }
 }
@@ -627,6 +633,30 @@ fn v13_to_v14(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
             out.insert("start".into(), Value::from("auto"));
         }
         *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
+/// Version 14 → 15 (#302): `holds_slug: null` at the end of each placed
+/// tab. Whether a format 14 hole tab was placed to hold its slug shows
+/// only in where it sits against the tool path of the Profile that cuts
+/// it (#300), which only `dc-cam` builds, so the step records nothing and
+/// generation keeps that rule for an unset tab: the file warns as it did.
+/// Fails if a tab already has the key: that is not a version 14 file.
+fn v14_to_v15(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(tabs) = root.get_mut("tabs").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, tab) in tabs.iter_mut().enumerate() {
+        let Value::Object(fields) = tab else {
+            return Err(format!("`tabs[{i}]` is not an object"));
+        };
+        if fields.contains_key("holds_slug") {
+            return Err(format!(
+                "a version 14 file has no `tabs[{i}].holds_slug`, but this one does"
+            ));
+        }
+        fields.insert("holds_slug".into(), Value::Null);
     }
     Ok(root)
 }

@@ -56,9 +56,10 @@ pub struct TabSize {
 /// spaced or tabs at `at_distances` along it from its start (the
 /// Profile's start point when it sets one, #285); off corners where they
 /// can be with `avoid_corners` ([`Warning::TabOnCorner`] for one that
-/// cannot); none on a hole unless `on_holes`; and on a path too short for
-/// them, the most that cover at most half of it, but at least one on a
-/// part. Each tab is
+/// cannot); none on a hole unless `on_holes`, and those it puts there
+/// with `holds_slug: true` (#302), every other with `false`; and on a path
+/// too short for them, the most that cover at most half of it, but at
+/// least one on a part. Each tab is
 /// placed at its centre on the tool path itself, taken into the
 /// instance's definition space, so the Profile cuts it exactly where the
 /// request did; it is crossed by every Profile that comes near where it
@@ -83,6 +84,9 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
             continue;
         };
         let length_mm = path.length_mm();
+        // #302: a tab the request puts on a hole, which it does only with
+        // `on_holes`, is there to hold the slug.
+        let holds_slug = spec.on_holes && cut.holes.get(j).copied().unwrap_or(false);
         if let Some(Some((reduced, widths_mm))) = cut.plan.request_reductions.get(j) {
             placement.warnings.push(coverage_warning(
                 op,
@@ -137,7 +141,7 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
                 width_mm: tab_cut.width_mm,
                 height_mm: tab_cut.top_z_mm,
                 shape: tab_cut.shape,
-                holds_slug: None,
+                holds_slug: Some(holds_slug),
             };
             if !has_copy(project, &placement.tabs, &tab) {
                 placement.tabs.push(tab);
@@ -150,7 +154,9 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
 
 /// Places a tab of `size` at each of `at_mm`, distances along the outline
 /// from its first vertex as drawn (mm, definition space), on every
-/// outline Profile `op` cuts: none on a hole unless `on_holes`. A closed
+/// outline Profile `op` cuts: none on a hole unless `on_holes`, and those
+/// it puts there with `holds_slug: true` (#302), every other with
+/// `false`. A closed
 /// outline takes each distance modulo its length; an open one clamps it
 /// to its ends. The tabs are cut as placed; the warnings say where they
 /// would overlap or cover more than half of a tool path.
@@ -213,7 +219,9 @@ pub fn place_on_outlines(
                 width_mm: size.width_mm,
                 height_mm: size.height_mm,
                 shape: size.shape,
-                holds_slug: None,
+                // #302: only `on_holes` puts a tab on a hole, to hold
+                // its slug.
+                holds_slug: Some(hole),
             };
             if !has_copy(project, &placement.tabs, &tab) {
                 placement.tabs.push(tab);
@@ -460,8 +468,9 @@ pub fn off_outline_mm(project: &Project, tab: &PlacedTab) -> Option<f64> {
 
 /// The placed tabs Profile `op` crosses on a tool path round a hole, with
 /// the hole, in project order: those generation warns
-/// [`Warning::TabOnHole`] for, and those placed there for this cut, which
-/// it does not (#300). `tabs place` warns for the ones it places. Fails as
+/// [`Warning::TabOnHole`] for, and those that hold their slugs, which it
+/// does not (#300, #302: `holds_slug`, or unset and on this Profile's path
+/// round the hole). `tabs place` warns for the ones it places. Fails as
 /// [`crossed_by`] does.
 pub fn on_holes(project: &Project, op: &ProfileOp) -> Result<Vec<(TabId, ShapeRef)>, CamError> {
     Ok(op_tabs(project, op)?
@@ -1183,15 +1192,17 @@ mod tests {
             assert_eq!(t.holds_slug, Some(t.profile == 1), "{t:?}");
         }
         p.tabs = on.tabs;
+        let ids: Vec<TabId> = p.tabs.iter().map(|t| t.id.clone()).collect();
         for diameter_mm in [6.35, 3.175] {
             p.tools[0].diameter_mm = diameter_mm;
-            let (tp, warnings) = generate(&p);
+            let (_, warnings) = generate(&p);
             assert_eq!(
                 on_hole_warned(&warnings),
                 vec![],
                 "{diameter_mm} mm: {warnings:?}"
             );
-            assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 4, "{diameter_mm} mm");
+            let profile = profile_mut(&mut p).clone();
+            assert_eq!(crossed_by(&p, &profile).unwrap(), ids, "{diameter_mm} mm");
         }
     }
 
