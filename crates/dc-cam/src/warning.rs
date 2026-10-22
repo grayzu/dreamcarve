@@ -102,6 +102,11 @@ pub enum WarningCode {
     /// A Profile has a last pass, but its cut is one pass deep, so that
     /// pass is the last and no pass leaves the allowance (#310 review).
     LastPassUnused,
+    /// A Profile's last pass turns on an inside arc tighter than its
+    /// allowance, where its feed is lowered only to the least the safety
+    /// pass accepts, so its cutting edge moves faster than the feed
+    /// (#335).
+    LastPassEdgeFaster,
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped.
     EngravePathDegenerate,
@@ -166,6 +171,7 @@ impl WarningCode {
             Self::ReliefCornerTooTight => "relief_corner_too_tight",
             Self::ReliefCornerNotCut => "relief_corner_not_cut",
             Self::LastPassUnused => "last_pass_unused",
+            Self::LastPassEdgeFaster => "last_pass_edge_faster",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::CutInsideTabHeldPart => "cut_inside_tab_held_part",
@@ -541,6 +547,21 @@ pub enum Warning {
         /// The operation.
         op: OperationId,
     },
+    /// [`WarningCode::LastPassEdgeFaster`].
+    LastPassEdgeFaster {
+        /// The operation.
+        op: OperationId,
+        /// The shape.
+        shape: ShapeRef,
+        /// The tightest such arc's radius, the tool centre's, mm.
+        radius_mm: f64,
+        /// The allowance, mm.
+        allowance_mm: f64,
+        /// The feed the arc runs at, mm/min.
+        feed_mm_min: f64,
+        /// How many times the feed the cutting edge moves at there.
+        edge_ratio: f64,
+    },
     /// [`WarningCode::EngravePathDegenerate`].
     EngravePathDegenerate {
         /// The operation.
@@ -656,6 +677,7 @@ impl Warning {
             Self::ReliefCornerTooTight { .. } => WarningCode::ReliefCornerTooTight,
             Self::ReliefCornerNotCut { .. } => WarningCode::ReliefCornerNotCut,
             Self::LastPassUnused { .. } => WarningCode::LastPassUnused,
+            Self::LastPassEdgeFaster { .. } => WarningCode::LastPassEdgeFaster,
             Self::EngravePathDegenerate { .. } => WarningCode::EngravePathDegenerate,
             Self::CutInsideFreedPart { .. } => WarningCode::CutInsideFreedPart,
             Self::CutInsideTabHeldPart { .. } => WarningCode::CutInsideTabHeldPart,
@@ -687,6 +709,7 @@ impl Warning {
             | Self::ReliefCornerTooTight { op, .. }
             | Self::ReliefCornerNotCut { op, .. }
             | Self::LastPassUnused { op }
+            | Self::LastPassEdgeFaster { op, .. }
             | Self::EngravePathDegenerate { op, .. }
             | Self::CutInsideFreedPart { op, .. }
             | Self::CutInsideTabHeldPart { op, .. }
@@ -1155,6 +1178,21 @@ impl fmt::Display for Warning {
             ),
             Self::LastPassUnused { .. } => f.write_str(
                 "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
+            ),
+            Self::LastPassEdgeFaster {
+                shape,
+                radius_mm,
+                allowance_mm,
+                feed_mm_min,
+                edge_ratio,
+                ..
+            } => write!(
+                f,
+                "its last pass round {shape} turns on an inside arc of {} mm, tighter than the {} mm allowance, where it runs at {} mm/min, the least the safety pass allows, so its cutting edge there moves at {} times the feed; use a smaller bit, larger inside radii or a smaller allowance",
+                rounded(*radius_mm, 3),
+                mm(*allowance_mm),
+                mm(*feed_mm_min),
+                rounded(*edge_ratio, 2)
             ),
             Self::EngravePathDegenerate { shape, .. } => write!(
                 f,
@@ -1692,6 +1730,17 @@ mod tests {
                 "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
             ),
             (
+                Warning::LastPassEdgeFaster {
+                    op: op(),
+                    shape: shape(),
+                    radius_mm: 0.325,
+                    allowance_mm: 0.5,
+                    feed_mm_min: 136.054_421_768_707_5,
+                    edge_ratio: 1.465_201_465,
+                },
+                "its last pass round `Shape` (instance `i1`, profile 2) turns on an inside arc of 0.325 mm, tighter than the 0.5 mm allowance, where it runs at 136.05 mm/min, the least the safety pass allows, so its cutting edge there moves at 1.47 times the feed; use a smaller bit, larger inside radii or a smaller allowance",
+            ),
+            (
                 Warning::EngravePathDegenerate {
                     op: op(),
                     shape: shape(),
@@ -1809,7 +1858,8 @@ mod tests {
             C::ReliefSkipped => C::ReliefCornerTooTight,
             C::ReliefCornerTooTight => C::ReliefCornerNotCut,
             C::ReliefCornerNotCut => C::LastPassUnused,
-            C::LastPassUnused => C::EngravePathDegenerate,
+            C::LastPassUnused => C::LastPassEdgeFaster,
+            C::LastPassEdgeFaster => C::EngravePathDegenerate,
             C::EngravePathDegenerate => C::CutInsideFreedPart,
             C::CutInsideFreedPart => C::CutInsideTabHeldPart,
             C::CutInsideTabHeldPart => C::ToolChangeAvoidable,
@@ -1855,7 +1905,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 31);
+        assert_eq!(count, 32);
     }
 
     #[test]

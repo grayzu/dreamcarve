@@ -955,7 +955,14 @@ built (design addendum, "Order and format versions").
     With a lead, the earlier passes are led in beside the last pass's
     lead and the step joins the two staging points; a last pass lead-in
     that starts too far from their cut is left off with
-    `lead_dropped`.)
+    `lead_dropped`. Changed again in #335: round an inside arc of its
+    path, of radius `ρ` round a wall of `ρ + r`, the last pass runs at
+    `feed · ρ / (ρ + r)`, rounded down, so its cutting edge moves at the
+    feed (the issue's `k` is 1) and it removes no more per minute than a
+    straight wall's last pass; never below `feed · a / (a + r)`, the
+    smallest hole's, where a tighter arc warns `last_pass_edge_faster`.
+    Straight cuts, outside corners, lead arcs and the earlier passes keep
+    the feed, and so does a curve drawn as straight segments.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 
@@ -1103,3 +1110,10 @@ built (design addendum, "Order and format versions").
   pass's step across the allowance, from the path the earlier passes cut
   to its own, may run between the two, on Left and Right too, still `r`
   from every open path and kept edge.)
+- **S3 with a last pass** (#335). A level cut of a Profile with a last
+  pass may run slower than its tool's feed, down to
+  `feed · a / (a + r)`, the allowance `a` over the allowance plus the
+  tool radius: the last pass's inside arcs run at `feed · ρ / (ρ + r)`,
+  no lower than that. Slower, or faster than the feed, is still
+  `feed_not_from_tool`; so is a slower level cut of any other operation.
+  The emitter writes such a feed rounded down.

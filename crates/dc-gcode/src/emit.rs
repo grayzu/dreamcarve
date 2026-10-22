@@ -2095,6 +2095,10 @@ struct Writer<'a> {
     /// written: no cut the toolpath holds to it may fall faster, as
     /// written (S10, #325).
     plunge_mm_min: Option<f64>,
+    /// The cutting feed, mm/min, of that tool: a level cut slower than
+    /// it, a last pass's inside arc (#335), is written rounded down, so
+    /// its cutting edge moves no faster than the generator held it to.
+    cut_feed_mm_min: Option<f64>,
     /// The lines that set the controller's modal state, written again after
     /// a pause.
     setup: Vec<String>,
@@ -2133,6 +2137,7 @@ impl<'a> Writer<'a> {
             spindle_rpm: None,
             tool: None,
             plunge_mm_min: None,
+            cut_feed_mm_min: None,
             setup: Vec::new(),
             lifted: false,
             retracted_z_mm: None,
@@ -2306,6 +2311,7 @@ impl<'a> Writer<'a> {
         toolpath: &Toolpath,
     ) -> Result<Written, ExportError> {
         self.plunge_mm_min = tool.plunge_mm_min;
+        self.cut_feed_mm_min = tool.feed_mm_min;
         // Every cut carries a feed, checked before fitting so the error
         // names the move whatever the fitting does.
         for (index, mv) in toolpath.moves.iter().enumerate() {
@@ -2583,8 +2589,13 @@ impl<'a> Writer<'a> {
     fn linear_held(&mut self, to: Point3, feed_mm_min: f64, held: bool) -> Result<(), ExportError> {
         let m = self.transform.to_machine(to);
         let post = self.post;
+        let level = self
+            .position
+            .is_some_and(|from| (from.z - to.z).abs() <= EPS_MM);
         let feed_mm_min = if held {
             self.written_feed_mm_min(MotionKind::Linear, m, ArcWords::default(), feed_mm_min)?
+        } else if level {
+            self.level_feed_mm_min(feed_mm_min)?
         } else {
             feed_mm_min
         };
@@ -2704,6 +2715,33 @@ impl<'a> Writer<'a> {
             steps -= 1.0;
         }
         Ok(feed_mm_min)
+    }
+
+    /// `feed_mm_min`, mm/min, as written for a level cut: rounded down to
+    /// the last written place when it is slower than the tool's cutting
+    /// feed and is not its plunge rate (#335: a last pass's inside arc,
+    /// whose cutting edge must move no faster than the feed), so the
+    /// controller never runs it faster than the toolpath holds it;
+    /// otherwise as it is, rounded as every feed is. A toolpath without
+    /// such cuts is written as before.
+    fn level_feed_mm_min(&self, feed_mm_min: f64) -> Result<f64, ExportError> {
+        let slower = self
+            .cut_feed_mm_min
+            .is_some_and(|cut| feed_mm_min < cut * (1.0 - HELD_TO_PLUNGE_RELATIVE));
+        let plunge = self
+            .plunge_mm_min
+            .is_some_and(|p| (feed_mm_min - p).abs() <= p * HELD_TO_PLUNGE_RELATIVE);
+        if !slower || plunge {
+            return Ok(feed_mm_min);
+        }
+        let mm_per_unit = self.transform.mm_per_unit();
+        let units = feed_mm_min / mm_per_unit;
+        let written = self.written(units)?;
+        if written <= units {
+            return Ok(written * mm_per_unit);
+        }
+        let quantum = self.quantum();
+        Ok(self.written((units / quantum).floor() * quantum)? * mm_per_unit)
     }
 
     /// `value`, output units, as the controller reads it once written.
@@ -2887,7 +2925,11 @@ impl<'a> Writer<'a> {
         feed_mm_min: f64,
     ) -> Result<f64, ExportError> {
         if !self.holds_arc_to_plunge(arc, feed_mm_min) {
-            return Ok(feed_mm_min);
+            return if (arc.start.z - arc.end.z).abs() <= EPS_MM {
+                self.level_feed_mm_min(feed_mm_min)
+            } else {
+                Ok(feed_mm_min)
+            };
         }
         let kind = if command == self.post.motion.cw_arc_command {
             MotionKind::ArcCw
@@ -5721,6 +5763,38 @@ mod tests {
             assert!(text.contains("F39.3700"), "{text}");
             assert!(!text.contains("F39.3701"), "{text}");
         }
+    }
+
+    /// #335: a last pass's inside arcs run at `feed · ρ / (ρ + r)`, which
+    /// in an 8 mm hole with the 6.35 mm bit is 206.25 mm/min, 8.120 08
+    /// in/min. It is written rounded down, `F8.1200`, not to the nearest,
+    /// `F8.1201` (206.2525 mm/min), so the cutting edge moves no faster
+    /// than the feed; the program passes S3 with it.
+    #[test]
+    fn last_pass_edge_feed_is_written_rounded_down() {
+        let mut project = sample_project();
+        project.display_units = Units::Inch;
+        if let Some(definition) = project.definitions.values_mut().next() {
+            definition.profiles = vec![dc_geometry::Polyline::new(
+                vec![
+                    dc_geometry::Vertex::new(29.0, 15.0, 1.0),
+                    dc_geometry::Vertex::new(21.0, 15.0, 1.0),
+                ],
+                true,
+            )];
+        }
+        let op = dc_project::test_support::profile_mut(&mut project);
+        op.side = dc_project::Side::Inside;
+        op.tabs = None;
+        op.last_pass = Some(dc_project::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: false,
+        });
+        let ops = generated_ops(&project);
+        let text = emit(&project, &ops, DATE).unwrap().0.text;
+        assert!(text.contains("F8.1200"), "{text}");
+        assert!(!text.contains("F8.1201"), "{text}");
     }
 
     // #283: the clearance, tool-change and park heights (design addendum

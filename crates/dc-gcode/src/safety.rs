@@ -1177,7 +1177,10 @@ fn differs(a: Option<f64>, b: Option<f64>) -> bool {
 /// scaled so its vertical rate stays under the plunge rate (S10's feed
 /// scale, `dc_cam::entry`), or a tool rate the emitter rounded down for
 /// the same reason (#325), which lands between the two. Whether that
-/// vertical rate is right is S10's check ([`check_descent_rate`]).
+/// vertical rate is right is S10's check ([`check_descent_rate`]). A
+/// level cut of a Profile with a last pass may also run anywhere from
+/// [`last_pass_floor_mm_min`] up to the feed: the last pass's inside arcs,
+/// or their chords, slowed so the cutting edge moves at the feed (#335).
 fn check_feed(
     mv: &MachineMove,
     limits: &Limits<'_>,
@@ -1201,12 +1204,47 @@ fn check_feed(
                     feed_mm_min >= plunge - tolerance_mm_min
                         && feed_mm_min <= cut + tolerance_mm_min
                 });
-        let matches = on_a_rate || scaled_descent;
+        // #335: a Profile's last pass runs its inside arcs at the feed
+        // scaled by `ρ / (ρ + r)`, so its cutting edge moves at the feed,
+        // and never slower than the edge needs in the smallest hole the
+        // last pass cuts, `a / (a + r)`; flattened, their chords too.
+        let edge_scaled = is_level_cut(mv)
+            && last_pass_floor_mm_min(limits)
+                .zip(tool.feed_mm_min)
+                .is_some_and(|(floor, cut)| {
+                    feed_mm_min >= floor - tolerance_mm_min && feed_mm_min <= cut + tolerance_mm_min
+                });
+        let matches = on_a_rate || scaled_descent || edge_scaled;
         if !matches {
             return Err(ExportError::FeedNotFromTool { line, feed_mm_min });
         }
     }
     Ok(())
+}
+
+/// True for a `G1`, `G2` or `G3` that moves in XY at one Z, every
+/// coordinate known.
+fn is_level_cut(mv: &MachineMove) -> bool {
+    let (from, to) = (mv.from, mv.to);
+    let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+        (from.x, from.y, from.z, to.x, to.y, to.z)
+    else {
+        return false;
+    };
+    mv.kind.is_cut() && (tz - fz).abs() <= EPS_MM && (tx - fx).hypot(ty - fy) > 0.0
+}
+
+/// The least feed, mm/min, a level cut of a Profile with a last pass may
+/// carry (#335): its tool's feed times `a / (a + r)`, the allowance over
+/// the allowance plus the tool radius, as slow as the generator runs the
+/// last pass's tightest inside arc. `None` for any other operation.
+fn last_pass_floor_mm_min(limits: &Limits<'_>) -> Option<f64> {
+    let (Some(Operation::Profile(op)), Some(tool)) = (limits.op, limits.tool) else {
+        return None;
+    };
+    let allowance_mm = op.last_pass.as_ref()?.allowance_mm;
+    let feed_mm_min = tool.feed_mm_min?;
+    Some(feed_mm_min * allowance_mm / (allowance_mm + tool.diameter_mm / 2.0))
 }
 
 /// True for a `G1`, `G2` or `G3` that falls while it moves in XY, every
@@ -2596,6 +2634,89 @@ mod tests {
         assert!(
             matches!(err, ExportError::FeedNotFromTool { line: 8, .. }),
             "{err:?}"
+        );
+    }
+
+    /// [`check_text`] for the fixture's Profile after `edit`.
+    fn check_text_for(
+        text: &str,
+        edit: impl FnOnce(&mut dc_project::ProfileOp),
+    ) -> Result<(), ExportError> {
+        let (project, mut op, mut tool) = fixture();
+        tool.diameter_mm = 6.35;
+        edit(&mut op);
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let toolpath = Toolpath::default();
+        let lines = text.lines().count() + 1;
+        let op = Operation::Profile(op);
+        let spans = [OpSpan {
+            op: &op,
+            tool: &tool,
+            toolpath: &toolpath,
+            material: &Material::Unchecked,
+            tabs: &[],
+            lines: 1..lines,
+        }];
+        check_rules(
+            text,
+            &post,
+            &transform,
+            project.stock.thickness_mm.unwrap(),
+            Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: project.arc_fit_tolerance_mm,
+            },
+            ProgramHeights {
+                machine_lift_mm: None,
+                clearance_z_mm: None,
+            },
+            &spans,
+        )
+        .map(|_| ())
+    }
+
+    /// #335 (S3 with a last pass): a Profile's last pass runs its inside
+    /// arcs at the feed scaled by `ρ / (ρ + r)`, never below
+    /// `feed · a / (a + r)`, 136.05 mm/min for the fixture's 1000 mm/min
+    /// 6.35 mm bit at 0.5 mm. With a last pass a level cut, an arc or its
+    /// chords, may run at that or any feed up to the tool's; slower, or
+    /// faster than the feed, fails, and without a last pass a slower level
+    /// cut fails as before. A descent keeps its rule.
+    #[test]
+    fn s3_accepts_a_last_pass_edge_feed() {
+        let arc = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nG2 X10 Y0 I5 J0 F{f}\nG0 Z5\nM5\n"
+            )
+        };
+        let line = |f: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX0 Y0\nG1 Z-1 F300\nX10 F{f}\nG0 Z5\nM5\n"
+            )
+        };
+        let with_last_pass = |op: &mut dc_project::ProfileOp| {
+            op.last_pass = Some(dc_project::LastPass {
+                allowance_mm: 0.5,
+                thickness_mm: None,
+                reverse: false,
+            });
+        };
+        for f in ["206.25", "136.054", "650", "1000"] {
+            check_text_for(&arc(f), with_last_pass).unwrap_or_else(|e| panic!("arc F{f}: {e}"));
+            check_text_for(&line(f), with_last_pass).unwrap_or_else(|e| panic!("line F{f}: {e}"));
+        }
+        for f in ["135", "1100"] {
+            let err = check_text_for(&arc(f), with_last_pass).unwrap_err();
+            assert!(
+                matches!(err, ExportError::FeedNotFromTool { line: 8, .. }),
+                "F{f}: {err:?}"
+            );
+        }
+        let err = check_text(&arc("206.25")).unwrap_err();
+        assert!(
+            matches!(err, ExportError::FeedNotFromTool { line: 8, .. }),
+            "no last pass: {err:?}"
         );
     }
 

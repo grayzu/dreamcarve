@@ -40,6 +40,11 @@ written. There are no safety warnings, only errors.
    down while it moves sideways, a ramp or helix [entry](pocket.md#entry)
    or a smooth [tab](tabs.md)'s ramp down: its feed rate is lowered just
    enough that it goes down no faster than the plunge rate (rule 11). A
+   Profile's [last pass](profile.md#last-pass) runs its inside arcs slower
+   than the feed rate, so that its cutting edge moves at the feed rate; the
+   check lets a level move of such a Profile go as slow as the feed rate
+   times the allowance over the allowance plus the bit's radius, and no
+   slower. A
    feed rate that would go down faster once rounded to the decimal places
    written is rounded down instead: a plunge rate the written places cannot
    hold, such as 1000 mm/min in inches (`F39.3700`, not `F39.3701`), is

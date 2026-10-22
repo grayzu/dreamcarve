@@ -3404,6 +3404,44 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    notch's descend point; an allowance pass is `a` off it.)
 6. The last pass is the block that `frees`; `pass_first` orders by pass
    index as now.
+7. **Feed round inside arcs** (added in #335, `last_pass::EdgeFeed`,
+   `profile::own_edge_feeds`). The tool centre runs an arc of `ρ` round a
+   wall of `ρ + r`, so the cutting edge moves `(ρ + r) / ρ` times as fast
+   as the centre, and the last pass, meant to take a thin skin, takes
+   several times a straight wall's in a minute. Of the issue's options
+   this lowers the feed: a warning alone leaves the bit overloaded, and
+   more radial cuts lower what each takes but not how fast the edge
+   moves. Every level arc of the last pass's lap and overcut that turns
+   round the wall (its centre on the side of travel away from the wall:
+   the wall is on the right climbing, the left conventional, the other way
+   reversed) and runs at the cutting feed runs at `feed · ρ / (ρ + r)`.
+   The issue's `k` is 1, so the edge moves at the feed. That scale is the
+   edge speed's, the conservative one: it also brings the material
+   removed per minute per mm of depth to `feed · (a − a² / 2(ρ + r))`,
+   under a straight wall's `feed · a`, where the removal's own scale,
+   `ρ / (ρ + r − a/2)`, would leave the edge faster. Lead arcs, straight
+   cuts, outside arcs (where the edge is slower than the centre), moves
+   over tabs and the earlier passes, which cut a full slot as without a
+   last pass, keep the feed. The scale is never below `a / (a + r)`, the
+   edge's in the smallest hole the last pass cuts (`D + 2a`, its centre
+   on a circle of `a`): S3 accepts a last pass's level cut down to
+   `feed · a / (a + r)` and no slower, so the generator cannot invent a
+   feed. A tighter inside arc, a fillet under `r + a` that the allowance
+   path turns as a corner, runs at that floor, and its edge moves faster
+   than the feed: `Warning::LastPassEdgeFaster` names the shape, the arc's
+   radius, its feed and the edge's multiple of the feed (one per shape,
+   the tightest). The emitter writes a level cut slower than the tool's
+   feed, not at the plunge rate, rounded down in the last written place
+   (#325's rule), so as written the edge moves no faster; no program
+   without a last pass has such a cut, so they are byte-identical. Curves
+   drawn as straight segments are not slowed. Measured on the emitted
+   G-code (`last_pass_entry::last_pass_small_hole_load`, 0.05 mm
+   lattice, at a layer the earlier passes left the allowance on, every
+   entry): before, in the 8 mm hole the edge moved at 4.85 times the feed
+   and the lap removed 3.6 (0.5 mm) to 4.1 (0.2 mm) times a straight
+   wall's share per minute, 2.0 to 2.5 in the 10 mm hole, 1.2 to 1.6 in
+   the 15 mm; after, the edge moves at the feed and the removal is 0.69
+   to 0.95 of a straight wall's.
 
 S9 in the safety pass is unchanged: the allowance passes keep more than
 `r` from the part, which it already accepts. The generator tests hold
@@ -3520,7 +3558,11 @@ Tests: `migrate::v12_to_v13_adds_null_last_pass`,
 and the G-code heightfield checks (`dc-gcode`)
 `last_pass_entry::last_pass_entry_never_plunges_deeper_than_step_down`,
 `last_pass_entry::last_pass_entry_keeps_the_tabs` and
-`last_pass_entry::no_last_pass_programs_are_unchanged`.
+`last_pass_entry::no_last_pass_programs_are_unchanged`; and (#335)
+`profile::last_pass_small_hole_edge_feed`, `profile::last_pass_tight_inside_arc_warns`,
+`safety::s3_accepts_a_last_pass_edge_feed`,
+`emit::last_pass_edge_feed_is_written_rounded_down` and the heightfield check
+`last_pass_entry::last_pass_small_hole_load`.
 
 ### A9. Tabs off corners and start point (format version 14)
 

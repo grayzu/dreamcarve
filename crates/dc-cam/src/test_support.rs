@@ -42,7 +42,9 @@ use dc_project::{Operation, Project};
 ///    its vertical component is at most the plunge rate, `min(feed,
 ///    plunge × length / drop)` (S10's feed scale, #157): the cutting feed
 ///    where that is slow enough, else exactly the plunge-limited feed.
-///    Every other move that changes XY carries the tool's feed rate.
+///    Every other move that changes XY carries the tool's feed rate,
+///    except a Profile's last pass's level arcs, which may run as slow as
+///    `feed · a / (a + r)` (#335).
 /// 5. **Dwells.** A dwell ends where the tool already is and carries no
 ///    feed.
 ///
@@ -60,6 +62,13 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
         Operation::Drill(_) => tool.feed_mm_min.unwrap_or(f64::NAN),
         _ => tool.feed_mm_min.expect("tool has a feed"),
     };
+    // #335: a last pass's inside arcs run as slow as `feed · a / (a + r)`.
+    let level_floor_mm_min = match op {
+        Operation::Profile(p) => p.last_pass.as_ref().map_or(feed_mm_min, |l| {
+            feed_mm_min * l.allowance_mm / (l.allowance_mm + tool.diameter_mm / 2.0)
+        }),
+        _ => feed_mm_min,
+    };
     assert_safe_within(
         toolpath,
         &Limits {
@@ -68,6 +77,7 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
             floor_z_mm: -op.through_cut_allowance_mm(),
             feed_mm_min,
             plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
+            level_floor_mm_min,
         },
     );
 }
@@ -88,6 +98,10 @@ pub struct Limits {
     pub feed_mm_min: f64,
     /// The tool's plunge rate, mm/min.
     pub plunge_mm_min: f64,
+    /// The least feed a level move that changes XY may carry, mm/min:
+    /// the cutting feed, or with a Profile's last pass the feed its
+    /// inside arcs may be lowered to, `feed · a / (a + r)` (#335).
+    pub level_floor_mm_min: f64,
 }
 
 /// [`assert_safe`] with the limits given directly instead of read from a
@@ -166,8 +180,14 @@ pub fn assert_safe_within(toolpath: &Toolpath, limits: &Limits) {
                         "descending XY move {i} feeds at {f}, not the plunge-limited {limited} (feed {feed}, plunge {plunge}): {prev:?} -> {mv:?}"
                     );
                 } else if moves_xy {
+                    // #335: a last pass's inside arc, level, as slow as its
+                    // floor.
+                    let level_arc = !descends
+                        && !matches!(mv.kind, MoveKind::Linear)
+                        && f >= limits.level_floor_mm_min - EPS_MM
+                        && f <= feed + EPS_MM;
                     assert!(
-                        approx_eq(f, feed, EPS_MM),
+                        approx_eq(f, feed, EPS_MM) || level_arc,
                         "XY cutting move {i} feeds at {f}, not feed {feed}: {mv:?}"
                     );
                 }
