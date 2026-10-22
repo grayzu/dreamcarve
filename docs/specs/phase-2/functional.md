@@ -1102,4 +1102,5 @@ built (design addendum, "Order and format versions").
   path and kept edge, as without a last pass. Changed in #339: the last
   pass's step across the allowance, from the path the earlier passes cut
   to its own, may run between the two, on Left and Right too, still `r`
-  from every open path and kept edge.)
+  from every open path and kept edge: one level move from one path to the
+  other, no longer than the generator's bound.)
