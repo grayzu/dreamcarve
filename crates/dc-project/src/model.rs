@@ -891,6 +891,18 @@ pub struct PlacedTab {
     pub height_mm: f64,
     /// Tab cross-section.
     pub shape: TabShape,
+    /// Whether the tab is meant to hold the slug of the hole it is on
+    /// (#302). It changes no cut, only whether `check` and `export` warn
+    /// `tab_on_hole` for it. `Some(true)`: the user asked for it, so they
+    /// do not; `tabs place --on-holes` and a request with `on_holes`
+    /// write it for each tab they put on a hole. `Some(false)`: they do;
+    /// every other placing writes it. `None`: not recorded, as the
+    /// version 15 migration writes it for every tab: they warn as format
+    /// 14 did, except for a tab on the tool path round the hole of the
+    /// Profile that cuts it, where only placing with `on_holes` puts one
+    /// (#300).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub holds_slug: Option<bool>,
 }
 
 /// Holding tabs to place on every outline a Profile cuts (#105, ADR-0005):

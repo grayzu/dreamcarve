@@ -163,11 +163,11 @@ dreamcarve tabs list coaster.dcv
 ```
 
 ```text
-ID    INSTANCE  PROFILE  AT_MM    OFF_MM  X_MM    Y_MM    WIDTH_MM  HEIGHT_MM  SHAPE  CUT_BY
-tab1  i1        0        35.343   3.175   84.065  15.935  8         3          rect   op1
-tab2  i1        0        106.029  3.175   15.935  15.935  8         3          rect   op1
-tab3  i1        0        176.715  3.175   15.935  84.065  8         3          rect   op1
-tab4  i1        0        247.4    3.175   84.065  84.065  8         3          rect   op1
+ID    INSTANCE  PROFILE  AT_MM    OFF_MM  X_MM    Y_MM    WIDTH_MM  HEIGHT_MM  SHAPE  HOLDS_SLUG  CUT_BY
+tab1  i1        0        35.343   3.175   84.065  15.935  8         3          rect   no          op1
+tab2  i1        0        106.029  3.175   15.935  15.935  8         3          rect   no          op1
+tab3  i1        0        176.715  3.175   15.935  84.065  8         3          rect   no          op1
+tab4  i1        0        247.4    3.175   84.065  84.065  8         3          rect   no          op1
 1 operation(s) hold a tab request, listed as the tabs it places; any `tabs` command that saves the project writes them.
 ```
 
@@ -179,6 +179,7 @@ tab4  i1        0        247.4    3.175   84.065  84.065  8         3          r
 | `OFF_MM` | How far the tab's point is from the outline, as cut (after the instance's transform): 0 for a tab placed with `--at`, the bit's radius for one placed with `--count` or from a request. More than the tab's width plus the bit warns `tab_off_outline` ([A placed tab in the file](#a-placed-tab-in-the-file)). |
 | `X_MM`, `Y_MM` | The tab's point, in the shape's own coordinates (its definition), not the stock's. |
 | `WIDTH_MM`, `HEIGHT_MM`, `SHAPE` | The tab's size and shape. |
+| `HOLDS_SLUG` | `yes` for a tab placed on a hole with `--on-holes` or from a request with `on_holes`, which `check` and `export` do not warn `tab_on_hole` for; `no` for the others; `-` for a tab from a version 14 file, which did not record it ([Parts with holes](#parts-with-holes)). |
 | `CUT_BY` | The enabled Profiles that rise over the tab, or `-` for none. |
 
 The last line appears when an enabled Profile still holds a tab request,
@@ -222,7 +223,8 @@ Note: operation `op1` now cuts `coaster` (instance `i1`, profile 0) through the 
     "y_mm": 15.935129303418655,
     "width_mm": 8.0,
     "height_mm": 3.0,
-    "shape": "rect"
+    "shape": "rect",
+    "holds_slug": false
   }
 ]
 ```
@@ -236,6 +238,7 @@ Note: operation `op1` now cuts `coaster` (instance `i1`, profile 0) through the 
 | `width_mm` | Length of the tab along the outline. More than 0. |
 | `height_mm` | Height of the tab top above the stock bottom. More than 0. |
 | `shape` | `"rect"` or `"smooth"`. |
+| `holds_slug` | `true` when the tab is meant to hold the slug of the hole it is on, so `check` and `export` do not warn `tab_on_hole` for it; `false` otherwise; `null` in a project from version 14. It changes no cut. See [Parts with holes](#parts-with-holes). |
 
 You can edit a tab in the file: change its size or shape, or move its
 point. The point need not be exactly on the outline. A Profile centres the
@@ -499,18 +502,29 @@ from the middle of a ring. Each hole then gets the tabs, or as many as fit
 ([Outlines too short for the tabs](#outlines-too-short-for-the-tabs)).
 A placed tab on a hole is always cut, however it was placed. A held slug
 is usually waste you then have to free by hand, so `tabs place` warns
-`tab_on_hole` once for each tab it puts on a hole. After that, `check`
-and `export` stay quiet about the tabs placed on a hole for the cut that
-holds it, with `--count --on-holes` or from a request with `on_holes`,
-because you asked for them. They still warn about any other tab on a
-hole, such as one you added by hand, one placed with `--at --on-holes`
-(it sits on the outline, where a hand edit could also put it), or one
-whose Profile's bit or side changed since it was placed. If you did not
-mean to keep the slug, remove the tab:
+`tab_on_hole` once for each tab it puts on a hole. It saves those tabs
+with `"holds_slug": true`, because you asked for them, with `--count
+--on-holes`, `--at --on-holes` or a request with `on_holes`. After that,
+`check` and `export` stay quiet about them, even after you change the
+Profile's bit or side. They still warn on every run about a tab on a
+hole with `"holds_slug": false`, such as one you added by hand or one
+placed without `--on-holes` on an outline that another operation cuts as
+a hole. To keep a slug without the warning, set the tab's `holds_slug`
+to `true` in the file. If you did not mean to keep the slug, remove the
+tab:
 
 ```text
 warning: tab_on_hole: operation `op1`: tab `tab3` is on `Shape` (instance `i1`, profile 2), which this operation cuts as a hole, so the tab holds the hole's slug in place; the slug is usually waste, so remove the tab (`dreamcarve tabs clear <dcv> --tab tab3`) unless you mean to keep the slug
 ```
+
+A project from format version 14 or before has no `holds_slug`, so its
+tabs open with `"holds_slug": null` (`-` in `tabs list`), and warn as
+they did: quiet for a tab on the bit's path round the hole, where only
+`--count --on-holes` or a request with `on_holes` put one, and on every
+run for any other tab on a hole, such as one placed with `--at
+--on-holes` or one whose Profile's bit or side has changed since. Set
+`holds_slug` to `true` or `false` to decide, or place the tabs again
+with `tabs place --replace`.
 
 A project from before format version 9 opens with `"on_holes": true` in
 its request, because every outline had tabs then, so it cuts as it did.

@@ -49,7 +49,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v14/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v15/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -122,7 +122,8 @@ pub fn sample_project() -> Project {
 }
 
 /// A 6 × 2 mm rect tab `id` on the sample rectangle's outline, its centre
-/// at (`x_mm`, `y_mm`) in definition space (#105).
+/// at (`x_mm`, `y_mm`) in definition space (#105), placed by hand: it
+/// does not hold a slug (#302).
 pub fn sample_tab(id: &str, x_mm: f64, y_mm: f64) -> PlacedTab {
     PlacedTab {
         id: TabId::new(id),
@@ -133,6 +134,7 @@ pub fn sample_tab(id: &str, x_mm: f64, y_mm: f64) -> PlacedTab {
         width_mm: 6.0,
         height_mm: 2.0,
         shape: TabShape::Rect,
+        holds_slug: Some(false),
     }
 }
 
