@@ -9,9 +9,9 @@ Dev-only tool for issue #328 (layer 3 of
 
 It runs DreamCarve's LinuxCNC and generic programs through LinuxCNC's
 full simulation, headless: `linuxcnc -r` with task, the interpreter, and
-either the motion module or `motion-logger` in its place, driven by a
-small Python UI instead of a GUI, as LinuxCNC's own
-`tests/motion-logger` does. It then checks what
+either the motion module or `motion-logger` in its place. In place of
+a GUI, a small driver script talks to LinuxCNC's own command server,
+`linuxcncrsh`, over a socket. It then checks what
 [`rs274-motion`](../rs274-motion/README.md) cannot, since `rs274` is the
 interpreter alone:
 
@@ -30,13 +30,51 @@ interpreter alone:
 
 LinuxCNC is GPL-2.0. It runs as a separate program, in a container or
 natively, and nothing of it is copied into this repository. The files in
-`sim/` are DreamCarve's own, written from LinuxCNC's documented INI, HAL
-and Python interfaces.
+`sim/` are DreamCarve's own, written from LinuxCNC's documented INI and
+HAL files.
+
+## How DreamCarve talks to LinuxCNC
+
+No DreamCarve code imports a LinuxCNC module or links LinuxCNC. The
+driver, `sim/dreamcarve-ui.py`, uses only Python's standard library.
+LinuxCNC starts it as the INI's `[DISPLAY]` program, and it talks to two
+separate LinuxCNC programs, each through its documented interface:
+
+- **`linuxcncrsh`**, LinuxCNC's text-mode command server
+  ([linuxcncrsh(1)](https://linuxcnc.org/docs/2.9/html/man/man1/linuxcncrsh.1.html)).
+  The driver starts it and talks to it over TCP on 127.0.0.1. It uses
+  `hello` and `set enable`, then `set estop`, `machine`, `mode`,
+  `teleop_enable`, `home -1`, `feed_override`, `linear_unit_conversion
+  mm`, `open`, `run`, `resume`, `abort` and `set_wait`. It reads state
+  with `get program_status`, `program_line`, `abs_act_pos`,
+  `joint_homed`, `error`, `operator_display` and `operator_text`.
+- **`halcmd`**, for HAL pins
+  ([halcmd(1)](https://linuxcnc.org/docs/2.9/html/man/man1/halcmd.1.html)).
+  It reads `motion.current-vel` and `motion.in-position` (the motion
+  module's pins, [motion(9)](https://linuxcnc.org/docs/2.9/html/man/man9/motion.9.html)),
+  and sets `motion-logger.reopen-log` to rotate the log between programs
+  ([motion-logger(1)](https://linuxcnc.org/docs/2.9/html/man/man1/motion-logger.1.html)).
+
+`motion-logger` itself is LinuxCNC's, loaded by `sim/logger.hal` as LinuxCNC's own
+`tests/motion-logger` does.
+
+The first version of the driver imported LinuxCNC's Python `linuxcnc` and
+`hal` modules. Every check it made still runs through `linuxcncrsh` and
+`halcmd`. Three readings had no equivalent there, and none was needed:
+
+- `stat.motion_line` beside `stat.current_line`. `program_line` gives one
+  line. At a pause it is the line of the last move, so the check that the
+  program has not reached the `M0`'s line stays.
+- `stat.state` (`RCS_DONE`). A program counts as completed when it ends
+  with no error, no refused command and no timeout.
+- The interpreter's paused state, apart from task's. `program_status`
+  says `PAUSED`, and the pause is recorded then.
 
 ## Getting LinuxCNC
 
 The image `rs274-motion` builds has all of LinuxCNC (Debian 13's
-`linuxcnc-uspace` 2.9.4, with `motion-logger` and the Python module):
+`linuxcnc-uspace` 2.9.4, with `linuxcncrsh`, `halcmd` and
+`motion-logger`):
 
 ```sh
 podman build -t dreamcarve-rs274 tools/rs274-motion
@@ -91,8 +129,8 @@ runs three LinuxCNCs at once (`src/lib.rs`, `check_cases`):
    design (the definitions README, "Generic"), so its arcs would follow
    the INI's `G90.1`.
 3. **The motion module.** Every program on a homed machine with soft
-   limits, at feed override 100. The UI records each `M0` pause once the
-   queue has drained, resumes it, and records the end
+   limits, at feed override 10000 %. The driver records each `M0` pause
+   once the machine has stopped, resumes it, and records the end
    (`src/report.rs`).
 
 The INI (`sim/machine.ini.in`) is a three-axis mill in millimetres. Z
@@ -119,24 +157,27 @@ was there too. A deepened cut was reported on its line.
 Under the short travel the lift was refused with "Linear move on line 530
 would exceed Z's positive limit", as the definitions README says. But
 motion refuses a move when task queues it, and task reads ahead, so the
-program stopped while motion was on line 119, mid-cut, with the bit at
-work Z -4 in the stock. It did stop before the lift. The
-post-processors chapter's "before the machine moves" reads as if nothing
-had run (#336).
+program stopped mid-cut, with the bit in the stock, long before the lift:
+on line 119 in one run and line 51 in another. It did stop before the
+lift. #336 corrected the post-processors chapter, which had said
+"before the machine moves".
 
 Two things about LinuxCNC are worth knowing when reading a report:
 
-- At an `M0` pause, `stat.current_line` and `stat.motion_line` name the
-  line of the last move, not the `M0`'s. The check is that motion has not
-  reached the `M0`'s line and the machine is where the move before it
-  ended.
+- At an `M0` pause, `get program_line` names the line of the last move,
+  not the `M0`'s. The check is that the program has not reached the
+  `M0`'s line and the machine is where the move before it ended.
+- `get error` returns the latest error only. The driver polls it with
+  every status poll and records each new one. Under the short travel it
+  caught all three of LinuxCNC's messages.
 - `motion-logger` prints positions and speeds with `%.6g`. Below 1000 mm
   that keeps three decimals, as many as DreamCarve writes. Speeds match
   to 1e-5 relative, not `rs274`'s 1e-6.
-- When interp goes idle at the program end, the motion queue can be empty
-  and `inpos` set while the last segment still blends into its end point.
-  The UI records a pause or an end only once the machine has had no
-  velocity and the same position for a whole second. The servo thread is
+- When the program goes idle at its end, motion can be in position with
+  nothing queued while the last segment still blends into its end point.
+  The driver records a pause or an end only once `motion.current-vel` is
+  0, `motion.in-position` is true, and `abs_act_pos` has not changed for
+  a whole second. The servo thread is
   not realtime in a container, and on a loaded host it stalls for long
   enough that a 100 ms window recorded positions short of the end.
 

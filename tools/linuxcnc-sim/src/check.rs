@@ -175,7 +175,7 @@ pub fn check_run(run: &ProgramReport, expected: &Expected) -> Vec<String> {
             "did not run to completion: {}{}",
             if run.timed_out { "timed out; " } else { "" },
             if run.errors.is_empty() {
-                format!("state {:?}", run.end.map(|e| e.rcs_state))
+                "no end recorded".to_owned()
             } else {
                 run.errors.join(" | ")
             }
@@ -183,13 +183,10 @@ pub fn check_run(run: &ProgramReport, expected: &Expected) -> Vec<String> {
     }
     if run.pauses.len() == expected.stops.len() {
         for (pause, (line, known)) in run.pauses.iter().zip(&expected.stops) {
-            if !pause.interp_paused {
-                problems.push(format!("M0 on line {line}: the interpreter was not paused"));
-            }
-            if pause.motion_line >= *line {
+            if pause.line >= *line {
                 problems.push(format!(
-                    "M0 on line {line}: motion had reached line {}",
-                    pause.motion_line
+                    "M0 on line {line}: the program had reached line {}",
+                    pause.line
                 ));
             }
             if differs(known, pause.machine_mm) {
@@ -223,7 +220,7 @@ pub fn check_run(run: &ProgramReport, expected: &Expected) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::report::{End, Pause, RCS_DONE};
+    use crate::report::{End, Pause};
     use dc_project::latest_definition;
     use rs274_motion::reference::reference;
 
@@ -264,15 +261,11 @@ mod tests {
         ProgramReport {
             file: "p001.ngc".to_owned(),
             pauses: vec![Pause {
-                current_line: 2,
-                motion_line: 2,
-                interp_paused: true,
+                line: 2,
                 machine_mm: pause_mm,
             }],
             end: Some(End {
-                rcs_state: RCS_DONE,
-                current_line: 5,
-                motion_line: 5,
+                line: 5,
                 machine_mm: end_mm,
             }),
             ..ProgramReport::default()

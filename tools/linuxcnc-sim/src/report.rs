@@ -3,34 +3,25 @@
 
 //! Reads `result.txt`, the record `sim/dreamcarve-ui.py` writes of a
 //! session: one tab-separated record per line, as that script's header
-//! lists. Positions are machine coordinates, millimetres.
+//! lists. Positions are machine coordinates, millimetres, as
+//! `linuxcncrsh`'s `get abs_act_pos` gives them with `linear_unit_conversion
+//! mm`.
 
-/// `RCS_DONE`, LinuxCNC's `stat.state` once a command finished without
-/// error (`RCS_EXEC` is 2, `RCS_ERROR` 3).
-pub const RCS_DONE: i32 = 1;
-
-/// An `M0` pause, as the UI saw it once motion had stopped.
+/// An `M0` pause, as the UI saw it once the machine had stopped:
+/// `linuxcncrsh`'s `get program_status` said `PAUSED`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pause {
-    /// `stat.current_line`: the line of the last motion, not the `M0`'s.
-    pub current_line: usize,
-    /// `stat.motion_line`: the line motion last executed.
-    pub motion_line: usize,
-    /// `stat.interp_state` was `INTERP_PAUSED`.
-    pub interp_paused: bool,
+    /// `get program_line`: the line of the last move, not the `M0`'s.
+    pub line: usize,
     /// Where the machine was, machine mm.
     pub machine_mm: [f64; 3],
 }
 
-/// How a program ended.
+/// Where a program ended, once the machine had stopped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct End {
-    /// `stat.state`: [`RCS_DONE`] when it ran without error.
-    pub rcs_state: i32,
-    /// `stat.current_line`.
-    pub current_line: usize,
-    /// `stat.motion_line`.
-    pub motion_line: usize,
+    /// `get program_line`.
+    pub line: usize,
     /// Where the machine was, machine mm.
     pub machine_mm: [f64; 3],
 }
@@ -44,21 +35,19 @@ pub struct ProgramReport {
     pub pauses: Vec<Pause>,
     /// Operator messages, such as `(MSG, ...)` text.
     pub messages: Vec<String>,
-    /// Errors from task or motion.
+    /// Errors from task or motion, and commands `linuxcncrsh` refused.
     pub errors: Vec<String>,
     /// The UI aborted it after its timeout.
     pub timed_out: bool,
-    /// How it ended.
+    /// Where it ended.
     pub end: Option<End>,
 }
 
 impl ProgramReport {
-    /// It ran to its end: no error, no timeout, and `stat.state` done.
+    /// It ran to its end: no error, no refused command, no timeout.
     #[must_use]
     pub fn completed(&self) -> bool {
-        self.errors.is_empty()
-            && !self.timed_out
-            && self.end.is_some_and(|e| e.rcs_state == RCS_DONE)
+        self.errors.is_empty() && !self.timed_out && self.end.is_some()
     }
 }
 
@@ -101,12 +90,11 @@ pub fn parse_report(text: &str) -> Result<SessionReport, ReportError> {
         let Some((&head, rest)) = fields.split_first() else {
             continue;
         };
-        let int = |k: usize| -> Result<i64, ReportError> {
+        let line_no = |k: usize| -> Result<usize, ReportError> {
             rest.get(k)
                 .and_then(|f| f.trim().parse().ok())
                 .ok_or_else(bad)
         };
-        let line_no = |k: usize| int(k).and_then(|v| usize::try_from(v).map_err(|_| bad()));
         let position = |k: usize| -> Result<[f64; 3], ReportError> {
             let mut p = [0.0; 3];
             for (axis, value) in p.iter_mut().enumerate() {
@@ -121,7 +109,7 @@ pub fn parse_report(text: &str) -> Result<SessionReport, ReportError> {
         let current = report.programs.last_mut();
         match (head, current) {
             ("", _) => {}
-            ("HOMED", _) => report.homed = int(0)? == 1,
+            ("HOMED", _) => report.homed = line_no(0)? == 1,
             ("PROGRAM", _) => report.programs.push(ProgramReport {
                 file: text_field(),
                 ..ProgramReport::default()
@@ -131,18 +119,14 @@ pub fn parse_report(text: &str) -> Result<SessionReport, ReportError> {
             ("ERROR", Some(p)) => p.errors.push(text_field()),
             ("MESSAGE", Some(p)) => p.messages.push(text_field()),
             ("PAUSE", Some(p)) => p.pauses.push(Pause {
-                current_line: line_no(0)?,
-                motion_line: line_no(1)?,
-                interp_paused: int(2)? == 1,
-                machine_mm: position(3)?,
+                line: line_no(0)?,
+                machine_mm: position(1)?,
             }),
             ("TIMEOUT", Some(p)) => p.timed_out = true,
             ("END", Some(p)) => {
                 p.end = Some(End {
-                    rcs_state: i32::try_from(int(0)?).map_err(|_| bad())?,
-                    current_line: line_no(1)?,
-                    motion_line: line_no(2)?,
-                    machine_mm: position(3)?,
+                    line: line_no(0)?,
+                    machine_mm: position(1)?,
                 });
             }
             ("DONE", _) => report.done = true,
@@ -156,18 +140,16 @@ pub fn parse_report(text: &str) -> Result<SessionReport, ReportError> {
 mod tests {
     use super::*;
 
-    /// A record LinuxCNC 2.9.4 left: the pause program, then a lift
-    /// beyond Z's travel under the short-Z machine.
+    /// A record the UI left with LinuxCNC 2.9.4: the pause program, then
+    /// a lift beyond Z's travel under the short-Z machine.
     const RECORD: &str = "HOMED\t1
 PROGRAM\tp001.ngc
-PAUSE\t2\t2\t1\t35.400000000000006\t60.800000000000004\t-86.2
-END\t1\t5\t5\t45.4\t60.800000000000004\t-5.0
+MESSAGE\tTurn the router OFF.
+PAUSE\t2\t35.400000\t60.800000\t-86.200000
+END\t5\t45.400000\t60.800000\t-5.000000
 PROGRAM\tp002.ngc
-PAUSE\t2\t2\t1\t35.4\t60.800000000000004\t-86.2
 ERROR\tLinear move on line 5 would exceed Z's positive limit
-ERROR\tLinear move on line 5 would exceed joint 2's positive limit
-ERROR\tinvalid params in linear command
-END\t3\t5\t4\t35.65\t60.800000000000004\t-86.2
+END\t4\t35.650000\t60.800000\t-86.200000
 DONE
 ";
 
@@ -180,12 +162,11 @@ DONE
         };
         assert!(ok.completed());
         assert_eq!(ok.pauses.len(), 1);
-        assert!(ok.pauses[0].interp_paused);
-        assert_eq!(ok.end.map(|e| e.machine_mm[2]), Some(-5.0));
+        assert_eq!(ok.pauses[0].line, 2);
+        assert_eq!(ok.messages, ["Turn the router OFF."]);
+        assert_eq!(ok.end.map(|e| e.line), Some(5));
         assert!(!refused.completed());
-        assert_eq!(refused.errors.len(), 3);
         assert!(refused.errors[0].contains("would exceed Z's positive limit"));
-        assert_eq!(refused.end.map(|e| e.rcs_state), Some(3));
     }
 
     #[test]

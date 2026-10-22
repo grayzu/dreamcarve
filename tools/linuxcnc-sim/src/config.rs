@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The machine configurations a session runs, and the files a session
-//! directory holds: the INI file, its HAL file, the headless UI, a tool
+//! directory holds: the INI file, its HAL file, the driver, a tool
 //! table, the parameter file with the work offset, the programs and the
 //! list of them.
 

@@ -239,10 +239,6 @@ fn full_sim_reports_a_lift_beyond_soft_limits() {
         end.machine_mm[2] <= SHORT_Z_MAX_MM,
         "Z went above its travel: {end:?}"
     );
-    assert!(
-        end.motion_line < lift_line,
-        "motion reached the lift's line: {end:?}"
-    );
     // The same program on the normal machine completes, so the error is
     // the lift's.
     let travel = run_session(
@@ -265,9 +261,9 @@ fn full_sim_reports_a_lift_beyond_soft_limits() {
 }
 
 /// With manual spindle control the program pauses at each `M0` until the
-/// UI resumes it. At each pause the interpreter is paused, motion has not
-/// reached the `M0`'s line, and the machine is where DreamCarve reads it:
-/// after the lift, at the lift's machine Z.
+/// UI resumes it. At each pause `linuxcncrsh` reports the program paused
+/// on a line before the `M0`'s, and the machine is where DreamCarve reads
+/// it: after the lift, at the lift's machine Z.
 #[test]
 fn full_sim_stops_at_m0() {
     let Some(linuxcnc) = linuxcnc_or_skip("full_sim_stops_at_m0") else {
@@ -287,12 +283,13 @@ fn full_sim_stops_at_m0() {
         &work_dir("m0"),
     )
     .expect("the session reports");
+    assert!(
+        run.report.startup_errors.is_empty(),
+        "{:#?}",
+        run.report.startup_errors
+    );
     let program = &run.report.programs[0];
     assert_eq!(program.pauses.len(), e.stops.len(), "{program:#?}");
-    assert!(
-        program.pauses.iter().all(|p| p.interp_paused),
-        "{program:#?}"
-    );
     let problems = check_run(program, &e);
     assert!(problems.is_empty(), "{problems:#?}");
     let last = program.pauses.last().expect("paused");

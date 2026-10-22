@@ -22,8 +22,11 @@
 //! The pieces:
 //!
 //! - [`config`] writes a session: the INI (from `sim/machine.ini.in`), a
-//!   HAL file, the headless UI `sim/dreamcarve-ui.py`, a parameter file
-//!   with a G54 offset, and the programs.
+//!   HAL file, the driver `sim/dreamcarve-ui.py`, a parameter file with a
+//!   G54 offset, and the programs. The driver imports nothing from
+//!   LinuxCNC: it talks to `linuxcncrsh` over TCP and runs `halcmd`, both
+//!   separate LinuxCNC programs (`README.md`, "How DreamCarve talks to
+//!   LinuxCNC").
 //! - [`runner`] runs `linuxcnc -r`, natively or in the `rs274-motion`
 //!   container.
 //! - [`report`] reads the UI's record; [`motion_log`] reads
@@ -221,6 +224,17 @@ pub fn check_cases(
                 continue;
             }
         };
+        for (label, session) in [
+            ("motion-logger", &logged),
+            ("motion-logger, startup code", &startup),
+            ("motion module", &travel),
+        ] {
+            for e in &session.report.startup_errors {
+                outcome
+                    .problems
+                    .push(format!("{label}: before the first program: {e}"));
+            }
+        }
         if !travel.report.homed {
             outcome
                 .problems
