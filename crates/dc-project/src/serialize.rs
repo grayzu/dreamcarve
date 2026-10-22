@@ -73,7 +73,7 @@ pub enum LoadError {
         /// Where in the file's text the value the message names first
         /// is (`operations[0].last_pass`, in backquotes), when [`load`]
         /// read it from text and the file has that value. `None` from
-        /// [`crate::migrate`], which has no text.
+        /// [`crate::migrate`](fn@crate::migrate), which has no text.
         at: Option<TextPosition>,
     },
     /// The JSON does not match the project schema (unknown or missing

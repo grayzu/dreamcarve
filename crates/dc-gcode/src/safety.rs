@@ -136,7 +136,7 @@ pub(crate) fn check(
     .map(|(extents, _)| extents)
 }
 
-/// [`check`], also returning the blocks the program parsed into, so the
+/// `check` (test builds only), also returning the blocks the program parsed into, so the
 /// emitter reads its pauses without parsing the program again (#71).
 #[allow(
     clippy::too_many_arguments,

@@ -248,7 +248,7 @@ pub struct ExportArgs {
     /// defaults (and your configured ones) instead of keeping yours.
     #[arg(long, requires = "post")]
     pub reset_settings: bool,
-    /// Write one program with T<n> M6 tool changes, whatever the project's
+    /// Write one program with `T<n> M6` tool changes, whatever the project's
     /// tool_change_mode says. Needs a post-processor with M6 (grblHAL).
     /// Not saved to the project.
     #[arg(long, conflicts_with = "programs_per_tool")]

@@ -20,7 +20,7 @@
 //!
 //! Circular arcs stay arcs (#70, not in PureCutCNC, which flattens every
 //! curve): usvg's Bézier pieces of circles, equal-radius ellipses,
-//! rounded-rect corners and `A` commands are recognised exactly ([`arc`])
+//! rounded-rect corners and `A` commands are recognised exactly (the `arc` module)
 //! and become bulges, so generators offset true arcs and Drill sees exact
 //! circles. Every other curve is flattened. The sweep is measured after
 //! the flip, so a reflection reverses an arc's bulge by construction.

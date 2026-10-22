@@ -217,7 +217,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
 /// Inside and Outside contours are re-seamed where an arc tangent to them
-/// fits in the waste domain away from corners ([`crate::lead`]): each
+/// fits in the waste domain away from corners (the `lead` module): each
 /// pass descends at the arc's far end, its staging point, cuts the arc,
 /// the lap from the arrival, the overcut and the exit arc at the feed
 /// rate, and retracts. Below the tab top the arcs keep off the tabs, and
@@ -254,7 +254,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// to each; the twin runs the way its path does, ramps along itself, and
 /// carries the tabs as a closed shape's twin does. `reverse` runs the
 /// last pass from the path's other end, where the earlier passes end. The
-/// allowance paths must follow the line ([`last_pass::open_twins`],
+/// allowance paths must follow the line (`last_pass::open_twins`,
 /// [`CamError::ShapeNarrowerThanAllowance`]) and keep `r + a` from every
 /// other line and kept strip ([`CamError::AllowanceCutsIntoKeptSide`]).
 ///
@@ -288,7 +288,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// regions whose tool paths cut into each other give
 /// [`Warning::ToolpathsOverlap`], in cut order; an open path cut On
 /// line is a shape of its own unless it lies in a region's material
-/// (#206, [`crate::overlap`]). Fails without a toolpath when a feed, plunge rate, or
+/// (#206, the `overlap` module). Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
 /// allowance, when targets cross, when an id does not resolve, when the
 /// cutter would leave the stock ([`CamError::OffStock`]), when an entry's
