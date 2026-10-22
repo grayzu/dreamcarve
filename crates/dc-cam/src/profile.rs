@@ -6582,6 +6582,7 @@ mod tests {
                         width_mm: 8.0,
                         height_mm: TOP_MM,
                         shape,
+                        holds_slug: Some(false),
                     }];
                     let placed_op = ProfileOp {
                         tabs: None,
