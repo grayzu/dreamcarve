@@ -1,0 +1,31 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "grbl-sim-motion"
+description = "Runs DreamCarve's grblHAL and GRBL programs through the grblHAL Simulator and grbl-sim and compares their motion with DreamCarve's reading"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "grbl_sim_motion"
+path = "src/lib.rs"
+
+[[bin]]
+name = "grbl-sim-motion"
+path = "src/main.rs"
+
+[dependencies]
+dc-gcode.workspace = true
+dc-project.workspace = true
+dc-geometry.workspace = true
+rs274-motion = { path = "../rs274-motion" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

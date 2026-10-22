@@ -158,6 +158,11 @@ cannot be and why, and the manual procedure for the rest:
 - **A real machine.** The trustworthy layer is an air cut, then foam or
   scrap, on a real machine: today the maintainer's grblHAL and GRBL.
 
+Record each manual run, on the controller's software or on a machine,
+with the [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml): one issue per run, with the
+program and project attached and the result of each check in the plan's
+procedure for that controller.
+
 To run the automatic check without LinuxCNC installed:
 
 ```sh
@@ -171,4 +176,6 @@ DREAMCARVE_RS274=podman:dreamcarve-rs274 cargo test -p rs274-motion -- --nocaptu
       lists the controller in "Choosing one" and "Controllers compared",
       with what was verified, its canned cycles and its tool changes.
 - [ ] "Not yet checked on a real machine" in that chapter names it until
-      a program from it has run on the controller.
+      a passed layer 5 report exists for it: a
+      [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml) issue for a real machine whose result
+      is Pass.
