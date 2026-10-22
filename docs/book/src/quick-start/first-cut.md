@@ -46,11 +46,11 @@ Imported 1 shape(s) from coaster.svg: page units mm, 1 user unit = 1.0000 mm.
 Wrote coaster.dcv: stock 110.00 × 110.00 mm, post-processor grblhal, 1 shape(s) targeted by Profile.
 Values to set; export refuses until every one is set:
 coaster.dcv:10:21: stock.thickness_mm is not set (mm)
-coaster.dcv:24:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:25:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:26:14: tools[t1].rpm is not set (RPM) for tool `Set me`
-coaster.dcv:27:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-coaster.dcv:42:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
+coaster.dcv:29:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:30:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:31:14: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:32:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
+coaster.dcv:47:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
 Next: edit coaster.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check coaster.dcv`.
 ```
 
@@ -70,7 +70,7 @@ reads). `init` fills it with these defaults:
 | Work zero | X and Y at the stock's bottom-left corner, Z at the stock top |
 | Tool `t1`, named "Set me" | 6.35 mm end mill, 2 flutes, **no feed, plunge rate, spindle speed or depth per pass** |
 | Operation `op1` | A Profile of every closed shape: outside the line, climb, **no depth**, passes as deep as the tool's depth per pass, a 15° ramp into each pass, safe Z 5 mm |
-| Tabs | 4 tabs, 8 mm wide and 3 mm tall, square |
+| Tabs | 4 tabs on each part's outline, 8 mm wide and 3 mm tall, square, asked for in the Profile's `tabs`; `dreamcarve tabs` places and lists them ([Tabs](../user-guide/tabs.md)) |
 | Post-processor | grblHAL, millimetres |
 
 A **Profile** cuts along a shape's outline. "Outside" puts the cutter outside
@@ -88,11 +88,11 @@ This fails, on purpose:
 
 ```text
 coaster.dcv:10:21: error: stock.thickness_mm is not set (mm)
-coaster.dcv:24:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:25:24: error: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-coaster.dcv:26:14: error: tools[t1].rpm is not set (RPM) for tool `Set me`
-coaster.dcv:27:23: error: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-coaster.dcv:42:19: error: operations[op1].depth_mm is not set (mm) for operation `Profile`
+coaster.dcv:29:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:30:24: error: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:31:14: error: tools[t1].rpm is not set (RPM) for tool `Set me`
+coaster.dcv:32:23: error: tools[t1].step_down_mm is not set (mm) for tool `Set me`
+coaster.dcv:47:19: error: operations[op1].depth_mm is not set (mm) for operation `Profile`
 error: export of coaster.dcv failed; nothing was written
 ```
 
@@ -110,7 +110,7 @@ set is near the top, before the shapes. The file starts like this:
 <!-- doc-test: excerpt coaster.dcv -->
 ```json
 {
-  "version": 8,
+  "version": 15,
   "name": "coaster",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -123,6 +123,11 @@ set is near the top, before the shapes. The file starts like this:
   "origin": {
     "xy": "bottom_left",
     "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
   },
   "tools": [
     {
@@ -138,8 +143,9 @@ set is near the top, before the shapes. The file starts like this:
       "step_down_mm": null,
 ```
 
-The operations follow the tools, then the placed shapes and the
-`post_processor` block, which names grblHAL and holds its settings, and
+The operations follow the tools, then the project's placed tabs (an
+empty list for now: the Profile's `tabs` asks for the four tabs), the
+placed shapes and the `post_processor` block, which names grblHAL and holds its settings, and
 last the shapes themselves.
 
 ### The material
@@ -225,8 +231,9 @@ dreamcarve check coaster.dcv
 it found:
 
 ```text
-Extents (machine coordinates, mm, tool centre): X 6.825..103.175, Y 6.825..103.175, Z -12.000..5.000
-  The cutter's edge reaches X 3.650..106.350, Y 3.650..106.350; keep clamps outside that.
+Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 coaster.dcv: 0 error(s), 0 warning(s)
 ```
 
@@ -243,25 +250,40 @@ dreamcarve export coaster.dcv
 ```
 
 ```text
-Wrote coaster.nc (57 lines, post-processor grblhal).
-  op1 `Profile`: tool `t1` (Set me), 1 target(s), 12 mm deep
-Extents (machine coordinates, mm, tool centre): X 6.817..103.969, Y 6.817..103.183, Z -12.000..5.000
-  The cutter's edge reaches X 3.642..107.144, Y 3.642..106.358; keep clamps outside that.
+Wrote coaster.nc (48 lines, post-processor grblhal).
+  op1 `Profile`: tool `t1` (Set me), 1 target(s), 12.000 mm deep
+Extents (machine coordinates, mm, tool centre): X 6.825..103.989, Y 6.825..103.175, Z -12.000..5.000
+  The cutter's edge reaches X 3.650..107.164, Y 3.650..106.350; keep clamps outside that.
+Estimated time: 46 s (cutting 43 s, dwells 3 s); 21 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Before you start: fit T1 Set me and set work zero with it.
+This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
+If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.
 ```
 
 `coaster.nc` is the G-code program. The **extents** are where it takes the
 bit, in the coordinates your controller shows once work zero is set: the
-centre of the bit stays between X 6.817 and 103.969 mm, and its edge, half
-the 6.35 mm diameter further out, between X 3.64 and 107.14 mm (Y between
-3.64 and 106.36 mm: the ramp into each pass, step 7, reaches a little past
+centre of the bit stays between X 6.825 and 103.989 mm, and its edge, half
+the 6.35 mm diameter further out, between X 3.65 and 107.16 mm (Y between
+3.65 and 106.35 mm: the ramp into each pass, step 7, reaches a little past
 the circle on the right). Z runs from −12, the deepest cut, up to 5, safe Z. You place
 clamps from these numbers in step 8.
 
+The **estimated time** is how long the cutting and the spindle's spin-up
+wait take at the feed rates you set. It leaves out the rapids, because
+DreamCarve does not know how fast your machine moves; set your machine's
+rapid rate in the [configuration](../user-guide/configuration.md#estimated-run-time)
+to include them. The real job takes a little longer: the machine also
+speeds up and slows down.
+
 The program does not stop for its first bit: you fit it and set work zero
-with it before you start, as the last line says. A program that stops, for a second bit or for a router you
+with it before you start, as the "Before you start" line says. A program that stops, for a second bit or for a router you
 switch by hand, also lists every place where it stops and waits for you.
 Your sender may not show why it stopped, so note them.
+
+The last line is for senders that measure each bit with a tool setter and
+store its length on the controller: that length becomes part of the Z
+zero you set, so the program leaves it alone. If you set Z zero by
+touching the bit to the stock, as this chapter does, you can ignore it.
 
 ## 7. Read the start of the program
 
@@ -269,11 +291,14 @@ Open `coaster.nc`. It starts like this (your date will differ):
 
 <!-- doc-test: excerpt coaster.nc -->
 ```text
-( coaster )
+( Project: coaster )
 ( Generated by DreamCarve on 2026-10-16 )
 G90
 G17
 G94
+G80
+G40
+G50
 G21
 G54
 ( Operation 1: Profile )
@@ -281,28 +306,30 @@ G54
 G0 Z5.000
 M3 S18000
 G4 P3.000
-X103.139 Y56.863
-G1 X103.969 Y37.831 Z-0.104 F1500.000
-X103.335 Y52.356 Z-4.000
-X103.139 Y56.863
-G2 X86.245 Y18.324 I-48.139 J-1.870
+X103.175 Y55.000
+Z1.000
+G1 X103.989 Y73.642 Z-4.000 F1500.000
+X103.175 Y55.000
+G2 X6.825 Y55.000 I-48.175 J0.000
 ```
 
 | Lines | What they do |
 | --- | --- |
-| `G90 G17 G94 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
-| `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) happen only at or above this height. |
+| `G90 G17 G94 G80 G40 G50 G21 G54` | Set the controller's state: absolute coordinates, the XY plane, feed in units per minute, no drilling cycle, no cutter compensation, no scaling, millimetres, and the first work coordinate system. A controller left in another state by an earlier job is corrected. |
+| `G0 Z5.000` | Rapid up to **safe Z**, 5 mm above the stock top. Rapids (fast, non-cutting moves) that go sideways happen only at or above this height. |
 | `M3 S18000`, `G4 P3.000` | Start the spindle at 18000 RPM, then wait 3 seconds for it to reach speed. |
-| `X103.139 Y56.863` | Rapid to the start of the cut, still at safe Z. |
-| `G1 X103.969 Y37.831 Z-0.104 F1500.000`, `X103.335 Y52.356 Z-4.000` | **Ramp** down to the first pass, 4 mm deep: two straight moves at 15° in the waste outside the coaster, out and back, at the feed rate. The bit enters the wood on a slope instead of drilling straight down, which is easier on the bit and leaves no plunge mark. `G1` stays in effect, so the next lines are cuts too. |
-| `X103.139 Y56.863` | Back to the start of the cut, at the pass depth. |
-| `G2 X86.245 Y18.324 I-48.139 J-1.870` | Cut along the outline at the feed rate, as a clockwise arc (`G2`) whose centre is `I`, `J` from the start. |
+| `X103.175 Y55.000` | Rapid to the start of the cut, still at safe Z. |
+| `Z1.000` | Rapid straight down to 1 mm above the stock top, where the ramp starts, so the bit does not ramp through the air. `G0` is still in effect from `G0 Z5.000`. |
+| `G1 X103.989 Y73.642 Z-4.000 F1500.000` | **Ramp** down to the first pass, 4 mm deep: one straight move at 15° in the waste outside the coaster, at the feed rate. The bit enters the wood on a slope instead of drilling straight down, which is easier on the bit and leaves no plunge mark. `G1` stays in effect, so the next lines are cuts too. |
+| `X103.175 Y55.000` | Back to the start of the cut, at the pass depth. |
+| `G2 X6.825 Y55.000 I-48.175 J0.000` | Cut along the outline at the feed rate, as a clockwise arc (`G2`) whose centre is `I`, `J` from the start: half the circle, 48.175 mm from the centre, the circle's 45 mm radius plus half the bit. |
 
-The drawing's circle was imported as 160 short straight edges, and the
-program would be a thousand lines of `G1` moves. Instead `export` writes
-each lap as a few arcs that pass within 0.01 mm of every corner of the
-outline ([Arc fitting](../user-guide/project-file.md#arc-fitting)); the
-cut is the same, only smoother.
+The drawing's `<circle>` is imported as the circle it is, two half-circle
+arcs, so each lap is two `G2` moves on the exact circle the bit's centre
+follows. Curves that are not circles, such as ellipses and most Bézier
+curves, are imported as short straight edges instead, and `export` turns
+runs of those back into arcs where it can
+([Arc fitting](../user-guide/project-file.md#arc-fitting)).
 
 The circle is cut in three passes: Z −4, −8 and −12, each ramped into
 from the floor of the pass before. The bottom of the
@@ -317,8 +344,8 @@ job:
 
 1. **Fix the stock.** The program uses the 110 × 110 mm square that starts
    at your XY zero. Use the extents `export` printed (step 6) to place
-   clamps: the bit's edge reaches X 3.64 to 107.14 mm and Y 3.64 to
-   106.36 mm from your XY zero, so keep clamps and screws outside that area,
+   clamps: the bit's edge reaches X 3.65 to 107.16 mm and Y 3.65 to
+   106.35 mm from your XY zero, so keep clamps and screws outside that area,
    with room to spare for the collet nut. Your board can be bigger. If you
    change the project, export again and use the new extents.
 2. **Use a spoilboard.** The last pass goes 0.2 mm below the plywood,

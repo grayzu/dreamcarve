@@ -10,7 +10,7 @@ use crate::GeometryWarning;
 use crate::contour::Contour;
 use crate::distance::distance_to_segment;
 use crate::offset::to_cavalier;
-use crate::point::{EPS_MM, Point, Vec2};
+use crate::point::{EPS_MM, Point, Rect, Vec2};
 use crate::polyline::Segment;
 use cavalier_contours::polyline::{BooleanOp, PlineSource};
 use std::f64::consts::{PI, TAU};
@@ -20,7 +20,11 @@ use std::f64::consts::{PI, TAU};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Region {
     outer: Contour,
+    /// The input position of `outer`.
+    outer_index: usize,
     holes: Vec<Contour>,
+    /// The input position of each hole, in step with `holes`.
+    hole_indices: Vec<usize>,
     depth: usize,
 }
 
@@ -31,11 +35,26 @@ impl Region {
         &self.outer
     }
 
+    /// The position in [`nest`]'s input of the contour that became
+    /// [`Region::outer`], so a caller can find what it came from without
+    /// comparing contours (#71).
+    #[must_use]
+    pub fn outer_index(&self) -> usize {
+        self.outer_index
+    }
+
     /// The holes, in the input order given to [`nest`]; each is clockwise
     /// and lies inside [`Region::outer`].
     #[must_use]
     pub fn holes(&self) -> &[Contour] {
         &self.holes
+    }
+
+    /// The position in [`nest`]'s input of each of [`Region::holes`], in
+    /// the same order.
+    #[must_use]
+    pub fn hole_indices(&self) -> &[usize] {
+        &self.hole_indices
     }
 
     /// How many input contours enclose [`Region::outer`]: 0 for a part
@@ -92,39 +111,89 @@ pub fn area_mm2(regions: &[Region]) -> f64 {
 pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>), GeometryError> {
     let mut keep = vec![true; contours.len()];
     let mut warnings = Vec::new();
-    for (i, first) in contours.iter().enumerate() {
-        for (j, second) in contours.iter().enumerate().skip(i + 1) {
-            let both_kept =
-                keep.get(i).copied().unwrap_or(false) && keep.get(j).copied().unwrap_or(false);
-            if !both_kept {
-                continue;
+    // Contours whose boxes are apart are `Overlap::Apart`, so only pairs
+    // with touching boxes need the boolean. They come in the order a
+    // comparison of every pair would visit them, so the same contour is
+    // dropped and the same crossing reported.
+    let boxes: Vec<Option<Rect>> = contours.iter().map(|c| c.polyline().bounds()).collect();
+    for (i, j) in touching_pairs(&boxes, 0.0) {
+        let (Some(first), Some(second)) = (contours.get(i), contours.get(j)) else {
+            continue;
+        };
+        let both_kept =
+            keep.get(i).copied().unwrap_or(false) && keep.get(j).copied().unwrap_or(false);
+        if !both_kept {
+            continue;
+        }
+        match overlap(first, second) {
+            Overlap::Same => {
+                if let Some(flag) = keep.get_mut(j) {
+                    *flag = false;
+                }
+                warnings.push(GeometryWarning::DuplicateContourDropped {
+                    index: j,
+                    duplicate_of: i,
+                });
             }
-            match overlap(first, second) {
-                Overlap::Same => {
-                    if let Some(flag) = keep.get_mut(j) {
-                        *flag = false;
-                    }
-                    warnings.push(GeometryWarning::DuplicateContourDropped {
-                        index: j,
-                        duplicate_of: i,
-                    });
-                }
-                Overlap::Cross => {
-                    return Err(GeometryError::ContoursCross {
-                        first: i,
-                        second: j,
-                    });
-                }
-                Overlap::Apart | Overlap::Nested => {}
+            Overlap::Cross => {
+                return Err(GeometryError::ContoursCross {
+                    first: i,
+                    second: j,
+                });
+            }
+            Overlap::Apart | Overlap::Nested => {}
+        }
+    }
+    let (kept, sources) = contours
+        .into_iter()
+        .zip(keep)
+        .enumerate()
+        .filter_map(|(index, (contour, kept))| kept.then_some((contour, index)))
+        .unzip();
+    Ok((nest_from(kept, sources), warnings))
+}
+
+/// Every pair `(i, j)`, `i < j`, of `boxes` whose rectangles overlap or
+/// touch once each is grown by `margin_mm` on every side, in ascending
+/// order of `i` then `j`. A `None` box pairs with nothing. Sweeps the
+/// boxes sorted by left edge, so separate shapes cost about `n log n`
+/// rather than a comparison per pair (#71). Boxes with a coordinate that is
+/// not finite cannot be sorted, so then every pair of `Some` boxes is
+/// returned.
+fn touching_pairs(boxes: &[Option<Rect>], margin_mm: f64) -> Vec<(usize, usize)> {
+    let mut sorted: Vec<(usize, Rect)> = boxes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.map(|b| (i, b)))
+        .collect();
+    let finite = sorted.iter().all(|(_, b)| {
+        [b.min.x, b.min.y, b.max.x, b.max.y]
+            .iter()
+            .all(|v| v.is_finite())
+    });
+    let mut pairs = Vec::new();
+    if !finite {
+        for (k, &(i, _)) in sorted.iter().enumerate() {
+            pairs.extend(sorted.iter().skip(k + 1).map(|&(j, _)| (i, j)));
+        }
+        return pairs;
+    }
+    sorted.sort_by(|(i, a), (j, b)| a.min.x.total_cmp(&b.min.x).then(i.cmp(j)));
+    for (k, &(i, a)) in sorted.iter().enumerate() {
+        for &(j, b) in sorted.iter().skip(k + 1) {
+            // Sorted by left edge: no later box reaches back to `a`.
+            if b.min.x - margin_mm > a.max.x + margin_mm {
+                break;
+            }
+            if b.min.y - margin_mm <= a.max.y + margin_mm
+                && a.min.y - margin_mm <= b.max.y + margin_mm
+            {
+                pairs.push((i.min(j), i.max(j)));
             }
         }
     }
-    let kept = contours
-        .into_iter()
-        .zip(keep)
-        .filter_map(|(contour, kept)| kept.then_some(contour))
-        .collect();
-    Ok((nest_unchecked(kept), warnings))
+    pairs.sort_unstable();
+    pairs
 }
 
 /// How two closed contours relate, judged by the area they share.
@@ -178,23 +247,39 @@ fn shared_area_mm2(a: &Contour, b: &Contour) -> f64 {
 }
 
 /// Nesting proper, for contours already known not to cross or repeat.
+/// The regions' indices are positions in `contours`.
 pub(crate) fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
+    let sources = (0..contours.len()).collect();
+    nest_from(contours, sources)
+}
+
+/// [`nest_unchecked`] where `sources[k]` is the input position the
+/// regions report for `contours[k]`.
+fn nest_from(contours: Vec<Contour>, sources: Vec<usize>) -> Vec<Region> {
     let areas_mm2: Vec<f64> = contours.iter().map(|c| c.signed_area_mm2().abs()).collect();
     let sized: Vec<(&Contour, f64)> = contours.iter().zip(areas_mm2.iter().copied()).collect();
 
-    // For every contour, the indices of the contours that enclose it.
-    let containers: Vec<Vec<usize>> = sized
-        .iter()
-        .enumerate()
-        .map(|(i, &inner)| {
-            sized
-                .iter()
-                .enumerate()
-                .filter(|&(j, &outer)| j != i && encloses(outer, inner))
-                .map(|(j, _)| j)
-                .collect()
-        })
-        .collect();
+    // For every contour, the indices of the contours that enclose it. A
+    // contour encloses another only if a point of the other lies inside
+    // it, more than `EPS_MM` from its boundary, so only pairs whose boxes
+    // grown by `EPS_MM` touch are tested (#71).
+    let boxes: Vec<Option<Rect>> = contours.iter().map(|c| c.polyline().bounds()).collect();
+    let mut containers: Vec<Vec<usize>> = vec![Vec::new(); contours.len()];
+    for (i, j) in touching_pairs(&boxes, EPS_MM) {
+        let (Some(&a), Some(&b)) = (sized.get(i), sized.get(j)) else {
+            continue;
+        };
+        if encloses(a, b)
+            && let Some(enclosing) = containers.get_mut(j)
+        {
+            enclosing.push(i);
+        }
+        if encloses(b, a)
+            && let Some(enclosing) = containers.get_mut(i)
+        {
+            enclosing.push(j);
+        }
+    }
     let depths: Vec<usize> = containers.iter().map(Vec::len).collect();
     let is_outer = |j: usize| depths.get(j).is_some_and(|d| d % 2 == 0);
 
@@ -220,23 +305,31 @@ pub(crate) fn nest_unchecked(contours: Vec<Contour>) -> Vec<Region> {
         .collect();
 
     let mut regions: Vec<(usize, Region)> = Vec::new();
-    let mut holes: Vec<(usize, Contour)> = Vec::new();
-    for ((index, contour), role) in contours.into_iter().enumerate().zip(roles) {
+    let mut holes: Vec<(usize, Contour, usize)> = Vec::new();
+    for (((index, contour), role), source) in
+        contours.into_iter().enumerate().zip(roles).zip(sources)
+    {
         match role {
             Role::Outer => regions.push((
                 index,
                 Region {
                     outer: with_ccw(contour, true),
+                    outer_index: source,
                     holes: Vec::new(),
+                    hole_indices: Vec::new(),
                     depth: depths.get(index).copied().unwrap_or(0),
                 },
             )),
-            Role::HoleOf(parent) => holes.push((parent, with_ccw(contour, false))),
+            Role::HoleOf(parent) => holes.push((parent, with_ccw(contour, false), source)),
         }
     }
-    for (parent, hole) in holes {
-        if let Some((_, region)) = regions.iter_mut().find(|(index, _)| *index == parent) {
+    // `regions` is in input order, so sorted by index.
+    for (parent, hole, source) in holes {
+        if let Ok(k) = regions.binary_search_by_key(&parent, |(index, _)| *index)
+            && let Some((_, region)) = regions.get_mut(k)
+        {
             region.holes.push(hole);
+            region.hole_indices.push(source);
         }
     }
     regions.into_iter().map(|(_, region)| region).collect()
@@ -660,6 +753,27 @@ mod tests {
         assert_eq!(warnings.len(), 1);
     }
 
+    /// #71: a region names the input positions of its contours, counting
+    /// a dropped duplicate, so a caller can map it back to its shapes.
+    #[test]
+    fn regions_carry_input_indices() {
+        let (regions, warnings) = nest(vec![
+            circle(50.0, 0.0, 3.0),
+            circle(0.0, 0.0, 4.0),
+            circle(0.0, 0.0, 4.0),
+            circle(0.0, 0.0, 10.0),
+            circle(0.0, 0.0, 2.0),
+            circle(0.0, 6.0, 1.0),
+        ])
+        .unwrap();
+        assert_eq!(warnings.len(), 1);
+        let indices: Vec<(usize, &[usize])> = regions
+            .iter()
+            .map(|r| (r.outer_index(), r.hole_indices()))
+            .collect();
+        assert_eq!(indices, [(0, &[][..]), (3, &[1, 5][..]), (4, &[][..])]);
+    }
+
     #[test]
     fn duplicate_hole_is_dropped_and_part_keeps_one_hole() {
         let (regions, warnings) = nest(vec![
@@ -676,6 +790,32 @@ mod tests {
                 index: 2,
                 duplicate_of: 1
             }]
+        );
+    }
+
+    /// #71: nesting 2000 contours, a page of text's worth (1000 letters
+    /// with one counter each), takes under 500 ms. Comparing every pair
+    /// took 2.1 s for 2000 circles. Timing means nothing in a debug build,
+    /// so this runs with `cargo test --release` only.
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "timing holds in release builds only (#71)")]
+    fn nest_2000_shapes_under_500ms() {
+        // Flattened, as imported text is: dozens of vertices per contour.
+        let flat = |c: Contour| Contour::new(c.polyline().with_arcs_flattened(0.01)).unwrap();
+        let mut contours = Vec::with_capacity(2000);
+        for k in 0..1000_u32 {
+            let (x, y) = (f64::from(k % 40) * 10.0, f64::from(k / 40) * 12.0);
+            contours.push(flat(circle(x, y, 4.0)));
+            contours.push(flat(circle(x, y, 2.0)));
+        }
+        let start = std::time::Instant::now();
+        let regions = nest_ok(contours);
+        let elapsed = start.elapsed();
+        assert_eq!(regions.len(), 1000);
+        assert!(regions.iter().all(|r| r.holes().len() == 1));
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "nest took {elapsed:?}"
         );
     }
 }

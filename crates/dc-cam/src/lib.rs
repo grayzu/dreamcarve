@@ -3,12 +3,15 @@
 
 //! Toolpath generators for DreamCarve. Pure functions from a project and an
 //! operation to a toolpath plus warnings (`docs/specs/phase-1/design.md`,
-//! "dc-cam"). Phase 1 adds Profile, with holding tabs. Phase 2 moves every
+//! "dc-cam"). Phase 1 adds Profile, with tabs. Phase 2 moves every
 //! generator onto cut blocks ([`CutBlock`]) that one shared step,
 //! [`sequence`](fn@sequence), orders and links (`docs/specs/phase-2/design.md`,
 //! "Algorithms → Sequence"), and adds [`order::check`], which warns when the
 //! order of operations cuts inside a part an earlier one freed. Phase 2
-//! also adds Drill ([`generate_drill`]).
+//! also adds Pocket ([`generate_pocket`]), Drill ([`generate_drill`]) and
+//! Engrave ([`generate_engrave`]), and entries, leads and corner relief.
+//! Tabs are placed on the project's outlines ([`placed_tabs`], #105,
+//! ADR-0005), and every Profile that cuts a tab's outline rises over it.
 //!
 //! Toolpaths use the project's absolute frame: Y-up, Z-up, millimetres
 //! (ADR-0001), stock bottom at Z = 0 and stock top at Z = thickness.
@@ -23,8 +26,10 @@ mod lead;
 pub mod order;
 mod overlap;
 pub mod passes;
+pub mod placed_tabs;
 pub mod pocket;
 mod profile;
+mod relief;
 mod sequence;
 mod stock;
 mod tabs;
@@ -41,8 +46,11 @@ pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use footprint::footprint;
 pub use pocket::generate_pocket;
 pub use profile::{Wall, generate_profile, traversal_is_ccw};
-pub use sequence::{SequenceInput, plan, sequence};
+pub use sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
-pub use tabs::tab_centres_mm;
+pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};
 pub use toolpath::{Move, MoveKind, Toolpath};
-pub use warning::{Warning, WarningCode};
+pub use warning::{
+    IslandNeighbour, LeadDroppedReason, OpenPathReason, ReliefCornerReason, ReliefSkippedReason,
+    TabOnCornerReason, TabsRangeReason, Warning, WarningCode,
+};

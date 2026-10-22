@@ -122,6 +122,8 @@ pub enum CamError {
     MissingFeed {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// Which rate is missing.
         field: FeedField,
     },
@@ -137,6 +139,8 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// The cutter in words, such as `a V-bit`.
         cutter: &'static str,
     },
@@ -147,6 +151,8 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
     },
     /// Neither the Pocket nor its tool sets a step-over fraction.
     #[error("operation `{op}` has no step_over_fraction and tool `{tool}` sets none")]
@@ -155,6 +161,8 @@ pub enum CamError {
         op: OperationId,
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
     },
     /// The step-over fraction in effect is not in (0, 1], or is so small
     /// that one pass would need more than [`crate::pocket::MAX_RINGS`]
@@ -208,11 +216,12 @@ pub enum CamError {
         /// The angle given, degrees.
         angle_deg: f64,
     },
-    /// A helix entry on an On line Profile, which removes nothing but its
-    /// own kerf, so no material is there to helix in. Validation reports
-    /// it (`helix_needs_waste_side`); the generator refuses it too.
+    /// A helix entry on an On line, Left or Right Profile, which removes
+    /// nothing but its own kerf, so no material is there to helix in.
+    /// Validation reports it (`helix_needs_waste_side`); the generator
+    /// refuses it too.
     #[error(
-        "operation `{op}` cuts on the line and asks for a helix entry; a helix needs waste beside the cut, so use ramp or plunge"
+        "operation `{op}` cuts on the line or beside an open path and asks for a helix entry; a helix needs waste beside the cut, so use ramp or plunge"
     )]
     HelixNeedsWasteSide {
         /// The operation.
@@ -309,6 +318,8 @@ pub enum CamError {
     InvalidToolDiameter {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// The diameter, mm.
         diameter_mm: f64,
     },
@@ -347,6 +358,195 @@ pub enum CamError {
         /// The later shape in target order.
         second: ShapeRef,
     },
+    /// A Profile's cut along one line of a region comes too close to
+    /// another line of the same region: the band between them (an outline
+    /// and an island or hole in it, or two of those) is narrower than the
+    /// tool. Inside, the band is waste and the cutter would cut into the
+    /// material the Profile keeps beyond the other line (#192); On line,
+    /// the band is the part, and the two lines' cuts would cut through it
+    /// (#199), as they would beside an open path drawn in the part, away
+    /// from where the two lines meet (#210). `shape` is the one drawn first; `other` is boxed to keep
+    /// the error small.
+    #[error(
+        "operation `{op}` cuts {shape} and {other}, but the band between them is {band_mm:.3} mm wide, narrower than its {diameter_mm} mm tool, so the bit would cut into material the Profile keeps; no toolpath was produced"
+    )]
+    BandNarrowerThanTool {
+        /// The operation.
+        op: OperationId,
+        /// One line of the band, the one drawn first.
+        shape: ShapeRef,
+        /// The other line.
+        other: Box<ShapeRef>,
+        /// The narrowest distance between the two lines, mm.
+        band_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
+    /// An On line Profile's part is narrower than the tool everywhere: every
+    /// point of it lies within the tool radius of its lines (the part
+    /// shrunk by the radius is empty), so the cut along them removes the
+    /// whole part (#223). `shape` is the part's outline.
+    #[error(
+        "operation `{op}` cuts {shape} On line, but the part is nowhere as wide as its {diameter_mm} mm tool, so the bit would remove the whole part; cut it Outside, or use Engrave to mark it; no toolpath was produced"
+    )]
+    PartNarrowerThanTool {
+        /// The operation.
+        op: OperationId,
+        /// The part's outline.
+        shape: ShapeRef,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
+    /// A Profile's last pass has an allowance that is not more than 0 and
+    /// at most a third of the bit's diameter, or a thickness that is not
+    /// more than 0 and at most the depth (#284). Validation rejects both;
+    /// the generator does not trust its callers.
+    #[error("operation `{op}` has last_pass.{field} {value} mm; it must be {range}")]
+    InvalidLastPass {
+        /// The operation.
+        op: OperationId,
+        /// `allowance_mm` or `thickness_mm`.
+        field: &'static str,
+        /// The value set, mm.
+        value: f64,
+        /// The allowed range, as the user reads it.
+        range: String,
+    },
+    /// A Profile that cuts On line has a last pass (#284): it cuts with
+    /// both flanks, so it leaves no wall to take the allowance off.
+    /// Validation rejects it; the generator refuses it too. (changed in
+    /// #311: Left and Right take a last pass.)
+    #[error(
+        "operation `{op}` has a last_pass but cuts on the line; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside, Outside, Left or Right"
+    )]
+    LastPassNeedsSide {
+        /// The operation.
+        op: OperationId,
+    },
+    /// #284: a Profile with a last pass allowance cuts two lines closer
+    /// than its passes before the last need, `needed_mm`. Inside, two
+    /// lines of one region need the tool and the allowance on both,
+    /// `diameter + 2 · allowance`: those passes, `allowance_mm` farther
+    /// from each line, would cut into the skin the other line's passes
+    /// leave, or into the part. Between two regions (a part and another
+    /// part, or one inside another's hole) the passes need
+    /// `diameter + allowance`, or they would come within the radius of the
+    /// other part (#310 review). `shape` is the one drawn first; `other`
+    /// is boxed to keep the error small.
+    #[error(
+        "operation `{op}` cuts {shape} and {other} with a {allowance_mm} mm last pass allowance, but the gap between them is {band_mm:.3} mm, narrower than the {needed_mm:.3} mm its {diameter_mm} mm tool and the allowance need there, so the passes before the last would cut into material the Profile keeps; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    BandNarrowerThanAllowance {
+        /// The operation.
+        op: OperationId,
+        /// One line of the band, the one drawn first.
+        shape: ShapeRef,
+        /// The other line.
+        other: Box<ShapeRef>,
+        /// The narrowest distance between the two lines, mm.
+        band_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+        /// The gap the passes before the last need, mm.
+        needed_mm: f64,
+    },
+    /// #284, #310 review, changed in #324: somewhere the passes before the
+    /// last on `shape` skip material the last pass would then cut whole at
+    /// full depth: a neck, slot, notch, inlet or small hole wider than the
+    /// tool but narrower than the tool plus the allowance on both sides,
+    /// which they bridge (refused once the last pass would take off more
+    /// than a square corner's `√2` times the allowance there), or a tip so
+    /// narrow that the last pass would take off more than a third of the
+    /// tool (or `√2` times the allowance, if more) where they stop short.
+    /// A corner whose wedge is thinner than that is cut.
+    #[error(
+        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the passes before the last cannot follow it and the last pass would cut what they skip at full depth: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a tip so narrow that the last pass would take off more than a third of the tool there; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    ShapeNarrowerThanAllowance {
+        /// The operation.
+        op: OperationId,
+        /// The shape the allowance passes cannot follow.
+        shape: ShapeRef,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+    },
+    /// A Left or Right Profile's cut beside one open path comes within the
+    /// tool radius of another line of the operation, or of the strip one
+    /// radius wide that a line keeps on the side away from its own cut
+    /// (#207): the bit would cut into material the drawing keeps. `shape`
+    /// and `other` are in drawing order and may be the same path, whose
+    /// cut reaches what it keeps further along. `other` is boxed to keep
+    /// the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape} and {other}, but a cut comes within the {diameter_mm} mm tool's radius of one of them or of the material it keeps, so the bit would cut into the part; join lines that meet into one path, move them apart, or check which side each is cut on; no toolpath was produced"
+    )]
+    CutsIntoKeptSide {
+        /// The operation.
+        op: OperationId,
+        /// One of the two paths, the one drawn first.
+        shape: ShapeRef,
+        /// The other path.
+        other: Box<ShapeRef>,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+    },
+    /// #311: a Left or Right Profile's passes before the last, `allowance_mm`
+    /// farther from each open path than its last pass, come within the
+    /// tool radius plus the allowance of another line of the operation,
+    /// or of the strip one radius wide that a line keeps on its part side:
+    /// they would take that line's skin, which its own last pass is to cut,
+    /// or cut into the part. This is [`CamError::CutsIntoKeptSide`]'s rule
+    /// with the radius grown by the allowance, as Inside's band rule needs
+    /// `diameter + 2 · allowance` ([`CamError::BandNarrowerThanAllowance`]).
+    /// `shape` and `other` are in drawing order and may be the same path;
+    /// `other` is boxed to keep the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape} and {other} with a {allowance_mm} mm last pass allowance, but a pass before the last comes within the {diameter_mm} mm tool's radius plus the allowance of one of them or of the material it keeps, so it would cut the skin that line's last pass takes off, or the part; move the lines apart, make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    AllowanceCutsIntoKeptSide {
+        /// The operation.
+        op: OperationId,
+        /// One of the two paths, the one drawn first.
+        shape: ShapeRef,
+        /// The other path.
+        other: Box<ShapeRef>,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
+    },
+    /// #342: a Left or Right Profile's cut beside an open path has no room
+    /// at one of the path's ends. The segment that ends there is too short
+    /// for the tool, plus the last pass allowance when `allowance_mm` is
+    /// set, to cut beside it: on the inside of the turn before it, the cut
+    /// beside the earlier segment reaches past the normal through the end
+    /// vertex, where every cut must stop (A8, "Ends"), and into the strip
+    /// the path keeps or the part past its end. `shape` is boxed to keep
+    /// the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape}, but the segment ending at its vertex {vertex} is {length_mm:.3} mm long, too short for its {diameter_mm} mm tool{} to cut beside it: the cut would reach past the path's end into the part; lengthen or remove that segment, cut the other side, or use a smaller tool; no toolpath was produced",
+        with_allowance(*.allowance_mm)
+    )]
+    EndSegmentHasNoRoom {
+        /// The operation.
+        op: OperationId,
+        /// The open path.
+        shape: Box<ShapeRef>,
+        /// The end vertex, 0-based in the path as drawn: 0 for its first,
+        /// one less than its vertex count for its last.
+        vertex: usize,
+        /// The length of the segment that ends there, mm.
+        length_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm, when only the passes before the
+        /// last have no room.
+        allowance_mm: Option<f64>,
+    },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
     #[error("shape {shape} cannot be cut: {source}")]
@@ -366,6 +566,21 @@ pub enum CamError {
         field: String,
         /// The value, mm.
         value_mm: f64,
+    },
+    /// Tabs were asked for an operation the project does not have (#105).
+    #[error("operation `{op}` is not in the project")]
+    UnknownOperation {
+        /// The operation asked for.
+        op: OperationId,
+    },
+    /// Tabs were asked for an operation that is not a Profile, which is
+    /// the only operation that cuts round tabs (#105).
+    #[error("operation `{op}` is a {kind} operation; only a Profile cuts tabs")]
+    TabsNeedProfile {
+        /// The operation.
+        op: OperationId,
+        /// Its kind, as the file tags it.
+        kind: &'static str,
     },
     /// A Drill setting cannot be cut: a chip-break gap that is not a
     /// positive number, or a dwell that is negative or not finite.
@@ -399,4 +614,12 @@ pub enum CamError {
     /// Any other geometry failure.
     #[error(transparent)]
     Geometry(#[from] GeometryError),
+}
+
+/// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
+/// allowance: none without one.
+fn with_allowance(allowance_mm: Option<f64>) -> String {
+    allowance_mm.map_or_else(String::new, |a| {
+        format!(" and its {a} mm last pass allowance")
+    })
 }

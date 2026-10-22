@@ -17,10 +17,21 @@
 //! follow PureCutCNC. Re-derived for Y-up (ADR-0001): PureCutCNC keeps SVG's
 //! Y-down coordinates; here every point is flipped once, `y' = height_mm −
 //! y`, so the page's bottom-left corner is the origin.
+//!
+//! Circular arcs stay arcs (#70, not in PureCutCNC, which flattens every
+//! curve): usvg's Bézier pieces of circles, equal-radius ellipses,
+//! rounded-rect corners and `A` commands are recognised exactly (the `arc` module)
+//! and become bulges, so generators offset true arcs and Drill sees exact
+//! circles. Every other curve is flattened. The sweep is measured after
+//! the flip, so a reflection reverses an arc's bulge by construction.
+
+mod arc;
 
 use crate::{ImportError, ImportWarning};
+use arc::ArcPiece;
 use dc_geometry::{
-    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Polyline, Rect, Transform, flatten,
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, MAX_COORDINATE_MM, Point, Polyline,
+    Rect, Transform, Vertex,
 };
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId};
 use kurbo::{Affine, BezPath, PathEl};
@@ -140,8 +151,12 @@ pub struct SvgImport {
 ///
 /// Every `<path>`, `<rect>`, `<circle>`, `<ellipse>`, `<line>`,
 /// `<polyline>` and `<polygon>` becomes one feature definition whose
-/// profiles are its subpaths flattened to `options.flatten_tolerance_mm`.
-/// Closed subpaths (ending in `Z`, or returning to their start point) become
+/// profiles are its subpaths, in mm, Y-up. Circular arcs (circles,
+/// ellipses with rx = ry, rounded-rect corners with rx = ry, and `A`
+/// commands with rx = ry, under a transform that keeps circles circular)
+/// are bulge arcs of up to 180°, and a closed subpath that is one whole
+/// circle is two half-circle arcs; every other curve is flattened to
+/// `options.flatten_tolerance_mm`. Closed subpaths (ending in `Z`, or returning to their start point) become
 /// closed polylines; others stay open. Closed polylines with no area are
 /// dropped with a warning. Text, images, gradients, clip paths, and masks
 /// are skipped or ignored with a warning; paint never affects geometry.
@@ -383,7 +398,8 @@ impl Walker {
         }
 
         let to_mm = self.px_to_mm * affine(path.abs_transform());
-        let bez = to_bez_path(path.data(), to_mm);
+        let mm_path = to_mm_path(path.data(), to_mm);
+        let bez = &mm_path.bez;
         if !bez.elements().iter().all(element_is_finite) {
             return Err(ImportError::NonFinite { path: name });
         }
@@ -396,13 +412,13 @@ impl Walker {
             });
         }
         // Refuse before flattening, so a runaway path is never allocated.
-        let estimate = estimated_vertices(&bez, self.tolerance_mm);
+        let estimate = estimated_vertices(bez, self.tolerance_mm);
         if self.vertex_count.saturating_add(estimate) > self.max_vertices {
             return Err(ImportError::TooManyVertices {
                 limit: self.max_vertices,
             });
         }
-        let flattened = flatten(&bez, self.tolerance_mm);
+        let flattened = build_profiles(&mm_path, self.tolerance_mm);
         // The estimate is conservative; the exact count is what accumulates.
         for polyline in &flattened {
             self.vertex_count = self.vertex_count.saturating_add(polyline.vertices().len());
@@ -462,41 +478,96 @@ fn affine(t: usvg::Transform) -> Affine {
     Affine::new([t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from))
 }
 
-/// Converts a usvg path to a kurbo path through `to_mm`. A subpath that
-/// ends within [`SUBPATH_CLOSE_TOLERANCE_MM`] of its start without `Z` is
+/// A path in millimetres, Y-up, and which of its elements are pieces of a
+/// circular arc.
+struct MmPath {
+    bez: BezPath,
+    /// One per element of `bez`: `Some` for the Bézier piece of a circular
+    /// arc, which becomes a bulge instead of being flattened.
+    arcs: Vec<Option<ArcHint>>,
+}
+
+/// What [`build_profiles`] needs to turn a recognised Bézier piece back
+/// into its arc.
+#[derive(Debug, Clone, Copy)]
+struct ArcHint {
+    /// Signed sweep in millimetre space (after the Y flip); positive is
+    /// counter-clockwise.
+    sweep_rad: f64,
+    /// How far, mm, f32 rounding may have moved the piece's points.
+    tolerance_mm: f64,
+}
+
+/// Converts a usvg path to a kurbo path through `to_mm`, marking the cubics
+/// that are pieces of a circular arc (see [`arc`]). A subpath that ends
+/// within [`SUBPATH_CLOSE_TOLERANCE_MM`] of its start without `Z` is
 /// closed, its last point snapped onto the start, as PureCutCNC's
 /// `parsePathProfiles` does.
-fn to_bez_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> BezPath {
+fn to_mm_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> MmPath {
     let pt =
         |p: usvg::tiny_skia_path::Point| to_mm * kurbo::Point::new(f64::from(p.x), f64::from(p.y));
-    let mut out = BezPath::new();
+    // Only a similarity keeps a circle a circle; under anything else every
+    // curve is flattened.
+    let scale = arc::similarity_scale(to_mm);
+    let mut out = MmPath {
+        bez: BezPath::new(),
+        arcs: Vec::new(),
+    };
     let mut start = kurbo::Point::ZERO;
+    let mut local_start = usvg::tiny_skia_path::Point::zero();
+    let mut local_last = local_start;
     let mut open = false;
     for segment in data.segments() {
-        match segment {
+        let arc = match segment {
             PathSegment::MoveTo(p) => {
                 close_if_returned(&mut out, start, open);
                 start = pt(p);
-                out.move_to(start);
+                out.bez.move_to(start);
+                (local_start, local_last) = (p, p);
                 open = false;
+                None
             }
             PathSegment::LineTo(p) => {
-                out.line_to(pt(p));
+                out.bez.line_to(pt(p));
+                local_last = p;
                 open = true;
+                None
             }
             PathSegment::QuadTo(c, p) => {
-                out.quad_to(pt(c), pt(p));
+                out.bez.quad_to(pt(c), pt(p));
+                local_last = p;
                 open = true;
+                None
             }
             PathSegment::CubicTo(c1, c2, p) => {
-                out.curve_to(pt(c1), pt(c2), pt(p));
+                let local = [local_last, c1, c2, p];
+                let [p0, c1, c2, p3] = local.map(pt);
+                out.bez.curve_to(c1, c2, p3);
+                local_last = p;
                 open = true;
+                scale.and_then(|scale| {
+                    // f32 rounding is relative to the stored coordinates.
+                    let largest = local
+                        .iter()
+                        .map(|q| f64::from(q.x.abs().max(q.y.abs())))
+                        .fold(0.0, f64::max);
+                    let tolerance_mm = arc::recognition_tolerance_mm(largest, scale);
+                    arc::cubic_arc_sweep_rad(p0, c1, c2, p3, tolerance_mm).map(|sweep_rad| {
+                        ArcHint {
+                            sweep_rad,
+                            tolerance_mm,
+                        }
+                    })
+                })
             }
             PathSegment::Close => {
-                out.close_path();
+                out.bez.close_path();
+                local_last = local_start;
                 open = false;
+                None
             }
-        }
+        };
+        out.arcs.push(arc);
     }
     close_if_returned(&mut out, start, open);
     out
@@ -504,20 +575,158 @@ fn to_bez_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> BezPath {
 
 /// Closes the open subpath at the end of `out` when its last point is back
 /// at `start`.
-fn close_if_returned(out: &mut BezPath, start: kurbo::Point, open: bool) {
+fn close_if_returned(out: &mut MmPath, start: kurbo::Point, open: bool) {
     if !open {
         return;
     }
     let near = |p: &kurbo::Point| p.distance(start) <= SUBPATH_CLOSE_TOLERANCE_MM;
-    let snapped = match out.elements().last() {
+    let snapped = match out.bez.elements().last() {
         Some(PathEl::LineTo(p)) if near(p) => PathEl::LineTo(start),
         Some(PathEl::QuadTo(c, p)) if near(p) => PathEl::QuadTo(*c, start),
         Some(PathEl::CurveTo(c1, c2, p)) if near(p) => PathEl::CurveTo(*c1, *c2, start),
         _ => return,
     };
-    out.pop();
-    out.push(snapped);
-    out.close_path();
+    // The snapped element keeps its arc mark: its sweep is unchanged.
+    out.bez.pop();
+    out.bez.push(snapped);
+    out.bez.close_path();
+    out.arcs.push(None);
+}
+
+/// One polyline per subpath of `path`: lines stay lines, arc pieces become
+/// bulges, joined into arcs of up to 180°, and every other curve is
+/// flattened to `tolerance_mm`. Otherwise the rule is
+/// [`dc_geometry::flatten`]'s, which a path with no arcs gives exactly: a
+/// subpath ending in `ClosePath` is closed, a point within [`EPS_MM`] of
+/// the one before is dropped, and so is a subpath of fewer than two points.
+fn build_profiles(path: &MmPath, tolerance_mm: f64) -> Vec<Polyline> {
+    let mut out = Vec::new();
+    let mut profile = ProfileBuilder::default();
+    let mut current = kurbo::Point::ZERO;
+    let mut subpath_start = current;
+    for (el, arc) in path.bez.elements().iter().zip(&path.arcs) {
+        match (*el, arc) {
+            (PathEl::MoveTo(p), _) => {
+                out.extend(std::mem::take(&mut profile).finish(false));
+                profile.push(point(p), None);
+                subpath_start = p;
+            }
+            (PathEl::LineTo(p), _) => profile.push(point(p), None),
+            (PathEl::CurveTo(_, _, p), Some(hint)) => profile.arc_to(point(p), *hint),
+            (PathEl::QuadTo(..) | PathEl::CurveTo(..), _) => {
+                let mut curve = BezPath::new();
+                curve.move_to(current);
+                curve.push(*el);
+                kurbo::flatten(&curve, tolerance_mm * KURBO_FLATTEN_SAFETY, |flat| {
+                    if let PathEl::LineTo(p) = flat {
+                        profile.push(point(p), None);
+                    }
+                });
+            }
+            (PathEl::ClosePath, _) => {
+                out.extend(std::mem::take(&mut profile).finish(true));
+            }
+        }
+        current = el.end_point().unwrap_or(subpath_start);
+    }
+    out.extend(profile.finish(false));
+    out
+}
+
+fn point(p: kurbo::Point) -> Point {
+    Point::new(p.x, p.y)
+}
+
+/// The points of one subpath so far and the segments between them.
+#[derive(Default)]
+struct ProfileBuilder {
+    points: Vec<Point>,
+    /// `arcs[i]` is the segment from `points[i]` to the next point: `None`
+    /// for a line. One shorter than `points` until the profile is closed.
+    arcs: Vec<Option<ArcPiece>>,
+}
+
+impl ProfileBuilder {
+    /// Adds a segment to `end`, a line or `arc`, unless `end` is within
+    /// [`EPS_MM`] of the last point. An arc that continues the previous one
+    /// on the same circle is joined to it while the two sweep at most 180°.
+    fn push(&mut self, end: Point, arc: Option<ArcPiece>) {
+        let Some(last) = self.points.last_mut() else {
+            self.points.push(end);
+            return;
+        };
+        if last.distance_to(end) <= EPS_MM {
+            return;
+        }
+        if let (Some(piece), Some(Some(previous))) = (arc, self.arcs.last_mut())
+            && let Some(joined) = previous.joined(&piece)
+        {
+            *previous = joined;
+            *last = end;
+            return;
+        }
+        self.arcs.push(arc);
+        self.points.push(end);
+    }
+
+    fn arc_to(&mut self, end: Point, hint: ArcHint) {
+        let arc = self.points.last().map(|&start| ArcPiece {
+            start,
+            end,
+            sweep_rad: hint.sweep_rad,
+            tolerance_mm: hint.tolerance_mm,
+        });
+        self.push(end, arc);
+    }
+
+    /// The finished polyline, or `None` with fewer than two points. A
+    /// closed subpath that goes once round one circle is the two
+    /// half-circle arcs from its start, as `Polyline::circle` makes.
+    fn finish(mut self, closed: bool) -> Option<Polyline> {
+        if closed {
+            match (self.points.first(), self.points.last()) {
+                (Some(first), Some(last))
+                    if self.points.len() > 1 && first.distance_to(*last) <= EPS_MM =>
+                {
+                    // The last segment now ends at the first point.
+                    self.points.pop();
+                }
+                _ => self.arcs.push(None),
+            }
+        }
+        let first = *self.points.first()?;
+        if self.points.len() < 2 {
+            return None;
+        }
+        if closed
+            && let Some(pieces) = self.arcs.iter().copied().collect::<Option<Vec<_>>>()
+            && let Some((centre, direction)) = arc::full_circle(&pieces)
+        {
+            let opposite = Point::new(2.0 * centre.x - first.x, 2.0 * centre.y - first.y);
+            return Some(Polyline::new(
+                vec![
+                    Vertex::new(first.x, first.y, direction),
+                    Vertex::new(opposite.x, opposite.y, direction),
+                ],
+                true,
+            ));
+        }
+        let vertices = self
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let bulge = self
+                    .arcs
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map_or(0.0, |arc| arc.bulge());
+                Vertex::new(p.x, p.y, bulge)
+            })
+            .collect();
+        Some(Polyline::new(vertices, closed))
+    }
 }
 
 /// Whether every point of `el` lies within [`MAX_COORDINATE_MM`] of the
@@ -608,7 +817,7 @@ mod tests {
     )]
 
     use super::*;
-    use dc_geometry::{Point, Polyline, Transform, assert_approx_eq};
+    use dc_geometry::{Polyline, Transform, assert_approx_eq};
     use dc_project::{DefinitionId, InstanceId};
 
     /// Coordinates pass through usvg as f32; at workpiece scale that is a
@@ -778,29 +987,251 @@ mod tests {
         assert_rect(bounds(slot), (50.0, 50.0), (80.0, 50.0));
     }
 
-    #[test]
-    fn circle_flattens_within_tolerance() {
-        let options = SvgImportOptions::new();
-        let (result, _) =
-            import_svg(include_bytes!("../tests/fixtures/circle.svg"), &options).unwrap();
-        assert_eq!(result.definitions.len(), 1);
-        let profiles = &result.definitions[0].profiles;
-        assert_eq!(profiles.len(), 1);
-        assert!(profiles[0].is_closed());
-        assert!(profiles[0].vertices().len() > 8);
+    // ── arcs (#70) ───────────────────────────────────────────────────────
 
-        // usvg turns the circle into four cubic Béziers before we flatten;
-        // that approximation strays up to 2.7e-4 × r (0.0122 mm at r = 45)
-        // from the true circle. Flattening adds at most the tolerance.
-        let bezier_error_mm = 2.75e-4 * 45.0;
-        let allowed_mm = options.flatten_tolerance_mm + bezier_error_mm + TOL_MM;
-        let centre = Point::new(50.0, 50.0);
-        for seg in profiles[0].segments() {
-            assert!(seg.is_line());
-            for p in [seg.start, seg.start + (seg.end - seg.start) * 0.5] {
-                let err = (p.distance_to(centre) - 45.0).abs();
-                assert!(err <= allowed_mm, "{p:?} is {err} mm off the circle");
+    /// Bulges an arc import computes from usvg's f32 control points, not
+    /// snapped, agree with the exact value to this. Dimensionless.
+    const BULGE_TOL: f64 = 1e-6;
+
+    fn vertex_points(polyline: &Polyline) -> Vec<(f64, f64)> {
+        polyline.vertices().iter().map(|v| (v.x, v.y)).collect()
+    }
+
+    fn assert_points(polyline: &Polyline, expected: &[(f64, f64)]) {
+        let got = vertex_points(polyline);
+        assert_eq!(got.len(), expected.len(), "vertices {got:?}");
+        for (g, e) in got.iter().zip(expected) {
+            assert_approx_eq!(g.0, e.0, TOL_MM);
+            assert_approx_eq!(g.1, e.1, TOL_MM);
+        }
+    }
+
+    fn assert_all_lines(polyline: &Polyline) {
+        for (i, seg) in polyline.segments().enumerate() {
+            assert!(seg.is_line(), "segment {i} is an arc: {seg:?}");
+        }
+    }
+
+    /// A `<circle>` is two half-circle arcs, as `Polyline::circle` and a
+    /// DXF `CIRCLE` are: the start point usvg uses, (cx + r, cy), and the
+    /// point opposite. usvg draws circles towards +y in SVG's Y-down page,
+    /// clockwise as seen; the Y flip keeps that clockwise, so both bulges
+    /// are exactly −1.
+    #[test]
+    fn circle_imports_as_two_bulge_arcs() {
+        let (result, warnings) = import(include_bytes!("../tests/fixtures/circle.svg"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let profile = only_profile(&result);
+        assert!(profile.is_closed());
+        assert_points(profile, &[(95.0, 50.0), (5.0, 50.0)]);
+        for v in profile.vertices() {
+            assert_approx_eq!(v.bulge, -1.0, 0.0);
+        }
+        let (centre, radius_mm) = dc_geometry::as_circle(profile, EPS_MM).expect("a circle");
+        assert_approx_eq!(centre.x, 50.0, TOL_MM);
+        assert_approx_eq!(centre.y, 50.0, TOL_MM);
+        assert_approx_eq!(radius_mm, 45.0, TOL_MM);
+    }
+
+    /// An `<ellipse>` with rx = ry is a circle.
+    #[test]
+    fn ellipse_with_equal_radii_imports_as_two_bulge_arcs() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><ellipse cx="40" cy="30" rx="12" ry="12"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert_points(profile, &[(52.0, 70.0), (28.0, 70.0)]);
+        for v in profile.vertices() {
+            assert_approx_eq!(v.bulge, -1.0, 0.0);
+        }
+    }
+
+    /// SVG `A` with rx = ry is one bulge segment per arc of up to 180°,
+    /// though usvg hands it over as several Bézier pieces. The half circle
+    /// from (10, 50) to (90, 50) with sweep-flag 1 runs through SVG (50, 10)
+    /// (positive angles are clockwise on SVG's Y-down page), which is
+    /// Y-up (50, 90): clockwise, bulge −1. The quarter from SVG (60, 20) to
+    /// (70, 10), sweep-flag 0, is centred on SVG (60, 10), Y-up (60, 90),
+    /// and runs counter-clockwise in Y-up: bulge +tan(22.5°).
+    #[test]
+    fn circular_arc_command_imports_as_bulge() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100">
+                <path id="half" d="M 10 50 A 40 40 0 0 1 90 50" fill="none"/>
+                <path id="quarter" d="M 60 20 A 10 10 0 0 0 70 10" fill="none"/>
+            </svg>"#,
+        );
+        let half = &def(&result, "half").profiles;
+        assert_eq!(half.len(), 1);
+        assert!(!half[0].is_closed());
+        assert_points(&half[0], &[(10.0, 50.0), (90.0, 50.0)]);
+        assert_approx_eq!(half[0].vertices()[0].bulge, -1.0, BULGE_TOL);
+
+        let quarter = &def(&result, "quarter").profiles;
+        assert_eq!(quarter.len(), 1);
+        assert_points(&quarter[0], &[(60.0, 80.0), (70.0, 90.0)]);
+        let b = (std::f64::consts::FRAC_PI_8).tan();
+        assert_approx_eq!(quarter[0].vertices()[0].bulge, b, BULGE_TOL);
+        let arc = quarter[0]
+            .segments()
+            .next()
+            .and_then(|s| s.arc())
+            .expect("an arc");
+        assert_approx_eq!(arc.centre.x, 60.0, TOL_MM);
+        assert_approx_eq!(arc.centre.y, 90.0, TOL_MM);
+        assert_approx_eq!(arc.radius_mm, 10.0, TOL_MM);
+    }
+
+    /// A rounded rectangle with rx = ry has circular corners, which usvg
+    /// draws with the same arc command: four quarter arcs between four
+    /// straight edges, eight vertices instead of a flattened polygon.
+    #[test]
+    fn rounded_rect_corners_import_as_quarter_arcs() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><rect x="10" y="10" width="40" height="20" rx="5" ry="5"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert_eq!(profile.vertices().len(), 8);
+        let b = (std::f64::consts::FRAC_PI_8).tan();
+        let arcs: Vec<f64> = profile
+            .vertices()
+            .iter()
+            .map(|v| v.bulge)
+            .filter(|bulge| bulge.abs() > BULGE_TOL)
+            .collect();
+        assert_eq!(arcs.len(), 4, "bulges {:?}", profile.vertices());
+        for bulge in arcs {
+            assert_approx_eq!(bulge.abs(), b, BULGE_TOL);
+        }
+        assert_rect(
+            bounds(&result.definitions[0].profiles),
+            (10.0, 70.0),
+            (50.0, 90.0),
+        );
+    }
+
+    /// No bulge holds an ellipse, so one with rx ≠ ry is flattened.
+    #[test]
+    fn ellipse_with_unequal_radii_is_still_flattened() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><ellipse cx="50" cy="50" rx="40" ry="20"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert!(profile.is_closed());
+        assert!(profile.vertices().len() > 8);
+        assert_all_lines(profile);
+        assert_rect(
+            bounds(&result.definitions[0].profiles),
+            (10.0, 30.0),
+            (90.0, 70.0),
+        );
+    }
+
+    /// A circle under scale(2, 1) is an ellipse on the page: flattened.
+    #[test]
+    fn circle_under_non_uniform_scale_is_flattened() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><circle cx="20" cy="50" r="10" transform="scale(2 1)"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert!(profile.vertices().len() > 8);
+        assert_all_lines(profile);
+        assert_rect(
+            bounds(&result.definitions[0].profiles),
+            (20.0, 40.0),
+            (60.0, 60.0),
+        );
+    }
+
+    /// Rotation and uniform scale keep a circle a circle: still two exact
+    /// half-circle arcs, at the scaled radius.
+    #[test]
+    fn circle_under_rotation_and_uniform_scale_stays_two_arcs() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100"><g transform="translate(50 50) rotate(30) scale(2)"><circle cx="0" cy="0" r="10"/></g></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert_eq!(profile.vertices().len(), 2);
+        for v in profile.vertices() {
+            assert_approx_eq!(v.bulge, -1.0, 0.0);
+        }
+        let (centre, radius_mm) = dc_geometry::as_circle(profile, EPS_MM).expect("a circle");
+        assert_approx_eq!(centre.x, 50.0, TOL_MM);
+        assert_approx_eq!(centre.y, 50.0, TOL_MM);
+        assert_approx_eq!(radius_mm, 20.0, TOL_MM);
+    }
+
+    /// A reflection keeps a circle a circle but reverses its direction, so
+    /// the mirrored circle's bulges are +1 where the plain one's are −1.
+    /// scale(−1, 1) moves the centre from x −70 to 70.
+    #[test]
+    fn mirrored_circle_keeps_its_radius_and_flips_direction() {
+        let result = parse(
+            r#"<svg width="100mm" height="100mm" viewBox="0 0 100 100">
+                <circle id="plain" cx="30" cy="50" r="10"/>
+                <circle id="mirrored" cx="-70" cy="50" r="10" transform="scale(-1 1)"/>
+            </svg>"#,
+        );
+        for (name, centre_x, bulge) in [("plain", 30.0, -1.0), ("mirrored", 70.0, 1.0)] {
+            let profiles = &def(&result, name).profiles;
+            assert_eq!(profiles.len(), 1, "{name}");
+            assert_eq!(profiles[0].vertices().len(), 2, "{name}");
+            for v in profiles[0].vertices() {
+                assert_approx_eq!(v.bulge, bulge, 0.0);
             }
+            let (centre, radius_mm) =
+                dc_geometry::as_circle(&profiles[0], EPS_MM).expect("a circle");
+            assert_approx_eq!(centre.x, centre_x, TOL_MM);
+            assert_approx_eq!(centre.y, 50.0, TOL_MM);
+            assert_approx_eq!(radius_mm, 10.0, TOL_MM);
+        }
+    }
+
+    /// A cubic Bézier that is not a circular arc's is flattened, even when
+    /// it bends like one: the plaque's squiggle.
+    #[test]
+    fn non_circular_cubic_is_still_flattened() {
+        let result = parse(
+            r#"<svg width="150mm" height="100mm" viewBox="0 0 150 100"><path d="M 95,88 C 105,65 120,100 130,75" fill="none"/></svg>"#,
+        );
+        let profile = only_profile(&result);
+        assert!(profile.vertices().len() > 4);
+        assert_all_lines(profile);
+    }
+
+    /// A path with no circular arc imports exactly as before #70, when
+    /// `dc_geometry::flatten` flattened the whole path: per-curve
+    /// flattening gives the same vertices. Lines, quadratics, free cubics,
+    /// an ellipse, a stretched circle and a gap-closed subpath.
+    #[test]
+    fn paths_without_arcs_flatten_as_before() {
+        let shapes = [
+            r#"<path d="M 95,88 C 105,65 120,100 130,75 L 140,10 Q 120,5 100,20 Z M 5,5 L 20,5 L 5,20 L 5,5"/>"#,
+            r#"<ellipse cx="50" cy="50" rx="40" ry="20"/>"#,
+            r#"<circle cx="20" cy="50" r="10" transform="scale(2 1)"/>"#,
+        ];
+        for shape in shapes {
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="150mm" height="100mm" viewBox="0 0 150 100">{shape}</svg>"#
+            );
+            let tree = usvg::Tree::from_str(&svg, &usvg_options()).expect("parses");
+            fn first_path(group: &usvg::Group) -> Option<&usvg::Path> {
+                group.children().iter().find_map(|node| match node {
+                    usvg::Node::Path(p) => Some(p.as_ref()),
+                    usvg::Node::Group(g) => first_path(g),
+                    _ => None,
+                })
+            }
+            let path = first_path(tree.root()).expect("a path");
+            let px_to_mm = Affine::new([MM_PER_PX, 0.0, 0.0, -MM_PER_PX, 0.0, 100.0]);
+            let mm_path = to_mm_path(path.data(), px_to_mm * affine(path.abs_transform()));
+            assert!(mm_path.arcs.iter().all(Option::is_none), "{shape}");
+            let tolerance_mm = FLATTEN_TOLERANCE_DEFAULT_MM;
+            assert_eq!(
+                build_profiles(&mm_path, tolerance_mm),
+                dc_geometry::flatten(&mm_path.bez, tolerance_mm),
+                "{shape}"
+            );
         }
     }
 
@@ -1031,12 +1462,15 @@ mod tests {
 
     #[test]
     fn vertex_cap_is_enforced_while_flattening() {
-        // The circle flattens to far more than 10 vertices.
+        // The ellipse flattens to far more than 10 vertices.
         let options = SvgImportOptions {
             max_vertices: 10,
             ..SvgImportOptions::new()
         };
-        let err = import_svg(include_bytes!("../tests/fixtures/circle.svg"), &options).unwrap_err();
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+            <ellipse cx="50" cy="50" rx="45" ry="30"/>
+        </svg>"#;
+        let err = import_svg(svg, &options).unwrap_err();
         assert!(
             matches!(err, ImportError::TooManyVertices { limit: 10 }),
             "{err:?}"

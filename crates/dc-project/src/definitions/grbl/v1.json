@@ -39,7 +39,8 @@
     "line_number_increment": 10
   },
   "work_coordinates": {
-    "select_command": "G54"
+    "select_command": "G54",
+    "machine_command": "G53"
   },
   "motion": {
     "rapid_command": "G0",

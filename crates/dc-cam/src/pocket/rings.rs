@@ -22,8 +22,25 @@
 //! Upstream builds the tree recursively; it is built and walked with an
 //! explicit stack here, so a fine step-over on a large pocket cannot
 //! exhaust the call stack.
+//!
+//! Above half the diameter the rings alone leave material standing (#258):
+//! a ring sweeps `r` either side, so a point more than `r` from its node's
+//! ring and more than `r` from every child is never cut, the middle of a
+//! region too small for another step-over, or a sharp corner of one with a
+//! child. [`RingTree::build`] gives each such node residual rings that
+//! reach it, as upstream's trochoidal pocket does for its leaves
+//! (`appendResidualCoreGuides`). Each residual ring is cut from inside the
+//! lap of the ring that leaves it (#267, [`Splice`]), not as a ring of its
+//! own, so the far-apart corner pieces cost no lift.
 
-use dc_geometry::{Contour, Point, Region, difference, nest, offset};
+use dc_geometry::{
+    Arc, Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, difference, nest, offset,
+    point_segment_distance_mm, segment_distance_mm,
+};
+use std::f64::consts::TAU;
+
+use super::rest::grow_all;
+use crate::sequence::nearest_of;
 
 /// `region` inset by `inset_mm`: its outer offset inward and its islands
 /// outward by `inset_mm`, the islands then cut from the outer. An island
@@ -55,10 +72,14 @@ pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Re
     all.extend(grown.iter().cloned());
     if let Ok((regions, warnings)) = nest(all) {
         let holes: usize = regions.iter().map(|r| r.holes().len()).sum();
+        // A grown island that encloses the shrunk outer nests as the outer
+        // of an inverted annulus; only the offset outers may be outers.
         let clean = warnings.is_empty()
             && regions.len() == outers.len()
             && holes == grown.len()
-            && regions.iter().all(|r| r.depth() == 0);
+            && regions
+                .iter()
+                .all(|r| r.depth() == 0 && outers.contains(r.outer()));
         if clean {
             return regions;
         }
@@ -71,6 +92,22 @@ pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Re
     difference(&subject, &clip, tolerance_mm)
 }
 
+/// Whether `region` is noise at `tolerance_mm`, not a ring to cut: its
+/// area is under the tolerance times its perimeter, a piece thinner than
+/// twice the tolerance (rest machining's rule, [`super::rest`]); for a
+/// circle, a radius under twice the tolerance. A ring that small is
+/// below what a program can be trusted to write (#235: one of radius
+/// 0.0002 mm, three arcs whose ends round to one point, failed S6), and
+/// it cuts nothing the ring around it does not already reach within the
+/// tolerance when the step-over is at most the tool radius.
+fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
+    let perimeter_mm: f64 = std::iter::once(region.outer())
+        .chain(region.holes())
+        .map(|c| c.polyline().length_mm())
+        .sum();
+    region.area_mm2() <= tolerance_mm * perimeter_mm
+}
+
 /// The region `contour` alone encloses.
 fn single_region(contour: Contour) -> Option<Region> {
     nest(vec![contour])
@@ -78,9 +115,58 @@ fn single_region(contour: Contour) -> Option<Region> {
         .and_then(|(regions, _)| regions.into_iter().next())
 }
 
+/// What the rings of a node of `region` whose children are `children`
+/// leave uncut, as regions whose rings cut it (#258): the points more than
+/// `r` from the node's rings and from every child, which the walk's rings
+/// never reach when the step-over is above `r`. Each ring sweeps `r` either
+/// side, and a child's subtree clears the child, so the rest of the node
+/// is cut within `r` of its rings and of its children. Every point the
+/// step-over inset leaves out lies under a step-over (at most `2r`) from
+/// the node's rings, so under `r` from the edge of the node inset by `r`:
+/// one ring round each piece of what is left, a leaf, reaches all of it.
+///
+/// Measured `tolerance_mm` further in on both sides, the node inset by
+/// `r + tolerance_mm` less the children grown by `r + tolerance_mm`, so
+/// at step-over `2r`, where the two edges meet along a straight wall, no
+/// sliver is left between them; the pieces' rings still sweep the
+/// tolerance-wide strips this leaves out. Pieces thinner than twice the
+/// tolerance are noise (`is_noise`). Empty when nothing is
+/// left; at step-over `r` or less nothing ever is.
+///
+/// Upstream (`appendResidualCoreGuides`) adds one ring inset by the
+/// shortfall to each leaf of a trochoidal pocket only, its contour pocket
+/// having the same gap above half the diameter; the corners of a node with
+/// children are left there.
+#[must_use]
+pub fn residual_regions(
+    region: &Region,
+    children: &[Region],
+    radius_mm: f64,
+    tolerance_mm: f64,
+) -> Vec<Region> {
+    let reach_mm = radius_mm + tolerance_mm;
+    let deep = inset_region(region, reach_mm, tolerance_mm);
+    if deep.is_empty() {
+        return deep;
+    }
+    let left = if children.is_empty() {
+        deep
+    } else {
+        difference(
+            &deep,
+            &grow_all(children, reach_mm, tolerance_mm),
+            tolerance_mm,
+        )
+    };
+    left.into_iter()
+        .filter(|r| !is_noise(r, tolerance_mm))
+        .collect()
+}
+
 /// The rings of one tool-centre region: the region itself at the root,
 /// and below each node the regions [`inset_region`] leaves of it at one
-/// step-over, until nothing is left.
+/// step-over, until nothing is left, with the residual nodes of
+/// [`residual_regions`] beside them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RingTree {
     /// Every node; the root is node 0.
@@ -94,6 +180,26 @@ pub struct RingNode {
     pub region: Region,
     /// Indices of the node's children in [`RingTree::nodes`].
     pub children: Vec<usize>,
+    /// A residual node (#258): a leaf that reaches what its parent's rings
+    /// and its siblings leave, not an inset of its parent.
+    pub residual: bool,
+    /// For a residual node, where its parent's ring cuts it (#267); `None`
+    /// when no straight link from a ring of the parent reaches it, and the
+    /// node is then cut as a ring of its own.
+    pub splice: Option<Splice>,
+}
+
+/// Where a residual node is cut from inside its parent's lap (#267): the
+/// lap leaves its ring at `at`, runs straight to `start`, cuts the
+/// residual ring round to `start`, and runs straight back to `at`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Splice {
+    /// Which ring of the parent: 0 its outer, `i + 1` its hole `i`.
+    pub ring: usize,
+    /// The point of that ring the lap leaves from and comes back to.
+    pub at: Point,
+    /// The residual ring's point nearest `at`, where it starts and ends.
+    pub start: Point,
 }
 
 /// Which wall of its node a ring is.
@@ -115,9 +221,22 @@ pub struct Ring {
     pub kind: RingKind,
     /// Index of the node in [`RingTree::nodes`].
     pub node: usize,
-    /// The vertex the ring starts and ends at: the one nearest the end of
-    /// the ring before it.
+    /// The point the ring starts and ends at: its point nearest the end of
+    /// the ring before it ([`nearest`]), a vertex or a point inside a
+    /// segment, which [`split_at`] makes a vertex of the ring's path.
     pub start: Point,
+    /// The residual rings cut from inside this ring's lap (#267), each
+    /// with the point of this ring it is reached from.
+    pub cleanups: Vec<Cleanup>,
+}
+
+/// A residual ring cut from inside another ring's lap ([`Splice`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cleanup {
+    /// The point of the lap's ring the tool leaves from and comes back to.
+    pub at: Point,
+    /// The residual ring, starting at its point nearest `at`.
+    pub ring: Ring,
 }
 
 /// Where a wall pass goes in a walk.
@@ -132,35 +251,73 @@ pub enum WallRings {
 }
 
 impl RingTree {
-    /// The tree of `root` at step-over `stepover_mm`, or `None` when it
-    /// would have more than `max_nodes` nodes.
+    /// The tree of `root` at step-over `stepover_mm` for a tool of radius
+    /// `radius_mm`, or `None` when it would have more than `max_nodes`
+    /// nodes. Each node's children are its [`inset_region`] by the
+    /// step-over, then its [`residual_regions`] as residual leaves. An
+    /// inset that is noise at `tolerance_mm` (`is_noise`) is not a node
+    /// (#235); what it stood for is then in the residual regions. Each
+    /// residual node gets its [`Splice`] when a straight link no longer
+    /// than one diameter plus the step-over, inside the parent's region,
+    /// joins it to one of the parent's rings (`splice_of`).
     #[must_use]
     pub fn build(
         root: Region,
         stepover_mm: f64,
+        radius_mm: f64,
         tolerance_mm: f64,
         max_nodes: usize,
     ) -> Option<Self> {
         let mut nodes = vec![RingNode {
             region: root,
             children: Vec::new(),
+            residual: false,
+            splice: None,
         }];
+        let link_limit_mm = 2.0 * radius_mm + stepover_mm;
         let mut pending = vec![0usize];
         while let Some(index) = pending.pop() {
-            let children = match nodes.get(index) {
-                Some(node) => inset_region(&node.region, stepover_mm, tolerance_mm),
+            let (children, residual) = match nodes.get(index) {
+                Some(node) => {
+                    let children: Vec<Region> =
+                        inset_region(&node.region, stepover_mm, tolerance_mm)
+                            .into_iter()
+                            .filter(|r| !is_noise(r, tolerance_mm))
+                            .collect();
+                    let residual: Vec<(Region, Option<Splice>)> =
+                        if stepover_mm > radius_mm + tolerance_mm {
+                            residual_regions(&node.region, &children, radius_mm, tolerance_mm)
+                                .into_iter()
+                                .map(|r| {
+                                    let splice = splice_of(&node.region, &r, link_limit_mm);
+                                    (r, splice)
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                    (children, residual)
+                }
                 None => continue,
             };
-            let mut ids = Vec::with_capacity(children.len());
-            for region in children {
+            let mut ids = Vec::with_capacity(children.len() + residual.len());
+            let tagged = children
+                .into_iter()
+                .map(|r| (r, false, None))
+                .chain(residual.into_iter().map(|(r, splice)| (r, true, splice)));
+            for (region, residual, splice) in tagged {
                 if nodes.len() >= max_nodes {
                     return None;
                 }
                 ids.push(nodes.len());
-                pending.push(nodes.len());
+                if !residual {
+                    pending.push(nodes.len());
+                }
                 nodes.push(RingNode {
                     region,
                     children: Vec::new(),
+                    residual,
+                    splice,
                 });
             }
             if let Some(node) = nodes.get_mut(index) {
@@ -174,75 +331,143 @@ impl RingTree {
     /// walk that, at each node, visits the child whose outer comes nearest
     /// `anchor` (the end of the last ring, ties by child order), then cuts
     /// the node's own rings, nearest first. The root's rings go where
-    /// `wall` says. `anchor` is updated to each ring's start vertex nearest
-    /// it, which is where that ring will start and end.
+    /// `wall` says; with the root's rings omitted, so are its residual
+    /// nodes, which reach only what those rings would leave. A residual
+    /// node with a [`Splice`] onto a ring that is cut is not visited: it is
+    /// a [`Cleanup`] of that ring (#267). `anchor` is updated to each
+    /// ring's point nearest it, which is where that ring will start and
+    /// end.
     pub fn walk(&self, wall: WallRings, anchor: &mut Option<Point>) -> Vec<Ring> {
+        self.walk_keeping(wall, anchor, &|_| true)
+    }
+
+    /// [`RingTree::walk`] over the rings `keep` accepts: a ring it refuses
+    /// is not cut, and the next ring starts nearest the end of the last one
+    /// kept. Rest machining refuses the rings that cut only air (#167).
+    pub fn walk_keeping(
+        &self,
+        wall: WallRings,
+        anchor: &mut Option<Point>,
+        keep: &dyn Fn(&Ring) -> bool,
+    ) -> Vec<Ring> {
         let mut out = Vec::new();
         if wall == WallRings::First {
-            self.push_rings(0, anchor, &mut out);
+            self.push_rings(0, anchor, keep, &mut out);
+        }
+        let mut first = self.walked_children(0, keep);
+        if wall == WallRings::Omitted {
+            first.retain(|&c| self.nodes.get(c).is_some_and(|n| !n.residual));
         }
         // Frames of (node, children not yet visited).
-        let mut stack: Vec<(usize, Vec<usize>)> = vec![(0, self.children(0))];
+        let mut stack: Vec<(usize, Vec<usize>)> = vec![(0, first)];
         while let Some((node, remaining)) = stack.last_mut() {
             if remaining.is_empty() {
                 let node = *node;
                 stack.pop();
                 if node != 0 || wall == WallRings::Last {
-                    self.push_rings(node, anchor, &mut out);
+                    self.push_rings(node, anchor, keep, &mut out);
                 }
                 continue;
             }
-            let pick = remaining
-                .iter()
-                .enumerate()
-                .min_by(|(ia, a), (ib, b)| {
-                    let d = |n: usize| {
-                        self.nodes
-                            .get(n)
-                            .map_or(f64::INFINITY, |n| nearest(n.region.outer(), *anchor).1)
-                    };
-                    d(**a).total_cmp(&d(**b)).then(ia.cmp(ib))
-                })
-                .map(|(i, _)| i);
+            let pick = nearest_of(remaining.iter().enumerate().map(|(i, &n)| {
+                let d = self
+                    .nodes
+                    .get(n)
+                    .map_or(f64::INFINITY, |n| nearest(n.region.outer(), *anchor).1);
+                (i, d)
+            }));
             let Some(child) = pick.map(|i| remaining.remove(i)) else {
                 break;
             };
-            stack.push((child, self.children(child)));
+            stack.push((child, self.walked_children(child, keep)));
         }
         out
     }
 
-    fn children(&self, node: usize) -> Vec<usize> {
-        self.nodes
-            .get(node)
-            .map_or_else(Vec::new, |n| n.children.clone())
+    /// The children of `node` the walk visits: all but the residual nodes
+    /// cut from one of its rings ([`RingTree::spliced`]).
+    fn walked_children(&self, node: usize, keep: &dyn Fn(&Ring) -> bool) -> Vec<usize> {
+        let Some(n) = self.nodes.get(node) else {
+            return Vec::new();
+        };
+        n.children
+            .iter()
+            .copied()
+            .filter(|&c| self.spliced(node, c, keep).is_none())
+            .collect()
     }
 
-    /// Appends `node`'s outer and holes, nearest `anchor` first.
-    fn push_rings(&self, node: usize, anchor: &mut Option<Point>, out: &mut Vec<Ring>) {
-        let Some(n) = self.nodes.get(node) else {
-            return;
+    /// Ring `index` of `node`, 0 its outer and `i + 1` its hole `i`, with
+    /// no clean-ups and a start still to be set.
+    fn ring_of(&self, node: usize, index: usize) -> Option<Ring> {
+        let region = &self.nodes.get(node)?.region;
+        let (contour, kind) = match index.checked_sub(1) {
+            None => (region.outer(), RingKind::Outer),
+            Some(hole) => (region.holes().get(hole)?, RingKind::Hole),
         };
-        let ring = |contour: &Contour, kind| Ring {
+        Some(Ring {
             contour: contour.clone(),
             kind,
             node,
             start: Point::new(0.0, 0.0),
+            cleanups: Vec::new(),
+        })
+    }
+
+    /// The splice of `child` into a ring of its parent `node`, when it has
+    /// one and `keep` accepts that ring.
+    fn spliced(&self, node: usize, child: usize, keep: &dyn Fn(&Ring) -> bool) -> Option<Splice> {
+        let splice = self.nodes.get(child).filter(|c| c.residual)?.splice?;
+        let ring = self.ring_of(node, splice.ring)?;
+        keep(&ring).then_some(splice)
+    }
+
+    /// The residual rings of `node` spliced into its ring `index`.
+    fn cleanups(&self, node: usize, index: usize, keep: &dyn Fn(&Ring) -> bool) -> Vec<Cleanup> {
+        let Some(n) = self.nodes.get(node) else {
+            return Vec::new();
         };
-        let mut rings: Vec<Ring> = std::iter::once(ring(n.region.outer(), RingKind::Outer))
-            .chain(n.region.holes().iter().map(|h| ring(h, RingKind::Hole)))
+        n.children
+            .iter()
+            .filter_map(|&c| {
+                let splice = self.spliced(node, c, keep).filter(|s| s.ring == index)?;
+                let mut ring = self.ring_of(c, 0)?;
+                ring.start = splice.start;
+                Some(Cleanup {
+                    at: splice.at,
+                    ring,
+                })
+            })
+            .collect()
+    }
+
+    /// Appends `node`'s outer and holes that `keep` accepts, nearest
+    /// `anchor` first, each with the residual rings spliced into it.
+    fn push_rings(
+        &self,
+        node: usize,
+        anchor: &mut Option<Point>,
+        keep: &dyn Fn(&Ring) -> bool,
+        out: &mut Vec<Ring>,
+    ) {
+        let Some(n) = self.nodes.get(node) else {
+            return;
+        };
+        let mut rings: Vec<Ring> = (0..=n.region.holes().len())
+            .filter_map(|index| {
+                let mut ring = self.ring_of(node, index).filter(|r| keep(r))?;
+                ring.cleanups = self.cleanups(node, index, keep);
+                Some(ring)
+            })
             .collect();
         while !rings.is_empty() {
-            let pick = rings
-                .iter()
-                .enumerate()
-                .min_by(|(ia, a), (ib, b)| {
-                    nearest(&a.contour, *anchor)
-                        .1
-                        .total_cmp(&nearest(&b.contour, *anchor).1)
-                        .then(ia.cmp(ib))
-                })
-                .map_or(0, |(i, _)| i);
+            let pick = nearest_of(
+                rings
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (i, nearest(&r.contour, *anchor).1)),
+            )
+            .unwrap_or(0);
             let mut ring = rings.remove(pick);
             ring.start = nearest(&ring.contour, *anchor).0;
             *anchor = Some(ring.start);
@@ -251,32 +476,245 @@ impl RingTree {
     }
 }
 
-/// The vertex of `contour` nearest `anchor` (upstream
-/// `contourNearestVertexIndex`, the first on a tie) and its distance; the
-/// first vertex and 0 with no anchor.
+/// The step, mm, at which [`link_inside`] samples a link.
+const SPLICE_SAMPLE_STEP_MM: f64 = 0.1;
+
+/// Where the residual `piece` of `parent` is cut from a ring of `parent`
+/// (#267): the point of one of its rings ([`nearest`], so a straight edge
+/// offers its corners) nearest a vertex of the piece's ring, and the
+/// piece's point nearest that. `None` when the piece has a hole, or when
+/// the straight link between the two is longer than `limit_mm` (one
+/// diameter plus the step-over, the `sequence` stay-down limit) or leaves
+/// `parent`. The ring has cleared `r` about the point the link leaves
+/// from, and the piece lies `r` or more from the ring, so the link runs out
+/// through cleared material and into the piece's material only near its
+/// end. Ties go to the outer, then the earlier hole and vertex
+/// ([`crate::sequence::NEAREST_TIE_MM`]).
+fn splice_of(parent: &Region, piece: &Region, limit_mm: f64) -> Option<Splice> {
+    if !piece.holes().is_empty() {
+        return None;
+    }
+    let vertices = piece.outer().polyline().vertices();
+    let candidates = std::iter::once(parent.outer())
+        .chain(parent.holes())
+        .enumerate()
+        .flat_map(|(ring, contour)| {
+            vertices.iter().map(move |v| {
+                let (at, d) = nearest(contour, Some(v.point()));
+                ((ring, at), d)
+            })
+        });
+    let (ring, at) = nearest_of(candidates)?;
+    let start = nearest(piece.outer(), Some(at)).0;
+    let reached = at.distance_to(start) <= limit_mm + EPS_MM && link_inside(parent, at, start);
+    reached.then_some(Splice { ring, at, start })
+}
+
+/// True when the straight link from `from`, a point on `region`'s edge,
+/// to `to` stays inside `region`: it comes within [`EPS_MM`] of no edge
+/// segment but those through `from` (distances follow arcs), and every
+/// point along it, [`SPLICE_SAMPLE_STEP_MM`] apart, is inside, so it does
+/// not leave across a segment through `from` either.
+fn link_inside(region: &Region, from: Point, to: Point) -> bool {
+    let link = Segment {
+        start: from,
+        end: to,
+        bulge: 0.0,
+    };
+    let clear = std::iter::once(region.outer())
+        .chain(region.holes())
+        .flat_map(|c| c.polyline().segments())
+        .all(|s| {
+            point_segment_distance_mm(s, from) <= EPS_MM || segment_distance_mm(link, s) > EPS_MM
+        });
+    // Rounds up; the count is small, so the cast cannot truncate.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let steps = (from.distance_to(to) / SPLICE_SAMPLE_STEP_MM)
+        .ceil()
+        .max(1.0) as usize;
+    let d = to - from;
+    clear
+        && (1..=steps).all(|k| {
+            let t = k as f64 / steps as f64;
+            region.contains_point(Point::new(from.x + d.x * t, from.y + d.y * t))
+        })
+}
+
+/// Where a ring starts: the point of `contour` nearest `anchor` among its
+/// vertices and along its arcs, and its distance; the first vertex and 0
+/// with no anchor. Upstream (`contourNearestVertexIndex`) takes the
+/// nearest vertex of a Clipper polygon, whose arcs are sampled densely, so
+/// on an arc its nearest vertex is in effect the nearest point, and on a
+/// straight edge it is a corner. DreamCarve keeps arcs, so a circle has
+/// two vertices and its nearest vertex can be far from its nearest point
+/// (#196); the nearest point of an arc stands in for upstream's dense
+/// vertices. A straight edge offers only its corners, as upstream's does
+/// (the `pocket-offset-rect` golden case links its rings corner to
+/// corner). A point within [`EPS_MM`] of an arc's end is that end, so no
+/// sliver arc is made. Ties go to the earlier segment, points within
+/// `NEAREST_TIE_MM` of the nearest included (#215).
 #[must_use]
 pub fn nearest(contour: &Contour, anchor: Option<Point>) -> (Point, f64) {
-    let vertices = contour.polyline().vertices();
-    let first = vertices.first().map_or(Point::new(0.0, 0.0), |v| v.point());
+    let polyline = contour.polyline();
+    let first = polyline
+        .vertices()
+        .first()
+        .map_or(Point::new(0.0, 0.0), |v| v.point());
     let Some(anchor) = anchor else {
         return (first, 0.0);
     };
-    vertices
-        .iter()
-        .map(|v| (v.point(), v.point().distance_to(anchor)))
-        .fold((first, f64::INFINITY), |best, candidate| {
-            if candidate.1 < best.1 {
-                candidate
-            } else {
-                best
+    let candidates = std::iter::once(first).chain(polyline.segments().map(|segment| {
+        let mut point = if segment.arc().is_some() {
+            closest_on_segment(segment, anchor)
+        } else {
+            segment.start
+        };
+        for end in [segment.start, segment.end] {
+            if point.distance_to(end) <= EPS_MM {
+                point = end;
             }
+        }
+        point
+    }));
+    let best = nearest_of(candidates.map(|p| (p, p.distance_to(anchor)))).unwrap_or(first);
+    (best, best.distance_to(anchor))
+}
+
+/// The point of `segment` nearest `p`, following an arc.
+fn closest_on_segment(segment: Segment, p: Point) -> Point {
+    let nearer_end = || {
+        if p.distance_to(segment.start) <= p.distance_to(segment.end) {
+            segment.start
+        } else {
+            segment.end
+        }
+    };
+    match segment.arc() {
+        Some(arc) => {
+            let v = p - arc.centre;
+            match v.normalized() {
+                Some(unit) if sweep_to(arc, v.y.atan2(v.x)).is_some() => {
+                    arc.centre + unit * arc.radius_mm
+                }
+                _ => nearer_end(),
+            }
+        }
+        None => {
+            let d = segment.end - segment.start;
+            let len2 = d.dot(d);
+            if len2 <= EPS_MM * EPS_MM {
+                return segment.start;
+            }
+            let t = ((p - segment.start).dot(d) / len2).clamp(0.0, 1.0);
+            segment.start + d * t
+        }
+    }
+}
+
+/// The signed sweep from `arc`'s start to the direction `angle_rad` from
+/// its centre, when that direction lies within the arc.
+fn sweep_to(arc: Arc, angle_rad: f64) -> Option<f64> {
+    let from_start = if arc.sweep_rad > 0.0 {
+        (angle_rad - arc.start_angle_rad).rem_euclid(TAU)
+    } else {
+        (arc.start_angle_rad - angle_rad).rem_euclid(TAU)
+    };
+    (from_start <= arc.sweep_rad.abs()).then(|| from_start.copysign(arc.sweep_rad))
+}
+
+/// The closed `path` with a vertex at `at`, a point on it: the segment
+/// `at` lies inside (more than [`EPS_MM`] from both its ends) is split
+/// there, an arc into two arcs of the same circle. Unchanged when `at` is
+/// already a vertex or is on no segment.
+#[must_use]
+pub fn split_at(path: &Polyline, at: Point) -> Polyline {
+    let vertices = path.vertices();
+    if vertices.iter().any(|v| v.point().distance_to(at) <= EPS_MM) {
+        return path.clone();
+    }
+    for (index, segment) in path.segments().enumerate() {
+        if closest_on_segment(segment, at).distance_to(at) > EPS_MM {
+            continue;
+        }
+        // The bulges of the two parts: tan(θ/4) of each part's sweep.
+        let (before, after) = match segment.arc() {
+            Some(arc) => {
+                let v = at - arc.centre;
+                let Some(sweep) = sweep_to(arc, v.y.atan2(v.x)) else {
+                    continue;
+                };
+                ((sweep / 4.0).tan(), ((arc.sweep_rad - sweep) / 4.0).tan())
+            }
+            None => (0.0, 0.0),
+        };
+        let mut out = vertices.to_vec();
+        if let Some(v) = out.get_mut(index) {
+            v.bulge = before;
+        }
+        out.insert((index + 1).min(out.len()), Vertex::new(at.x, at.y, after));
+        return Polyline::new(out, path.is_closed());
+    }
+    path.clone()
+}
+
+/// The point of `path` nearest `p`, along its lines and arcs, and its
+/// distance; `None` for a path with no segment. Ties go to the earlier
+/// segment.
+#[must_use]
+pub fn closest_point(path: &Polyline, p: Point) -> Option<(Point, f64)> {
+    path.segments()
+        .map(|segment| {
+            let q = closest_on_segment(segment, p);
+            (q, q.distance_to(p))
         })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// The part of the closed `ring` from `from` to `to`, two points on it,
+/// the shorter way round, as an open path keeping the ring's arcs (#202).
+/// Ties go the ring's own way. `None` when either point is not on it.
+#[must_use]
+pub fn shorter_way(ring: &Polyline, from: Point, to: Point) -> Option<Polyline> {
+    let forward = way_along(ring, from, to)?;
+    let backward = way_along(&ring.reversed(), from, to)?;
+    Some(if backward.length_mm() < forward.length_mm() - EPS_MM {
+        backward
+    } else {
+        forward
+    })
+}
+
+/// The part of the closed `ring` from `from` to `to` in its own direction.
+fn way_along(ring: &Polyline, from: Point, to: Point) -> Option<Polyline> {
+    let split = split_at(&split_at(ring, from), to);
+    let vertices = split.vertices();
+    let at = |p: Point| {
+        vertices
+            .iter()
+            .position(|v| v.point().distance_to(p) <= EPS_MM)
+    };
+    let (first, last) = (at(from)?, at(to)?);
+    let mut out = Vec::new();
+    let mut index = first;
+    for _ in 0..vertices.len() {
+        out.push(*vertices.get(index)?);
+        if index == last {
+            break;
+        }
+        index = (index + 1) % vertices.len();
+    }
+    if let Some(end) = out.last_mut() {
+        end.bulge = 0.0;
+    }
+    Some(Polyline::new(out, false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Polyline, area_mm2, assert_approx_eq};
+    use crate::pocket::ring_path;
+    use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, area_mm2, assert_approx_eq};
+    use dc_project::CutDirection;
 
     fn region(polylines: Vec<Polyline>) -> Region {
         let contours = polylines
@@ -317,10 +755,172 @@ mod tests {
         assert_eq!(out.len(), 2, "{out:?}");
     }
 
+    /// A band thinner than twice the inset (what a rough Pocket's
+    /// allowance leaves for rest machining) insets to nothing. The grown
+    /// island then encloses the shrunk outer, and must not be read back
+    /// as the outer of an inverted annulus, which grows on every inset.
+    #[test]
+    fn inset_of_a_thin_band_is_empty() {
+        let r = region(vec![
+            Polyline::rect(Point::new(0.0, 0.0), 40.0, 40.0),
+            Polyline::rect(Point::new(1.0, 1.0), 38.0, 38.0),
+        ]);
+        let out = inset_region(&r, 1.2, FLATTEN_TOLERANCE_DEFAULT_MM);
+        assert!(out.is_empty(), "{out:?}");
+        let tree = RingTree::build(r, 1.2, 1.5, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        assert_eq!(tree.nodes.len(), 1);
+    }
+
+    /// #196: a ring starts at its point nearest the anchor, on an arc too,
+    /// not at its nearest vertex. A circle of radius 10 about the origin
+    /// has vertices at (±10, 0); from (12, 1) its nearest point is at
+    /// θ = atan2(1, 12), and the ring's contour gains a vertex there.
+    #[test]
+    fn ring_starts_at_nearest_point_of_an_arc() {
+        let r = region(vec![Polyline::circle(Point::new(0.0, 0.0), 10.0)]);
+        let tree = RingTree::build(r, 50.0, 25.0, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        let mut anchor = Some(Point::new(12.0, 1.0));
+        let rings = tree.walk(WallRings::Last, &mut anchor);
+        assert_eq!(rings.len(), 1);
+        let theta = 1.0_f64.atan2(12.0);
+        let want = Point::new(10.0 * theta.cos(), 10.0 * theta.sin());
+        assert!(
+            rings[0].start.distance_to(want) <= EPS_MM,
+            "starts at {:?}, want {want:?}",
+            rings[0].start
+        );
+        assert_eq!(anchor, Some(rings[0].start));
+        // The ring's path starts there, split into arcs of the same
+        // circle: the same length and area.
+        let start = rings[0].start;
+        for direction in [CutDirection::Climb, CutDirection::Conventional] {
+            let path = ring_path(rings[0].clone(), direction);
+            let first = path.vertices().first().unwrap().point();
+            assert!(first.distance_to(start) <= EPS_MM, "{path:?}");
+            assert_eq!(path.vertices().len(), 3, "{path:?}");
+            assert_approx_eq!(path.length_mm(), TAU * 10.0, 1e-9);
+            assert_approx_eq!(
+                path.signed_area_mm2().abs(),
+                std::f64::consts::PI * 100.0,
+                1e-9
+            );
+        }
+    }
+
+    /// Splitting a line keeps both halves straight; a point that is a
+    /// vertex, or on no segment, changes nothing.
+    #[test]
+    fn split_at_a_line_and_at_a_vertex() {
+        let rect = Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0);
+        let split = split_at(&rect, Point::new(5.0, 0.0));
+        assert_eq!(split.vertices().len(), 5);
+        assert!(split.segments().all(|s| s.is_line()));
+        assert_approx_eq!(split.length_mm(), 60.0, 1e-9);
+        assert_eq!(split_at(&rect, Point::new(20.0, 0.0)), rect);
+        assert_eq!(split_at(&rect, Point::new(5.0, 5.0)), rect);
+        // A straight edge offers only its corners, as upstream's polygon
+        // does: from inside the rect, its nearest corner.
+        let r = region(vec![rect]);
+        let (p, d) = nearest(r.outer(), Some(Point::new(5.0, 2.0)));
+        assert!(p.distance_to(Point::new(0.0, 0.0)) <= EPS_MM, "{p:?}");
+        assert_approx_eq!(d, 29.0_f64.sqrt(), 1e-9);
+    }
+
+    /// #258: a 6.35 mm tool at step-over 1.0 (`s = 6.35`, `r = 3.175`). A
+    /// tool-centre circle of radius 5.325 has no room for another ring, and
+    /// its ring reaches only 3.175 in; it gets one residual ring, the circle
+    /// inset by `r` and the tolerance, which reaches the centre. At radius
+    /// 3.0 the ring reaches the centre and none is added; nor is one at
+    /// step-over 0.5, whatever the radius.
+    #[test]
+    fn leaf_gets_a_residual_ring_only_when_needed() {
+        let tol = FLATTEN_TOLERANCE_DEFAULT_MM;
+        let circle = |radius_mm| region(vec![Polyline::circle(Point::new(0.0, 0.0), radius_mm)]);
+        let tree = RingTree::build(circle(5.325), 6.35, 3.175, tol, 100).unwrap();
+        assert_eq!(tree.nodes.len(), 2, "{tree:?}");
+        assert_eq!(tree.nodes[0].children, [1]);
+        let residual = &tree.nodes[1];
+        assert!(residual.residual && residual.children.is_empty());
+        assert_approx_eq!(
+            residual.region.area_mm2(),
+            std::f64::consts::PI * (5.325 - 3.175 - tol).powi(2),
+            1e-6
+        );
+        // #267: it is cut from the ring, out and back along a radius.
+        let rings = tree.walk(WallRings::Last, &mut None);
+        assert_eq!(rings.iter().map(|r| r.node).collect::<Vec<_>>(), [0]);
+        let cleanups = &rings[0].cleanups;
+        assert_eq!(cleanups.len(), 1, "{cleanups:?}");
+        assert_eq!(cleanups[0].ring.node, 1);
+        assert_approx_eq!(
+            cleanups[0].at.distance_to(cleanups[0].ring.start),
+            3.175 + tol,
+            1e-6
+        );
+        // With the wall pass omitted the residual ring goes with it.
+        assert!(tree.walk(WallRings::Omitted, &mut None).is_empty());
+
+        let tree = RingTree::build(circle(3.0), 6.35, 3.175, tol, 100).unwrap();
+        assert_eq!(tree.nodes.len(), 1);
+        let tree = RingTree::build(circle(5.325), 3.175, 3.175, tol, 100).unwrap();
+        assert!(tree.nodes.iter().all(|n| !n.residual), "{tree:?}");
+    }
+
+    /// #258: at step-over 1.0 the child of a rect has its corners `2r` in
+    /// from each side, so a point `1.1r` from both sides of a corner is
+    /// more than `r` from the ring and from the child (`0.9·√2·r`). The
+    /// 100 × 50 pocket's tool-centre rect gets one residual ring in each
+    /// corner beside its child. At 0.8 the child's corner is near enough
+    /// (a right angle needs `s ≤ (1 + √2/2)·r`) and none is added.
+    #[test]
+    fn square_corners_get_residual_rings_at_full_step_over() {
+        let tol = FLATTEN_TOLERANCE_DEFAULT_MM;
+        let rect = || region(vec![Polyline::rect(Point::new(0.0, 0.0), 93.65, 43.65)]);
+        let tree = RingTree::build(rect(), 6.35, 3.175, tol, 1000).unwrap();
+        let root = &tree.nodes[0];
+        let residual: Vec<&RingNode> = root
+            .children
+            .iter()
+            .map(|&c| &tree.nodes[c])
+            .filter(|n| n.residual)
+            .collect();
+        assert_eq!(root.children.len(), 5, "{root:?}");
+        assert_eq!(residual.len(), 4);
+        for corner in [(0.0, 0.0), (93.65, 0.0), (93.65, 43.65), (0.0, 43.65)] {
+            let corner = Point::new(corner.0, corner.1);
+            assert!(
+                residual.iter().any(|n| {
+                    n.region
+                        .outer()
+                        .polyline()
+                        .vertices()
+                        .iter()
+                        .all(|v| v.point().distance_to(corner) < 2.5 * 3.175)
+                }),
+                "no residual ring at {corner:?}"
+            );
+            // #267: each is cut from the root ring, out from its corner.
+            assert!(
+                residual.iter().any(|n| n.splice.is_some_and(|s| s.ring == 0
+                    && s.at.distance_to(corner) <= EPS_MM
+                    && (s.start.distance_to(corner) - (3.175 + tol) * 2.0_f64.sqrt()).abs()
+                        <= 1e-6)),
+                "no residual ring cut from {corner:?}: {residual:?}"
+            );
+        }
+        // Every residual ring of the tree is a clean-up of its parent's ring.
+        let rings = tree.walk(WallRings::Last, &mut None);
+        assert!(rings.iter().all(|r| !tree.nodes[r.node].residual));
+        let cleanups: usize = rings.iter().map(|r| r.cleanups.len()).sum();
+        assert_eq!(cleanups, tree.nodes.iter().filter(|n| n.residual).count());
+        let tree = RingTree::build(rect(), 0.8 * 6.35, 3.175, tol, 1000).unwrap();
+        assert!(tree.nodes.iter().all(|n| !n.residual));
+    }
+
     #[test]
     fn tree_of_a_rect_is_a_chain() {
         let r = region(vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0)]);
-        let tree = RingTree::build(r, 2.0, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
+        let tree = RingTree::build(r, 2.0, 2.5, FLATTEN_TOLERANCE_DEFAULT_MM, 100).unwrap();
         // Half-height 5: insets of 2 and 4 remain, 6 does not.
         assert_eq!(tree.nodes.len(), 3);
         let mut anchor = None;
@@ -331,10 +931,48 @@ mod tests {
             RingTree::build(
                 region(vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0)]),
                 2.0,
+                2.5,
                 FLATTEN_TOLERANCE_DEFAULT_MM,
                 2
             )
             .is_none()
         );
+    }
+
+    /// #235 (found by the dc-gcode property test): the nested circular
+    /// pocket's tool-centre region, a circle of radius 1.4994 mm, at the
+    /// property case's 0.2998 mm step-over is 5.0006 step-overs across its
+    /// radius, so a sixth ring of radius 0.0002 mm was kept: three arcs
+    /// whose ends round to one point in the program (S6). A ring under
+    /// twice the tolerance across is noise by the rule rest machining
+    /// uses (area under the tolerance times the perimeter), and nothing
+    /// the tool does not already reach from the ring before it: five
+    /// rings, none under 0.02 mm across.
+    #[test]
+    fn no_ring_smaller_than_the_tolerance() {
+        let tool_radius_mm = 1.715_671_296_509_893_3 / 2.0;
+        let centre_radius_mm = 2.906_933_833_965_864_4 - tool_radius_mm - 0.549_697_563_087_318_1;
+        let stepover_mm = 1.715_671_296_509_893_3 * 0.174_767_951_923_974_57;
+        let root = region(vec![Polyline::circle(
+            Point::new(120.0, 80.0),
+            centre_radius_mm,
+        )]);
+        let tree = RingTree::build(
+            root,
+            stepover_mm,
+            tool_radius_mm,
+            FLATTEN_TOLERANCE_DEFAULT_MM,
+            100,
+        )
+        .unwrap();
+        assert_eq!(tree.nodes.len(), 5, "{:?}", tree.nodes);
+        for (i, node) in tree.nodes.iter().enumerate() {
+            let bounds = node.region.outer().polyline().bounds().unwrap();
+            let across_mm = bounds.width_mm().min(bounds.height_mm());
+            assert!(
+                across_mm >= 2.0 * FLATTEN_TOLERANCE_DEFAULT_MM,
+                "ring {i} is {across_mm} mm across"
+            );
+        }
     }
 }

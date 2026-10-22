@@ -16,6 +16,9 @@ the GUI both call, so **pure core, thin shell**.
 
 - Stable Rust, 2024 edition. `rust-version` in the workspace `Cargo.toml` is
   the only MSRV statement; bump it deliberately, in its own commit.
+- `rust-toolchain.toml` pins the release the build gate (fmt, clippy, tests)
+  runs on, locally and in CI. It is newer than the MSRV and is not one. Bump
+  it in its own pull request, which fixes the lints the new release adds.
 - One `[workspace.lints]` table, inherited by every crate with
   `lints.workspace = true`. Library crates (`dc-*`): `unsafe_code = "forbid"`,
   `clippy::unwrap_used = "deny"`, `clippy::expect_used = "deny"`,
@@ -61,6 +64,10 @@ nothing else.
   `eprintln!`, or logging macros in `dc-*`.
 - Nothing GUI-specific (egui, wgpu, winit types) appears in a `dc-*` crate.
   The GUI adapts engine types at its own edge.
+- `dc-geometry`'s API uses its own types. The one exception is
+  `flatten(&kurbo::BezPath, …)`, the importers' curve form: SVG and DXF
+  curves are kurbo paths until they are flattened. `kurbo` is a workspace
+  dependency, so both sides name one version (#71).
 
 ## Errors and warnings
 
@@ -157,7 +164,10 @@ nothing else.
   return owned results. No `&mut` to a caller's data in the engine; callers
   decide what to replace.
 - No `Rc<RefCell<_>>`, no `static mut`, no global state in `dc-*`. State
-  travels as parameters.
+  travels as parameters. The one exception is a `OnceLock` cache of data
+  compiled into the binary, set once and read-only after, which no caller
+  can change: `dc-project`'s parsed bundled post-processor definitions
+  (#71).
 - No `async` and no runtime in `dc-*`. The GUI runs the synchronous engine on
   a worker thread and passes results back over a channel.
 
@@ -252,10 +262,11 @@ nothing else.
 **Prefer**
 
 - One crate per job: `cavalier_contours` for offsets, `i_overlay` for boolean
-  ops, `kurbo` for curves, `usvg` for SVG, `dxf` for DXF, `ttf-parser` for
-  fonts, `thiserror`/`anyhow` for errors, `serde`/`serde_json` for files,
-  `clap` for the CLI. Introducing a second crate for the same job needs an
-  ADR.
+  ops, `kurbo` for curves, `usvg` for SVG, `ttf-parser` for fonts,
+  `thiserror`/`anyhow` for errors, `serde`/`serde_json` for files, `clap` for
+  the CLI. Introducing a second crate for the same job needs an ADR. DXF is
+  read by `dc-import`'s own group-code reader (#124): the `dxf` crate added
+  about 50 crates for the dozen group codes the importer reads.
 
 ## Documentation and comments
 

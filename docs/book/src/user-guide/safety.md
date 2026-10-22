@@ -18,16 +18,32 @@ written. There are no safety warnings, only errors.
    So is a stock without `thickness_mm` or an operation without
    `depth_mm`: DreamCarve has no defaults for them.
 2. **Rapids only at safe Z.** Every rapid (`G0`) move is at or above safe Z.
-   The first move of the program is a rapid straight up to safe Z. The one
-   exception is inside a [Drill](drill.md): there a rapid straight down may
-   stop at the retract height above the stock, or inside the part of the
-   hole already drilled, and never in uncut material.
+   The first move of the program is a rapid straight up to safe Z. There
+   are two exceptions, both straight down and only into air. Above a ramp
+   or helix [entry](pocket.md#entry), and above every straight plunge (a
+   `plunge` entry, an [Engrave](engrave.md) pass, a corner-relief notch),
+   a rapid straight down from safe Z stops 1 mm above the stock top, or
+   1 mm above the floor the same operation has already cut at that point;
+   the ramp, helix or plunge at the plunge rate starts there, not at safe
+   Z. The check refuses a rapid that stops lower, or over a floor only
+   another operation cut. With a [clearance height](post-processors.md#heights-clearance-tool-change-and-park)
+   set, moves between parts and between operations rise to it, which is
+   higher still: the check holds each operation's first move across the
+   work, every move across outside the operations (such as the move to
+   the park point) and every stop to it. Without one, moves after the last
+   operation are held to the highest safe Z of the program. Inside a [Drill](drill.md), a rapid straight
+   down may stop at the retract height above the stock, or inside the
+   part of the hole already drilled, and never in uncut material.
 3. **No invented feeds.** Every cutting move carries a feed rate you set on
    the tool: the plunge rate for straight-down moves and tab steps, the feed
    rate for everything else. The one value in between is a move that goes
    down while it moves sideways, a ramp or helix [entry](pocket.md#entry)
    or a smooth [tab](tabs.md)'s ramp down: its feed rate is lowered just
    enough that it goes down no faster than the plunge rate (rule 11). A
+   feed rate that would go down faster once rounded to the decimal places
+   written is rounded down instead: a plunge rate the written places cannot
+   hold, such as 1000 mm/min in inches (`F39.3700`, not `F39.3701`), is
+   written one unit in the last place lower. A
    tool without a feed rate or
    plunge rate stops the export, and so does one without a spindle speed unless the
    router is switched by hand. DreamCarve has no defaults for these.
@@ -68,12 +84,14 @@ written. There are no safety warnings, only errors.
    ends where the toolpath's does, every arc turns the same way about the
    same centre, and there are no moves in between except a rapid split
    into its up-or-down and sideways parts, an arc written as short
-   straight moves along it, and a lift to safe Z before or after the
-   operation. An arc written in place of a run of straight moves
+   straight moves along it, and a lift to safe Z, or to the clearance
+   height, before or after the operation. An arc written in place of a run of straight moves
    ([Arc fitting](project-file.md#arc-fitting)) is accepted only if it
    starts and ends on the toolpath's corners, every corner between lies
-   on it within `arc_fit_tolerance_mm`, it sweeps at most 90°, and it
-   turns the way the corners do.
+   on it within `arc_fit_tolerance_mm`, it stays that close to every
+   straight move it replaces along the move's whole length (so the four
+   corners of a square, which lie on one circle, never become a circle),
+   it sweeps at most 90°, and it turns the way the corners do.
 9. **The cut stays on the stock.** Every cutting move, widened by the
    bit's radius, stays inside the stock's `width_mm` by `height_mm`
    rectangle; arcs count all the way round, not just at their ends. A shape
@@ -90,15 +108,18 @@ written. There are no safety warnings, only errors.
     controller makes for it, and rules 1, 2, 8 and 9 are checked on those
     moves: they must be the Drill's own moves, hole for hole, depth for
     depth. A cycle the check cannot read back exactly, such as one with a
-    word missing, is refused.
+    word missing, is refused, and so is any other move before the `G80`
+    that ends the cycles.
 11. **Nothing goes down faster than the plunge rate.** For every cutting
     move that goes down, the check works out its slope from the numbers
     written in the program, and its speed straight down: the feed rate
     times the sine of the slope. That must not be faster than the tool's
     plunge rate. This holds for a ramp, a helix, a smooth tab's ramp down,
-    and a straight plunge, whose speed straight down is its feed rate. The
-    rounding of the numbers is allowed for: one unit in the last decimal
-    place written. A move that goes down too fast stops the export with an
+    and a straight plunge, whose speed straight down is its feed rate.
+    Nothing is allowed for rounding: DreamCarve rounds such a move's feed
+    rate down, by as many units in the last decimal place as its rounded
+    coordinates need, so the move as written goes down no faster than the
+    plunge rate. A move that goes down too fast stops the export with an
     error that names the line and the operation, for example ``emitted
     line 42 of operation `op2` descends faster than its tool's plunge
     rate``.
@@ -114,9 +135,34 @@ written. There are no safety warnings, only errors.
     - a [Drill](drill.md): the bit stays inside one of the circles it
       drills.
     - an [Engrave](engrave.md): the centre of the bit stays on the line.
-    - a [Profile](profile.md): rules 8 and 9 already hold its cuts to its
-      shapes' outlines and to the stock, and toolpath generation keeps one
-      shape's cut out of another part.
+    - a [Profile](profile.md): the whole width of the bit stays in the
+      waste. Cut **outside**, that means outside every part, and cut
+      **inside**, inside the hole and off any island left in it. Cut **on
+      line**, the centre of the bit stays on the line, at least a bit's
+      width from the part's other lines, so a cut that would cut through
+      a ring narrower than the bit stops the export. On an open path in a
+      part, the bit's centre stays on the path and a bit's width from the
+      part's lines and its other open paths, except near a point where the
+      two meet. A cut also keeps a bit's width from the stretches of its
+      own line farther along it, so a cut along a U, a tight spiral or a
+      narrow neck stops the export, and so does any cut round a part
+      narrower than the bit everywhere, which the cut would remove whole,
+      as DreamCarve's own check (see
+      [Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)). Laps, tab rises,
+      entry ramps and helixes, lead arcs and corner relief notches all
+      count, so a ramp or lead arc that swings into a part, its own or a
+      neighbour's, stops the export. A lap that runs along one outline at
+      the bit's radius passes even where another, separate shape is
+      closer than the bit is wide: that gouge is the `toolpaths_overlap`
+      warning. It never passes closer than the radius to another line of
+      its own shape, such as an island in a band narrower than the bit;
+      DreamCarve refuses that cut before export (see
+      [Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)).
+      A Profile also leaves its [tabs](tabs.md) standing: a straight plunge
+      on the bit's path, below a tab's top, within the stretch a pass rises
+      over for that tab (its width plus the bit's diameter, along the path;
+      under a smooth tab's slope, below the slope), stops the export. The
+      tabs are the project's placed tabs and those a tab request places.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus
@@ -124,6 +170,18 @@ written. There are no safety warnings, only errors.
     is on. A cut outside stops the export with an error that names the
     line and the operation, for example ``emitted line 57 takes operation
     `op2`'s tool outside the material it may cut``.
+
+13. **Machine coordinates only for the tool-change lift.** A program
+    writes `G53` only as `G53 G0 Z<v>`, alone on its line, where `<v>` is
+    the project's `tool_change_machine_z_mm` (below 0), on a
+    post-processor that documents `G53` (grblHAL, GRBL, LinuxCNC), and only right
+    before a tool-change stop or the end of the program, from at or above
+    safe Z, at the spot the bit is already over, or again right after a
+    stop that followed a lift (the router-off pause, then the tool change)
+    with nothing moved between. Any other `G53` is refused. After the lift the check treats Z as unknown, as after a
+    stop (rule 5), so a move across the work needs a lift to safe Z in
+    work coordinates first; a program that moves before the stop or the
+    end it lifted for is refused.
 
 It also checks that:
 
@@ -161,7 +219,12 @@ It also checks that:
 - **Safe Z height.** It keeps rapids at safe Z, but cannot tell whether safe
   Z clears your clamps.
 - **Machine limits.** It does not know your machine's travel. Use homing and
-  soft limits on the controller. The 6000 mm limit on project coordinates
+  soft limits on the controller.
+- **Homing, with a tool-change machine Z.** A `G53` lift goes to a machine
+  position, which is right only if the machine was homed since it was
+  switched on. `export` reminds you, but cannot tell. Nor can it tell
+  whether the machine Z you chose is above the clearance height on your
+  machine, so that the lift only goes up. The 6000 mm limit on project coordinates
   only catches typing mistakes; it is not your machine's size.
 - **The router, in manual mode.** It cannot tell whether you switched it on.
 - **Pause messages.** Your sender may not show why the program paused. Use
@@ -201,7 +264,8 @@ It also checks that:
 8. **Stay at the machine** with the emergency stop or feed hold in reach.
    Wear eye and hearing protection, and keep dust extraction running.
 
-Phase 1's first test part, the coaster in the
-[quick start](../quick-start/first-cut.md), has not yet been cut on a real
-machine by the project. Until it has, treat every program as untested and
-watch the air cut closely.
+Neither test part, the coaster in the
+[first quick start](../quick-start/first-cut.md) nor the plaque in the
+[second](../quick-start/plaque.md), has yet been cut on a real machine by
+the project. Until they have, treat every program as untested and watch
+the air cut closely.

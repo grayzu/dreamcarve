@@ -175,6 +175,111 @@ impl Segment {
             }
         }
     }
+
+    /// The pieces of the segment that lie outside every disc of
+    /// `radius_mm` about one of `centres`, mm, in order along it and
+    /// running the same way; an arc's pieces are arcs of the same circle.
+    /// A piece no longer than [`EPS_MM`] is dropped, so a segment wholly
+    /// inside the discs has none. With no centres, or a radius that is not
+    /// positive, the segment is its own one piece.
+    #[must_use]
+    pub fn outside_discs(&self, centres: &[Point], radius_mm: f64) -> Vec<Segment> {
+        let length_mm = self.length_mm();
+        if centres.is_empty() || radius_mm.is_nan() || radius_mm <= 0.0 {
+            return vec![*self];
+        }
+        if length_mm <= EPS_MM {
+            let inside = centres
+                .iter()
+                .any(|c| self.start.distance_to(*c) < radius_mm);
+            return if inside { Vec::new() } else { vec![*self] };
+        }
+        // The stretches inside a disc, as fractions of the length.
+        let mut inside: Vec<(f64, f64)> = centres
+            .iter()
+            .flat_map(|&c| self.inside_disc(c, radius_mm))
+            .filter(|(a, b)| b > a)
+            .collect();
+        inside.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut pieces = Vec::new();
+        let mut from = 0.0_f64;
+        for (a, b) in inside.into_iter().chain(std::iter::once((1.0, 1.0))) {
+            if (a - from) * length_mm > EPS_MM {
+                pieces.extend(self.piece(from, a));
+            }
+            from = from.max(b);
+        }
+        pieces
+    }
+
+    /// The stretches of the segment inside the disc of `radius_mm` about
+    /// `centre`, as fractions of its length, clamped to `[0, 1]`: at most
+    /// one for a line, two for an arc whose sweep wraps past the disc.
+    fn inside_disc(&self, centre: Point, radius_mm: f64) -> Vec<(f64, f64)> {
+        let clamp = |(a, b): (f64, f64)| (a.clamp(0.0, 1.0), b.clamp(0.0, 1.0));
+        match self.arc() {
+            None => {
+                // |start + f·d − centre|² = r², a quadratic in f.
+                let d = self.end - self.start;
+                let w = self.start - centre;
+                let (a, b, c) = (d.dot(d), 2.0 * d.dot(w), w.dot(w) - radius_mm * radius_mm);
+                let disc = b * b - 4.0 * a * c;
+                if a <= 0.0 || disc <= 0.0 {
+                    return Vec::new();
+                }
+                let root = disc.sqrt();
+                vec![clamp(((-b - root) / (2.0 * a), (-b + root) / (2.0 * a)))]
+            }
+            Some(arc) => {
+                let to_centre = centre - arc.centre;
+                let gap_mm = to_centre.length();
+                let r = arc.radius_mm;
+                if gap_mm <= EPS_MM {
+                    return if r < radius_mm {
+                        vec![(0.0, 1.0)]
+                    } else {
+                        Vec::new()
+                    };
+                }
+                // A point of the circle at angle φ is inside the disc when
+                // cos(φ − α) ≥ k, α the direction to `centre`.
+                let k = (r * r + gap_mm * gap_mm - radius_mm * radius_mm) / (2.0 * r * gap_mm);
+                if k >= 1.0 {
+                    return Vec::new();
+                }
+                let half_rad = k.max(-1.0).acos();
+                let sweep_rad = arc.sweep_rad.abs();
+                let tau = std::f64::consts::TAU;
+                // The angle travelled from the start to α, in the sweep's
+                // direction.
+                let alpha = to_centre.y.atan2(to_centre.x);
+                let toward =
+                    (arc.sweep_rad.signum() * (alpha - arc.start_angle_rad)).rem_euclid(tau);
+                [-tau, 0.0, tau]
+                    .into_iter()
+                    .map(|turn| (toward + turn - half_rad, toward + turn + half_rad))
+                    .filter(|&(a, b)| b > 0.0 && a < sweep_rad)
+                    .map(|(a, b)| clamp((a / sweep_rad, b / sweep_rad)))
+                    .collect()
+            }
+        }
+    }
+
+    /// The part of the segment from fraction `from` to `to` of its length.
+    pub(crate) fn piece(&self, from: f64, to: f64) -> Option<Segment> {
+        let length_mm = self.length_mm();
+        let at = |f: f64| match f {
+            f if f <= 0.0 => Some(self.start),
+            f if f >= 1.0 => Some(self.end),
+            f => self.point_at(f * length_mm).map(|(p, _)| p),
+        };
+        let (start, end) = (at(from)?, at(to)?);
+        let bulge = match self.arc() {
+            Some(arc) => (arc.sweep_rad * (to - from) / 4.0).tan(),
+            None => 0.0,
+        };
+        Some(Segment { start, end, bulge })
+    }
 }
 
 /// How many equal chords replace `arc` so none strays more than
@@ -667,5 +772,99 @@ mod tests {
         let c = Polyline::circle(Point::new(1.0, 2.0), 3.0);
         let json = serde_json::to_string(&c).unwrap();
         assert_eq!(serde_json::from_str::<Polyline>(&json).unwrap(), c);
+    }
+
+    fn assert_point(p: Point, x: f64, y: f64) {
+        assert!(
+            approx_eq(p.x, x, 1e-9) && approx_eq(p.y, y, 1e-9),
+            "{p:?} is not ({x}, {y})"
+        );
+    }
+
+    /// A line from (0, 0) to (10, 0) less the discs of radius 2 about
+    /// (5, 0) and (10, 0): the pieces from 0 to 3 and from 7 to 8, the
+    /// same way as the line.
+    #[test]
+    fn line_outside_discs_keeps_the_stretches_between_them() {
+        let line = Segment {
+            start: Point::new(0.0, 0.0),
+            end: Point::new(10.0, 0.0),
+            bulge: 0.0,
+        };
+        let pieces = line.outside_discs(&[Point::new(10.0, 0.0), Point::new(5.0, 0.0)], 2.0);
+        assert_eq!(pieces.len(), 2, "{pieces:?}");
+        assert_point(pieces[0].start, 0.0, 0.0);
+        assert_point(pieces[0].end, 3.0, 0.0);
+        assert_point(pieces[1].start, 7.0, 0.0);
+        assert_point(pieces[1].end, 8.0, 0.0);
+        assert!(pieces.iter().all(Segment::is_line));
+        // A disc that misses the line, and none at all, keep it whole.
+        assert_eq!(line.outside_discs(&[Point::new(5.0, 3.0)], 2.0), vec![line]);
+        assert_eq!(line.outside_discs(&[], 2.0), vec![line]);
+        // A disc that holds it leaves nothing.
+        assert!(line.outside_discs(&[Point::new(5.0, 0.0)], 6.0).is_empty());
+    }
+
+    /// The upper half of the unit circle about the origin, counter-
+    /// clockwise from (1, 0), less the disc of radius √2 about (0, 1)
+    /// (which reaches the circle at (±1, 0)): nothing. Less the disc of
+    /// radius 2·sin(π/8) about (0, 1), the circle within π/4 of the top:
+    /// two quarter-turn-less-π/4 arcs of the same circle, each the
+    /// original's direction.
+    #[test]
+    fn arc_outside_discs_keeps_arcs_of_the_same_circle() {
+        let upper = Segment {
+            start: Point::new(1.0, 0.0),
+            end: Point::new(-1.0, 0.0),
+            bulge: 1.0,
+        };
+        let top = Point::new(0.0, 1.0);
+        assert!(
+            upper
+                .outside_discs(&[top], 2.0_f64.sqrt() + 1e-9)
+                .is_empty()
+        );
+        let pieces = upper.outside_discs(&[top], 2.0 * (PI / 8.0).sin());
+        assert_eq!(pieces.len(), 2, "{pieces:?}");
+        let (c, s) = ((PI / 4.0).cos(), (PI / 4.0).sin());
+        assert_point(pieces[0].start, 1.0, 0.0);
+        assert_point(pieces[0].end, c, s);
+        assert_point(pieces[1].start, -c, s);
+        assert_point(pieces[1].end, -1.0, 0.0);
+        for piece in &pieces {
+            let arc = piece.arc().unwrap();
+            assert_approx_eq!(arc.radius_mm, 1.0, TOL);
+            assert_approx_eq!(arc.sweep_rad, PI / 4.0, TOL);
+        }
+        // Clockwise the other way round: the same stretches, reversed.
+        let upper_cw = Segment {
+            start: Point::new(-1.0, 0.0),
+            end: Point::new(1.0, 0.0),
+            bulge: -1.0,
+        };
+        let pieces = upper_cw.outside_discs(&[top], 2.0 * (PI / 8.0).sin());
+        assert_eq!(pieces.len(), 2, "{pieces:?}");
+        assert_point(pieces[0].end, -c, s);
+        assert_point(pieces[1].start, c, s);
+    }
+
+    /// An arc of three quarters of a turn whose start and end both lie in
+    /// one disc: the disc cuts it at both ends, leaving the middle.
+    #[test]
+    fn arc_wrapping_past_a_disc_keeps_its_middle() {
+        // From (0, -1) counter-clockwise round to (-1, 0): 270°.
+        let arc = Segment {
+            start: Point::new(0.0, -1.0),
+            end: Point::new(-1.0, 0.0),
+            bulge: (3.0 * PI / 8.0).tan(),
+        };
+        // Radius 1 about (-1, -1) reaches (0, -1) and (-1, 0).
+        let pieces = arc.outside_discs(&[Point::new(-1.0, -1.0)], 1.0);
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        assert_point(pieces[0].start, 0.0, -1.0);
+        assert_point(pieces[0].end, -1.0, 0.0);
+        let pieces = arc.outside_discs(&[Point::new(-1.0, -1.0)], 1.2);
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        assert!(pieces[0].length_mm() < arc.length_mm() - 0.1, "{pieces:?}");
     }
 }

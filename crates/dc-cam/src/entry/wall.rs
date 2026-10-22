@@ -28,14 +28,15 @@
 
 use super::{
     Area, Descent, ENTRY_EPS, EntryDomain, EntryKind, EntryPlan, EntryTool, FallbackReason,
-    MAX_RAMP_RUN_DIAMETERS, MIN_RAMP_RUN_FRACTION, RAMP_DIRECTIONS, RampPlacement,
-    boundary_safety_mm, count_within_cap, is_descent_move, move_feed_mm_min, plan_with,
+    MAX_RAMP_RUN_DIAMETERS, MIN_RAMP_RUN_FRACTION, RAMP_DIRECTIONS, RAMP_MIN_LAST_DROP_MM,
+    RampPlacement, boundary_safety_mm, count_within_cap, is_descent_move, move_feed_mm_min,
+    plan_with, segment_distance_sq,
 };
 use crate::toolpath::Move;
 use dc_geometry::{EPS_MM, Point, Point3, Polyline, Vec2};
 use dc_project::Entry;
 use std::cmp::Ordering;
-use std::f64::consts::PI;
+use std::f64::consts::{PI, SQRT_2};
 
 /// [`super::plan`] for a target on a Profile's tool-centre path, the edge
 /// of `domain`: the helix as [`super::plan`] places it, the ramp from the
@@ -69,7 +70,7 @@ fn place_wall_ramp(
         for i in 0..RAMP_DIRECTIONS {
             let angle = PI * i as f64 / RAMP_DIRECTIONS as f64;
             let direction = Vec2::new(angle.cos(), angle.sin());
-            let Some((min, max)) = area.line_interval(target, direction) else {
+            let Some((min, max)) = area.line_interval(target, direction, ENTRY_EPS) else {
                 continue;
             };
             for (sign, room) in [(1.0, max), (-1.0, -min)] {
@@ -255,10 +256,17 @@ impl Flat {
 /// The On line ramp (design spec, "On line ramp"): from the start vertex
 /// of `path` at `start_z_mm`, forward along the path for `run = min(3·D,
 /// L, max_run_mm)` and back, again and again, each leg descending at
-/// `angle_deg` until `z_mm`, the final leg cut short there; arcs are split
-/// into chords within `tolerance_mm` while Z changes. The tool then
+/// `angle_deg` until `z_mm`, the final leg cut short there, or sharing the
+/// depth with the leg before when it would fall less than
+/// [`RAMP_MIN_LAST_DROP_MM`] (`plan_legs`; #234, #273); arcs are split
+/// into chords within `tolerance_mm` while Z changes, and a chord the
+/// program cannot write is merged into its neighbour
+/// (`merge_unwritable`), else the ramp falls back to a plunge with
+/// [`FallbackReason::TooSmall`] (#273). The tool then
 /// returns along the path at `z_mm` to the start vertex, where the lap
-/// starts, so the ramped stretch is cut again at full depth. On an open
+/// starts, so the ramped stretch is cut again at full depth; a piece of
+/// that return shorter than the program can write is merged as the
+/// descent's are (#321). On an open
 /// path shorter than a leg the legs turn at its end. Every descending move
 /// runs at the feed scaled so its vertical rate is at most the plunge rate
 /// (S10). A run of no more than `0.02·D`, or one that would need more than
@@ -311,52 +319,156 @@ pub fn along_path(
         }
     };
     let mut current = Point3::new(from.x, from.y, start_z_mm);
-    let mut s_mm = 0.0;
     let mut moves = Vec::new();
-    'legs: for leg in 0..legs {
-        let (leg_from, leg_to) = if leg % 2 == 0 {
-            (0.0, run_mm)
-        } else {
-            (run_mm, 0.0)
-        };
+    let leg_plan = plan_legs(legs, run_mm, slope, depth_mm);
+    let mut s_mm = 0.0;
+    for (i, &(leg_from, leg_to, leg_slope)) in leg_plan.iter().enumerate() {
         let leg_z = current.z;
+        let last = i + 1 == leg_plan.len();
+        let mut points = vec![current];
         let mut stops = flat.between(leg_from, leg_to);
         stops.push(leg_to);
         for stop in stops {
-            let z_at = leg_z - (stop - leg_from).abs() * slope;
-            let (s, z, done) = if z_at <= z_mm + EPS_MM {
-                let reach = (leg_z - z_mm) / slope;
-                let s = if leg_to >= leg_from {
-                    leg_from + reach
-                } else {
-                    leg_from - reach
-                };
-                (s, z_mm, true)
-            } else {
-                (stop, z_at, false)
-            };
-            let p = flat.point_at(s);
-            let next = Point3::new(p.x, p.y, z);
+            let p = flat.point_at(stop);
+            let z = leg_z - (stop - leg_from).abs() * leg_slope;
+            points.push(Point3::new(p.x, p.y, z));
+        }
+        if last && let Some(end) = points.last_mut() {
+            end.z = z_mm;
+        }
+        // #273: a piece of the leg the program cannot write is merged into
+        // its neighbour, or the ramp is not cut.
+        if !merge_unwritable(&mut points, tool.quantum_mm) {
+            descent.used = EntryKind::Plunge;
+            descent.reason = Some(FallbackReason::TooSmall);
+            return descent;
+        }
+        for next in points.into_iter().skip(1) {
             moves.push(Move::linear(next, move_feed_mm_min(tool, current, next)));
             current = next;
-            s_mm = s;
-            if done {
-                break 'legs;
-            }
         }
+        s_mm = leg_to;
     }
     // Back along the path to the start vertex, at the pass Z.
     let mut stops = flat.between(s_mm, 0.0);
     stops.push(0.0);
+    let mut back = vec![current];
     for stop in stops {
         let p = flat.point_at(stop);
-        if p.distance_to(current.xy()) > EPS_MM {
-            current = Point3::new(p.x, p.y, z_mm);
-            moves.push(Move::linear(current, tool.feed_mm_min));
+        if back
+            .last()
+            .is_some_and(|last| p.distance_to(last.xy()) > EPS_MM)
+        {
+            back.push(Point3::new(p.x, p.y, z_mm));
         }
+    }
+    // #321: a leg that ends just past a chord vertex leaves a level piece
+    // to that vertex too short to write. The program writes it as nothing,
+    // so arc fitting would count a chord S12 does not see. It is merged
+    // as the descent's pieces are; if it cannot be, the way back is kept.
+    let mut merged = back.clone();
+    if merge_short(&mut merged, tool.quantum_mm, |a, b| {
+        a.xy().distance_to(b.xy()) < SQRT_2 * tool.quantum_mm
+    }) {
+        back = merged;
+    }
+    for next in back.into_iter().skip(1) {
+        moves.push(Move::linear(next, tool.feed_mm_min));
     }
     descent.moves = moves;
     descent
+}
+
+/// The legs of an On line ramp of `legs` legs over `depth_mm`, along a run
+/// of `run_mm` at `slope` (tan of the angle): each leg's start and end,
+/// distances along the path, and its slope. Legs alternate out from the
+/// start vertex and back, each falling `run_mm × slope`; the last is cut
+/// short where it reaches the depth. When that last leg would fall less
+/// than [`RAMP_MIN_LAST_DROP_MM`], the last two legs share their depth
+/// instead, each at the angle, the first cut short and the second back to
+/// where the first began, as the Pocket ramp's do (#234); a ramp of one
+/// such leg runs the whole leg, shallower. (Changed in #273: the shallow
+/// last leg of #234 fell so gently that its chords along an arc each fell
+/// less than an inch program's last place.)
+fn plan_legs(legs: usize, run_mm: f64, slope: f64, depth_mm: f64) -> Vec<(f64, f64, f64)> {
+    let full_mm = run_mm * slope;
+    let rest_mm = depth_mm - legs.saturating_sub(1) as f64 * full_mm;
+    let ends = |leg: usize| {
+        if leg.is_multiple_of(2) {
+            (0.0, run_mm)
+        } else {
+            (run_mm, 0.0)
+        }
+    };
+    let toward = |from: f64, to: f64, reach_mm: f64| {
+        if to >= from {
+            from + reach_mm
+        } else {
+            from - reach_mm
+        }
+    };
+    let mut plan: Vec<(f64, f64, f64)> = (0..legs)
+        .map(|leg| {
+            let (from, to) = ends(leg);
+            (from, to, slope)
+        })
+        .collect();
+    if rest_mm >= RAMP_MIN_LAST_DROP_MM {
+        if let Some(last) = plan.last_mut() {
+            last.1 = toward(last.0, last.1, (rest_mm / slope).min(run_mm));
+        }
+    } else if legs >= 2 {
+        let reach_mm = (full_mm + rest_mm) / (2.0 * slope);
+        let (from, to) = ends(legs - 2);
+        let turn = toward(from, to, reach_mm.min(run_mm));
+        plan.truncate(legs - 2);
+        plan.push((from, turn, slope));
+        plan.push((turn, from, slope));
+    } else if let Some(only) = plan.first_mut() {
+        only.2 = depth_mm / run_mm;
+    }
+    plan
+}
+
+/// #273: merges each piece of `points`, one leg's descent through its
+/// stops from its start, that falls less than `quantum_mm` or runs less
+/// than √2 of it in XY, into a neighbour, so every move the program writes
+/// keeps two Z values and two XY points and so its slope (S3, S10, as
+/// [`super::helix_writable`] for the helix). The stop between them goes:
+/// the piece's end, or its start when the piece ends the leg; a leg's ends
+/// stay. False when a leg of one piece is still too short, or when a stop
+/// lies more than a unit off the merged move, which would leave the path.
+fn merge_unwritable(points: &mut Vec<Point3>, quantum_mm: f64) -> bool {
+    merge_short(points, quantum_mm, |a, b| {
+        a.z - b.z < quantum_mm || a.xy().distance_to(b.xy()) < SQRT_2 * quantum_mm
+    })
+}
+
+/// Merges each piece of `points` that is `short` into a neighbour, as
+/// [`merge_unwritable`] says; false as it is.
+fn merge_short(
+    points: &mut Vec<Point3>,
+    quantum_mm: f64,
+    short: impl Fn(&Point3, &Point3) -> bool,
+) -> bool {
+    while let Some(i) = points
+        .windows(2)
+        .position(|w| matches!(w, [a, b] if short(a, b)))
+    {
+        let gone = if i + 2 < points.len() { i + 1 } else { i };
+        let (Some(before), Some(at), Some(after)) = (
+            gone.checked_sub(1).and_then(|k| points.get(k)),
+            points.get(gone),
+            points.get(gone + 1),
+        ) else {
+            return false;
+        };
+        if segment_distance_sq(at.xy(), before.xy(), after.xy()).sqrt() > quantum_mm {
+            return false;
+        }
+        points.remove(gone);
+    }
+    true
 }
 
 #[cfg(test)]
@@ -374,6 +486,7 @@ mod tests {
             plunge_mm_min: 200.0,
             direction: CutDirection::Conventional,
             side: CutSide::Internal,
+            quantum_mm: 0.001,
         }
     }
 
@@ -466,5 +579,204 @@ mod tests {
         assert_eq!(d.used, EntryKind::Plunge);
         assert_eq!(d.reason, Some(FallbackReason::NoRoom));
         assert!(d.moves.is_empty());
+    }
+
+    /// #234 for the On line ramp: over 4.0018 legs' depth (12 mm legs at
+    /// 5° along a 50 mm line), the fifth leg would fall 0.0019 mm over
+    /// 0.02 mm, a fragment the program writes level at the scaled feed.
+    /// Falling less than `RAMP_MIN_LAST_DROP_MM`, it shares the depth with
+    /// the fourth instead (#273), each at 5° over 6.01 mm; no descending
+    /// move is shorter than a tenth of a leg or steeper than 5°, and the
+    /// drops sum to the depth.
+    #[test]
+    fn along_path_has_no_fragment_leg() {
+        let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
+        let tan = 5.0_f64.to_radians().tan();
+        let depth_mm = 4.0018 * 12.0 * tan;
+        let d = along_path(&line, 5.0, f64::INFINITY, depth_mm, 0.0, &tool(), 0.01);
+        assert_eq!(d.used, EntryKind::Ramp);
+        let mut from = Point3::new(d.from.x, d.from.y, depth_mm);
+        let mut total = 0.0;
+        for (i, mv) in d.moves.iter().enumerate() {
+            let (run, drop) = (from.xy().distance_to(mv.to.xy()), from.z - mv.to.z);
+            if drop > 0.0 {
+                assert!(
+                    run >= 0.1 * 12.0 - 1e-9 && drop <= run * tan + 1e-9,
+                    "move {i} falls {drop} mm over {run} mm"
+                );
+                total += drop;
+            }
+            from = mv.to;
+        }
+        assert_approx_eq!(total, depth_mm, 1e-9);
+    }
+
+    /// One unit in the last place of an inch program with 4 decimals, mm.
+    const INCH_QUANTUM_MM: f64 = 0.00254;
+
+    /// #273 (the Profile property, `PROPTEST_RNG_SEED=500`): an On line
+    /// ramp in an inch program wrote a chord level at the plunge-limited
+    /// feed, which S3 refuses, because a leg ended 0.0055 mm past a chord
+    /// vertex and its last piece fell 0.0014 mm, under the program's last
+    /// place (0.00254 mm). Three such legs: cut short 0.0055 mm past a
+    /// vertex of a line; turning 0.002 mm past one; and on that issue's
+    /// 14.33 mm circle by a 1.614 mm bit at 14.3°, a depth one leg and
+    /// 0.004 mm deep, whose last leg run whole and shallower (#234) fell
+    /// under 0.001 mm a chord. Every descending move falls at least a unit
+    /// and runs at least √2 units in XY, so its ends round apart (as the
+    /// helix's, #265); none leaves the path by more than the flatten
+    /// tolerance and a unit; the drops sum to the depth.
+    #[test]
+    fn along_path_writes_no_move_too_short_for_the_program() {
+        let line = |x: f64| {
+            Polyline::new(
+                vec![
+                    Vertex::line(0.0, 0.0),
+                    Vertex::line(x, 0.0),
+                    Vertex::line(50.0, 0.0),
+                ],
+                false,
+            )
+        };
+        let (bit, circle_bit) = (
+            EntryTool {
+                quantum_mm: INCH_QUANTUM_MM,
+                ..tool()
+            },
+            EntryTool {
+                diameter_mm: 1.614_062_019_946_190_8,
+                quantum_mm: INCH_QUANTUM_MM,
+                ..tool()
+            },
+        );
+        let circle_r_mm = 14.332_509_386_700_824;
+        let tan15 = 15.0_f64.to_radians().tan();
+        let tan14 = 14.301_902_402_989_514_f64.to_radians().tan();
+        let cases = [
+            (line(3.0), 15.0, 3.0055 * tan15, &bit),
+            (line(11.998), 15.0, 18.0 * tan15, &bit),
+            (
+                Polyline::circle(Point::new(0.0, 0.0), circle_r_mm),
+                14.301_902_402_989_514,
+                3.0 * circle_bit.diameter_mm * tan14 + 0.004,
+                &circle_bit,
+            ),
+        ];
+        for (k, (path, angle_deg, depth_mm, t)) in cases.iter().enumerate() {
+            let d = along_path(path, *angle_deg, f64::INFINITY, *depth_mm, 0.0, t, 0.01);
+            assert_eq!(d.used, EntryKind::Ramp, "case {k}");
+            let mut from = Point3::new(d.from.x, d.from.y, *depth_mm);
+            let mut total = 0.0;
+            for (i, mv) in d.moves.iter().enumerate() {
+                let (run, drop) = (from.xy().distance_to(mv.to.xy()), from.z - mv.to.z);
+                if drop > EPS_MM {
+                    assert!(
+                        drop >= INCH_QUANTUM_MM
+                            && run >= std::f64::consts::SQRT_2 * INCH_QUANTUM_MM,
+                        "case {k}: move {i} falls {drop} mm over {run} mm"
+                    );
+                    total += drop;
+                }
+                if k == 2 {
+                    let middle = from.xy() + (mv.to.xy() - from.xy()) * 0.5;
+                    for p in [middle, mv.to.xy()] {
+                        let off = (p.distance_to(Point::new(0.0, 0.0)) - circle_r_mm).abs();
+                        assert!(
+                            off <= 0.01 + INCH_QUANTUM_MM,
+                            "case {k}: move {i} is {off} mm off the circle"
+                        );
+                    }
+                }
+                from = mv.to;
+            }
+            assert_approx_eq!(total, *depth_mm, 1e-9);
+            assert!(from.xy().distance_to(d.from) <= EPS_MM, "case {k}");
+        }
+    }
+
+    /// #273: a run whose every leg falls less than a unit (0.05 mm at 15°
+    /// falls 0.0134 mm, under the 0.0254 mm of a 3-decimal inch program)
+    /// cannot be written as a ramp; it falls back to a plunge, reason
+    /// `too_small`, as a helix that small does (#265).
+    #[test]
+    fn along_path_too_small_to_write_falls_back_to_a_plunge() {
+        let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
+        let t = EntryTool {
+            diameter_mm: 1.0,
+            quantum_mm: 0.0254,
+            ..tool()
+        };
+        let d = along_path(&line, 15.0, 0.05, 2.0, 0.0, &t, 0.01);
+        assert_eq!(d.used, EntryKind::Plunge);
+        assert_eq!(d.reason, Some(FallbackReason::TooSmall));
+        assert!(d.moves.is_empty());
+    }
+
+    /// #321 (the Profile property, `PROPTEST_RNG_SEED=72`): the first pass
+    /// of an On line ramp at 43.4° by a 3.455 mm bit round a 12.42 mm
+    /// circle, clockwise from (10.802, 6.135), 1.845 mm deep in a 3-place
+    /// mm program. Its one leg ends 0.00015 mm past a chord vertex; the
+    /// descent merges that piece (#273), but the way back went to the
+    /// vertex first, a level move of 0.00015 mm the program writes as
+    /// nothing, which arc fitting counted as one of a fitted arc's three
+    /// chords and S12 did not. Every move of the ramp, down and back, runs
+    /// at least √2 units in XY; each stays within the flatten tolerance
+    /// and a unit of the circle, none goes below the pass Z, the level
+    /// moves run at the tool's feed and the descending ones at no more,
+    /// and the ramp ends at its start.
+    #[test]
+    fn along_path_returns_with_no_move_too_short_for_the_program() {
+        let quantum_mm = 0.001;
+        let t = EntryTool {
+            diameter_mm: 3.454_973_032_185_739_3,
+            feed_mm_min: 2_327.326_110_062_505,
+            plunge_mm_min: 2_862.833_030_368_147,
+            quantum_mm,
+            ..tool()
+        };
+        let (sx, sy): (f64, f64) = (10.802_141_070_690_34, 6.135_438_106_759_34);
+        let r_mm = sx.hypot(sy);
+        let circle = Polyline::new(
+            vec![Vertex::new(sx, sy, -1.0), Vertex::new(-sx, -sy, -1.0)],
+            true,
+        );
+        let (start_z_mm, z_mm) = (10.999_327_355_218_911, 9.154_636_095_983_91);
+        let d = along_path(
+            &circle,
+            43.395_007_100_651_696,
+            f64::INFINITY,
+            start_z_mm,
+            z_mm,
+            &t,
+            0.01,
+        );
+        assert_eq!(d.used, EntryKind::Ramp);
+        let mut from = Point3::new(d.from.x, d.from.y, start_z_mm);
+        for (i, mv) in d.moves.iter().enumerate() {
+            let (run, drop) = (from.xy().distance_to(mv.to.xy()), from.z - mv.to.z);
+            assert!(
+                run >= std::f64::consts::SQRT_2 * quantum_mm,
+                "move {i} runs {run} mm: {:?}",
+                d.moves
+            );
+            let middle = from.xy() + (mv.to.xy() - from.xy()) * 0.5;
+            for p in [middle, mv.to.xy()] {
+                let off = (p.distance_to(Point::new(0.0, 0.0)) - r_mm).abs();
+                assert!(
+                    off <= 0.01 + quantum_mm,
+                    "move {i} is {off} mm off the circle"
+                );
+            }
+            assert!(mv.to.z >= z_mm - EPS_MM, "move {i} goes below the pass");
+            let feed = mv.feed_mm_min.unwrap();
+            if drop > EPS_MM {
+                assert!(feed <= t.feed_mm_min + EPS_MM, "move {i}");
+            } else {
+                assert_approx_eq!(feed, t.feed_mm_min, EPS_MM);
+            }
+            from = mv.to;
+        }
+        assert!(from.xy().distance_to(d.from) <= EPS_MM);
+        assert_approx_eq!(from.z, z_mm, EPS_MM);
     }
 }

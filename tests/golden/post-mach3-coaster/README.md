@@ -2,11 +2,31 @@
 
 The quick-start coaster (`fixtures/coaster.svg`: a 90 mm circle on 100 mm
 stock, 11.8 mm thick, cut through in 4 mm passes at feed 1500, plunge 500,
-18000 RPM) exported with the bundled `mach3` post-processor, version 1.
+18000 RPM) exported with the bundled `mach3` post-processor, version 3.
 
+- Recaptured in #312 for version 3, whose header cancels scaling and
+  rotation with `G50` and `G69`, each on a line of its own after the
+  modal line: a `G51` or `G68` left set by MDI or an earlier program
+  would scale, mirror or rotate every coordinate. Only those two lines
+  were added. Mach3 numbers every line, so every line number after them
+  moves on by 20. The version 2 program is kept as
+  `crates/dreamcarve/tests/expected/coaster-mach3-v2.tap`, which a
+  version 2 project must still export
+  (`cli::mach3_v2_project_still_exports_byte_identically`).
+- Recaptured in #286 for version 2, whose header has no `G49`
+  (`N30 G90 G94 G17 G40 G80`): a Z zero set with a tool length offset
+  active includes it, so cancelling it moved every Z. Only that line
+  changed. The version 1 program is kept as
+  `crates/dreamcarve/tests/expected/coaster-mach3-v1.tap`, which a version
+  1 project must still export
+  (`cli::mach3_and_uccnc_v1_projects_still_export_byte_identically`).
 - Recaptured in slice 10 (#165) when `init` began writing a 15° ramp
   entry (#119): each pass now starts with the ramp, the laps are
   unchanged.
+- Recaptured in #70 when `init` began importing the `<circle>` as two
+  exact half-circle arcs instead of 160 flattened edges: each untabbed
+  lap is two arcs on the true tool-centre circle (radius 48.175 mm), not
+  seven fitted ones, and the cut starts at the circle's +X point.
 - Captured from DreamCarve itself (slice 17, #164), with
   `dreamcarve export coaster.dcv --post mach3 --date 2026-10-15`, after
   `mach3/v1.json` was checked line by line against *Using Mach3Mill* 1.84

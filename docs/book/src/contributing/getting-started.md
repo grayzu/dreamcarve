@@ -28,9 +28,30 @@ cargo install mdbook
 
 (`brew install cargo-deny mdbook` on macOS also works.)
 
+### The pinned toolchain
+
+`rust-toolchain.toml` at the repository root pins the Rust release the build
+gate runs on, with `rustfmt` and `clippy`. Install Rust through
+[rustup](https://rustup.rs): inside the checkout, rustup reads the file and
+downloads that release the first time you run `cargo`. Check with:
+
+```sh
+rustc --version   # prints the channel in rust-toolchain.toml
+```
+
+Homebrew's `rust` (and other distribution packages) is not enough. It ignores
+`rust-toolchain.toml` and runs whatever release it ships, whose `clippy` can
+pass code that CI rejects. If you have it, uninstall it or put `~/.cargo/bin`
+ahead of it on your `PATH`.
+
+The pin is not the minimum supported Rust version. That stays `rust-version`
+in `Cargo.toml`, which is lower, so a build from source works on an older
+stable. A new stable release does not change CI on its own: the pin moves in
+its own pull request, which fixes any new lints the new release raises.
+
 ## The build gate
 
-Before committing, all of these pass:
+Before committing, all of these pass on the pinned toolchain:
 
 ```sh
 cargo fmt --all -- --check
@@ -42,10 +63,14 @@ cargo deny check licenses advisories
 mdbook build docs/book
 ```
 
-CI runs the same commands on Windows, macOS, and Linux for every pull
-request. `cargo test` includes `quick_start_runs_as_written`, which runs the
-[quick start](../quick-start/first-cut.md) as written; if you change a
-command's behaviour or output file, update that chapter in the same pull
+CI runs the same commands, on the same pinned toolchain, on Windows, macOS,
+and Linux for every pull request, and also builds the API docs
+(`cargo doc --no-deps --workspace`). `cargo test` includes
+`crates/dreamcarve/tests/quick_start.rs`, which runs the quick start
+chapters ([Your first cut from an SVG](../quick-start/first-cut.md) and
+[A pocketed plaque from DXF](../quick-start/plaque.md)) as written, and
+checks every program excerpt they show; if you change a command's
+behaviour or output file, update those chapters in the same pull
 request.
 
 ## Picking up work

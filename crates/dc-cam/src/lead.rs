@@ -41,9 +41,8 @@
 
 use crate::entry::{EntryDomain, boundary_safety_mm};
 use crate::error::{CamError, ShapeRef};
-use crate::profile::shape_warning;
 use crate::toolpath::MoveKind;
-use crate::warning::{Warning, WarningCode};
+use crate::warning::{LeadDroppedReason, Warning};
 use dc_geometry::{EPS_MM, Point, Polyline, Segment, Vec2, Vertex};
 use dc_project::{Lead, OperationId};
 use std::f64::consts::PI;
@@ -501,6 +500,36 @@ pub(crate) fn plan_lead_in(
     None
 }
 
+/// [`plan_lead_in`] at one arrival, the start of the closed `path` (#285:
+/// the Profile's start is set, so the lead arrives there or not at all).
+/// The radius and sweep ladders and the free sides are tried as there; the
+/// seam is the path itself. `None` when nothing fits there.
+pub(crate) fn plan_lead_in_at_start(
+    path: &Polyline,
+    lead: &Lead,
+    tool_diameter_mm: f64,
+    space: &dyn LeadSpace,
+) -> Option<LeadIn> {
+    let (edges, perimeter_mm) = edges_of(path);
+    if perimeter_mm.is_nan() || perimeter_mm <= EPS_MM || !path.is_closed() {
+        return None;
+    }
+    let edge = edges.iter().find(|e| e.length_mm > LEAD_EPS)?;
+    let (_, tangent) = edge.segment.point_at(0.0)?;
+    let point = edge.segment.start;
+    let free = sides(point, tangent, tool_diameter_mm, space);
+    ladder(lead).into_iter().find_map(|(radius_mm, sweep_deg)| {
+        free.iter()
+            .map(|&side| arc_into(point, tangent, side, radius_mm, sweep_deg))
+            .find(|arc| lead_fits(point, arc, space))
+            .map(|arc| LeadIn {
+                arc,
+                arrival_mm: edge.start_mm,
+                seam: reseam_at(path, edge.index, 0.0),
+            })
+    })
+}
+
 /// Upstream `planXyLeadOut` with DreamCarve's overcut: from `seam` (the
 /// contour as the lead-in re-seamed it, so the lap ends at its start),
 /// continue `lead.overcut_mm` along it (at most one more lap), then the
@@ -552,8 +581,8 @@ fn part_bulge(bulge: f64, fraction: f64) -> f64 {
 /// `path`, closed, re-seamed to start `distance_mm` along it (modulo its
 /// length): the same segments from a different start, the segment holding
 /// the new start split in two there (arcs as two arcs). At a vertex,
-/// nothing is split.
-#[cfg(test)]
+/// nothing is split. Profile also re-seams a path off its tabs with it
+/// (#176).
 pub(crate) fn reseam(path: &Polyline, distance_mm: f64) -> Polyline {
     let (edges, perimeter_mm) = edges_of(path);
     if perimeter_mm.is_nan() || perimeter_mm <= EPS_MM {
@@ -570,7 +599,7 @@ pub(crate) fn reseam(path: &Polyline, distance_mm: f64) -> Polyline {
 }
 
 /// `path` re-seamed `local_mm` along its segment `index`.
-fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polyline {
+pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polyline {
     let vertices = path.vertices();
     let n = vertices.len();
     let rotated = |k: usize| {
@@ -736,10 +765,10 @@ pub(crate) enum DropReason {
 }
 
 impl DropReason {
-    const fn as_str(self) -> &'static str {
+    const fn reason(self) -> LeadDroppedReason {
         match self {
-            Self::NoRoom => "no_room",
-            Self::Exit => "exit",
+            Self::NoRoom => LeadDroppedReason::NoRoom,
+            Self::Exit => LeadDroppedReason::Exit,
         }
     }
 }
@@ -782,28 +811,46 @@ impl LeadWarnings {
 
     /// The warnings, each naming `op`, for `lead`.
     pub(crate) fn into_warnings(self, op: &OperationId, lead: &Lead) -> Vec<Warning> {
-        let shrunk = self.shrunk.into_iter().map(|(shape, radius, sweep)| {
-            shape_warning(WarningCode::LeadShrunk, &shape)
-                .with("op", op)
-                .with("requested_mm", lead.radius_mm)
-                .with("used_mm", radius)
-                .with("requested_sweep_deg", lead.sweep_deg)
-                .with("used_sweep_deg", sweep)
-        });
-        let dropped = self.dropped.into_iter().map(|(shape, reason)| {
-            shape_warning(WarningCode::LeadDropped, &shape)
-                .with("op", op)
-                .with("reason", reason.as_str())
-        });
+        let shrunk = self
+            .shrunk
+            .into_iter()
+            .map(|(shape, radius, sweep)| Warning::LeadShrunk {
+                op: op.clone(),
+                shape,
+                requested_mm: lead.radius_mm,
+                used_mm: radius,
+                requested_sweep_deg: lead.sweep_deg,
+                used_sweep_deg: sweep,
+            });
+        let dropped = self
+            .dropped
+            .into_iter()
+            .map(|(shape, reason)| Warning::LeadDropped {
+                op: op.clone(),
+                shape: Some(shape),
+                reason: reason.reason(),
+            });
         shrunk.chain(dropped).collect()
     }
 }
 
 /// `lead_dropped` for an On line operation `op`, which has no waste side.
 pub(crate) fn on_line_warning(op: &OperationId) -> Warning {
-    Warning::new(WarningCode::LeadDropped)
-        .with("op", op)
-        .with("reason", "on_line")
+    Warning::LeadDropped {
+        op: op.clone(),
+        shape: None,
+        reason: LeadDroppedReason::OnLine,
+    }
+}
+
+/// `lead_dropped` for a Left or Right operation `op`, which cuts open
+/// paths: VCarve gives an open profile no lead (#207).
+pub(crate) fn open_path_warning(op: &OperationId) -> Warning {
+    Warning::LeadDropped {
+        op: op.clone(),
+        shape: None,
+        reason: LeadDroppedReason::OpenPath,
+    }
 }
 
 #[cfg(test)]

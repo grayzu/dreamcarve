@@ -22,12 +22,12 @@
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
 use crate::passes::pass_z_mm;
-use crate::profile::{containment_pairs, rates_of, shape_warning};
-use crate::sequence::{SequenceInput, sequence};
+use crate::profile::{containment_pairs, rates_of};
+use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::tabs::segment_kind;
 use crate::toolpath::{Move, Toolpath};
-use crate::warning::{Warning, WarningCode};
+use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, Point3, Polyline, nest};
 use dc_project::{EngraveOp, Project};
 
@@ -48,7 +48,7 @@ use dc_project::{EngraveOp, Project};
 /// open paths have none.
 ///
 /// A path of fewer than two distinct points is skipped with
-/// [`WarningCode::EngravePathDegenerate`]. Fails without a toolpath when a
+/// [`Warning::EngravePathDegenerate`]. Fails without a toolpath when a
 /// feed, plunge rate, or step-down is missing, when the depth goes below the
 /// stock bottom plus allowance (S1), when an id does not resolve, or when
 /// the cutter would leave the stock ([`CamError::OffStock`]).
@@ -69,6 +69,7 @@ pub fn generate_engrave(
     if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
         return Err(CamError::InvalidToolDiameter {
             tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
             diameter_mm: tool.diameter_mm,
         });
     }
@@ -84,6 +85,7 @@ pub fn generate_engrave(
             .ok_or_else(|| CamError::MissingStepDown {
                 op: op.id.clone(),
                 tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             })?;
     let thickness_mm = project
         .stock
@@ -156,10 +158,13 @@ pub fn generate_engrave(
         order: op.machining_order,
         containment: &containment,
         safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
+        stock_top_mm: thickness_mm,
         tool_diameter_mm: tool.diameter_mm,
         stepover_mm: 0.0,
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
+        cut_before: &[],
     };
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
@@ -213,9 +218,10 @@ fn resolve_targets(
                     source,
                 })?;
             if !has_two_distinct_points(&placed) {
-                warnings.push(
-                    shape_warning(WarningCode::EngravePathDegenerate, &shape).with("op", &op.id),
-                );
+                warnings.push(Warning::EngravePathDegenerate {
+                    op: op.id.clone(),
+                    shape,
+                });
                 continue;
             }
             paths.push((shape, placed));
@@ -521,7 +527,9 @@ mod tests {
     }
 
     /// Spec step 3: without alternation every pass starts at the path's
-    /// first vertex: a retract to safe Z, a rapid back, and a plunge.
+    /// first vertex: a retract to safe Z, a rapid back, a rapid down to
+    /// 1 mm above the floor just cut, and a plunge (changed in #227: the
+    /// plunge started at safe Z).
     #[test]
     fn no_alternation_retracts_between_passes() {
         let p = l_project();
@@ -531,7 +539,7 @@ mod tests {
         assert_points(&laps[0].points, &L_FORWARD);
         assert_points(&laps[1].points, &L_FORWARD);
         let between = &tp.moves[laps[0].last + 1..laps[1].first];
-        assert_eq!(between.len(), 3, "{between:?}");
+        assert_eq!(between.len(), 4, "{between:?}");
         assert!(between[0].is_rapid(), "{between:?}");
         assert_approx_eq!(between[0].to.x, 30.0, TOL);
         assert_approx_eq!(between[0].to.y, 30.0, TOL);
@@ -540,9 +548,44 @@ mod tests {
         assert_approx_eq!(between[1].to.x, 20.0, TOL);
         assert_approx_eq!(between[1].to.y, 20.0, TOL);
         assert_approx_eq!(between[1].to.z, SAFE_Z_MM, TOL);
-        assert_eq!(between[2].kind, MoveKind::Linear);
-        assert_approx_eq!(between[2].to.z, PASS_Z_MM[1], TOL);
-        assert_approx_eq!(between[2].feed_mm_min.unwrap(), PLUNGE_MM_MIN, TOL);
+        assert!(between[2].is_rapid(), "{between:?}");
+        assert_approx_eq!(between[2].to.z, PASS_Z_MM[0] + 1.0, TOL);
+        assert_eq!(between[3].kind, MoveKind::Linear);
+        assert_approx_eq!(between[3].to.z, PASS_Z_MM[1], TOL);
+        assert_approx_eq!(between[3].feed_mm_min.unwrap(), PLUNGE_MM_MIN, TOL);
+    }
+
+    /// #227, S2: every pass reaches its plunge by a rapid straight down
+    /// from safe Z, and plunges at the plunge rate only from 1 mm above
+    /// the stock top (the first pass) or 1 mm above the floor the pass
+    /// before cut at the path's start (a later pass after a lift).
+    #[test]
+    fn later_pass_rapids_to_just_above_its_floor() {
+        let p = l_project();
+        let (tp, _) = generate(&p, &engrave_op(&p, 0.5));
+        let downs: Vec<(usize, Move)> = tp
+            .moves
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(i, m)| m.is_rapid() && *i > 0 && m.to.z < tp.moves[i - 1].to.z - EPS_MM)
+            .collect();
+        let expected = [
+            (THICKNESS_MM + 1.0, PASS_Z_MM[0]),
+            (PASS_Z_MM[0] + 1.0, PASS_Z_MM[1]),
+        ];
+        assert_eq!(downs.len(), expected.len(), "{:?}", tp.moves);
+        for (&(i, rapid), (rapid_z, pass_z)) in downs.iter().zip(expected) {
+            assert_eq!(
+                tp.moves[i - 1],
+                Move::rapid(Point3::new(20.0, 20.0, SAFE_Z_MM))
+            );
+            assert_eq!(rapid, Move::rapid(Point3::new(20.0, 20.0, rapid_z)));
+            assert_eq!(
+                tp.moves[i + 1],
+                Move::linear(Point3::new(20.0, 20.0, pass_z), PLUNGE_MM_MIN)
+            );
+        }
     }
 
     /// Capability 15: any cutter, as with Profile's On line, and the cutter
@@ -583,14 +626,17 @@ mod tests {
         let (tp, warnings) = generate(&p, &engrave_op(&p, 1.0));
         let degenerate: Vec<&Warning> = warnings
             .iter()
-            .filter(|w| w.code == WarningCode::EngravePathDegenerate)
+            .filter(|w| w.code() == WarningCode::EngravePathDegenerate)
             .collect();
         assert_eq!(degenerate.len(), 2, "{warnings:?}");
-        for (w, profile) in degenerate.iter().zip(["1", "2"]) {
-            assert_eq!(w.param("op"), Some("o1"), "{w:?}");
-            assert_eq!(w.param("instance"), Some("i1"), "{w:?}");
-            assert_eq!(w.param("instance_name"), Some("Shape i1"), "{w:?}");
-            assert_eq!(w.param("profile"), Some(profile), "{w:?}");
+        for (w, profile) in degenerate.iter().zip([1, 2]) {
+            let Warning::EngravePathDegenerate { op, shape } = w else {
+                panic!("{w:?}");
+            };
+            assert_eq!(op.as_str(), "o1", "{w:?}");
+            assert_eq!(shape.instance.as_str(), "i1", "{w:?}");
+            assert_eq!(shape.instance_name, "Shape i1", "{w:?}");
+            assert_eq!(shape.profile, profile, "{w:?}");
         }
         let laps = laps(&tp);
         assert_eq!(laps.len(), 1, "{laps:?}");
@@ -693,6 +739,40 @@ mod tests {
         assert_eq!(laps.len(), 2, "{laps:?}");
         assert_approx_eq!(laps[0].x_extent_mm(), 100.0, TOL);
         assert_approx_eq!(laps[1].x_extent_mm(), 20.0, TOL);
+    }
+
+    /// #206: Engrave takes no part in D6. It cuts every line as drawn at
+    /// one depth, so lines that cross or touch (lettering, a hatch, a
+    /// border meeting its corners) are the design, not two shapes cut
+    /// into each other: crossing lines and a line touching an outline
+    /// give no `toolpaths_overlap`.
+    #[test]
+    fn crossing_lines_do_not_warn_toolpaths_overlap() {
+        let p = project(
+            vec![
+                rect_100x50(),
+                Polyline::new(
+                    vec![Vertex::line(50.0, 0.0), Vertex::line(50.0, 50.0)],
+                    false,
+                ),
+                Polyline::new(
+                    vec![Vertex::line(10.0, 25.0), Vertex::line(90.0, 25.0)],
+                    false,
+                ),
+                Polyline::new(
+                    vec![Vertex::line(20.0, 50.0), Vertex::line(20.0, 70.0)],
+                    false,
+                ),
+            ],
+            &[("i1", at_20_20())],
+        );
+        let (_, warnings) = generate(&p, &engrave_op(&p, 1.0));
+        assert!(
+            warnings
+                .iter()
+                .all(|w| w.code() != WarningCode::ToolpathsOverlap),
+            "{warnings:?}"
+        );
     }
 
     /// Capability 11 on Engrave: pass first cuts every path at one depth

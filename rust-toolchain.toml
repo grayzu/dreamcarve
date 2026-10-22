@@ -1,0 +1,16 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The toolchain the build gate runs on, locally and in CI (issue #151). rustup
+# reads this file and installs the toolchain on first use; Homebrew's `rust`
+# ignores it, so its clippy can miss lints CI raises.
+#
+# This is the lint toolchain, not the minimum supported Rust version. The MSRV
+# stays `rust-version` in Cargo.toml (1.94), so a build from source still works
+# on an older stable. Pinning means a new stable release cannot break main on
+# its own: bump `channel` in its own pull request and fix any new lints there.
+
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

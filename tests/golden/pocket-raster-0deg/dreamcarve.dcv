@@ -1,0 +1,125 @@
+{
+  "version": 8,
+  "name": "pocket-raster-0deg",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 150,
+    "height_mm": 100,
+    "thickness_mm": 12
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm 2-flute upcut",
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1500,
+      "plunge_mm_min": 500,
+      "rpm": 18000,
+      "step_down_mm": 4,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "enabled": true,
+      "through_cut_allowance_mm": 0,
+      "safe_z_mm": 5,
+      "kind": "pocket",
+      "strategy": {
+        "raster": {
+          "angle_deg": 0
+        }
+      },
+      "wall_pass": "first",
+      "step_over_fraction": 0.4,
+      "direction": "climb",
+      "allowance_mm": 0,
+      "rest_of": null,
+      "entry": "plunge",
+      "corner_relief": "none",
+      "machining_order": "full_depth_first",
+      "id": "o1",
+      "name": "Raster",
+      "targets": [
+        "p1"
+      ],
+      "tool": "t1",
+      "depth_mm": 6,
+      "step_down_mm": 3
+    }
+  ],
+  "instances": [
+    {
+      "id": "p1",
+      "definition": "d-p1",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        30,
+        30
+      ],
+      "name": "p1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 2,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3,
+    "tool_change_mode": "m6",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d-p1": {
+      "id": "d-p1",
+      "name": "p1",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 0,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 60,
+              "y": 0,
+              "bulge": 0
+            },
+            {
+              "x": 60,
+              "y": 40,
+              "bulge": 0
+            },
+            {
+              "x": 0,
+              "y": 40,
+              "bulge": 0
+            }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

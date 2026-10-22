@@ -13,12 +13,17 @@ members = [
     "crates/dreamcarve",
     "tools/check-headers",
     "tools/doc-figures",
+    "tools/grbl-sim-motion",
+    "tools/rs274-motion",
     "tools/third-party-licenses",
 ]
 
 [workspace.package]
 version = "0.1.1"
 edition = "2024"
+# The minimum supported Rust version, not the toolchain the gates run on.
+# rust-toolchain.toml pins that newer lint toolchain (issue #151); the MSRV
+# stays lower so a build from source works on an older stable.
 rust-version = "1.94"
 license = "Apache-2.0"
 repository = "https://github.com/grayzu/dreamcarve"
@@ -53,9 +58,6 @@ i_overlay = { version = "9.1", default-features = false }
 # features are off: they add text shaping, system font loading (file I/O),
 # svgz, and the writer, none of which an importer needs.
 usvg = { version = "0.48", default-features = false }
-# DXF parsing (group codes, sections, blocks, entity structs). The `serialize`
-# feature is the only optional one and stays off.
-dxf = { version = "0.6", default-features = false }
 # `config.toml` parsing (phase 2 design, "User config (CLI only)"). Default
 # features are off: `display` (the writer) is not needed; `parse` and
 # `serde` deserialize the file into a struct.
@@ -65,6 +67,12 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 # codecs. Fusion writes deflate, so only the deflate decoder is on, through
 # flate2's pure-Rust zlib-rs backend.
 zip = { version = "9.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Property tests (dev-dependency only, issue #72; `docs/rust-guidelines.md`,
+# "Tests"). Default features are off: `fork` and `timeout` run each case in
+# a child process (rusty-fork, tempfile), and `bit-set` serves collection
+# strategies nothing here uses. `std` keeps the regression files under
+# `proptest-regressions/`.
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic

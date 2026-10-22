@@ -29,6 +29,7 @@ use dc_project::{Tool, ToolId, ToolKind};
 use crate::cli::{Failure, StagedFile, ToolsCommand, read_file};
 use crate::config::Paths;
 use crate::export::load_project;
+use crate::output::{out, outln};
 
 /// Runs `tools <command>`.
 pub fn run(command: &ToolsCommand) -> Result<ExitCode, Failure> {
@@ -86,21 +87,21 @@ fn list(paths: &Paths, json: bool) -> Result<(), Failure> {
     let library = read_library(paths)?;
     if json {
         let lib = library.unwrap_or_default();
-        print!("{}", dc_library::save(&lib).map_err(Failure::error)?);
+        out!("{}", dc_library::save(&lib).map_err(Failure::error)?)?;
         return Ok(());
     }
     let Some(lib) = library else {
-        println!(
+        outln!(
             "No tool library yet: {} does not exist. Add tools with `dreamcarve tools import <file>`.",
             paths.library_file.display()
-        );
+        )?;
         return Ok(());
     };
     if lib.tools.is_empty() {
-        println!(
+        outln!(
             "The tool library {} is empty.",
             paths.library_file.display()
-        );
+        )?;
         return Ok(());
     }
     let header = [
@@ -128,7 +129,7 @@ fn list(paths: &Paths, json: bool) -> Result<(), Failure> {
             .zip(&widths)
             .map(|(cell, &width)| format!("{cell:<width$}"))
             .collect();
-        println!("{}", line.join("  ").trim_end());
+        outln!("{}", line.join("  ").trim_end())?;
     }
     Ok(())
 }
@@ -189,12 +190,12 @@ fn add(paths: &Paths, dcv: &Path, key: &str) -> Result<(), Failure> {
     });
     let text = dc_project::save(&project).map_err(Failure::error)?;
     StagedFile::write(dcv, text.as_bytes())?.commit()?;
-    println!(
+    outln!(
         "Added `{}` ({}) to {} as tool {id}.",
         entry.tool.name,
         entry.id,
         dcv.display()
-    );
+    )?;
     Ok(())
 }
 
@@ -275,22 +276,22 @@ fn import(paths: &Paths, file: &Path, replace: bool) -> Result<(), Failure> {
             }
         };
         if entry.notes.is_empty() {
-            println!("`{name}`: {report}");
+            outln!("`{name}`: {report}")?;
         } else {
-            println!("`{name}`: {report}; {}", entry.notes.join(", "));
+            outln!("`{name}`: {report}; {}", entry.notes.join(", "))?;
         }
     }
     for item in skipped.iter().flatten() {
-        println!("`{}`: skipped: {}", item.description, item.reason);
+        outln!("`{}`: skipped: {}", item.description, item.reason)?;
     }
     if lib != before {
         write_library(paths, &lib)?;
     }
     let skipped = skipped.map_or(String::new(), |s| format!(", {} skipped", s.len()));
-    println!(
+    outln!(
         "{imported} imported, {present} already present, {replaced} replaced{skipped}; library: {}",
         paths.library_file.display()
-    );
+    )?;
     Ok(())
 }
 
@@ -299,7 +300,7 @@ fn export(paths: &Paths, file: &Path) -> Result<(), Failure> {
     let lib = existing_library(paths)?;
     let text = dc_library::save(&lib).map_err(Failure::error)?;
     StagedFile::write(file, text.as_bytes())?.commit()?;
-    println!("Wrote {} tool(s) to {}.", lib.tools.len(), file.display());
+    outln!("Wrote {} tool(s) to {}.", lib.tools.len(), file.display())?;
     Ok(())
 }
 
@@ -309,9 +310,10 @@ fn remove(paths: &Paths, key: &str) -> Result<(), Failure> {
     let removed = dc_library::remove(&mut lib, key)
         .map_err(|e| Failure::error(format!("cannot remove `{key}`: {e}")))?;
     write_library(paths, &lib)?;
-    println!(
+    outln!(
         "Removed `{}` ({}) from the library. Projects keep their copies.",
-        removed.tool.name, removed.id
-    );
+        removed.tool.name,
+        removed.id
+    )?;
     Ok(())
 }

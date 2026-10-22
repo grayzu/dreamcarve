@@ -109,6 +109,11 @@ pub struct Block {
     /// the same line number. The line's own block has the cycle's words and
     /// no motion.
     pub synthetic: bool,
+    /// For a `G53 G0 Z<v>` line (S16, #283), the machine Z it lifts to,
+    /// millimetres: a move in machine coordinates, which is not a
+    /// [`MachineMove`] (those are work coordinates). Work Z is unknown
+    /// after it.
+    pub machine_lift_mm: Option<f64>,
 }
 
 impl Block {
@@ -296,6 +301,12 @@ impl State {
         words: Vec<Word>,
         blocks: &mut Vec<Block>,
     ) -> Result<(), String> {
+        if words
+            .iter()
+            .any(|w| w.letter == 'G' && is_code(w.value, 53.0))
+        {
+            return self.machine_lift(line, words, blocks);
+        }
         let mut dwell = false;
         for w in &words {
             match w.letter {
@@ -309,7 +320,13 @@ impl State {
                     };
                     if let Some(mode) = mode {
                         if !matches!(mode, Mode::Cycle(_)) {
-                            // Any other motion ends a series of cycles.
+                            // #314: a series of cycles ends with `G80`.
+                            // LinuxCNC also ends it at any other motion
+                            // ([G] `#gcode:g80`), but Mach3Mill does not
+                            // say that resets the `G98` level (10.7.29).
+                            if matches!(self.mode, Some(Mode::Cycle(_))) {
+                                return Err(series_without_cancel());
+                            }
                             self.initial_z = None;
                         }
                         self.mode = Some(mode);
@@ -344,12 +361,14 @@ impl State {
                 words,
                 motion: None,
                 synthetic: false,
+                machine_lift_mm: None,
             });
             blocks.extend(hole.into_iter().map(|(words, motion)| Block {
                 line,
                 words,
                 motion,
                 synthetic: true,
+                machine_lift_mm: None,
             }));
             return Ok(());
         }
@@ -382,6 +401,59 @@ impl State {
             words,
             motion,
             synthetic: false,
+            machine_lift_mm: None,
+        });
+        Ok(())
+    }
+
+    /// S16 (#283): a line with `G53` must be `G53 G0 Z<v>` and nothing
+    /// else but a line number: one rapid in Z alone in machine
+    /// coordinates, which grblHAL, GRBL and LinuxCNC run ignoring work and
+    /// tool offsets (grblHAL `gcode.c` 3254-3277, GRBL `gcode.c` 592-597,
+    /// LinuxCNC `interp_find.cc` 170-200; definitions README,
+    /// "Machine-coordinate moves"). It
+    /// leaves `G0` the motion mode and work Z unknown; X and Y do not move.
+    /// Any other `G53` is refused rather than modelled.
+    fn machine_lift(
+        &mut self,
+        line: usize,
+        words: Vec<Word>,
+        blocks: &mut Vec<Block>,
+    ) -> Result<(), String> {
+        if matches!(self.mode, Some(Mode::Cycle(_))) {
+            return Err(series_without_cancel());
+        }
+        let refuse = || "`G53` is accepted only as `G53 G0 Z…`, alone on its line (S16)".to_owned();
+        let count = |letter: char, value: Option<f64>| {
+            words
+                .iter()
+                .filter(|w| w.letter == letter && value.is_none_or(|v| is_code(w.value, v)))
+                .count()
+        };
+        let only_these = words.iter().all(|w| matches!(w.letter, 'G' | 'Z' | 'N'));
+        if !(only_these
+            && count('G', Some(53.0)) == 1
+            && count('G', Some(0.0)) == 1
+            && count('G', None) == 2
+            && count('Z', None) == 1
+            && count('N', None) <= 1)
+        {
+            return Err(refuse());
+        }
+        let z = words
+            .iter()
+            .find(|w| w.letter == 'Z')
+            .map(|w| w.value)
+            .ok_or_else(refuse)?;
+        self.mode = Some(Mode::Move(MotionKind::Rapid));
+        self.initial_z = None;
+        self.pos.z = None;
+        blocks.push(Block {
+            line,
+            words,
+            motion: None,
+            synthetic: false,
+            machine_lift_mm: Some(z * mm_per_unit(self.units)),
         });
         Ok(())
     }
@@ -499,6 +571,12 @@ impl State {
         let mv = self.make(line, kind, to, ArcWords::default());
         Some((vec![word('G', g), word('Z', z)], Some(mv)))
     }
+}
+
+/// Why a motion word or a `G53` lift while a canned cycle is the motion
+/// mode is refused (S11, #314).
+fn series_without_cancel() -> String {
+    "a series of canned cycles must end with G80 before any other motion".to_owned()
 }
 
 /// A block the parser synthesises for a canned cycle: the words of the
@@ -645,6 +723,31 @@ mod tests {
             ..CycleModel::default()
         };
         parse_program_with("G21\nG0 Z5\nG98 G83 X10 Y0 Z-3 R1 Q1 F300\n", &model).unwrap();
+    }
+
+    /// #314, S11: a series of cycles ends with `G80`. A motion word or a
+    /// `G53` lift while a cycle is the motion mode ends it too on LinuxCNC
+    /// ([G] `#gcode:g80`), but Mach3Mill (10.7.23, 10.7.29) does not say
+    /// that resets the `G98` level, so the parser refuses it rather than
+    /// model it. After `G80` a new series starts from the Z the tool is at:
+    /// here Z 8, so its hole returns to Z 8.
+    #[test]
+    fn a_series_of_cycles_ends_with_g80() {
+        let start = "G21\nG0 Z5\nX0 Y0\nG98 G81 X10 Y0 Z-3 R1 F300\n";
+        for (next, line) in [("G0 Z8\n", 5), ("G1 X20 Z-1\n", 5), ("G53 G0 Z-5\n", 5)] {
+            let result = parse_program(&format!("{start}{next}"));
+            assert!(
+                matches!(&result, Err(ExportError::Unparseable { line: l, .. }) if *l == line),
+                "{next}: {result:?}"
+            );
+        }
+        let text = format!("{start}G80\nG0 Z8\nG81 X20 Y0 Z-3 R1\nG80\n");
+        let moves = parse_motion(&text).unwrap();
+        let last = moves.last().unwrap();
+        assert_eq!(
+            (last.kind, last.to.x, last.to.z),
+            (MotionKind::Rapid, Some(20.0), Some(8.0))
+        );
     }
 
     #[test]

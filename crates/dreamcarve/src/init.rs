@@ -6,7 +6,10 @@
 //! "CLI (dreamcarve)": stock = drawing bounds plus a 10 mm margin on each
 //! side; origin bottom-left at the stock top; one placeholder tool "Set me"
 //! (6.35 mm, 2 flutes, no feeds or step-down); one outside climb Profile of
-//! every closed shape, safe Z 5 mm, four 8 × 3 mm rectangular tabs. The
+//! every closed shape, safe Z 5 mm, asking for four 8 × 3 mm rectangular
+//! tabs on each part it cuts and none on its holes: a tab request, cut as
+//! the tabs it places, which `dreamcarve tabs` writes as placed tabs
+//! (#105, ADR-0005). The
 //! format is the file's extension; a DXF takes the DXF-only `--units`
 //! override, `--join-tolerance` and `--layer` (`docs/specs/phase-2/design.md`,
 //! "CLI additions").
@@ -30,13 +33,14 @@ use dc_import::{
 };
 use dc_project::{
     CURRENT_VERSION, CornerRelief, CutDirection, Entry, FeatureDefinition, FeatureInstance,
-    MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PostProcessorRef,
-    ProfileOp, Project, Side, SourceMap, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId,
-    ToolKind, Units, validate,
+    Heights, MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ,
+    PostProcessorRef, ProfileOp, Project, Side, SourceMap, StartAt, Stock, TabPlacement, TabShape,
+    TabSpec, Tool, ToolId, ToolKind, Units, validate,
 };
 
 use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
 use crate::config;
+use crate::output::{errln, outln};
 
 /// Margin between the drawing's bounds and each stock edge, mm.
 const STOCK_MARGIN_MM: f64 = 10.0;
@@ -109,7 +113,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
         import_svg_drawing(args, &bytes)?
     };
     for warning in &warnings {
-        eprintln!("warning: {warning}");
+        errln!("warning: {warning}");
     }
     let Some(bounds) = import.bounds else {
         return Err(Failure::error(format!(
@@ -136,7 +140,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     let text = dc_project::save(&project).map_err(Failure::error)?;
     StagedFile::write(&output, text.as_bytes())?.commit()?;
 
-    report(&project, &output, &text);
+    report(&project, &output, &text)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -147,13 +151,13 @@ fn import_svg_drawing(
 ) -> Result<(Imported, Vec<ImportWarning>), Failure> {
     let (import, warnings) = import_svg(bytes, &SvgImportOptions::new())
         .map_err(|e| Failure::error(format!("cannot import {}: {e}", args.drawing.display())))?;
-    println!(
+    outln!(
         "Imported {} shape(s) from {}: page units {}, 1 user unit = {:.4} mm.",
         import.definitions.len(),
         args.drawing.display(),
         import.units,
         import.mm_per_user_unit
-    );
+    )?;
     Ok((
         Imported {
             definitions: import.definitions,
@@ -192,12 +196,12 @@ fn import_dxf_drawing(
         // Unreachable: without either, the import fails above.
         (None, None) => "units unknown".to_owned(),
     };
-    println!(
+    outln!(
         "Imported {} shape(s) from {}: {units}, 1 drawing unit = {:.4} mm.",
         import.definitions.len(),
         args.drawing.display(),
         import.mm_per_unit
-    );
+    )?;
     Ok((
         Imported {
             definitions: import.definitions,
@@ -289,6 +293,10 @@ fn default_project(
             width_mm: TAB_WIDTH_MM,
             height_mm: TAB_HEIGHT_MM,
             shape: TabShape::Rect,
+            // #109: a hole's slug is waste.
+            on_holes: false,
+            // #285: tabs are weakest, and hardest to clean up, on a corner.
+            avoid_corners: true,
         }),
         machining_order: MachiningOrder::FullDepthFirst,
         entry: Entry::Ramp {
@@ -296,6 +304,8 @@ fn default_project(
         },
         lead: None,
         corner_relief: CornerRelief::None,
+        last_pass: None,
+        start: StartAt::Auto,
     };
     Project {
         version: CURRENT_VERSION,
@@ -312,51 +322,56 @@ fn default_project(
             xy: OriginXy::BottomLeft,
             z: OriginZ::StockTop,
         },
+        // #283: the clearance, tool-change and park heights are the
+        // user's to set, like the thickness; unset, the program is as
+        // before they existed.
+        heights: Heights::unset(),
         definitions,
         instances,
         tools: vec![tool],
         operations: vec![Operation::Profile(profile)],
+        tabs: Vec::new(),
         post_processor,
     }
 }
 
 /// Prints what was written and what the user must do next: one line per
 /// value to set, located in `text`, the file as written.
-fn report(project: &Project, output: &Path, text: &str) {
+fn report(project: &Project, output: &Path, text: &str) -> Result<(), Failure> {
     let targets = project
         .operations
         .iter()
         .map(|op| op.targets().len())
         .sum::<usize>();
     let untargeted = project.instances.len() - targets.min(project.instances.len());
-    println!(
+    outln!(
         "Wrote {}: stock {:.2} × {:.2} mm, post-processor {}, {} shape(s) targeted by Profile.",
         output.display(),
         project.stock.width_mm,
         project.stock.height_mm,
         project.post_processor.id,
         targets,
-    );
+    )?;
     if untargeted > 0 {
-        println!(
+        outln!(
             "{untargeted} shape(s) are open paths and are not cut; `dreamcarve check` lists them."
-        );
+        )?;
     }
-    println!("Values to set; export refuses until every one is set:");
+    outln!("Values to set; export refuses until every one is set:")?;
     let map = SourceMap::parse(text).ok();
     for problem in validate(project).iter().filter(|p| p.is_unset_value()) {
         let at = problem
             .field()
             .and_then(|field| map.as_ref()?.locate(&field));
         match at {
-            Some(at) => println!("{}:{at}: {problem}", output.display()),
-            None => println!("{problem}"),
+            Some(at) => outln!("{}:{at}: {problem}", output.display())?,
+            None => outln!("{problem}")?,
         }
     }
-    println!(
+    outln!(
         "Next: edit {} and replace each `null` listed above. To cut through, `depth_mm` is \
          the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check {}`.",
         output.display(),
         output.display()
-    );
+    )
 }

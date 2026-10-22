@@ -56,6 +56,8 @@ pub enum ExportError {
     MissingFeed {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
         /// Which rate is missing.
         field: FeedField,
     },
@@ -69,6 +71,8 @@ pub enum ExportError {
     MissingRpm {
         /// The tool's name.
         tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
     },
     /// One program was asked for operations that use more than one tool,
     /// but the post-processor's tool-change mode is not `"m6"`, or its tool
@@ -193,6 +197,18 @@ pub enum ExportError {
         line: usize,
         /// The word.
         word: String,
+    },
+    /// #312: a setup code the definition's header writes (`G50`, `G69`)
+    /// appears where `emit` never writes it: with other words on its line,
+    /// or outside the header and the setup after a stop.
+    #[error("emitted line {line} has `{word}` where DreamCarve never sends it: {reason}")]
+    MisplacedSetupWord {
+        /// 1-based line number in the program.
+        line: usize,
+        /// The word.
+        word: String,
+        /// Why it is refused.
+        reason: &'static str,
     },
     /// S5: the program does not select units, a work-coordinate system, and
     /// absolute distance mode before its first motion or spindle start.
@@ -396,5 +412,93 @@ pub enum ExportError {
         /// Index of the first toolpath move not reproduced; the number of
         /// moves if extra motion follows the last.
         index: usize,
+    },
+    /// #283: the project's clearance height is below an operation's safe
+    /// Z, so a link between parts would run lower than one between passes.
+    /// Validation refuses such a project first.
+    #[error(
+        "the clearance height {clearance_mm} mm is below operation `{op}`'s safe Z of {safe_z_mm} mm"
+    )]
+    ClearanceBelowSafeZ {
+        /// The operation.
+        op: OperationId,
+        /// `heights.clearance_mm`, mm above the stock top.
+        clearance_mm: f64,
+        /// The operation's `safe_z_mm`, mm above the stock top.
+        safe_z_mm: f64,
+    },
+    /// #283: the tool-change machine Z is 0 or above, or not a number.
+    /// grblHAL and GRBL, and LinuxCNC as its configuration tools set it up
+    /// (#306), home Z to machine Z 0 or a negative position, so the lift
+    /// would go past the limit switch. Validation refuses it first.
+    #[error("the tool-change machine Z {machine_z_mm} mm is not below 0, where Z homes")]
+    MachineZNotBelowHome {
+        /// `heights.tool_change_machine_z_mm`.
+        machine_z_mm: f64,
+    },
+    /// #283: the project sets a tool-change machine Z, but the definition
+    /// documents no machine-coordinate move. Validation refuses it first.
+    #[error(
+        "post-processor `{post}` documents no machine-coordinate move (G53), so it cannot lift to the tool-change machine Z"
+    )]
+    MachineZNeedsG53 {
+        /// The post-processor's id.
+        post: String,
+    },
+    /// #283: the park point is not a finite number within the coordinate
+    /// limit. Validation refuses it first.
+    #[error("the park point ({x_mm}, {y_mm}) mm is not a point the program can move to")]
+    InvalidPark {
+        /// X, mm.
+        x_mm: f64,
+        /// Y, mm.
+        y_mm: f64,
+    },
+    /// S2 as changed for #283: with a clearance height, an operation's
+    /// first move across the work, or one outside every operation such as
+    /// the move to the park point, runs below it.
+    #[error(
+        "emitted line {line} moves across the work below the clearance height ({clearance_z_mm} mm above the stock bottom)"
+    )]
+    RapidBelowClearance {
+        /// 1-based line number in the program.
+        line: usize,
+        /// The height above stock bottom, mm; `None` when not known.
+        z_mm: Option<f64>,
+        /// The clearance height above stock bottom, mm.
+        clearance_z_mm: f64,
+    },
+    /// S16: a machine-coordinate lift (`G53 G0 Z`) comes with the tool not
+    /// known to be at or above safe Z in work coordinates.
+    #[error(
+        "emitted line {line} lifts in machine coordinates (G53) without a retract to safe Z first"
+    )]
+    MachineLiftNotAtSafeZ {
+        /// 1-based line number of the lift.
+        line: usize,
+    },
+    /// S16: a machine-coordinate lift is to another Z than the project's
+    /// `tool_change_machine_z_mm`, or to one not below 0.
+    #[error(
+        "emitted line {line} lifts to machine Z {z_mm} mm; the project's tool-change machine Z is {expected_mm} mm"
+    )]
+    MachineLiftWrongZ {
+        /// 1-based line number of the lift.
+        line: usize,
+        /// The machine Z written, mm.
+        z_mm: f64,
+        /// `heights.tool_change_machine_z_mm`.
+        expected_mm: f64,
+    },
+    /// S16: the program moves after a machine-coordinate lift before a
+    /// tool-change stop or the end; a lift comes only right before one.
+    #[error(
+        "emitted line {line} moves after the machine-coordinate lift on line {lift_line} without a stop between"
+    )]
+    MachineLiftNotBeforeStop {
+        /// 1-based line number of the move.
+        line: usize,
+        /// 1-based line number of the lift.
+        lift_line: usize,
     },
 }

@@ -76,6 +76,9 @@ pub struct Transform(kurbo::Affine);
 
 pub fn offset(c: &Contour, delta_mm: f64) -> Vec<Contour>;       // cavalier_contours parallel_offset; +delta grows
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline>;
+    // within tolerance_mm of the curve: kurbo is asked for half of it, as the SVG importer's
+    // per-curve flattening is (changed in #225: kurbo's own bound is approximate, and at the
+    // tolerance itself it strayed up to 1.34 × it from random cubics)
 pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>), GeometryError>;
     // even-odd containment → outer/holes; crossing shapes are ContoursCross, duplicates dropped with a warning
 pub fn length(p: &Polyline) -> f64;
@@ -84,7 +87,9 @@ pub fn bounds(p: &Polyline) -> Rect;
 pub fn distance_mm(a: &Polyline, b: &Polyline) -> f64;          // shortest gap between lines, arcs exact; 0 when they touch
 ```
 
-Errors: `GeometryError::{Degenerate, SelfIntersecting, OffsetVanished, ArcUnderNonUniformTransform, ContoursCross}`.
+Errors: `GeometryError::{Degenerate, SelfIntersecting, ArcUnderNonUniformTransform, ContoursCross, CoordinateOutOfRange}`.
+An offset that consumes a contour is not an error: `offset` returns no
+contours, and the generator decides what that means (#71).
 Warnings: `GeometryWarning::DuplicateContourDropped`. The nesting rules, with
 figures, are in the user guide chapter "Shapes, holes, and islands".
 
@@ -328,7 +333,9 @@ pub enum MoveKind { Rapid, Linear, ArcCw { centre: Point }, ArcCcw { centre: Poi
 pub struct Move { pub kind: MoveKind, pub to: Point3, pub feed_mm_min: Option<f64> }
 // Rapids carry no feed. Every Linear/Arc carries Some(feed).
 
-pub struct Warning { pub code: WarningCode, pub params: BTreeMap<String, String> }
+// #248: one variant per WarningCode, with typed fields; `code()` gives the
+// stable snake_case code and `Display` the message.
+pub enum Warning { OpenPathSkipped { shape: ShapeRef, reason: OpenPathReason }, /* … */ }
 
 pub fn generate_profile(project: &Project, op: &ProfileOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 
@@ -534,7 +541,13 @@ Inputs: project, op. Output: toolpath in project space.
    are its toolpath move for move: rapids split only into their Z and XY
    parts, arcs as `G2`/`G3` with the toolpath's direction and centre, or
    as straight moves on the arc in order within the flatten tolerance, and
-   nothing else but retracts before the first move and after the last),
+   nothing else but retracts before the first move and after the last; a
+   move that ends where the controller already is, within the rounding,
+   may be written as nothing, a straight move or an arc of at most a half
+   turn (changed in the property-test fixes of #225–#235: an offset ring
+   began 0.0017 mm before the end of a round corner, and the arc piece
+   left, shorter than a unit of a 4-place inch program, was written as
+   nothing and failed S6),
    S7 (every cutting move, mapped back to project space with its arc
    extremes and widened by its operation's tool radius, stays in the stock
    rectangle within one unit in the last written place:
@@ -567,7 +580,9 @@ Inputs: project, op. Output: toolpath in project space.
    mm, and flipped: `y' = height_mm − y`.
 3. `flatten` at `flatten_tolerance_mm`. Closed subpaths become closed
    polylines; open stay open. Zero-area closed polylines are dropped with a
-   warning.
+   warning. (Changed in phase 2, #70: the cubics usvg makes of circular
+   arcs are recognised exactly and kept as bulges, and only other curves
+   are flattened; see `crates/dc-import/src/svg/arc.rs`.)
 4. Each definition gets one instance with identity transform and
    `z_top_mm`, `z_bottom_mm` unset (`None`, #99).
 

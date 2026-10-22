@@ -22,11 +22,12 @@ use crate::entry::{
 };
 use crate::error::{CamError, ShapeRef};
 use crate::footprint::footprint_at;
+use crate::lead::reseam;
 use crate::pocket::rings::inset_region;
 use crate::tabs::{PathTabs, Tabs};
 use crate::toolpath::{Move, Toolpath};
 use dc_geometry::{EPS_MM, Point, Point3, Polyline, Region, area_mm2, difference};
-use dc_project::{Entry, ProfileOp, Side, Stock};
+use dc_project::{CutDirection, Entry, ProfileOp, Side, Stock};
 
 /// What [`path_entries`] and [`wall_domains`] need from the generator.
 pub(super) struct EntrySetup<'a, 'b> {
@@ -40,8 +41,19 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub layouts: &'a [Option<(PathTabs, bool)>],
     pub tabs: Option<&'a Tabs>,
     pub pass_z: &'a [f64],
+    /// The Z a descent starts at where no pass before cut: the entry
+    /// clearance above the stock top (#214).
+    pub start_z_mm: f64,
     pub entry_tool: &'a dyn Fn(Wall) -> EntryTool,
     pub tolerance_mm: f64,
+    /// How much farther than the radius each path runs from its wall: a
+    /// last pass allowance (#284), 0 for the part's own path. Missing
+    /// entries are 0.
+    pub allowances: &'a [f64],
+    /// The paths cut against `op.direction` (#284: a reversed last
+    /// pass), whose entries turn the other way. Missing entries are
+    /// false.
+    pub reversed: &'a [bool],
 }
 
 /// One domain a path's entries and leads are placed in: its regions (for
@@ -97,7 +109,9 @@ pub(super) struct PassEntry<'a> {
     pub z_mm: f64,
     /// The pass is below the tab top, so the tabs stand.
     pub below_tabs: bool,
-    pub safe_z_mm: f64,
+    /// The Z a descent starts at where no pass before cut: the entry
+    /// clearance above the stock top (#214).
+    pub start_z_mm: f64,
     pub tool: EntryTool,
     pub tolerance_mm: f64,
 }
@@ -114,7 +128,9 @@ pub(super) fn path_entries(
     let n = setup.paths.len();
     match (op.side, &op.entry) {
         (_, Entry::Plunge) => (0..n).map(|_| None).collect(),
-        (Side::OnLine, Entry::Ramp { angle_deg }) => setup
+        // #207: Left and Right ramp along their offset path as On line
+        // ramps along its line.
+        (Side::OnLine | Side::Left | Side::Right, Entry::Ramp { angle_deg }) => setup
             .layouts
             .iter()
             .map(|layout| {
@@ -129,7 +145,9 @@ pub(super) fn path_entries(
             })
             .collect(),
         // Refused before this is reached; a plunge if it ever is.
-        (Side::OnLine, Entry::Helix { .. }) => (0..n).map(|_| None).collect(),
+        (Side::OnLine | Side::Left | Side::Right, Entry::Helix { .. }) => {
+            (0..n).map(|_| None).collect()
+        }
         (Side::Inside | Side::Outside, _) => (0..n)
             .map(|i| {
                 let (domain, target) = (domains.get(i)?, targets.get(i)?);
@@ -146,17 +164,136 @@ pub(super) fn path_entries(
     }
 }
 
-/// The entry tool of path `i`.
-fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
+/// #176: where each closed path of `setup` should start so its ramp or
+/// helix fits clear of the tabs, as a distance along it from its start;
+/// `None` keeps the start. Only a path whose seam is free (`kept` false:
+/// no lead, and no explicit start, #285, which wins over the entry) whose
+/// passes below the tab top would plunge at its start is moved:
+/// its start under a tab span, or so near one that the entry has no room
+/// in the waste domain less the tab keep-outs (Inside, Outside) or before
+/// the first tab (On line). The candidates are the middles of the
+/// stretches between tab spans, longest first, then nearest the start;
+/// the first where no pass below the tab top plunges wins. When none
+/// does, the start is kept and those passes plunge as before. One start
+/// serves every pass, and the tabs keep their distances from the
+/// original start ([`PathTabs::reseamed`]).
+pub(super) fn tab_seams(
+    setup: &EntrySetup<'_, '_>,
+    domains: &[PathDomain],
+    kept: &[bool],
+) -> Vec<Option<f64>> {
+    let none = || setup.paths.iter().map(|_| None).collect();
+    let Some(tabs) = setup.tabs else {
+        return none();
+    };
+    let below: Vec<(f64, f64)> = setup
+        .pass_z
+        .iter()
+        .enumerate()
+        .filter(|(_, z)| **z < tabs.top_z_mm() - EPS_MM)
+        .map(|(k, z)| {
+            let from_z_mm = k
+                .checked_sub(1)
+                .and_then(|j| setup.pass_z.get(j).copied())
+                .unwrap_or(setup.start_z_mm);
+            (from_z_mm, *z)
+        })
+        .collect();
+    if below.is_empty() || matches!(setup.op.entry, Entry::Plunge) {
+        return none();
+    }
+    let along = match (setup.op.side, &setup.op.entry) {
+        (Side::OnLine | Side::Left | Side::Right, Entry::Ramp { angle_deg }) => Some(*angle_deg),
+        (Side::OnLine | Side::Left | Side::Right, _) => return none(),
+        _ => None,
+    };
+    setup
+        .paths
+        .iter()
+        .enumerate()
+        .map(|(i, (path, _))| {
+            let layout = match setup.layouts.get(i) {
+                Some(Some((layout, _))) if path.is_closed() => layout,
+                _ => return None,
+            };
+            if kept.get(i).copied().unwrap_or(false) {
+                return None;
+            }
+            let tool = tool_for(setup, i);
+            let fits = |seam_mm: f64| {
+                let moved = layout.reseamed(seam_mm);
+                if moved.clear_from_start_mm() <= EPS_MM {
+                    return false;
+                }
+                let seamed = reseam(path, seam_mm);
+                match along {
+                    Some(angle_deg) => {
+                        let clear_mm =
+                            moved.clear_from_start_mm() - boundary_safety_mm(tool.diameter_mm);
+                        below.iter().all(|&(from_z_mm, z_mm)| {
+                            let d = entry::along_path(
+                                &seamed,
+                                angle_deg,
+                                clear_mm,
+                                from_z_mm,
+                                z_mm,
+                                &tool,
+                                setup.tolerance_mm,
+                            );
+                            d.used != EntryKind::Plunge
+                        })
+                    }
+                    None => {
+                        let (Some(space), Some(at)) = (
+                            domains.get(i).map(|d| d.for_pass(true)),
+                            seamed.vertices().first().map(|v| v.point()),
+                        ) else {
+                            return false;
+                        };
+                        let plan = plan_at_wall(&space.domain, &setup.op.entry, at, &tool);
+                        below.iter().all(|&(from_z_mm, z_mm)| {
+                            plan.descend(from_z_mm, z_mm).used != EntryKind::Plunge
+                        })
+                    }
+                }
+            };
+            if fits(0.0) {
+                return None;
+            }
+            let length_mm = layout.length_mm();
+            layout
+                .gaps_mm()
+                .into_iter()
+                .map(|(start_mm, gap_mm)| (start_mm + gap_mm / 2.0).rem_euclid(length_mm))
+                .find(|&seam_mm| fits(seam_mm))
+        })
+        .collect()
+}
+
+/// The entry tool of path `i`: cutting the other way on a reversed path
+/// (#284).
+pub(super) fn tool_for(setup: &EntrySetup<'_, '_>, i: usize) -> EntryTool {
     let wall = setup.walls.get(i).map_or(Wall::Outside, |(w, _)| *w);
-    (setup.entry_tool)(wall)
+    let tool = (setup.entry_tool)(wall);
+    if setup.reversed.get(i).copied().unwrap_or(false) {
+        EntryTool {
+            direction: match tool.direction {
+                CutDirection::Climb => CutDirection::Conventional,
+                CutDirection::Conventional => CutDirection::Climb,
+            },
+            ..tool
+        }
+    } else {
+        tool
+    }
 }
 
 /// Inside and Outside: each path's waste domain ([`waste::domains`]) and,
 /// when some pass is below the tab top, that domain less every path's tab
-/// keep-outs ([`waste::tab_keep_out`]). Empty for On line.
+/// keep-outs ([`waste::tab_keep_out`]). Empty for On line, Left and
+/// Right, which have no waste area.
 pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
-    if setup.op.side == Side::OnLine {
+    if !setup.op.side.has_waste_area() {
         return Vec::new();
     }
     let radius_mm = tool_for(setup, 0).diameter_mm / 2.0;
@@ -165,9 +302,11 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
         .paths
         .iter()
         .zip(setup.walls)
-        .map(|((path, _), (_, region))| WallPath {
+        .enumerate()
+        .map(|(i, ((path, _), (_, region)))| WallPath {
             path,
             region: *region,
+            allowance_mm: setup.allowances.get(i).copied().unwrap_or(0.0),
         })
         .collect();
     let domains = waste::domains(
@@ -213,12 +352,13 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
 }
 
 impl PathEntry {
-    /// The descent of one pass that starts at `from_z_mm` (safe Z on the
-    /// first pass, the previous pass Z after), and the Z it starts at.
-    /// `previous` is which plan (tabbed or not) and entry the path's
-    /// previous pass cut, updated here: a helix after the first pass
-    /// rejoins the bore its previous pass cut, or starts again from safe Z
-    /// when that pass cut none.
+    /// The descent of one pass that starts at `from_z_mm` (the entry
+    /// clearance above the stock top on the first pass, #214; the previous
+    /// pass Z after), and the Z it starts at. `previous` is which plan
+    /// (tabbed or not) and entry the path's previous pass cut, updated
+    /// here: a helix after the first pass rejoins the bore its previous
+    /// pass cut, or starts again from just above the stock when that pass
+    /// cut none.
     pub(super) fn descend(
         &self,
         pass: &PassEntry<'_>,
@@ -259,12 +399,13 @@ impl PathEntry {
                         d = plan.rejoin(d, from_z);
                     } else {
                         // The previous pass cut no bore here: helix from
-                        // safe Z (the sequencer retracts, since the helix
-                        // does not start where the lap ended), or ramp
-                        // from where the tool is.
-                        let restart = plan.descend(pass.safe_z_mm, pass.z_mm);
+                        // just above the stock (the sequencer retracts,
+                        // since the helix does not start where the lap
+                        // ended, and rapids down to it), or ramp from
+                        // where the tool is.
+                        let restart = plan.descend(pass.start_z_mm, pass.z_mm);
                         if restart.used == EntryKind::Helix {
-                            from_z = pass.safe_z_mm;
+                            from_z = pass.start_z_mm;
                             d = restart;
                         } else {
                             d = plan.descend_without_helix(

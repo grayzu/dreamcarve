@@ -35,7 +35,7 @@
 //! `restrictFloorRoot` noise rule, in mm.
 
 use super::rings::inset_region;
-use dc_geometry::{Contour, Region, difference, intersection, nest, offset, union};
+use dc_geometry::{Contour, Region, difference, distance_mm, intersection, nest, offset, union};
 
 /// The Pocket a rest operation rests on, as far as rest machining needs it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,7 +66,7 @@ pub fn grow_region(region: &Region, by_mm: f64, tolerance_mm: f64) -> Vec<Region
 }
 
 /// The union of every region of `regions` grown by `by_mm`.
-fn grow_all(regions: &[Region], by_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+pub(super) fn grow_all(regions: &[Region], by_mm: f64, tolerance_mm: f64) -> Vec<Region> {
     let grown: Vec<Region> = regions
         .iter()
         .flat_map(|r| grow_region(r, by_mm, tolerance_mm))
@@ -127,6 +127,38 @@ pub fn rest_centre(
         intersection(own_centre, &touching, tolerance_mm),
         tolerance_mm,
     )
+}
+
+/// Whether a tool of radius `radius_mm` whose centre runs along `ring`
+/// cuts none of `left` (from [`left_by`]), so its whole swept area is
+/// material the reference already removed (#167): `ring` lies outside every
+/// piece of `left` and at least `radius_mm − tolerance_mm` from each. The
+/// tolerance allows for the flattened edge of [`rest_centre`]'s boolean
+/// result, whose chords come up to the tolerance nearer the leftover than
+/// the round offset they stand for; a ring dropped for it would leave a
+/// strip under the tolerance thick, noise by the rule below.
+///
+/// Only a ring on the edge of a rest tool-centre region can be in air,
+/// where that edge is the leftover grown by `radius_mm` (the band's inner
+/// edge against the cleared area): every point inside the region is nearer
+/// than that to the leftover.
+#[must_use]
+pub fn in_air(ring: &Contour, left: &[Region], radius_mm: f64, tolerance_mm: f64) -> bool {
+    let clear_mm = radius_mm - tolerance_mm;
+    if clear_mm.is_nan() || clear_mm <= 0.0 {
+        return false;
+    }
+    let Some(on_ring) = ring.polyline().vertices().first().map(|v| v.point()) else {
+        return false;
+    };
+    left.iter().all(|piece| {
+        // Far from every edge of the piece, the ring is wholly inside or
+        // wholly outside it; one point tells which.
+        !piece.contains_point(on_ring)
+            && std::iter::once(piece.outer())
+                .chain(piece.holes())
+                .all(|edge| distance_mm(ring.polyline(), edge.polyline()) >= clear_mm)
+    })
 }
 
 /// `regions` without the pieces thinner than twice `tolerance_mm`: area
@@ -200,6 +232,27 @@ mod tests {
         let want = (4.0 - std::f64::consts::PI) * 25.0;
         let arcs_mm = 4.0 * std::f64::consts::FRAC_PI_2 * 5.0;
         assert_approx_eq!(area_mm2(&left), want, TOL * arcs_mm);
+    }
+
+    /// A ring whose tool only grazes the leftover is in air; one that
+    /// reaches into it, or runs inside it, is not.
+    #[test]
+    fn in_air_needs_a_radius_of_clearance() {
+        let left = [rect(0.0, 0.0, 10.0, 10.0)];
+        let around = |gap_mm: f64| {
+            Contour::new(Polyline::rect(
+                Point::new(-gap_mm, -gap_mm),
+                10.0 + 2.0 * gap_mm,
+                10.0 + 2.0 * gap_mm,
+            ))
+            .unwrap()
+        };
+        assert!(in_air(&around(2.0), &left, 2.0, TOL));
+        assert!(in_air(&around(2.0 - TOL / 2.0), &left, 2.0, TOL));
+        assert!(!in_air(&around(1.5), &left, 2.0, TOL));
+        let inside = Contour::new(Polyline::rect(Point::new(4.0, 4.0), 2.0, 2.0)).unwrap();
+        assert!(!in_air(&inside, &left, 2.0, TOL));
+        assert!(!in_air(&around(2.0), &left, TOL, TOL));
     }
 
     /// With an allowance the reference leaves a band of that width too:

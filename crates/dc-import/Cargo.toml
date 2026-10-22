@@ -14,7 +14,6 @@ authors.workspace = true
 [dependencies]
 dc-geometry.workspace = true
 dc-project.workspace = true
-dxf.workspace = true
 kurbo.workspace = true
 thiserror.workspace = true
 usvg.workspace = true

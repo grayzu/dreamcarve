@@ -1,0 +1,121 @@
+{
+  "version": 13,
+  "name": "profile-helix-inside",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 150,
+    "height_mm": 100,
+    "thickness_mm": 12
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm 2-flute upcut",
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1500,
+      "plunge_mm_min": 500,
+      "rpm": 18000,
+      "step_down_mm": 4,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "enabled": true,
+      "through_cut_allowance_mm": 0,
+      "safe_z_mm": 5,
+      "kind": "profile",
+      "direction": "climb",
+      "tabs": null,
+      "machining_order": "full_depth_first",
+      "entry": {
+        "helix": {
+          "diameter_fraction": 0.5,
+          "angle_deg": 10
+        }
+      },
+      "lead": null,
+      "corner_relief": "none",
+      "last_pass": null,
+      "id": "o1",
+      "name": "Inside",
+      "targets": [
+        "hole1"
+      ],
+      "tool": "t1",
+      "side": "inside",
+      "depth_mm": 12,
+      "step_down_mm": 4
+    }
+  ],
+  "tabs": [],
+  "instances": [
+    {
+      "id": "hole1",
+      "definition": "d-hole1",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        75,
+        50
+      ],
+      "name": "hole1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 12,
+      "z_bottom_mm": 0
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 2,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3,
+    "tool_change_mode": "m6",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d-hole1": {
+      "id": "d-hole1",
+      "name": "hole1",
+      "profiles": [
+        {
+          "vertices": [
+            {
+              "x": 20,
+              "y": 0,
+              "bulge": 1
+            },
+            {
+              "x": -20,
+              "y": 0,
+              "bulge": 1
+            }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

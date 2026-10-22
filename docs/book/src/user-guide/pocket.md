@@ -37,7 +37,8 @@ Profile. A complete Pocket:
 
 Put a Pocket **before** the Profile that cuts the part out: once the part
 is free, the pocket would be cut in a loose part (`check` warns
-`cut_inside_freed_part`).
+`cut_inside_freed_part`), or with tabs, in a part held only by them
+(`cut_inside_tab_held_part`, for a pocket deeper than half the stock).
 
 ## Settings
 
@@ -57,8 +58,8 @@ is free, the pocket would be cut in a loose part (`check` warns
 | `allowance_mm` | Material to leave on the walls and round the islands, mm, 0 or more. See [Allowance](#allowance). |
 | `rest_of` | `null`, or the id of an earlier Pocket of the same targets whose leftovers this one clears. See [Rest machining](#rest-machining). |
 | `entry` | How the bit gets down to each pass: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`. See [Entry](#entry). |
-| `corner_relief` | `"none"`. Dogbone or T-bone is skipped, with a warning. |
-| `machining_order` | `"full_depth_first"` or `"pass_first"`, as for [Profile](profile.md#machining-order). |
+| `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
+| `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](machining-order.md#machining-order). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go. A pocket deeper than the stock needs it, as a through cut does. |
 | `safe_z_mm` | The height above the stock top for moves between cuts. |
 
@@ -79,8 +80,9 @@ cut last, with the least load on the bit (PureCutCNC's "inner first").
 
 Between two rings of one pass the bit stays down and cuts straight across
 when the move stays inside the tool-centre area; otherwise it lifts to
-safe Z. Each ring starts at its corner nearest where the previous one
-ended, so those links are short. Between passes, and between separate
+safe Z. Each ring starts at its point nearest where the previous one
+ended: a corner, or on a curve the nearest point of the curve, so those
+links are short. Between passes, and between separate
 pockets, the bit lifts to safe Z and comes back down by the operation's
 [entry](#entry): a plunge at the plunge rate, a ramp or a helix.
 
@@ -95,7 +97,8 @@ island. Then the tool-centre area splits into separate pieces, each with
 its own rings, and the bit lifts to safe Z to go from one to the other:
 it never cuts across an island. The material in the gap is narrower than
 the bit and stays; `pocket_island_too_close` names the island and the
-gap.
+gap. With an [allowance](#allowance) the bit needs its diameter plus
+twice the allowance to pass, so a gap narrower than that warns too.
 
 A shape inside an island is a pocket of its own, cut after the pocket
 around the island.
@@ -115,12 +118,13 @@ and to the left. 0 to 180 covers every direction a line can have, so
 DreamCarve's 135°.
 
 **The lines** start half a stepover in from the edge of the tool-centre
-area and step across it by the stepover. Where the area is narrower than
-one stepover, there is one line down its middle. If the last line would
-end up more than a stepover from the far edge, one more line goes half a
-stepover from it, so no strip is left between the lines and the wall
-ring. Lines run in alternate directions, a zigzag. An island cuts a line
-into pieces, one on each side of it.
+area and step across it by the stepover. At 0° the first line is half a
+stepover below the top edge, as in PureCutCNC. Where the area is
+narrower than one stepover, there is one line down its middle. If the
+last line would end up more than a stepover from the far edge, one more
+line goes half a stepover from it, so no strip is left between the lines
+and the wall ring. Lines run in alternate directions, a zigzag. An
+island cuts a line into pieces, one on each side of it.
 
 **Between lines** the bit stays down and cuts straight across to the
 start of the next line when that move is shorter than the bit's diameter
@@ -128,6 +132,31 @@ plus the stepover and stays inside the tool-centre area, through
 material the two lines have just cut. Otherwise, as across an island, it
 lifts to safe Z and plunges again. A rectangle at 0° is cut in one
 zigzag per pass with no lift.
+
+**Round an island** the pieces are cut nearest first: from the end of
+one piece the bit goes to the nearest piece it can reach without
+lifting, so it zigzags down one side of the island, along the island's
+edge, before it lifts once to cross to the other side. Next to a round
+island no straight move from one line's end to the next stays clear of
+the island. With a wall pass (`"last"` or `"first"`) the bit then
+follows the island's curve instead, at the cutting feed and the pass's
+depth, with its edge on the island, as the island ring will: it cuts
+nothing the island ring does not, and never into the island. On the
+100 × 50 mm rectangle with a 20 mm round island and a 6.35 mm bit, that
+is 1 lift per pass with the wall pass last (2 with it first), where a
+straight-only rule lifts at all 11 lines the island splits. With
+`"none"` the band along the island is not the pocket's to cut, so the
+bit lifts at about every line that the island splits, whatever the
+order; there the lines keep their scan order.
+
+**Along a wall that curves inward** the same holds. Where the pocket's
+wall bulges into it, as at a rounded bay or the inside corner of an L,
+a straight move between two line ends would cut into the wall, so with
+a wall pass the bit follows the wall's curve instead, with its edge on
+the wall, as the wall ring will. On a 100 × 50 mm rectangle with a
+30 mm half-round bay pushed into one long side, that is 1 lift per pass
+where a straight-only rule lifts 6 times; on a 100 × 50 mm L, none
+where it lifts once. With `"none"` the bit lifts there, as before.
 
 **Scallops.** Each line leaves a shallow ridge on the floor between it and
 the next, and the zigzag cuts alternately climb and conventional, so a
@@ -162,10 +191,14 @@ A 100 × 50 mm rectangle with a 6.35 mm bit at 40 % stepover and 0° gives
 
 The stepover is the distance from one ring to the next, as a fraction of
 the bit's diameter: 0.4 with a 6.35 mm bit is 2.54 mm. Smaller is slower
-and leaves a smoother floor. Above about 0.7 the corners of neighbouring
-rings are further apart diagonally than the bit is wide, so small ridges
-stay on the floor there. The operation's `step_over_fraction` wins over the
-tool's.
+and leaves a smoother floor. Above 0.5 the rings alone would leave
+material standing: a pin in the middle of the innermost ring, and above
+about 0.85 a small peak in each sharp corner of a ring. DreamCarve finds
+what the rings miss and adds a short clean-up ring round each piece, so
+the floor is cleared at any stepover. The ring next to a piece cuts it
+on its way past, without lifting: it runs in from its corner, round the
+clean-up ring and back out. The operation's
+`step_over_fraction` wins over the tool's.
 
 ## Direction
 
@@ -185,7 +218,8 @@ arrives from safe Z (VCarve's "Ramps"; Fusion's "Ramp Type"). A ring or
 raster line reached by a stay-down link from the one before is already at
 depth, so it has no entry.
 
-- `"plunge"`: straight down at the tool's plunge rate. A bit that does
+- `"plunge"`: straight down at the tool's plunge rate, from 1 mm above the
+  stock or the floor already cut there (the bit rapids that far). A bit that does
   not cut well at its centre, as most do not, takes this hard.
 - `{ "ramp": { "angle_deg": 15.0 } }`: a zigzag. The bit runs back and
   forth along a short straight line through the point where the ring or
@@ -193,7 +227,10 @@ depth, so it has no entry.
   the pass depth, then moves to that start. The line is the longest
   one through that point that fits in the tool-centre area, kept a tenth
   of the bit's diameter in from its edge so the ramp does not mark the
-  wall, and at most three diameters long.
+  wall, and at most three diameters long. When the depth is a hair over
+  a whole number of legs, the last two legs share what is left, so no
+  leg is too short for the program to write; no leg is steeper than
+  `angle_deg`.
 - `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`: a spiral
   down, `diameter_fraction` of the bit's diameter across (5.08 mm for a
   6.35 mm bit at 0.8), at `angle_deg`, then one flat turn at the pass
@@ -205,9 +242,12 @@ The angle must be more than 0 and at most 45 degrees, the fraction more
 than 0 and at most 1. A climb pocket turns its helix counter-clockwise,
 seen from above, as its rings run; conventional turns it clockwise.
 
-The first pass descends from safe Z; each pass after starts from the
-floor of the pass before, so the bit does not spiral down through air it
-has already cleared.
+The bit rapids straight down from safe Z to 1 mm above the stock top,
+and the first pass's ramp or helix starts there; each pass after starts
+1 mm above the floor of the pass before, so the bit does not ramp or
+spiral down through air. Where that pass's cut went through the start,
+the bit rapids down to it; elsewhere it rapids to 1 mm above the stock
+and comes down the rest at the plunge rate.
 
 **Feed rate.** A ramp or helix moves at the tool's feed rate, except
 that its speed straight down is never faster than the plunge rate: when
@@ -222,8 +262,12 @@ bit diameters wide, falls back to a ramp; a ramp that does not fit, in a
 hole barely wider than the bit, falls back to a plunge. Each fallback
 warns `entry_fallback`, naming the shape and both entries. A very shallow
 angle on a deep pass that would take more than 20 000 moves falls back
-the same way. A shape that can only be plunged warns on every export
-until its `entry` is `"plunge"`.
+the same way, and so does a helix too small for the program to write:
+one whose moves would each fall less than the last decimal place
+(by default 0.001 mm, or 0.0001 in in an inch program), or run less than about
+one and a half of it sideways, as a 5 % helix of a 0.5 mm bit does. A
+shape that can only be plunged warns on every export until its `entry`
+is `"plunge"`.
 
 The ramp or helix is inside the tool-centre area of the pass, and out of
 every island grown by the bit's radius, so the whole bit stays in the
@@ -232,7 +276,7 @@ material the pocket removes: the [safety](#safety) check covers it.
 ## Allowance
 
 `allowance_mm` leaves that much material on every wall and round every
-island, for a finishing pass to take off later (VCarve's "Pocket
+island, for a finishing Pocket to take off later (VCarve's "Pocket
 Allowance"; the sign is VCarve's: a positive value leaves material). The
 bit's centre stays its radius plus the allowance from the wall, so the
 wall ring, the clearing rings or raster lines, and the ramp or helix all
@@ -276,13 +320,13 @@ Pocket's own allowance, is the leftover. This Pocket's bit then runs
 wherever it would touch the leftover: along every wall, which also takes
 off the earlier allowance, into each corner as far as it can, and through
 each narrow slot, overlapping the cleared area by up to its own width so
-no ridge is left at the edge. With `"offset"` it also runs a ring along
-the inner edge of that band, in air the earlier Pocket cleared.
+no ridge is left at the edge. It does not run along the inner edge of
+that band, where its bit would only touch air the earlier Pocket cleared.
 
-**Safety.** The rest Pocket is checked exactly as any Pocket: its cut
+**Safety.** A rest machining Pocket is checked exactly as any Pocket: its cut
 stays inside its own shape, the allowance off the walls and out of every
 island (safety rule S14). If the earlier Pocket's settings were wrong,
-the rest Pocket cuts more air or leaves material; it never cuts outside
+the rest machining Pocket cuts more air or leaves material; it never cuts outside
 the shape.
 
 **When there is nothing to do.** If this Pocket's bit reaches nothing the
@@ -292,12 +336,58 @@ larger allowance), it warns `rest_of_clears_nothing` and cuts nothing.
 A 100 × 50 mm rectangle with a 10 × 10 mm notch, roughed with a 12.7 mm
 bit at 0.5 mm allowance, then rest-machined with a 3.175 mm bit: the rest
 Pocket cuts a band about 2 mm wide along the walls, the four corners and
-the notch, about a sixth of the length a full 3.175 mm Pocket would cut.
+the notch, under a tenth of the length a full 3.175 mm Pocket would cut.
 
-## Not yet in this build
+## Corner relief
 
-`corner_relief` `dogbone` or `t_bone` loads and validates, but is skipped
-(`relief_skipped`). The pocket is still the one asked for.
+A round bit leaves a radius in every inside corner of a pocket, so a
+square part, a hinge leaf or the tenon of a box joint does not sit flat in
+it. `corner_relief` cuts a short notch into each such corner after the
+pocket is cleared, so the square part fits. The names are VCarve's ("Create
+Fillets": Dog-Bone and T-Bone):
+
+- `"dogbone"`: the notch runs along the corner's bisector, the line that
+  splits the corner in half, until the bit just touches the corner. It
+  takes the same small bite out of both walls (0.29 × the bit's radius in a
+  square corner). Use it where both walls show equally, or where neither
+  matters: the usual choice for joints and inlays.
+- `"t_bone"`: the notch runs along one wall, the corner's **longer** edge
+  (as VCarve places it; on equal edges the one nearer the X axis), until
+  the bit reaches the corner. It cuts a slot a bit's radius deep into that
+  wall and leaves the other wall straight (exactly so in a square corner).
+  Use it to keep a visible face clean, or where a slot along the long side
+  looks or holds better than two bites.
+
+Corners relieved: every corner of the pocket's outline where the outline
+turns by more than 15°, and the inward-pointing corners of islands (the
+inside corner of an L-shaped island traps the bit just like a pocket
+corner). An island's outward corners are not relieved: the bit already
+cuts round them. Arcs and fillets have no corners, so a circle or a
+rounded rectangle gets no notches. Each edge beside a corner must be at
+least the bit's diameter long, or the notch would not fit; such a corner
+is skipped with `relief_corner_too_tight`. So is a corner whose notch
+would come nearer another wall, such as an island's, than the bit's
+radius, since it would cut into that wall too.
+
+**How it is cut.** After all the pocket's passes, the bit visits the
+corners, nearest first from where it finished. At each it plunges where
+the wall pass turned the corner (material the pocket already cut to full
+depth), cuts out to the corner and back, and steps down by the **tool's**
+`step_down_mm` until it reaches the pocket's depth; then it lifts to safe Z
+and moves to the next corner. The operation's own `step_down_mm` is not
+used. A tool with no `step_down_mm` skips the relief with `relief_skipped`
+(`check` warns `relief_needs_step_down` first).
+
+A corner whose wall the pocket did not cut to full depth is skipped with
+`relief_corner_not_cut`, rather than plunged into: with `wall_pass:
+"none"` every corner is. With an allowance the notches are sized to the
+wall the pocket leaves, the allowance in from the drawn one; a [rest
+machining](#rest-machining) Pocket with corner relief is the usual way to
+finish a roughed pocket with square corners.
+
+A 40 × 30 mm pocket with a 6.35 mm bit and `"dogbone"` gets four notches,
+each ending 3.175 mm from its corner along the bisector, so a 40 × 30 mm
+block fits; with `"t_bone"` each notch runs along a 40 mm edge instead.
 
 ## Safety
 
@@ -307,17 +397,22 @@ stays inside the pocket, the allowance off its walls, and out of every
 island (safety rule S9), and that
 it stays on the stock. Ramp and helix moves are checked on the bit's
 centre, which must stay in the tool-centre area: the same rule, measured
-the cheap way. If not, export fails and nothing is written.
+the cheap way. A corner relief notch cuts past the walls on purpose, so
+each may also cut within its own corner's notch: the bit at most touches
+the corner, and bites at most its radius past one of the corner's two
+walls, nowhere else. If not, export fails and nothing is written.
 
 ## Warnings
 
 | Code | Meaning |
 | --- | --- |
 | `pocket_no_room` | The bit is wider than the pocket everywhere; that shape is not cut. |
-| `pocket_island_too_close` | An island is nearer the wall or another island than the bit is wide; the material between them stays. |
+| `pocket_island_too_close` | An island is nearer the wall or another island than the bit needs to pass (its diameter plus twice the allowance); the material between them stays. |
 | `entry_fallback` | The helix or ramp asked for does not fit a shape; it uses a ramp or a plunge instead. |
 | `helix_diameter_reduced` | The helix fits a shape only smaller than asked; it is cut at the size that fits. |
-| `relief_skipped` | The corner relief asked for is not in this build. |
+| `relief_skipped` | The tool has no `step_down_mm`, so no corner is relieved. |
+| `relief_corner_too_tight` | A corner's edge is shorter than the bit is wide, the bit cannot reach it, or its notch would cut into another wall; it keeps the bit's radius. |
+| `relief_corner_not_cut` | The pocket did not cut to full depth where a corner's notch would start; that corner is skipped. |
 | `rest_of_clears_nothing` | A rest machining Pocket's bit reaches nothing the earlier Pocket left; it cuts nothing. |
 
 All codes are listed under [Warnings](warnings.md).

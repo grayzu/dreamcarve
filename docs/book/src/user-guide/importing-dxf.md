@@ -23,18 +23,37 @@ space layout is left out.
 | --- | --- |
 | `LINE` | An open shape of one segment. |
 | `ARC`, `CIRCLE` | Arcs. They stay arcs in the project, with the centre and radius the file states, and are written as `G2`/`G3` where the post-processor allows. |
-| `LWPOLYLINE`, `POLYLINE` | A shape with the polyline's vertices and bulges (arc segments). The polyline's closed flag closes the shape. Polygon and polyface meshes are skipped. |
+| `LWPOLYLINE`, `POLYLINE` | A shape with the polyline's vertices and bulges (arc segments). The polyline's closed flag closes the shape. Polygon and polyface meshes are skipped. A polyline smoothed with "spline fit" imports as the smoothed curve, not the frame it was fitted to; one smoothed with "curve fit" keeps its fitted arcs. |
 | `SPLINE` | Short straight lines within the project's tolerance (0.01 mm) of the curve. Rational splines and fit-point-only splines are read. |
 | `ELLIPSE` | Short straight lines within the tolerance of the ellipse or elliptical arc. |
-| `INSERT` | The block's contents, moved, rotated and scaled as the insert says, up to 12 blocks deep. A mirrored insert mirrors its arcs; an insert scaled differently in X and Y turns arcs into short lines. |
+| `INSERT` | The block's contents, moved, rotated and scaled as the insert says, up to 12 blocks deep. A mirrored insert mirrors its arcs; an insert scaled differently in X and Y turns arcs into short lines. An array insert (`MINSERT`, rows and columns of one block) places the block in every cell. |
 
-Everything else, `TEXT`, `MTEXT`, `DIMENSION`, `HATCH`, 3D solids and
-meshes, images, points, is **skipped and counted**. The count is printed as
-one warning, so nothing disappears silently:
+Everything else, `TEXT`, `MTEXT`, `DIMENSION`, `HATCH`, block attributes
+(`ATTRIB`), 3D solids and meshes, images, points, is **skipped and
+counted**. The count is printed as one warning, so nothing disappears
+silently:
 
 ```text
 warning: dxf_entities_skipped: 2 entity(ies) DreamCarve does not read were skipped: DIMENSION: 1, TEXT: 1
 ```
+
+### Mirrored and tilted entities
+
+Arcs, circles, polylines, ellipses and inserts carry the direction they
+face, their *extrusion direction*. Many CAD programs mirror a shape by
+turning it over, so that it faces down (−Z) instead of up. DreamCarve
+applies this: a shape facing down imports mirrored left to right, where
+the CAD program shows it, with its arcs turning the other way. A shape
+facing any other way stands at an angle to the drawing's plane; it cannot
+be cut from above without distorting it, so it is skipped and counted, by
+type, as not in the XY plane:
+
+```text
+warning: dxf_entities_skipped: 1 entity(ies) DreamCarve does not read were skipped: CIRCLE (not in the XY plane): 1
+```
+
+Rotate such a shape flat in the CAD program, or project it onto the XY
+plane ("flatten"), before importing.
 
 To cut text, explode it to outlines in the CAD program first (most call
 this "explode text" or "convert to polyline").
@@ -93,8 +112,8 @@ closed polyline, are left alone. Segments on different layers are never
 joined.
 
 A drawing whose ends do not quite meet, because it was traced by hand or
-snapped to a coarse grid, imports as open chains, which Profile does not
-cut; `dreamcarve check` lists them. Raise the tolerance to join them:
+snapped to a coarse grid, imports as open chains, which a Pocket and an
+Inside or Outside Profile do not cut; `dreamcarve check` lists them. Raise the tolerance to join them:
 
 ```sh
 dreamcarve init part.dxf --join-tolerance 0.5
@@ -113,8 +132,22 @@ A drawing is refused when any shape reaches more than 6000 mm (6 m) from
 the origin after conversion to millimetres, when a coordinate is not a
 number, or when a block is inserted into itself without end (the first 12
 levels are read and a warning names the block). An insert of a block the
-file does not define is skipped with a warning. Binary DXF is read, but
-entity types DreamCarve does not know are then not counted in the warning.
-The extrusion direction of an entity (group code 210) is ignored: a
-drawing whose entities were mirrored by setting their extrusion to −Z
-imports unmirrored.
+file does not define is skipped with a warning. Inserts and arrays may
+place at most 500 000 block entities in all; a drawing of arrays nested
+in arrays that places more is refused (explode the arrays in the CAD
+program, or simplify them). A file that is cut off or
+garbled, so that its codes and values no longer pair up, is refused with
+the line (or, in a binary DXF, the byte) where it goes wrong.
+
+ASCII and binary DXF are both read, from every AutoCAD version. Files
+from AutoCAD 2007 on are UTF-8. Earlier files are written in the code
+page their header names (`$DWGCODEPAGE`), and their layer names are read
+in it: Windows-1250 to 1258 (Central European, Cyrillic, Western, Greek,
+Turkish, Hebrew, Arabic, Baltic, Vietnamese) and 874 (Thai). Text that is
+already UTF-8, as some programs write it whatever the header says, is
+read as UTF-8, and a file that names no code page is read as Western
+European (Windows-1252). A file in another code page,
+such as the Japanese, Chinese or Korean ones (`ANSI_932`, `ANSI_936`,
+`ANSI_949`, `ANSI_950`), is read as Windows-1252 and its layer names may
+show wrong characters; a warning names the code page. The geometry is not
+affected; save the file as a 2007 or later DXF to fix the names.

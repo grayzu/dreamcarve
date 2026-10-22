@@ -38,7 +38,7 @@ Profile. A complete Engrave:
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required.** |
 | `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, `check` reports it and export refuses. |
 | `alternate_direction` | `true` cuts the passes of an open path back and forth. See [Alternating direction](#alternating-direction). Default `false`. |
-| `machining_order` | `"full_depth_first"` or `"pass_first"`, as for [Profile](profile.md#machining-order). |
+| `machining_order` | `"full_depth_first"` or `"pass_first"`. See [Machining order](machining-order.md#machining-order). |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go, as for [Profile](profile.md#cutting-through). Engraving rarely needs it; leave it at 0. |
 | `safe_z_mm` | The height above the stock top for moves between cuts. Must be more than 0. |
 
@@ -61,7 +61,8 @@ at Z 11.5 and 11 above the stock bottom.
 
 A closed path ends at its start, so the tool plunges straight to the next
 pass there. An open path ends at its far end. By default the tool then
-lifts to safe Z, rapids back to the start, and plunges, so every pass runs
+lifts to safe Z, rapids back to the start and down to 1 mm above the floor
+the pass before cut, and plunges from there, so every pass runs
 the same way.
 
 A closed path inside another closed path is cut first, as with Profile.
@@ -104,7 +105,18 @@ lettering does, is a V-Carve, not an Engrave.
 | `engrave_deeper_than_cone` | The V-bit's cone is shorter than `depth_mm`. Use a shallower depth or a wider bit. |
 
 An open path targeted by an Engrave is not reported as `open_profile`:
-Engrave cuts it.
+Engrave cuts it. An `on_line` [Profile](profile.md#open-paths) cuts open
+paths too, with a ramp entry and tabs; Engrave plunges and has no tabs,
+but can cut successive passes back and forth (`alternate_direction`).
+
+An Engrave never warns `toolpaths_overlap`: it cuts every line as drawn,
+so lines that cross or meet, as in lettering, a hatch or a border, are the
+design, not two shapes drawn too close. An Engrave inside a part that an
+earlier Profile cut free warns `cut_inside_freed_part`, for an open path
+as for a closed one, when all of the path lies inside the freed outline.
+Inside a part that the Profile cut through round with tabs, an Engrave
+deeper than half the stock warns `cut_inside_tab_held_part`: the part is
+held only by them. A shallow one there is quiet.
 
 The errors are those of every operation: a missing feed, plunge rate or
 step-down, a depth below the stock bottom plus the allowance, and a cut

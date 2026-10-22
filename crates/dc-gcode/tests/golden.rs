@@ -1,19 +1,26 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Golden parity: DreamCarve's Profile output against PureCutCNC's, captured
-//! into `tests/golden/profile-*` by `tools/parity/`
+//! Golden parity: DreamCarve's output against PureCutCNC's, captured into
+//! `tests/golden/<case>/` by `tools/parity/`
 //! (`docs/specs/phase-1/functional.md`, acceptance test 14;
-//! `docs/specs/phase-1/design.md`, "Test plan → golden").
+//! `docs/specs/phase-2/functional.md`, acceptance test 38;
+//! `docs/specs/phase-2/design.md`, "Test plan → dc-gcode").
 //!
-//! Each test builds the DreamCarve project equivalent to the case's
-//! PureCutCNC project (`tools/parity/cases/<case>.camj`). PureCutCNC is
-//! Y-down with its origin at the stock's top-left corner (Y-down) and Z zero
-//! at the stock top; DreamCarve is Y-up (ADR-0001), so every DreamCarve Y is
-//! the stock height minus the PureCutCNC Y, and the origin is the bottom-left
-//! corner, Z zero at the stock top. Both programs then share one machine
-//! frame and are compared in it. What the harness checks is in
-//! [`harness::check`]; each case's README lists the differences.
+//! Each test has the DreamCarve project equivalent to the case's
+//! PureCutCNC project (`tools/parity/cases/<case>.camj`): the phase 1
+//! Profile cases build it here, and the phase 2 cases load it from
+//! `tests/golden/<case>/dreamcarve.dcv`. PureCutCNC is Y-down with its
+//! origin at the stock's top-left corner (Y-down) and Z zero at the stock
+//! top; DreamCarve is Y-up (ADR-0001), so every DreamCarve Y is the stock
+//! height minus the PureCutCNC Y, and the origin is the bottom-left corner,
+//! Z zero at the stock top. Both programs then share one machine frame and
+//! are compared in it. What the harness checks is in [`harness::check`];
+//! each case's README lists the differences.
+//!
+//! Every phase 2 case uses 150 × 100 × 12 mm stock and a 6.35 mm end mill
+//! at feed 1500, plunge 500 and 18000 RPM unless its comment says
+//! otherwise, with climb milling and safe Z 5 mm above the stock top.
 
 #![allow(
     clippy::panic,
@@ -34,7 +41,7 @@ use dc_project::{
     CutDirection, DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, MachineOrigin,
     Operation, OriginXy, OriginZ, Project, Side, Stock, TabPlacement, TabShape, TabSpec,
 };
-use harness::{Case, Difference};
+use harness::{Case, Difference, Order};
 
 /// Stock thickness of every case, mm (PureCutCNC `stock.thickness`).
 const THICKNESS_MM: f64 = 12.0;
@@ -153,6 +160,7 @@ fn profile_outside_rect() {
             None,
         ),
         differences: vec![],
+        order: Order::Sets,
     });
 }
 
@@ -174,6 +182,7 @@ fn profile_inside_circle() {
             None,
         ),
         differences: vec![],
+        order: Order::Sets,
     });
 }
 
@@ -198,6 +207,7 @@ fn profile_ring() {
             None,
         ),
         differences: vec![],
+        order: Order::Sets,
     });
 }
 
@@ -240,8 +250,199 @@ fn profile_tabs_circle() {
                 width_mm: 8.0,
                 height_mm: 3.0,
                 shape: TabShape::Rect,
+                on_holes: false,
+                avoid_corners: false,
             }),
         ),
         differences: vec![Difference::RectTabStepsAtPlungeRate],
+        order: Order::Sets,
     });
+}
+
+/// A phase 2 case: its DreamCarve project is
+/// `tests/golden/<name>/dreamcarve.dcv`.
+fn case(name: &'static str, differences: Vec<Difference>, order: Order) -> Case {
+    Case {
+        name,
+        project: harness::load(name),
+        differences,
+        order,
+    }
+}
+
+/// Offset Pocket of a 60 × 40 mm rectangle at (30, 30) Y-up ((30, 30)
+/// Y-down too: the stock is 100 high and the pocket centred), 6 mm deep in
+/// 3 mm passes at step-over 0.4. The rings are compared per level as sets;
+/// the diagonal ring-to-ring links, which move with the rings' start
+/// corner, by their lengths. PureCutCNC's `roundOutsideCorners` is off: it
+/// would round the inner rings' corners, which DreamCarve keeps sharp.
+#[test]
+fn pocket_offset_rect() {
+    harness::check(&case("pocket-offset-rect", vec![], Order::Sets));
+}
+
+/// Offset Pocket of an 80 × 60 mm rectangle at (20, 20) round a 20 mm
+/// circular island at (60, 50), 6 mm deep in 3 mm passes. The `.camj`
+/// island is a 360-sided polygon on the circle, because PureCutCNC samples
+/// a `circle` too coarsely for 0.01 mm; DreamCarve's is a true circle.
+#[test]
+fn pocket_offset_island() {
+    harness::check(&case("pocket-offset-island", vec![], Order::Sets));
+}
+
+/// Raster Pocket of the `pocket-offset-rect` rectangle at 0°, wall pass
+/// first as PureCutCNC cuts it. The lines are compared without direction
+/// and the links between them not at all ([`Difference::RasterLineOrder`]).
+#[test]
+fn pocket_raster_0deg() {
+    harness::check(&case(
+        "pocket-raster-0deg",
+        vec![Difference::RasterLineOrder],
+        Order::Sets,
+    ));
+}
+
+/// As `pocket_raster_0deg` at 45°: lines along (1, 1). PureCutCNC rotates
+/// by −`pocketAngle` in its Y-down frame, so its +45° is DreamCarve's 135°
+/// (#146); the `.camj` says `pocketAngle: -45`.
+#[test]
+fn pocket_raster_45deg() {
+    harness::check(&case(
+        "pocket-raster-45deg",
+        vec![Difference::RasterLineOrder],
+        Order::Sets,
+    ));
+}
+
+/// The rectangle roughed with the 6.35 mm tool leaving 0.5 mm, then
+/// cleared with a 3.175 mm tool (feed 1200, plunge 400) in one program with
+/// an `M6`. DreamCarve's second Pocket is `rest_of` the first; PureCutCNC's
+/// is a finish pass on the rough's `stockToLeaveRadial`
+/// ([`Difference::RestMachiningAgainstFinishPass`]).
+#[test]
+fn pocket_rough_then_rest() {
+    harness::check(&case(
+        "pocket-rough-then-rest",
+        vec![Difference::RestMachiningAgainstFinishPass],
+        Order::Sets,
+    ));
+}
+
+/// Four 6 mm circles drilled 8 mm deep with a 5 mm drill (feed 1500,
+/// plunge 300, 12000 RPM), retract 1 mm. They are drawn at (20, 50),
+/// (95, 65), (130, 45) and (55, 30) Y-up and drilled nearest-first from the
+/// first: (20, 50), (55, 30), (95, 65), (130, 45). PureCutCNC's walk starts
+/// elsewhere but gives the same order here. Holes are compared in order.
+#[test]
+fn drill_simple() {
+    harness::check(&case("drill-simple", vec![], Order::Sets));
+}
+
+/// The same holes 12 mm deep in 4 mm pecks with full retracts: DreamCarve
+/// pecks to Z −3, −7, −11 and −12 from its retract plane at 1, PureCutCNC to
+/// −4, −8 and −12 from the stock top ([`Difference::PecksFromRetractPlane`],
+/// #153).
+#[test]
+fn drill_peck() {
+    harness::check(&case(
+        "drill-peck",
+        vec![Difference::PecksFromRetractPlane],
+        Order::Sets,
+    ));
+}
+
+/// Engrave, 3 mm deep in 1.5 mm passes: an open zigzag through (20, 20),
+/// (50, 40), (80, 20) and (110, 40), and a closed rectangle drawn from
+/// (30, 80) clockwise in the machine frame, the way the `.camj` draws it
+/// (Engrave follows the drawing).
+#[test]
+fn engrave_open_closed() {
+    harness::check(&case("engrave-open-closed", vec![], Order::Sets));
+}
+
+/// Outside Profile of a 100 × 50 mm rectangle at (25, 25), 12 mm deep in
+/// 4 mm passes, with a 15° ramp. DreamCarve's ramp starts at the lap's
+/// entry point and later passes ramp down from the previous one; PureCutCNC
+/// centres its zigzag elsewhere and ramps from safe Z every pass
+/// ([`Difference::EntryPlacement`], #165, #174).
+#[test]
+fn profile_ramp() {
+    harness::check(&case(
+        "profile-ramp",
+        vec![Difference::EntryPlacement],
+        Order::Sets,
+    ));
+}
+
+/// Inside Profile of a 40 mm circle at (75, 50), 12 mm deep in 4 mm
+/// passes, entered by a helix half the tool's diameter at 10°. Both
+/// programs helix down counter-clockwise (climb inside) on a 3.175 mm
+/// circle; DreamCarve places it at its lap start and later passes rejoin
+/// the bore, PureCutCNC places it elsewhere and helixes from safe Z every
+/// pass ([`Difference::EntryPlacement`]).
+#[test]
+fn profile_helix_inside() {
+    harness::check(&case(
+        "profile-helix-inside",
+        vec![Difference::EntryPlacement],
+        Order::Sets,
+    ));
+}
+
+/// Outside Profile of a 100 × 50 mm rectangle at (25, 25), one 4 mm pass,
+/// with a 6.35 mm, 90° lead-in and lead-out. PureCutCNC leads only with a
+/// ramped entry, so both enter by a 15° ramp. DreamCarve's rectangle is
+/// drawn from its top-right corner so that its contour starts where
+/// PureCutCNC's does: the lead's arrival ties on the contour's edge order
+/// (#185). The lead arcs match; their feed differs by design
+/// ([`Difference::LeadArcsAtCuttingFeed`]). One pass, because DreamCarve
+/// plans one lead per path and PureCutCNC one per level.
+#[test]
+fn profile_lead() {
+    harness::check(&case(
+        "profile-lead",
+        vec![
+            Difference::EntryPlacement,
+            Difference::LeadArcsAtCuttingFeed,
+        ],
+        Order::Sets,
+    ));
+}
+
+/// Inside Profile of a 40 × 30 mm rectangle at (55, 35), 6 mm deep in
+/// 3 mm passes, with dogbones: four notches along the corner bisectors,
+/// cut out and back at the tool's 4 mm step-down levels, Z −4 and −6.
+/// The notch at the lap's start and end rises from the lap at Z −6 to
+/// Z −4 rather than retracting ([`Difference::NotchRisesFromLapEnd`]).
+#[test]
+fn profile_dogbone() {
+    harness::check(&case(
+        "profile-dogbone",
+        vec![Difference::NotchRisesFromLapEnd],
+        Order::Sets,
+    ));
+}
+
+/// Three 30 × 30 mm parts at x 10, 60 and 110 (y 35), each with a 12 mm
+/// hole at its centre, cut through in 4 mm passes under
+/// `full_depth_first` (PureCutCNC `feature_first`). PureCutCNC routes an
+/// inside edge only round `subtract` features and an outside edge only
+/// round `add` ones, so both projects have two operations: the holes, then
+/// the parts. Compared in order: each shape to full depth, nearest first.
+#[test]
+fn order_full_depth_first() {
+    harness::check(&case("order-full-depth-first", vec![], Order::InOrder));
+}
+
+/// The `order_full_depth_first` parts under `pass_first` (PureCutCNC
+/// `level_first`). The passes are compared in order, each as a set; the
+/// order of shapes within a pass differs by design
+/// ([`Difference::PassOrderWithinLayer`]).
+#[test]
+fn order_pass_first() {
+    harness::check(&case(
+        "order-pass-first",
+        vec![Difference::PassOrderWithinLayer],
+        Order::InOrder,
+    ));
 }

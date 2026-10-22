@@ -10,6 +10,12 @@ use crate::polyline::{Polyline, Vertex};
 use crate::{DegenerateReason, GeometryError};
 use serde::{Deserialize, Serialize};
 
+/// Smallest determinant of a transform's linear part that is not
+/// singular. The determinant is the factor areas scale by, so it has no
+/// unit; below this a unit square shrinks to less than a square
+/// [`EPS_MM`] on a side, mm², which is as good as nothing.
+const MIN_DETERMINANT: f64 = EPS_MM * EPS_MM;
+
 /// A 2D affine transform in millimetres. Serialized as the six coefficients
 /// `[a, b, c, d, e, f]` mapping (x, y) to (a·x + c·y + e, b·x + d·y + f).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -62,10 +68,20 @@ impl Transform {
         Self(next.0 * self.0)
     }
 
-    /// The wrapped kurbo transform, for curve operations at crate edges.
+    /// The six coefficients `[a, b, c, d, e, f]`, as serialized: (x, y)
+    /// maps to (a·x + c·y + e, b·x + d·y + f), `e` and `f` in millimetres.
     #[must_use]
-    pub fn as_kurbo(self) -> kurbo::Affine {
-        self.0
+    pub fn coeffs(self) -> [f64; 6] {
+        self.0.as_coeffs()
+    }
+
+    /// The transform that undoes this one, or `None` when it is singular
+    /// (its determinant below the area of a square [`EPS_MM`] on a side).
+    #[must_use]
+    pub fn inverse(self) -> Option<Transform> {
+        let [a, b, c, d, _, _] = self.0.as_coeffs();
+        let det = a * d - b * c;
+        (det.is_finite() && det.abs() >= MIN_DETERMINANT).then(|| Self(self.0.inverse()))
     }
 
     /// The transformed point.
@@ -83,7 +99,7 @@ impl Transform {
     pub fn apply_polyline(self, polyline: &Polyline) -> Result<Polyline, GeometryError> {
         let [a, b, c, d, _, _] = self.0.as_coeffs();
         let det = a * d - b * c;
-        if det.abs() < EPS_MM * EPS_MM {
+        if det.abs() < MIN_DETERMINANT {
             return Err(GeometryError::Degenerate(
                 DegenerateReason::SingularTransform,
             ));
@@ -128,6 +144,19 @@ mod tests {
     use crate::assert_approx_eq;
 
     use std::f64::consts::PI;
+
+    /// #105: a tab's point goes into definition space and back unchanged.
+    #[test]
+    fn inverse_undoes_the_transform() {
+        let t = Transform::scale(-2.0, 2.0)
+            .then(Transform::rotate(0.7))
+            .then(Transform::translate(12.5, -3.0));
+        let p = Point::new(3.25, -7.5);
+        let back = t.inverse().unwrap().apply(t.apply(p));
+        assert_approx_eq!(back.x, p.x, 1e-12);
+        assert_approx_eq!(back.y, p.y, 1e-12);
+        assert_eq!(Transform::scale(1.0, 0.0).inverse(), None);
+    }
 
     #[test]
     fn translate_then_rotate_composes_in_order() {
