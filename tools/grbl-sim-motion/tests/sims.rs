@@ -371,15 +371,24 @@ fn assert_header_sets_the_modal_state(firmware: Firmware, prelude: &[&str], test
         let state = modal_state_after(firmware, prelude, &header_lines(&case.text), &sims, &dir)
             .expect("the header runs");
         for mode in &modes {
-            if !state.contains(mode) {
+            // GRBL 1.1h accepts G40 and does nothing with it, having no
+            // cutter compensation, and its $G has no group for it
+            // (definitions README, "Header modal state").
+            let unreported = firmware == Firmware::Grbl && mode == "G40";
+            if !unreported && !state.contains(mode) {
                 failures.push(format!(
                     "{}: header {mode}, but $G reports {state:?}",
                     case.name
                 ));
             }
         }
+        // Every header version writes G90, G17, G54 and G94. Only those
+        // that write G80 (grblHAL and GRBL v3 on) cancel a cycle mode:
+        // versions 1 and 2 leave it, the hazard #279 fixed, and the
+        // simulator shows it.
+        let cancels_cycles = modes.iter().any(|m| m == "G80");
         for left in ["G91", "G18", "G55", "G93", "G81"] {
-            if state.iter().any(|w| w == left) {
+            if (left != "G81" || cancels_cycles) && state.iter().any(|w| w == left) {
                 failures.push(format!(
                     "{}: {left} survives the header: {state:?}",
                     case.name

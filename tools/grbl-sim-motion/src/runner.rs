@@ -58,6 +58,9 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(200);
 /// How long the simulator may take to print its banner.
 const BANNER_TIMEOUT: Duration = Duration::from_secs(30);
+/// Held while a simulator runs.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// How long a validator may take.
 const VALIDATOR_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the simulator may take to exit after `0x06`.
@@ -461,9 +464,15 @@ impl Sims {
         sync: Sync,
         dir: &Path,
     ) -> Result<Session, RunError> {
+        // One simulator at a time, across the threads `cargo test` runs:
+        // under load the grblHAL Simulator loses the end of a move (README,
+        // "What runs").
+        let _one_at_a_time = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Both simulators hand serial bytes between threads, and now and
-        // then one stops answering (README, "What runs"). A run that
-        // stalls is run once more, from the start, in a new directory.
+        // then one stops answering. A run that stalls is run once more,
+        // from the start, in a new directory.
         match self.stream_once(firmware, lines, sync, dir) {
             Err(RunError::Stalled(why)) => {
                 eprintln!("{firmware} simulator stalled ({why}); running it again");
@@ -653,9 +662,13 @@ impl Link {
         Err(RunError::Stalled(format!("no answer to `{text}`")))
     }
 
-    /// A status report once the controller is idle.
+    /// A status report once the controller is idle and has stopped: two
+    /// idle reports in a row at the same position. Under load the grblHAL
+    /// Simulator can report `Idle` while its stepper thread, which the
+    /// state does not wait for, is still moving.
     fn idle_status(&mut self) -> Result<Status, RunError> {
         let deadline = Instant::now() + REPLY_TIMEOUT;
+        let mut last: Option<[f64; 3]> = None;
         while Instant::now() < deadline {
             self.send(b"?")?;
             let wait = Instant::now() + Duration::from_secs(2);
@@ -672,8 +685,15 @@ impl Link {
                     if (status.state == "Idle" || status.state == "Check")
                         && status.machine_mm.is_some()
                     {
-                        return Ok(status);
+                        if let (Some(now), Some(before)) = (status.machine_mm, last)
+                            && now.iter().zip(before).all(|(a, b)| (a - b).abs() < 1e-9)
+                        {
+                            return Ok(status);
+                        }
+                        last = status.machine_mm;
+                        break;
                     }
+                    last = None;
                     self.on_status(&status)?;
                     break;
                 }

@@ -38,7 +38,12 @@ program it checks:
 - **The header sets the modal state.** After MDI leaves incremental
   mode, inches, the XZ plane, `G55` and inverse time (and, on grblHAL, a
   `G81` motion mode and a `G51` scale), each program's header leaves
-  `$G` showing every mode it writes and none of those.
+  `$G` showing every mode it writes and none of those. GRBL's `$G` has
+  no cutter-compensation group, since GRBL accepts `G40` and does
+  nothing with it, so `G40` is not looked for there. Versions 1 and 2
+  of the headers write no `G80` or `G50`, and the simulator shows the
+  hazard that #279 and #316 fixed: a `G81` mode and a `G51` scale left by
+  MDI are still live after them.
 - **Scaling on grblHAL.** The version 4 header's `G50` clears a scale that
   includes X. It does not clear `G51 Z-1` or `G51 Y-1`. That is the
   grblHAL bug the definitions README documents ("Scaling on grblHAL"). It
@@ -157,6 +162,12 @@ What the build changes, and what running the simulators found:
   whatever `-t` asks for. A GRBL coaster takes about a minute. The
   grblHAL Simulator skips idle ticks and runs the whole grblHAL corpus in
   seconds.
+- **Under load the grblHAL Simulator loses the end of a move.** With
+  several simulators running at once (`cargo test` runs tests on
+  parallel threads), the probe `G0 X1 Y2 Z3` stopped 0.3 % short of its
+  end and reported `Idle` there. So the harness runs one simulator at a
+  time, and takes a position only from two idle reports in a row that
+  agree.
 - A simulator that stops answering is killed after 60 s without a
   reply. Its container is killed by name, since killing `podman run`
   leaves the container running. The run is then made once more from the
