@@ -29,8 +29,8 @@ use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
     CornerRelief, DefinitionId, DrillCycle, EngraveOp, Entry, FeatureDefinition, FeatureInstance,
     InstanceId, Lead, Loaded, MachiningOrder, Operation, OperationId, PeckRetract, ProfileOp,
-    Project, Side, SpindleControl, TabPlacement, TabShape, TabSpec, ToolChangeMode, ToolId,
-    ToolKind, load, save,
+    Project, Side, SpindleControl, StartAt, TabPlacement, TabShape, TabSpec, ToolChangeMode,
+    ToolId, ToolKind, load, save,
 };
 
 /// The date every compared program is exported with.
@@ -142,6 +142,8 @@ fn init_tab_request() -> TabSpec {
         height_mm: 3.0,
         shape: TabShape::Rect,
         on_holes: false,
+        // #285: off corners.
+        avoid_corners: true,
     }
 }
 
@@ -6184,7 +6186,7 @@ fn last_pass_exports_and_refuses_what_cannot_work() {
 
     for (side, allowance_mm, needle) in [
         (Side::Outside, 2.2, "a third of the bit"),
-        (Side::OnLine, 0.5, "Inside or Outside"),
+        (Side::OnLine, 0.5, "Inside, Outside, Left or Right"),
     ] {
         set_last_pass(side, allowance_mm);
         if dir.join("coaster.nc").exists() {
@@ -6201,6 +6203,59 @@ fn last_pass_exports_and_refuses_what_cannot_work() {
             assert!(report.contains("last_pass"), "{args:?}: {report}");
         }
         assert!(!dir.join("coaster.nc").exists(), "export wrote nothing");
+    }
+}
+
+/// #311: two Left and Right Profiles of open paths saved at format 12,
+/// with no last pass (the line and arc of `open-path-on-line-climb` cut
+/// Left, climb, with a ramp and smooth tabs; a square of four separate
+/// lines cut Right, conventional, pass first, with a rect tab) export
+/// byte for byte the programs the build before #311 wrote, committed
+/// under `tests/expected/side-last-pass/`. With a 0.5 mm last pass each
+/// passes `check` and exports a different program; with `reverse` and
+/// `thickness_mm: 1` too.
+#[test]
+fn left_right_last_pass_exports_and_without_is_byte_identical() {
+    let dir = work_dir("left_right_last_pass_exports_and_without_is_byte_identical");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let corpus = root.join("tests/fixtures/side-last-pass");
+    let expected_dir = root.join("tests/expected/side-last-pass");
+    for name in ["left-climb-ramp-tabs", "right-square-of-lines-conventional"] {
+        let file = format!("{name}.dcv");
+        std::fs::copy(corpus.join(&file), dir.join(&file)).expect("fixture copied");
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let program = format!("{name}.nc");
+        let plain = std::fs::read_to_string(dir.join(&program)).expect("program written");
+        let expected = std::fs::read_to_string(expected_dir.join(&program))
+            .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+        assert!(
+            plain == expected,
+            "{name}: differs from the program before #311:\n{plain}"
+        );
+
+        for (thickness_mm, reverse) in [(None, false), (Some(1.0), true)] {
+            let mut project = load_file(&dir.join(&file)).project;
+            let op = as_profile_mut(&mut project.operations[0]);
+            assert!(matches!(op.side, Side::Left | Side::Right), "{name}");
+            op.last_pass = Some(dc_project::LastPass {
+                allowance_mm: 0.5,
+                thickness_mm,
+                reverse,
+            });
+            let with = format!("{name}-last.dcv");
+            std::fs::write(dir.join(&with), save(&project).expect("project saves"))
+                .expect("dcv written");
+            let check = run(&dir, &["check", &with]);
+            let report = format!("{}{}", stdout(&check), stderr(&check));
+            assert_eq!(check.status.code(), Some(0), "{name}: {report}");
+            assert!(report.contains("0 error(s)"), "{name}: {report}");
+            let out = run(&dir, &["export", &with, "--date", FIXED_DATE]);
+            assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+            let text = std::fs::read_to_string(dir.join(format!("{name}-last.nc")))
+                .expect("program written");
+            assert_ne!(text, plain, "{name}: the last pass changes the program");
+        }
     }
 }
 
@@ -7877,4 +7932,595 @@ fn version_11_projects_export_byte_identical_programs() {
         assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
         assert_corpus_programs(&dir, &name, "version 12");
     }
+}
+
+// ── #285: tabs off corners, and the start point ──
+
+/// #285 (`migrate::v13_to_v14_adds_corner_and_start_defaults`): every
+/// project of the #284 corpus saved at format 13 (the 22 projects of
+/// `tests/fixtures/last-pass-migration/` with `last_pass: null` added)
+/// migrates to format 14 with `avoid_corners: false` on every tab request
+/// and `start: "auto"` on every Profile, and exports byte for byte the
+/// programs the build before #285 wrote. Those are the #284 corpus's
+/// programs, committed under `tests/expected/last-pass-migration/`: the
+/// build before #285 exported the format 13 files to the same bytes.
+#[test]
+fn version_13_projects_export_byte_identical_programs() {
+    let dir = work_dir("version_13_projects_export_byte_identical_programs");
+    let corpus =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/corners-start-migration");
+    let expected_dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected/last-pass-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&corpus)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 22, "{names:?}");
+    let mut requests = 0;
+    for (name, path) in names {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 13"),
+            "{name} is a version 13 file"
+        );
+        assert!(!text.contains("avoid_corners"), "{name}");
+        assert!(!text.contains("\"start\""), "{name}");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        for op in &project.operations {
+            if let Operation::Profile(p) = op {
+                assert_eq!(p.start, StartAt::Auto, "{name}: {}", p.id);
+                if let Some(tabs) = &p.tabs {
+                    assert!(!tabs.avoid_corners, "{name}: {}", p.id);
+                    requests += 1;
+                }
+            }
+        }
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let programs = exported_programs(&dir, &name);
+        assert!(!programs.is_empty(), "{name} exported nothing");
+        for (program, text) in programs {
+            let expected = std::fs::read_to_string(expected_dir.join(&program))
+                .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{name}: {program} differs from the program before #285:\n{text}"
+            );
+        }
+    }
+    assert!(requests > 10, "the corpus holds tab requests: {requests}");
+}
+
+/// The cutting moves of `program` held at `z_mm` while they move in XY.
+fn held_at(program: &str, z_mm: f64) -> Vec<MachineMove> {
+    dc_gcode::parse_motion(program)
+        .expect("program parses")
+        .into_iter()
+        .filter(|m| {
+            m.kind.is_cut()
+                && m.from.z.is_some_and(|z| (z - z_mm).abs() <= 1e-3)
+                && m.to.z.is_some_and(|z| (z - z_mm).abs() <= 1e-3)
+                && (m.from.x != m.to.x || m.from.y != m.to.y)
+        })
+        .collect()
+}
+
+/// Whether `m` is an arc, `G2` or `G3`.
+fn is_arc(m: &MachineMove) -> bool {
+    !matches!(
+        m.kind,
+        dc_gcode::parse::MotionKind::Linear | dc_gcode::parse::MotionKind::Rapid
+    )
+}
+
+/// #285, acceptance 47 from the CLI: `init` writes `avoid_corners: true`
+/// and `start: "auto"`, and the coaster's program is byte-identical with
+/// `avoid_corners` on and off. The coaster redrawn as a 50 mm square
+/// rotated 45°, cut outside with init's four tabs and `start: {near:
+/// {x_mm: 0, y_mm: 0}}`, checks with no error and exports, so the full
+/// safety pass (S1–S16) accepted it: every move held at the tab top is
+/// straight, on a side, where without `avoid_corners` the tabs sit on the
+/// arcs round the corners; and the first pass reaches its depth at the
+/// path's point nearest the origin. `tabs place --count` places tabs off
+/// the corners too, and `--allow-corners` places them as before.
+#[test]
+fn corners_and_start_rotated_square() {
+    let dir = work_dir("corners_and_start_rotated_square");
+    let dcv = init_coaster(&dir);
+    let project = load_file(&dcv).project;
+    let op = as_profile(&project.operations[0]);
+    assert_eq!(op.start, StartAt::Auto);
+    assert!(op.tabs.as_ref().expect("init's request").avoid_corners);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+
+    let export = |name: &str| {
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        std::fs::read_to_string(dir.join("coaster.nc")).expect("program")
+    };
+    let edit = |f: &dyn Fn(&mut Project)| {
+        let mut project = load_file(&dcv).project;
+        f(&mut project);
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    };
+    let set_avoid = |avoid: bool| {
+        edit(&|p: &mut Project| {
+            for op in p.operations.iter_mut().map(as_profile_mut) {
+                if let Some(tabs) = &mut op.tabs {
+                    tabs.avoid_corners = avoid;
+                }
+            }
+        });
+    };
+    let on = export("coaster on");
+    set_avoid(false);
+    let off = export("coaster off");
+    assert!(on == off, "the coaster's tabs never move");
+
+    edit(&|p: &mut Project| {
+        for def in p.definitions.values_mut() {
+            def.profiles = vec![Polyline::rect(Point::new(-25.0, -25.0), 50.0, 50.0)];
+        }
+        for instance in &mut p.instances {
+            instance.transform = Transform::rotate(std::f64::consts::FRAC_PI_4)
+                .then(Transform::translate(50.0, 50.0));
+        }
+        for op in p.operations.iter_mut().map(as_profile_mut) {
+            op.start = StartAt::Near {
+                x_mm: 0.0,
+                y_mm: 0.0,
+            };
+        }
+    });
+    let tab_z_mm = 3.0 - MEASURED_THICKNESS_MM;
+    let off = export("square off");
+    assert!(
+        held_at(&off, tab_z_mm).iter().any(is_arc),
+        "without avoid_corners the tabs sit on the corners:\n{off}"
+    );
+    set_avoid(true);
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(" 0 error(s)"), "{report}");
+    assert!(!report.contains("tab_on_corner"), "{report}");
+    let on = export("square on");
+    let held = held_at(&on, tab_z_mm);
+    assert!(!held.is_empty(), "{on}");
+    for m in &held {
+        assert!(!is_arc(m), "line {}: a tab on a corner:\n{on}", m.line);
+    }
+    // The cut starts at the middle of the side nearest the origin, a
+    // tool radius out: the first pass's ramp ends there.
+    let off_side =
+        25.0 * std::f64::consts::SQRT_2 / 2.0 + 6.35 / 2.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let start = Point::new(50.0 - off_side, 50.0 - off_side);
+    let moves = dc_gcode::parse_motion(&on).expect("program parses");
+    let first_depth = -STEP_DOWN_MM;
+    let xy = |m: &MachineMove| Point::new(m.to.x.expect("X"), m.to.y.expect("Y"));
+    let at_depth = |m: &MachineMove| m.to.z.is_some_and(|z| (z - first_depth).abs() <= 1e-3);
+    let reached = moves
+        .iter()
+        .position(|m| m.kind.is_cut() && at_depth(m))
+        .expect("the first pass is cut");
+    let arrived = moves
+        .iter()
+        .skip(reached)
+        .position(|m| m.kind.is_cut() && at_depth(m) && xy(m).distance_to(start) <= 2e-3)
+        .expect("the first pass's ramp ends at the start");
+    // Between the two, the ramp stays beside the start.
+    for m in moves.iter().skip(reached).take(arrived + 1) {
+        assert!(xy(m).distance_to(start) <= 3.0 * 6.35, "line {}", m.line);
+    }
+
+    // `tabs place --count` keeps the tabs off the corners; with
+    // `--allow-corners` it places them as before.
+    edit(&|p: &mut Project| {
+        for op in p.operations.iter_mut().map(as_profile_mut) {
+            op.tabs = None;
+        }
+    });
+    let out = run(
+        &dir,
+        &["tabs", "place", "coaster.dcv", "op1", "--count", "4"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let placed = export("placed");
+    assert!(!held_at(&placed, tab_z_mm).is_empty());
+    assert!(!held_at(&placed, tab_z_mm).iter().any(is_arc), "{placed}");
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "coaster.dcv",
+            "op1",
+            "--count",
+            "4",
+            "--replace",
+            "--allow-corners",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let allowed = export("allowed");
+    assert!(held_at(&allowed, tab_z_mm).iter().any(is_arc), "{allowed}");
+    assert!(allowed == off, "placed as the request laid them");
+}
+
+// ── #302: hole tabs that hold their slugs ──
+
+/// The #285 corpus's 60 mm square with a 30 mm hole (Outside, `o1`, a
+/// 6.35 mm bit, tabs 6 × 2 mm), copied into `dir` as `square.dcv` with its
+/// request placed and every tab cleared, ready for `tabs place`.
+fn bare_square_with_hole(dir: &Path) -> PathBuf {
+    let dcv = dir.join("square.dcv");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/corners-start-migration/square-with-hole-on-holes.dcv"),
+        &dcv,
+    )
+    .expect("fixture copied");
+    let out = run(dir, &["tabs", "clear", "square.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert!(project.tabs.is_empty(), "{:?}", project.tabs);
+    let op = project.operations.first().map(as_profile);
+    assert!(op.is_some_and(|op| op.tabs.is_none()), "{op:?}");
+    dcv
+}
+
+/// `export` then `check` of `square.dcv` in `dir`, each as stdout and
+/// stderr together; both must succeed.
+fn export_and_check(dir: &Path) -> [String; 2] {
+    let export = run(dir, &["export", "square.dcv", "--date", FIXED_DATE]);
+    assert_eq!(export.status.code(), Some(0), "{}", stderr(&export));
+    let check = run(dir, &["check", "square.dcv"]);
+    assert_eq!(check.status.code(), Some(0), "{}", stdout(&check));
+    [export, check].map(|out| format!("{}{}", stdout(&out), stderr(&out)))
+}
+
+/// The tabs of `project` on the square's hole, profile 1.
+fn hole_tabs(project: &Project) -> Vec<&dc_project::PlacedTab> {
+    project.tabs.iter().filter(|t| t.profile == 1).collect()
+}
+
+/// #302, the issue's second test: `tabs place --at 5 --on-holes` on the
+/// square with a hole puts a tab 5 mm along each outline. The one on the
+/// hole is saved with `holds_slug: true`, the one on the part with
+/// `false`. Placing warns `tab_on_hole` once, for the hole's tab, and
+/// `export` and `check` then warn none, though the tab is on the hole's
+/// outline rather than on the Profile's path (#300 warned on every
+/// export). The same tab saved `false`, as a hand edit or a tab placed
+/// without the flag is, warns on every `export` and `check`.
+#[test]
+fn tabs_place_at_on_holes_exports_without_tab_on_hole() {
+    let dir = work_dir("tabs_place_at_on_holes_exports_without_tab_on_hole");
+    let dcv = bare_square_with_hole(&dir);
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--at",
+            "5",
+            "--on-holes",
+            "--width",
+            "6",
+            "--height",
+            "2",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let warned = stderr(&out);
+    assert_eq!(
+        warned.matches("warning: tab_on_hole:").count(),
+        1,
+        "{warned}"
+    );
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 2, "{:?}", project.tabs);
+    for tab in &project.tabs {
+        assert_eq!(tab.holds_slug, Some(tab.profile == 1), "{tab:?}");
+    }
+    let hole = hole_tabs(&project)[0].id.clone();
+    assert!(warned.contains(&format!("tab `{hole}` is on")), "{warned}");
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+    }
+
+    let mut project = project;
+    for tab in &mut project.tabs {
+        tab.holds_slug = Some(false);
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    for _ in 0..2 {
+        for report in export_and_check(&dir) {
+            assert_eq!(
+                report.matches("warning: tab_on_hole:").count(),
+                1,
+                "{report}"
+            );
+            assert!(report.contains(&format!("tab `{hole}` is on")), "{report}");
+        }
+    }
+}
+
+/// #302: `tabs place --count 4 --on-holes` saves the tabs it puts on the
+/// hole with `holds_slug: true` and those on the part with `false`. It
+/// keeps them off corners (#285), and `export` and `check` warn no
+/// `tab_on_hole` for them: as placed, after the Profile gains a last pass
+/// and a start point (#284, #285), and after its bit changes, which takes
+/// its path off the tabs' points (#300 warned for them then). Placed
+/// without `--on-holes`, no tab is on the hole and every tab is `false`.
+#[test]
+fn tabs_place_count_on_holes_holds_slugs() {
+    let dir = work_dir("tabs_place_count_on_holes_holds_slugs");
+    let dcv = bare_square_with_hole(&dir);
+    let place = |extra: &[&str]| {
+        let mut args = vec![
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--count",
+            "4",
+            "--width",
+            "6",
+            "--height",
+            "2",
+            "--replace",
+        ];
+        args.extend_from_slice(extra);
+        let out = run(&dir, &args);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        out
+    };
+    let out = place(&[]);
+    assert!(!stderr(&out).contains("tab_on_hole"), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert!(hole_tabs(&project).is_empty(), "{:?}", project.tabs);
+    assert!(
+        project.tabs.iter().all(|t| t.holds_slug == Some(false)),
+        "{:?}",
+        project.tabs
+    );
+
+    let out = place(&["--on-holes"]);
+    let project = load_file(&dcv).project;
+    let on_hole = hole_tabs(&project);
+    assert!(!on_hole.is_empty(), "{:?}", project.tabs);
+    assert_eq!(
+        stderr(&out).matches("warning: tab_on_hole:").count(),
+        on_hole.len(),
+        "{}",
+        stderr(&out)
+    );
+    for tab in &project.tabs {
+        assert_eq!(tab.holds_slug, Some(tab.profile == 1), "{tab:?}");
+    }
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+        assert!(!report.contains("tab_on_corner"), "{report}");
+    }
+
+    let edit = |f: &dyn Fn(&mut Project)| {
+        let mut project = load_file(&dcv).project;
+        f(&mut project);
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    };
+    edit(&|p: &mut Project| {
+        let op = as_profile_mut(&mut p.operations[0]);
+        op.last_pass = Some(dc_project::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: false,
+        });
+        op.start = StartAt::Near {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        };
+    });
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+    }
+    edit(&|p: &mut Project| p.tools[0].diameter_mm = 3.175);
+    for report in export_and_check(&dir) {
+        assert!(!report.contains("tab_on_hole"), "{report}");
+    }
+}
+
+/// #302: `tabs list` shows in `HOLDS_SLUG`, after `SHAPE`, whether each
+/// tab is meant to hold its slug: `yes` for one placed on a hole with
+/// `--on-holes`, `no` for the others, and `-` for a tab of a format 14
+/// file, which recorded neither.
+#[test]
+fn tabs_list_shows_whether_each_tab_holds_its_slug() {
+    let dir = work_dir("tabs_list_shows_whether_each_tab_holds_its_slug");
+    let dcv = bare_square_with_hole(&dir);
+    let out = run(
+        &dir,
+        &[
+            "tabs",
+            "place",
+            "square.dcv",
+            "o1",
+            "--at",
+            "5",
+            "--on-holes",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let list = |file: &str| -> Vec<(String, String, String)> {
+        let out = run(&dir, &["tabs", "list", file]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let listed = stdout(&out);
+        let rows: Vec<Vec<&str>> = listed
+            .lines()
+            .map(|l| l.split_whitespace().collect())
+            .collect();
+        let column = rows[0]
+            .iter()
+            .position(|h| *h == "HOLDS_SLUG")
+            .unwrap_or_else(|| panic!("a HOLDS_SLUG column: {listed}"));
+        assert_eq!(rows[0][column - 1], "SHAPE", "{listed}");
+        assert_eq!(rows[0][column + 1], "CUT_BY", "{listed}");
+        rows[1..]
+            .iter()
+            .map(|r| (r[0].to_owned(), r[2].to_owned(), r[column].to_owned()))
+            .collect()
+    };
+    let project = load_file(&dcv).project;
+    let expected: Vec<(String, String, String)> = project
+        .tabs
+        .iter()
+        .map(|t| {
+            let flag = if t.profile == 1 { "yes" } else { "no" };
+            (t.id.to_string(), t.profile.to_string(), flag.to_owned())
+        })
+        .collect();
+    assert_eq!(expected.len(), 2);
+    assert_eq!(list("square.dcv"), expected);
+
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/holds-slug-migration/square-with-hole-on-holes.dcv"),
+        dir.join("v14.dcv"),
+    )
+    .expect("fixture copied");
+    let listed = list("v14.dcv");
+    assert!(!listed.is_empty());
+    for (id, _, flag) in &listed {
+        assert_eq!(flag, "-", "{id}");
+    }
+}
+
+/// #302: a hand-edited `holds_slug` that is not `true`, `false` or `null`
+/// fails `check` and `export` with the field's path and where its value
+/// is in the file, and nothing is exported.
+#[test]
+fn hand_edited_holds_slug_is_refused_with_its_place() {
+    let dir = work_dir("hand_edited_holds_slug_is_refused_with_its_place");
+    let dcv = bare_square_with_hole(&dir);
+    let out = run(&dir, &["tabs", "place", "square.dcv", "o1", "--at", "5"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    let at = text.find("\"holds_slug\": false").expect("a tab's flag");
+    let line = text[..at].lines().count();
+    let column = at - text[..at].rfind('\n').expect("a line") + "\"holds_slug\": ".len();
+    let edited = text.replacen("\"holds_slug\": false", "\"holds_slug\": \"yes\"", 1);
+    std::fs::write(&dcv, edited).expect("dcv written");
+    for command in ["check", "export"] {
+        let out = run(&dir, &[command, "square.dcv"]);
+        assert_eq!(out.status.code(), Some(1), "{command}: {}", stdout(&out));
+        let report = stderr(&out);
+        assert!(
+            report.contains(&format!(
+                "at `tabs[0].holds_slug` (line {line}, column {column})"
+            )),
+            "{command}: {report}"
+        );
+    }
+    assert!(!dir.join("square.nc").exists(), "nothing exported");
+}
+
+/// #302 (`migrate::v14_placed_tabs_migrate_with_holds_slug_unset`): every
+/// project of `tests/fixtures/holds-slug-migration/`, saved at format 14
+/// by the build before #302, migrates to format 15 with `holds_slug: null`
+/// on every placed tab, and exports byte for byte the programs that build
+/// wrote, with the same warnings from `export` and `check`. Sixteen are
+/// the tabbed projects of the #285 corpus with their requests placed by
+/// `tabs place`, whose programs are the #284 corpus's (placing changes no
+/// cut, #105). Three are the square with a hole, its programs committed
+/// beside the warnings: tabs placed with `--at --on-holes` on the hole's
+/// outline, which warn `tab_on_hole` on every export; tabs placed for the
+/// cut, then the bit changed, which warn too; and `--count --on-holes`
+/// tabs, off corners, on a Profile with a last pass and a start point,
+/// which sit on the path and do not.
+#[test]
+fn version_14_projects_export_byte_identical_programs_and_warnings() {
+    let dir = work_dir("version_14_projects_export_byte_identical_programs_and_warnings");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let corpus = root.join("tests/fixtures/holds-slug-migration");
+    let expected_dir = root.join("tests/expected/holds-slug-migration");
+    let earlier_dir = root.join("tests/expected/last-pass-migration");
+    let mut names: Vec<(String, PathBuf)> = std::fs::read_dir(&corpus)
+        .expect("corpus readable")
+        .map(|e| e.expect("corpus entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dcv"))
+        .map(|p| {
+            let stem = p.file_stem().expect("stem").to_string_lossy().into_owned();
+            (stem, p)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 19, "{names:?}");
+    let (mut hole_warnings, mut quiet_hole_tabs) = (0, 0);
+    for (name, path) in names {
+        let file = format!("{name}.dcv");
+        std::fs::copy(&path, dir.join(&file)).expect("corpus copied");
+        let text = std::fs::read_to_string(dir.join(&file)).expect("dcv readable");
+        assert!(
+            text.contains("\"version\": 14"),
+            "{name} is a version 14 file"
+        );
+        assert!(!text.contains("holds_slug"), "{name}");
+
+        let project = load_file(&dir.join(&file)).project;
+        assert_eq!(project.version, dc_project::CURRENT_VERSION);
+        assert!(!project.tabs.is_empty(), "{name} has placed tabs");
+        assert!(
+            project.tabs.iter().all(|t| t.holds_slug.is_none()),
+            "{name}: {:?}",
+            project.tabs
+        );
+        let out = run(&dir, &["export", &file, "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{name}: {}", stderr(&out));
+        let programs = exported_programs(&dir, &name);
+        assert!(!programs.is_empty(), "{name} exported nothing");
+        for (program, text) in programs {
+            let committed = expected_dir.join(&program);
+            let expected_path = if committed.exists() {
+                committed
+            } else {
+                earlier_dir.join(&program)
+            };
+            let expected = std::fs::read_to_string(&expected_path)
+                .unwrap_or_else(|e| panic!("{name}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{name}: {program} differs from the program before #302:\n{text}"
+            );
+        }
+        let warnings = std::fs::read_to_string(expected_dir.join(format!("{name}.warnings")))
+            .unwrap_or_else(|e| panic!("{name}: expected warnings: {e}"));
+        assert_eq!(stderr(&out), warnings, "{name}: export's warnings");
+        let check = run(&dir, &["check", &file]);
+        assert_eq!(check.status.code(), Some(0), "{name}: {}", stdout(&check));
+        let checked: String = format!("{}{}", stdout(&check), stderr(&check))
+            .lines()
+            .filter(|l| l.contains("warning: "))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(checked, warnings, "{name}: check's warnings");
+
+        let warned = warnings.matches("warning: tab_on_hole:").count();
+        hole_warnings += warned;
+        if warned == 0 {
+            quiet_hole_tabs += hole_tabs(&project).len();
+        }
+    }
+    assert!(hole_warnings >= 5, "the corpus warns for hole tabs");
+    assert!(quiet_hole_tabs >= 6, "and holds slugs without a warning");
 }

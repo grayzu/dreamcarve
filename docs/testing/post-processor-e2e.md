@@ -23,10 +23,19 @@ Each layer checks something the one below it cannot.
 | 4. The controller's own software | Mach3 and UCCNC read the program as their manuals say. | Manual, in each product's documented demo or simulation mode, on Windows | Before a release, by a person |
 | 5. A real machine | It cuts what the preview shows. | Air cut, then foam or scrap, on grblHAL and GRBL. Other controllers need a user with one. | Before a release, by a person |
 
-Layers 0 to 3 are automatic; layer 3 runs locally for now. Layers 4 and 5
-are manual, and the post-processors chapter keeps saying "Not yet
-checked on a real machine" for a controller until layer 5 has been done
-on it.
+Layers 0 to 3 are automatic; layer 3 runs locally for now. Layers 4
+and 5 are manual. Each manual run is recorded on its own issue, with the
+[controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml)
+(`.github/ISSUE_TEMPLATE/controller-run.yml`): the controller and its
+version, the sender, the DreamCarve version and commit, the program and
+project, the layer, and the result of each check in the controller's
+procedure below. The procedures are the authority; the form copies their
+checks.
+
+**Rule.** The post-processors chapter's "Not yet checked on a real
+machine" names a controller until a passed layer 5 report exists for it:
+a controller run issue, layer 5, whose result is Pass. A layer 4 run, or
+a failed layer 5 run, does not lift it.
 
 ## Controller by controller
 
@@ -51,9 +60,12 @@ on it.
   task layer or trajectory planner, so it does not apply soft limits,
   does not stop at `M0` (it prints `PROGRAM_STOP()` and carries on), and
   needs no homing. `linuxcnc-sim` runs the same LinuxCNC and generic
-  programs under `linuxcnc -r`, headless, with a small Python UI in place
-  of a GUI, as LinuxCNC's own `tests/motion-logger` does. The INI is a
-  three-axis mill in mm with the same G54 offset. Three sessions run:
+  programs under `linuxcnc -r`, headless. In place of a GUI, a driver
+  script talks to LinuxCNC's documented command server, `linuxcncrsh`,
+  over TCP, and reads HAL pins with `halcmd`. It imports no LinuxCNC
+  module: both are separate LinuxCNC programs, as the licence rule
+  requires. The INI is a three-axis mill in mm with the same G54 offset.
+  Three sessions run:
   - With `motion-logger` in place of the motion module, every move task
     sends to motion is compared with DreamCarve's reading, line by line,
     with `rs274-motion`'s comparison. Inch programs go through the mm
@@ -91,6 +103,7 @@ which is free:
 6. Run it. Check that each `M0` stops with its message, that the lift
    goes to the machine Z the export names, and that the program ends with
    the spindle off.
+7. Record the run with the [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml).
 
 ### Generic RS274/NGC
 
@@ -169,8 +182,8 @@ a volunteer who has read the licence:
 6. Repeat with canned cycles on (`use_canned_cycles`) and a simple Drill
    with a dwell, which writes `G81` and `G82`. The holes must be where the
    preview shows them.
-7. Record the Mach3 version and the result on the release's checklist
-   issue.
+7. Record the Mach3 version and the result with the
+   [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml).
 
 ### UCCNC
 
@@ -209,6 +222,7 @@ line it changes:
 4. Run it. The dwell after `M3` should last 3 s, not 3000 s or 3 ms. `M0`
    should stop, and the program should end with `M30`.
 5. Repeat with an inch project and the units set to inches.
+6. Record each run with the [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml).
 
 ### grblHAL and GRBL
 
@@ -217,12 +231,44 @@ they are the controllers with a real machine. They are the trustworthy
 layer 5 for the motion that all six share. `post::linuxcnc_mach3_uccnc_generic_differ_only_in_dialect`
 already shows that the XYZ motion is the grblHAL program's.
 
-**Automatic.** The grblHAL Simulator (<https://github.com/grblHAL/Simulator>,
-GPL-3.0, active in October 2026) builds the real grblHAL core for a
-desktop and has a `grblHAL_validator`. It is the grblHAL counterpart of
-`rs274`. A follow-up issue proposes running the grblHAL corpus through
-it. grbl-sim (<https://github.com/grbl/grbl-sim>, GPL-3.0) does the same
-for GRBL 1.1, but it is a proof of concept.
+**Automatic (layers 1 and 2): `tools/grbl-sim-motion` (#329).** The
+grblHAL Simulator (<https://github.com/grblHAL/Simulator>, GPL-3.0,
+active in October 2026) builds the real grblHAL core for a desktop.
+grbl-sim (<https://github.com/grbl/grbl-sim>, GPL-3.0, last changed in
+2018) does the same for GRBL 1.1h. The tool's `Containerfile` builds both
+at pinned commits: the grblHAL core and GRBL commits the definitions
+README cites. The tool streams each grblHAL and GRBL program to its
+firmware as a sender does, one line per `ok`, from the firmware's default
+settings, under the same G54 offset `rs274-motion` uses. For each program
+it checks:
+
+- `$C` check mode: every line `ok`, nothing moving. On GRBL, grbl-sim's
+  validator as well.
+- The motion. After each line, the firmware's own machine position,
+  motion mode and feed (status report and `$G`) are compared with
+  DreamCarve's reading of where the line ends, so a `G53` lift must land
+  at machine Z, not work Z. Arc segments are not compared, because
+  neither simulator logs its planned blocks faithfully. Each `M0`, and on grblHAL each `M6`, pauses once and is
+  resumed, and the run ends where DreamCarve reads it ending.
+- The header's modal state. After MDI leaves `G91`, `G20`, `G18`, `G55`,
+  `G93` (and, on grblHAL, a `G81` motion mode and a `G51` scale), `$G`
+  shows every mode the header writes.
+- Scaling on grblHAL. Version 4's `G50` clears `G51 X2` and the other
+  scales that include X. As the definitions README says, it does not
+  clear `G51 Z-1`, and the simulator reproduces that bug. The test reports
+  it and does not fail on it.
+- Canned cycles. No grblHAL or GRBL program writes one, and GRBL refuses
+  `G81` with error 20.
+
+What the simulators cannot show: homing and soft limits. Neither models
+limit switches, so the lift's safety on a machine that homes Z downward
+stays with the air cut below. Running them also turned up faults in the
+simulators themselves, none in DreamCarve's programs. grblHAL's
+validator crashes on every input. grbl-sim's clock never runs on arm64,
+and its serial emulation stalls and garbles bytes. Both block logs drop
+blocks. The tool's README lists each fault and what it does instead.
+grbl-sim runs at about real time, so the GRBL half takes minutes. The
+grblHAL half takes seconds.
 
 **Manual procedure (layer 5): air cut, then a real cut.** On the
 maintainer's machine:
@@ -246,8 +292,10 @@ maintainer's machine:
 3. **Foam or scrap.** Run it again with the real Z zero in foam or scrap
    wood, at full feed. Measure a pocket depth and a hole position against
    the project.
-4. **Record it.** Note the controller version, the sender, the program
-   and the result on the release checklist issue.
+4. **Record it.** Record the controller version, the sender, the
+   program and the result of each check with the
+   [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml), one issue per run: the air cut and the
+   foam or scrap cut are separate layer 5 runs.
 
 ## What converting to grblHAL would test
 
@@ -282,10 +330,10 @@ Existing tools that expand cycles are not authorities for this either:
 | Option | Licence | Fidelity to these dialects | Decision |
 | --- | --- | --- | --- |
 | LinuxCNC `rs274`, the standalone interpreter in `linuxcnc-uspace` | GPL-2.0 (run as a separate process) | It is LinuxCNC's interpreter. It expands canned cycles (G73 and G83 back off 0.254 mm), handles `G53`, `G98`/`G99`, comments and `N` words. Mach3 and UCCNC need the bridge. | **Used**: layers 1 and 2 |
-| LinuxCNC full sim, `linuxcnc -r <ini>` with `motion-logger` and the Python `linuxcnc` module, no display | GPL-2.0 | Adds the task layer, planner and soft limits. LinuxCNC's own tests (`tests/motion-logger/basic`) run it headless with `DISPLAY` unset, and its CI runs them in `debian:bookworm` containers. | **Used**: layer 3, `tools/linuxcnc-sim` (#328), in the `rs274-motion` image |
+| LinuxCNC full sim, `linuxcnc -r <ini>` with `motion-logger`, driven through `linuxcncrsh` and `halcmd`, no display | GPL-2.0 | Adds the task layer, planner and soft limits. LinuxCNC's own tests (`tests/motion-logger/basic`) run it headless with `DISPLAY` unset, and its CI runs them in `debian:bookworm` containers. | **Used**: layer 3, `tools/linuxcnc-sim` (#328), in the `rs274-motion` image |
 | LinuxCNC Docker images | `jeffersonjhunt/linuxcnc` and `meri/linuxcnc` state no licence and were last updated 6 and 10 years ago. There is no official image. | | **Not used.** `tools/rs274-motion/Containerfile` installs Debian 13's own `linuxcnc-uspace` 2.9.4, signed by Debian. #264 pins 2.9.10 from linuxcnc.org. |
 | CAMotics 1.2 (`planner`, `gcodetool`, `camsim` CLIs) | GPL-2.0+ | "A subset of LinuxCNC GCode" (<https://camotics.org/gcode.html>). Its own list of missing codes includes G73 and G83. | Not used. `rs274` is LinuxCNC itself. CAMotics could later check the cut stock (`camsim` writes an STL), which is a different question. |
-| grblHAL Simulator, grbl-sim | GPL-3.0 | The real firmware core | Follow-up issue, for grblHAL and GRBL |
+| grblHAL Simulator, grbl-sim | GPL-3.0 (run as separate processes) | The real firmware core: grblHAL at the commit the definitions README cites, GRBL 1.1h. No limit switches, so no homing or soft limits. | **Used** for grblHAL and GRBL: `tools/grbl-sim-motion` (#329) |
 | pygcode | GPL-3.0, last commit 2018 | Low: fixed retract and dwell in its cycle expander | Not used |
 | gcodeparser (Python), cncjs gcode-interpreter, gcode-preview | MIT | Parsers or viewers with no machine state or canned cycles | Not used |
 | Mach3 in a Windows VM or CI runner | Proprietary; EULA not published | The real product | Manual only (layer 4), until a maintainer has read the licence |
@@ -332,10 +380,10 @@ host's load. Most of it is `motion-logger`, which answers about one
 command per 10 ms. Under the short Z travel the
 lift was refused with "Linear move on line 530 would exceed Z's positive
 limit". Motion refuses a move when task queues it, and task reads ahead,
-so the program stopped while motion was on line 119, mid-cut, with the
-bit in the stock. It did stop before the lift. The post-processors
-chapter says such a lift stops the program "before the machine moves",
-which reads as if nothing had run; #336 is the follow-up.
+so the program stopped mid-cut, with the bit in the stock, long before
+the lift (line 119 in one run, line 51 in another). It did stop before
+the lift. #336 corrected the post-processors chapter, which had said
+"before the machine moves".
 
 ## CI
 
@@ -347,15 +395,20 @@ second workflow PR, because it is one step in that job. Agents cannot
 merge either: the token has no `workflow` scope.
 
 Layer 3 needs a non-root user, which a job container does not have by
-default (LinuxCNC refuses to run as root), and several minutes. So
-it is proposed on #264 as its own job on `ubuntu-latest`: build the
-`rs274-motion` image with podman, then run `cargo test -p linuxcnc-sim`
-with `DREAMCARVE_LINUXCNC=podman:dreamcarve-rs274`.
+default (LinuxCNC refuses to run as root), and several minutes. So it is
+proposed on #264 as its own job on the runner itself: install
+`linuxcnc-uspace`, then run `cargo test -p linuxcnc-sim` with
+`DREAMCARVE_LINUXCNC=/usr/bin/linuxcnc`. The `rs274-motion` image with
+podman is the fallback; it has been run only through podman machine on
+macOS.
 
 ## Follow-up issues
 
 - LinuxCNC full simulation, headless (layer 3): #328, `tools/linuxcnc-sim`.
-- grblHAL Simulator for the grblHAL and GRBL corpus.
-- A release checklist issue template that records the manual layer 4 and
-  5 runs, and that "Not yet checked on a real machine" is lifted only
-  from one.
+  CI for it is proposed on #264. The doc fix it found is #336, done.
+- grblHAL Simulator and grbl-sim for the grblHAL and GRBL corpus: #329,
+  `tools/grbl-sim-motion`. CI for it is proposed on #264. The simulator
+  faults it found are #344.
+- An issue form that records the manual layer 4 and 5 runs, and the rule
+  that "Not yet checked on a real machine" is lifted only from one: #330,
+  done (see "The layers").

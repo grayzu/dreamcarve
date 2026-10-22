@@ -9,7 +9,7 @@ use crate::migrate::CURRENT_VERSION;
 use crate::model::{
     ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
     FeatureDefinition, FeatureInstance, Heights, MachineOrigin, MachiningOrder, Operation,
-    OriginXy, OriginZ, PlacedTab, PocketOp, ProfileOp, Project, Side, Stock, TabPlacement,
+    OriginXy, OriginZ, PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
     TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
@@ -49,7 +49,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v13/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v15/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -104,12 +104,15 @@ pub fn sample_project() -> Project {
                 // As every older fixture migrates (#109); the rectangle
                 // has no hole, so either value cuts the same.
                 on_holes: true,
+                // As every older fixture migrates (#285).
+                avoid_corners: false,
             }),
             machining_order: MachiningOrder::FullDepthFirst,
             entry: Entry::Plunge,
             lead: None,
             corner_relief: CornerRelief::None,
             last_pass: None,
+            start: StartAt::Auto,
         })],
         // No placed tabs: the Profile's tab request is placed by `dc-cam`
         // (#105), so the sample is a project as a format 10 file migrates.
@@ -119,7 +122,8 @@ pub fn sample_project() -> Project {
 }
 
 /// A 6 × 2 mm rect tab `id` on the sample rectangle's outline, its centre
-/// at (`x_mm`, `y_mm`) in definition space (#105).
+/// at (`x_mm`, `y_mm`) in definition space (#105), placed by hand: it
+/// does not hold a slug (#302).
 pub fn sample_tab(id: &str, x_mm: f64, y_mm: f64) -> PlacedTab {
     PlacedTab {
         id: TabId::new(id),
@@ -130,6 +134,7 @@ pub fn sample_tab(id: &str, x_mm: f64, y_mm: f64) -> PlacedTab {
         width_mm: 6.0,
         height_mm: 2.0,
         shape: TabShape::Rect,
+        holds_slug: Some(false),
     }
 }
 

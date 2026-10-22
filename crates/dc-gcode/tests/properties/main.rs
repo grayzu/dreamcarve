@@ -61,8 +61,9 @@ fn config(cases: u32) -> ProptestConfig {
 /// how the shapes and the tool meet: the cutter would leave the stock, a
 /// band between two lines is narrower than the tool, an On line part is
 /// nowhere as wide as the tool (#223), or a Left or Right cut reaches what
-/// a line keeps (#207). Any other error from a project that
-/// validates is a defect.
+/// a line keeps (#207), with its last pass allowance too (#311), or an
+/// end segment has no room for it (#342). Any other error from a project
+/// that validates is a defect.
 fn rejects_drawing(error: &CamError) -> bool {
     matches!(
         error,
@@ -72,6 +73,8 @@ fn rejects_drawing(error: &CamError) -> bool {
             | CamError::CutsIntoKeptSide { .. }
             | CamError::BandNarrowerThanAllowance { .. }
             | CamError::ShapeNarrowerThanAllowance { .. }
+            | CamError::AllowanceCutsIntoKeptSide { .. }
+            | CamError::EndSegmentHasNoRoom { .. }
     )
 }
 

@@ -295,9 +295,14 @@ above its top), and
 `tab_on_hole` for a tab on an outline a Profile cuts as a hole: the tab
 is cut and holds the slug. `tabs place` warns `tab_on_hole` once for each
 tab it places on a hole; `check` and `export` do not warn again for a
-tab placed there for that cut (`--count --on-holes` or a request with
-`on_holes`, such as a version 8 file's migrated one), only for others
-(changed in #300: every hole tab warned on every export). A crossed tab
+tab placed there with `--on-holes` (`--count` or `--at`) or from a
+request with `on_holes`, such as a version 8 file's migrated one, which
+is saved with `holds_slug: true`, only for others (changed in #300:
+every hole tab warned on every export; changed in #302: a tab placed
+with `--at --on-holes`, or whose Profile changed its bit or side, warned
+on every export). Format version 15 adds `holds_slug` to each placed tab
+(`true`, `false`, or `null` from the migration, which warns as format 14
+did), and `tabs list` shows it as `HOLDS_SLUG`. A crossed tab
 whose point is farther from its outline than its width plus the widest
 bit that cuts round it warns `tab_off_outline`, project-level, with the
 distance; it is cut at the outline's nearest point (#300). The CLI gains `dreamcarve tabs place <dcv>
@@ -338,7 +343,10 @@ Left, to the Right or On the selected vectors". The tool centre runs one
 radius to that side of each open target, looking along it from its first
 vertex to its last as drawn; the cut ends square on the normals through
 the path's ends, so the bit's edge reaches the end vertex and goes no
-further on the part side. The side the bit runs on is waste and the
+further on the part side. An end segment too short for the bit on the
+inside of the turn before it is an error naming its end vertex (changed
+in #342: the cut beside the segment before ran past the end normal into
+the part). The side the bit runs on is waste and the
 other side is the part: a cut that would cross another of the
 operation's lines, or reach the strip one radius wide that a line keeps
 on its part side, is an error. Direction is the milling mode, as on a
@@ -351,9 +359,11 @@ end beside the first vertex; there is no lead, no corner relief and no
 helix, as VCarve gives open profiles none. Closed targets are skipped
 with `side_needs_open_path`, since a closed path's direction is not
 shown in the drawing. S9 holds the cut to the offset path and clear of
-every line and kept strip. (added in #207: before, an open path could
+every line and kept strip, the strip closed at each end by the normal
+through the end vertex (#342). (added in #207: before, an open path could
 be cut only On line, and cutting beside one meant redrawing it a bit
-radius over.)
+radius over. Changed in #311: a Left or Right Profile takes a last pass,
+capability 34.)
 
 ## Out of scope
 
@@ -921,7 +931,19 @@ built (design addendum, "Order and format versions").
     V, W, M and K. A narrower tip is refused, and
     so is a notch, slot or inlet that the earlier passes bridge and skip,
     however thin the last pass's cut there, once it is thicker than a
-    square corner's.)
+    square corner's. Changed again in #311: Left and Right take a last
+    pass, as VCarve's Profile of an open vector does; they cut one flank
+    of the bit against the part, as Inside and Outside do, and only On
+    line, which cuts with both, is refused. The earlier passes run the
+    allowance farther to the cut side and end square on the same end
+    normals as the last pass, so no pass cuts past an end on the part
+    side and the last pass takes the skin off right up to each end;
+    `reverse` starts the last pass at the path's other end, where the
+    earlier passes end, so it mills the other way. The refusals above
+    apply to the path, a stretch at an end the earlier passes stop short
+    of counting as no corner, and the earlier passes must keep the bit's
+    radius plus the allowance from every other line and every kept
+    strip.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 
@@ -937,7 +959,12 @@ built (design addendum, "Order and format versions").
     (<https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/MFG-REF-2D-CONTOUR-TABS.htm>);
     VCarve documents no corner rule, so the 30° rule is DreamCarve's.
     `init` writes `true`; migrated projects get `false`, so they cut as
-    before.
+    before. (changed in #285: it acts wherever a request is laid, at
+    export and in `tabs place` with the request or `--count`, which avoids
+    corners unless `--allow-corners`; tabs placed with `--at` or by their
+    point are cut as placed and never move. "Half the gap" is measured to
+    the neighbours as the layout put them, before any tab moved. A tab
+    left on a corner is kept, so the #109 floor holds.)
 36. **Start point** (`start` on Profile; VCarve 2D Profile "Use vector
     start point" and "Start At", on the page A8 cites; Fusion "Entry
     Positions"):
@@ -954,7 +981,17 @@ built (design addendum, "Order and format versions").
     dropped, an entry with no room there falls back (ramp, then plunge)
     instead of moving, and `at_distances` tabs are measured from that
     point, so the user knows where they are. Open paths ignore `start`:
-    their start is the end the cut direction sets (#242).
+    their start is the end the cut direction sets (#242). (changed in
+    #285: "nearest" is `nearest_point`'s, which takes the middle of an arc
+    centred on the target, so `first_vertex` on a convex corner cut
+    outside starts mid-arc round it; a last pass's allowance passes start
+    at their own path's point nearest the same target. Changed again in
+    #337: on a start under a tab, the first pass below the tab top plunges
+    only to the tab top there, warned `entry_fallback`; each later pass
+    starts on the tab where the one before ended, never lower, and every
+    pass comes down to its depth past the tab's end, as a lap leaves any
+    tab: a rect tab's step, a smooth tab's slope. This holds for `auto`
+    too, where a plunge entry keeps its start.)
 
 ### Acceptance tests (addendum)
 
@@ -1012,6 +1049,11 @@ built (design addendum, "Order and format versions").
     is byte-identical either way. `start: {near: {x_mm: 0, y_mm: 0}}`
     starts each outline's cut at its path point nearest the origin, and
     `at_distances: [10]` puts the tab 10 mm along the path from there.
+    (changed in #285: from the `auto` start, which is the start of a side,
+    four tabs already sit mid-side, since the path's period is a quarter
+    of it; with the `near` start, mid-side, they sit mid-arc without
+    `avoid_corners` and on the sides with it. The test checks both, and
+    three tabs from the `auto` start.)
 
 ### Safety (addendum)
 
@@ -1042,4 +1084,7 @@ built (design addendum, "Order and format versions").
   into stock a tab leaves. Changed in #324: at a corner, where the
   earlier passes cut both walls, the last pass may take off up to a third
   of the bit diameter, or that bound where it is more; nowhere else more
-  than the square corner's.)
+  than the square corner's. Changed in #311: on a Left or Right Profile
+  every pass but the last runs on the targets' open paths offset by
+  `r + allowance_mm` to the side, and every pass keeps `r` from every open
+  path and kept edge, as without a last pass.)
