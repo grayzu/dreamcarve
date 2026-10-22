@@ -153,6 +153,17 @@ impl EntryDomain {
             .fold(f64::NEG_INFINITY, f64::max)
     }
 
+    /// True when the straight move from `a` to `b` keeps its tool centre
+    /// in one region of the domain, within `slack_mm` (#339: the last
+    /// pass's step across the allowance).
+    pub(crate) fn segment_within(&self, a: Point, b: Point, slack_mm: f64) -> bool {
+        self.areas.iter().any(|area: &Area| {
+            area.contains_within(a, slack_mm)
+                && area.contains_within(b, slack_mm)
+                && area.segment_inside(a, b, slack_mm)
+        })
+    }
+
     /// S9 for one descent: the index in `moves`, cut from `from`, of the
     /// first descent move ([`is_descent_move`]) whose tool centre leaves
     /// every region of the domain by more than `slack_mm`.

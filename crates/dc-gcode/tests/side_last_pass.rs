@@ -158,9 +158,10 @@ struct Cut {
 }
 
 /// The program `project` exports, its cutting moves split into passes:
-/// each run of cuts between rapids. `None` when the generator refuses
-/// the drawing with an error that names it.
-fn passes(project: &Project) -> Option<Vec<Vec<Cut>>> {
+/// each run of cuts between rapids, a reversed last pass from its step
+/// across the allowance onto its path beside `line` (#339). `None` when the
+/// generator refuses the drawing with an error that names it.
+fn passes(project: &Project, rough_floor_mm: f64, line: &[Point]) -> Option<Vec<Vec<Cut>>> {
     let Operation::Profile(op) = &project.operations[0] else {
         unreachable!("a Profile");
     };
@@ -243,6 +244,25 @@ fn passes(project: &Project) -> Option<Vec<Vec<Cut>>> {
     }
     if !run.is_empty() {
         out.push(run);
+    }
+    // #339: the last pass goes down where the pass before ended, with no
+    // rapid between them when it is reversed: a run that cuts along the
+    // earlier passes' floor and then steps onto the last pass's path, `r`
+    // from the line, holds both, and is split at that step.
+    let step = out.iter().enumerate().find_map(|(r, run)| {
+        run.iter()
+            .position(|c| (place(line, c.to.xy()).gap_mm - RADIUS_MM).abs() <= SLACK_MM)
+            .map(|k| (r, k))
+    });
+    if let Some((r, k)) = step
+        && out[r][..k].iter().any(|c| {
+            (c.from.z - rough_floor_mm).abs() <= 1e-6
+                && (c.to.z - rough_floor_mm).abs() <= 1e-6
+                && c.from.xy().distance_to(c.to.xy()) > 1e-6
+        })
+    {
+        let last = out[r].split_off(k);
+        out.insert(r + 1, last);
     }
     Some(out)
 }
@@ -364,11 +384,49 @@ fn check(project: &Project, expect: &Expect) -> bool {
     );
     let tool = &project.tools[0];
     let (feed_mm_min, plunge_mm_min) = (tool.feed_mm_min.unwrap(), tool.plunge_mm_min.unwrap());
-    let Some(passes) = passes(project) else {
+    let Some(passes) = passes(project, expect.rough_floor_mm, line) else {
         return false;
     };
     assert_eq!(passes.len(), expect.passes, "{case}: one run per pass");
     let last_index = passes.len() - 1;
+    // #339: the last pass goes down on the earlier passes' path, then
+    // steps across the allowance, on the normal through the end it starts
+    // at, onto its own: the cuts up to the first that ends `r` from the L.
+    let mut passes = passes;
+    let last = passes.pop().expect("a last pass");
+    let step = last
+        .iter()
+        .position(|c| (place(line, c.to.xy()).gap_mm - RADIUS_MM).abs() <= SLACK_MM)
+        .expect("the last pass reaches its path");
+    let (entry, lap_cuts) = last.split_at(step + 1);
+    for cut in &entry[..step] {
+        for p in &cut.samples {
+            let gap_mm = place(line, p.xy()).gap_mm;
+            assert!(
+                (gap_mm - (RADIUS_MM + ALLOWANCE_MM)).abs() <= SLACK_MM,
+                "{case}: the last pass goes down {gap_mm} mm from the L at {p:?}"
+            );
+        }
+    }
+    let across = &entry[step];
+    assert!(
+        (across.from.z - across.to.z).abs() <= 1e-6
+            && (across.from.xy().distance_to(across.to.xy()) - ALLOWANCE_MM).abs() <= SLACK_MM,
+        "{case}: the step across the allowance runs {:?} to {:?}; {:?}",
+        across.from,
+        across.to,
+        entry.iter().map(|c| (c.from, c.to)).collect::<Vec<_>>()
+    );
+    for p in &across.samples {
+        let at = place(line, p.xy());
+        assert!(
+            at.signed_mm * expect.sign >= RADIUS_MM - SLACK_MM
+                && (at.along_mm <= 1e-9 || at.along_mm >= length_mm - 1e-9),
+            "{case}: the step leaves the end normal at {p:?}"
+        );
+    }
+    passes.push(lap_cuts.iter().map(clone_cut).collect());
+    let entry: Vec<Cut> = entry.iter().map(clone_cut).collect();
     for (k, pass) in passes.iter().enumerate() {
         let away_mm = if k < last_index {
             RADIUS_MM + ALLOWANCE_MM
@@ -443,10 +501,13 @@ fn check(project: &Project, expect: &Expect) -> bool {
     let mut held = Heights::new(line);
     held.sweep(&earlier, RADIUS_MM - 0.03);
     held.sweep(&plunges, RADIUS_MM - 0.03);
+    // #339: nor does the last pass's descent and step.
+    held.sweep(&entry, RADIUS_MM - 0.03);
     let mut final_lap = Heights::new(line);
     final_lap.sweep(&lap, RADIUS_MM);
     let mut final_pass = Heights::new(line);
     final_pass.sweep(&last[0], RADIUS_MM);
+    final_pass.sweep(&entry, RADIUS_MM);
     let (mut skin, mut ends, mut standing) = (0, 0, 0);
     for j in 0..before.ny {
         for i in 0..before.nx {

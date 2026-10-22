@@ -566,7 +566,9 @@ fn open_path_ignores_start() {
 /// the allowance passes on their own path a little farther out, and tabs
 /// laid off corners keep their material on every pass (the safety pass's
 /// S9, which `dreamcarve`'s export runs, is checked at the CLI). A
-/// reversed last pass starts at the same point.
+/// reversed last pass starts at the same point. (Changed in #339: every
+/// plunge is on the allowance path, the last pass's too, which then steps
+/// across the allowance to its own start at full depth.)
 #[test]
 fn explicit_start_with_last_pass_starts_every_pass_there() {
     let p = rect_project();
@@ -590,13 +592,20 @@ fn explicit_start_with_last_pass_starts_every_pass_there() {
             "{warnings:?}"
         );
         let starts = distinct(plunge_points(&tp));
-        assert_same_points(
-            &starts,
-            &[
-                round_corner(corner, origin, RADIUS_MM + 0.5),
-                round_corner(corner, origin, RADIUS_MM),
-            ],
-            &format!("reverse {reverse}"),
+        let (twin_start, own_start) = (
+            round_corner(corner, origin, RADIUS_MM + 0.5),
+            round_corner(corner, origin, RADIUS_MM),
+        );
+        let case = format!("reverse {reverse}");
+        assert_same_points(&starts, &[twin_start], &case);
+        assert!(
+            tp.moves.windows(2).any(|w| {
+                w[0].to.xy().distance_to(twin_start) <= TOL
+                    && w[1].to.xy().distance_to(own_start) <= TOL
+                    && w[0].to.z.abs() <= TOL
+                    && w[1].to.z.abs() <= TOL
+            }),
+            "{case}: the last pass steps from {twin_start:?} to {own_start:?}"
         );
     }
 }

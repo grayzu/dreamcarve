@@ -15,13 +15,15 @@
 //! and carries the part path's tabs onto it.
 
 use super::{Offset, check_band, region_shapes};
+use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
 use crate::overlap::within;
 use crate::passes::pass_z_mm;
-use crate::tabs::{PathTabs, RaisedSpan};
+use crate::tabs::{LapRates, PathTabs, RaisedSpan};
+use crate::toolpath::{Move, MoveKind};
 use dc_geometry::{
-    Contour, EPS_MM, Point, Polyline, Region, Vec2, Vertex, distance_mm, nearest_point, offset,
-    offset_open,
+    Arc, Contour, EPS_MM, Point, Point3, Polyline, Region, Vec2, Vertex, distance_mm,
+    nearest_point, offset, offset_open,
 };
 use dc_project::{LastPass, ProfileOp, Side, TabShape, Tool};
 use std::collections::BTreeMap;
@@ -497,6 +499,173 @@ fn cuts_only_corners(
         }
     }
     true
+}
+
+/// How far, mm, the last pass may step from its allowance path's kerf
+/// onto its own path (#339): the most it may take off anywhere
+/// ([`thickest_mm`]), which [`cuts_only_corners`] holds every point of its
+/// path to from the allowance path, and the slack of that sampling.
+pub(super) fn step_reach_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
+    thickest_mm(diameter_mm, allowance_mm) + THICKNESS_SLACK_MM
+}
+
+/// #339: the last pass's block `own`, entered from its allowance twin's
+/// kerf instead of straight down at its own start, where the allowance
+/// stands uncut to the stock top. `twin` is the block one more pass of the
+/// twin would be at the last pass's depth: its descent, by the operation's
+/// entry, goes one step-down into the floor the passes before cut.
+///
+/// The last pass's descent is that descent, then the twin's cut from where
+/// it ends to the point of it nearest where `own` starts (its lap's start,
+/// or its lead's staging point), of the points no higher than the height
+/// `own` starts at (a tab's, #337) if one is in reach, else of all; then,
+/// if lower, straight up to that height there; then one straight step at
+/// the feed across the allowance to `own`'s start, which `fits` (from, to,
+/// Z) must keep in the waste; then, if the step ran higher (over a tab
+/// the twin rises over and `own` starts on the slope of), straight down
+/// there to where `own` starts, no lower than its lap cuts there. That
+/// point is at most `reach_mm` away, or the step would cut more than the
+/// last pass may take off. When `own_led` and its staging point is
+/// farther, the lead-in arc is left off and the step goes to the lap's
+/// start: the second value is true. `None` when no step reaches or fits.
+pub(super) fn enter_from_twin(
+    twin: &CutBlock,
+    own: CutBlock,
+    own_led: bool,
+    reach_mm: f64,
+    rates: LapRates,
+    fits: &dyn Fn(Point, Point, f64) -> bool,
+) -> Option<(CutBlock, bool)> {
+    if let Some(block) = entered(twin, &own, reach_mm, rates, fits) {
+        return Some((block, false));
+    }
+    if !own_led || own.cuts.is_empty() {
+        return None;
+    }
+    let mut plain = own;
+    let arc = plain.cuts.remove(0);
+    plain.entry = arc.to.xy();
+    entered(twin, &plain, reach_mm, rates, fits).map(|block| (block, true))
+}
+
+/// [`enter_from_twin`] onto `own` as it is.
+fn entered(
+    twin: &CutBlock,
+    own: &CutBlock,
+    reach_mm: f64,
+    rates: LapRates,
+    fits: &dyn Fn(Point, Point, f64) -> bool,
+) -> Option<CutBlock> {
+    let start_z_mm = own.descent.last().map_or(own.z_mm, |m| m.to.z);
+    let target = own.entry;
+    let mut moves = twin.descent.clone();
+    if moves.is_empty() {
+        // The twin's plunge, which the sequencer would cut for it.
+        moves.push(Move::linear(
+            Point3::new(twin.entry.x, twin.entry.y, twin.z_mm),
+            rates.plunge_mm_min,
+        ));
+    }
+    let descended = moves.len();
+    moves.extend(twin.cuts.iter().copied());
+    // The points nearest `target` of the descent's end and the level cuts
+    // after it, (gap, move, point): of those no higher than `own` starts,
+    // and of all.
+    let mut low: Option<(f64, usize, Point3)> = None;
+    let mut any: Option<(f64, usize, Point3)> = None;
+    let mut at = Point3::new(
+        twin.descent_from.x,
+        twin.descent_from.y,
+        twin.descent_from_z_mm,
+    );
+    for (k, mv) in moves.iter().enumerate() {
+        let from = at;
+        at = mv.to;
+        let candidate = match (k + 1).cmp(&descended) {
+            std::cmp::Ordering::Less => None,
+            std::cmp::Ordering::Equal => Some(mv.to),
+            std::cmp::Ordering::Greater => ((from.z - mv.to.z).abs() <= EPS_MM)
+                .then(|| nearest_on_move(from, mv, target))
+                .flatten(),
+        };
+        if let Some(q) = candidate {
+            let gap_mm = q.xy().distance_to(target);
+            let keep = |best: &mut Option<(f64, usize, Point3)>| {
+                if best.is_none_or(|(b, _, _)| gap_mm < b - EPS_MM) {
+                    *best = Some((gap_mm, k, q));
+                }
+            };
+            keep(&mut any);
+            if q.z <= start_z_mm + EPS_MM {
+                keep(&mut low);
+            }
+        }
+    }
+    // A raised point of the twin's cut (over a tab), when no lower one is
+    // in reach: the step runs at its height, and the tool comes down at
+    // `own`'s start to where its lap starts there, a smooth tab's slope:
+    // no lower than the lap cuts there, so into no tab.
+    let (gap_mm, k, q) = low.filter(|(gap_mm, _, _)| *gap_mm <= reach_mm).or(any)?;
+    if gap_mm > reach_mm {
+        return None;
+    }
+    let mut descent: Vec<Move> = moves.into_iter().take(k + 1).collect();
+    if k + 1 > descended
+        && let Some(last) = descent.last_mut()
+    {
+        // The twin's cut, stopped at the point: an arc keeps its centre.
+        last.to = q;
+    }
+    let step_z_mm = q.z.max(start_z_mm);
+    if q.z < step_z_mm - EPS_MM {
+        descent.push(Move::linear(
+            Point3::new(q.x, q.y, step_z_mm),
+            rates.plunge_mm_min,
+        ));
+    }
+    if gap_mm > EPS_MM {
+        if !fits(q.xy(), target, step_z_mm) {
+            return None;
+        }
+        descent.push(Move::linear(
+            Point3::new(target.x, target.y, step_z_mm),
+            rates.feed_mm_min,
+        ));
+    }
+    if step_z_mm > start_z_mm + EPS_MM {
+        descent.push(Move::linear(
+            Point3::new(target.x, target.y, start_z_mm),
+            rates.plunge_mm_min,
+        ));
+    }
+    Some(CutBlock {
+        descent_from: twin.descent_from,
+        descent_from_z_mm: twin.descent_from_z_mm,
+        descent,
+        ..own.clone()
+    })
+}
+
+/// The point of the level cutting move `mv`, from `from`, nearest `p`, at
+/// the move's Z.
+fn nearest_on_move(from: Point3, mv: &Move, p: Point) -> Option<Point3> {
+    let (a, b) = (from.xy(), mv.to.xy());
+    let bulge = match mv.kind {
+        MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+            let ccw = matches!(mv.kind, MoveKind::ArcCcw { .. });
+            (Arc::from_ends(a, b, centre, ccw).sweep_rad / 4.0).tan()
+        }
+        MoveKind::Linear => 0.0,
+        _ => return None,
+    };
+    if a.distance_to(b) <= EPS_MM {
+        return Some(from);
+    }
+    let segment = Polyline::new(
+        vec![Vertex::new(a.x, a.y, bulge), Vertex::line(b.x, b.y)],
+        false,
+    );
+    nearest_point(&segment, p).map(|near| Point3::new(near.point.x, near.point.y, mv.to.z))
 }
 
 /// `path`, closed, run the other way from the same start: its last pass

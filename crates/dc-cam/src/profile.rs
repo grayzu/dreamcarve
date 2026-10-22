@@ -46,8 +46,8 @@ use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, TabId, Tool,
 };
 use entries::{
-    EntrySetup, PassEntry, PathDomain, Space, Targets, off_material, path_entries, plunged,
-    tab_seams, wall_domains,
+    EntrySetup, PassEntry, PathDomain, PathEntry, Space, Targets, off_material, path_entries,
+    plunged, tab_seams, wall_domains,
 };
 
 /// One path's tab layout, and whether its spans overlapped; `None`
@@ -253,7 +253,11 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// no pass cuts past an end and the last pass takes the allowance off up
 /// to each; the twin runs the way its path does, ramps along itself, and
 /// carries the tabs as a closed shape's twin does. `reverse` runs the
-/// last pass from the path's other end, where the earlier passes end. The
+/// last pass from the path's other end, where the earlier passes end.
+/// The last pass never goes straight down through the allowance (#339,
+/// `last_pass_block`): it descends as one more earlier pass would, on
+/// the allowance path where the pass before ended, by the entry (a ramp
+/// along that path), and steps across the allowance onto its own path. The
 /// allowance paths must follow the line ([`last_pass::open_twins`],
 /// [`CamError::ShapeNarrowerThanAllowance`]) and keep `r + a` from every
 /// other line and kept strip ([`CamError::AllowanceCutsIntoKeptSide`]).
@@ -572,6 +576,14 @@ pub fn generate_profile(
         Vec::new()
     };
     let below_tabs = |z_mm: f64| tabs.as_ref().is_some_and(|t| z_mm < t.top_z_mm() - EPS_MM);
+    // #339: each allowance twin's part path, whose last pass enters from
+    // the twin.
+    let mut part_of: Vec<Option<usize>> = vec![None; paths.len()];
+    for (i, twin) in twin_of.iter().enumerate() {
+        if let Some(slot) = twin.and_then(|t| part_of.get_mut(t)) {
+            *slot = Some(i);
+        }
+    }
     let mut lead_warnings = LeadWarnings::default();
     let leads = match lead {
         Some(lead) => plan_leads(
@@ -585,6 +597,7 @@ pub fn generate_profile(
                 any_above_tabs: pass_z.iter().any(|z| !below_tabs(*z)),
                 any_below_tabs: pass_z.iter().any(|z| below_tabs(*z)),
                 fixed: &fixed,
+                part_of: &part_of,
             },
             &mut lead_warnings,
         )?,
@@ -599,7 +612,42 @@ pub fn generate_profile(
         .zip(&fixed)
         .map(|(lead, fixed)| lead.is_some() || *fixed)
         .collect();
-    let seams = tab_seams(&setup, &domains, &kept);
+    let mut seams = tab_seams(&setup, &domains, &kept);
+    // #339: a closed part path whose seam is free starts within a step
+    // of where its twin starts, where the last pass enters from the
+    // twin's kerf: as it is when it already does, else at its point
+    // nearest there.
+    for (i, twin) in twin_of.iter().enumerate() {
+        let (Some(t), Some((path, _))) = (*twin, paths.get(i)) else {
+            continue;
+        };
+        if kept.get(i).copied().unwrap_or(true) || !path.is_closed() {
+            continue;
+        }
+        let twin_start = paths.get(t).and_then(|(twin, _)| {
+            seams.get(t).copied().flatten().map_or_else(
+                || twin.vertices().first().map(|v| v.point()),
+                |s| lead::reseam(twin, s).vertices().first().map(|v| v.point()),
+            )
+        });
+        let own_start = seams.get(i).copied().flatten().map_or_else(
+            || path.vertices().first().map(|v| v.point()),
+            |s| path.point_at(s).map(|(p, _)| p),
+        );
+        let reach_mm = last_pass::step_reach_mm(tool.diameter_mm, allowance_mm.unwrap_or(0.0));
+        if let (Some(at), Some(own)) = (twin_start, own_start)
+            && own.distance_to(at) <= reach_mm
+        {
+            continue;
+        }
+        let seam_mm = twin_start
+            .and_then(|at| nearest_point(path, at))
+            .map(|near| near.along_mm)
+            .filter(|&d| d > EPS_MM && d < path.length_mm() - EPS_MM);
+        if let Some(slot) = seams.get_mut(i) {
+            *slot = seam_mm;
+        }
+    }
     let (paths, layouts): (Vec<(Polyline, &ShapeRef)>, Vec<PathLayout>) = paths
         .iter()
         .zip(&layouts)
@@ -642,97 +690,78 @@ pub fn generate_profile(
     let mut blocks = Vec::with_capacity(n * pass_z.len());
     // The part's path each block cuts, for naming contours in cut order.
     let mut block_paths = Vec::with_capacity(blocks.capacity());
+    let ctx = PassCtx {
+        op,
+        tabs: tabs.as_ref(),
+        pass_z: &pass_z,
+        safe_z_mm,
+        start_z_mm,
+        rates,
+        tolerance_mm: project.flatten_tolerance_mm,
+    };
+    let path_at = |k: usize| {
+        let ((path, shape), layout) = (paths.get(k)?, layouts.get(k)?);
+        Some(PassPath {
+            path,
+            shape,
+            layout,
+            lead: leads.get(k).and_then(Option::as_ref),
+            entry: entries.get(k).and_then(Option::as_ref),
+            domain: domains.get(k),
+            tool: entries::tool_for(&setup, k),
+        })
+    };
     for i in 0..n {
-        // The path the previous pass cut, whose entry this pass's follows.
-        let mut previous_path: Option<usize> = None;
+        // The entry the previous pass cut, which this pass's follows.
         let mut previous: Option<(bool, EntryKind)> = None;
+        let twin = twin_of.get(i).copied().flatten();
         for (pass, &z_mm) in pass_z.iter().enumerate() {
-            // #284: every pass but the last cuts the allowance twin.
-            let k = match twin_of.get(i).copied().flatten() {
-                Some(twin) if pass < last_index => twin,
-                _ => i,
-            };
-            if previous_path != Some(k) {
-                previous_path = Some(k);
-                previous = None;
-            }
-            let (Some((path, shape)), Some(layout)) = (paths.get(k), layouts.get(k)) else {
-                continue;
-            };
-            let path_tabs = match (&tabs, layout) {
-                (Some(tabs), Some((layout, _))) => Some((tabs, layout)),
-                _ => None,
-            };
-            let Some(start) = path.vertices().first().map(|v| v.point()) else {
-                continue;
-            };
-            let below_tabs = below_tabs(z_mm);
-            let led = leads
-                .get(k)
-                .and_then(Option::as_ref)
-                .filter(|l| l.below_tabs || !below_tabs);
-            let led_block = led.and_then(|l| {
-                led_block(shape, pass, z_mm, l, path_tabs, &pass_z, safe_z_mm, rates)
-            });
-            // A lead whose lap would start on a tab (never, since the
-            // arrival is kept off the tabs) is not cut, and nor is the
-            // entry planned for its staging point.
-            let entry_target_lost = led.is_some() && led_block.is_none();
-            let (mut block, on_tab, lap_start_z_mm) = match led_block {
-                Some(block) => (block, false, z_mm),
-                None => {
-                    let Some(lap) = lap_cuts(path, z_mm, path_tabs, rates) else {
+            let block = match (twin, path_at(i)) {
+                // #339: the last pass enters from its twin's kerf.
+                (Some(t), Some(own)) if pass == last_index => {
+                    let Some(twin_path) = path_at(t) else {
                         continue;
                     };
-                    let on_tab = lap.start_z_mm > z_mm + EPS_MM;
-                    let lap_start_z_mm = lap.start_z_mm;
-                    let block =
-                        contour_block(shape, pass, z_mm, start, lap, &pass_z, safe_z_mm, rates);
-                    (block, on_tab || entry_target_lost, lap_start_z_mm)
+                    let entered = last_pass_block(
+                        &ctx,
+                        &LastPassPaths {
+                            own,
+                            twin: twin_path,
+                            reverse: reverse_last,
+                            domain: domains.get(i),
+                            allowance_mm: allowance_mm.unwrap_or(0.0),
+                        },
+                        pass,
+                        z_mm,
+                        &mut previous,
+                        &mut entry_warnings,
+                    )?;
+                    if entered.lead_dropped
+                        && let Some((_, shape)) = paths.get(i)
+                    {
+                        lead_warnings.record_dropped(shape, DropReason::NoRoom);
+                    }
+                    entered.block
+                }
+                // #284: every pass but the last cuts the allowance twin.
+                (_, own) => {
+                    let p = match twin {
+                        Some(t) => path_at(t),
+                        None => own,
+                    };
+                    match p {
+                        Some(p) => {
+                            pass_block(&ctx, &p, pass, z_mm, &mut previous, &mut entry_warnings)?
+                                .map(|(block, _)| block)
+                        }
+                        None => None,
+                    }
                 }
             };
-            // An open path cuts a slot; it frees nothing.
-            block.frees &= path.is_closed();
-            if let Some(entry) = entries.get(k).and_then(Option::as_ref) {
-                let pass_entry = PassEntry {
-                    path,
-                    pass,
-                    z_mm,
-                    below_tabs,
-                    start_z_mm,
-                    tool: entries::tool_for(&setup, k),
-                    tolerance_mm: project.flatten_tolerance_mm,
-                };
-                if on_tab {
-                    // The start sits under a tab span: the lap starts on
-                    // the tab, and the block comes down onto it, never
-                    // into it (#337); only the first pass that reaches the
-                    // tab top there plunges, warned.
-                    if block.descent_from_z_mm - lap_start_z_mm > EPS_MM {
-                        entry_warnings.record(
-                            shape,
-                            &plunged(start, EntryKind::of(&op.entry), FallbackReason::NoRoom),
-                        );
-                    }
-                    previous = Some((false, EntryKind::Plunge));
-                } else {
-                    // #214: the first pass's ramp or helix starts just
-                    // above the stock, not at safe Z.
-                    let from_z_mm = if pass == 0 {
-                        start_z_mm
-                    } else {
-                        block.descent_from_z_mm
-                    };
-                    let (descent, from_z_mm) = entry.descend(&pass_entry, from_z_mm, &mut previous);
-                    entry_warnings.record(shape, &descent);
-                    entry.check(op, shape, &pass_entry, &descent, from_z_mm, domains.get(k))?;
-                    block.descent_from = descent.from;
-                    block.descent_from_z_mm = from_z_mm;
-                    block.descent = descent.moves;
-                }
+            if let Some(block) = block {
+                blocks.push(block);
+                block_paths.push(i);
             }
-            blocks.push(block);
-            block_paths.push(i);
         }
     }
     warnings.extend(entry_warnings.into_warnings(&op.id));
@@ -1793,6 +1822,257 @@ fn contour_block(
     }
 }
 
+/// What every pass block of an operation shares, for [`pass_block`].
+struct PassCtx<'a> {
+    op: &'a ProfileOp,
+    tabs: Option<&'a Tabs>,
+    pass_z: &'a [f64],
+    safe_z_mm: f64,
+    /// Where a descent starts with no pass above it (#214).
+    start_z_mm: f64,
+    rates: LapRates,
+    tolerance_mm: f64,
+}
+
+/// One tool-centre path, as [`pass_block`] cuts it.
+struct PassPath<'p> {
+    path: &'p Polyline,
+    shape: &'p ShapeRef,
+    layout: &'p PathLayout,
+    lead: Option<&'p PathLead>,
+    /// `None` for a plunge, or a block cut with no entry of its own.
+    entry: Option<&'p PathEntry>,
+    domain: Option<&'p PathDomain>,
+    tool: EntryTool,
+}
+
+impl PassPath<'_> {
+    /// Below the tab top, `z_mm` cuts round the tabs.
+    fn below_tabs(ctx: &PassCtx<'_>, z_mm: f64) -> bool {
+        ctx.tabs.is_some_and(|t| z_mm < t.top_z_mm() - EPS_MM)
+    }
+}
+
+/// The block that cuts `p` at pass `pass`, `z_mm`, its descent by `p`'s
+/// entry, and whether it is led in; `None` for a path with no vertices.
+/// `previous` is the entry the path's pass before cut (see
+/// [`PathEntry::descend`]). A lap that starts on a tab comes down onto it,
+/// never into it (#337).
+fn pass_block(
+    ctx: &PassCtx<'_>,
+    p: &PassPath<'_>,
+    pass: usize,
+    z_mm: f64,
+    previous: &mut Option<(bool, EntryKind)>,
+    entry_warnings: &mut EntryWarnings,
+) -> Result<Option<(CutBlock, bool)>, CamError> {
+    let (op, shape, path) = (ctx.op, p.shape, p.path);
+    let path_tabs = match (ctx.tabs, p.layout) {
+        (Some(tabs), Some((layout, _))) => Some((tabs, layout)),
+        _ => None,
+    };
+    let Some(start) = path.vertices().first().map(|v| v.point()) else {
+        return Ok(None);
+    };
+    let below_tabs = PassPath::below_tabs(ctx, z_mm);
+    let led = p.lead.filter(|l| l.below_tabs || !below_tabs);
+    let led_block = led.and_then(|l| {
+        led_block(
+            shape,
+            pass,
+            z_mm,
+            l,
+            path_tabs,
+            ctx.pass_z,
+            ctx.safe_z_mm,
+            ctx.rates,
+        )
+    });
+    // A lead whose lap would start on a tab (never, since the arrival is
+    // kept off the tabs) is not cut, and nor is the entry planned for its
+    // staging point.
+    let entry_target_lost = led.is_some() && led_block.is_none();
+    let is_led = led_block.is_some();
+    let (mut block, on_tab, lap_start_z_mm) = match led_block {
+        Some(block) => (block, false, z_mm),
+        None => {
+            let Some(lap) = lap_cuts(path, z_mm, path_tabs, ctx.rates) else {
+                return Ok(None);
+            };
+            let on_tab = lap.start_z_mm > z_mm + EPS_MM;
+            let lap_start_z_mm = lap.start_z_mm;
+            let block = contour_block(
+                shape,
+                pass,
+                z_mm,
+                start,
+                lap,
+                ctx.pass_z,
+                ctx.safe_z_mm,
+                ctx.rates,
+            );
+            (block, on_tab || entry_target_lost, lap_start_z_mm)
+        }
+    };
+    // An open path cuts a slot; it frees nothing.
+    block.frees &= path.is_closed();
+    if let Some(entry) = p.entry {
+        let pass_entry = PassEntry {
+            path,
+            pass,
+            z_mm,
+            below_tabs,
+            start_z_mm: ctx.start_z_mm,
+            tool: p.tool,
+            tolerance_mm: ctx.tolerance_mm,
+        };
+        if on_tab {
+            // The start sits under a tab span: the lap starts on the tab,
+            // and the block comes down onto it, never into it (#337); only
+            // the first pass that reaches the tab top there plunges, warned.
+            if block.descent_from_z_mm - lap_start_z_mm > EPS_MM {
+                entry_warnings.record(
+                    shape,
+                    &plunged(start, EntryKind::of(&op.entry), FallbackReason::NoRoom),
+                );
+            }
+            *previous = Some((false, EntryKind::Plunge));
+        } else {
+            // #214: the first pass's ramp or helix starts just above the
+            // stock, not at safe Z.
+            let from_z_mm = if pass == 0 {
+                ctx.start_z_mm
+            } else {
+                block.descent_from_z_mm
+            };
+            let (descent, from_z_mm) = entry.descend(&pass_entry, from_z_mm, previous);
+            entry_warnings.record(shape, &descent);
+            entry.check(op, shape, &pass_entry, &descent, from_z_mm, p.domain)?;
+            block.descent_from = descent.from;
+            block.descent_from_z_mm = from_z_mm;
+            block.descent = descent.moves;
+        }
+    }
+    Ok(Some((block, is_led)))
+}
+
+/// A part path's last pass and its allowance twin, for
+/// [`last_pass_block`].
+struct LastPassPaths<'p> {
+    /// The part path, cut by the last pass.
+    own: PassPath<'p>,
+    /// Its allowance twin, cut by every pass before.
+    twin: PassPath<'p>,
+    /// The last pass runs the other way (`LastPass::reverse`).
+    reverse: bool,
+    /// The part path's waste domains; `None` without (Left, Right).
+    domain: Option<&'p PathDomain>,
+    allowance_mm: f64,
+}
+
+/// What [`last_pass_block`] made.
+struct Entered {
+    block: Option<CutBlock>,
+    /// The last pass's lead-in was left off: its staging point lies too far
+    /// from the twin's kerf to step to.
+    lead_dropped: bool,
+}
+
+/// #339: the block of a part path's last pass, entered from its allowance
+/// twin's kerf (`last_pass::enter_from_twin`). The tool descends as one
+/// more pass of the twin would, at the twin's start where the pass before
+/// ended, by the operation's entry: a plunge, a helix rejoining the twin's
+/// bore, or a ramp, which runs along the twin itself, in the kerf every
+/// pass before cut (a Left or Right twin cut from its other end, where a
+/// reversed last pass starts, is ramped from that end). Every plunge then
+/// goes one step-down (or the last pass's thickness) into the twin's floor,
+/// never through the allowance's uncut strip. `previous` is the twin's.
+fn last_pass_block(
+    ctx: &PassCtx<'_>,
+    paths: &LastPassPaths<'_>,
+    pass: usize,
+    z_mm: f64,
+    previous: &mut Option<(bool, EntryKind)>,
+    entry_warnings: &mut EntryWarnings,
+) -> Result<Entered, CamError> {
+    let op = ctx.op;
+    let twin = &paths.twin;
+    // A Left or Right twin, run from the end a reversed last pass starts
+    // beside.
+    let backwards = (paths.reverse && !twin.path.is_closed()).then(|| {
+        (
+            twin.path.reversed(),
+            twin.layout
+                .as_ref()
+                .map(|(l, overlapped)| (l.reversed_open(), *overlapped)),
+        )
+    });
+    let (path, layout) = backwards
+        .as_ref()
+        .map_or((twin.path, twin.layout), |(path, layout)| (path, layout));
+    let along = match op.entry {
+        Entry::Ramp { angle_deg } => Some(PathEntry::Along {
+            angle_deg,
+            clear_mm: layout.as_ref().map_or(f64::INFINITY, |(l, _)| {
+                l.clear_from_start_mm() - entry::boundary_safety_mm(twin.tool.diameter_mm)
+            }),
+        }),
+        _ => None,
+    };
+    // A led twin descends at its lead's staging point, where its passes
+    // before descended too, by the entry planned there.
+    let led = twin
+        .lead
+        .is_some_and(|l| l.below_tabs || !PassPath::below_tabs(ctx, z_mm));
+    let entry = match op.entry {
+        Entry::Ramp { .. } if !led => along.as_ref(),
+        Entry::Ramp { .. } | Entry::Helix { .. } => twin.entry,
+        Entry::Plunge => None,
+    };
+    let twin_pass = PassPath {
+        path,
+        shape: twin.shape,
+        layout,
+        lead: twin.lead,
+        entry,
+        domain: twin.domain,
+        tool: twin.tool,
+    };
+    let own = PassPath {
+        entry: None,
+        ..paths.own
+    };
+    let twin_block = pass_block(ctx, &twin_pass, pass, z_mm, previous, entry_warnings)?;
+    let own_block = pass_block(ctx, &own, pass, z_mm, &mut None, entry_warnings)?;
+    let (Some((twin_block, _)), Some((own_block, own_led))) = (twin_block, own_block) else {
+        return Ok(Entered {
+            block: None,
+            lead_dropped: false,
+        });
+    };
+    let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
+    let fits = |from: Point, to: Point, at_z_mm: f64| {
+        paths.domain.is_none_or(|d| {
+            d.for_pass(PassPath::below_tabs(ctx, at_z_mm))
+                .domain
+                .segment_within(from, to, slack_mm)
+        })
+    };
+    let reach_mm = last_pass::step_reach_mm(own.tool.diameter_mm, paths.allowance_mm);
+    match last_pass::enter_from_twin(&twin_block, own_block, own_led, reach_mm, ctx.rates, &fits) {
+        Some((block, lead_dropped)) => Ok(Entered {
+            block: Some(block),
+            lead_dropped,
+        }),
+        None => Err(CamError::ShapeNarrowerThanAllowance {
+            op: op.id.clone(),
+            shape: own.shape.clone(),
+            diameter_mm: own.tool.diameter_mm,
+            allowance_mm: paths.allowance_mm,
+        }),
+    }
+}
+
 /// A path's lead (`docs/specs/phase-2/design.md`, "Algorithms → Lead-in
 /// and lead-out"): the arc in, the re-seamed contour, the overcut and the
 /// arc out, the same on every pass that cuts it.
@@ -1818,6 +2098,9 @@ struct LeadSetup<'a, 'b> {
     /// The paths whose start is set (#285): a lead arrives there or not
     /// at all.
     fixed: &'a [bool],
+    /// Each allowance twin's part path (#284), by index; `None` for a part
+    /// path. Missing entries are `None`.
+    part_of: &'a [Option<usize>],
 }
 
 /// Each path's lead, in order, or `None` where none fits (or On line).
@@ -1843,8 +2126,26 @@ fn plan_leads(
         };
         let d = setup.diameter_mm;
         let at_start = setup.fixed.get(i).copied().unwrap_or(false);
+        // #339: an allowance twin is led in beside where its part path's
+        // lead arrives, so the last pass, which enters from the twin, finds
+        // its lead's staging point beside the twin's.
+        let beside = setup
+            .part_of
+            .get(i)
+            .copied()
+            .flatten()
+            .filter(|_| !at_start)
+            .and_then(|part| out.get(part))
+            .and_then(Option::as_ref)
+            .map(|part: &PathLead| part.lead_in.arrival());
         let plan_in = |space: &Space| {
             let leads = DomainSpace::new(&space.domain, d, setup.tolerance_mm);
+            if let Some(lead_in) =
+                beside.and_then(|at| lead_in_beside(path, at, setup.lead, d, &leads))
+            {
+                let lead_out = lead::plan_lead_out(&lead_in.seam, setup.lead, d, &leads);
+                return Some((lead_in, lead_out));
+            }
             let lead_in = if at_start {
                 lead::plan_lead_in_at_start(path, setup.lead, d, &leads)
             } else {
@@ -1905,6 +2206,26 @@ fn plan_leads(
         }));
     }
     Ok(out)
+}
+
+/// #339: a lead-in onto the closed `path` arriving at its point nearest
+/// `at` ([`lead::plan_lead_in_at_start`] on the path re-seamed there), its
+/// arrival measured from `path`'s own start; `None` when none fits there.
+fn lead_in_beside(
+    path: &Polyline,
+    at: Point,
+    lead: &Lead,
+    diameter_mm: f64,
+    space: &DomainSpace<'_>,
+) -> Option<LeadIn> {
+    let near = nearest_point(path, at)?;
+    let seamed = lead::reseam_at(path, near.segment, near.along_segment_mm);
+    let mut lead_in = lead::plan_lead_in_at_start(&seamed, lead, diameter_mm, space)?;
+    let length_mm = path.length_mm();
+    if length_mm > EPS_MM {
+        lead_in.arrival_mm = (near.along_mm + lead_in.arrival_mm).rem_euclid(length_mm);
+    }
+    Some(lead_in)
 }
 
 /// S9 for a lead arc planned in `space`: every sample of its tool centre
@@ -5146,7 +5467,6 @@ mod tests {
     /// Acceptance 46: 12 mm stock cut through in 4 mm passes.
     const LAST_STOCK_MM: f64 = 12.0;
     const LAST_PASS_Z_MM: [f64; 3] = [8.0, 4.0, 0.0];
-    const LAST_SAFE_Z_MM: f64 = LAST_STOCK_MM + 5.0;
 
     fn rect_60x40() -> Polyline {
         Polyline::rect(Point::new(0.0, 0.0), 60.0, 40.0)
@@ -5235,19 +5555,32 @@ mod tests {
         range
     }
 
-    /// Where the last pass starts in a one-shape, full-depth-first
-    /// toolpath: the rise to safe Z before the first move below
-    /// `roughing_floor_mm`, the deepest pass before the last.
-    fn last_pass_start(tp: &Toolpath, roughing_floor_mm: f64, safe_z_mm: f64) -> usize {
+    /// Where the last pass leaves its allowance path in a one-shape,
+    /// full-depth-first toolpath (#339): the first move, after the first
+    /// one below `roughing_floor_mm` (the deepest pass before the last),
+    /// that ends nearer `outline` than the allowance path, `r +
+    /// allowance_mm`. The last pass goes down on that path, as one more
+    /// earlier pass would, so the moves before this one keep `r + a`; this
+    /// is its step across the allowance onto its own path, or its lead-in
+    /// arc. (Changed in #339: the rise to safe Z before the last pass,
+    /// which no longer retracts.)
+    fn last_pass_start(
+        tp: &Toolpath,
+        outline: &Polyline,
+        roughing_floor_mm: f64,
+        allowance_mm: f64,
+    ) -> usize {
         let below = tp
             .moves
             .iter()
             .position(|m| m.to.z < roughing_floor_mm - EPS_MM)
             .expect("the last pass goes deeper");
-        tp.moves[..below]
-            .iter()
-            .rposition(|m| m.is_rapid() && m.to.z >= safe_z_mm - EPS_MM)
-            .expect("the last pass starts from safe Z")
+        (below..tp.moves.len())
+            .find(|&k| {
+                let m = &tp.moves[k];
+                !m.is_rapid() && gap_mm(outline, m.to.xy()) < R_MM + allowance_mm - 1e-3
+            })
+            .expect("the last pass reaches its path")
     }
 
     /// Acceptance 46: the first two passes run 0.5 mm farther from the
@@ -5268,7 +5601,7 @@ mod tests {
                 ..op.clone()
             },
         );
-        let laps = laps(&tp);
+        let laps = last_pass_laps(&tp);
         let plain_laps = laps_at(&plain, 0.0);
         assert_eq!(laps.len(), 3);
         for (lap, z) in laps.iter().zip(LAST_PASS_Z_MM) {
@@ -5284,7 +5617,7 @@ mod tests {
         assert_eq!(laps[2].moves, plain_laps[0].moves, "the phase 1 path");
 
         let outline = placed_rect();
-        let split = last_pass_start(&tp, LAST_PASS_Z_MM[1], LAST_SAFE_Z_MM);
+        let split = last_pass_start(&tp, &outline, LAST_PASS_Z_MM[1], ALLOWANCE_MM);
         let (near, far) = gap_range_mm(&outline, tp.moves[0].to, &tp.moves[..split]).unwrap();
         assert_approx_eq!(near, R_MM + ALLOWANCE_MM, TOL);
         assert_approx_eq!(far, R_MM + ALLOWANCE_MM, TOL);
@@ -5292,14 +5625,46 @@ mod tests {
             gap_range_mm(&outline, tp.moves[split].to, &tp.moves[split + 1..]).unwrap();
         assert_approx_eq!(near, R_MM, TOL);
         assert_approx_eq!(far, R_MM, TOL);
-        // The last pass plunges at its own start, through the column the
-        // earlier passes cleared, to the full depth.
-        assert!(
-            tp.moves[split..]
-                .iter()
-                .any(|m| !m.is_rapid() && (m.to.z - 0.0).abs() <= TOL),
-            "the last pass reaches the full depth"
-        );
+        // #339: the last pass plunges where the pass before ended, on the
+        // allowance path, one step-down to the full depth, then steps the
+        // allowance across onto its own path at the feed.
+        let step = tp.moves[split];
+        let plunge = tp.moves[split - 1];
+        let before = tp.moves[split - 2].to;
+        assert_eq!(plunge.feed_mm_min, Some(300.0));
+        assert!(before.xy().distance_to(plunge.to.xy()) <= TOL);
+        assert_approx_eq!(before.z, LAST_PASS_Z_MM[1], TOL);
+        assert_approx_eq!(plunge.to.z, 0.0, TOL);
+        assert_eq!(step.kind, MoveKind::Linear);
+        assert_eq!(step.feed_mm_min, Some(1000.0));
+        assert_approx_eq!(step.to.z, 0.0, TOL);
+        assert_approx_eq!(plunge.to.xy().distance_to(step.to.xy()), ALLOWANCE_MM, 1e-9);
+    }
+
+    /// [`laps`], without the step across the allowance a last pass's lap
+    /// starts with (#339): a lap that starts with a straight move no
+    /// longer than a third of the bit and does not end where it starts.
+    /// (The tests' open paths start with a longer move.)
+    fn last_pass_laps(tp: &Toolpath) -> Vec<Lap> {
+        laps(tp)
+            .into_iter()
+            .map(|mut lap| {
+                // Closed, the lap ends where the step ends; open (Left,
+                // Right) it never closes, and its first real move is long.
+                let last = lap.points[lap.points.len() - 1];
+                let stepped = lap.moves.len() > 1
+                    && lap.moves[0].kind == MoveKind::Linear
+                    && lap.points[0].distance_to(lap.points[1]) <= 6.35 / 3.0 + EPS_MM
+                    && lap.points[0].distance_to(last) > EPS_MM;
+                if stepped {
+                    let (a, b) = (lap.points[0], lap.points[1]);
+                    lap.area_mm2 -= (a.x * b.y - b.x * a.y) / 2.0;
+                    lap.points.remove(0);
+                    lap.moves.remove(0);
+                }
+                lap
+            })
+            .collect()
     }
 
     /// Acceptance 46: `thickness_mm: 1` cuts 4, 8 and 11 mm deep on the
@@ -5315,7 +5680,7 @@ mod tests {
             ..last_pass_op(&p, Side::Outside)
         };
         let (tp, _) = generate(&p, &op);
-        let laps = laps(&tp);
+        let laps = last_pass_laps(&tp);
         let zs: Vec<f64> = laps.iter().map(|l| l.z_mm).collect();
         assert_eq!(laps.len(), 4, "{zs:?}");
         for (z, expected) in zs.iter().zip([8.0, 4.0, 1.0, 0.0]) {
@@ -5334,7 +5699,7 @@ mod tests {
             }),
             ..last_pass_op(&p, Side::Outside)
         };
-        let usual: Vec<f64> = super::tests::laps(&generate(&p, &op).0)
+        let usual: Vec<f64> = last_pass_laps(&generate(&p, &op).0)
             .iter()
             .map(|l| l.z_mm)
             .collect();
@@ -5378,8 +5743,8 @@ mod tests {
             }),
             ..forward.clone()
         };
-        let forward = laps(&generate(&p, &forward).0);
-        let reverse = laps(&generate(&p, &reverse).0);
+        let forward = last_pass_laps(&generate(&p, &forward).0);
+        let reverse = last_pass_laps(&generate(&p, &reverse).0);
         assert_eq!(reverse.len(), 3);
         for (a, b) in forward.iter().zip(&reverse).take(2) {
             assert_eq!(a.moves, b.moves, "the allowance passes are unchanged");
@@ -5714,6 +6079,7 @@ mod tests {
             (Side::Inside, triangle_45()),
             (Side::Outside, triangle_45()),
         ] {
+            let part = at_20_20().apply_polyline(&outline).unwrap();
             let mut p = last_pass_project_of(vec![outline]);
             p.stock.width_mm = 300.0;
             for shape in [TabShape::Rect, TabShape::Smooth] {
@@ -5744,7 +6110,7 @@ mod tests {
                 {
                     let case = format!("{side:?} {shape:?} {case}");
                     let (tp, _) = generate(project, op);
-                    let split = last_pass_start(&tp, 2.0, LAST_SAFE_Z_MM);
+                    let split = last_pass_start(&tp, &part, 2.0, ALLOWANCE_MM);
                     let (worst_mm, standing) = earlier_cuts_into_tabs(&tp, split, 0.0);
                     assert!(
                         standing > 100,
@@ -6020,7 +6386,7 @@ mod tests {
                 };
                 let (tp, _) = generate_profile(&p, &op).unwrap_or_else(|e| panic!("{case}: {e}"));
                 assert_safe(&tp, &p, &Operation::Profile(op.clone()));
-                let split = last_pass_start(&tp, LAST_PASS_Z_MM[1], LAST_SAFE_Z_MM);
+                let split = last_pass_start(&tp, &part, LAST_PASS_Z_MM[1], a);
                 let (near, _) = gap_range_mm(&part, tp.moves[0].to, &tp.moves[..split]).unwrap();
                 assert!(near >= R_MM + a - 1e-3, "{case}: an earlier pass at {near}");
                 let (near, _) =
@@ -6277,7 +6643,7 @@ mod tests {
                 ..op.clone()
             },
         );
-        let laps = laps(&tp);
+        let laps = last_pass_laps(&tp);
         assert_eq!(laps.len(), 3);
         let shrunk = 2.0 * (R_MM + ALLOWANCE_MM);
         for lap in &laps[..2] {
@@ -6288,7 +6654,7 @@ mod tests {
         assert_approx_eq!(laps[2].x_extent_mm(), 60.0 - 6.35, TOL);
         assert_eq!(laps[2].moves, laps_at(&plain, 0.0)[0].moves);
         let outline = placed_rect();
-        let split = last_pass_start(&tp, LAST_PASS_Z_MM[1], LAST_SAFE_Z_MM);
+        let split = last_pass_start(&tp, &outline, LAST_PASS_Z_MM[1], ALLOWANCE_MM);
         let (near, _) = gap_range_mm(&outline, tp.moves[0].to, &tp.moves[..split]).unwrap();
         assert_approx_eq!(near, R_MM + ALLOWANCE_MM, TOL);
         let (near, far) =
@@ -6378,7 +6744,7 @@ mod tests {
                         ..last_pass_op(&p, side)
                     };
                     let (tp, _) = generate(&p, &op);
-                    let split = last_pass_start(&tp, LAST_PASS_Z_MM[1], LAST_SAFE_Z_MM);
+                    let split = last_pass_start(&tp, &outline, LAST_PASS_Z_MM[1], ALLOWANCE_MM);
                     let (near, _) = gap_range_mm(&outline, tp.moves[0].to, &tp.moves[..split])
                         .unwrap_or_else(|| panic!("{case}: the allowance passes cut"));
                     assert!(
@@ -6514,7 +6880,7 @@ mod tests {
                 } else {
                     (80.0, 20.0)
                 };
-                let laps = laps(&tp);
+                let laps = last_pass_laps(&tp);
                 assert_eq!(laps.len(), 3, "{case}: {laps:?}");
                 for (k, (lap, z)) in laps.iter().zip(LAST_PASS_Z_MM).enumerate() {
                     assert_approx_eq!(lap.z_mm, z, TOL);
@@ -6699,6 +7065,7 @@ mod tests {
     #[test]
     fn last_pass_left_right_tabs_keep_off_the_tab_material() {
         for (name, path) in [("L", ell_path()), ("60° V", vee_path(60.0))] {
+            let line = at_20_20().apply_polyline(&path).unwrap();
             let p = last_pass_project_of(vec![path]);
             for side in [Side::Left, Side::Right] {
                 for shape in [TabShape::Rect, TabShape::Smooth] {
@@ -6730,7 +7097,7 @@ mod tests {
                     {
                         let case = format!("{name} {side:?} {shape:?} {how}");
                         let (tp, _) = generate(project, op);
-                        let split = last_pass_start(&tp, 2.0, LAST_SAFE_Z_MM);
+                        let split = last_pass_start(&tp, &line, 2.0, ALLOWANCE_MM);
                         let (worst_mm, standing) = earlier_cuts_into_tabs(&tp, split, 0.0);
                         assert!(
                             standing > 100,
@@ -6766,8 +7133,8 @@ mod tests {
                     }),
                     ..forward.clone()
                 };
-                let f = laps(&generate(&p, &forward).0);
-                let r = laps(&generate(&p, &reverse).0);
+                let f = last_pass_laps(&generate(&p, &forward).0);
+                let r = last_pass_laps(&generate(&p, &reverse).0);
                 assert_eq!(r.len(), 3, "{case}");
                 for (a, b) in f.iter().zip(&r).take(2) {
                     assert_eq!(a.moves, b.moves, "{case}: the earlier passes");
@@ -6896,7 +7263,7 @@ mod tests {
         let op = side_last_pass_op(&p, Side::Right, CutDirection::Climb);
         let (tp, warnings) = generate(&p, &op);
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(laps(&tp).len(), 4 * 3);
+        assert_eq!(last_pass_laps(&tp).len(), 4 * 3);
     }
 
     /// #311 (#324's rule on an open path): a sharp corner is cut. Inside
@@ -6924,7 +7291,7 @@ mod tests {
                     ..side_last_pass_op(&p, side, CutDirection::Climb)
                 };
                 let (tp, _) = generate(&p, &op);
-                let split = last_pass_start(&tp, LAST_PASS_Z_MM[1], LAST_SAFE_Z_MM);
+                let split = last_pass_start(&tp, &line, LAST_PASS_Z_MM[1], a);
                 let (near, far) = gap_range_mm(&line, tp.moves[0].to, &tp.moves[..split]).unwrap();
                 assert!(
                     (near - (R_MM + a)).abs() <= 1e-3 && (far - (R_MM + a)).abs() <= 1e-3,

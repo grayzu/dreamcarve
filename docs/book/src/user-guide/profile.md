@@ -529,13 +529,43 @@ no last pass. With `thickness_mm` 1 the passes are 4, 8, 11 and 12 mm
 deep, and only the 12 mm pass is on the part's path. Cut inside, the
 earlier passes run 0.5 mm farther into the hole instead.
 
-**How it cuts.** The last pass starts at the start of its own path, beside
-where the others started. It is reached by a rapid up to safe Z and a
-rapid down to 1 mm above the stock. With a ramp or a plunge
-[entry](#entry), it plunges at the plunge rate through the slot the
-earlier passes cut down to their floor, then ramps or plunges on to the
-full depth. With a helix, there is no bore of its own to rejoin, so it
-helixes all the way down from 1 mm above the stock.
+**How it cuts.** The allowance stands uncut from the stock top down
+beside the part, so the last pass never goes straight down at its own
+start. It enters the way one more earlier pass would: where the earlier
+passes ended, it goes down into their floor with the operation's
+[entry](#entry), then steps across the allowance onto its own path.
+
+- A **plunge** goes one step-down deep (or `thickness_mm` deep), into
+  the floor of the earlier passes' cut.
+- A **ramp** runs back and forth along the earlier passes' path, inside
+  the slot they cut, at the ramp angle, and comes back to where it
+  started.
+- A **helix** goes back into the bore the earlier passes' helix cut and
+  helixes down one more step.
+- Then, at the full depth, the bit moves at the feed rate straight across
+  the allowance onto the last pass's path, which starts beside where the
+  earlier passes start, and cuts its lap. The step is short: the
+  allowance, or the wedge in a corner.
+- With a [lead](#leads), the earlier passes are led in beside where the
+  last pass's lead comes in, so the bit goes down at their lead's start
+  and steps across to the last pass's. If that is too far to step (the
+  earlier passes' lead had to be made smaller), the last pass's lead-in
+  is left off and `lead_dropped` warns; its lead-out is kept.
+
+- If the last pass's path starts on a tab, the step runs at the height
+  its lap starts at there, so it stays above the tab. On a smooth tab's
+  slope, where the earlier passes ran higher, it steps across at their
+  height and comes down onto the slope.
+
+So no plunge goes deeper into uncut material than a step-down, whatever
+the entry. One case is left: with a tab taller than the step-down, the
+last pass still comes down the tab's height in one move at a rect tab's
+far end, or at a start low on a smooth tab's slope
+([#348](https://github.com/grayzu/dreamcarve/issues/348)). Keep tabs
+no taller than the step-down when you use a last pass. (Changed in
+#339: the last pass plunged at its own start
+from 1 mm above the stock down to the earlier passes' floor, through the
+allowance, which with a plunge entry meant the full depth.)
 
 **With tabs**, the tabs are laid on the last pass's path, so they are
 where they would be without a last pass. Each earlier pass rises over
@@ -619,7 +649,12 @@ pass. Every pass runs from X 20 to X 80.
   last pass starts at the other end, where the earlier passes finished,
   and mills the other way: conventional after climbing passes, or climb
   after conventional ones.
-- **Ramps, tabs and leads.** Each pass ramps along its own path. Tabs are
+- **Ramps, tabs and leads.** Each earlier pass ramps along its own path.
+  The last pass goes down on the earlier passes' path, ramping along it
+  (or plunging one step), then steps across the allowance on the line
+  square to the path at its starting end, as on an outline; with
+  `reverse` it goes down at the end where the earlier passes finished,
+  so it does not retract first. Tabs are
   laid on the last pass's path, measured from the end beside the first
   vertex as always, and each earlier pass rises over every point where
   its cutter could reach them, as on an outline; a tab at an end of the

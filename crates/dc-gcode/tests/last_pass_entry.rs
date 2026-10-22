@@ -25,8 +25,8 @@ use dc_gcode::transform::MachineTransform;
 use dc_geometry::{Arc, Point, Point3, Polyline, Transform, Vec2, Vertex, nearest_point};
 use dc_project::test_support::sample_project;
 use dc_project::{
-    CutDirection, Entry, LastPass, Lead, Operation, ProfileOp, Project, Side, Stock, TabPlacement,
-    TabShape, TabSpec,
+    CutDirection, Entry, LastPass, Lead, Operation, Project, Side, Stock, TabPlacement, TabShape,
+    TabSpec,
 };
 
 const STOCK_MM: f64 = 12.0;
@@ -149,7 +149,7 @@ struct Case {
     allowance_mm: f64,
     thickness_mm: Option<f64>,
     reverse: bool,
-    tabs: Option<TabShape>,
+    tabs: Option<TabSpec>,
 }
 
 impl Case {
@@ -164,6 +164,8 @@ impl Case {
             self.thickness_mm,
             self.reverse,
             self.tabs
+                .as_ref()
+                .map(|t| (t.shape, t.height_mm, t.placement.clone()))
         )
     }
 
@@ -188,20 +190,25 @@ impl Case {
         op.step_down_mm = Some(STEP_DOWN_MM);
         op.entry = self.entering.entry();
         op.lead = self.entering.lead();
-        op.tabs = self.tabs.map(|shape| TabSpec {
-            placement: TabPlacement::Count { count: 2 },
-            width_mm: 6.0,
-            height_mm: 3.0,
-            shape,
-            on_holes: false,
-            avoid_corners: false,
-        });
+        op.tabs.clone_from(&self.tabs);
         op.last_pass = last_pass.then_some(LastPass {
             allowance_mm: self.allowance_mm,
             thickness_mm: self.thickness_mm,
             reverse: self.reverse,
         });
         project
+    }
+}
+
+/// Two 6 × 3 mm tabs of `shape`, no taller than a step-down.
+fn two_tabs(shape: TabShape) -> TabSpec {
+    TabSpec {
+        placement: TabPlacement::Count { count: 2 },
+        width_mm: 6.0,
+        height_mm: 3.0,
+        shape,
+        on_holes: false,
+        avoid_corners: false,
     }
 }
 
@@ -440,10 +447,6 @@ fn check(case: &Case) -> Option<Measured> {
         }
         heights.sweep(cut, RADIUS_MM);
     }
-    if std::env::var_os("DC_MEASURE").is_some() {
-        println!("{name}: deepest plunge {deepest_plunge_mm:.3} mm");
-        return Some(Measured { deepest_plunge_mm });
-    }
     assert!(
         deepest_plunge_mm <= STEP_DOWN_MM + DEPTH_TOL_MM,
         "{name}: a plunge goes {deepest_plunge_mm} mm into uncut material, more than the {STEP_DOWN_MM} mm step-down"
@@ -588,7 +591,7 @@ fn last_pass_entry_keeps_the_tabs() {
                     allowance_mm: 0.5,
                     thickness_mm: None,
                     reverse,
-                    tabs: Some(shape),
+                    tabs: Some(two_tabs(shape)),
                 };
                 let refused = check(&case).is_none();
                 assert!(
@@ -601,13 +604,61 @@ fn last_pass_entry_keeps_the_tabs() {
     }
 }
 
+/// A 60 mm open line from (60, 50) along +X.
+fn line() -> Drawing {
+    Drawing {
+        name: "line",
+        profile: Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(60.0, 0.0)], false),
+        at: (60.0, 50.0),
+    }
+}
+
+/// #339 with #337: a last pass that starts on a tab. The 60 mm line cut
+/// Left and Right with 8 × 3 mm tabs 3 mm from each end of the last
+/// pass's path, rect and smooth, from either end, with a plunge and a
+/// ramp: the allowance passes and the last pass both start on a tab, the
+/// smooth one partway up its slope, where the last pass comes down from
+/// the allowance pass's height after its step. The checks of
+/// [`last_pass_entry_keeps_the_tabs`] hold, and every case is cut.
+#[test]
+fn last_pass_entry_starting_on_a_tab() {
+    for side in [Side::Left, Side::Right] {
+        for entering in [Entering::Plunge, Entering::Ramp] {
+            for shape in [TabShape::Rect, TabShape::Smooth] {
+                for reverse in [false, true] {
+                    let case = Case {
+                        drawing: line(),
+                        side,
+                        direction: CutDirection::Climb,
+                        entering,
+                        allowance_mm: 0.5,
+                        thickness_mm: None,
+                        reverse,
+                        tabs: Some(TabSpec {
+                            placement: TabPlacement::AtDistances {
+                                distances_mm: vec![3.0, 57.0],
+                            },
+                            width_mm: 8.0,
+                            ..two_tabs(shape)
+                        }),
+                    };
+                    assert!(check(&case).is_some(), "{} is refused", case.name());
+                }
+            }
+        }
+    }
+}
+
 /// #339: projects without a last pass export what they did before: every
 /// case of [`matrix`] with `last_pass` unset is compared with the program
 /// the generator wrote before this change, through its fingerprint.
 #[test]
 fn no_last_pass_programs_are_unchanged() {
     let mut fingerprint: u64 = 0xcbf2_9ce4_8422_2325;
-    for case in matrix().iter().filter(|c| c.allowance_mm == 0.5) {
+    for case in matrix()
+        .iter()
+        .filter(|c| (c.allowance_mm - 0.5).abs() < 1e-9)
+    {
         let Some((text, _)) = program(&case.project(false)) else {
             continue;
         };

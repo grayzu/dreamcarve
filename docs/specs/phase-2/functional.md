@@ -939,7 +939,19 @@ built (design addendum, "Order and format versions").
     apply to the path, a stretch at an end the earlier passes stop short
     of counting as no corner, and the earlier passes must keep the bit's
     radius plus the allowance from every other line and every kept
-    strip.)
+    strip. Changed again in #339: the last pass enters as one more
+    earlier pass would, never straight down through the allowance,
+    which stands uncut to the stock top beside the part. It goes down
+    into the earlier passes' floor where they ended, with the
+    operation's entry (a plunge one step-down or `thickness_mm` deep, a
+    ramp along the earlier passes' own path inside their kerf, or a
+    helix in their bore), then steps across the allowance at the feed
+    onto its own path, whose start is beside theirs. So every plunge
+    into uncut material is at most the step-down, whatever the entry.
+    With a lead, the earlier passes are led in beside the last pass's
+    lead and the step joins the two staging points; a last pass lead-in
+    that starts too far from their cut is left off with
+    `lead_dropped`.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 
@@ -1083,4 +1095,7 @@ built (design addendum, "Order and format versions").
   than the square corner's. Changed in #311: on a Left or Right Profile
   every pass but the last runs on the targets' open paths offset by
   `r + allowance_mm` to the side, and every pass keeps `r` from every open
-  path and kept edge, as without a last pass.)
+  path and kept edge, as without a last pass. Changed in #339: the last
+  pass's step across the allowance, from the path the earlier passes cut
+  to its own, may run between the two, on Left and Right too, still `r`
+  from every open path and kept edge.)
