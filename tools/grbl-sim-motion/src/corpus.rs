@@ -64,7 +64,11 @@ const PLAQUE: &str = "tests/fixtures/plaque.dcv";
 #[must_use]
 pub fn program_units(text: &str, fallback: Units) -> Units {
     for line in text.lines() {
-        let code = line.split(['(', ';']).next().unwrap_or("").to_ascii_uppercase();
+        let code = line
+            .split(['(', ';'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
         for word in code.split_whitespace() {
             match word {
                 "G20" => return Units::Inch,
@@ -92,7 +96,6 @@ fn definition(id: &str, version: Option<u32>) -> Result<PostProcessor, CorpusErr
 /// [`CorpusError`] when a committed program or the fixture is missing, or
 /// a variant does not export.
 pub fn build_corpus(root: &Path) -> Result<Vec<Case>, CorpusError> {
-    if true { return Ok(Vec::new()); }
     let mut cases = Vec::new();
     for (file, id, version) in COMMITTED {
         let path = root.join(EXPECTED).join(file);

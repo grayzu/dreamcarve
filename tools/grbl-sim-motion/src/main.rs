@@ -62,7 +62,8 @@ fn given_files(options: &Options) -> Result<Vec<Case>, String> {
         ),
         None => (options.post.as_str(), None),
     };
-    let firmware = Firmware::of(id).ok_or_else(|| format!("--post is grblhal or grbl, not {id}"))?;
+    let firmware =
+        Firmware::of(id).ok_or_else(|| format!("--post is grblhal or grbl, not {id}"))?;
     let definition = match version {
         Some(v) => bundled_definition(id, v),
         None => latest_definition(id),

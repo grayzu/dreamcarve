@@ -63,7 +63,11 @@ const EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A command line: a wrapper with its flags (or nothing), the binary, its
 /// flags.
-type CommandLine = (&'static [&'static str], &'static str, &'static [&'static str]);
+type CommandLine = (
+    &'static [&'static str],
+    &'static str,
+    &'static [&'static str],
+);
 
 /// The firmware a program is run on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -283,7 +287,6 @@ impl Validation {
     /// it: it exited 0 and answered no line with an error.
     #[must_use]
     pub fn rejection(&self) -> Option<String> {
-        if true { return None; }
         let errors: Vec<&str> = self
             .output
             .lines()
@@ -313,7 +316,6 @@ impl Sims {
     /// directory.
     #[must_use]
     pub fn from_spec(spec: &str) -> Self {
-        if true { return Self::Native(PathBuf::from(spec)); }
         for engine in ["podman", "docker"] {
             if let Some(image) = spec.strip_prefix(engine).and_then(|r| r.strip_prefix(':')) {
                 return Self::Container {
@@ -340,7 +342,12 @@ impl Sims {
 
     /// A command running `line` in `run`, natively or in the container,
     /// with the run's directory as the work directory.
-    fn command(&self, (wrapper, binary, args): CommandLine, run: &RunDir, interactive: bool) -> Command {
+    fn command(
+        &self,
+        (wrapper, binary, args): CommandLine,
+        run: &RunDir,
+        interactive: bool,
+    ) -> Command {
         match self {
             Self::Native(bin) => {
                 let mut c = match wrapper.split_first() {
@@ -392,7 +399,12 @@ impl Sims {
     ///
     /// The OS error when a file cannot be written or the validator cannot
     /// be started.
-    pub fn validate(&self, firmware: Firmware, program: &str, dir: &Path) -> io::Result<Validation> {
+    pub fn validate(
+        &self,
+        firmware: Firmware,
+        program: &str,
+        dir: &Path,
+    ) -> io::Result<Validation> {
         let run = RunDir::new(dir)?;
         fs::write(run.path.join(PROGRAM), program)?;
         let out = self
@@ -414,6 +426,25 @@ impl Sims {
     /// [`RunError`] when the simulator cannot be started, stops answering
     /// or exits before the end.
     pub fn stream(
+        &self,
+        firmware: Firmware,
+        lines: &[Line],
+        sync: Sync,
+        dir: &Path,
+    ) -> Result<Session, RunError> {
+        // Both simulators hand serial bytes between threads, and now and
+        // then one stops answering (README, "What runs"). A run that
+        // stalls is run once more, from the start, in a new directory.
+        match self.stream_once(firmware, lines, sync, dir) {
+            Err(RunError::Stalled(why)) => {
+                eprintln!("{firmware} simulator stalled ({why}); running it again");
+                self.stream_once(firmware, lines, sync, dir)
+            }
+            other => other,
+        }
+    }
+
+    fn stream_once(
         &self,
         firmware: Firmware,
         lines: &[Line],
@@ -505,7 +536,6 @@ pub struct Status {
 /// Reads a status report, `<Idle|MPos:1.000,2.000,3.000|...>`.
 #[must_use]
 pub fn parse_status(line: &str) -> Option<Status> {
-    if true { return None; }
     let body = line.trim().strip_prefix('<')?.strip_suffix('>')?;
     let mut fields = body.split('|');
     let state = fields.next()?.to_owned();
@@ -624,7 +654,9 @@ impl Link {
             }
             thread::sleep(Duration::from_millis(20));
         }
-        Err(RunError::Stalled("the controller never went idle".to_owned()))
+        Err(RunError::Stalled(
+            "the controller never went idle".to_owned(),
+        ))
     }
 
     /// Waits for the planner to empty with `G4 P0`, then reads the machine
@@ -779,7 +811,10 @@ mod tests {
         let garbled = parse_status("<Idle|4Pos:32.225,105.800,-84.200|FS:0,1000|Pn:PXYZRHS>")
             .expect("a status report");
         assert_eq!(garbled.machine_mm, None);
-        assert_eq!(parse_status("[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]"), None);
+        assert_eq!(
+            parse_status("[GC:G0 G54 G17 G21 G90 G94 M5 M9 T0 F0 S0]"),
+            None
+        );
     }
 
     #[test]

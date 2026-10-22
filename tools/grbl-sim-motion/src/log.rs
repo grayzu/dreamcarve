@@ -15,7 +15,6 @@ use dc_gcode::parse::MotionKind;
 /// The words of a `$G` report, or `None` if `line` is not one.
 #[must_use]
 pub fn parse_modal_state(line: &str) -> Option<Vec<String>> {
-    if true { return None; }
     let body = line.trim().strip_prefix("[GC:")?.strip_suffix(']')?;
     Some(body.split_whitespace().map(str::to_owned).collect())
 }
@@ -24,7 +23,6 @@ pub fn parse_modal_state(line: &str) -> Option<Vec<String>> {
 /// report without one.
 #[must_use]
 pub fn motion_mode(modal: &[String]) -> Option<MotionKind> {
-    if true { return None; }
     modal.iter().find_map(|w| match w.as_str() {
         "G0" => Some(MotionKind::Rapid),
         "G1" => Some(MotionKind::Linear),
@@ -40,7 +38,6 @@ pub fn motion_mode(modal: &[String]) -> Option<MotionKind> {
 /// program set: both firmwares hold the feed in mm/min.
 #[must_use]
 pub fn feed(modal: &[String]) -> Option<(f64, f64)> {
-    if true { return None; }
     let text = modal.iter().find_map(|w| w.strip_prefix('F'))?;
     let value: f64 = text.parse().ok()?;
     let decimals = text.split_once('.').map_or(0, |(_, d)| d.len());
@@ -57,10 +54,9 @@ mod tests {
     /// and a header with `G50`, and as grbl-sim printed it after `G21 G90`.
     #[test]
     fn reads_modal_state_reports() {
-        let hal = parse_modal_state(
-            "[GC:G0 G54 G17 G21 G90 G94 G40 G49 G98 G51:Z M5 M9 T0 F600 S0.]",
-        )
-        .expect("a report");
+        let hal =
+            parse_modal_state("[GC:G0 G54 G17 G21 G90 G94 G40 G49 G98 G51:Z M5 M9 T0 F600 S0.]")
+                .expect("a report");
         assert!(hal.iter().any(|w| w == "G51:Z"));
         assert_eq!(motion_mode(&hal), Some(MotionKind::Rapid));
         let grbl =

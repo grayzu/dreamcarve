@@ -67,7 +67,6 @@ pub struct Target {
 /// The moves in `events`, DreamCarve's reading, in machine millimetres.
 #[must_use]
 pub fn targets(events: &[RefEvent], frame: &Frame) -> Vec<Target> {
-    if true { return Vec::new(); }
     let mut out = Vec::new();
     let mut at: [Option<f64>; 3] = [None; 3];
     for event in events {
@@ -198,7 +197,6 @@ pub fn line_ends(targets: &[Target]) -> BTreeMap<usize, Target> {
 /// had finished the line's motion.
 #[must_use]
 pub fn compare_lines(targets: &[Target], observed: &[(usize, Settled)]) -> Comparison {
-    if true { return Comparison::default(); }
     let ends = line_ends(targets);
     let mut out = Comparison {
         moves: targets.len(),
@@ -252,7 +250,6 @@ pub fn compare_lines(targets: &[Target], observed: &[(usize, Settled)]) -> Compa
 /// not where DreamCarve reads the program ending.
 #[must_use]
 pub fn compare_final(targets: &[Target], actual: &[f64; 3]) -> Option<Difference> {
-    if true { return None; }
     let known = line_ends(targets)
         .last_key_value()
         .map_or([None; 3], |(_, t)| t.to);
@@ -295,7 +292,9 @@ mod tests {
     /// What the pinned grblHAL Simulator reported for [`PROGRAM`] under the
     /// harness's offset, line by line.
     fn reported() -> Vec<(usize, Settled)> {
-        let gc = |m: &str, f: &str| format!("[GC:{m} G54 G17 G21 G90 G94 G40 G49 G98 G50 M5 M9 T0 F{f} S0.]");
+        let gc = |m: &str, f: &str| {
+            format!("[GC:{m} G54 G17 G21 G90 G94 G40 G49 G98 G50 M5 M9 T0 F{f} S0.]")
+        };
         vec![
             (2, settled([0.0, 0.0, -71.2], &gc("G0", "0"))),
             (3, settled([35.4, 60.8, -71.2], &gc("G0", "0"))),
@@ -322,8 +321,8 @@ mod tests {
         let mut r = reported();
         r[2].1.position_mm[2] = -77.3;
         r[4].1.position_mm[2] = -81.2;
-        r[3].1.modal = parse_modal_state("[GC:G3 G54 G17 G21 G90 G94 M5 M9 T0 F60 S0]")
-            .expect("a report");
+        r[3].1.modal =
+            parse_modal_state("[GC:G3 G54 G17 G21 G90 G94 M5 M9 T0 F60 S0]").expect("a report");
         let c = compare_lines(&ours(PROGRAM), &r);
         let at = |line: usize| -> Vec<&str> {
             c.differences
@@ -332,10 +331,26 @@ mod tests {
                 .map(|d| d.what.as_str())
                 .collect()
         };
-        assert!(at(4).iter().any(|w| w.contains("Z -77.2000 vs -77.3000")), "{:#?}", c.differences);
-        assert!(at(6).iter().any(|w| w.contains("Z -5.0000 vs -81.2000")), "{:#?}", c.differences);
-        assert!(at(5).iter().any(|w| w.contains("motion mode ArcCw")), "{:#?}", c.differences);
-        assert!(at(5).iter().any(|w| w.contains("F 600 vs")), "{:#?}", c.differences);
+        assert!(
+            at(4).iter().any(|w| w.contains("Z -77.2000 vs -77.3000")),
+            "{:#?}",
+            c.differences
+        );
+        assert!(
+            at(6).iter().any(|w| w.contains("Z -5.0000 vs -81.2000")),
+            "{:#?}",
+            c.differences
+        );
+        assert!(
+            at(5).iter().any(|w| w.contains("motion mode ArcCw")),
+            "{:#?}",
+            c.differences
+        );
+        assert!(
+            at(5).iter().any(|w| w.contains("F 600 vs")),
+            "{:#?}",
+            c.differences
+        );
     }
 
     #[test]

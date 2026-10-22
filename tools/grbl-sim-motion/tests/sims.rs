@@ -58,9 +58,8 @@ fn sims_or_skip(test: &str, firmware: Firmware) -> Option<(Sims, PathBuf)> {
         return None;
     };
     let dir = work_dir(test);
-    if let Err(why) = probe(firmware, &sims, &dir) {
-        panic!("{test}: {why}");
-    }
+    let probed = probe(firmware, &sims, &dir);
+    assert!(probed.is_ok(), "{test}: {probed:?}");
     Some((sims, dir))
 }
 
@@ -125,7 +124,9 @@ fn corpus_covers_each_controller_and_feature() {
         );
     }
     for case in &cases {
-        for cycle in ["G73", "G81", "G82", "G83", "G85", "G86", "G89", "G98", "G99"] {
+        for cycle in [
+            "G73", "G81", "G82", "G83", "G85", "G86", "G89", "G98", "G99",
+        ] {
             assert!(
                 !has_word(case, cycle),
                 "{}: {cycle}: GRBL has no canned cycles, and no grblHAL or GRBL definition \
@@ -147,10 +148,9 @@ fn grbl_validator_accepts_the_corpus() {
     let failures: Vec<String> = of(Firmware::Grbl)
         .iter()
         .filter_map(|case| {
-            match validate(&case.text, Firmware::Grbl, &sims, &dir).expect("the validator runs") {
-                None => None,
-                Some(why) => Some(format!("{}: {why}", case.name)),
-            }
+            validate(&case.text, Firmware::Grbl, &sims, &dir)
+                .expect("the validator runs")
+                .map(|why| format!("{}: {why}", case.name))
         })
         .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -160,8 +160,7 @@ fn grbl_validator_accepts_the_corpus() {
 /// rejected (error 33, invalid target).
 #[test]
 fn grbl_validator_rejects_a_bad_arc() {
-    let Some((sims, dir)) = sims_or_skip("grbl_validator_rejects_a_bad_arc", Firmware::Grbl)
-    else {
+    let Some((sims, dir)) = sims_or_skip("grbl_validator_rejects_a_bad_arc", Firmware::Grbl) else {
         return;
     };
     let why = validate(
@@ -171,7 +170,10 @@ fn grbl_validator_rejects_a_bad_arc() {
         &dir,
     )
     .expect("the validator runs");
-    assert!(why.as_ref().is_some_and(|w| w.contains("error:33")), "{why:?}");
+    assert!(
+        why.as_ref().is_some_and(|w| w.contains("error:33")),
+        "{why:?}"
+    );
 }
 
 /// GRBL refuses a canned cycle (error 20, unsupported command), which is
@@ -188,7 +190,10 @@ fn grbl_rejects_canned_cycles() {
         &dir,
     )
     .expect("the validator runs");
-    assert!(why.as_ref().is_some_and(|w| w.contains("error:20")), "{why:?}");
+    assert!(
+        why.as_ref().is_some_and(|w| w.contains("error:20")),
+        "{why:?}"
+    );
 }
 
 fn assert_check_mode_accepts(firmware: Firmware, test: &str) {
@@ -225,8 +230,7 @@ fn grbl_check_mode_accepts_the_corpus() {
 /// error 33 on grblHAL too.
 #[test]
 fn grblhal_check_mode_rejects_a_bad_arc() {
-    let Some((sims, dir)) =
-        sims_or_skip("grblhal_check_mode_rejects_a_bad_arc", Firmware::GrblHal)
+    let Some((sims, dir)) = sims_or_skip("grblhal_check_mode_rejects_a_bad_arc", Firmware::GrblHal)
     else {
         return;
     };
@@ -249,7 +253,10 @@ fn assert_motion_matches(firmware: Firmware, test: &str) {
     for case in of(firmware) {
         match check_motion(&case, &sims, &dir) {
             Verdict::Compared(c) if c.differences.is_empty() => {
-                eprintln!("{test}: {}: {} moves, {} checked", case.name, c.moves, c.checked);
+                eprintln!(
+                    "{test}: {}: {} moves, {} checked",
+                    case.name, c.moves, c.checked
+                );
             }
             Verdict::Compared(c) => failures.push(format!("{}: {:#?}", case.name, c.differences)),
             Verdict::Rejected(why) => {
@@ -283,9 +290,10 @@ fn grbl_sim_motion_matches_dreamcarve() {
 /// original.
 #[test]
 fn a_cut_the_simulator_makes_deeper_is_reported() {
-    let Some((sims, dir)) =
-        sims_or_skip("a_cut_the_simulator_makes_deeper_is_reported", Firmware::GrblHal)
-    else {
+    let Some((sims, dir)) = sims_or_skip(
+        "a_cut_the_simulator_makes_deeper_is_reported",
+        Firmware::GrblHal,
+    ) else {
         return;
     };
     let case = of(Firmware::GrblHal)
@@ -358,15 +366,25 @@ fn assert_header_sets_the_modal_state(firmware: Firmware, prelude: &[&str], test
             .expect("the header runs");
         for mode in &modes {
             if !state.contains(mode) {
-                failures.push(format!("{}: header {mode}, but $G reports {state:?}", case.name));
+                failures.push(format!(
+                    "{}: header {mode}, but $G reports {state:?}",
+                    case.name
+                ));
             }
         }
         for left in ["G91", "G18", "G55", "G93", "G81"] {
             if state.iter().any(|w| w == left) {
-                failures.push(format!("{}: {left} survives the header: {state:?}", case.name));
+                failures.push(format!(
+                    "{}: {left} survives the header: {state:?}",
+                    case.name
+                ));
             }
         }
-        let units = if modes.iter().any(|m| m == "G20") { "G20" } else { "G21" };
+        let units = if modes.iter().any(|m| m == "G20") {
+            "G20"
+        } else {
+            "G21"
+        };
         if !state.iter().any(|w| w == units) {
             failures.push(format!("{}: $G reports {state:?}, not {units}", case.name));
         }
@@ -401,7 +419,10 @@ fn grblhal_v4_header() -> Vec<Line> {
         .into_iter()
         .find(|c| c.name.ends_with("/coaster-grblhal.nc"))
         .expect("the grblHAL coaster is in the corpus");
-    assert!(has_word(&case, "G50"), "the latest grblHAL header writes G50");
+    assert!(
+        has_word(&case, "G50"),
+        "the latest grblHAL header writes G50"
+    );
     header_lines(&case.text)
 }
 
@@ -409,9 +430,10 @@ fn grblhal_v4_header() -> Vec<Line> {
 /// definitions README says it does ("Scaling on grblHAL").
 #[test]
 fn grblhal_g50_clears_a_scale_that_includes_x() {
-    let Some((sims, dir)) =
-        sims_or_skip("grblhal_g50_clears_a_scale_that_includes_x", Firmware::GrblHal)
-    else {
+    let Some((sims, dir)) = sims_or_skip(
+        "grblhal_g50_clears_a_scale_that_includes_x",
+        Firmware::GrblHal,
+    ) else {
         return;
     };
     let header = grblhal_v4_header();

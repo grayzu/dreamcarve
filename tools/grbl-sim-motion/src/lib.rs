@@ -89,7 +89,6 @@ impl Verdict {
 /// The lines of `text` to send, numbered from 1, blank lines left out.
 #[must_use]
 pub fn program_lines(text: &str) -> Vec<Line> {
-    if true { return Vec::new(); }
     text.lines()
         .enumerate()
         .filter(|(_, l)| !l.trim().is_empty())
@@ -101,7 +100,10 @@ pub fn program_lines(text: &str) -> Vec<Line> {
 }
 
 fn code(line: &str) -> String {
-    line.split(['(', ';']).next().unwrap_or("").to_ascii_uppercase()
+    line.split(['(', ';'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase()
 }
 
 fn has_word(line: &str, word: &str) -> bool {
@@ -113,7 +115,6 @@ fn has_word(line: &str, word: &str) -> bool {
 /// state for cycle start. GRBL has no `M6`, and no GRBL program writes one.
 #[must_use]
 pub fn pauses(text: &str) -> usize {
-    if true { return 0; }
     text.lines()
         .filter(|l| has_word(l, "M0") || has_word(l, "M6"))
         .count()
@@ -123,14 +124,12 @@ pub fn pauses(text: &str) -> usize {
 /// the spindle.
 #[must_use]
 pub fn header_lines(text: &str) -> Vec<Line> {
-    if true { return Vec::new(); }
     program_lines(text)
         .into_iter()
         .take_while(|l| {
             let c = code(&l.text);
-            !c.split_whitespace().any(|w| {
-                w.starts_with(['X', 'Y', 'Z']) || matches!(w, "M3" | "M4" | "M0" | "G4")
-            })
+            !c.split_whitespace()
+                .any(|w| w.starts_with(['X', 'Y', 'Z']) || matches!(w, "M3" | "M4" | "M0" | "G4"))
         })
         .collect()
 }
@@ -147,7 +146,6 @@ pub fn validate(
     sims: &Sims,
     dir: &Path,
 ) -> Result<Option<String>, String> {
-    if true { return Err("not implemented".to_owned()); }
     let run = sims
         .validate(firmware, text, dir)
         .map_err(|e| format!("cannot run {firmware}'s validator from {sims}: {e}"))?;
@@ -170,7 +168,6 @@ fn session_rejection(session: &Session) -> Option<String> {
 /// with DreamCarve's reading.
 #[must_use]
 pub fn check_motion(case: &Case, sims: &Sims, dir: &Path) -> Verdict {
-    if true { return Verdict::Failed("not implemented".to_owned()); }
     match run_motion(case, sims, dir) {
         Ok(v) => v,
         Err(why) => Verdict::Failed(why),
@@ -233,7 +230,6 @@ fn run_motion(case: &Case, sims: &Sims, dir: &Path) -> Result<Verdict, String> {
 ///
 /// Why the simulator could not be run.
 pub fn check_mode(case: &Case, sims: &Sims, dir: &Path) -> Result<Vec<String>, String> {
-    if true { return Err("not implemented".to_owned()); }
     let mut lines = vec![Line::harness("$C")];
     lines.extend(program_lines(&case.text));
     let session = sims
@@ -268,7 +264,6 @@ pub fn modal_state_after(
     sims: &Sims,
     dir: &Path,
 ) -> Result<Vec<String>, String> {
-    if true { return Err("not implemented".to_owned()); }
     let mut lines: Vec<Line> = prelude.iter().map(|l| Line::harness(l)).collect();
     lines.extend(header.iter().cloned());
     lines.push(Line::harness("$G"));
@@ -294,7 +289,6 @@ pub fn modal_state_after(
 ///
 /// Why the probe failed, starting "misconfigured".
 pub fn probe(firmware: Firmware, sims: &Sims, dir: &Path) -> Result<(), String> {
-    if true { return Err("not implemented".to_owned()); }
     let post: PostProcessor = latest_definition(firmware.definition_id())
         .map_err(|e| e.to_string())?
         .post_processor()
@@ -308,7 +302,9 @@ pub fn probe(firmware: Firmware, sims: &Sims, dir: &Path) -> Result<(), String> 
     };
     match check_motion(&case, sims, dir) {
         Verdict::Compared(c) if c.differences.is_empty() && c.moves == 1 => Ok(()),
-        other => Err(format!("misconfigured: {firmware} probe G0 X1 Y2 Z3: {other:?}")),
+        other => Err(format!(
+            "misconfigured: {firmware} probe G0 X1 Y2 Z3: {other:?}"
+        )),
     }
 }
 
