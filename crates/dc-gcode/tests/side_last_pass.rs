@@ -550,6 +550,7 @@ fn left_right_last_pass_keeps_the_tabs() {
                     height_mm: 6.0,
                     shape,
                     on_holes: false,
+                    avoid_corners: false,
                 });
                 if let Some(last_pass) = &mut op.last_pass {
                     last_pass.reverse = reverse;

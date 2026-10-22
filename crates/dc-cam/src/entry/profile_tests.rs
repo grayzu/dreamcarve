@@ -141,6 +141,7 @@ fn op(p: &Project, side: Side, entry: Entry) -> ProfileOp {
         lead: None,
         corner_relief: CornerRelief::None,
         last_pass: None,
+        start: dc_project::StartAt::Auto,
     }
 }
 
@@ -491,6 +492,7 @@ fn tabs_are_kept_out_of_the_entry() {
         height_mm: tab_top_mm,
         shape: TabShape::Rect,
         on_holes: false,
+        avoid_corners: false,
     });
     // How far the cutter at `s` reaches into the tab: the tab is the kerf
     // over its stretch, the stretch grown by r; the cutter adds r more.

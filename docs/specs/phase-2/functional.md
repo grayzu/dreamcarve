@@ -950,7 +950,12 @@ built (design addendum, "Order and format versions").
     (<https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/MFG-REF-2D-CONTOUR-TABS.htm>);
     VCarve documents no corner rule, so the 30° rule is DreamCarve's.
     `init` writes `true`; migrated projects get `false`, so they cut as
-    before.
+    before. (changed in #285: it acts wherever a request is laid, at
+    export and in `tabs place` with the request or `--count`, which avoids
+    corners unless `--allow-corners`; tabs placed with `--at` or by their
+    point are cut as placed and never move. "Half the gap" is measured to
+    the neighbours as the layout put them, before any tab moved. A tab
+    left on a corner is kept, so the #109 floor holds.)
 36. **Start point** (`start` on Profile; VCarve 2D Profile "Use vector
     start point" and "Start At", on the page A8 cites; Fusion "Entry
     Positions"):
@@ -967,7 +972,17 @@ built (design addendum, "Order and format versions").
     dropped, an entry with no room there falls back (ramp, then plunge)
     instead of moving, and `at_distances` tabs are measured from that
     point, so the user knows where they are. Open paths ignore `start`:
-    their start is the end the cut direction sets (#242).
+    their start is the end the cut direction sets (#242). (changed in
+    #285: "nearest" is `nearest_point`'s, which takes the middle of an arc
+    centred on the target, so `first_vertex` on a convex corner cut
+    outside starts mid-arc round it; a last pass's allowance passes start
+    at their own path's point nearest the same target. Changed again in
+    #337: on a start under a tab, the first pass below the tab top plunges
+    only to the tab top there, warned `entry_fallback`; each later pass
+    starts on the tab where the one before ended, never lower, and every
+    pass comes down to its depth past the tab's end, as a lap leaves any
+    tab: a rect tab's step, a smooth tab's slope. This holds for `auto`
+    too, where a plunge entry keeps its start.)
 
 ### Acceptance tests (addendum)
 
@@ -1025,6 +1040,11 @@ built (design addendum, "Order and format versions").
     is byte-identical either way. `start: {near: {x_mm: 0, y_mm: 0}}`
     starts each outline's cut at its path point nearest the origin, and
     `at_distances: [10]` puts the tab 10 mm along the path from there.
+    (changed in #285: from the `auto` start, which is the start of a side,
+    four tabs already sit mid-side, since the path's period is a quarter
+    of it; with the `near` start, mid-side, they sit mid-arc without
+    `avoid_corners` and on the sides with it. The test checks both, and
+    three tabs from the `auto` start.)
 
 ### Safety (addendum)
 

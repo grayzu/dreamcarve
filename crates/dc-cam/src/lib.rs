@@ -48,9 +48,9 @@ pub use pocket::generate_pocket;
 pub use profile::{Wall, generate_profile, traversal_is_ccw};
 pub use sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
-pub use tabs::tab_centres_mm;
+pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};
 pub use toolpath::{Move, MoveKind, Toolpath};
 pub use warning::{
     IslandNeighbour, LeadDroppedReason, OpenPathReason, ReliefCornerReason, ReliefSkippedReason,
-    TabsRangeReason, Warning, WarningCode,
+    TabOnCornerReason, TabsRangeReason, Warning, WarningCode,
 };

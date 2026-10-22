@@ -105,6 +105,18 @@
 //!     through. dc-cam's waste domain also keeps entries out of other
 //!     shapes' kerfs; that is waste too, so S9 does not hold the program
 //!     to it.
+//! - **Tabs** (#337): a Profile leaves its tabs standing. A straight
+//!   plunge (Z falls, XY stays) that ends below a tab's top is refused
+//!   when it lies on the bit's path round the tab's outline (the outline
+//!   offset by the tool radius, or the radius plus a last pass's
+//!   allowance, either way, within the slack) less than half the tab's
+//!   width plus the radius from the tab's centre along that path, the
+//!   stretch a lap rises over (ADR-0005), less a tenth of the radius for
+//!   a rect tab's step at its end. The tabs are the project's placed tabs
+//!   on the Profile's targets and those its tab request places
+//!   (`dc_cam::placed_tabs::place`, the documented layout rule, not the
+//!   toolpath). So a lap that starts on a tab and plunges there, below
+//!   its top, is refused, wherever on the tab it starts.
 //! - **Drill:** every cut stays inside one of the Drill's holes, the
 //!   closed targets that are circles ([`dc_geometry::as_circle`], as
 //!   `dc_cam::generate_drill` finds them): its ends and middle lie within
@@ -130,10 +142,10 @@ use std::ops::Range;
 
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
-    as_circle, closest_points, inset_is_empty, meeting_points, nest, offset_open,
-    point_segment_distance_mm, segment_distance_mm,
+    as_circle, closest_points, inset_is_empty, meeting_points, nearest_point, nest, offset,
+    offset_open, point_segment_distance_mm, segment_distance_mm,
 };
-use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side};
+use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side, TabShape};
 
 use crate::ExportError;
 use crate::parse::{Block, MachineMove, MotionKind};
@@ -677,6 +689,191 @@ fn placed(project: &Project, targets: &[InstanceId]) -> Option<Vec<Polyline>> {
     Some(paths)
 }
 
+/// One tab a Profile must leave standing (S9, #337), measured as the
+/// generator's span rule measures it (ADR-0005): along the bit's path
+/// round its outline, from the path's point nearest the tab.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TabSpine {
+    /// The bit's paths round the tab's outline: the outline offset by the
+    /// tool radius both ways (and by the radius plus a last pass's
+    /// allowance, #284), project space.
+    paths: Vec<Polyline>,
+    /// The tab's point, project space.
+    point: Point,
+    /// How far along a path either side of the tab's centre a lap holds
+    /// the tab top, mm: the tool radius for a smooth tab, which then
+    /// slopes down; for a rect tab, which does not, half its width plus
+    /// the radius, its half span.
+    hold_mm: f64,
+    /// How far a smooth tab's slope runs past the hold, mm: half its
+    /// width; 0 for a rect tab.
+    slope_mm: f64,
+    /// How much nearer than the span a cut may come down, mm:
+    /// [`TAB_SPAN_MARGIN`] of the radius.
+    margin_mm: f64,
+    /// The tab's cross-section.
+    shape: TabShape,
+    /// The cut's floor, above the stock bottom, mm: where a smooth tab's
+    /// slope ends on the last pass.
+    floor_z_mm: f64,
+    /// How far from a path the tab's point may be and still be crossed by
+    /// it, mm: the tool radius plus half the tab's width, as the
+    /// generator crosses it.
+    reach_mm: f64,
+    /// The tab's top above the stock bottom, mm.
+    top_z_mm: f64,
+}
+
+/// Fraction of the tool radius a plunge may come inside a tab's span (the
+/// tab's width plus the tool diameter, along the bit's path) without being
+/// refused (#337): a rect tab steps down at the span's end, and the
+/// offsets S9 builds round the outline may differ that much from the
+/// generator's along the path.
+const TAB_SPAN_MARGIN: f64 = 0.1;
+
+/// The tabs Profile `op` must leave standing in `project` (S9, #337): its
+/// placed tabs on closed outlines of its targets, and those its tab
+/// request places (`dc_cam::placed_tabs::place`, the documented layout
+/// rule, not the toolpath). Empty for another kind of operation, or when
+/// the tool, an instance, a definition or a profile is missing.
+pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
+    let Operation::Profile(profile) = op else {
+        return Vec::new();
+    };
+    let Some(radius_mm) = project
+        .tools
+        .iter()
+        .find(|t| t.id == profile.tool)
+        .map(|t| t.diameter_mm / 2.0)
+    else {
+        return Vec::new();
+    };
+    let allowance_mm = profile.last_pass.as_ref().map(|l| l.allowance_mm);
+    let Some(floor_z_mm) = project
+        .stock
+        .thickness_mm
+        .zip(profile.depth_mm)
+        .map(|(thickness_mm, depth_mm)| thickness_mm - depth_mm)
+    else {
+        return Vec::new();
+    };
+    let requested = profile
+        .tabs
+        .as_ref()
+        .and_then(|spec| dc_cam::placed_tabs::place(project, &profile.id, spec).ok())
+        .map(|placement| placement.tabs)
+        .unwrap_or_default();
+    project
+        .tabs
+        .iter()
+        .chain(&requested)
+        .filter(|t| profile.targets.contains(&t.instance))
+        .filter_map(|tab| {
+            let instance = project.instances.iter().find(|i| i.id == tab.instance)?;
+            let outline = project
+                .definitions
+                .get(&instance.definition)?
+                .profiles
+                .get(tab.profile)?;
+            let outline = instance.transform.apply_polyline(outline).ok()?;
+            let contour = Contour::new(outline.clone()).ok()?;
+            let mut paths = vec![outline];
+            for delta_mm in std::iter::once(radius_mm).chain(allowance_mm.map(|a| radius_mm + a)) {
+                for sign in [1.0, -1.0] {
+                    paths.extend(
+                        offset(&contour, sign * delta_mm)
+                            .into_iter()
+                            .map(Contour::into_polyline),
+                    );
+                }
+            }
+            let (hold_mm, slope_mm) = match tab.shape {
+                TabShape::Rect => (radius_mm + tab.width_mm / 2.0, 0.0),
+                TabShape::Smooth => (radius_mm, tab.width_mm / 2.0),
+            };
+            Some(TabSpine {
+                paths,
+                point: instance.transform.apply(Point::new(tab.x_mm, tab.y_mm)),
+                hold_mm,
+                slope_mm,
+                margin_mm: radius_mm * TAB_SPAN_MARGIN,
+                shape: tab.shape,
+                floor_z_mm,
+                reach_mm: radius_mm + tab.width_mm / 2.0,
+                top_z_mm: tab.height_mm,
+            })
+        })
+        .collect()
+}
+
+impl TabSpine {
+    /// Whether a cut down to `z_mm` at `p`, on one of the bit's paths
+    /// round the tab's outline within `slack_mm`, one that crosses the tab,
+    /// goes below the tab there ([`TabSpine::lowest_z_mm`]).
+    fn cuts_into(&self, p: Point, z_mm: f64, slack_mm: f64) -> bool {
+        self.paths.iter().any(|path| {
+            let (Some(at), Some(centre)) =
+                (nearest_point(path, p), nearest_point(path, self.point))
+            else {
+                return false;
+            };
+            if at.gap_mm > slack_mm || centre.gap_mm > self.reach_mm + slack_mm {
+                return false;
+            }
+            let raw = (at.along_mm - centre.along_mm).abs();
+            let along = raw.min(path.length_mm() - raw);
+            z_mm < self.lowest_z_mm(along) - slack_mm
+        })
+    }
+
+    /// The lowest a cut may come down to `along_mm` along the bit's path
+    /// from the tab's centre: the top over a rect tab's span; over a
+    /// smooth tab's, the top within the tool radius of its centre, then
+    /// straight down to the cut's floor over half its width, the slope the
+    /// last pass cuts (an earlier pass's is higher). The margin lets a cut
+    /// come [`TAB_SPAN_MARGIN`] of the radius nearer.
+    fn lowest_z_mm(&self, along_mm: f64) -> f64 {
+        let d = along_mm + self.margin_mm;
+        if d >= self.hold_mm + self.slope_mm {
+            return f64::NEG_INFINITY;
+        }
+        match self.shape {
+            TabShape::Rect => self.top_z_mm,
+            TabShape::Smooth => {
+                let f = ((d - self.hold_mm) / self.slope_mm).clamp(0.0, 1.0);
+                self.top_z_mm - (self.top_z_mm - self.floor_z_mm) * f
+            }
+        }
+    }
+}
+
+/// S9's tab rule (#337) for one move `mv` of `span`: `false` when it is a
+/// straight plunge that ends below a tab's top within the tab's span
+/// along the bit's path ([`TabSpine`]).
+fn keeps_tabs(
+    mv: &MachineMove,
+    transform: &MachineTransform,
+    span: &OpSpan<'_>,
+    slack_mm: f64,
+) -> bool {
+    if span.tabs.is_empty() {
+        return true;
+    }
+    let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+        (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
+    else {
+        return true;
+    };
+    let from = transform.to_project(Point3::new(fx, fy, fz), mv.units);
+    let to = transform.to_project(Point3::new(tx, ty, tz), mv.units);
+    let plunge = from.xy().distance_to(to.xy()) <= slack_mm && to.z < from.z - EPS_MM;
+    !plunge
+        || span
+            .tabs
+            .iter()
+            .all(|tab| to.z >= tab.top_z_mm - slack_mm || !tab.cuts_into(to.xy(), to.z, slack_mm))
+}
+
 /// S9 for `span`: every cutting move in its lines stays in its material.
 ///
 /// # Errors
@@ -719,6 +916,12 @@ pub(crate) fn check(
             continue;
         }
         let slack_mm = quantum_mm(post, mv.units) + departure_mm;
+        if !keeps_tabs(mv, transform, span, slack_mm) {
+            return Err(ExportError::OffMaterial {
+                op: span.op.id().clone(),
+                line: mv.line,
+            });
+        }
         let path = project_path(mv, transform);
         let inside = path.is_some_and(|path| match span.material {
             #[cfg(test)]

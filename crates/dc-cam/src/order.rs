@@ -411,6 +411,7 @@ mod tests {
             height_mm: 2.0,
             shape: TabShape::Rect,
             on_holes: false,
+            avoid_corners: false,
         }
     }
 

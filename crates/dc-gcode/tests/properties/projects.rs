@@ -20,8 +20,8 @@ use dc_project::{
     ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, DrillCycle, DrillOp, EngraveOp,
     Entry, FeatureDefinition, FeatureInstance, InstanceId, LastPass, Lead, MachineOrigin,
     MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PeckRetract, PocketOp, ProfileOp,
-    Project, Side, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units, WallPass,
-    latest_definitions,
+    Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units,
+    WallPass, latest_definitions,
 };
 use proptest::prelude::*;
 use std::collections::BTreeMap;
@@ -418,7 +418,7 @@ fn step_down() -> impl Strategy<Value = Option<f64>> {
 
 /// Tabs as (placement, width mm, height as a fraction of the stock, shape,
 /// whether holes get them too).
-fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape, bool)>> {
+fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape, bool, bool)>> {
     prop::option::of((
         prop_oneof![
             (1_u8..=6).prop_map(|count| TabPlacement::Count { count }),
@@ -429,7 +429,19 @@ fn tabs() -> impl Strategy<Value = Option<(TabPlacement, f64, f64, TabShape, boo
         0.05..0.8_f64,
         prop_oneof![Just(TabShape::Rect), Just(TabShape::Smooth)],
         any::<bool>(),
+        // #285: tabs off corners.
+        any::<bool>(),
     ))
+}
+
+/// Where each closed outline's cut starts (#285): as before, at the
+/// point nearest its first vertex, or nearest a point on or off the stock.
+fn start() -> impl Strategy<Value = StartAt> {
+    prop_oneof![
+        Just(StartAt::Auto),
+        Just(StartAt::FirstVertex),
+        (-20.0..320.0_f64, -20.0..320.0_f64).prop_map(|(x_mm, y_mm)| StartAt::Near { x_mm, y_mm }),
+    ]
 }
 
 /// A last pass (#284) where the side has a wall to leave it on (Left and
@@ -494,6 +506,7 @@ fn profile_project_of(
                     lead(),
                     relief(),
                     last_pass(side != Side::OnLine),
+                    start(),
                 ),
             )
         })
@@ -502,7 +515,7 @@ fn profile_project_of(
                 setup,
                 side,
                 (depth, step_down_mm, direction, safe_z_mm),
-                (tabs, order, entry, lead, relief, last_pass),
+                (tabs, order, entry, lead, relief, last_pass, start),
             )| {
                 project(setup, |s, targets| {
                     let depth_mm = depth.depth_mm(s.thickness_mm);
@@ -518,13 +531,18 @@ fn profile_project_of(
                         direction,
                         through_cut_allowance_mm: depth.allowance_mm,
                         safe_z_mm,
-                        tabs: tabs.map(|(placement, width_mm, height, shape, on_holes)| TabSpec {
-                            placement,
-                            width_mm,
-                            height_mm: height * s.thickness_mm,
-                            shape,
-                            on_holes,
-                        }),
+                        tabs: tabs.map(
+                            |(placement, width_mm, height, shape, on_holes, avoid_corners)| {
+                                TabSpec {
+                                    placement,
+                                    width_mm,
+                                    height_mm: height * s.thickness_mm,
+                                    shape,
+                                    on_holes,
+                                    avoid_corners,
+                                }
+                            },
+                        ),
                         machining_order: order,
                         entry,
                         lead,
@@ -540,6 +558,7 @@ fn profile_project_of(
                             }),
                             reverse,
                         }),
+                        start,
                     })
                 })
             },

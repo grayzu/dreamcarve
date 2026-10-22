@@ -127,7 +127,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `13`. |
+| `version` | Format version. This build writes `14`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -365,13 +365,15 @@ A list of operations, cut in order. `kind` says which: `"profile"`,
     "width_mm": 8.0,
     "height_mm": 3.0,
     "shape": "rect",
-    "on_holes": false
+    "on_holes": false,
+    "avoid_corners": true
   },
   "machining_order": "full_depth_first",
   "entry": { "ramp": { "angle_deg": 15.0 } },
   "lead": null,
   "corner_relief": "none",
-  "last_pass": null
+  "last_pass": null,
+  "start": "auto"
 }
 ```
 
@@ -387,13 +389,16 @@ project's [`tabs`](#tabs) list and sets the request to `null`
 format version 9: `false`
 leaves the holes among the operation's outlines without tabs, which is
 what `init` writes; a project upgraded from version 8 gets `true`, so its
-holes keep their tabs. `init` leaves `depth_mm` as `null`; export refuses until
+holes keep their tabs. `tabs.avoid_corners` came with format version 14:
+`true`, as `init` writes it, slides each tab off a corner of the bit's
+path; a project upgraded from version 13 gets `false`, so its tabs stay
+where they were ([Tabs: tabs off corners](tabs.md#tabs-off-corners)). `init` leaves `depth_mm` as `null`; export refuses until
 you set it. It also leaves `step_down_mm` as `null`, so the operation uses
 the tool's depth per pass; set it only to override the tool's.
 
 `machining_order`, `entry`, `lead` and `corner_relief` came with format
 version 8 and are shared with the other kinds; `last_pass`, Profile only,
-came with format version 13. This build reads and checks them all, and a
+came with format version 13, and `start`, Profile only, with version 14. This build reads and checks them all, and a
 Profile cuts them as set:
 
 | Field | Values |
@@ -403,6 +408,7 @@ Profile cuts them as set:
 | `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line, Left or Right. See [Leads](profile.md#leads). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each internal corner a round tool cannot reach. Pocket and Profile. Steps down at the tool's `step_down_mm`, so that must be set. See [Pocket: corner relief](pocket.md#corner-relief) and [Profile: corner relief](profile.md#corner-relief). |
 | `last_pass` | `null`, or `{ "allowance_mm": 0.5, "thickness_mm": null, "reverse": false }`: every pass but the last leaves `allowance_mm` on the wall (more than 0, at most a third of the bit's diameter), and the last pass cuts to size at full depth. `thickness_mm` is `null` for the usual last pass, or how deep the last pass cuts (more than 0, at most `depth_mm`); It may be no thicker than the step-down in effect. `reverse` cuts the last pass the other way round. All three keys are needed. Inside, Outside, Left and Right Profiles; not On line. `init` writes `null`, and a project upgraded from version 12 gets `null`, so it cuts as before. See [Last pass](profile.md#last-pass). |
+| `start` | `"auto"`, `"first_vertex"` or `{ "near": { "x_mm": 0.0, "y_mm": 0.0 } }`: where each closed outline's cut starts, at the point of the bit's path nearest the outline's first vertex as drawn or nearest that project point. Tabs a request lays are measured from there, a lead arrives there or is dropped, and an entry with no room there falls back rather than moving. Open paths ignore it. `init` writes `"auto"`, and a project upgraded from version 13 gets `"auto"`, so it cuts as before. Profile only. See [Start point](profile.md#start-point). |
 
 A Pocket, Drill or Engrave has `kind`, `id`, `name`, `enabled`, `targets`,
 `tool`, `depth_mm`, `through_cut_allowance_mm` and `safe_z_mm` with the
@@ -500,6 +506,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 11 | Adds `tabs`, the project's placed tabs, empty on upgrade (#105). A Profile's `tabs` setting stays as a tab request: it is cut as before, and the next `dreamcarve tabs` command that saves the project places it. See [Tabs](tabs.md). |
 | 12 | Adds `heights` after `origin`, with `clearance_mm`, `tool_change_machine_z_mm` and `park` all `null` on upgrade (#283), so the project exports as before. See [`heights`](#heights). |
 | 13 | Adds each Profile's `last_pass`, `null` on upgrade (#284), so every pass cuts on the part's path as before. See [Last pass](profile.md#last-pass). |
+| 14 | Adds `avoid_corners` to each Profile's tab request, `false` on upgrade, and each Profile's `start`, `"auto"` on upgrade (#285), so the tabs are laid and each cut starts where it did. See [Tabs: tabs off corners](tabs.md#tabs-off-corners) and [Profile: start point](profile.md#start-point). |
 
 ## What `check` reports
 

@@ -112,6 +112,11 @@ pub struct TabsPlaceArgs {
     /// Put tabs on holes too, to hold their slugs.
     #[arg(long)]
     pub on_holes: bool,
+    /// With --count, leave tabs where the spacing puts them, on corners
+    /// too. Without it each tab on a corner slides off it, as a request
+    /// with `avoid_corners` does.
+    #[arg(long, requires = "count")]
+    pub allow_corners: bool,
     /// Remove the tabs the operation cuts round (those `tabs clear <dcv>
     /// <op>` removes) and place the new ones instead, in one save.
     #[arg(long)]
