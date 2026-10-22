@@ -53,9 +53,13 @@ pub struct TabSize {
 
 /// Places the tabs `spec` asks for on the outlines Profile `op` cuts, with
 /// the phase 2 layout rules (#109): per tool path, `count` tabs evenly
-/// spaced or tabs at `at_distances` along it from its start; none on a
-/// hole unless `on_holes`; and on a path too short for them, the most
-/// that cover at most half of it, but at least one on a part. Each tab is
+/// spaced or tabs at `at_distances` along it from its start (the
+/// Profile's start point when it sets one, #285); off corners where they
+/// can be with `avoid_corners` ([`Warning::TabOnCorner`] for one that
+/// cannot); none on a hole unless `on_holes`, and those it puts there
+/// with `holds_slug: true` (#302), every other with `false`; and on a path
+/// too short for them, the most that cover at most half of it, but at
+/// least one on a part. Each tab is
 /// placed at its centre on the tool path itself, taken into the
 /// instance's definition space, so the Profile cuts it exactly where the
 /// request did; it is crossed by every Profile that comes near where it
@@ -80,6 +84,9 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
             continue;
         };
         let length_mm = path.length_mm();
+        // #302: a tab the request puts on a hole, which it does only with
+        // `on_holes`, is there to hold the slug.
+        let holds_slug = spec.on_holes && cut.holes.get(j).copied().unwrap_or(false);
         if let Some(Some((reduced, widths_mm))) = cut.plan.request_reductions.get(j) {
             placement.warnings.push(coverage_warning(
                 op,
@@ -96,6 +103,20 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
             placement
                 .warnings
                 .push(overlap_warning(op, j, Some(shape), length_mm));
+        }
+        // #285: a tab left on a corner is placed there, warned.
+        if let Some(on) = cut.plan.on_corners_mm.get(j) {
+            placement
+                .warnings
+                .extend(
+                    on.iter()
+                        .map(|&(distance_mm, reason)| Warning::TabOnCorner {
+                            op: op.clone(),
+                            shape: shape.clone(),
+                            distance_mm,
+                            reason,
+                        }),
+                );
         }
         for tab_cut in asked {
             // Centres on an open path are measured from its first vertex
@@ -120,6 +141,7 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
                 width_mm: tab_cut.width_mm,
                 height_mm: tab_cut.top_z_mm,
                 shape: tab_cut.shape,
+                holds_slug: Some(holds_slug),
             };
             if !has_copy(project, &placement.tabs, &tab) {
                 placement.tabs.push(tab);
@@ -132,7 +154,9 @@ pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Plac
 
 /// Places a tab of `size` at each of `at_mm`, distances along the outline
 /// from its first vertex as drawn (mm, definition space), on every
-/// outline Profile `op` cuts: none on a hole unless `on_holes`. A closed
+/// outline Profile `op` cuts: none on a hole unless `on_holes`, and those
+/// it puts there with `holds_slug: true` (#302), every other with
+/// `false`. A closed
 /// outline takes each distance modulo its length; an open one clamps it
 /// to its ends. The tabs are cut as placed; the warnings say where they
 /// would overlap or cover more than half of a tool path.
@@ -195,6 +219,9 @@ pub fn place_on_outlines(
                 width_mm: size.width_mm,
                 height_mm: size.height_mm,
                 shape: size.shape,
+                // #302: only `on_holes` puts a tab on a hole, to hold
+                // its slug.
+                holds_slug: Some(hole),
             };
             if !has_copy(project, &placement.tabs, &tab) {
                 placement.tabs.push(tab);
@@ -441,8 +468,9 @@ pub fn off_outline_mm(project: &Project, tab: &PlacedTab) -> Option<f64> {
 
 /// The placed tabs Profile `op` crosses on a tool path round a hole, with
 /// the hole, in project order: those generation warns
-/// [`Warning::TabOnHole`] for, and those placed there for this cut, which
-/// it does not (#300). `tabs place` warns for the ones it places. Fails as
+/// [`Warning::TabOnHole`] for, and those that hold their slugs, which it
+/// does not (#300, #302: `holds_slug`, or unset and on this Profile's path
+/// round the hole). `tabs place` warns for the ones it places. Fails as
 /// [`crossed_by`] does.
 pub fn on_holes(project: &Project, op: &ProfileOp) -> Result<Vec<(TabId, ShapeRef)>, CamError> {
     Ok(op_tabs(project, op)?
@@ -569,7 +597,8 @@ mod tests {
     use dc_geometry::{Point3, Transform, assert_approx_eq};
     use dc_project::test_support::{profile_mut, sample_pocket, sample_project, sample_tab};
     use dc_project::{
-        CutDirection, DefinitionId, Entry, FeatureDefinition, InstanceId, Lead, Side, TabPlacement,
+        CutDirection, DefinitionId, Entry, FeatureDefinition, InstanceId, Lead, Side, StartAt,
+        TabPlacement,
     };
 
     const TOL: f64 = 1e-9;
@@ -691,6 +720,7 @@ mod tests {
             height_mm: TAB_TOP_MM,
             shape: TabShape::Smooth,
             on_holes: false,
+            avoid_corners: false,
         };
         let cases: Vec<(&str, Edit)> = vec![
             ("outside climb", Box::new(|_| {})),
@@ -894,6 +924,7 @@ mod tests {
             height_mm: TAB_TOP_MM,
             shape: TabShape::Rect,
             on_holes,
+            avoid_corners: false,
         }
     }
 
@@ -969,18 +1000,10 @@ mod tests {
         assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1);
     }
 
-    /// #300: tabs placed on a hole for the Profile that cuts it, by a
-    /// request or `--count` with `on_holes` (a version 8 file's migrated
-    /// request among them), sit on that Profile's tool path round the
-    /// hole. They hold the slug because the user asked, so generation does
-    /// not warn `tab_on_hole` for them on every export; `on_holes` lists
-    /// them, for `tabs place` to warn once. The same tab moved onto the
-    /// hole's outline, where nothing places a tab for this cut unasked,
-    /// still warns. A 28 mm hole in a 36 mm frame: the frame takes four
-    /// tabs, and the hole's 21.65 mm square path the three that cover at
-    /// most half of it.
-    #[test]
-    fn hole_tabs_placed_for_the_cut_do_not_warn() {
+    /// A 28 mm hole in a 36 mm frame, both cut by the sample's Profile:
+    /// the frame takes four tabs, and the hole's 21.65 mm square path the
+    /// three that cover at most half of it.
+    fn frame_with_hole() -> Project {
         let square = |side_mm: f64| {
             Polyline::rect(
                 Point::new(25.0 - side_mm / 2.0, 15.0 - side_mm / 2.0),
@@ -988,21 +1011,61 @@ mod tests {
                 side_mm,
             )
         };
-        let mut p = with_profiles(vec![square(36.0), square(28.0)]);
-        let op = OperationId::new("o1");
-        p.tabs = place(&p, &op, &four_tabs(true)).unwrap().tabs;
-        let on_hole: Vec<TabId> = p
-            .tabs
+        with_profiles(vec![square(36.0), square(28.0)])
+    }
+
+    /// The ids of the `tab_on_hole` warnings in `warnings`, in order.
+    fn on_hole_warned(warnings: &[Warning]) -> Vec<TabId> {
+        warnings
+            .iter()
+            .filter_map(|w| match w {
+                Warning::TabOnHole { tab, .. } => Some(tab.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `tab` moved onto its outline, at its foot.
+    fn onto_outline(p: &Project, tab: &PlacedTab) -> PlacedTab {
+        let foot = outline_foot(p, tab).unwrap();
+        let foot = p.instances[0].transform.inverse().unwrap().apply(foot);
+        PlacedTab {
+            x_mm: foot.x,
+            y_mm: foot.y,
+            ..tab.clone()
+        }
+    }
+
+    /// The ids of the tabs of `p` on the frame's hole, profile 1.
+    fn hole_tab_ids(p: &Project) -> Vec<TabId> {
+        p.tabs
             .iter()
             .filter(|t| t.profile == 1)
             .map(|t| t.id.clone())
-            .collect();
+            .collect()
+    }
+
+    /// #300, #302: tabs placed on a hole for the Profile that cuts it, by
+    /// a request or `--count` with `on_holes` (a version 8 file's migrated
+    /// request among them), hold the slug because the user asked, so they
+    /// are written with `holds_slug: true` and generation does not warn
+    /// `tab_on_hole` for them on every export; `on_holes` lists them, for
+    /// `tabs place` to warn once. The frame's tabs are written `false`.
+    /// The flag goes with the tab, so a hole tab moved onto the hole's
+    /// outline stays quiet too (changed in #302: it warned, as its point
+    /// no longer sat on the Profile's path).
+    #[test]
+    fn hole_tabs_placed_for_the_cut_do_not_warn() {
+        let mut p = frame_with_hole();
+        let op = OperationId::new("o1");
+        p.tabs = place(&p, &op, &four_tabs(true)).unwrap().tabs;
+        let on_hole = hole_tab_ids(&p);
         assert_eq!(on_hole.len(), 3, "{:?}", p.tabs);
+        for t in &p.tabs {
+            assert_eq!(t.holds_slug, Some(t.profile == 1), "{t:?}");
+        }
         let (tp, warnings) = generate(&p);
-        assert!(
-            !codes(&warnings).contains(&WarningCode::TabOnHole),
-            "{warnings:?}"
-        );
+        assert_eq!(on_hole_warned(&warnings), vec![], "{warnings:?}");
         assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 7);
         let profile = profile_mut(&mut p).clone();
         let listed: Vec<TabId> = on_holes(&p, &profile)
@@ -1017,20 +1080,172 @@ mod tests {
             .iter()
             .position(|t| t.profile == 1)
             .expect("a hole tab");
-        let foot = outline_foot(&p, &p.tabs[moved]).unwrap();
-        let foot = p.instances[0].transform.inverse().unwrap().apply(foot);
-        p.tabs[moved].x_mm = foot.x;
-        p.tabs[moved].y_mm = foot.y;
+        p.tabs[moved] = onto_outline(&p, &p.tabs[moved]);
         let (_, warnings) = generate(&p);
-        let warned: Vec<&Warning> = warnings
+        assert_eq!(on_hole_warned(&warnings), vec![], "{warnings:?}");
+    }
+
+    /// #302, the issue's third test: a tab with `holds_slug: false` on a
+    /// hole warns `tab_on_hole` on every generation, wherever it sits: on
+    /// the hole's outline, as `--at` or a hand edit puts it, and on the
+    /// Profile's path round the hole, where #300 kept it quiet. The same
+    /// tab with `holds_slug: true` warns on neither. Either way it is cut.
+    #[test]
+    fn hand_placed_hole_tab_still_warns() {
+        let mut p = frame_with_hole();
+        let op = OperationId::new("o1");
+        let placed = place(&p, &op, &four_tabs(true)).unwrap().tabs;
+        let on_path = placed
             .iter()
-            .filter(|w| w.code() == WarningCode::TabOnHole)
-            .collect();
-        assert_eq!(warned.len(), 1, "{warnings:?}");
-        assert!(
-            matches!(warned[0], Warning::TabOnHole { tab, .. } if *tab == p.tabs[moved].id),
-            "{warned:?}"
+            .find(|t| t.profile == 1)
+            .expect("a hole tab")
+            .clone();
+        let on_outline = PlacedTab {
+            id: TabId::new("tab9"),
+            ..onto_outline(&p, &on_path)
+        };
+        for (case, tab) in [("on the path", on_path), ("on the outline", on_outline)] {
+            p.tabs = vec![PlacedTab {
+                holds_slug: Some(false),
+                ..tab.clone()
+            }];
+            for run in 0..2 {
+                let (tp, warnings) = generate(&p);
+                assert_eq!(
+                    on_hole_warned(&warnings),
+                    vec![tab.id.clone()],
+                    "{case}, run {run}: {warnings:?}"
+                );
+                assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1, "{case}: it is cut");
+            }
+            p.tabs[0].holds_slug = Some(true);
+            let (tp, warnings) = generate(&p);
+            assert_eq!(on_hole_warned(&warnings), vec![], "{case}: {warnings:?}");
+            assert_eq!(held_runs(&tp, TAB_TOP_MM).len(), 1, "{case}: it is cut");
+        }
+    }
+
+    /// #302 (`migrate::v14_placed_tabs_migrate_with_holds_slug_unset`): a
+    /// format 14 file's tabs load with `holds_slug: null`, and warn as
+    /// format 14 did (#300). A hole tab on the Profile's path round the
+    /// hole, where only placing with `on_holes` puts one, holds its slug
+    /// and does not warn; one on the hole's outline does, as does one
+    /// left off the path by a change of bit. The tabs are those `place`
+    /// writes, with their flag unset.
+    #[test]
+    fn v14_hole_tabs_on_the_path_hold_their_slugs() {
+        let mut p = frame_with_hole();
+        let op = OperationId::new("o1");
+        p.tabs = place(&p, &op, &four_tabs(true)).unwrap().tabs;
+        for t in &mut p.tabs {
+            t.holds_slug = None;
+        }
+        let (_, warnings) = generate(&p);
+        assert_eq!(on_hole_warned(&warnings), vec![], "{warnings:?}");
+
+        let moved = p
+            .tabs
+            .iter()
+            .position(|t| t.profile == 1)
+            .expect("a hole tab");
+        let mut on_outline = p.clone();
+        on_outline.tabs[moved] = onto_outline(&p, &p.tabs[moved]);
+        let (_, warnings) = generate(&on_outline);
+        assert_eq!(
+            on_hole_warned(&warnings),
+            vec![p.tabs[moved].id.clone()],
+            "{warnings:?}"
         );
+
+        let mut smaller_bit = p.clone();
+        smaller_bit.tools[0].diameter_mm = 3.175;
+        let (_, warnings) = generate(&smaller_bit);
+        assert_eq!(on_hole_warned(&warnings), hole_tab_ids(&p), "{warnings:?}");
+    }
+
+    /// #302: `--at --on-holes` (`place_on_outlines` with `on_holes`)
+    /// writes `holds_slug: true` on each tab it puts on a hole and `false`
+    /// on the others; without `on_holes` it puts none on a hole and every
+    /// tab is `false`. The hole tabs then do not warn, though they sit on
+    /// the hole's outline, and stay quiet after the Profile's bit
+    /// changes, which takes its path farther from them.
+    #[test]
+    fn place_at_distances_on_holes_marks_the_hole_tabs() {
+        let mut p = frame_with_hole();
+        let op = OperationId::new("o1");
+        let size = TabSize {
+            width_mm: 2.0,
+            height_mm: TAB_TOP_MM,
+            shape: TabShape::Rect,
+        };
+        let off = place_on_outlines(&p, &op, &[5.0, 60.0], size, false).unwrap();
+        assert_eq!(off.tabs.len(), 2, "{off:?}");
+        assert!(
+            off.tabs
+                .iter()
+                .all(|t| t.profile == 0 && t.holds_slug == Some(false)),
+            "{off:?}"
+        );
+        let on = place_on_outlines(&p, &op, &[5.0, 60.0], size, true).unwrap();
+        assert_eq!(on.tabs.len(), 4, "{on:?}");
+        for t in &on.tabs {
+            assert_eq!(t.holds_slug, Some(t.profile == 1), "{t:?}");
+        }
+        p.tabs = on.tabs;
+        let ids: Vec<TabId> = p.tabs.iter().map(|t| t.id.clone()).collect();
+        for diameter_mm in [6.35, 3.175] {
+            p.tools[0].diameter_mm = diameter_mm;
+            let (_, warnings) = generate(&p);
+            assert_eq!(
+                on_hole_warned(&warnings),
+                vec![],
+                "{diameter_mm} mm: {warnings:?}"
+            );
+            let profile = profile_mut(&mut p).clone();
+            assert_eq!(crossed_by(&p, &profile).unwrap(), ids, "{diameter_mm} mm");
+        }
+    }
+
+    /// #302 with #284 and #285: a request with `on_holes` that keeps its
+    /// tabs off corners, counted from a start point, on a Profile with a
+    /// last pass, places hole tabs that hold their slugs. They cut what
+    /// the request cut, and none warns `tab_on_hole`, before or after
+    /// placing. The same tabs marked `false` cut the same and warn once
+    /// each, not once more for the allowance path they are carried onto.
+    #[test]
+    fn hole_tabs_hold_their_slugs_off_corners_with_a_last_pass() {
+        let mut p = frame_with_hole();
+        let op = profile_mut(&mut p);
+        op.start = StartAt::Near {
+            x_mm: 0.0,
+            y_mm: 0.0,
+        };
+        op.last_pass = Some(dc_project::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: false,
+        });
+        op.tabs = Some(TabSpec {
+            avoid_corners: true,
+            ..four_tabs(true)
+        });
+        let (asked, warnings) = generate(&p);
+        assert_eq!(on_hole_warned(&warnings), vec![], "{warnings:?}");
+        let (mut placed, _) = place_requests(&p).unwrap();
+        let hole_tabs = hole_tab_ids(&placed);
+        assert!(!hole_tabs.is_empty(), "{:?}", placed.tabs);
+        for t in &placed.tabs {
+            assert_eq!(t.holds_slug, Some(t.profile == 1), "{t:?}");
+        }
+        let (cut, warnings) = generate(&placed);
+        assert_eq!(on_hole_warned(&warnings), vec![], "{warnings:?}");
+        assert_same_motion(&asked, &cut, "placed");
+        for t in &mut placed.tabs {
+            t.holds_slug = Some(false);
+        }
+        let (unmarked, warnings) = generate(&placed);
+        assert_eq!(on_hole_warned(&warnings), hole_tabs, "{warnings:?}");
+        assert_same_motion(&cut, &unmarked, "the flag changes no cut");
     }
 
     /// #300, the issue's first test: a tab whose point is far from its
@@ -1263,5 +1478,77 @@ mod tests {
         assert!(placed.tabs.iter().all(|t| t.shape == TabShape::Smooth));
         let err = place_on_outlines(&p, &OperationId::new("o1"), &[-1.0], size, false).unwrap_err();
         assert!(matches!(err, CamError::InvalidTab { .. }), "{err:?}");
+    }
+
+    /// #285 (#296's note): `tabs.avoid_corners` and `start` act when a
+    /// request is placed as when it is cut. Placing a request that keeps
+    /// off corners, counted from the start it sets, writes tabs that cut
+    /// exactly what the request cuts, none of them on an arc round a
+    /// corner (without `avoid_corners` some are). A tab left on a corner
+    /// warns `tab_on_corner` when placed, as when cut, and is placed.
+    #[test]
+    fn placing_keeps_tabs_off_corners_and_counts_from_the_start() {
+        let request = |count: u8, avoid_corners: bool| TabSpec {
+            placement: TabPlacement::Count { count },
+            avoid_corners,
+            ..four_tabs(false)
+        };
+        let on_arc = |tp: &Toolpath| {
+            held_runs(tp, TAB_TOP_MM)
+                .iter()
+                .flatten()
+                .any(|(_, mv)| !matches!(mv.kind, MoveKind::Linear))
+        };
+        let cases = [
+            (
+                4,
+                StartAt::Near {
+                    x_mm: 0.0,
+                    y_mm: 0.0,
+                },
+            ),
+            (5, StartAt::Auto),
+            (7, StartAt::FirstVertex),
+        ];
+        let mut any_on_arc = false;
+        for (count, start) in cases {
+            let case = format!("{count} from {start:?}");
+            let mut p = sample_project();
+            let op = profile_mut(&mut p);
+            op.start = start;
+            op.tabs = Some(request(count, false));
+            any_on_arc |= on_arc(&generate(&p).0);
+            profile_mut(&mut p).tabs = Some(request(count, true));
+            let (asked, warnings) = generate(&p);
+            assert!(
+                !codes(&warnings).contains(&WarningCode::TabOnCorner),
+                "{case}: {warnings:?}"
+            );
+            assert!(!on_arc(&asked), "{case}");
+            let (placed, warnings) = place_requests(&p).unwrap();
+            assert!(
+                !codes(&warnings).contains(&WarningCode::TabOnCorner),
+                "{case}: {warnings:?}"
+            );
+            assert_eq!(placed.tabs.len(), usize::from(count), "{case}");
+            let (cut, _) = generate(&placed);
+            assert_same_motion(&asked, &cut, &case);
+        }
+        assert!(any_on_arc, "without avoid_corners some tab is on a corner");
+
+        // An 8 mm square is a corner everywhere: its tab stays, warned.
+        let small = with_profiles(vec![Polyline::rect(Point::new(21.0, 11.0), 8.0, 8.0)]);
+        let spec = TabSpec {
+            width_mm: 2.0,
+            ..request(1, true)
+        };
+        let placed = place(&small, &OperationId::new("o1"), &spec).unwrap();
+        assert_eq!(placed.tabs.len(), 1, "{placed:?}");
+        assert_eq!(
+            codes(&placed.warnings),
+            vec![WarningCode::TabOnCorner],
+            "{:?}",
+            placed.warnings
+        );
     }
 }

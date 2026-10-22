@@ -102,6 +102,8 @@ pub struct PlacedTab {
     pub width_mm: f64,           // along the outline; > 0
     pub height_mm: f64,          // tab top above the stock bottom; > 0
     pub shape: TabShape,         // "rect" | "smooth"
+    pub holds_slug: Option<bool>, // #302, format 15: meant to hold its hole's slug;
+                                 //   null from the v14 → v15 migration
 }
 
 pub struct Tool {
@@ -1259,18 +1261,42 @@ request is reduced (#109's rules). A placed tab on an outline the
 Profile cuts as a hole (`Role::Hole`) is cut too, because the user
 placed it, and warns `TabOnHole (op, tab, shape)`: the slug is usually
 waste and holding it is work by hand. Generation does not warn for a tab
-whose point lies on this Profile's tool path round the hole (within
-`EPS_MM`). Only `place` with `on_holes`, from a request or `--count
---on-holes`, puts a tab there, so such a tab was asked for: a version 8
-file's migrated `on_holes: true` request among them. `placed_tabs::on_holes`
+that holds the slug: one whose `holds_slug` is `true`. `place` with
+`on_holes` (a request, the migrated `on_holes: true` request of a version
+8 file among them, or `--count --on-holes`) and `place_on_outlines` with
+`on_holes` (`--at --on-holes`) write `true` on each tab they put on a
+hole, since the user asked for it, and `false` on every other tab they
+place. A tab whose `holds_slug` is `None`, as the version 15 migration
+leaves every format 14 tab, keeps #300's rule: it holds the slug when its
+point lies on this Profile's tool path round the hole (within `EPS_MM`),
+where only `place` with `on_holes` put a tab. `placed_tabs::on_holes`
 lists every hole tab a Profile crosses, and `tabs place` and `tabs clear`
-warn `TabOnHole` once for each tab they place on a hole. A tab on the
-hole's outline (`--at --on-holes`, or a hand edit) or left off the path by
-a change of bit or side still warns on every export. (changed in #300: every
-hole tab warned on every `check` and `export`, and a user who kept the
-tabs a migrated request asked for could not silence it. Marking a tab as
-meant to hold its slug needs a field, so a format version; #283 holds
-the next one; #302 adds it after.)
+warn `TabOnHole` once for each tab they place on a hole. A hole tab
+marked `false` (a hand edit) warns on every export, wherever it sits; one
+marked `true` warns on none, on the hole's outline or after a change of
+bit or side. The flag changes no cut, and a last pass's allowance path
+carries no warning of its own. (changed in #300: every hole tab warned on
+every `check` and `export`, and a user who kept the tabs a migrated
+request asked for could not silence it. Changed again in #302: #300 told
+a tab placed for the cut by its point alone, so a tab placed with `--at
+--on-holes`, or left off the path by a change of bit or side, warned on
+every export.)
+
+**Migration v14 → v15** (`migrate::v14_to_v15`, #302): `holds_slug:
+null` at the end of every placed tab, and nothing else. Whether a format
+14 hole tab was placed for the cut shows only in where it sits against
+that Profile's tool path, which only `dc-cam` builds, and a migration
+step rewrites JSON only; `null` keeps #300's rule for it, so every format
+14 file warns and cuts as it did. The migration fails if a tab already
+has the key. Byte identity and the warnings are checked on a corpus of
+format 14 files with placed tabs, saved by the build before #302:
+`crates/dreamcarve/tests/fixtures/holds-slug-migration/`, the 16 tabbed
+projects of the #285 corpus with their requests placed and three squares
+with a hole (`--at --on-holes`, tabs placed for the cut then the bit
+changed, and `--count --on-holes` off corners with a last pass and a start
+point); its programs and the warnings of `export` and `check` are
+committed under `tests/expected/holds-slug-migration/`, beside the #284
+corpus's programs.
 
 **Not crossed.** `placed_tabs::check(project, generated)` gives one
 `TabNotCrossed (tab, shape)` for each tab no enabled, generated Profile
@@ -1306,7 +1332,8 @@ its first vertex as drawn, whichever end the cut starts at.
 tab at each distance along each outline the Profile cuts, measured in
 definition space from the outline's first vertex as drawn; a closed
 outline takes the distance modulo its length, an open one clamps it to
-its ends. Holes are skipped unless `on_holes`. The point stored is the
+its ends. Holes are skipped unless `on_holes`, and a tab put on one is
+`holds_slug: true` (#302). The point stored is the
 outline's point there. These tabs are cut as placed; placing them warns
 `TabsOverlap` and `TabsCoverMostOfContour` as generation would.
 
@@ -1661,7 +1688,8 @@ bit radius over. Issue #207's design comment is the source of these
 rules; the strip rule was added in implementation, because a cut that
 only keeps `r` from other lines still passes when it lies wholly on
 another line's kept side, as a line drawn twice in opposite directions
-shows.)
+shows. Changed in #311: a Left or Right Profile takes a last pass; see
+A8, "Left and Right".)
 
 ### Corner relief (dc-cam::relief)
 
@@ -1680,6 +1708,11 @@ Ported from `cornerRelief.ts`.
 3. **End point:** dogbone `C + bisector·r`; T-bone `C + u·r` along the
    longer adjacent edge (tie: the more X-parallel edge, then `+x`). Notch
    depth past the wall: `r(1 − sin(θ/2))` dogbone, `r` T-bone (tests).
+   The excursion, descend point to end point, must keep `r` from every
+   edge of the site's loops but the corner's own two, else
+   `ReliefCornerTooTight` (`NearOtherWall`, #322): nearer, the notch
+   cuts past that wall too, through a part thinner there than the notch
+   is deep or into an island, which S9's notch rule refuses.
 4. **Pass:** the levels are `generateStepLevels(top, bottom,
    tool.step_down)`; per corner and level: plunge at the descend point,
    cut to the end, cut back. Only corners whose descend point the main
@@ -2383,11 +2416,16 @@ following the chapters, which each carry a complete JSON block to paste.
   With or without `--replace`, each new tab an enabled Profile cuts as a
   hole warns `tab_on_hole` once, on stderr (#300); a tab `--replace`
   removes and places again takes a new id, so it is new and warns again.
+  With `--on-holes` (`--count` or `--at`) each tab placed on a hole is
+  saved with `holds_slug: true`, and every other tab placed with `false`
+  (#302).
 - `tabs list <dcv>`: a table `ID INSTANCE PROFILE AT_MM OFF_MM X_MM Y_MM
-  WIDTH_MM HEIGHT_MM SHAPE CUT_BY`, `AT_MM` the distance of the tab's
+  WIDTH_MM HEIGHT_MM SHAPE HOLDS_SLUG CUT_BY`, `AT_MM` the distance of the tab's
   foot along its outline from the first vertex as drawn, `OFF_MM` how far
   its point is from the foot in project space (`off_outline_mm`; changed
-  in #300: the distance was not shown), `CUT_BY` the
+  in #300: the distance was not shown), `HOLDS_SLUG` the tab's
+  `holds_slug` as `yes`, `no` or `-` for `None` (changed in #302: not
+  shown), `CUT_BY` the
   enabled Profiles that cross it (`-` for none). Requests are shown as
   the tabs they place, with a note line; nothing is saved.
 - `tabs clear <dcv>` removes every tab, `tabs clear <dcv> <op>` the
@@ -2484,6 +2522,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `cli::version_9_tab_settings_export_byte_identical_programs` (the tabs-migration corpus, as loaded and after `tabs place`), `cli::init_asks_for_four_tabs_that_tabs_place_writes`, `cli::tabs_place_list_and_clear`, `cli::tabs_place_at_puts_tabs_along_the_outline`, `cli::tabs_place_refuses_what_it_cannot_place`, `cli::check_warns_tab_not_crossed`.
 - `placed_tabs::replace_swaps_only_the_tabs_the_profile_crosses`, `cli::tabs_place_replace_swaps_the_operations_tabs`, `cli::tabs_place_without_replace_notes_existing_tabs` (#293).
 - `placed_tabs::tab_far_from_its_outline_warns`, `placed_tabs::hole_tabs_placed_for_the_cut_do_not_warn`, `cli::tabs_list_shows_how_far_each_tab_is_off_its_outline`, `cli::placed_v8_hole_tabs_export_without_tab_on_hole`, `cli::tabs_place_replace_onto_a_hole_warns_once` (#300).
+- `migrate::v14_placed_tabs_migrate_with_holds_slug_unset`, `migrate::v14_with_holds_slug_already_present_fails`, `migrate::v14_with_holds_slug_says_where`, `migrate::holds_slug_round_trips`, `migrate::invalid_holds_slug_says_where`, `placed_tabs::hand_placed_hole_tab_still_warns`, `placed_tabs::v14_hole_tabs_on_the_path_hold_their_slugs`, `placed_tabs::place_at_distances_on_holes_marks_the_hole_tabs`, `placed_tabs::hole_tabs_hold_their_slugs_off_corners_with_a_last_pass`, `cli::tabs_place_at_on_holes_exports_without_tab_on_hole`, `cli::tabs_place_count_on_holes_holds_slugs`, `cli::tabs_list_shows_whether_each_tab_holds_its_slug`, `cli::hand_edited_holds_slug_is_refused_with_its_place`, `cli::version_14_projects_export_byte_identical_programs_and_warnings` (#302; the issue's `migrate::v12_hole_tabs_on_the_path_hold_their_slugs` became the `null` migration and `placed_tabs::v14_hole_tabs_on_the_path_hold_their_slugs`, since a migration step cannot see tool paths).
 
 **dc-cam — pocket**
 - `pocket::offset_rings_are_concentric_and_spaced_by_stepover` — 100×50, 6.35 mm, 40 %: ring gaps 2.54 ± 0.01.
@@ -2692,6 +2731,7 @@ updated in the same PR. The other six change no persisted field.
 | A7 Separate heights | #283 | `Project::heights`; definition field `work_coordinates.machine_command` | 12 | #105 (v11), A3 |
 | A8 Profile last pass | #284 | `ProfileOp::last_pass` | 13 | A7 |
 | A9 Tab corners, start point | #285 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
+| (follow-up) Hole tabs hold their slugs | #302 | `PlacedTab::holds_slug` | 15 | A9 |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only
@@ -3202,7 +3242,8 @@ above the step-down in effect, the operation's or else the tool's, is
 `Problem::LastPassThickerThanStepDown`, located at the thickness and
 naming the step-down's field, so a last pass is never thicker than a
 pass; and a cut of only one pass, whose allowance nothing leaves, warns
-`last_pass_unused`.)
+`last_pass_unused`. Changed in #311: Left and Right take a last pass, so
+`LastPassNeedsSide` is On line only, `Side::has_wall`.)
 
 **Algorithm** (`dc-cam::profile`).
 
@@ -3233,7 +3274,31 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    `ShapeNarrowerThanAllowance`. This replaces the earlier bound of `r`,
    which let a notch, slot or tip the earlier passes skip be cut whole at
    full depth; it refuses every path corner sharper than 90°, at any
-   allowance, since there the last pass takes `a / sin(θ/2)`.)
+   allowance, since there the last pass takes `a / sin(θ/2)`. Changed in
+   #324, `last_pass::cuts_only_corners`: the part path is sampled every
+   `min(r/8, 0.25)` mm and at each vertex, with its distance to the
+   allowance path. Nowhere may it be farther than
+   `max(D/3, √2 · a + 0.05)`. A *departure* is a stretch farther than
+   `a + 0.05`; one that reaches past `√2 · a + 0.05` must be a corner:
+   its turning, summed between samples, is one way (at most 1° the other,
+   for sampling and flattening) and less than 179°. Otherwise it is
+   `ShapeNarrowerThanAllowance`. Why: a corner's earlier passes cut both
+   its walls and stop `a / sin(θ/2)` short of the last pass, which takes
+   only the wedge between. D/3 is the thickest skin `check` lets the
+   allowance be on a straight wall, so the wedge is never thicker than a
+   skin the last pass may already take at full depth; `√2 · a + 0.05`
+   keeps everything #310 cut. A stretch that turns back, or as far as a
+   U-turn, goes into a notch, slot or inlet the allowance path bridges:
+   the earlier passes never enter it, and the last pass cuts it whole,
+   about as wide as the bit. Thickness alone cannot tell the two apart:
+   a 7 × 3 mm notch cut outside at 0.5 mm with a 6.35 mm bit takes 1.0 mm
+   off, as a 60° corner does. Measured on a 0.05 mm material lattice
+   against the earlier passes' cuts (`profile::last_pass_allows_sharp_corners`),
+   the last pass's widest removal is the wedge within the lattice: at
+   0.5 mm, 0.98 mm in a 60° triangle, 1.28 mm in a 45° one, 1.36 mm at a
+   42° star tip, 0.95 mm in a 60° V notch. Its momentary engagement as it
+   meets the next wall's skin in any inside corner, square ones
+   included, is not what this bounds; #310 allowed that too.)
 3. **Tabs** are laid out on the final path (the tabs left on the part).
    On the allowance path each tab stretch is the nearest-point projection
    of the final stretch's ends, widened by `a` each way, so the raised
@@ -3274,6 +3339,89 @@ holds the allowance passes to `r` from those, and outside them. Between
 `r` and `r + a` of another part an allowance pass cuts only that part's
 skin, which its own last pass removes, and is allowed.)
 
+**Left and Right** (added in #311; VCarve's Last Pass Allowance applies
+to its Profile of an open vector cut to the left or right, the A8 page;
+PureCutCNC has neither). A Left or Right Profile cuts one flank of the
+bit against the part, so it takes a last pass as Inside and Outside do.
+
+1. **Side.** The allowance path is the open path offset by `r + a` to
+   the cut side, `offset_open(path, ±(r + a))`, the same call as the
+   last pass's with the larger distance (`last_pass::open_twins`). It
+   runs the way the last pass's path runs (`open_runs_reversed`, the
+   #287 spindle rule), so the earlier passes and the last mill alike.
+2. **Ends.** Both offsets end square on the normals through the path's
+   end vertices, so the earlier passes end where the last pass ends:
+   neither is shortened nor extended. No pass reaches the part side past
+   an end (the cutter's edge touches the end vertex only on the last
+   pass, and stays `a` off it on the others); the earlier passes leave
+   the `a` skin standing up to each end normal and the last pass takes it
+   off there. Shortening the earlier passes would leave the last pass a
+   full-width cut at each end; extending them would cut past the end.
+3. **Narrowness and corners.** The pieces of the two offsets must pair
+   one for one (an arc, U or hairpin on the cut side that fits the bit
+   but not the bit plus the allowance makes the larger offset vanish or
+   split), and the last pass is held to `cuts_only_corners` as on an
+   outline, scanned from the path's start to its end with no wrap; a
+   departure that reaches an end of the path is no corner, so it may be
+   no thicker than a square corner's. Either is
+   `ShapeNarrowerThanAllowance`. So the thickness cap
+   `max(D/3, √2·a + 0.05)` applies to a V cut inside its tip.
+4. **Neighbours.** `check_kept_sides` runs on the allowance paths with
+   the reach `r + a` (the kept edges stay `r` off their lines): an
+   allowance path within `r + a` of another line of the operation, or of
+   any line's kept edge, would take that line's skin, which its own last
+   pass is to cut, or cut its kept strip. That is
+   `CamError::AllowanceCutsIntoKeptSide { op, shape, other, diameter_mm,
+   allowance_mm }`, the counterpart of Inside's `D + 2a` band rule. Two
+   lines cut towards each other need `D + 2a` between them; a cut towards
+   another line's kept side needs `3r + 2a`. Lines that meet at an outer
+   corner keep exactly `r + a` and are cut. Closed targets are skipped,
+   so they are no neighbours.
+5. **Tabs** are laid on the last pass's path (`PathEnds::Open`, from the
+   end beside the first vertex) and carried onto the allowance path by
+   `last_pass::twin_tabs`, its raised stretches cut short at the path's
+   ends (`PathTabs::from_spans` with `closed: false`); a smooth stretch
+   an end cuts short has no ramp at that end and holds the tab's top to it
+   (changed in the #311 review: its ramp there was nearly zero long, so
+   the pass fell to its own depth inside the tab in the last fraction of
+   a millimetre). `twin_tabs` also
+   samples each raised cut's reach all round it, just inside it
+   (`RING_INSET_MM`): where the last pass rises onto a tab, the tab's
+   foot at the far side of its kerf is a cusp thinner than the `r/12`
+   lattice, which the allowance pass, `a` nearer that side, reaches up to
+   `√(2ar − a²)` before the rise. This applies to outlines too, whose
+   rises it lengthens by at most a lattice step.
+6. **Entries, leads, relief.** A pass whose lap starts on a tab
+   descends no lower than the tab there (#337, which this relies on: a
+   reversed last pass, or an allowance pass, can start on a tab at a
+   path's end). Each pass ramps along its own path
+   (`entry::along_path`); a helix stays `HelixNeedsWasteSide`. No lead
+   and no relief, as without a last pass. The last pass plunges through
+   the column the earlier passes cleared, as on an outline (step 4).
+7. **`reverse`** runs the last pass's path backwards (`Polyline::reversed`)
+   from the other end, where the earlier passes end, with its layout
+   measured from there (`PathTabs::reversed_open`), so the tabs stay put
+   and the milling mode flips, as it does on an outline.
+8. **S9** (`Material::SideProfile`): with a last pass the open paths
+   offset by `r + a` to the side are tool-centre paths too; every cut
+   still keeps `r` from every open path and kept edge.
+
+Tests: `profile::last_pass_left_offsets_earlier_passes`,
+`profile::last_pass_left_right_tabs_cover_same_stretch` (the rise is
+`√(2ar − a²)`, the #310 review's rule, not the issue's "widened by a"),
+`profile::last_pass_left_right_tabs_keep_off_the_tab_material`,
+`profile::last_pass_left_right_reverse_runs_from_the_other_end`,
+`profile::last_pass_left_right_refuses_what_the_earlier_passes_cannot_follow`,
+`profile::last_pass_left_right_allows_sharp_corners`,
+`validate::last_pass_left_right_is_valid`,
+`safety::left_right_last_pass_passes_s9`, the G-code heightfield checks
+`side_last_pass::left_right_last_pass_keeps_the_kept_side_and_cuts_to_the_ends`
+`side_last_pass::left_right_last_pass_keeps_the_tabs` and
+`side_last_pass::left_right_last_pass_keeps_tabs_at_the_ends` (`dc-gcode`),
+and `cli::left_right_last_pass_exports_and_without_is_byte_identical`,
+whose projects without a last pass export the programs the build before
+#311 wrote. The Left and Right property projects get random last passes.
+
 Tests: `migrate::v12_to_v13_adds_null_last_pass`,
 `validate::last_pass_allowance_limit`, `validate::last_pass_on_line_is_error`,
 `validate::last_pass_thickness_range`,
@@ -3312,7 +3460,20 @@ open path it never passes an end. None: it stays, with `Warning::TabOnCorner
 over the path's corner intervals, not sampled: the allowed set is the
 path minus each corner window grown by the half-stretch, and the move is
 to its nearest end. A circle of radius `R` turns `D/R` radians per window,
-under 30° for `R > 1.91 D`, so the coaster's tabs never move.
+under 30° for `R > 1.91 D`, so the coaster's tabs never move. (changed in
+#285: in `dc-cam::tabs::corners`. The half gap is to the neighbours'
+positions before any tab moved; the no-overlap rule uses positions as
+placed. A moved tab sits 1e-5 mm past the edge it stops at, so its span
+does not touch the corner or a neighbour's span. On a closed path whose
+length is at most `D`, every position is a corner. It runs inside
+`Request::fit` before the #109 rule, on the kept tabs again when that
+rule re-spaces or drops some, and so in `op_tabs`, which `tabs place`
+uses: a request placed there writes the moved points. `tabs place
+--count` sets `avoid_corners` unless `--allow-corners`. A tab moved on an
+open path keeps its whole stretch within the path's ends. `tab_on_corner`
+carries why the tab stays: `everywhere` when the path is a corner wherever
+a tab could go, `no_room` when the neighbours, another tab or an end are
+in the way.)
 
 **Start** (`dc-cam::profile`, the seam step that #176 and leads use).
 `FirstVertex` and `Near` set each closed outline's seam to the distance
@@ -3323,7 +3484,22 @@ count from it and `count` spaces from it; #176's move is skipped (an
 entry that does not fit falls back ramp → plunge, warned); a lead is
 planned at that one arrival (its radius and sweep ladders still apply)
 or dropped with `LeadDropped (no_room)`. `Auto` is the code path of
-today. Open paths ignore it.
+today. Open paths ignore it. (changed in #285: in
+`dc-cam::profile::start`, after `centre_paths` in both `generate_profile`
+and `op_tabs`. The nearest point is `nearest_point`'s: first along the
+path on a tie, except the middle of an arc centred on the target. The
+allowance twin (#284) is re-seamed nearest the same target before
+`twin_tabs` carries the tabs onto it, and a reversed last pass keeps its
+start. The lead is `lead::plan_lead_in_at_start`. Changed again in #337:
+`contour_block` starts a pass's descent at the previous pass Z or the
+lap's start Z, whichever is higher, so a lap that starts on a tab never
+descends below the tab there, and comes down to its depth past the tab's
+end as it leaves any tab; this held for `auto` with a plunge entry too.
+The safety pass's S9 refuses a straight plunge below a tab's top within
+its span along the bit's path (the outline offset by the radius, and by
+the radius plus a last pass's allowance; over a smooth tab's slope, below
+the slope the last pass cuts), from the placed tabs and the request's
+placement, not the toolpath.)
 
 Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 `tabs::rotated_square_tabs_leave_corners` (acceptance 47),
@@ -3335,7 +3511,10 @@ Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 `profile::at_distances_count_from_explicit_start`,
 `profile::explicit_start_entry_falls_back_not_moves`,
 `profile::explicit_start_lead_dropped_when_no_room`,
-`profile::open_path_ignores_start`, `cli::corners_and_start_rotated_square`.
+`profile::open_path_ignores_start`, `cli::corners_and_start_rotated_square`;
+for #337, `profile::start_under_a_tab_never_plunges_into_it`,
+`safety::s9_refuses_a_descent_into_a_tab` and
+`safety::start_under_a_tab_passes_s9`.
 
 ### Documentation (every item)
 

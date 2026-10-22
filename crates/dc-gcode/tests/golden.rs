@@ -251,6 +251,7 @@ fn profile_tabs_circle() {
                 height_mm: 3.0,
                 shape: TabShape::Rect,
                 on_holes: false,
+                avoid_corners: false,
             }),
         ),
         differences: vec![Difference::RectTabStepsAtPlungeRate],

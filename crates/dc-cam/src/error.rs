@@ -412,11 +412,12 @@ pub enum CamError {
         /// The allowed range, as the user reads it.
         range: String,
     },
-    /// A Profile that cuts On line, Left or Right has a last pass (#284):
-    /// only Inside and Outside leave a wall to take the allowance off.
-    /// Validation rejects it; the generator refuses it too.
+    /// A Profile that cuts On line has a last pass (#284): it cuts with
+    /// both flanks, so it leaves no wall to take the allowance off.
+    /// Validation rejects it; the generator refuses it too. (changed in
+    /// #311: Left and Right take a last pass.)
     #[error(
-        "operation `{op}` has a last_pass but does not cut Inside or Outside; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside or Outside"
+        "operation `{op}` has a last_pass but cuts on the line; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside, Outside, Left or Right"
     )]
     LastPassNeedsSide {
         /// The operation.
@@ -451,15 +452,17 @@ pub enum CamError {
         /// The gap the passes before the last need, mm.
         needed_mm: f64,
     },
-    /// #284, #310 review: somewhere the last pass on `shape` would take
-    /// off more than the allowance, `√2` times it as in a square corner
-    /// (plus 0.05 mm): a neck, slot, notch or small hole wider than the
+    /// #284, #310 review, changed in #324: somewhere the passes before the
+    /// last on `shape` skip material the last pass would then cut whole at
+    /// full depth: a neck, slot, notch, inlet or small hole wider than the
     /// tool but narrower than the tool plus the allowance on both sides,
-    /// which the passes before the last skip, or a corner sharper than
-    /// 90°, where they stop short of the last pass. The last pass would
-    /// cut that material at full depth in one go.
+    /// which they bridge (refused once the last pass would take off more
+    /// than a square corner's `√2` times the allowance there), or a tip so
+    /// narrow that the last pass would take off more than a third of the
+    /// tool (or `√2` times the allowance, if more) where they stop short.
+    /// A corner whose wedge is thinner than that is cut.
     #[error(
-        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the last pass would take off more than the allowance at full depth, where the passes before it cannot follow it: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a corner sharper than 90°; make last_pass.allowance_mm smaller (it does not help a sharp corner) or set last_pass to null; no toolpath was produced"
+        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the passes before the last cannot follow it and the last pass would cut what they skip at full depth: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a tip so narrow that the last pass would take off more than a third of the tool there; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
     )]
     ShapeNarrowerThanAllowance {
         /// The operation.
@@ -490,6 +493,31 @@ pub enum CamError {
         other: Box<ShapeRef>,
         /// The tool's diameter, mm.
         diameter_mm: f64,
+    },
+    /// #311: a Left or Right Profile's passes before the last, `allowance_mm`
+    /// farther from each open path than its last pass, come within the
+    /// tool radius plus the allowance of another line of the operation,
+    /// or of the strip one radius wide that a line keeps on its part side:
+    /// they would take that line's skin, which its own last pass is to cut,
+    /// or cut into the part. This is [`CamError::CutsIntoKeptSide`]'s rule
+    /// with the radius grown by the allowance, as Inside's band rule needs
+    /// `diameter + 2 · allowance` ([`CamError::BandNarrowerThanAllowance`]).
+    /// `shape` and `other` are in drawing order and may be the same path;
+    /// `other` is boxed to keep the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape} and {other} with a {allowance_mm} mm last pass allowance, but a pass before the last comes within the {diameter_mm} mm tool's radius plus the allowance of one of them or of the material it keeps, so it would cut the skin that line's last pass takes off, or the part; move the lines apart, make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+    )]
+    AllowanceCutsIntoKeptSide {
+        /// The operation.
+        op: OperationId,
+        /// One of the two paths, the one drawn first.
+        shape: ShapeRef,
+        /// The other path.
+        other: Box<ShapeRef>,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm.
+        allowance_mm: f64,
     },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.

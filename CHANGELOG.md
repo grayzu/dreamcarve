@@ -176,15 +176,53 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   the other way round. Tabs, leads, ramps, helixes and corner relief work with
   it: the earlier passes rise over a slightly longer stretch round each tab,
   and the notches are cut from the last pass. The allowance must be more than
-  0 and at most a third of the bit's diameter, on an Inside or Outside
-  Profile, and `thickness_mm` at most the step-down. The last pass takes
-  off at most the allowance (√2 times it in a square corner): a drawing the
-  earlier passes cannot follow (a band, neck, slot, notch or hole that fits
-  the bit but not the bit plus the allowance, a corner sharper than 90°, or
-  a part that close to another) is refused, naming the shapes. A one-pass
+  0 and at most a third of the bit's diameter, on an Inside, Outside, Left
+  or Right Profile, and `thickness_mm` at most the step-down. The last pass takes
+  off at most the allowance (√2 times it in a square corner), except in a
+  sharp corner, where it takes the wedge the earlier passes stop short of,
+  up to a third of the bit ([#324]): triangles and stars cut inside, V
+  notches cut outside and letters such as A, V and W are cut, not refused.
+  A drawing the earlier passes cannot follow (a band, neck, slot, notch or
+  hole that fits the bit but not the bit plus the allowance, a tip whose
+  wedge is thicker than that, or a part that close to another) is refused,
+  naming the shapes. A one-pass
   cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
-  DreamCarve versions cannot read version 13 files.
+  DreamCarve versions cannot read version 13 files. Left and Right
+  Profiles take a last pass too ([#311]): the earlier passes run the
+  allowance farther to the cut side and end on the same lines through the
+  path's ends as the last pass, so none cuts past an end and the skin is
+  taken off right up to each; `reverse` starts the last pass at the other
+  end. The earlier passes must keep the bit's radius plus the allowance
+  from every other line and the strip it keeps. On an outline or an open
+  path, the earlier passes now also rise over the thin edge of a tab where
+  the last pass rises onto it, at the far side of its cut.
+- **Tabs off corners and the Profile start point; project format version
+  14.** A tab request's `avoid_corners` slides each tab that sits where the
+  bit's path turns 30° or more within one bit diameter to the nearest place
+  off it, at most half way to the next tab and never onto it; one with
+  nowhere to go stays and warns `tab_on_corner`, so no tab is lost
+  ([#285]). `tabs place --count` does the same unless `--allow-corners`.
+  A circle more than about 1.91 bit diameters in radius has no corner, so
+  the coaster cuts as before. A Profile's `start` (`"auto"`,
+  `"first_vertex"`, or `{ "near": { "x_mm", "y_mm" } }`, VCarve's "Use
+  vector start point" and "Start At") starts each closed outline's cut at
+  its bit path's point nearest the drawn first vertex or that point: a
+  request's tabs count from there, a lead arrives there or is dropped, and
+  an entry with no room there falls back instead of moving. `init` writes
+  `avoid_corners: true` and `start: "auto"`; upgraded projects get
+  `false` and `"auto"`, and cut exactly as before. Older DreamCarve
+  versions cannot read version 14 files.
+- **Hole tabs that hold their slugs; project format version 15.** Each placed
+  tab records in `holds_slug` whether it is meant to hold the slug of the hole
+  it is on ([#302]). `tabs place --on-holes`, with `--count` or `--at`, and a
+  request with `on_holes` write `true` for the tabs they put on holes, and
+  `check` and `export` no longer warn `tab_on_hole` for those, even when they
+  sit on the hole's outline or the Profile's bit or side has changed; any
+  other tab on a hole still warns on every run. `tabs list` shows the flag in
+  a new `HOLDS_SLUG` column. Upgraded projects get `null`, which warns as
+  before, and cut exactly as before. The flag changes no cut. Older
+  DreamCarve versions cannot read version 15 files.
 - **Post-processor end-to-end plan and motion check.** `docs/testing/post-processor-e2e.md`
   says, for LinuxCNC, Mach3, UCCNC and generic, what is checked automatically,
   what cannot be and why, and the manual and air-cut procedures for the rest.
@@ -338,6 +376,13 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
 
 ### Fixed
 
+- A Profile whose cut starts under a tab no longer plunges into the tab on
+  later passes. The move between passes came down to the previous pass's
+  depth at the start, inside the tab, leaving it up to one step-down
+  thinner, or more with a last pass. It happened with `start: auto` and a
+  plunge entry, and with an explicit start with every entry. Each pass now starts on the tab at its height and gets
+  down past the tab's end, and the safety pass's S9 refuses a plunge into a
+  tab ([#337]).
 - The CLI no longer panics when its output pipe closes, as in
   `dreamcarve check part.dcv | head`; it finishes its work and exits with its
   own status ([#216]).
@@ -354,6 +399,11 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   back to that vertex with a move too short to write. With arc fitting on,
   arc fitting counted that move as a chord the program does not write, and
   export failed S12 ([#321]).
+- A T-bone or dogbone notch that would come nearer another wall than the bit's
+  radius is no longer cut. A T-bone in a hole whose part is thinner past the
+  hole's wall than the bit's radius cut through the part into the outside,
+  and export failed S9. Such a corner is now skipped with
+  `relief_corner_too_tight` and keeps the bit's radius ([#322]).
 
 ### Safety
 
@@ -472,9 +522,15 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#281]: https://github.com/grayzu/dreamcarve/issues/281
 [#282]: https://github.com/grayzu/dreamcarve/issues/282
 [#284]: https://github.com/grayzu/dreamcarve/issues/284
+[#285]: https://github.com/grayzu/dreamcarve/issues/285
+[#324]: https://github.com/grayzu/dreamcarve/issues/324
+[#311]: https://github.com/grayzu/dreamcarve/issues/311
+[#337]: https://github.com/grayzu/dreamcarve/issues/337
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
+[#302]: https://github.com/grayzu/dreamcarve/issues/302
 [#306]: https://github.com/grayzu/dreamcarve/issues/306
 [#308]: https://github.com/grayzu/dreamcarve/issues/308
 [#299]: https://github.com/grayzu/dreamcarve/issues/299
 [#321]: https://github.com/grayzu/dreamcarve/issues/321
+[#322]: https://github.com/grayzu/dreamcarve/issues/322
