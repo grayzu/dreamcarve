@@ -1,0 +1,233 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Records one manual run of a DreamCarve program on a controller: layer 4
+# (the controller's own software, in its documented demo or simulation
+# mode) or layer 5 (a real machine) of docs/testing/post-processor-e2e.md.
+# The plan's procedures are the authority; this form copies their checks.
+# The controller dropdown lists exactly the bundled definitions' ids
+# (crates/dreamcarve/tests/controller_run_form.rs).
+# Syntax: https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms
+name: Controller run
+description: Record a manual run of a DreamCarve program on a controller's software or a real machine (layers 4 and 5).
+title: "Controller run: <controller> <version>, <layer>"
+labels: [needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Record one run of one program. Follow the procedure for your controller in the [post-processor end-to-end plan](https://github.com/grayzu/dreamcarve/blob/main/docs/testing/post-processor-e2e.md), "Controller by controller": the plan is the authority, and this form only records what it asks you to check.
+
+        Use only the controller's own documented demo or simulation mode, or a real machine. Do not inspect a proprietary product to learn how it computes anything (AGENTS.md).
+
+        On a real machine, start with an air cut, with feed override low and a hand on feed hold. G-code drives real machines.
+  - type: dropdown
+    id: controller
+    attributes:
+      label: Controller
+      description: The post-processor id you exported with (`dreamcarve posts` lists them). For `generic`, name the controller you ran it on below.
+      options:
+        - grblhal
+        - grbl
+        - linuxcnc
+        - mach3
+        - uccnc
+        - generic
+    validations:
+      required: true
+  - type: input
+    id: controller-version
+    attributes:
+      label: Controller and version
+      description: The controller software or firmware you ran it on, and its version.
+      placeholder: "grblHAL 20250101, LinuxCNC 2.9.4 (AXIS sim), Mach3 R3.043.066"
+    validations:
+      required: true
+  - type: input
+    id: sender
+    attributes:
+      label: Sender
+      description: The program that streamed the G-code, and its version, where one is used (GRBL and grblHAL). Leave empty otherwise.
+      placeholder: "ioSender 2.0.46"
+  - type: input
+    id: post-version
+    attributes:
+      label: Post-processor version
+      description: The definition version the program was written with (`post_processor.version` in the project, or the header line).
+      placeholder: "2"
+    validations:
+      required: true
+  - type: input
+    id: dreamcarve-version
+    attributes:
+      label: DreamCarve version and commit
+      description: "`dreamcarve --version`, and the commit if you built it from source (`git rev-parse --short HEAD`)."
+      placeholder: "dreamcarve 0.2.0 (abc1234)"
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Project and program
+      description: Attach the `.dcv` project and the exported program (drag them here; zip them if GitHub refuses the extension), and paste the `dreamcarve export` command you ran.
+    validations:
+      required: true
+  - type: dropdown
+    id: units
+    attributes:
+      label: Units
+      description: The project's units, and so the program's.
+      options:
+        - mm
+        - inch
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      description: The machine or simulator configuration, with its Z travel and where Z homes. For a simulator, the configuration file.
+      placeholder: "Shapeoko 4, Z homes up, travel 0 to -100 mm; or sim/axis/axis_mm.ini"
+    validations:
+      required: true
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Layer
+      description: Layer 4 is the controller's own software in its documented demo or simulation mode. Layer 5 is a real machine.
+      options:
+        - "Layer 4: simulation or demo mode"
+        - "Layer 5: air cut"
+        - "Layer 5: foam or scrap"
+        - "Layer 5: material"
+    validations:
+      required: true
+  - type: dropdown
+    id: preview
+    attributes:
+      label: Toolpath matches the preview
+      description: The controller's toolpath display, or the cut, matches `dreamcarve export --preview`.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+    validations:
+      required: true
+  - type: dropdown
+    id: work-zero
+    attributes:
+      label: Work zero
+      description: The program cuts from the work zero you set (touched off on the stock, or above it for an air cut).
+      options:
+        - Pass
+        - Fail
+        - Not checked
+    validations:
+      required: true
+  - type: dropdown
+    id: safe-z
+    attributes:
+      label: Safe Z, plunges and arcs
+      description: Each rapid is at safe Z, each plunge is at the plunge rate, and arcs turn the way the preview shows.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+    validations:
+      required: true
+  - type: dropdown
+    id: spindle
+    attributes:
+      label: Spindle start and dwell
+      description: The spindle starts at the tool's speed and the dwell after `M3` lasts the configured seconds (3 s by default, not 3 ms or 3000 s). "Not applicable" with manual spindle control.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: tool-change
+    attributes:
+      label: Tool change
+      description: At each tool change the program stops where you can fit the bit and set Z zero, then rises clear of the work before it moves across it. "Not applicable" for a one-tool program.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: g53-lift
+    attributes:
+      label: G53 lift
+      description: The `G53` lift goes to the machine Z the export names. "Not applicable" without a tool-change machine Z, and on Mach3, UCCNC and generic, which refuse one.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: m0-pauses
+    attributes:
+      label: M0 pauses
+      description: Every `M0` stops, with its message where the controller or sender shows one, until you resume. "Not applicable" if the program has none.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: final-park
+    attributes:
+      label: Final park and end
+      description: The program ends at the park position (or at the clearance height when none is set), with the spindle off, at `M30` or `M2`.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+    validations:
+      required: true
+  - type: dropdown
+    id: feed-override
+    attributes:
+      label: Feed override
+      description: Feed override changes the feed as the controller documents (on grblHAL and GRBL, start at 50 %). "Not applicable" in a simulator without one.
+      options:
+        - Pass
+        - Fail
+        - Not checked
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Procedure steps
+      description: Each step of the plan's procedure for this controller, with its result. For a cut, the measured depth of a pocket and the position of a hole against the project.
+      placeholder: |
+        1. Installed without the parallel port driver: Simulation mode. Pass.
+        2. "G04 Dwell param in ms" unchecked, IJ mode absolute: circles right. Pass.
+    validations:
+      required: true
+  - type: textarea
+    id: issues
+    attributes:
+      label: Observed issues
+      description: Anything that differed from the plan or the preview, with the program line and the controller's exact message. Open a bug for each problem and link it here.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      description: Pass only if every check above passed or does not apply. A passed layer 5 run is what lets the post-processors chapter stop listing a controller under "Not yet checked on a real machine".
+      options:
+        - Pass
+        - Fail
+    validations:
+      required: true

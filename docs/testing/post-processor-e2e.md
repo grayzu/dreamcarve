@@ -24,9 +24,18 @@ Each layer checks something the one below it cannot.
 | 5. A real machine | It cuts what the preview shows. | Air cut, then foam or scrap, on grblHAL and GRBL. Other controllers need a user with one. | Before a release, by a person |
 
 Layers 0 to 2 are automatic. Layer 3 can be automated. Layers 4 and 5
-are manual, and the post-processors chapter keeps saying "Not yet
-checked on a real machine" for a controller until layer 5 has been done
-on it.
+are manual. Each manual run is recorded on its own issue, with the
+[controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml)
+(`.github/ISSUE_TEMPLATE/controller-run.yml`): the controller and its
+version, the sender, the DreamCarve version and commit, the program and
+project, the layer, and the result of each check in the controller's
+procedure below. The procedures are the authority; the form copies their
+checks.
+
+**Rule.** The post-processors chapter's "Not yet checked on a real
+machine" names a controller until a passed layer 5 report exists for it:
+a controller run issue, layer 5, whose result is Pass. A layer 4 run, or
+a failed layer 5 run, does not lift it.
 
 ## Controller by controller
 
@@ -69,6 +78,7 @@ which is free:
 6. Run it. Check that each `M0` stops with its message, that the lift
    goes to the machine Z the export names, and that the program ends with
    the spindle off.
+7. Record the run with the [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml).
 
 ### Generic RS274/NGC
 
@@ -147,8 +157,8 @@ a volunteer who has read the licence:
 6. Repeat with canned cycles on (`use_canned_cycles`) and a simple Drill
    with a dwell, which writes `G81` and `G82`. The holes must be where the
    preview shows them.
-7. Record the Mach3 version and the result on the release's checklist
-   issue.
+7. Record the Mach3 version and the result with the
+   [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml).
 
 ### UCCNC
 
@@ -187,6 +197,7 @@ line it changes:
 4. Run it. The dwell after `M3` should last 3 s, not 3000 s or 3 ms. `M0`
    should stop, and the program should end with `M30`.
 5. Repeat with an inch project and the units set to inches.
+6. Record each run with the [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml).
 
 ### grblHAL and GRBL
 
@@ -224,8 +235,10 @@ maintainer's machine:
 3. **Foam or scrap.** Run it again with the real Z zero in foam or scrap
    wood, at full feed. Measure a pocket depth and a hole position against
    the project.
-4. **Record it.** Note the controller version, the sender, the program
-   and the result on the release checklist issue.
+4. **Record it.** Record the controller version, the sender, the
+   program and the result of each check with the
+   [controller run form](https://github.com/grayzu/dreamcarve/issues/new?template=controller-run.yml), one issue per run: the air cut and the
+   foam or scrap cut are separate layer 5 runs.
 
 ## What converting to grblHAL would test
 
@@ -300,6 +313,6 @@ merge either: the token has no `workflow` scope.
 
 - LinuxCNC full simulation, headless (layer 3).
 - grblHAL Simulator for the grblHAL and GRBL corpus.
-- A release checklist issue template that records the manual layer 4 and
-  5 runs, and that "Not yet checked on a real machine" is lifted only
-  from one.
+- An issue form that records the manual layer 4 and 5 runs, and the rule
+  that "Not yet checked on a real machine" is lifted only from one: #330,
+  done (see "The layers").

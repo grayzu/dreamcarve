@@ -229,6 +229,12 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   `tools/rs274-motion` (dev only) runs those programs through LinuxCNC's
   `rs274` interpreter and compares its moves, feeds, dwells, canned cycles and
   `G53` lifts with DreamCarve's own reading, line by line ([#299]).
+- **Controller run form.** A GitHub issue form, "Controller run", records one
+  manual run of a program on a controller's demo or simulation mode or on a
+  real machine: the controller and version, the DreamCarve version, the
+  program and project, and the result of each check in the plan's procedure.
+  The post-processors chapter lists a controller as not yet checked on a real
+  machine until a passed real-machine run is recorded with it ([#330]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -545,3 +551,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#321]: https://github.com/grayzu/dreamcarve/issues/321
 [#322]: https://github.com/grayzu/dreamcarve/issues/322
 [#342]: https://github.com/grayzu/dreamcarve/issues/342
+[#330]: https://github.com/grayzu/dreamcarve/issues/330
