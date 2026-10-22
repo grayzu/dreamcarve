@@ -1611,6 +1611,27 @@ meaning and the labels are VCarve's.
   a round extension would cut `r` further along the line. The
   alternatives were rejected: stopping `r` short leaves a nib at the end,
   and wrapping round the end vertex cuts into the part side past it.
+  (changed in #342: the offset of the end segment ends square, but where
+  that segment is too short to have one, on the inside of the turn
+  before it (shorter than `r·cot(θ/2)` for segments meeting at θ), the
+  offset of the segment before runs on until cavalier_contours' circle
+  of radius `r` round the end vertex stops it, past the normal: a 30° V
+  with a 2 mm last segment, cut inside with the 6.35 mm bit, took about
+  0.05 mm² of the kept strip there at full depth, and more of the part
+  past the end. `profile::check_open_ends` refuses a path with a piece
+  that ends on that circle and none that ends square there:
+  `CamError::EndSegmentHasNoRoom { op, shape, vertex, length_mm,
+  diameter_mm, allowance_mm }`, at the end vertex as drawn. Clipping the
+  piece back to the normal instead, as the issue first proposed, would
+  stop it more than `r` from the vertex with nothing cut beside the end
+  segment, where it crosses the normal at all; the bit cannot follow
+  that end, so it is an error. Where the end segment has room, every
+  piece ends square already, so programs that do not reach past an end
+  are unchanged. Round the V (the turn's outside) the path is cut. The
+  test is `side_last_pass::open_path_short_end_segment_keeps_the_kept_strip`,
+  a G-code heightfield of 30°, 45° and 60° V notches with last segments
+  of 1, 2 and 3 mm, Left and Right, with and without a last pass and
+  tabs at the ends, and `profile::left_right_end_segment_with_no_room_is_refused`.)
 - **Closed targets** are skipped with `Warning::SideNeedsOpenPath { shape }`
   (`side_needs_open_path`), not mapped to Inside or Outside by winding:
   the drawing does not show a closed path's direction
@@ -1673,14 +1694,27 @@ meaning and the labels are VCarve's.
   warning, as #192, #199 and #210 decided for cuts into kept material
   (`profile::left_right_cut_into_the_kept_side_is_refused`). D6's
   `ToolpathsOverlap` is not run for Left and Right: its condition, a path
-  within `r` of another shape's line, is already this error.
+  within `r` of another shape's line, is already this error. (changed in
+  #342: the kept edge alone leaves the strip open at each end, so a cut
+  could reach into it past an end normal while keeping `r` from the line
+  and the edge. The strip is closed at each end by
+  `dc_geometry::strip_ends`: the normal through the end vertex, `r` long
+  to the kept side, cut short at the first line of the operation it
+  meets, so that where the end segment is short and turns toward the
+  kept side the end stops at the segment it runs into. Each piece keeps
+  `r` from those too, `r + a` for the allowance paths:
+  `profile::left_right_cut_into_the_strip_past_an_end_is_refused`.)
 - **S9** (`Material::SideProfile`): every cut's ends and middle lie within
   the slack of one of the targets' open paths offset by `r` to the side
   (`offset_open`, computed from the project, not taken from dc-cam), and
-  the whole cut keeps `r` less the slack from every open path and every
-  kept edge, closed targets ignored
-  (`safety::left_right_cut_off_its_path_fails_s9`; the property test
-  `random_valid_left_right_profiles_never_panic_and_pass_safety`).
+  the whole cut keeps `r` less the slack from every open path, every
+  kept edge and every strip end (`strip_ends`, #342), closed targets
+  ignored (`safety::left_right_cut_off_its_path_fails_s9`; the property
+  test `random_valid_left_right_profiles_never_panic_and_pass_safety`).
+  The strip ends make the kept-strip test independent of how the offset
+  ends: before #342 a cut along the offset of a path whose offset ran
+  past an end normal passed, because the test used the same offset
+  (`safety::s9_refuses_a_cut_past_an_open_path_end`).
 
 (changed in #207: an open path could be cut only On line, so cutting
 beside a line, as VCarve's Left and Right do, needed the line redrawn one
@@ -2588,7 +2622,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-cam — profile**
 - `profile::inside_cut_in_band_narrower_than_tool_is_refused`, `profile::inside_band_as_wide_as_the_tool_is_cut`, `profile::inside_island_in_an_outline_too_small_for_the_tool_is_refused` (#192), `profile::on_line_ring_narrower_than_tool_is_refused`, `profile::on_line_ring_wider_than_the_tool_is_cut` (#199), `profile::open_path_alongside_its_part_wall_is_refused`, `profile::open_slot_from_the_edge_is_cut`, `profile::open_path_far_from_walls_is_cut` (#210), `profile::on_line_hairpin_narrower_than_tool_is_refused`, `profile::on_line_spiral_with_tight_turns_is_refused`, `profile::on_line_smooth_curve_is_not_compared_with_itself`, `profile::on_line_narrow_notch_in_an_outline_is_cut`, `profile::duplicate_open_paths_are_dropped_with_a_warning` (#221), `profile::on_line_part_smaller_than_the_bit_is_refused`, `profile::on_line_part_just_larger_than_the_bit_is_cut`, `safety::on_line_part_smaller_than_the_bit_fails_s9` (#223).
 - `profile::start_under_a_tab_moves_so_the_ramp_fits`, `profile::tab_positions_do_not_move_when_the_seam_moves` (#176).
-- `profile::open_path_left_offsets_to_the_left`, `profile::open_path_right_offsets_to_the_right`, `profile::left_right_on_closed_target_is_skipped_with_warning`, `profile::left_right_ramp_and_tabs`, `profile::left_right_cut_into_the_kept_side_is_refused`, `profile::left_right_tool_too_large_for_a_tight_arc_warns`, `offset::open_offset_moves_left_of_travel_and_ends_square`, `offset::open_offset_rounds_outer_turns_and_trims_inner_ones`, `offset::open_offset_of_a_tight_arc_toward_its_centre_vanishes`, `safety::left_right_cut_off_its_path_fails_s9`, `cli::left_profile_of_an_svg_line_exports_on_its_left` (#207). `profile::left_climb_keeps_the_part_on_the_right_of_travel`, `profile::right_climb_keeps_the_part_on_the_right_of_travel`, `profile::left_conventional_is_the_reverse` (#287, replacing #207's `profile::left_right_direction_follows_vcarve`).
+- `profile::open_path_left_offsets_to_the_left`, `profile::open_path_right_offsets_to_the_right`, `profile::left_right_on_closed_target_is_skipped_with_warning`, `profile::left_right_ramp_and_tabs`, `profile::left_right_cut_into_the_kept_side_is_refused`, `profile::left_right_tool_too_large_for_a_tight_arc_warns`, `offset::open_offset_moves_left_of_travel_and_ends_square`, `offset::open_offset_rounds_outer_turns_and_trims_inner_ones`, `offset::open_offset_of_a_tight_arc_toward_its_centre_vanishes`, `safety::left_right_cut_off_its_path_fails_s9`, `cli::left_profile_of_an_svg_line_exports_on_its_left` (#207). `profile::left_climb_keeps_the_part_on_the_right_of_travel`, `profile::right_climb_keeps_the_part_on_the_right_of_travel`, `profile::left_conventional_is_the_reverse` (#287, replacing #207's `profile::left_right_direction_follows_vcarve`). `side_last_pass::open_path_short_end_segment_keeps_the_kept_strip` (the issue's `profile::open_path_short_end_segment_keeps_the_kept_strip`, in dc-gcode because it reads the emitted G-code), `safety::s9_refuses_a_cut_past_an_open_path_end`, `profile::left_right_end_segment_with_no_room_is_refused`, `profile::left_right_cut_into_the_strip_past_an_end_is_refused`, `offset::strip_ends_run_along_the_end_normals_to_the_first_line` (#342).
 - `profile::on_line_cuts_an_open_path`, `profile::open_path_direction_picks_the_end_it_starts_at`, `profile::on_line_open_path_ramps_back_and_forth_along_the_line` (acceptance 26), `profile::open_path_tabs_are_measured_from_its_first_vertex`, `profile::on_line_open_path_with_no_length_is_skipped`, `profile::open_path_is_skipped_with_warning` (Inside and Outside), `validate::open_profile_cut_on_line_is_not_reported`, `safety::on_line_profile_of_an_open_path_passes_s9` (#175).
 
 **dc-cam — overlap**
@@ -3390,7 +3424,10 @@ bit against the part, so it takes a last pass as Inside and Outside do.
    runs the way the last pass's path runs (`open_runs_reversed`, the
    #287 spindle rule), so the earlier passes and the last mill alike.
 2. **Ends.** Both offsets end square on the normals through the path's
-   end vertices, so the earlier passes end where the last pass ends:
+   end vertices (an end segment with room for `r` but not `r + a` is
+   `EndSegmentHasNoRoom` with the allowance, #342: the allowance path
+   would run past the normal), so the earlier passes end where the last
+   pass ends:
    neither is shortened nor extended. No pass reaches the part side past
    an end (the cutter's edge touches the end vertex only on the last
    pass, and stays `a` off it on the others); the earlier passes leave

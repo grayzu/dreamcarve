@@ -386,6 +386,22 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   across the allowance onto its own path. No plunge goes deeper into uncut
   material than a step-down. A last pass lead-in that starts too far from
   the earlier passes' cut is left off with `lead_dropped` ([#339]).
+- The post-processors chapter no longer says that on LinuxCNC a `G53` lift
+  outside the soft limits stops the program before the machine moves.
+  LinuxCNC refuses the lift when it reads ahead to it, so the job can stop
+  part-way, with the bit in the stock. The chapter now says so, and names
+  the "Program exceeds machine limits" warning AXIS shows when you press
+  Run, which catches it before anything moves ([#336]).
+- A Left or Right Profile of an open path whose last (or first) segment is
+  too short for the bit on the inside of the turn before it no longer cuts
+  past the end. The cut beside the segment before it ran on past the line
+  through the end vertex and took a sliver of the part at full depth: about
+  0.05 mm² of the strip the path keeps for a 30° V with a 2 mm last segment
+  and a 6.35 mm bit. Such a path is now refused, naming the vertex
+  (`EndSegmentHasNoRoom`), with a last pass too when only the bit plus the
+  allowance has no room; the strip a line keeps ends square at its end
+  vertices, so a cut that reaches into it past an end is refused; and the
+  safety pass's S9 holds every program to that strip ([#342]).
 - A Profile whose cut starts under a tab no longer plunges into the tab on
   later passes. The move between passes came down to the previous pass's
   depth at the start, inside the tab, leaving it up to one step-down
@@ -545,3 +561,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#299]: https://github.com/grayzu/dreamcarve/issues/299
 [#321]: https://github.com/grayzu/dreamcarve/issues/321
 [#322]: https://github.com/grayzu/dreamcarve/issues/322
+[#342]: https://github.com/grayzu/dreamcarve/issues/342
+[#336]: https://github.com/grayzu/dreamcarve/issues/336
