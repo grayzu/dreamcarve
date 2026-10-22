@@ -525,7 +525,8 @@ pub enum CamError {
     /// set, to cut beside it: on the inside of the turn before it, the cut
     /// beside the earlier segment reaches past the normal through the end
     /// vertex, where every cut must stop (A8, "Ends"), and into the strip
-    /// the path keeps or the part past its end.
+    /// the path keeps or the part past its end. `shape` is boxed to keep
+    /// the error small.
     #[error(
         "operation `{op}` cuts beside {shape}, but the segment ending at its vertex {vertex} is {length_mm:.3} mm long, too short for its {diameter_mm} mm tool{} to cut beside it: the cut would reach past the path's end into the part; lengthen or remove that segment, cut the other side, or use a smaller tool; no toolpath was produced",
         with_allowance(*.allowance_mm)
@@ -534,7 +535,7 @@ pub enum CamError {
         /// The operation.
         op: OperationId,
         /// The open path.
-        shape: ShapeRef,
+        shape: Box<ShapeRef>,
         /// The end vertex, 0-based in the path as drawn: 0 for its first,
         /// one less than its vertex count for its last.
         vertex: usize,

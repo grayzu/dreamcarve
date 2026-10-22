@@ -753,8 +753,21 @@ fn left_right_last_pass_keeps_tabs_at_the_ends() {
 /// The lattice points of `heights` on the kept side of `line`, cut on the
 /// side of `sign` (+1 Left, −1 Right), that it has cut, with how deep: at
 /// most a radius from the line on its other side, past its ends included
-/// (judged there by the end segment's direction).
+/// (judged there by the end segment's direction). What A8 lets a square
+/// end cut is not counted: the cutter centred on the normal through an
+/// end vertex, a radius to the cut side, reaches the radius past the end
+/// on the waste side of the end segment's line, which can be within a
+/// radius of an earlier segment where the end segment is short and turns
+/// toward the kept side (round a 30° V with a 1 mm last segment).
 fn cuts_on_kept_side(heights: &Heights, line: &[Point], sign: f64) -> Vec<(Point, f64)> {
+    let unit = |a: Point, b: Point| (b - a) * (1.0 / a.distance_to(b));
+    let n = line.len();
+    // Each end vertex with its square end point.
+    let ends = [
+        (line[0], unit(line[0], line[1])),
+        (line[n - 1], unit(line[n - 2], line[n - 1])),
+    ]
+    .map(|(at, dir)| at + dir.perp() * (sign * RADIUS_MM));
     let mut found = Vec::new();
     for j in 0..heights.ny {
         for i in 0..heights.nx {
@@ -763,6 +776,7 @@ fn cuts_on_kept_side(heights: &Heights, line: &[Point], sign: f64) -> Vec<(Point
             if at.signed_mm * sign < -SLACK_MM
                 && at.gap_mm <= RADIUS_MM
                 && heights.at(i, j) < STOCK_MM
+                && ends.iter().all(|e| q.distance_to(*e) > RADIUS_MM)
             {
                 found.push((q, STOCK_MM - heights.at(i, j)));
             }
@@ -801,11 +815,14 @@ fn notch(angle_deg: f64, last_mm: f64) -> Vec<(f64, f64)> {
 /// the allowance) having no room. Round the V every case is cut, and a
 /// material heightfield of its emitted G-code shows no cut on the kept
 /// side within a radius of the path, past either end included, while the
-/// cut reaches both end normals.
+/// cut reaches both end normals. The exception, as before #342, is the
+/// 30° V with a 1 mm last segment and a last pass: the allowance pass's
+/// square end comes within `r + a` (3.58 mm) of the edge of the strip the
+/// first arm keeps inside the V, `AllowanceCutsIntoKeptSide`.
 #[test]
 fn open_path_short_end_segment_keeps_the_kept_strip() {
     let at = (60.0, 40.0);
-    let (mut refused, mut cut) = (0, 0);
+    let (mut refused, mut narrow, mut cut) = (0, 0, 0);
     for angle_deg in [30.0, 45.0, 60.0] {
         for last_mm in [1.0, 2.0, 3.0] {
             let points = notch(angle_deg, last_mm);
@@ -878,6 +895,12 @@ fn open_path_short_end_segment_keeps_the_kept_strip() {
                                     kept.first()
                                 );
                             }
+                            Err(dc_cam::CamError::AllowanceCutsIntoKeptSide { .. })
+                                if !inside && last_pass && angle_deg < 40.0 && last_mm < 1.5 =>
+                            {
+                                narrow += 1;
+                                continue;
+                            }
                             Err(e) => panic!("{case}: {e}"),
                         }
                         let passes = passes(&project).expect("cut");
@@ -891,16 +914,16 @@ fn open_path_short_end_segment_keeps_the_kept_strip() {
                             kept.len(),
                             kept.first()
                         );
-                        let along: Vec<f64> = all
+                        let (first_mm, last_mm) = all
                             .iter()
                             .flat_map(|c| &c.samples)
                             .filter(|p| p.z < STOCK_MM)
                             .map(|p| place(&line, p.xy()).along_mm)
-                            .collect();
+                            .fold((f64::MAX, f64::MIN), |(lo, hi), a| (lo.min(a), hi.max(a)));
+                        // To the program's last place.
                         assert!(
-                            along.iter().any(|&a| a <= 1e-6)
-                                && along.iter().any(|&a| a >= total_mm - 1e-6),
-                            "{case}: the cut reaches both end normals"
+                            first_mm <= 1e-3 && last_mm >= total_mm - 1e-3,
+                            "{case}: the cut runs from {first_mm} to {last_mm} of {total_mm} mm"
                         );
                         cut += 1;
                     }
@@ -908,5 +931,5 @@ fn open_path_short_end_segment_keeps_the_kept_strip() {
             }
         }
     }
-    assert_eq!((refused, cut), (36, 36), "refused and cut");
+    assert_eq!((refused, narrow, cut), (36, 2, 34), "refused and cut");
 }

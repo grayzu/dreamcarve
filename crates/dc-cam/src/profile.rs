@@ -40,7 +40,7 @@ use crate::warning::{OpenPathReason, TabOnCornerReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
     distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point, nest,
-    offset, offset_open, point_segment_distance_mm,
+    offset, offset_open, point_segment_distance_mm, strip_ends,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, TabId, Tool,
@@ -1046,6 +1046,9 @@ fn centre_paths<'s>(
             });
             continue;
         }
+        if let Some(left_mm) = side_mm {
+            check_open_ends(op, tool, (shape, path), &centres, left_mm, None)?;
+        }
         open_centres.push((shape, centres));
         open_lines.push(path);
     }
@@ -1586,6 +1589,85 @@ fn drop_duplicate_paths(
     kept
 }
 
+/// How far a piece's end may lie from the square end point of an open
+/// path's offset and still be it, mm: well above the error of
+/// cavalier_contours' trim, well below any length a cut beside a segment
+/// is worth making.
+const SQUARE_END_MM: f64 = 1e-4;
+
+/// #342: every piece of an open path's Left or Right offset `pieces`, by
+/// `left_mm` (positive to the left, the radius, or the radius plus
+/// `allowance_mm` for the passes before the last), must end square on the
+/// normals through `path`'s end vertices (A8, "Ends"). The offset of the
+/// segment that ends there runs out to the square end point, `|left_mm|`
+/// along the normal from the vertex, and ends there; where that segment
+/// is too short to have one, on the inside of the turn before it, the
+/// offset of an earlier segment runs on until the circle of radius
+/// `|left_mm|` round the vertex stops it, which is past the normal: its
+/// cutter would take the strip the path keeps there, or the part past the
+/// end. So a piece that runs to the vertex's circle (each piece runs as
+/// `path` does: its last vertex for the path's last, its first for its
+/// first) when none ends square there is refused:
+/// [`CamError::EndSegmentHasNoRoom`] at that vertex. Clipped back to the
+/// normal, where the normal crosses it at all, the piece would stop more
+/// than the radius from the vertex and nothing would be cut beside the
+/// end segment: the bit cannot follow that end. Where the end segment has
+/// room the offset ends square already, and the strip's ends
+/// ([`check_kept_sides`]) hold any other piece out of the strip.
+fn check_open_ends(
+    op: &ProfileOp,
+    tool: &Tool,
+    (shape, path): (&ShapeRef, &Polyline),
+    pieces: &[Polyline],
+    left_mm: f64,
+    allowance_mm: Option<f64>,
+) -> Result<(), CamError> {
+    let length_mm = path.length_mm();
+    let vertices = path.vertices();
+    let firsts: Vec<Point> = pieces
+        .iter()
+        .filter_map(|p| p.vertices().first().map(|v| v.point()))
+        .collect();
+    let lasts: Vec<Point> = pieces
+        .iter()
+        .filter_map(|p| p.vertices().last().map(|v| v.point()))
+        .collect();
+    let ends = [
+        (0, 0.0, firsts),
+        (vertices.len().saturating_sub(1), length_mm, lasts),
+    ];
+    for (vertex, at_mm, piece_ends) in ends {
+        let Some((end, tangent)) = path.point_at(at_mm) else {
+            continue;
+        };
+        let square = end + tangent.perp() * left_mm;
+        let (mut square_end, mut wrapped) = (false, false);
+        for p in piece_ends {
+            if p.distance_to(square) <= SQUARE_END_MM {
+                square_end = true;
+            } else if p.distance_to(end) <= left_mm.abs() + SQUARE_END_MM {
+                wrapped = true;
+            }
+        }
+        if wrapped && !square_end {
+            let segment = if vertex == 0 {
+                path.segments().find(|s| s.length_mm() > EPS_MM)
+            } else {
+                path.segments().filter(|s| s.length_mm() > EPS_MM).last()
+            };
+            return Err(CamError::EndSegmentHasNoRoom {
+                op: op.id.clone(),
+                shape: Box::new(shape.clone()),
+                vertex,
+                length_mm: segment.map_or(0.0, |s| s.length_mm()),
+                diameter_mm: tool.diameter_mm,
+                allowance_mm,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// #207: the band rule for a Left or Right Profile. The side its cutter
 /// runs on is waste and the other side is the part, so the bit must not
 /// cross another line of the operation, nor reach the material a line
@@ -1593,7 +1675,10 @@ fn drop_duplicate_paths(
 /// by `left_mm`, as cut) must keep the tool radius (less [`EPS_MM`]) from
 /// every other line of `open`, and from every line's kept edge: the line
 /// offset by the radius to its other side, so the strip one radius wide
-/// beside it is never cut. A path is held to its own kept edge too, which
+/// beside it is never cut. The strip is closed at each end by the normal
+/// through the end vertex, a radius long and cut short at the first line
+/// it meets ([`strip_ends`], #342), so a cut that reaches past an end
+/// into the strip is refused too, as S9 refuses it. A path is held to its own kept edge too, which
 /// catches a spiral or hairpin whose cut reaches what the line keeps
 /// further along; it keeps its own line by construction
 /// ([`offset_open`]). Lines that meet are not set aside, unlike On line's
@@ -1617,9 +1702,14 @@ fn check_kept_sides(
     allowance_mm: f64,
 ) -> Result<(), CamError> {
     let reach_mm = left_mm.abs() + allowance_mm;
+    let lines: Vec<&Polyline> = open.iter().map(|(_, line)| line).collect();
     let kept: Vec<(&ShapeRef, &Polyline, Vec<Polyline>)> = open
         .iter()
-        .map(|(shape, line)| (shape, line, offset_open(line, -left_mm)))
+        .map(|(shape, line)| {
+            let mut edges = offset_open(line, -left_mm);
+            edges.extend(strip_ends(line, -left_mm, &lines));
+            (shape, line, edges)
+        })
         .collect();
     let drawn = |s: &ShapeRef| (op.targets.iter().position(|t| *t == s.instance), s.profile);
     for &(shape, ref pieces) in centres {
@@ -6889,5 +6979,114 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── #342: square ends of a Left or Right cut ──
+
+    /// #342: an open path whose end segment is too short for the bit on
+    /// the inside of the turn before it is refused at that end, rather
+    /// than cut past the end normal (A8, "Ends"). A 30° V drawn down a
+    /// 20 mm arm and up a 2 mm one, cut inside (Left): a cut beside the
+    /// 2 mm arm would start `r·cot 15°` (11.8 mm) along it, so the offset
+    /// is the first arm's alone, and it runs to the circle round the end
+    /// vertex, past the normal there: `EndSegmentHasNoRoom` at vertex 2,
+    /// the segment 2 mm long, with no allowance. Drawn the other way it is
+    /// the first segment, refused at vertex 0 when cut inside (Right).
+    /// Round the V it is cut. A 30 × 3.4 mm L cut inside its corner has
+    /// room for the bit (`r·cot 45°` = 3.175 mm) and for the bit plus a
+    /// 0.2 mm allowance, and every lap ends square on the end normal, but
+    /// not for the bit plus 0.5 mm: refused with that allowance.
+    #[test]
+    fn left_right_end_segment_with_no_room_is_refused() {
+        let climb = CutDirection::Climb;
+        let (sin, cos) = 15f64.to_radians().sin_cos();
+        let v = open(&[
+            (-20.0 * sin, 20.0 * cos),
+            (0.0, 0.0),
+            (2.0 * sin, 2.0 * cos),
+        ]);
+        let op = |p: &Project, side: Side, allowance_mm: Option<f64>| ProfileOp {
+            last_pass: allowance_mm.map(allowance),
+            ..side_last_pass_op(p, side, climb)
+        };
+        let refused = |p: &Project, op: &ProfileOp| {
+            let err = generate_profile(p, op).expect_err("no room");
+            let message = err.to_string();
+            let CamError::EndSegmentHasNoRoom {
+                shape,
+                vertex,
+                length_mm,
+                diameter_mm,
+                allowance_mm,
+                ..
+            } = err
+            else {
+                panic!("expected EndSegmentHasNoRoom, got {err:?}");
+            };
+            assert_eq!(shape.profile, 0);
+            assert_approx_eq!(diameter_mm, 6.35, TOL);
+            (vertex, length_mm, allowance_mm, message)
+        };
+        for a in [None, Some(ALLOWANCE_MM)] {
+            let p = last_pass_project_of(vec![v.clone()]);
+            let (vertex, length_mm, allowance_mm, message) = refused(&p, &op(&p, Side::Left, a));
+            assert_eq!((vertex, allowance_mm), (2, None), "{a:?}");
+            assert_approx_eq!(length_mm, 2.0, TOL);
+            assert!(
+                message.contains("its vertex 2 is 2.000 mm long"),
+                "{message}"
+            );
+            generate(&p, &op(&p, Side::Right, a));
+            let back = last_pass_project_of(vec![v.reversed()]);
+            let (vertex, length_mm, _, _) = refused(&back, &op(&back, Side::Right, a));
+            assert_eq!(vertex, 0, "{a:?}");
+            assert_approx_eq!(length_mm, 2.0, TOL);
+            generate(&back, &op(&back, Side::Left, a));
+        }
+        let ell = last_pass_project_of(vec![open(&[(0.0, 0.0), (30.0, 0.0), (30.0, 3.4)])]);
+        let (tp, _) = generate(&ell, &op(&ell, Side::Left, None));
+        let square = Point::new(50.0 - R_MM, 23.4);
+        for lap in laps(&tp) {
+            let end = lap.points[lap.points.len() - 1];
+            assert!(end.distance_to(square) <= TOL, "{end:?}");
+        }
+        generate(&ell, &op(&ell, Side::Left, Some(0.2)));
+        let (vertex, length_mm, allowance_mm, message) =
+            refused(&ell, &op(&ell, Side::Left, Some(ALLOWANCE_MM)));
+        assert_eq!((vertex, allowance_mm), (2, Some(ALLOWANCE_MM)));
+        assert_approx_eq!(length_mm, 3.4, TOL);
+        assert!(
+            message.contains("and its 0.5 mm last pass allowance"),
+            "{message}"
+        );
+    }
+
+    /// #342: the strip a line keeps is closed at each end by the normal
+    /// through the end vertex, so a cut that reaches into it past the end
+    /// is refused even where it keeps the radius from the line and from
+    /// the kept edge. Placed at (20, 20), a 20 mm line from (0, 0) cut Left keeps the strip
+    /// below it; a 0.8 mm line at X 26.19, cut Left (toward −X), runs its
+    /// cut 0.95 r past the end from Y −2 to −1.2: more than `r` from the
+    /// end vertex and from the kept edge's end at (20, −r), yet its bit
+    /// reaches 0.16 mm into the strip. `CutsIntoKeptSide`, the lines in
+    /// drawing order. Moved 0.2 mm further off, it is cut.
+    #[test]
+    fn left_right_cut_into_the_strip_past_an_end_is_refused() {
+        let lines = |x: f64| {
+            vec![
+                open(&[(0.0, 0.0), (20.0, 0.0)]),
+                open(&[(x, -2.0), (x, -1.2)]),
+            ]
+        };
+        let x = 20.0 + 0.95 * R_MM + R_MM;
+        let p = project(lines(x), &[("i1", at_20_20())]);
+        let err = generate_profile(&p, &profile_op(&p, Side::Left, CutDirection::Climb))
+            .expect_err("into the strip");
+        let CamError::CutsIntoKeptSide { shape, other, .. } = &err else {
+            panic!("expected CutsIntoKeptSide, got {err:?}");
+        };
+        assert_eq!((shape.profile, other.profile), (0, 1), "{err:?}");
+        let p = project(lines(x + 0.2), &[("i1", at_20_20())]);
+        generate(&p, &profile_op(&p, Side::Left, CutDirection::Climb));
     }
 }

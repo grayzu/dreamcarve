@@ -217,7 +217,10 @@ pub(super) fn twins(
 /// a hairpin on the cut side), the offset loses or gains pieces; and the
 /// last pass takes off what [`cuts_only_corners`] allows, a departure
 /// that reaches an end of the path counting as no corner. Either is
-/// [`CamError::ShapeNarrowerThanAllowance`].
+/// [`CamError::ShapeNarrowerThanAllowance`]. An end segment with room
+/// for the bit but not for the bit plus the allowance leaves no allowance
+/// path ending square there: [`CamError::EndSegmentHasNoRoom`] with the
+/// allowance (#342).
 pub(super) fn open_twins(
     op: &ProfileOp,
     tool: &Tool,
@@ -231,6 +234,16 @@ pub(super) fn open_twins(
         p
     }
     let found = offset_open(path, reach_mm.copysign(left_mm));
+    // #342: the allowance paths end square on the end normals too, or the
+    // passes before the last reach past an end.
+    super::check_open_ends(
+        op,
+        tool,
+        (shape, path),
+        &found,
+        reach_mm.copysign(left_mm),
+        Some(allowance_mm),
+    )?;
     paired(
         centres.iter(),
         found,
