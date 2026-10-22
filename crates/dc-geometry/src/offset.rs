@@ -7,8 +7,11 @@
 //! has no counterpart here.
 
 use crate::contour::Contour;
-use crate::polyline::{Polyline, Vertex};
-use cavalier_contours::polyline::{PlineCreation, PlineSource, PlineSourceMut};
+use crate::point::{EPS_MM, Point};
+use crate::polyline::{Polyline, Segment, Vertex};
+use cavalier_contours::polyline::{
+    PlineCreation, PlineSegIntr, PlineSource, PlineSourceMut, PlineVertex, pline_seg_intr,
+};
 
 pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 
@@ -54,8 +57,83 @@ pub fn offset_open(path: &Polyline, left_mm: f64) -> Vec<Polyline> {
         .parallel_offset(left_mm)
         .iter()
         .map(from_cavalier)
-        .filter(|p| p.vertices().len() >= 2 && p.length_mm() > crate::EPS_MM)
+        .filter(|p| p.vertices().len() >= 2 && p.length_mm() > EPS_MM)
         .collect()
+}
+
+/// The two ends of the strip `|left_mm|` wide beside the open path
+/// `path` on the side of `left_mm` (#342; positive is the left of travel
+/// from its first vertex to its last, as for [`offset_open`]): for its
+/// first vertex, then its last, the line from the vertex along the normal
+/// to that side, `|left_mm|` long, cut short where it first meets one of
+/// `lines` (crossing or touching it) farther than [`EPS_MM`] from the
+/// vertex. With `path` and its [`offset_open`] by `left_mm` they bound
+/// the strip; a strip bounded only by those two is open at each end, so
+/// a disc can reach into it past an end without coming near either.
+/// Cutting each end short at the first line it meets keeps it to the
+/// strip where the end segment is shorter than `|left_mm|` and another
+/// segment runs across its normal. Empty for a closed path, one of no
+/// length, or a `left_mm` no wider than [`EPS_MM`].
+#[must_use]
+pub fn strip_ends(path: &Polyline, left_mm: f64, lines: &[&Polyline]) -> Vec<Polyline> {
+    let length_mm = path.length_mm();
+    if path.is_closed() || length_mm <= EPS_MM || left_mm.is_nan() || left_mm.abs() <= EPS_MM {
+        return Vec::new();
+    }
+    [0.0, length_mm]
+        .into_iter()
+        .filter_map(|at_mm| {
+            let (vertex, tangent) = path.point_at(at_mm)?;
+            let normal = tangent.perp() * left_mm.signum();
+            let far = vertex + normal * left_mm.abs();
+            let end = Segment {
+                start: vertex,
+                end: far,
+                bulge: 0.0,
+            };
+            let reach_mm = lines
+                .iter()
+                .flat_map(|line| line.segments())
+                .flat_map(|s| crossings(end, s))
+                .map(|p| p.distance_to(vertex))
+                .filter(|&d| d > EPS_MM)
+                .fold(left_mm.abs(), f64::min);
+            let tip = vertex + normal * reach_mm;
+            Some(Polyline::new(
+                vec![Vertex::line(vertex.x, vertex.y), Vertex::line(tip.x, tip.y)],
+                false,
+            ))
+        })
+        .collect()
+}
+
+/// Where segments `s` and `t` cross or touch, within [`EPS_MM`]: both
+/// ends of a stretch where they overlap.
+fn crossings(s: Segment, t: Segment) -> Vec<Point> {
+    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
+    if s.start.distance_to(s.end) <= EPS_MM || t.start.distance_to(t.end) <= EPS_MM {
+        return Vec::new();
+    }
+    match pline_seg_intr(
+        vertex(s.start, s.bulge),
+        vertex(s.end, 0.0),
+        vertex(t.start, t.bulge),
+        vertex(t.end, 0.0),
+        EPS_MM,
+    ) {
+        PlineSegIntr::NoIntersect => Vec::new(),
+        PlineSegIntr::TangentIntersect { point: p } | PlineSegIntr::OneIntersect { point: p } => {
+            vec![Point::new(p.x, p.y)]
+        }
+        PlineSegIntr::TwoIntersects { point1, point2 }
+        | PlineSegIntr::OverlappingLines { point1, point2 }
+        | PlineSegIntr::OverlappingArcs { point1, point2 } => {
+            vec![
+                Point::new(point1.x, point1.y),
+                Point::new(point2.x, point2.y),
+            ]
+        }
+    }
 }
 
 /// Whether every point inside `contour` lies within `inset_mm` of it: the
@@ -302,6 +380,43 @@ mod tests {
             std::f64::consts::PI * (2.0 + TOOL_RADIUS_MM),
             1e-6
         );
+    }
+
+    /// #342: the ends of the strip an open path keeps run from its first
+    /// and last vertices along their normals to the strip's side, the
+    /// strip's width long, and stop where they first meet a line. A 100 mm
+    /// line's strip on its right ends at X 0 and X 100, `r` down. A 30° V
+    /// drawn down a 20 mm arm and up a 2 mm one keeps its inside when cut
+    /// round it: the end at the 2 mm arm's tip meets the first arm
+    /// `2·tan 30°` from the tip, so stops there; the end at the first
+    /// vertex is `r` long. Closed paths and zero widths have none.
+    #[test]
+    fn strip_ends_run_along_the_end_normals_to_the_first_line() {
+        let line = open(&[(0.0, 0.0), (100.0, 0.0)]);
+        let ends = strip_ends(&line, -TOOL_RADIUS_MM, &[&line]);
+        assert_eq!(ends.len(), 2, "{ends:?}");
+        for (end, x) in ends.iter().zip([0.0, 100.0]) {
+            let (from, to) = self::ends(end);
+            assert!(from.distance_to(Point::new(x, 0.0)) <= TOL, "{end:?}");
+            assert!(
+                to.distance_to(Point::new(x, -TOOL_RADIUS_MM)) <= TOL,
+                "{end:?}"
+            );
+        }
+        let (sin, cos) = 15f64.to_radians().sin_cos();
+        let v = open(&[
+            (-20.0 * sin, 20.0 * cos),
+            (0.0, 0.0),
+            (2.0 * sin, 2.0 * cos),
+        ]);
+        let ends = strip_ends(&v, TOOL_RADIUS_MM, &[&v]);
+        assert_eq!(ends.len(), 2, "{ends:?}");
+        assert_approx_eq!(ends[0].length_mm(), TOOL_RADIUS_MM, TOL);
+        assert_approx_eq!(ends[1].length_mm(), 2.0 * 30f64.to_radians().tan(), TOL);
+        let (from, _) = self::ends(&ends[1]);
+        assert!(from.distance_to(Point::new(2.0 * sin, 2.0 * cos)) <= TOL);
+        assert!(strip_ends(&Polyline::rect(Point::new(0.0, 0.0), 5.0, 5.0), 1.0, &[]).is_empty());
+        assert!(strip_ends(&line, 0.0, &[]).is_empty());
     }
 
     #[test]

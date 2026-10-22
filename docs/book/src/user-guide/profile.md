@@ -339,6 +339,24 @@ kept.
   vertex and reaches one radius past it on the cut side only, so the
   part side is never touched past the end. VCarve's manual does not say
   how its open cut ends; this keeps the part as drawn.
+- **A short end segment.** Inside a turn the bit cannot cut beside the
+  start of the next segment: it stops where its two passes meet, which
+  is the bit's radius times `cot(θ/2)` along each segment, for a turn
+  whose two segments meet at θ (3.175 mm at 90° with a 6.35 mm bit,
+  11.8 mm at 30°). When the path's last segment, or its first, is
+  shorter than that, the bit has no room beside it: the cut beside the
+  segment before it would run on past the line through the end vertex,
+  into the part. That is an error, and nothing is exported:
+
+  ``operation `o1` cuts beside `Edge` (instance `i1`, profile 0), but the
+  segment ending at its vertex 2 is 2.000 mm long, too short for its
+  6.35 mm tool to cut beside it: the cut would reach past the path's
+  end into the part; ...``
+
+  Vertices count from 0 in the order you drew them. Lengthen or remove
+  that segment, cut the path on its other side, or use a smaller bit. A
+  30° V drawn with a 2 mm last segment is refused cut inside and cut
+  round its outside.
 - **Direction** is climb or conventional milling, as on an outline (see
   [Direction](#direction)): `"left"` climb and `"right"` conventional
   start beside the first vertex, `"left"` conventional and `"right"`
@@ -357,7 +375,9 @@ kept.
   operation.
 - **Lines too close.** The bit must not cross another of the operation's
   lines, nor reach the strip one bit radius wide that a line keeps on its
-  part side. A cut that would is an error, and nothing is exported:
+  part side, past its ends included: the strip ends square at each end
+  vertex, like the cut. A cut that would is an error, and nothing is
+  exported:
 
   ``operation `o1` cuts beside `Edge` (instance `i1`, profile 0) and
   `Edge` (instance `i1`, profile 1), but a cut comes within the 6.35 mm
@@ -633,7 +653,12 @@ pass. Every pass runs from X 20 to X 80.
   or notch the bit fits but the bit plus the allowance does not (the
   inside of a U 7 mm wide, with a 6.35 mm bit and 0.5 mm), a tip whose
   wedge is thicker than a third of the bit, or a stretch at an end that
-  the earlier passes stop short of, is refused naming the path. The
+  the earlier passes stop short of, is refused naming the path. So is an
+  end segment with room for the bit but not for the bit plus the
+  allowance (see [A short end segment](#left-and-right)): the error
+  says "too short for its 6.35 mm tool and its 0.5 mm last pass
+  allowance". An L 3.4 mm long on its last leg, cut inside its corner,
+  is cut at 0.2 mm and refused at 0.5 mm. The
   earlier passes must also keep the bit's radius plus the allowance from
   every other line of the operation and from the strip each line keeps,
   so they never take another line's skin: two lines 6.85 mm apart cut
