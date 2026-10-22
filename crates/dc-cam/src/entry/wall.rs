@@ -269,10 +269,10 @@ impl Flat {
 /// L, max_run_mm)` and back, again and again, each leg descending at
 /// `angle_deg` until `z_mm`, the final leg cut short there, or sharing the
 /// depth with the leg before when it would fall less than
-/// [`RAMP_MIN_LAST_DROP_MM`] ([`plan_legs`]; #234, #273); arcs are split
+/// [`RAMP_MIN_LAST_DROP_MM`] (`plan_legs`; #234, #273); arcs are split
 /// into chords within `tolerance_mm` while Z changes, and a chord the
 /// program cannot write is merged into its neighbour
-/// ([`merge_unwritable`]), else the ramp falls back to a plunge with
+/// (`merge_unwritable`), else the ramp falls back to a plunge with
 /// [`FallbackReason::TooSmall`] (#273). The tool then
 /// returns along the path at `z_mm` to the start vertex, where the lap
 /// starts, so the ramped stretch is cut again at full depth; a piece of

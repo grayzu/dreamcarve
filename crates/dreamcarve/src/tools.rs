@@ -4,7 +4,7 @@
 //! `dreamcarve tools`: the tool library (`docs/specs/phase-2/design.md`,
 //! "Algorithms → Tool library CLI"; functional spec, capability 21).
 //!
-//! The library is `<config dir>/tools.json` ([`config::Paths`]), read and
+//! The library is `<config dir>/tools.json` ([`crate::config::Paths`]), read and
 //! written here; `dc-library` parses and edits it in memory. A missing
 //! file is an empty library for `list`, and is created, with its
 //! directory, by the first command that writes it (`import`). Every write

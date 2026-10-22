@@ -44,9 +44,35 @@ pub struct Comparison {
 /// A canonical event and, for a move, where `rs274` was before it.
 type Located = (CanonEvent, Option<[f64; 3]>);
 
+/// The other reading: what the report calls it, and how closely its feeds
+/// can match DreamCarve's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reader {
+    /// The name in the report.
+    pub name: &'static str,
+    /// The relative tolerance on feeds, which depends on how many digits
+    /// the reader prints.
+    pub rate_tolerance: f64,
+}
+
+impl Reader {
+    /// `rs274 -g`, which prints four decimal places.
+    pub const RS274: Self = Self {
+        name: "rs274",
+        rate_tolerance: RATE_TOLERANCE,
+    };
+}
+
 /// Compares `reference`, DreamCarve's reading, with `canon`, `rs274`'s.
 #[must_use]
 pub fn compare(reference: &[RefEvent], canon: &[CanonEvent]) -> Comparison {
+    compare_with(reference, canon, Reader::RS274)
+}
+
+/// Compares `reference`, DreamCarve's reading, with `canon`, the reading
+/// of `reader`, which made the events in [`CanonEvent`]'s terms.
+#[must_use]
+pub fn compare_with(reference: &[RefEvent], canon: &[CanonEvent], reader: Reader) -> Comparison {
     let mut by_line: BTreeMap<Option<usize>, (Vec<RefEvent>, Vec<Located>)> = BTreeMap::new();
     for event in reference {
         if let RefEvent::Move { kind, from, to, .. } = event
@@ -86,10 +112,12 @@ pub fn compare(reference: &[RefEvent], canon: &[CanonEvent]) -> Comparison {
             out.differences.push(Difference {
                 line: *line,
                 what: format!(
-                    "DreamCarve reads {} event(s), rs274 makes {}:\n  DreamCarve: {}\n  rs274:      {}",
+                    "DreamCarve reads {} event(s), {} makes {}:\n  DreamCarve: {}\n  {:<11} {}",
                     ours.len(),
+                    reader.name,
                     theirs.len(),
                     list(ours.iter().map(describe_ref)),
+                    format!("{}:", reader.name),
                     list(theirs.iter().map(|(e, _)| describe_canon(e))),
                 ),
             });
@@ -99,7 +127,7 @@ pub fn compare(reference: &[RefEvent], canon: &[CanonEvent]) -> Comparison {
             if matches!(ours, RefEvent::Move { .. } | RefEvent::MachineLift { .. }) {
                 out.moves += 1;
             }
-            if let Some(what) = differ(ours, theirs, *from) {
+            if let Some(what) = differ(ours, theirs, *from, reader) {
                 out.differences.push(Difference { line: *line, what });
             }
         }
@@ -108,7 +136,13 @@ pub fn compare(reference: &[RefEvent], canon: &[CanonEvent]) -> Comparison {
 }
 
 /// How `ours` and `theirs` differ, or `None` if they agree.
-fn differ(ours: &RefEvent, theirs: &CanonEvent, from: Option<[f64; 3]>) -> Option<String> {
+fn differ(
+    ours: &RefEvent,
+    theirs: &CanonEvent,
+    from: Option<[f64; 3]>,
+    reader: Reader,
+) -> Option<String> {
+    let name = reader.name;
     let mut why = Vec::new();
     match (ours, theirs) {
         (
@@ -132,7 +166,9 @@ fn differ(ours: &RefEvent, theirs: &CanonEvent, from: Option<[f64; 3]>) -> Optio
                 }
             }
             match feed {
-                Some(f) if !rate_eq(*f, m.feed) => why.push(format!("F {f} vs {}", m.feed)),
+                Some(f) if !rate_eq(*f, m.feed, reader.rate_tolerance) => {
+                    why.push(format!("F {f} vs {}", m.feed))
+                }
                 None if kind.is_cut() => why.push("DreamCarve reads no feed".to_owned()),
                 _ => {}
             }
@@ -144,7 +180,7 @@ fn differ(ours: &RefEvent, theirs: &CanonEvent, from: Option<[f64; 3]>) -> Optio
         }
         (RefEvent::MachineLift { z, .. }, CanonEvent::Move(m)) => {
             if m.kind != MotionKind::Rapid {
-                why.push(format!("G53 lift is a {:?} under rs274", m.kind));
+                why.push(format!("G53 lift is a {:?} under {name}", m.kind));
             }
             let machine_z = m.to[2] + m.offset[2];
             if !approx_eq(*z, machine_z, LENGTH_TOLERANCE) {
@@ -155,7 +191,7 @@ fn differ(ours: &RefEvent, theirs: &CanonEvent, from: Option<[f64; 3]>) -> Optio
                     && approx_eq(y, m.to[1], LENGTH_TOLERANCE))
             {
                 why.push(format!(
-                    "G53 lift moves XY under rs274: ({x}, {y}) to ({}, {})",
+                    "G53 lift moves XY under {name}: ({x}, {y}) to ({}, {})",
                     m.to[0], m.to[1]
                 ));
             }
@@ -173,7 +209,7 @@ fn differ(ours: &RefEvent, theirs: &CanonEvent, from: Option<[f64; 3]>) -> Optio
         (RefEvent::Stop { .. }, CanonEvent::Stop { .. })
         | (RefEvent::End { .. }, CanonEvent::End { .. }) => {}
         _ => why.push(format!(
-            "DreamCarve reads {}, rs274 makes {}",
+            "DreamCarve reads {}, {name} makes {}",
             describe_ref(ours),
             describe_canon(theirs)
         )),
@@ -182,10 +218,11 @@ fn differ(ours: &RefEvent, theirs: &CanonEvent, from: Option<[f64; 3]>) -> Optio
         None
     } else {
         Some(format!(
-            "{}: {}\n  DreamCarve: {}\n  rs274:      {}",
+            "{}: {}\n  DreamCarve: {}\n  {:<11} {}",
             describe_ref(ours).split(' ').next().unwrap_or(""),
             why.join(", "),
             describe_ref(ours),
+            format!("{name}:"),
             describe_canon(theirs)
         ))
     }
@@ -203,8 +240,8 @@ const fn is_arc(kind: MotionKind) -> bool {
     matches!(kind, MotionKind::ArcCw | MotionKind::ArcCcw)
 }
 
-fn rate_eq(a: f64, b: f64) -> bool {
-    approx_eq(a, b, RATE_TOLERANCE * a.abs().max(b.abs()).max(1.0))
+fn rate_eq(a: f64, b: f64, tolerance: f64) -> bool {
+    approx_eq(a, b, tolerance * a.abs().max(b.abs()).max(1.0))
 }
 
 const fn code(kind: MotionKind) -> &'static str {

@@ -24,7 +24,7 @@ use dc_geometry::{
 /// the disc at their end that the move before or after sweeps too. Arcs
 /// are swept as arcs. The result is polygonal, flattened at
 /// [`FLATTEN_TOLERANCE_DEFAULT_MM`], as [`dc_geometry::union`] returns it;
-/// [`footprint_at`] takes the tolerance.
+/// the crate-private `footprint_at` takes the tolerance.
 #[must_use]
 pub fn footprint(toolpath: &Toolpath, radius_mm: f64) -> Vec<Region> {
     footprint_at(toolpath, radius_mm, FLATTEN_TOLERANCE_DEFAULT_MM)

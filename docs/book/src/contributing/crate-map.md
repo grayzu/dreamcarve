@@ -176,6 +176,9 @@ read from the chapters themselves.
   figure is stale.
 - `tools/third-party-licenses`: gathers the license texts shipped with
   release binaries.
+- `tools/gcode-conformance`: runs the LinuxCNC and generic programs
+  through LinuxCNC's `rs274` interpreter, in the `gcode-conformance` CI
+  job. See [Verifying a post-processor](post-processor-checklist.md#linuxcncs-interpreter).
 - `tools/rs274-motion`: runs the LinuxCNC, Mach3, UCCNC and generic
   programs through LinuxCNC's `rs274` interpreter, and compares its
   motion with `dc-gcode`'s reading. Needs `rs274` or a container; see

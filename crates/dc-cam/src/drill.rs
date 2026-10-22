@@ -20,7 +20,7 @@
 //! retract plane, as a controller's `G83`/`G73` counts them from `R`,
 //! not from the stock top (#153); holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
-//! origin, by [`crate::sequence`]; there is no helical bore, countersink or
+//! origin, by [`crate::sequence`](fn@crate::sequence); there is no helical bore, countersink or
 //! clamp check. Nothing here depends on Y-up or Y-down: a drill moves only
 //! in Z at each centre, and distances are symmetric under the flip.
 
@@ -116,7 +116,7 @@ pub struct DrillToolpath {
 /// - it ends with a rapid to safe Z, where the `G98` return of a canned
 ///   cycle puts it.
 ///
-/// Holes are visited by [`crate::sequence`]: nearest neighbour from the
+/// Holes are visited by [`crate::sequence`](fn@crate::sequence): nearest neighbour from the
 /// first hole in drawing order, ties by drawing order, linked at safe Z.
 /// A peck that reaches the bottom from the retract plane drills the hole
 /// in one plunge, with [`Warning::DrillPeckDeeperThanHole`].

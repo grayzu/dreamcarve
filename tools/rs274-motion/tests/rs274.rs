@@ -89,6 +89,7 @@ fn corpus_covers_each_controller_and_feature() {
         ("G2", "a clockwise arc"),
         ("G4", "a dwell"),
         ("G50", "a Mach3 or UCCNC header"),
+        ("M0", "an M0 pause (manual spindle control)"),
     ] {
         assert!(
             cases.iter().any(|c| has_word(c, word)),

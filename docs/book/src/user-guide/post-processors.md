@@ -643,7 +643,7 @@ canned cycle, and no `M6`. The sources, line by line, are in
 
 | | LinuxCNC | Mach3 | UCCNC | Generic |
 | --- | --- | --- | --- | --- |
-| Checked against | LinuxCNC 2.9 G-code and M-code references, and its source | *Using Mach3Mill* 1.84 and the Mach3 configuration guide | UCCNC user's manual 1.0047 | NIST RS274/NGC version 3 (NISTIR 6556) |
+| Checked against | LinuxCNC 2.9 G-code and M-code references, and its source; programs run through LinuxCNC 2.9.10's own interpreter | *Using Mach3Mill* 1.84 and the Mach3 configuration guide | UCCNC user's manual 1.0047 | NIST RS274/NGC version 3 (NISTIR 6556); programs run through LinuxCNC 2.9.10's interpreter |
 | Extension | `.ngc` | `.tap` | `.txt` | `.nc` |
 | Header | `G90 G17 G40 G80 G94`, `G91.1`, units, `G54` | `%`, then `G90 G94 G17 G40 G80`, `G50`, `G69`, `G91.1`, units, `G54` | `G90 G17 G40 G80 G94`, `G50`, `G69`, `G54`; no units word | `G90`, `G17`, `G94`, units, `G54` |
 | Line numbers | No | Every line, `N10` up in tens | No | No |

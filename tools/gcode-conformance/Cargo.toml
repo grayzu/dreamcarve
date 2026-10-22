@@ -1,0 +1,27 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "gcode-conformance"
+description = "Runs DreamCarve's LinuxCNC and generic RS274/NGC programs through LinuxCNC's rs274 interpreter"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "gcode_conformance"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gcode-conformance"
+path = "src/main.rs"
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

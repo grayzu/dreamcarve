@@ -52,7 +52,7 @@ impl fmt::Display for ShapeRef {
 }
 
 /// What is wrong with a [`crate::CutBlock`] a generator handed to
-/// [`crate::sequence`].
+/// [`crate::sequence`](fn@crate::sequence).
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlockProblem {
     /// A cut or descent move ends below the block's pass Z.
