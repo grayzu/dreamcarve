@@ -527,7 +527,7 @@ Errors stop export. Warnings do not.
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A Profile whose tool does not fit between two lines of one shape, Inside or On line, or that would remove a whole part narrower than the bit On line ([Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)) | |
-| A Left or Right Profile whose cut would cross another of its lines or reach the part side of one ([Left and right](profile.md#left-and-right)) | |
+| A Left or Right Profile whose cut would cross another of its lines or reach the part side of one, or one whose path ends in a segment too short for the bit, or for the bit plus the last pass allowance, on the inside of the turn before it ([Left and right](profile.md#left-and-right)) | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
 | An Outside, Inside, Left or Right Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |

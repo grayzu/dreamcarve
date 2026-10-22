@@ -519,6 +519,34 @@ pub enum CamError {
         /// The last pass allowance, mm.
         allowance_mm: f64,
     },
+    /// #342: a Left or Right Profile's cut beside an open path has no room
+    /// at one of the path's ends. The segment that ends there is too short
+    /// for the tool, plus the last pass allowance when `allowance_mm` is
+    /// set, to cut beside it: on the inside of the turn before it, the cut
+    /// beside the earlier segment reaches past the normal through the end
+    /// vertex, where every cut must stop (A8, "Ends"), and into the strip
+    /// the path keeps or the part past its end. `shape` is boxed to keep
+    /// the error small.
+    #[error(
+        "operation `{op}` cuts beside {shape}, but the segment ending at its vertex {vertex} is {length_mm:.3} mm long, too short for its {diameter_mm} mm tool{} to cut beside it: the cut would reach past the path's end into the part; lengthen or remove that segment, cut the other side, or use a smaller tool; no toolpath was produced",
+        with_allowance(*.allowance_mm)
+    )]
+    EndSegmentHasNoRoom {
+        /// The operation.
+        op: OperationId,
+        /// The open path.
+        shape: Box<ShapeRef>,
+        /// The end vertex, 0-based in the path as drawn: 0 for its first,
+        /// one less than its vertex count for its last.
+        vertex: usize,
+        /// The length of the segment that ends there, mm.
+        length_mm: f64,
+        /// The tool's diameter, mm.
+        diameter_mm: f64,
+        /// The last pass allowance, mm, when only the passes before the
+        /// last have no room.
+        allowance_mm: Option<f64>,
+    },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
     #[error("shape {shape} cannot be cut: {source}")]
@@ -586,4 +614,12 @@ pub enum CamError {
     /// Any other geometry failure.
     #[error(transparent)]
     Geometry(#[from] GeometryError),
+}
+
+/// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
+/// allowance: none without one.
+fn with_allowance(allowance_mm: Option<f64>) -> String {
+    allowance_mm.map_or_else(String::new, |a| {
+        format!(" and its {a} mm last pass allowance")
+    })
 }

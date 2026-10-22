@@ -343,7 +343,10 @@ Left, to the Right or On the selected vectors". The tool centre runs one
 radius to that side of each open target, looking along it from its first
 vertex to its last as drawn; the cut ends square on the normals through
 the path's ends, so the bit's edge reaches the end vertex and goes no
-further on the part side. The side the bit runs on is waste and the
+further on the part side. An end segment too short for the bit on the
+inside of the turn before it is an error naming its end vertex (changed
+in #342: the cut beside the segment before ran past the end normal into
+the part). The side the bit runs on is waste and the
 other side is the part: a cut that would cross another of the
 operation's lines, or reach the strip one radius wide that a line keeps
 on its part side, is an error. Direction is the milling mode, as on a
@@ -356,7 +359,8 @@ end beside the first vertex; there is no lead, no corner relief and no
 helix, as VCarve gives open profiles none. Closed targets are skipped
 with `side_needs_open_path`, since a closed path's direction is not
 shown in the drawing. S9 holds the cut to the offset path and clear of
-every line and kept strip. (added in #207: before, an open path could
+every line and kept strip, the strip closed at each end by the normal
+through the end vertex (#342). (added in #207: before, an open path could
 be cut only On line, and cutting beside one meant redrawing it a bit
 radius over. Changed in #311: a Left or Right Profile takes a last pass,
 capability 34.)

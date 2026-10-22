@@ -5535,6 +5535,91 @@ mod tests {
         );
     }
 
+    /// #342: S9 holds a Left or Right cut out of the strip a line keeps,
+    /// bounded by the normals through its end vertices, whatever the
+    /// offset does there. The sample with a 30° V notch, tip at (50, 50),
+    /// down a 20 mm arm and up a 2 mm one, cut Left (inside it): its
+    /// offset by the radius (`offset_open`) is one piece beside the first
+    /// arm, stopped only by the circle round the end vertex, past the
+    /// normal there. A hand-written cut along that piece stays on the
+    /// offset and the radius from the line and from its kept edge, which
+    /// S9 alone accepted before #342; but at its end the cutter crosses
+    /// the end normal into the strip the 2 mm arm keeps, so it fails at
+    /// the move that gets there, and its first stretch, more than the
+    /// radius from that strip, passes. Cut Right (round the V), the
+    /// generated program passes.
+    #[test]
+    fn s9_refuses_a_cut_past_an_open_path_end() {
+        let (sin, cos) = 15f64.to_radians().sin_cos();
+        let v = [
+            (40.0 - 20.0 * sin, 40.0 + 20.0 * cos),
+            (40.0, 40.0),
+            (40.0 + 2.0 * sin, 40.0 + 2.0 * cos),
+        ];
+        let with_notch = |side: dc_project::Side| {
+            let mut project = sample_project();
+            if let Some(def) = project.definitions.values_mut().next() {
+                def.profiles.push(dc_geometry::Polyline::new(
+                    v.iter()
+                        .map(|&(x, y)| dc_geometry::Vertex::line(x, y))
+                        .collect(),
+                    false,
+                ));
+            }
+            let op = dc_project::test_support::profile_mut(&mut project);
+            op.side = side;
+            op.tabs = None;
+            let op = op.clone();
+            (project, op)
+        };
+        let placed = dc_geometry::Polyline::new(
+            v.iter()
+                .map(|&(x, y)| dc_geometry::Vertex::line(x + 10.0, y + 10.0))
+                .collect(),
+            false,
+        );
+        let pieces = dc_geometry::offset_open(&placed, 6.35 / 2.0);
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        let ends: Vec<dc_geometry::Point> =
+            pieces[0].vertices().iter().map(|v| v.point()).collect();
+        let (start, end) = (ends[0], ends[ends.len() - 1]);
+        let tip = dc_geometry::Point::new(v[2].0 + 10.0, v[2].1 + 10.0);
+        let along = (tip - dc_geometry::Point::new(50.0, 50.0)) * 0.5;
+        assert!(
+            (end - tip).dot(along) > 0.0 && (end.distance_to(tip) - 6.35 / 2.0).abs() < 1e-6,
+            "the piece ends past the end normal, on the circle round the end: {end:?}"
+        );
+        // 2 mm back from its end along the piece.
+        let back = end + (start - end) * (2.0 / start.distance_to(end));
+        let cut = |points: &[dc_geometry::Point]| {
+            let mut text = format!(
+                "G21 G90\nG54\nG0 Z5\nX{:.4} Y{:.4}\nG1 Z-1 F300\n",
+                points[0].x, points[0].y
+            );
+            for p in &points[1..] {
+                text.push_str(&format!("X{:.4} Y{:.4} F1000\n", p.x, p.y));
+            }
+            text.push_str("G0 Z5\n");
+            text
+        };
+        let (project, op) = with_notch(dc_project::Side::Left);
+        let op = Operation::Profile(op);
+        check_material_text(&cut(&[start, back]), &project, &op).unwrap();
+        let err = check_material_text(&cut(&[start, back, end]), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 7 } if at == op.id()),
+            "the cut past the end normal: {err:?}"
+        );
+        let (project, op) = with_notch(dc_project::Side::Right);
+        let (toolpath, _) = generate_profile(&project, &op).unwrap();
+        emit(
+            &project,
+            &[(Operation::Profile(op), project.tools[0].clone(), toolpath).into()],
+            "2026-10-21",
+        )
+        .unwrap();
+    }
+
     /// #210: S9 refuses what `generate_profile` refuses. An On line
     /// Profile of the sample rectangle (X 10 to 60, Y 10 to 40) with an
     /// open line 2 mm above its bottom edge: the generator refuses it

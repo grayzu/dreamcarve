@@ -82,9 +82,12 @@
 //!     to its last), its ends and middle within the slack of it, and the
 //!     whole cut keeps the radius from every open path of the targets and
 //!     from every path's kept edge (the path offset by the radius to its
-//!     other side): the cutter never crosses a line nor reaches the strip
-//!     one radius wide that a line keeps, as `dc_cam` refuses
-//!     (`CamError::CutsIntoKeptSide`). Closed targets are not cut. The
+//!     other side) and from the strip's two ends, the normals through the
+//!     path's end vertices one radius long, each cut short at the first
+//!     line it meets ([`dc_geometry::strip_ends`], #342): the cutter never
+//!     crosses a line nor reaches the strip one radius wide that a line
+//!     keeps, past an end included, wherever the offset runs, as `dc_cam`
+//!     refuses (`CamError::CutsIntoKeptSide`). Closed targets are not cut. The
 //!     ramp and the tabs run along the offset path; there is no lead or
 //!     notch. With a last pass (#311) the path offset by the radius plus
 //!     the allowance is a tool-centre path too, for the passes before the
@@ -143,7 +146,7 @@ use std::ops::Range;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
     as_circle, closest_points, inset_is_empty, meeting_points, nearest_point, nest, offset,
-    offset_open, point_segment_distance_mm, segment_distance_mm,
+    offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
 };
 use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side, TabShape};
 
@@ -199,8 +202,9 @@ pub(crate) enum Material {
     SideProfile {
         /// Every segment of every offset path, as cut.
         centres: Vec<Edge>,
-        /// Every segment of every open path, and of every path's kept
-        /// edge: what the cut keeps the tool radius from.
+        /// Every segment of every open path, of every path's kept edge
+        /// and of its strip's two ends (#342): what the cut keeps the
+        /// tool radius from.
         keep_clear: Vec<Edge>,
     },
     /// An Engrave's target paths, as segments.
@@ -640,7 +644,8 @@ impl Material {
 /// The material of a Left or Right Profile of `paths` (#207): the open
 /// ones with length, offset by `left_mm` (positive to the left) to give
 /// the tool-centre paths, and offset the other way to give their kept
-/// edges. With a last pass `allowance_mm` (#311) each is offset by
+/// edges, with the strip's two ends along the normals through the end
+/// vertices ([`strip_ends`], #342). With a last pass `allowance_mm` (#311) each is offset by
 /// `left_mm` plus the allowance, to the same side, too: the path every
 /// pass but the last cuts. The kept edges stay one radius off.
 fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> Material {
@@ -662,7 +667,14 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
         })
         .flat_map(|c| edges_of(&c).collect::<Vec<_>>())
         .collect();
-    let kept = open.iter().flat_map(|p| offset_open(p, -left_mm));
+    // #342: the strip closed at each end by the normal through the end
+    // vertex, cut short at the first line it meets, so a cutter that
+    // reaches past an end into the strip fails however the offset runs.
+    let kept = open.iter().flat_map(|p| {
+        let mut edges = offset_open(p, -left_mm);
+        edges.extend(strip_ends(p, -left_mm, &open));
+        edges
+    });
     let keep_clear = open
         .iter()
         .flat_map(|p| edges_of(p))
