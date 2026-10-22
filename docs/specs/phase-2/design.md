@@ -3434,7 +3434,7 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    feed, not at the plunge rate, rounded down in the last written place
    (#325's rule), so as written the edge moves no faster; no program
    without a last pass has such a cut, so they are byte-identical. Curves
-   drawn as straight segments are not slowed. Measured on the emitted
+   drawn as straight segments are not slowed (#350). Measured on the emitted
    G-code (`last_pass_entry::last_pass_small_hole_load`, 0.05 mm
    lattice, at a layer the earlier passes left the allowance on, every
    entry): before, in the 8 mm hole the edge moved at 4.85 times the feed

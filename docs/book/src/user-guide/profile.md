@@ -622,7 +622,8 @@ corner rounded to less than the bit's radius plus the allowance (a 3.5 mm
 corner radius with a 6.35 mm bit at 0.5 mm) needs more, so there the
 edge moves faster than the feed, and `last_pass_edge_faster` says so.
 Only true arcs are slowed: a curve drawn as many short lines (an ellipse
-or spline from a DXF) runs at the feed.
+or spline from a DXF) runs at the feed
+([#350](https://github.com/grayzu/dreamcarve/issues/350)).
 
 **Sharp corners.** Where the bit's path turns a corner sharper than
 90° (the points of a triangle or star cut inside, an inward V notch cut
