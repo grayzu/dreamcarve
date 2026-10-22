@@ -29,7 +29,7 @@ use grbl_sim_motion::corpus::{Case, build_corpus};
 use grbl_sim_motion::runner::{ENV, Firmware, Line, Reply, Sims, Sync};
 use grbl_sim_motion::{
     SET_WORK_OFFSET, Verdict, check_mode, check_motion, header_lines, modal_state_after, probe,
-    program_lines, validate,
+    program_lines, validate, validator_applies,
 };
 
 fn root() -> PathBuf {
@@ -137,15 +137,21 @@ fn corpus_covers_each_controller_and_feature() {
     }
 }
 
-/// Every GRBL program in the corpus passes grbl-sim's validator, GRBL
-/// 1.1h's own parser.
+/// Every GRBL program in the corpus with no `M0` passes grbl-sim's
+/// validator, GRBL 1.1h's own parser. The validator waits forever at an
+/// `M0`; check mode covers those programs.
 #[test]
 fn grbl_validator_accepts_the_corpus() {
     let Some((sims, dir)) = sims_or_skip("grbl_validator_accepts_the_corpus", Firmware::Grbl)
     else {
         return;
     };
-    let failures: Vec<String> = of(Firmware::Grbl)
+    let cases: Vec<Case> = of(Firmware::Grbl)
+        .into_iter()
+        .filter(validator_applies)
+        .collect();
+    assert!(!cases.is_empty(), "no GRBL program the validator can check");
+    let failures: Vec<String> = cases
         .iter()
         .filter_map(|case| {
             validate(&case.text, Firmware::Grbl, &sims, &dir)

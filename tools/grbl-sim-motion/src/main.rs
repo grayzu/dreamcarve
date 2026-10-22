@@ -1,12 +1,13 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `cargo run -p grbl-sim-motion -- [--sims SPEC] [--post ID[@VERSION]]
-//! [FILE...]`: runs DreamCarve's grblHAL and GRBL programs through the
-//! grblHAL Simulator and grbl-sim, and compares their motion with
-//! DreamCarve's reading (issue #329).
+//! `cargo run -p grbl-sim-motion -- [--sims SPEC] [--match TEXT]
+//! [--post ID[@VERSION]] [FILE...]`: runs DreamCarve's grblHAL and GRBL
+//! programs through the grblHAL Simulator and grbl-sim, and compares their
+//! motion with DreamCarve's reading (issue #329).
 //!
-//! With no FILE it runs the corpus ([`grbl_sim_motion::corpus`]). With
+//! With no FILE it runs the corpus ([`grbl_sim_motion::corpus`]), or the
+//! cases whose name holds every `--match` text (`--match plaque/grblhal`). With
 //! FILEs, `--post` names the definition they were written with (`grblhal`
 //! or `grbl`, default `grblhal`, latest version).
 //!
@@ -24,13 +25,16 @@ use std::process::ExitCode;
 use dc_project::{Units, bundled_definition, latest_definition};
 use grbl_sim_motion::corpus::{Case, build_corpus, program_units};
 use grbl_sim_motion::runner::{ENV, Firmware, KEEP, Sims};
-use grbl_sim_motion::{Verdict, check_mode, check_motion, probe, validate};
+use grbl_sim_motion::{Verdict, check_mode, check_motion, probe, validate, validator_applies};
 
-const USAGE: &str = "usage: grbl-sim-motion [--sims SPEC] [--post ID[@VERSION]] [FILE...]";
+const USAGE: &str =
+    "usage: grbl-sim-motion [--sims SPEC] [--match TEXT] [--post ID[@VERSION]] [FILE...]";
 
 struct Options {
     sims: Option<Sims>,
     post: String,
+    /// Corpus cases run only if their name holds each of these.
+    matching: Vec<String>,
     files: Vec<PathBuf>,
 }
 
@@ -38,6 +42,7 @@ fn options() -> Result<Options, String> {
     let mut options = Options {
         sims: None,
         post: "grblhal".to_owned(),
+        matching: Vec::new(),
         files: Vec::new(),
     };
     let mut args = std::env::args().skip(1);
@@ -46,6 +51,7 @@ fn options() -> Result<Options, String> {
         match arg.as_str() {
             "--sims" => options.sims = Some(Sims::from_spec(&value("--sims")?)),
             "--post" => options.post = value("--post")?,
+            "--match" => options.matching.push(value("--match")?),
             "-h" | "--help" => return Err(String::new()),
             flag if flag.starts_with('-') => return Err(format!("unknown option {flag}")),
             _ => options.files.push(PathBuf::from(arg)),
@@ -106,7 +112,14 @@ fn main() -> ExitCode {
     };
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cases = if options.files.is_empty() {
-        build_corpus(&root).map_err(|e| e.to_string())
+        build_corpus(&root)
+            .map(|cases| {
+                cases
+                    .into_iter()
+                    .filter(|c| options.matching.iter().all(|m| c.name.contains(m.as_str())))
+                    .collect()
+            })
+            .map_err(|e| e.to_string())
     } else {
         given_files(&options)
     };
@@ -157,11 +170,10 @@ fn main() -> ExitCode {
 fn report(case: &Case, sims: &Sims, work: &std::path::Path) -> bool {
     let label = format!("{} [{} on {}]", case.name, case.post.id, case.firmware);
     let mut ok = true;
-    // grblHAL_validator crashes on every input at the pinned commit
-    // (README, "What runs"); check mode covers what it would.
-    let validated = match case.firmware {
-        Firmware::Grbl => validate(&case.text, case.firmware, sims, work),
-        Firmware::GrblHal => Ok(None),
+    let validated = if validator_applies(case) {
+        validate(&case.text, case.firmware, sims, work)
+    } else {
+        Ok(None)
     };
     match validated {
         Ok(None) => {}

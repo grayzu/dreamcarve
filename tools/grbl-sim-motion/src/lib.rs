@@ -120,6 +120,15 @@ pub fn pauses(text: &str) -> usize {
         .count()
 }
 
+/// Whether a firmware's validator can check `case`. grblHAL's crashes on
+/// every input at the pinned commit, and GRBL's waits forever at an `M0`,
+/// having no cycle start (README, "What runs"). Check mode and the motion
+/// run cover those programs.
+#[must_use]
+pub fn validator_applies(case: &Case) -> bool {
+    case.firmware == Firmware::Grbl && !case.text.lines().any(|l| has_word(l, "M0"))
+}
+
 /// The header: the lines before the first that moves an axis or starts
 /// the spindle.
 #[must_use]

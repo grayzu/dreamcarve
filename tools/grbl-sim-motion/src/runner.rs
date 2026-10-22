@@ -53,11 +53,13 @@ const PROGRAM: &str = "program.nc";
 
 /// How long a reply may take: the longest move in the corpus, run at the
 /// simulated speed, with room to spare.
-const REPLY_TIMEOUT: Duration = Duration::from_secs(180);
+const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the simulator may stay silent before it is polled with `?`.
 const POLL: Duration = Duration::from_millis(200);
 /// How long the simulator may take to print its banner.
 const BANNER_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a validator may take.
+const VALIDATOR_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the simulator may take to exit after `0x06`.
 const EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -407,14 +409,41 @@ impl Sims {
     ) -> io::Result<Validation> {
         let run = RunDir::new(dir)?;
         fs::write(run.path.join(PROGRAM), program)?;
-        let out = self
+        let mut child = self
             .command((&[], firmware.validator(), &[PROGRAM]), &run, false)
             .stdin(Stdio::null())
-            .output()?;
-        Ok(Validation {
-            status: out.status.code(),
-            output: String::from_utf8_lossy(&out.stdout).into_owned(),
-        })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("no standard output"))?;
+        let reader = thread::spawn(move || {
+            let mut text = String::new();
+            let _ = io::Read::read_to_string(&mut stdout, &mut text);
+            text
+        });
+        // grbl-sim's validator waits forever at an `M0`: it has no cycle
+        // start. A run that outlasts this is killed and reported.
+        let deadline = Instant::now() + VALIDATOR_TIMEOUT;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status.code();
+            }
+            if Instant::now() > deadline {
+                child.kill()?;
+                child.wait()?;
+                self.stop(&run);
+                break None;
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        let mut output = reader.join().unwrap_or_default();
+        if status.is_none() {
+            output.push_str("\nEXITING: no end within the time limit\n");
+        }
+        Ok(Validation { status, output })
     }
 
     /// Starts `firmware`'s simulator in a new directory under `dir`, so it

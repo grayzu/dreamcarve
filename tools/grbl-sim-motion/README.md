@@ -16,7 +16,9 @@ counterpart of [`rs274-motion`](../rs274-motion/README.md). For each
 program it checks:
 
 - **The firmware's parser accepts it.** On GRBL this is grbl-sim's
-  validator. On both it is `$C` check mode in the simulator, streamed as
+  validator, for programs with no `M0`: the validator has no cycle start
+  and waits at one forever, so it is given 60 s. On both it is `$C`
+  check mode in the simulator, streamed as
   the GRBL wiki tells a user to try a program: every line must be `ok`
   and nothing may move.
 - **The motion is DreamCarve's.** The program runs from the firmware's
@@ -29,7 +31,7 @@ program it checks:
     `G53` lift must land at machine Z -5 mm, not work Z -5;
   - the motion mode (`$G`): `G0` for a rapid or a lift, `G1`, `G2` or
     `G3` for a cut;
-  - the feed (`$G`), for a cut, within half the report's last digit.
+  - the feed (`$G`), for a cut, within one unit of the report's last digit (grblHAL truncates it).
 
   Each `M0`, and on grblHAL each `M6`, must pause once, and the run must
   end where DreamCarve reads it ending.
@@ -66,6 +68,7 @@ export DREAMCARVE_GRBL_SIM=podman:dreamcarve-grbl-sim
 
 ```sh
 cargo run -p grbl-sim-motion                              # the corpus, with a report
+cargo run -p grbl-sim-motion -- --match plaque/grblhal    # the corpus cases whose name holds it
 cargo run -p grbl-sim-motion -- --post grbl a.nc          # your own files
 cargo test -p grbl-sim-motion -- --nocapture              # the tests
 DREAMCARVE_GRBL_SIM_TRACE=1 cargo run -p grbl-sim-motion -- b.nc   # print the serial exchange, timed
@@ -154,12 +157,13 @@ What the build changes, and what running the simulators found:
   whatever `-t` asks for. A GRBL coaster takes about a minute. The
   grblHAL Simulator skips idle ticks and runs the whole grblHAL corpus in
   seconds.
-- A simulator that stops answering is killed after 180 s without a
+- A simulator that stops answering is killed after 60 s without a
   reply. Its container is killed by name, since killing `podman run`
   leaves the container running. The run is then made once more from the
   start, which the report notes on standard error. The grblHAL Simulator
-  stalled once in about forty runs this way, with the machine under load
-  from a build.
+  stalls this way on a `G4 P0` now and then: twice in the seven plaque
+  runs one day, never in the twenty coaster runs. A retry has always
+  passed so far.
 
 ## What it does not check
 

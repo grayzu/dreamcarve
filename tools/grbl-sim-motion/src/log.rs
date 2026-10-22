@@ -32,17 +32,19 @@ pub fn motion_mode(modal: &[String]) -> Option<MotionKind> {
     })
 }
 
-/// The feed a report names, and half its last printed digit: GRBL prints
-/// `F1500`, so a feed of 1500.4 reads as 1500 ± 0.5. It is in report
-/// units, mm/min with the default `$13=0`, whatever `G20` or `G21` the
-/// program set: both firmwares hold the feed in mm/min.
+/// The feed a report names, and one unit of its last printed digit: both
+/// print `F1500` with no decimals in millimetres, and grblHAL truncates
+/// rather than rounds (a feed of 1499.9995 mm/min, `F59.055` in inches,
+/// prints `F1499`), so the feed is within one digit of the report. It is in
+/// report units, mm/min with the default `$13=0`, whatever `G20` or `G21`
+/// the program set: both firmwares hold the feed in mm/min.
 #[must_use]
 pub fn feed(modal: &[String]) -> Option<(f64, f64)> {
     let text = modal.iter().find_map(|w| w.strip_prefix('F'))?;
     let value: f64 = text.parse().ok()?;
     let decimals = text.split_once('.').map_or(0, |(_, d)| d.len());
-    let half_digit = 0.5 / 10_f64.powi(i32::try_from(decimals).unwrap_or(0));
-    Some((value, half_digit))
+    let digit = 1.0 / 10_f64.powi(i32::try_from(decimals).unwrap_or(0));
+    Some((value, digit))
 }
 
 #[cfg(test)]
@@ -62,18 +64,18 @@ mod tests {
         let grbl =
             parse_modal_state("[GC:G2 G54 G17 G21 G90 G94 M5 M9 T0 F1500 S0]").expect("a report");
         assert_eq!(motion_mode(&grbl), Some(MotionKind::ArcCw));
-        let (f, half) = feed(&grbl).expect("a feed");
+        let (f, digit) = feed(&grbl).expect("a feed");
         assert_approx_eq!(f, 1500.0, 1e-12);
-        assert_approx_eq!(half, 0.5, 1e-12);
+        assert_approx_eq!(digit, 1.0, 1e-12);
         assert_eq!(parse_modal_state("ok"), None);
     }
 
     #[test]
     fn a_feed_with_decimals_has_a_finer_resolution() {
         let words = vec!["G1".to_owned(), "F39.4".to_owned()];
-        let (f, half) = feed(&words).expect("a feed");
+        let (f, digit) = feed(&words).expect("a feed");
         assert_approx_eq!(f, 39.4, 1e-12);
-        assert_approx_eq!(half, 0.05, 1e-12);
+        assert_approx_eq!(digit, 0.1, 1e-12);
         assert_eq!(motion_mode(&["G80".to_owned()]), None);
     }
 }

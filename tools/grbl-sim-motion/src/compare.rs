@@ -214,8 +214,8 @@ pub fn compare_lines(targets: &[Target], observed: &[(usize, Settled)]) -> Compa
         }
         if let Some(f) = t.feed_mm_min.filter(|_| t.kind.is_cut()) {
             match feed(&settled.modal) {
-                Some((reported, half_digit))
-                    if approx_eq(f, reported, half_digit + RATE_TOLERANCE * f.abs()) => {}
+                Some((reported, digit))
+                    if approx_eq(f, reported, digit + RATE_TOLERANCE * f.abs()) => {}
                 other => why.push(format!("F {f} vs {other:?}")),
             }
         }
