@@ -156,8 +156,9 @@ pub enum ExportWarning {
     },
     /// Some runs of straight moves that fit an arc were written as the
     /// original moves because, once its numbers were rounded, the
-    /// controller would have rejected one of the run's arcs
-    /// (`arc_fit_fallback`).
+    /// controller would have rejected one of the run's arcs, or the arcs
+    /// would have strayed more than the tolerance plus one unit in the
+    /// last place from the moves (#355) (`arc_fit_fallback`).
     ArcFitFallback {
         /// The operation.
         op: OperationId,
@@ -2344,7 +2345,7 @@ impl<'a> Writer<'a> {
                 let to_machine =
                     move |p: Point| transform.to_machine(Point3::new(p.x, p.y, 0.0)).xy();
                 let start = self.emitted_xy().map(|(x, y)| Point::new(x, y));
-                arcfit::apply_fallback(fitted, &opts, start, &to_machine)
+                arcfit::apply_fallback(fitted, &opts, start, &to_machine, tolerance_mm)
             }
             None => (
                 toolpath.moves.iter().copied().map(Fitted::Move).collect(),

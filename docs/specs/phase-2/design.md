@@ -2034,9 +2034,16 @@ the fitted centre is transformed like a point).
    ±2 quanta to minimise the radius disagreement; accept when
    `|r_end − r_start| ≤ 0.005 mm`, reject above 0.5 mm, else accept when ≤
    0.1 % of `r`; with `r` format, repair a chord/2 rounding shortfall of
-   up to 2 quanta, else reject. Each run is judged from the emitted
-   position, with the post's number format; a run with no known emitted
-   start falls back (upstream judges it from its own start; this cannot
+   up to 2 quanta, else reject. The arcs as written (formatted ends, the
+   centre from the written `I`,`J` or `R`) must then follow the moves they
+   replace as S12 judges them, within the tolerance plus one unit in the
+   last place, or the run is rejected. (changed in #355: the snap moved a
+   centre 0.0072 mm in inch, two quanta each way, to agree on the radius
+   to 0.0002 mm where the rounded words already agreed to 0.0013 mm, and
+   the arc as written bowed 0.0126 mm off a chord the fitted arc bowed
+   0.0099 mm off; S12 allows 0.0125 mm and refused it.) Each run is judged
+   from the emitted position, with the post's number format; a run with
+   no known emitted start falls back (upstream judges it from its own start; this cannot
    happen after a rapid). A rejected sub-arc reverts its whole run to the
    original moves and warns `ArcFitFallback (op, runs)`. A full circle
    never emits as one arc (phase 1 `FullCircleArc`): a run that closes is
