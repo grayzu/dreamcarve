@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The minimal cases the properties shrank their failures to, as named
-//! tests (#231, #232, #234, #235, #265, #272, #273, #322, #355, #356): each project
+//! tests (#231, #232, #234, #235, #265, #272, #273, #322, #353, #355,
+//! #356, #358): each project
 //! validates, generates, and exports through the full safety pass. Every
 //! case is built from `dc_project::test_support::sample_project()` on
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
@@ -17,9 +18,10 @@ use dc_gcode::transform::MachineTransform;
 use dc_geometry::{Point, Point3, Polyline, Transform, Vertex};
 use dc_project::test_support::{sample_pocket, sample_project};
 use dc_project::{
-    ClearanceStrategy, CornerRelief, DefinitionId, Entry, FeatureDefinition, InstanceId,
-    MachineOrigin, Operation, OriginXy, OriginZ, PocketOp, PostProcessorRef, ProfileOp, Project,
-    Side, Stock, Units, WallPass, validate,
+    ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    InstanceId, LastPass, MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ, PocketOp,
+    PostProcessorRef, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec,
+    Units, WallPass, validate,
 };
 
 /// The sample project on 240 × 160 × `thickness_mm` stock, its one
@@ -1137,5 +1139,327 @@ fn shallow_ramp_round_a_circle_with_a_small_hole() -> Project {
     tool.rpm = Some(15_272);
     tool.step_down_mm = Some(0.415_478_759_066_539_8);
     tool.step_over_fraction = Some(0.326_634_913_148_346_75);
+    project
+}
+
+/// #358 case 1: a 0.29 mm deep Left Profile of an open path with two arcs,
+/// beside three closed outlines it skips, by a 5.31 mm tool, plunged,
+/// with a 0.09 mm last pass allowance and a 0.015 mm last pass, in mm on
+/// GRBL. The cut starts at the path's drawn end, where both offsets stop
+/// on circles round the end vertex but not on one normal, so the last
+/// pass's 0.11 mm step (line 26) from the allowance path's start to its
+/// own ends 0.114 mm from the allowance path, past S9's allowance band
+/// (`OffMaterial`).
+#[test]
+#[ignore = "#358"]
+fn left_open_path_last_pass_plunge_exports() {
+    exports(&left_open_path_last_pass_plunge());
+}
+
+/// #358 case 2: a 19.09 mm deep Inside Profile of a 13.6 × 20.3 mm
+/// rectangle with one 1.38 × 12.96 mm rect tab, by a 7.78 mm tool in
+/// 1.44 mm steps, helixed, pass first, with a 1.00 mm last pass
+/// allowance, in inch on UCCNC. S9's tab rule refuses each allowance
+/// pass below the tab top coming down at the end of its raised stretch
+/// (line 2576 first, `OffMaterial`), as #353's. Its last pass also comes
+/// down the tab's 10 mm height in one move at the tab's far end (#348).
+#[test]
+#[ignore = "#353"]
+fn inside_last_pass_helix_tabs_pass_first_exports() {
+    exports(&inside_last_pass_helix_tabs_pass_first());
+}
+
+/// #358's `201280a2` regression: the rectangle of case 2 cut Inside
+/// through its 22.03 mm stock with one 1.0 × 1.10 mm rect tab, plunged,
+/// full depth first, with a 2.24 mm last pass allowance. S9's tab rule
+/// refuses the allowance pass at Z 0.49 coming down at the end of its
+/// raised stretch (line 90, `OffMaterial`), as #353's.
+#[test]
+#[ignore = "#353"]
+fn inside_last_pass_plunge_short_tab_exports() {
+    exports(&inside_last_pass_plunge_short_tab());
+}
+
+/// #353's `a7bfa9cd` regression, rebuilt from the issue (the seed
+/// replays its unshrunk project, which exports, and the shrunk one was
+/// not kept): a 28.9 mm circle cut Outside through 10.1 mm stock with a
+/// 8.4 × 10 mm rectangular hole, rotated 30°, by a 2.1 mm tool in
+/// 1.21 mm steps, plunged, with a 0.60 mm last pass allowance and a
+/// 3.64 × 0.51 mm rect tab at 55.18 mm on each outline. S9 refuses the
+/// hole's allowance pass at Z 0.39 coming down at the end of its raised
+/// stretch over the tab (line 53, `OffMaterial`).
+#[test]
+#[ignore = "#353"]
+fn outside_last_pass_small_tab_on_a_hole_exports() {
+    exports(&outside_last_pass_small_tab_on_a_hole());
+}
+
+/// The sample's Profile with `side`, cut `depth_mm` deep by `entry`, with
+/// `last_pass` and `tabs`, its other settings the issue's.
+fn last_pass_profile(
+    side: Side,
+    depth_mm: f64,
+    entry: Entry,
+    last_pass: LastPass,
+    tabs: Option<TabSpec>,
+) -> ProfileOp {
+    let Operation::Profile(op) = sample_project().operations[0].clone() else {
+        unreachable!("the sample's operation is a Profile");
+    };
+    ProfileOp {
+        side,
+        depth_mm: Some(depth_mm),
+        step_down_mm: None,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 1.0,
+        tabs,
+        entry,
+        lead: None,
+        corner_relief: CornerRelief::None,
+        last_pass: Some(last_pass),
+        start: StartAt::Auto,
+        ..op
+    }
+}
+
+/// Sets `project`'s one tool: its diameter, feed, plunge rate, spindle
+/// speed, step-down and step-over.
+fn set_tool(
+    project: &mut Project,
+    diameter_mm: f64,
+    (feed_mm_min, plunge_mm_min, rpm): (f64, f64, u32),
+    step_down_mm: f64,
+    step_over_fraction: f64,
+) {
+    let tool = &mut project.tools[0];
+    tool.diameter_mm = diameter_mm;
+    tool.feed_mm_min = Some(feed_mm_min);
+    tool.plunge_mm_min = Some(plunge_mm_min);
+    tool.rpm = Some(rpm);
+    tool.step_down_mm = Some(step_down_mm);
+    tool.step_over_fraction = Some(step_over_fraction);
+}
+
+fn left_open_path_last_pass_plunge() -> Project {
+    let (ax, ay) = (12.735_741_384_150_293, 10.463_103_598_006_539);
+    let (bx, by) = (6.161_396_678_209_638, 3.546_270_859_301_415);
+    let (cx, cy) = (1.723_663_449_543_754_8, 0.986_903_899_408_676_6);
+    let profiles = vec![
+        straight([(-ax, ay), (ax, ay), (ax, -ay), (-ax, -ay)]),
+        straight([(-bx, -by), (bx, -by), (bx, by), (-bx, by)]),
+        straight([(-cx, -cy), (cx, -cy), (cx, cy), (-cx, cy)]),
+        Polyline::new(
+            vec![
+                Vertex::new(
+                    -7.707_296_639_115_788,
+                    0.964_187_341_962_776_1,
+                    -0.389_311_580_111_253_6,
+                ),
+                Vertex::new(-16.993_313_986_140_127, 8.340_273_308_754_115, 0.0),
+                Vertex::new(3.632_375_064_370_213_7, -3.256_045_238_042_021, 0.0),
+                Vertex::new(
+                    -5.890_870_604_198_071,
+                    -1.253_510_400_986_085,
+                    -0.251_098_236_982_057_13,
+                ),
+            ],
+            false,
+        ),
+    ];
+    let op = ProfileOp {
+        direction: CutDirection::Climb,
+        machining_order: MachiningOrder::FullDepthFirst,
+        start: StartAt::Near {
+            x_mm: 0.0,
+            y_mm: 196.569_406_351_940_44,
+        },
+        ..last_pass_profile(
+            Side::Left,
+            0.294_704_283_231_769_4,
+            Entry::Plunge,
+            LastPass {
+                allowance_mm: 0.088_504_229_190_802_82,
+                thickness_mm: Some(0.014_735_214_161_588_47),
+                reverse: false,
+            },
+            None,
+        )
+    };
+    let transform = Transform::from([
+        -0.438_645_465_077_644_5,
+        0.898_660_200_502_290_5,
+        -0.898_660_200_502_290_5,
+        -0.438_645_465_077_644_5,
+        40.0,
+        40.0,
+    ]);
+    let mut project = case(
+        profiles,
+        transform,
+        5.894_085_664_635_388,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Mm;
+    project.origin = MachineOrigin {
+        xy: OriginXy::BottomRight,
+        z: OriginZ::StockBottom,
+    };
+    project.arc_fit_tolerance_mm = None;
+    project.post_processor = PostProcessorRef::latest("grbl").expect("GRBL is bundled");
+    set_tool(
+        &mut project,
+        5.310_253_751_448_169,
+        (1_812.667_973_601_802_7, 2_653.082_271_466_902_5, 19_417),
+        2.876_197_522_786_930_5,
+        0.372_401_770_699_803_57,
+    );
+    project
+}
+
+/// The 13.6 × 20.3 mm rectangle of #358's Inside cases, rotated 0.31 rad,
+/// at (`x_mm`, 40), on 22.03 mm stock, in inch on UCCNC, cut by `op` with
+/// their 7.78 mm tool.
+fn uccnc_rectangle(x_mm: f64, op: ProfileOp) -> Project {
+    let (hx, hy) = (6.812_943_106_136_772, 10.150_614_061_311_213);
+    let transform = Transform::from([
+        0.952_230_104_477_401_2,
+        -0.305_381_446_926_557_1,
+        0.305_381_446_926_557_1,
+        0.952_230_104_477_401_2,
+        x_mm,
+        40.0,
+    ]);
+    let mut project = case(
+        vec![straight([(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)])],
+        transform,
+        22.031_217_735_812_504,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Inch;
+    project.origin = MachineOrigin {
+        xy: OriginXy::TopLeft,
+        z: OriginZ::StockBottom,
+    };
+    project.arc_fit_tolerance_mm = None;
+    project.post_processor = PostProcessorRef::latest("uccnc").expect("UCCNC is bundled");
+    set_tool(
+        &mut project,
+        7.780_855_084_777_605,
+        (2_523.738_573_213_584_5, 1_678.407_747_757_199_3, 10_350),
+        1.436_020_526_849_626_2,
+        0.988_663_914_969_774_9,
+    );
+    project
+}
+
+fn inside_last_pass_helix_tabs_pass_first() -> Project {
+    let op = ProfileOp {
+        direction: CutDirection::Climb,
+        machining_order: MachiningOrder::PassFirst,
+        ..last_pass_profile(
+            Side::Inside,
+            19.094_398_963_361_22,
+            Entry::Helix {
+                diameter_fraction: 0.225_713_859_585_626_45,
+                angle_deg: 2.152_324_848_967_854,
+            },
+            LastPass {
+                allowance_mm: 1.002_757_156_741_800_5,
+                thickness_mm: None,
+                reverse: false,
+            },
+            Some(TabSpec {
+                placement: TabPlacement::AtDistances {
+                    distances_mm: vec![163.917_868_619_434],
+                },
+                width_mm: 1.382_330_403_110_679_3,
+                height_mm: 12.958_115_719_223_605,
+                shape: TabShape::Rect,
+                on_holes: false,
+                avoid_corners: true,
+            }),
+        )
+    };
+    uccnc_rectangle(200.0, op)
+}
+
+fn inside_last_pass_plunge_short_tab() -> Project {
+    let op = ProfileOp {
+        direction: CutDirection::Conventional,
+        machining_order: MachiningOrder::FullDepthFirst,
+        ..last_pass_profile(
+            Side::Inside,
+            22.031_217_735_812_504,
+            Entry::Plunge,
+            LastPass {
+                allowance_mm: 2.240_394_252_311_478_6,
+                thickness_mm: None,
+                reverse: false,
+            },
+            Some(TabSpec {
+                placement: TabPlacement::Count { count: 1 },
+                width_mm: 1.0,
+                height_mm: 1.101_560_886_790_625_2,
+                shape: TabShape::Rect,
+                on_holes: false,
+                avoid_corners: false,
+            }),
+        )
+    };
+    uccnc_rectangle(40.0, op)
+}
+
+fn outside_last_pass_small_tab_on_a_hole() -> Project {
+    let r = 14.453_060_993_366_394;
+    let (hx, hy) = (4.212_446_961_402_92, 4.982_479_348_614_591);
+    let profiles = vec![
+        Polyline::new(
+            vec![Vertex::new(-r, 0.0, -1.0), Vertex::new(r, 0.0, -1.0)],
+            true,
+        ),
+        straight([(-hx, hy), (hx, hy), (hx, -hy), (-hx, -hy)]),
+    ];
+    let thickness_mm = 10.102_031_327_283_026;
+    let op = ProfileOp {
+        direction: CutDirection::Climb,
+        machining_order: MachiningOrder::FullDepthFirst,
+        ..last_pass_profile(
+            Side::Outside,
+            thickness_mm,
+            Entry::Plunge,
+            LastPass {
+                allowance_mm: 0.60,
+                thickness_mm: None,
+                reverse: false,
+            },
+            Some(TabSpec {
+                placement: TabPlacement::AtDistances {
+                    distances_mm: vec![55.18],
+                },
+                width_mm: 3.64,
+                height_mm: 0.51,
+                shape: TabShape::Rect,
+                on_holes: true,
+                avoid_corners: false,
+            }),
+        )
+    };
+    let (sin, cos) = 30_f64.to_radians().sin_cos();
+    let mut project = case(
+        profiles,
+        Transform::from([cos, sin, -sin, cos, 40.0, 40.0]),
+        thickness_mm,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Mm;
+    project.arc_fit_tolerance_mm = None;
+    project.post_processor = PostProcessorRef::latest("grbl").expect("GRBL is bundled");
+    set_tool(
+        &mut project,
+        2.103_135_519_226_597_2,
+        (249.818_149_582_006_92, 529.759_124_549_315_1, 16_789),
+        1.213_709_039_413_399_1,
+        0.894_619_790_919_957_6,
+    );
     project
 }
