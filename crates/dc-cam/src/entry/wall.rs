@@ -141,7 +141,7 @@ impl EntryPlan {
     /// and with no helix: a pass below the tab top ramps along the line
     /// the passes above it ramped on, so through stock they cut, as far as
     /// the tabs leave it. `None` when that stretch is no longer than a ramp
-    /// run may be short ([`MIN_RAMP_RUN_FRACTION`] of the diameter).
+    /// run may be short (`MIN_RAMP_RUN_FRACTION` of the diameter).
     #[must_use]
     pub fn following(&self, domain: &EntryDomain, end: Point) -> Option<Self> {
         let length_mm = self.target.distance_to(end);
