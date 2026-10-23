@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The minimal cases the properties shrank their failures to, as named
-//! tests (#231, #232, #234, #235, #265, #272, #273, #322): each project
+//! tests (#231, #232, #234, #235, #265, #272, #273, #322, #355): each project
 //! validates, generates, and exports through the full safety pass. Every
 //! case is built from `dc_project::test_support::sample_project()` on
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
@@ -12,6 +12,8 @@ use super::{DATE, generate};
 use dc_cam::entry::EntryKind;
 use dc_cam::{MoveKind, ReliefCornerReason, Warning, WarningCode, generate_profile};
 use dc_gcode::emit;
+use dc_gcode::parse::{MotionKind, parse_motion};
+use dc_gcode::transform::MachineTransform;
 use dc_geometry::{Point, Point3, Polyline, Transform, Vertex};
 use dc_project::test_support::{sample_pocket, sample_project};
 use dc_project::{
@@ -833,5 +835,163 @@ fn steep_ramp_on_circles() -> Project {
     tool.plunge_mm_min = Some(2_862.833_030_368_147);
     tool.step_down_mm = Some(0.844_691_259_235_000_5);
     tool.step_over_fraction = Some(0.248_493_065_736_951_43);
+    project
+}
+
+/// #355 (the Pocket property, `PROPTEST_RNG_SEED=33` and 22 at 512
+/// cases): an Offset Pocket of a 24.96 × 37.53 mm rectangle round a
+/// circular island of 4.64 mm radius, by a 1.273 mm tool, through 3.88 mm
+/// stock with a 1.706 mm allowance, rotated 44°, written in inch on
+/// LinuxCNC with arcs fitted at 0.01 mm. S12 refused a fitted arc round
+/// the island (`ArcFitViolation` at line 134). The program exports, and
+/// every arc it writes stays within the arc-fit tolerance (plus the
+/// program's rounding) of the toolpath it stands for.
+#[test]
+fn offset_pocket_round_a_circle_island_exports() {
+    let project = pocket_round_a_circle_island();
+    exports(&project);
+    let tolerance_mm = project.arc_fit_tolerance_mm.expect("arc fitting is on");
+    let op = generate(&project).expect("generates");
+    let path = toolpath_segments(&op.toolpath.moves);
+    let (program, _) = emit(&project, &[op], DATE).expect("exports");
+    let post = project
+        .post_processor
+        .resolve()
+        .expect("LinuxCNC is bundled");
+    let transform = MachineTransform::new(&project, &post).expect("a machine transform");
+    // One unit in the last written place, mm, each side of a written word.
+    let rounding_mm = 25.4 * 0.0001;
+    let mut arcs = 0;
+    for mv in parse_motion(&program.text).expect("parses") {
+        let clockwise = match mv.kind {
+            MotionKind::ArcCw => true,
+            MotionKind::ArcCcw => false,
+            _ => continue,
+        };
+        arcs += 1;
+        let at = |x: f64, y: f64, z: f64| transform.to_project(Point3::new(x, y, z), mv.units);
+        let (Some(sx), Some(sy), Some(sz), Some(ex), Some(ey)) =
+            (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y)
+        else {
+            panic!("line {}: an arc from an unknown position", mv.line);
+        };
+        let (i, j) = (mv.arc.i.expect("I"), mv.arc.j.expect("J"));
+        let start = at(sx, sy, sz);
+        let end = at(ex, ey, sz).xy();
+        let centre = at(sx + i, sy + j, sz).xy();
+        let clockwise = clockwise != transform.mirrors_xy();
+        let radius_mm = start.xy().distance_to(centre);
+        let a0 = (start.y - centre.y).atan2(start.x - centre.x);
+        let a1 = (end.y - centre.y).atan2(end.x - centre.x);
+        let sweep = if clockwise { a0 - a1 } else { a1 - a0 }.rem_euclid(std::f64::consts::TAU);
+        for k in 0..=64 {
+            let t = a0 + if clockwise { -sweep } else { sweep } * f64::from(k) / 64.0;
+            let p = Point::new(
+                centre.x + radius_mm * t.cos(),
+                centre.y + radius_mm * t.sin(),
+            );
+            let off = path
+                .iter()
+                .filter(|(a, _)| (a.z - start.z).abs() <= rounding_mm)
+                .map(|(a, b)| dc_geometry::point_segment_distance_mm(segment(a.xy(), b.xy()), p))
+                .fold(f64::INFINITY, f64::min);
+            assert!(
+                off <= tolerance_mm + 2.0 * rounding_mm,
+                "line {}: the arc is {off} mm off the toolpath at {p:?}",
+                mv.line
+            );
+        }
+    }
+    assert!(arcs > 0, "arcs are written");
+}
+
+/// A straight segment from `a` to `b`.
+fn segment(a: Point, b: Point) -> dc_geometry::Segment {
+    dc_geometry::Segment {
+        start: a,
+        end: b,
+        bulge: 0.0,
+    }
+}
+
+/// The cutting moves of `moves` as straight segments; a toolpath arc as
+/// 64 chords, close enough to measure a fitted arc against.
+fn toolpath_segments(moves: &[dc_cam::Move]) -> Vec<(Point3, Point3)> {
+    let mut out = Vec::new();
+    let mut from: Option<Point3> = None;
+    for mv in moves {
+        if let Some(a) = from.filter(|_| !mv.is_rapid()) {
+            match mv.kind {
+                MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+                    let cw = matches!(mv.kind, MoveKind::ArcCw { .. });
+                    let r = a.xy().distance_to(centre);
+                    let a0 = (a.y - centre.y).atan2(a.x - centre.x);
+                    let a1 = (mv.to.y - centre.y).atan2(mv.to.x - centre.x);
+                    let sweep =
+                        if cw { a0 - a1 } else { a1 - a0 }.rem_euclid(std::f64::consts::TAU);
+                    let mut p = a;
+                    for k in 1..=64 {
+                        let t = a0 + if cw { -sweep } else { sweep } * f64::from(k) / 64.0;
+                        let q = Point3::new(centre.x + r * t.cos(), centre.y + r * t.sin(), a.z);
+                        out.push((p, q));
+                        p = q;
+                    }
+                }
+                _ => out.push((a, mv.to)),
+            }
+        }
+        from = Some(mv.to);
+    }
+    out
+}
+
+/// #355's project, as the property shrank it.
+fn pocket_round_a_circle_island() -> Project {
+    let (hx, hy) = (12.481_040_697_088_298, 18.762_814_826_848_278);
+    let r = 4.637_682_794_054_545_5;
+    let profiles = vec![
+        Polyline::rect(Point::new(-hx, -hy), 2.0 * hx, 2.0 * hy),
+        Polyline::new(
+            vec![Vertex::new(-r, 0.0, -1.0), Vertex::new(r, 0.0, -1.0)],
+            true,
+        ),
+    ];
+    let thickness_mm = 3.880_412_583_570_487_2;
+    let op = PocketOp {
+        strategy: ClearanceStrategy::Offset,
+        wall_pass: WallPass::None,
+        depth_mm: Some(thickness_mm),
+        step_over_fraction: Some(0.888_442_811_577_295_3),
+        direction: dc_project::CutDirection::Conventional,
+        allowance_mm: 1.705_889_174_804_463_3,
+        safe_z_mm: 13.378_563_052_393_277,
+        ..sample_pocket()
+    };
+    let transform = Transform::from([
+        0.718_973_428_179_367_9,
+        0.695_037_559_828_249_3,
+        -0.695_037_559_828_249_3,
+        0.718_973_428_179_367_9,
+        200.0,
+        40.0,
+    ]);
+    let mut project = case(profiles, transform, thickness_mm, Operation::Pocket(op));
+    project.display_units = Units::Inch;
+    project.origin = MachineOrigin {
+        xy: OriginXy::Custom {
+            x_mm: 192.539_444_272_137_16,
+            y_mm: 119.461_040_582_034_09,
+        },
+        z: OriginZ::StockTop,
+    };
+    project.arc_fit_tolerance_mm = Some(0.01);
+    project.post_processor = PostProcessorRef::latest("linuxcnc").expect("LinuxCNC is bundled");
+    let tool = &mut project.tools[0];
+    tool.diameter_mm = 1.272_837_131_008_848_2;
+    tool.feed_mm_min = Some(2_704.671_379_278_641);
+    tool.plunge_mm_min = Some(630.335_261_894_897_7);
+    tool.rpm = Some(7014);
+    tool.step_down_mm = Some(2.778_420_178_868_245_7);
+    tool.step_over_fraction = Some(0.501_838_500_139_350_6);
     project
 }
