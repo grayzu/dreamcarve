@@ -14,6 +14,7 @@
 //! (#311); this module makes it, refuses a drawing it cannot follow,
 //! and carries the part path's tabs onto it.
 
+use super::tab_descent::onto_slope;
 use super::{Offset, check_band, region_shapes};
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
@@ -739,8 +740,10 @@ pub(super) fn step_reach_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
 /// the feed across the allowance to `own`'s start, which `rules` keep in
 /// the waste and run above the tab material the last pass leaves (#339
 /// review); then, if the step ran higher (over a tab, or one the twin
-/// rises over and `own` starts on the slope of), straight down there to
-/// where `own` starts, no lower than its lap cuts there. That
+/// rises over and `own` starts on the slope of), on to where `own` starts,
+/// no lower than its lap cuts there: along the lap at the step's height to
+/// where its slope is as high, and back down the slope (#348,
+/// [`onto_slope`]), not straight down through the allowance strip. That
 /// point is at most `reach_mm` away, or the step would cut more than the
 /// last pass may take off. When `own_led` and its staging point is
 /// farther, the lead-in arc is left off and the step goes to the lap's
@@ -886,10 +889,22 @@ fn entered(
         ));
     }
     if step_z_mm > start_z_mm + EPS_MM {
-        descent.push(Move::linear(
-            Point3::new(target.x, target.y, start_z_mm),
-            rates.plunge_mm_min,
-        ));
+        // #348: not straight down through the allowance strip, which
+        // stands to the step's height, but along the lap: level to where
+        // its slope is as high, and down the slope back to its start.
+        let closed = own
+            .cuts
+            .last()
+            .is_some_and(|m| m.to.xy().distance_to(target) <= EPS_MM);
+        match onto_slope(&own.cuts, target, (start_z_mm, step_z_mm), closed, rates) {
+            Some(moves) => descent.extend(moves),
+            // Never with one tab height: the lap's slope rises to the
+            // tab top, and the step runs no higher.
+            None => descent.push(Move::linear(
+                Point3::new(target.x, target.y, start_z_mm),
+                rates.plunge_mm_min,
+            )),
+        }
     }
     Ok(CutBlock {
         descent_from: twin.descent_from,

@@ -595,17 +595,29 @@ passes ended, it goes down into their floor with the operation's
 - If the last pass's path starts on a tab, or its step would pass near
   one, the step runs above the tab, at the height the lap leaves it. On a smooth tab's
   slope, where the earlier passes ran higher, it steps across at their
-  height and comes down onto the slope.
+  height, runs along its path at that height to where the slope is as
+  high, and comes back down the slope to its start, as it cuts every
+  slope.
+
+**Tabs taller than the step-down.** The earlier passes never cut the
+allowance, so where the last pass comes off a rect tab, the skin under
+the bit stands as high as the tab. Rather than drop the tab's whole
+height in one move there, the last pass comes down in stages: straight
+down to the floor of the earlier pass beside it, then one pass level at
+a time, each at most a step-down. Between stages it runs a bit radius
+along its own path, off the tab or back, at that level. With a 6.35 mm
+bit, a 6 mm tab cut 12 mm deep in 4 mm passes comes down 2 mm to the
+8 mm pass's floor, runs 3.175 mm along, comes down 4 mm to the full
+depth there and runs back to the tab's end. Its moves stay on the
+last pass's path, where it cuts lower anyway, so the tab is not touched.
 
 So no plunge goes deeper into uncut material than a step-down, whatever
-the entry. One case is left: with a tab taller than the step-down, the
-last pass still comes down the tab's height in one move at a rect tab's
-far end, or at a start low on a smooth tab's slope
-([#348](https://github.com/grayzu/dreamcarve/issues/348)). Keep tabs
-no taller than the step-down when you use a last pass. (Changed in
-#339: the last pass plunged at its own start
+the entry or the tabs. (Changed in #339: the last pass plunged at its own start
 from 1 mm above the stock down to the earlier passes' floor, through the
-allowance, which with a plunge entry meant the full depth.)
+allowance, which with a plunge entry meant the full depth. Changed in
+[#348](https://github.com/grayzu/dreamcarve/issues/348): it came down a
+tab taller than the step-down in one move at a rect tab's far end, and
+at a start low on a smooth tab's slope.)
 
 **With tabs**, the tabs are laid on the last pass's path, so they are
 where they would be without a last pass. Each earlier pass rises over
