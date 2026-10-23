@@ -1303,7 +1303,13 @@ fn inside_last_pass_ramp_lead_exports() {
 #[test]
 fn hole_lap_round_an_island_tab_exports() {
     let project = hole_lap_round_an_island_tab();
-    exports(&project);
+    let warnings = exports(&project);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.code() == WarningCode::ToolpathsOverlap),
+        "the hole's lap still gouges the island: {warnings:?}"
+    );
 
     let Operation::Profile(profile) = &project.operations[0] else {
         unreachable!("the case is a Profile");

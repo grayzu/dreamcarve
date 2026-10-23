@@ -1275,8 +1275,10 @@ shallow score pass of a tabbed outline neither rises nor warns
 With either unset every tab in reach counts. A path farther off, such as an Outside path past
 a narrow notch the tool cannot reach into, does not cross it.
 `crossed_by` lists the tabs a Profile crosses; only the tab's own
-outline counts, so a neighbouring part's path, a Pocket or an Engrave
-over the spot never rises.
+outline counts, so a Pocket or an Engrave over the spot never rises,
+and another operation's path does not either. Within one Profile a lap
+of another outline still rises over the tab where its bit reaches it
+("Reached tabs" below). (changed in #362: no other outline's path rose.)
 
 **Spans.** Each crossed tab gives a span of `w + d` along the path
 centred at its path point, with its own top and shape, the phase 1 rect
@@ -1286,6 +1288,32 @@ below that tab's top (`tabs.rs`, per-tab spans). Spans that touch or
 overlap merge as before: the merged span takes the highest top and is
 smooth only if every tab in it is, and the path warns `TabsOverlap`.
 A request's tabs and the placed tabs on one path are laid together.
+
+**Reached tabs** (#362). A lap rises over every tab its bit reaches, not
+only its own outline's. Where a band between two outlines of one
+Profile is narrower than the bit (a hole round an island, two parts
+whose kerfs overlap: the gouge `ToolpathsOverlap` warns of), one
+outline's lap runs within the radius of the other's tab and would cut it
+away below its top. The tab is the material the other outline's last
+pass leaves standing, which is found as an allowance path's tabs are
+from its own last pass (A8 step 3, `last_pass::twin_tabs`): a point
+within `r` of the last pass stands as high as the lowest the last pass
+cuts within `r` of it. Each part path, and each allowance path, is
+raised over every stretch whose cutter reaches that material of another
+part path, at the tab's top, rect if the tab is and smooth with slopes
+no longer than keep it above the material if not, a lattice step longer
+at both ends (`profile::reached`). These stretches merge with the path's
+own spans (`PathTabs::merged`): the merged span takes the highest top
+and is rect if any part of it is. They do not count as tabs of that path
+(no `TabsOverlap` or `TabsCoverMostOfContour`, and an untabbed hole
+stays `Hold::Free`). A path whose bit reaches no other outline's tab is
+laid as before. The new stretches' ends are come down from as every
+span's are: each pass below the tab top comes down one step-down into
+what the pass before cut there, and a last pass comes down a tab taller
+than the step-down in stages (A8 step 4, #348). S9's tab rule is
+unchanged and holds the result. (changed in #362: each lap rose over its
+own outline's tabs only, and a hole's lap in a band narrower than the
+bit came down inside an island's tab, which S9 refused.)
 
 **Cut as placed.** Placed tabs are never reduced. When the spans on a
 path cover more than half of it, `TabsCoverMostOfContour` warns with the

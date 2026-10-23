@@ -485,13 +485,37 @@ pub fn generate_profile(
     let n = paths.len();
     let mut walls = walls;
     let mut layouts = layouts;
+    // #362: a lap rises over every tab its bit reaches, not only its own
+    // outline's. Each part path, and further down each one's allowance
+    // twin, rises over the tabs the other part paths' last passes leave,
+    // standing from their floor (`reached`).
+    let floor_z_mm = pass_z.last().copied().unwrap_or(0.0);
+    let sources: Vec<(Polyline, Option<PathTabs>)> = paths
+        .iter()
+        .zip(&layouts)
+        .map(|((path, _), layout)| (path.clone(), layout.as_ref().map(|(l, _)| l.clone())))
+        .collect();
+    let over_reached = |i: usize, path: &Polyline, layout: &PathTabs| {
+        let others = sources
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .filter_map(|(_, (p, l))| l.as_ref().map(|l| (p, l)));
+        reached::over_reached_tabs(path, layout, others, radius_mm, floor_z_mm)
+    };
+    for (i, ((path, _), layout)) in paths.iter().zip(layouts.iter_mut()).enumerate() {
+        if let Some((layout, _)) = layout
+            && let Some(raised) = over_reached(i, path, layout)
+        {
+            *layout = raised;
+        }
+    }
     let mut allowances: Vec<f64> = vec![0.0; n];
     let mut reversed: Vec<bool> = vec![false; n];
     let mut twin_of: Vec<Option<usize>> = vec![None; n];
     let mut fixed = fixed;
     if let Some(allowance_mm) = allowance_mm {
-        // The last pass's floor, where the tabs it leaves stand from.
-        let floor_z_mm = pass_z.last().copied().unwrap_or(0.0);
+        // The tabs each last pass leaves stand from its floor.
         for (i, twin) in twins.into_iter().enumerate() {
             let (Some(twin), Some((path, shape)), Some(wall), Some(layout)) =
                 (twin, paths.get(i), walls.get(i), layouts.get(i))
@@ -499,10 +523,9 @@ pub fn generate_profile(
                 continue;
             };
             let carried = layout.as_ref().map(|(l, overlapped)| {
-                (
-                    last_pass::twin_tabs(path, l, &twin, radius_mm, floor_z_mm),
-                    *overlapped,
-                )
+                let own = last_pass::twin_tabs(path, l, &twin, radius_mm, floor_z_mm);
+                let raised = over_reached(i, &twin, &own).unwrap_or(own);
+                (raised, *overlapped)
             });
             let (shape, wall) = (*shape, *wall);
             if let Some(slot) = twin_of.get_mut(i) {

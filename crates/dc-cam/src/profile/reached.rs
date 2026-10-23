@@ -28,11 +28,29 @@ pub(super) fn over_reached_tabs<'a>(
     radius_mm: f64,
     floor_z_mm: f64,
 ) -> Option<PathTabs> {
-    let _ = (path, layout, radius_mm, floor_z_mm, last_pass::twin_tabs);
-    let _ = sources.into_iter().count();
-    let _ = within;
-    None
+    let bounds = path.bounds()?;
+    // A tab stands within the radius of its last pass, and the cutter
+    // reaches a radius, plus the lattice's step and slack, at most
+    // [`REACH_SLACK_MM`].
+    let reach_mm = 2.0 * radius_mm + REACH_SLACK_MM;
+    let mut raised: Option<PathTabs> = None;
+    for (source, tabs) in sources {
+        if tabs.is_untabbed() || !within(bounds, source.bounds(), reach_mm) {
+            continue;
+        }
+        let reached = last_pass::twin_tabs(source, tabs, path, radius_mm, floor_z_mm);
+        if reached.is_untabbed() {
+            continue;
+        }
+        let base = raised.as_ref().unwrap_or(layout);
+        raised = Some(base.merged(&reached));
+    }
+    raised
 }
+
+/// More than [`last_pass::twin_tabs`] reaches past twice the radius, mm:
+/// twice its largest lattice step.
+const REACH_SLACK_MM: f64 = 0.5;
 
 /// Whether `a` and `b` come within `reach_mm` of each other.
 fn within(a: Rect, b: Option<Rect>, reach_mm: f64) -> bool {
@@ -118,14 +136,19 @@ mod tests {
             assert!(raised.z_at_mm(d, 0.0).abs() < 1e-9, "y = {y} is raised");
         }
         let d = along(&hole, Point::new(30.0, 30.0));
-        assert!(raised.z_at_mm(d, 0.0).abs() < 1e-9, "the far side is raised");
+        assert!(
+            raised.z_at_mm(d, 0.0).abs() < 1e-9,
+            "the far side is raised"
+        );
     }
 
     #[test]
     fn lap_out_of_reach_of_every_other_tab_is_unchanged() {
         let (island, island_tabs) = island_lap();
-        // A lap 2.5 radii from the island's: its cutter reaches no tab.
-        let far = rect(20.0 + 3.5 * R, -10.0, 60.0, 30.0);
+        // A lap 0.3 mm more than the diameter from the island's, within
+        // the bounds' reach: its cutter stops short of the tab's material,
+        // which stands within the radius of the island's lap.
+        let far = rect(20.0 + 3.0 * R + 0.3, -10.0, 60.0, 30.0);
         let untabbed = PathTabs::from_spans(far.length_mm(), 0, &[], true);
         assert!(over_reached_tabs(&far, &untabbed, [(&island, &island_tabs)], R, 0.0).is_none());
     }
