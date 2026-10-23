@@ -1165,12 +1165,13 @@ fn left_open_path_last_pass_plunge_exports() {
 /// #358 case 2: a 19.09 mm deep Inside Profile of a 13.6 × 20.3 mm
 /// rectangle with one 1.38 × 12.96 mm rect tab, by a 7.78 mm tool in
 /// 1.44 mm steps, helixed, pass first, with a 1.00 mm last pass
-/// allowance, in inch on UCCNC. S9's tab rule refuses each allowance
+/// allowance, in inch on UCCNC. S9's tab rule refused each allowance
 /// pass below the tab top coming down at the end of its raised stretch
 /// (line 2576 first, `OffMaterial`), as #353's. Its last pass also comes
-/// down the tab's 10 mm height in one move at the tab's far end (#348).
+/// down the tab's 10 mm height in one move at the tab's far end: #348,
+/// still open, which S9 does not catch, so this test passing does not
+/// prove #348 fixed.
 #[test]
-#[ignore = "#353"]
 fn inside_last_pass_helix_tabs_pass_first_exports() {
     exports(&inside_last_pass_helix_tabs_pass_first());
 }
@@ -1178,10 +1179,9 @@ fn inside_last_pass_helix_tabs_pass_first_exports() {
 /// #358's `201280a2` regression: the rectangle of case 2 cut Inside
 /// through its 22.03 mm stock with one 1.0 × 1.10 mm rect tab, plunged,
 /// full depth first, with a 2.24 mm last pass allowance. S9's tab rule
-/// refuses the allowance pass at Z 0.49 coming down at the end of its
+/// refused the allowance pass at Z 0.49 coming down at the end of its
 /// raised stretch (line 90, `OffMaterial`), as #353's.
 #[test]
-#[ignore = "#353"]
 fn inside_last_pass_plunge_short_tab_exports() {
     exports(&inside_last_pass_plunge_short_tab());
 }
@@ -1191,11 +1191,10 @@ fn inside_last_pass_plunge_short_tab_exports() {
 /// not kept): a 28.9 mm circle cut Outside through 10.1 mm stock with a
 /// 8.4 × 10 mm rectangular hole, rotated 30°, by a 2.1 mm tool in
 /// 1.21 mm steps, plunged, with a 0.60 mm last pass allowance and a
-/// 3.64 × 0.51 mm rect tab at 55.18 mm on each outline. S9 refuses the
+/// 3.64 × 0.51 mm rect tab at 55.18 mm on each outline. S9 refused the
 /// hole's allowance pass at Z 0.39 coming down at the end of its raised
 /// stretch over the tab (line 53, `OffMaterial`).
 #[test]
-#[ignore = "#353"]
 fn outside_last_pass_small_tab_on_a_hole_exports() {
     exports(&outside_last_pass_small_tab_on_a_hole());
 }

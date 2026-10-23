@@ -166,8 +166,12 @@ written. There are no safety warnings, only errors.
       A Profile also leaves its [tabs](tabs.md) standing: a straight plunge
       on the bit's path, below a tab's top, within the stretch a pass rises
       over for that tab (its width plus the bit's diameter, along the path;
-      under a smooth tab's slope, below the slope), stops the export. The
-      tabs are the project's placed tabs and those a tab request places.
+      under a smooth tab's slope, below the slope), stops the export. With
+      a [last pass](profile.md#last-pass), the passes before it run beside
+      the tab, not over it: there a plunge below the tab's top stops the
+      export when the bit would cut into the tab the last pass leaves
+      standing, wherever along the path that is. The tabs are the
+      project's placed tabs and those a tab request places.
       An Inside or Outside Profile cuts only a trench, so below the stock
       top a ramp leg or helix move must run where the operation already
       cut: on the bit's path round the part (widened by a

@@ -111,11 +111,16 @@
 //! - **Tabs** (#337): a Profile leaves its tabs standing. A straight
 //!   plunge (Z falls, XY stays) that ends below a tab's top is refused
 //!   when it lies on the bit's path round the tab's outline (the outline
-//!   offset by the tool radius, or the radius plus a last pass's
-//!   allowance, either way, within the slack) less than half the tab's
-//!   width plus the radius from the tab's centre along that path, the
-//!   stretch a lap rises over (ADR-0005), less a tenth of the radius for
-//!   a rect tab's step at its end. The tabs are the project's placed tabs
+//!   offset by the tool radius either way, within the slack) less than
+//!   half the tab's width plus the radius from the tab's centre along
+//!   that path, the stretch a lap rises over (ADR-0005), less a tenth of
+//!   the radius for a rect tab's step at its end. On the path of the
+//!   passes before a last pass (the radius plus its allowance, #353),
+//!   which run beside the tab rather than over it, it is refused when its
+//!   cutter reaches into the tab material the laps leave: within the
+//!   radius of a lap held above the plunge's Z by that stretch (without
+//!   the tenth) and at least the radius from the rest of the outline's
+//!   laps, which cut to their floor. The tabs are the project's placed tabs
 //!   on the Profile's targets and those its tab request places
 //!   (`dc_cam::placed_tabs::place`, the documented layout rule, not the
 //!   toolpath). So a lap that starts on a tab and plunges there, below
@@ -792,10 +797,21 @@ fn placed(project: &Project, targets: &[InstanceId]) -> Option<Vec<Polyline>> {
 /// round its outline, from the path's point nearest the tab.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TabSpine {
-    /// The bit's paths round the tab's outline: the outline offset by the
-    /// tool radius both ways (and by the radius plus a last pass's
-    /// allowance, #284), project space.
+    /// The tab's outline: its instance and its index in the definition's
+    /// profiles. Tabs of one outline share its laps, where their spans
+    /// merge.
+    outline_id: (InstanceId, usize),
+    /// The bit's paths round the tab's outline a lap runs on: the outline
+    /// and the outline offset by the tool radius both ways, project space.
     paths: Vec<Polyline>,
+    /// The laps among [`TabSpine::paths`]: the outline offset by the tool
+    /// radius both ways, project space. Empty for an On line Profile,
+    /// whose lap is the outline.
+    laps: Vec<Polyline>,
+    /// The paths of the passes before a last pass (#284): the outline
+    /// offset by the radius plus the last pass's allowance both ways,
+    /// project space. Empty without a last pass.
+    allowance_paths: Vec<Polyline>,
     /// The tab's point, project space.
     point: Point,
     /// How far along a path either side of the tab's centre a lap holds
@@ -818,6 +834,8 @@ pub(crate) struct TabSpine {
     /// it, mm: the tool radius plus half the tab's width, as the
     /// generator crosses it.
     reach_mm: f64,
+    /// The tool radius, mm.
+    radius_mm: f64,
     /// The tab's top above the stock bottom, mm.
     top_z_mm: f64,
 }
@@ -828,6 +846,13 @@ pub(crate) struct TabSpine {
 /// offsets S9 builds round the outline may differ that much from the
 /// generator's along the path.
 const TAB_SPAN_MARGIN: f64 = 0.1;
+
+/// How many cells S9 looks at for tab material under one allowance
+/// pass's plunge (#353) before it gives up and refuses the plunge: the
+/// search halves cells only where the cutter comes within a cell of the
+/// tab, so a plunge clear of it by more than the slack needs a few
+/// hundred.
+const TAB_SEARCH_CELLS: usize = 200_000;
 
 /// The tabs Profile `op` must leave standing in `project` (S9, #337): its
 /// placed tabs on closed outlines of its targets, and those its tab
@@ -875,22 +900,32 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
                 .get(tab.profile)?;
             let outline = instance.transform.apply_polyline(outline).ok()?;
             let contour = Contour::new(outline.clone()).ok()?;
+            let offsets = |delta_mm: f64| -> Vec<Polyline> {
+                [1.0, -1.0]
+                    .into_iter()
+                    .flat_map(|sign| offset(&contour, sign * delta_mm))
+                    .map(Contour::into_polyline)
+                    .collect()
+            };
+            let laps = offsets(radius_mm);
+            let allowance_paths = allowance_mm
+                .map(|a| offsets(radius_mm + a))
+                .unwrap_or_default();
             let mut paths = vec![outline];
-            for delta_mm in std::iter::once(radius_mm).chain(allowance_mm.map(|a| radius_mm + a)) {
-                for sign in [1.0, -1.0] {
-                    paths.extend(
-                        offset(&contour, sign * delta_mm)
-                            .into_iter()
-                            .map(Contour::into_polyline),
-                    );
-                }
-            }
+            paths.extend(laps.iter().cloned());
             let (hold_mm, slope_mm) = match tab.shape {
                 TabShape::Rect => (radius_mm + tab.width_mm / 2.0, 0.0),
                 TabShape::Smooth => (radius_mm, tab.width_mm / 2.0),
             };
             Some(TabSpine {
+                outline_id: (tab.instance.clone(), tab.profile),
                 paths,
+                laps: if profile.side == Side::OnLine {
+                    Vec::new()
+                } else {
+                    laps
+                },
+                allowance_paths,
                 point: instance.transform.apply(Point::new(tab.x_mm, tab.y_mm)),
                 hold_mm,
                 slope_mm,
@@ -898,6 +933,7 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
                 shape: tab.shape,
                 floor_z_mm,
                 reach_mm: radius_mm + tab.width_mm / 2.0,
+                radius_mm,
                 top_z_mm: tab.height_mm,
             })
         })
@@ -905,11 +941,16 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
 }
 
 impl TabSpine {
-    /// Whether a cut down to `z_mm` at `p`, on one of the bit's paths
-    /// round the tab's outline within `slack_mm`, one that crosses the tab,
-    /// goes below the tab there ([`TabSpine::lowest_z_mm`]).
-    fn cuts_into(&self, p: Point, z_mm: f64, slack_mm: f64) -> bool {
-        self.paths.iter().any(|path| {
+    /// Whether a cut down to `z_mm` at `p`, within `slack_mm` of one of
+    /// the bit's paths round the tab's outline, goes below the tab there.
+    /// On a lap's path (or the outline) that is a cut within the tab's
+    /// span ([`TabSpine::lowest_z_mm`]). On the path of the passes before
+    /// a last pass (#353) it is a cut into the tab material the laps leave
+    /// standing ([`TabSpine::cuts_material`]), the tabs of the outline
+    /// `tabs` merged; on an On line Profile, which has no such laps, the
+    /// span again.
+    fn cuts_into(&self, p: Point, z_mm: f64, slack_mm: f64, tabs: &[TabSpine]) -> bool {
+        let by_span = |path: &Polyline| {
             let (Some(at), Some(centre)) =
                 (nearest_point(path, p), nearest_point(path, self.point))
             else {
@@ -921,7 +962,20 @@ impl TabSpine {
             let raw = (at.along_mm - centre.along_mm).abs();
             let along = raw.min(path.length_mm() - raw);
             z_mm < self.lowest_z_mm(along) - slack_mm
-        })
+        };
+        let on_allowance = || {
+            self.allowance_paths
+                .iter()
+                .any(|path| nearest_point(path, p).is_some_and(|at| at.gap_mm <= slack_mm))
+        };
+        if self.paths.iter().any(by_span) {
+            return true;
+        }
+        if self.laps.is_empty() {
+            self.allowance_paths.iter().any(by_span)
+        } else {
+            on_allowance() && self.cuts_material(p, z_mm, slack_mm, tabs)
+        }
     }
 
     /// The lowest a cut may come down to `along_mm` along the bit's path
@@ -943,11 +997,196 @@ impl TabSpine {
             }
         }
     }
+
+    /// How far along a lap either side of the tab's centre the lap runs
+    /// above `z_mm`, mm, by the span rule (ADR-0005) without
+    /// [`TAB_SPAN_MARGIN`]: a rect tab's whole half span below its top
+    /// (less `slack_mm`); a smooth tab's hold and the part of its slope
+    /// above `z_mm`. 0 when the tab's top is not above it. The margin
+    /// lets a lap come down early; the tab it leaves is still the span's
+    /// as the generator cuts it, and that is what the passes before a
+    /// last pass must not cut.
+    fn held_mm(&self, z_mm: f64, slack_mm: f64) -> f64 {
+        let above_mm = self.top_z_mm - slack_mm - z_mm;
+        if above_mm <= 0.0 {
+            return 0.0;
+        }
+        let rise_mm = self.top_z_mm - self.floor_z_mm;
+        let f = if rise_mm > EPS_MM {
+            (above_mm / rise_mm).min(1.0)
+        } else {
+            1.0
+        };
+        (self.hold_mm + self.slope_mm * f).max(0.0)
+    }
+
+    /// Whether the cutter plunged to `z_mm` at `p` cuts the tab material
+    /// the laps round this tab's outline leave standing above `z_mm`
+    /// (#353), the outline's `tabs` merged.
+    ///
+    /// The laps run at their floor except where the tab rule holds them
+    /// above `z_mm` ([`TabSpine::held_mm`]): every lap point is "high" or
+    /// "low". The material that stands above `z_mm` once the laps are cut
+    /// is every point within the radius of a high lap point and at least
+    /// the radius from every low one: the tab. The laps' segments are
+    /// split exactly where they turn high.
+    ///
+    /// The search halves square cells over the cutter, the radius round
+    /// `p`. A cell is dropped when no point of it can be inside the cutter
+    /// and `slack_mm` inside the tab (its centre's distances, give or
+    /// take its half diagonal, rule it out), and the plunge is refused
+    /// when a cell's centre lies in both, or the centre of a cell whose
+    /// half diagonal is at most the slack lies in the tab and within that
+    /// half diagonal of the cutter. So the rule refuses every cutter that
+    /// reaches the slack into the tab, and passes every cutter that, grown
+    /// by the slack, misses it. A search that needs more than
+    /// [`TAB_SEARCH_CELLS`] cells refuses the plunge.
+    fn cuts_material(&self, p: Point, z_mm: f64, slack_mm: f64, tabs: &[TabSpine]) -> bool {
+        let r = self.radius_mm;
+        let reach_mm = 2.0 * r + slack_mm;
+        let at = Rect::from_point(p);
+        let mut high: Vec<Segment> = Vec::new();
+        let mut low: Vec<Segment> = Vec::new();
+        for lap in &self.laps {
+            let length_mm = lap.length_mm();
+            let held: Vec<(f64, f64)> = tabs
+                .iter()
+                .filter(|t| t.outline_id == self.outline_id)
+                .filter_map(|t| {
+                    let centre = nearest_point(lap, t.point)?;
+                    let half_mm = t.held_mm(z_mm, slack_mm);
+                    (centre.gap_mm <= t.reach_mm + slack_mm && half_mm > 0.0)
+                        .then_some((centre.along_mm - half_mm, centre.along_mm + half_mm))
+                })
+                .collect();
+            split_lap(lap, length_mm, &held, |piece, is_high| {
+                if near(at, bounds_of(piece), reach_mm) {
+                    if is_high {
+                        high.push(piece);
+                    } else {
+                        low.push(piece);
+                    }
+                }
+            });
+        }
+        if high.is_empty() {
+            return false;
+        }
+        let gap = |segments: &[Segment], q: Point| {
+            segments
+                .iter()
+                .map(|s| point_segment_distance_mm(*s, q))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let tolerance_mm = slack_mm.max(EPS_MM);
+        // Cells as (centre, half side).
+        let mut cells: Vec<(Point, f64)> = vec![(p, r)];
+        let mut looked = 0;
+        while let Some((q, half_mm)) = cells.pop() {
+            looked += 1;
+            if looked > TAB_SEARCH_CELLS {
+                return true;
+            }
+            let blur_mm = half_mm * std::f64::consts::SQRT_2;
+            let (cutter, high_gap, low_gap) = (q.distance_to(p), gap(&high, q), gap(&low, q));
+            if cutter - blur_mm >= r
+                || high_gap - blur_mm >= r - tolerance_mm
+                || low_gap + blur_mm < r + tolerance_mm
+            {
+                continue;
+            }
+            let in_tab = high_gap < r && low_gap >= r;
+            if in_tab && cutter < r {
+                return true;
+            }
+            if blur_mm <= tolerance_mm {
+                if in_tab && cutter < r + blur_mm {
+                    return true;
+                }
+                continue;
+            }
+            let quarter = half_mm / 2.0;
+            for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                cells.push((q + Vec2::new(dx * quarter, dy * quarter), quarter));
+            }
+        }
+        false
+    }
+}
+
+/// Splits the closed or open lap `lap`, `length_mm` long, into pieces at
+/// the ends of the stretches `held` (from and to, mm along it from its
+/// start, either possibly past an end of a closed lap, where it wraps)
+/// and hands each piece to `f` with whether it lies in one of them.
+/// Segments no longer than [`EPS_MM`] are skipped, as
+/// [`nearest_point`] measures along a path.
+fn split_lap(
+    lap: &Polyline,
+    length_mm: f64,
+    held: &[(f64, f64)],
+    mut f: impl FnMut(Segment, bool),
+) {
+    let closed = lap.is_closed() && length_mm > EPS_MM;
+    // The stretches within [0, length], unwrapped.
+    let mut stretches: Vec<(f64, f64)> = Vec::new();
+    for &(from, to) in held {
+        if closed && to - from >= length_mm {
+            stretches.push((0.0, length_mm));
+            continue;
+        }
+        for shift in [-length_mm, 0.0, length_mm] {
+            if !closed && shift != 0.0 {
+                continue;
+            }
+            let (a, b) = ((from + shift).max(0.0), (to + shift).min(length_mm));
+            if b > a {
+                stretches.push((a, b));
+            }
+        }
+    }
+    let in_held = |d: f64| stretches.iter().any(|&(a, b)| a <= d && d <= b);
+    let mut walked_mm = 0.0;
+    for segment in lap.segments() {
+        let seg_mm = segment.length_mm();
+        if seg_mm <= EPS_MM {
+            continue;
+        }
+        let mut cuts: Vec<f64> = vec![0.0, seg_mm];
+        for &(a, b) in &stretches {
+            for d in [a - walked_mm, b - walked_mm] {
+                if d > 0.0 && d < seg_mm {
+                    cuts.push(d);
+                }
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        for (&a, &b) in cuts.iter().zip(cuts.iter().skip(1)) {
+            if b - a <= EPS_MM {
+                continue;
+            }
+            if let Some(piece) = sub_segment(segment, seg_mm, a, b) {
+                f(piece, in_held(walked_mm + (a + b) / 2.0));
+            }
+        }
+        walked_mm += seg_mm;
+    }
+}
+
+/// The part of `segment`, `length_mm` long, from `from_mm` to `to_mm`
+/// along it, an arc's part an arc of the same circle.
+fn sub_segment(segment: Segment, length_mm: f64, from_mm: f64, to_mm: f64) -> Option<Segment> {
+    let (start, _) = segment.point_at(from_mm)?;
+    let (end, _) = segment.point_at(to_mm)?;
+    let bulge = segment.arc().map_or(0.0, |arc| {
+        (arc.sweep_rad * (to_mm - from_mm) / length_mm / 4.0).tan()
+    });
+    Some(Segment { start, end, bulge })
 }
 
 /// S9's tab rule (#337) for one move `mv` of `span`: `false` when it is a
 /// straight plunge that ends below a tab's top within the tab's span
-/// along the bit's path ([`TabSpine`]).
+/// along the bit's path, or, on the path of the passes before a last
+/// pass, into the tab material the laps leave (#353) ([`TabSpine`]).
 fn keeps_tabs(
     mv: &MachineMove,
     transform: &MachineTransform,
@@ -966,10 +1205,9 @@ fn keeps_tabs(
     let to = transform.to_project(Point3::new(tx, ty, tz), mv.units);
     let plunge = from.xy().distance_to(to.xy()) <= slack_mm && to.z < from.z - EPS_MM;
     !plunge
-        || span
-            .tabs
-            .iter()
-            .all(|tab| to.z >= tab.top_z_mm - slack_mm || !tab.cuts_into(to.xy(), to.z, slack_mm))
+        || span.tabs.iter().all(|tab| {
+            to.z >= tab.top_z_mm - slack_mm || !tab.cuts_into(to.xy(), to.z, slack_mm, span.tabs)
+        })
 }
 
 /// What S9's trench rule (#352) needs from the project for an inside or
