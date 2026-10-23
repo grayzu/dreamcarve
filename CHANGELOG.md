@@ -433,6 +433,17 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   plunge entry, and with an explicit start with every entry. Each pass now starts on the tab at its height and gets
   down past the tab's end, and the safety pass's S9 refuses a plunge into a
   tab ([#337]).
+- A Profile with a last pass and tabs no longer fails export when a pass
+  before the last comes down off a tab in a slot, a hole or near a corner.
+  The safety pass's S9 held those passes to the stretch the last pass rises
+  over, its width plus the bit's diameter along the path, but they run
+  beside the tab and come down where their bit stops touching the tab the
+  last pass leaves, which is sooner where another stretch of the cut
+  removes the far side of the tab's kerf. On a heightfield those plunges
+  cut none of the tab. S9 now refuses such a plunge exactly when its bit
+  would cut into that tab, so on a straight wall it also refuses one past
+  the stretch that the old rule let through. No committed program changes
+  ([#353]).
 - An Inside or Outside Profile with a ramp entry and tabs no longer ramps
   into uncut stock on the passes below the tab top. Those passes placed
   their ramp beside the tabs on a line of its own, which no earlier pass
@@ -626,4 +637,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#330]: https://github.com/grayzu/dreamcarve/issues/330
 [#336]: https://github.com/grayzu/dreamcarve/issues/336
 [#352]: https://github.com/grayzu/dreamcarve/issues/352
+[#353]: https://github.com/grayzu/dreamcarve/issues/353
 [#355]: https://github.com/grayzu/dreamcarve/issues/355

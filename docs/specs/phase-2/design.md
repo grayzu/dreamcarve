@@ -3724,7 +3724,29 @@ The safety pass's S9 refuses a straight plunge below a tab's top within
 its span along the bit's path (the outline offset by the radius, and by
 the radius plus a last pass's allowance; over a smooth tab's slope, below
 the slope the last pass cuts), from the placed tabs and the request's
-placement, not the toolpath.)
+placement, not the toolpath. Changed in #353: on the path of the passes
+before a last pass (the radius plus the allowance) the span is not the
+rule, because those passes cut beside the tab, not over it, and
+`twin_tabs` ends their raised stretch where their cutter stops touching
+the tab the last pass leaves. There S9 refuses a plunge below a tab's top
+whose cutter reaches into that material: every point within the radius
+of a lap point the span rule holds above the plunge's Z (a rect tab's
+whole span, `r + w/2` along the lap with no margin; a smooth tab's hold
+and the part of its slope above that Z; the outline's tabs merged) and at
+least the radius from every other point of the outline's laps (the
+outline offset by the radius both ways), which cut to their floor. The
+laps' segments are split exactly at the span ends, and a quadtree over
+the cutter, halving cells only where the cutter comes within a cell of
+the tab, refuses every cutter that reaches the slack into the tab and
+passes every one that, grown by the slack, misses it. The margin of
+`TAB_SPAN_MARGIN` still applies to the lap's own plunges; the material
+is the span's without it, which is stricter. So the rule is looser than
+the span where other stretches of the lap cut the far side of the tab's
+kerf (a slot, a corner, the wall opposite: the #353 and #358 cases come
+down inside the span, cutting none of the tab on a heightfield), and
+stricter on a straight wall, where the
+kerf's far side stands the whole span and the cutter, `a` nearer it,
+reaches it until about `√(2ar − a²)` past the span.)
 
 Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 `tabs::rotated_square_tabs_leave_corners` (acceptance 47),
@@ -3739,7 +3761,13 @@ Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 `profile::open_path_ignores_start`, `cli::corners_and_start_rotated_square`;
 for #337, `profile::start_under_a_tab_never_plunges_into_it`,
 `safety::s9_refuses_a_descent_into_a_tab` and
-`safety::start_under_a_tab_passes_s9`.
+`safety::start_under_a_tab_passes_s9`; for #353,
+`safety::allowance_pass_leaves_a_tab_at_its_stretch_end`,
+`safety::allowance_pass_dropping_onto_a_tab_fails_s9`,
+`safety::allowance_pass_past_the_span_onto_a_tab_fails_s9` and the
+property cases `inside_last_pass_helix_tabs_pass_first_exports`,
+`inside_last_pass_plunge_short_tab_exports` and
+`outside_last_pass_small_tab_on_a_hole_exports`.
 
 ### Documentation (every item)
 

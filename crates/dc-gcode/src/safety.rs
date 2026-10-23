@@ -5283,11 +5283,12 @@ mod tests {
     /// material the last pass's lap leaves standing, not the lap's span.
     /// An inside Profile of an 8.5 mm wide slot (X 10 to 18.5, Y 10 to 40)
     /// with a tab on its left wall at Y 25: the lap on the right wall (X
-    /// 15.325) cuts the far side of the left lap's kerf down to its floor,
-    /// so the tab the left lap leaves ends within 3.62 mm of the tab along
-    /// the left allowance path (X 14.175). A plunge there 3.75 mm along,
-    /// inside the lap's span less a tenth of the radius (3.86 mm), cuts
-    /// none of it and passes.
+    /// 15.325) cuts the far side of the left lap's kerf down to its floor
+    /// (X 12.15 on), so the allowance cutter on the left allowance path (X
+    /// 14.175) clears the tab the left lap leaves `4.175 − √(r² −
+    /// 1.025²) + √(r² − 2.025²)` = 3.62 mm along from the tab. A plunge
+    /// there 3.75 mm along either way, inside the lap's span less a tenth
+    /// of the radius (3.86 mm), cuts none of it and passes.
     #[test]
     fn allowance_pass_leaves_a_tab_at_its_stretch_end() {
         let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
@@ -5298,14 +5299,14 @@ mod tests {
 
     /// #353: an allowance pass that comes down onto the tab material the
     /// lap leaves still fails S9. In the slot of
-    /// [`allowance_pass_leaves_a_tab_at_its_stretch_end`], a plunge 3.3 mm
-    /// along the left allowance path from the tab, short of where the tab
-    /// ends, is refused.
+    /// [`allowance_pass_leaves_a_tab_at_its_stretch_end`], a plunge 3.3 or
+    /// 3.55 mm along the left allowance path from the tab, short of the
+    /// 3.62 mm where its cutter clears the tab, or at the tab, is refused.
     #[test]
     fn allowance_pass_dropping_onto_a_tab_fails_s9() {
         let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
         let op = sample_profile_op_of(&project);
-        for y in [28.3, 21.7, 25.0] {
+        for y in [28.3, 21.7, 28.55, 21.45, 25.0] {
             let err = check_material_text(&plunge_at(14.175, y), &project, &op).unwrap_err();
             assert!(
                 matches!(&err, ExportError::OffMaterial { line: 5, .. }),
@@ -5317,15 +5318,17 @@ mod tests {
     /// #353: on a straight wall the lap's kerf keeps its far side, where
     /// the tab stands the lap's whole span (4.175 mm) either side of the
     /// tab, and the allowance cutter reaches it until it is
-    /// `√(2ar − a²)` = 2.31 mm farther along: 6.49 mm in all. The sample
-    /// rectangle cut outside with a tab on its bottom edge at X 35: a
-    /// plunge on the allowance path (Y 5.825) 5 mm along, past the lap's
-    /// span, is refused; one 6.7 mm along passes.
+    /// `√(2ar − a²)` = 2.31 mm farther along: 6.49 mm in all, the last
+    /// half millimetre of it the tab's tip, thinner than the slack. The
+    /// sample rectangle cut outside with a tab on its bottom edge at X 35:
+    /// a plunge on the allowance path (Y 5.825) 5 or 5.8 mm along, past
+    /// the lap's span less a tenth of the radius (3.86 mm), is refused;
+    /// one 6.7 mm along passes.
     #[test]
     fn allowance_pass_past_the_span_onto_a_tab_fails_s9() {
         let project = last_pass_tab_project(dc_project::Side::Outside, 50.0, (25.0, 0.0));
         let op = sample_profile_op_of(&project);
-        for x in [40.0, 30.0] {
+        for x in [40.0, 30.0, 40.8, 29.2] {
             let err = check_material_text(&plunge_at(x, 5.825), &project, &op).unwrap_err();
             assert!(
                 matches!(&err, ExportError::OffMaterial { line: 5, .. }),
