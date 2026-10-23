@@ -3,7 +3,7 @@
 
 //! The minimal cases the properties shrank their failures to, as named
 //! tests (#231, #232, #234, #235, #265, #272, #273, #322, #353, #355,
-//! #356, #358): each project
+//! #356, #358, #366): each project
 //! validates, generates, and exports through the full safety pass. Every
 //! case is built from `dc_project::test_support::sample_project()` on
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
@@ -19,9 +19,9 @@ use dc_geometry::{Point, Point3, Polyline, Transform, Vertex};
 use dc_project::test_support::{sample_pocket, sample_project};
 use dc_project::{
     ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    InstanceId, LastPass, MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ, PocketOp,
-    PostProcessorRef, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec,
-    Units, WallPass, validate,
+    InstanceId, LastPass, Lead, MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ,
+    PocketOp, PostProcessorRef, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape,
+    TabSpec, Units, WallPass, validate,
 };
 
 /// The sample project on 240 × 160 × `thickness_mm` stock, its one
@@ -1199,6 +1199,18 @@ fn outside_last_pass_small_tab_on_a_hole_exports() {
     exports(&outside_last_pass_small_tab_on_a_hole());
 }
 
+/// #366 (the Profile property, `PROPTEST_RNG_SEED=33`): an 8.93 mm deep
+/// Inside Profile of a 39.6 × 34.7 mm rectangle with a 16.0 × 17.1 mm
+/// rectangular hole and a 4.79 mm circle in it, by a 5.09 mm tool in
+/// 5.53 mm steps, ramped at 16.7°, with a 0.5 mm lead over 173° and a
+/// 0.085 mm last pass allowance (5.46 mm thick), untabbed, full depth
+/// first, in mm on Mach3 with arc fitting off. S9 refused line 32
+/// (`OffMaterial`).
+#[test]
+fn inside_last_pass_ramp_lead_exports() {
+    exports(&inside_last_pass_ramp_lead());
+}
+
 /// The sample's Profile with `side`, cut `depth_mm` deep by `entry`, with
 /// `last_pass` and `tabs`, its other settings the issue's.
 fn last_pass_profile(
@@ -1465,6 +1477,76 @@ fn outside_last_pass_small_tab_on_a_hole() -> Project {
         (249.818_149_582_006_92, 529.759_124_549_315_1, 16_789),
         1.213_709_039_413_399_1,
         0.894_619_790_919_957_6,
+    );
+    project
+}
+
+fn inside_last_pass_ramp_lead() -> Project {
+    let (ax, ay) = (19.807_767_211_790_523, 17.335_221_274_116_42);
+    let (bx, by) = (7.979_439_739_067_024, 8.560_834_672_441_597);
+    let r = 2.393_831_921_720_107;
+    let profiles = vec![
+        straight([(-ax, -ay), (ax, -ay), (ax, ay), (-ax, ay)]),
+        straight([(-bx, -by), (bx, -by), (bx, by), (-bx, by)]),
+        Polyline::new(
+            vec![Vertex::new(-r, 0.0, -1.0), Vertex::new(r, 0.0, -1.0)],
+            true,
+        ),
+    ];
+    let op = ProfileOp {
+        step_down_mm: Some(5.529_390_404_462_816),
+        direction: CutDirection::Climb,
+        machining_order: MachiningOrder::FullDepthFirst,
+        lead: Some(Lead {
+            radius_mm: 0.5,
+            sweep_deg: 173.354_924_152_233_08,
+            lead_out: false,
+            overcut_mm: 0.0,
+        }),
+        ..last_pass_profile(
+            Side::Inside,
+            8.929_528_220_205_565,
+            Entry::Ramp {
+                angle_deg: 16.726_834_643_729_2,
+            },
+            LastPass {
+                allowance_mm: 0.084_813_751_702_528_82,
+                thickness_mm: Some(5.463_977_798_488_451),
+                reverse: false,
+            },
+            None,
+        )
+    };
+    let transform = Transform::from([
+        -0.730_783_819_972_606_7,
+        0.682_608_971_861_815_6,
+        -0.682_608_971_861_815_6,
+        -0.730_783_819_972_606_7,
+        40.0,
+        40.0,
+    ]);
+    let mut project = case(
+        profiles,
+        transform,
+        18.239_814_566_960_71,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Mm;
+    project.origin = MachineOrigin {
+        xy: OriginXy::Custom {
+            x_mm: 163.770_798_233_330_48,
+            y_mm: 24.843_463_139_014_275,
+        },
+        z: OriginZ::StockTop,
+    };
+    project.arc_fit_tolerance_mm = None;
+    project.post_processor = PostProcessorRef::latest("mach3").expect("Mach3 is bundled");
+    set_tool(
+        &mut project,
+        5.088_825_102_151_729,
+        (3_511.208_596_937_322, 1_973.617_877_533_400_6, 13_320),
+        3.692_432_801_988_285,
+        0.888_842_317_033_553,
     );
     project
 }
