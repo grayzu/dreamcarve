@@ -128,6 +128,46 @@ impl EntryPlan {
         descent
     }
 
+    /// The ends of the ramp run this plan placed, its target first; `None`
+    /// when it placed none.
+    #[must_use]
+    pub fn ramp_line(&self) -> Option<(Point, Point)> {
+        self.ramp.map(|r| (r.start, r.end))
+    }
+
+    /// #352: this plan with its ramp run from its target toward `end`
+    /// instead, as far along that line as `domain` holds it, stopped the
+    /// boundary safety short of the far boundary and never past `end`,
+    /// and with no helix: a pass below the tab top ramps along the line
+    /// the passes above it ramped on, so through stock they cut, as far as
+    /// the tabs leave it. `None` when that stretch is no longer than a ramp
+    /// run may be short (`MIN_RAMP_RUN_FRACTION` of the diameter).
+    #[must_use]
+    pub fn following(&self, domain: &EntryDomain, end: Point) -> Option<Self> {
+        let length_mm = self.target.distance_to(end);
+        if length_mm <= ENTRY_EPS || length_mm.is_nan() {
+            return None;
+        }
+        let direction = (end - self.target) * (1.0 / length_mm);
+        let room_mm = domain
+            .candidates(self.target)
+            .iter()
+            .filter_map(|area| area.line_interval(self.target, direction, ENTRY_EPS))
+            .map(|(_, max)| max)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let diameter_mm = self.tool.diameter_mm;
+        let run_mm = length_mm.min(room_mm - boundary_safety_mm(diameter_mm));
+        let min_run_mm = ENTRY_EPS.max(diameter_mm * MIN_RAMP_RUN_FRACTION);
+        (run_mm > min_run_mm).then(|| Self {
+            helix: None,
+            ramp: Some(RampPlacement {
+                start: self.target,
+                end: self.target + direction * run_mm,
+            }),
+            ..self.clone()
+        })
+    }
+
     /// [`EntryPlan::descend`] without the helix: the chain from the ramp,
     /// a requested helix reported as not used for `reason`.
     #[must_use]
@@ -517,6 +557,43 @@ mod tests {
         let last = d.moves.last().unwrap().to;
         assert!(last.xy().distance_to(target) <= EPS_MM);
         assert_approx_eq!(last.z, 0.0, EPS_MM);
+    }
+
+    /// The 20 mm square cut short at `height_mm`, as a domain.
+    fn low_domain(height_mm: f64) -> EntryDomain {
+        let c = Contour::new(Polyline::rect(Point::new(0.0, 0.0), 20.0, height_mm)).unwrap();
+        let (regions, _) = nest(vec![c]).unwrap();
+        EntryDomain::new(&regions, 4.0, FLATTEN_TOLERANCE_DEFAULT_MM)
+    }
+
+    /// #352: a plan follows another plan's ramp line from its target as
+    /// far as its own domain holds it: the whole line where the domain
+    /// holds it all, else stopped the boundary safety short of where the
+    /// domain ends, and not at all when that leaves no run. The follower
+    /// has no helix.
+    #[test]
+    fn following_keeps_to_the_line_as_far_as_the_domain_holds_it() {
+        let target = Point::new(10.0, 0.0);
+        let entry = Entry::Ramp { angle_deg: 15.0 };
+        let plain = plan_at_wall(&square_domain(), &entry, target, &tool());
+        let (start, end) = plain.ramp_line().unwrap();
+        assert!(start.distance_to(target) <= EPS_MM);
+        let whole = plain.following(&square_domain(), end).unwrap();
+        assert_eq!(whole.ramp_line(), plain.ramp_line());
+        let low = plan_at_wall(&low_domain(7.0), &entry, target, &tool());
+        assert_ne!(low.ramp_line(), plain.ramp_line(), "another line");
+        let follow = low.following(&low_domain(7.0), end).unwrap();
+        let (s, e) = follow.ramp_line().unwrap();
+        assert!(s.distance_to(target) <= EPS_MM);
+        let along = (end - start) * (1.0 / start.distance_to(end));
+        assert_approx_eq!(along.cross(e - s), 0.0, 1e-9);
+        assert_approx_eq!(
+            s.distance_to(e),
+            7.0 / along.y - boundary_safety_mm(4.0),
+            1e-9
+        );
+        assert!(follow.helix.is_none());
+        assert!(low.following(&low_domain(0.4), end).is_none());
     }
 
     /// The helix rejoin leaves the target at the start Z for the helix
