@@ -1151,13 +1151,14 @@ fn shallow_ramp_round_a_circle_with_a_small_hole() -> Project {
 /// #358 case 1: a 0.29 mm deep Left Profile of an open path with two arcs,
 /// beside three closed outlines it skips, by a 5.31 mm tool, plunged,
 /// with a 0.09 mm last pass allowance and a 0.015 mm last pass, in mm on
-/// GRBL. The cut starts at the path's drawn end, where both offsets stop
-/// on circles round the end vertex but not on one normal, so the last
-/// pass's 0.11 mm step (line 26) from the allowance path's start to its
-/// own ends 0.114 mm from the allowance path, past S9's allowance band
-/// (`OffMaterial`).
+/// GRBL. The path's drawn end lies 3.2 mm from its start, so both
+/// offsets start where they come within `r` and `r + a` of that end
+/// vertex, on two circles round it and not on one normal. The last pass's
+/// 0.11 mm step (line 26) from the allowance path's start to its own then
+/// ends 0.114 mm from the allowance path, which S9's allowance band
+/// refused (`OffMaterial`) though it lies between the first segment's
+/// two offsets.
 #[test]
-#[ignore = "#358"]
 fn left_open_path_last_pass_plunge_exports() {
     exports(&left_open_path_last_pass_plunge());
 }

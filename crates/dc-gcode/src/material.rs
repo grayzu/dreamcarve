@@ -92,6 +92,11 @@
 //!     notch. With a last pass (#311) the path offset by the radius plus
 //!     the allowance is a tool-centre path too, for the passes before the
 //!     last; the kept edges stay one radius off.
+//!     The last pass's level step across the allowance from the earlier
+//!     passes' path onto its own (#339) runs between the two paths, or
+//!     between one segment's two offsets taken whole (#358): where an
+//!     end vertex comes back beside another segment, the two paths stop
+//!     on circles of `r` and `r + a` round it rather than on one normal.
 //!   - **A lap** of one outline, a cut that runs at the tool radius from
 //!     it on its waste side, passes even where an outline of another
 //!     region comes nearer than the radius. That cut is the outline's
@@ -715,14 +720,26 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
         .flat_map(|p| edges_of(p))
         .chain(kept.flat_map(|k| edges_of(&k).collect::<Vec<_>>()))
         .collect();
-    let steps = far
-        .zip(allowance_mm)
-        .map(|(far, allowance_mm)| AllowanceBand {
+    let steps = far.zip(allowance_left_mm).map(|(far, far_left_mm)| {
+        let allowance_mm = far_left_mm.abs() - left_mm.abs();
+        // #358: each segment's own band, its two offsets whole.
+        let strips = open
+            .iter()
+            .flat_map(|p| p.segments())
+            .filter_map(|s| {
+                let near = segment_offset(s, left_mm)?;
+                let far = segment_offset(s, far_left_mm)?;
+                Some((Edge::new(near), Edge::new(far)))
+            })
+            .collect();
+        AllowanceBand {
             near,
             far,
+            strips,
             allowance_mm,
             step_mm: dc_cam::last_pass_step_reach_mm(2.0 * left_mm.abs(), allowance_mm),
-        });
+        }
+    });
     Material::SideProfile {
         centres,
         keep_clear,
@@ -740,6 +757,11 @@ pub(crate) struct AllowanceBand {
     near: Vec<Edge>,
     /// The earlier passes' paths' segments.
     far: Vec<Edge>,
+    /// Each segment of each open path offset whole, by the radius and by
+    /// the radius plus the allowance (#358): the band beside that one
+    /// segment, before [`offset_open`] trims each offset where it comes
+    /// nearer another part of the path.
+    strips: Vec<(Edge, Edge)>,
     allowance_mm: f64,
     /// The longest step, mm.
     step_mm: f64,
@@ -761,20 +783,155 @@ impl AllowanceBand {
             && points_of(path).iter().all(|&p| self.holds(p, slack_mm))
     }
 
-    /// True when `p` lies between the two paths: its distances to them
-    /// add up to the allowance, within `slack_mm` each.
+    /// True when `p` lies between the two paths, or between one
+    /// segment's two whole offsets (#358): its distances to them add up
+    /// to the allowance, within `slack_mm` each.
+    ///
+    /// The second covers where the two paths are trimmed short of each
+    /// other: near an open path's end vertex that comes back beside
+    /// another of its segments, each offset of that segment stops where
+    /// it comes within its own distance of the vertex, `r` for the last
+    /// pass and `r + a` for the others, so the two stop on two circles
+    /// round it and not on one normal. Between a segment's whole offsets
+    /// `p` lies on its side, abreast of it, `r` to `r + a` from it: the
+    /// strip the passes beside it cut, not past its ends (beyond the
+    /// slack) nor on the kept side. The cut's distance from every line, which S9 checks
+    /// apart, keeps it from the vertex that trimmed them.
     fn holds(&self, p: Point, slack_mm: f64) -> bool {
         let reach_mm = self.allowance_mm + slack_mm;
+        let at = Rect::from_point(p);
+        let within = 2.0f64.mul_add(slack_mm, self.allowance_mm);
         let gap = |edges: &[Edge]| {
-            let at = Rect::from_point(p);
             edges
                 .iter()
                 .filter(|e| near(at, e.bounds, reach_mm))
                 .map(|e| point_segment_distance_mm(e.segment, p))
                 .fold(f64::INFINITY, f64::min)
         };
-        gap(&self.near) + gap(&self.far) <= self.allowance_mm + 2.0 * slack_mm
+        gap(&self.near) + gap(&self.far) <= within
+            || self.strips.iter().any(|(n, f)| {
+                near(at, n.bounds, reach_mm)
+                    && point_segment_distance_mm(n.segment, p)
+                        + point_segment_distance_mm(f.segment, p)
+                        <= within
+            })
     }
+}
+
+#[cfg(test)]
+mod allowance_band_tests {
+    use super::*;
+    use dc_geometry::Vertex;
+
+    const RADIUS_MM: f64 = 1.0;
+    const ALLOWANCE_MM: f64 = 0.3;
+    const SLACK_MM: f64 = 0.012;
+
+    fn line_path(points: &[(f64, f64)]) -> Polyline {
+        Polyline::new(
+            points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+            false,
+        )
+    }
+
+    /// The allowance band of a Left Profile of `path` with a last pass.
+    fn band(path: &Polyline) -> AllowanceBand {
+        match side_profile(std::slice::from_ref(path), RADIUS_MM, Some(ALLOWANCE_MM)) {
+            Material::SideProfile {
+                steps: Some(band), ..
+            } => band,
+            other => panic!("not a Left Profile with a last pass: {other:?}"),
+        }
+    }
+
+    /// The first point of `path` offset `left_mm`, which must be one piece.
+    fn offset_start(path: &Polyline, left_mm: f64) -> Point {
+        let pieces = offset_open(path, left_mm);
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        let v = pieces[0].vertices()[0];
+        Point::new(v.x, v.y)
+    }
+
+    fn level(start: Point, end: Point, bulge: f64) -> Segment {
+        Segment { start, end, bulge }
+    }
+
+    /// #358 case 1: an open path that nearly closes, cut Left (inside the
+    /// loop), its end vertex E 1.5 mm above the line its first segment
+    /// runs along. Both offsets start where they come `r` and `r + a`
+    /// from E, so the two passes' starts are not on one normal: the last
+    /// pass's step from the allowance path's start onto its own ends
+    /// 0.52 mm from the allowance path, farther than the allowance. It
+    /// still runs between the first segment's own two offsets, at least
+    /// `r` from every line, and is a step S9 accepts.
+    #[test]
+    fn last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed() {
+        let path = line_path(&[
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 5.0),
+            (-0.5, 5.0),
+            (-0.5, 1.5),
+        ]);
+        let far = offset_start(&path, RADIUS_MM + ALLOWANCE_MM);
+        let near = offset_start(&path, RADIUS_MM);
+        // Each pass starts on its circle round E, not on the first
+        // segment's normal through (0, 0).
+        let e = Point::new(-0.5, 1.5);
+        assert!((far.distance_to(e) - (RADIUS_MM + ALLOWANCE_MM)).abs() < 1e-6);
+        assert!((near.distance_to(e) - RADIUS_MM).abs() < 1e-6);
+        assert!((far.x - near.x).abs() > 0.4, "{far:?} {near:?}");
+        let band = band(&path);
+        let step = level(far, near, 0.0);
+        assert!(step.length_mm() <= band.step_mm, "{}", step.length_mm());
+        assert!(band.allows(step, true, SLACK_MM));
+        // A step that is not level is no step.
+        assert!(!band.allows(step, false, SLACK_MM));
+    }
+
+    /// #358: the band at an open end stays the strip's. A level arc from
+    /// the allowance path's end to the last pass's path that bows past
+    /// the path's end vertex, `r` to `r + a` from it, cuts past the open
+    /// end and still fails, and no point on the kept side, `r` to `r + a`
+    /// from the path, lies in the band.
+    #[test]
+    fn last_pass_step_past_an_open_end_or_on_the_kept_side_fails() {
+        let path = line_path(&[(0.0, 0.0), (10.0, 0.0)]);
+        let band = band(&path);
+        let (far_end, near) = (Point::new(10.0, 1.3), Point::new(9.9, 1.0));
+        assert!(band.allows(level(far_end, near, 0.0), true, SLACK_MM));
+        let bowed = level(far_end, near, -1.5);
+        let (middle, _) = bowed.point_at(bowed.length_mm() / 2.0).expect("an arc");
+        assert!(middle.x > 10.1, "{middle:?}");
+        let from_end_mm = middle.distance_to(Point::new(10.0, 0.0));
+        assert!((RADIUS_MM..=RADIUS_MM + ALLOWANCE_MM).contains(&from_end_mm));
+        assert!(bowed.length_mm() <= band.step_mm, "{}", bowed.length_mm());
+        assert!(!band.allows(bowed, true, SLACK_MM));
+        assert!(!band.holds(Point::new(10.4, 1.15), SLACK_MM));
+        assert!(!band.holds(Point::new(5.0, -1.15), SLACK_MM));
+        assert!(band.holds(Point::new(5.0, 1.15), SLACK_MM));
+    }
+}
+
+/// Segment `s` offset whole by `left_mm` (positive to the left of travel),
+/// untrimmed: a line moved along its normal, an arc the same sweep about
+/// the same centre. `None` for a segment of no length, or an arc that
+/// would shrink to its centre or past it.
+fn segment_offset(s: Segment, left_mm: f64) -> Option<Segment> {
+    let (start, start_dir) = s.point_at(0.0)?;
+    let (end, end_dir) = s.point_at(s.length_mm())?;
+    if let Some(arc) = s.arc() {
+        // The left of a counter-clockwise arc is towards its centre.
+        let inward_mm = left_mm * s.bulge.signum();
+        if arc.radius_mm - inward_mm <= EPS_MM {
+            return None;
+        }
+    }
+    Some(Segment {
+        start: start + start_dir.perp() * left_mm,
+        end: end + end_dir.perp() * left_mm,
+        bulge: s.bulge,
+    })
 }
 
 /// Every profile of every instance in `targets`, placed in project space;
