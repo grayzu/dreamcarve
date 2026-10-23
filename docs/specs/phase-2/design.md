@@ -3503,6 +3503,55 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    wall's share per minute, 2.0 to 2.5 in the 10 mm hole, 1.2 to 1.6 in
    the 15 mm; after, the edge moves at the feed and the removal is 0.69
    to 0.95 of a straight wall's.
+8. **Curves drawn as straight segments** (added in #350,
+   `last_pass::EdgeFeed::flattened_bend`, `profile::own_edge_feeds`). The
+   importers flatten a DXF `ELLIPSE` or `SPLINE`, or an SVG Bézier that is
+   not a circle, to short lines, which item 7 does not slow, so the edge
+   there moves faster than the feed. The maintainer chose to warn, not
+   slow down, in phase 2: one vertex cannot tell a flattened bend from a
+   sharp corner, which #324 leaves at the feed, and the rectangle's last
+   pass must not change. Arc fitting or a radius-based slowdown is a later
+   phase's. The last pass's lap and overcut (as item 7, without its lead
+   arcs) is split into runs of level straight cuts at the cutting feed;
+   an arc, a tab's ramp or lift, or any other feed ends a run. Each vertex
+   of a run turns by its signed angle, counted positive round the wall
+   (to the left with the wall on the right) and negative away from it,
+   and only if it turns less than **30°**; a vertex that turns more counts
+   0. Over a window from the middle of one segment to the middle of a
+   later one, the fewest segments reaching one bit diameter `D` (a run
+   shorter than that is taken as `D` long), the tool centre's radius is
+   `ρ ≈ L / Σθ`, and the edge moves at `(ρ + r) / ρ` times the feed.
+   Where that is over **1.5**, the result carries
+   `Warning::LastPassFlattenedCurve`, one per shape, its tightest bend:
+   the shape, `ρ`, a vertex in the bend's middle and the ratio. Feeds and
+   G-code are unchanged, so every golden is byte-identical.
+
+   *Why 30°.* A curve flattened to a tolerance `s` turns `√(8s / R)` per
+   vertex on a wall of radius `R`: 30° only under 0.3 mm at the default
+   0.01 mm, or 2.9 mm at 0.1 mm, ten times coarser. So the vertices of
+   every flattened curve tight enough to warn count, even at a coarse
+   tolerance (at 20°, a 10 mm hole flattened at 0.1 mm, whose vertices
+   turn 23°, would not warn, though its edge moves 2.7 times the feed).
+   A rectangle's corners (90°) and a hexagon's or an octagon's (60°,
+   45°) do not count, and #324 keeps deciding those; a 12-gon's 30°
+   corners do not either.
+
+   *Why 1.5.* Over 1.5 the tool centre's radius is under `2r`: the path
+   turns more than a radian in one bit diameter, which takes at least two
+   counted vertices, so a lone kink in a straight wall never warns (one
+   under 30° spread over `D` is `ρ > 3.8r`, a ratio under 1.27; two
+   within a diameter just reach 1.52). With a
+   6.35 mm bit it is any wall bend under `3r`, 9.5 mm radius; the bit
+   takes up to 50% more than its feed was set for there. Under that, the
+   estimate's own spread (a window's few percent) and the margin feeds are
+   chosen with would make the warning noise on every large spline. Item 7
+   warns tight true arcs at any excess, but those are exact; this one is
+   an estimate. Measured (`profile::last_pass_flattened_hole_edge_feed`
+   and a sweep of flattened circles): circles flattened at 0.01 or 0.1 mm
+   estimate within 3% of the true `R / (R − r)` (2.7 in a 10 mm hole, 1.7
+   in a 15 mm, 1.5 in a 19 mm, none from 20 mm); the 12 × 8 mm ellipse
+   at 0.5 mm warns at about 1.9; the 60 × 40 mm rectangle, Inside and
+   Outside, true-arc holes, and hexagons to 24-gons 20 mm across do not.
 
 S9 in the safety pass is unchanged: the allowance passes keep more than
 `r` from the part, which it already accepts. The generator tests hold
@@ -3626,7 +3675,8 @@ and the G-code heightfield checks (`dc-gcode`)
 `profile::last_pass_small_hole_edge_feed`, `profile::last_pass_tight_inside_arc_warns`,
 `safety::s3_accepts_a_last_pass_edge_feed`,
 `emit::last_pass_edge_feed_is_written_rounded_down` and the heightfield check
-`last_pass_entry::last_pass_small_hole_load`.
+`last_pass_entry::last_pass_small_hole_load`; and (#350)
+`profile::last_pass_flattened_hole_edge_feed`.
 
 ### A9. Tabs off corners and start point (format version 14)
 

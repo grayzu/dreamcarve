@@ -235,6 +235,15 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   program and project, and the result of each check in the plan's procedure.
   The post-processors chapter lists a controller as not yet checked on a real
   machine until a passed real-machine run is recorded with it ([#330]).
+- **Warning for a last pass round a curve drawn as lines.** A Profile's last
+  pass slows down round true arcs, but not round a curve flattened to many
+  short straight lines: a DXF ellipse or spline, or an SVG curve that is not a
+  circle. Where such a curve bends so tightly that the bit's cutting edge
+  moves more than 1.5 times the feed (in a 12 × 8 mm ellipse cut Inside with a
+  6.35 mm bit, about 1.9 times), the operation warns
+  `last_pass_flattened_curve`, naming the shape and where. Feeds and G-code
+  are unchanged. Lower the feed, use a smaller allowance, or redraw the curve
+  with arcs ([#350]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
@@ -614,6 +623,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#311]: https://github.com/grayzu/dreamcarve/issues/311
 [#337]: https://github.com/grayzu/dreamcarve/issues/337
 [#335]: https://github.com/grayzu/dreamcarve/issues/335
+[#350]: https://github.com/grayzu/dreamcarve/issues/350
 [#339]: https://github.com/grayzu/dreamcarve/issues/339
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300

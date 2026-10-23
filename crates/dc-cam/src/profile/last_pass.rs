@@ -585,6 +585,138 @@ impl EdgeFeed {
     }
 }
 
+/// #350: the most a vertex of a run of straight cuts may turn, degrees,
+/// and still count toward the run's bend. A curve flattened to a
+/// tolerance `s` turns `√(8s / R)` per vertex on a radius `R`: this much
+/// only under 0.3 mm at the default 0.01 mm, or 2.9 mm at 0.1 mm, so
+/// every flattened curve's vertices count. A rectangle's, hexagon's or
+/// octagon's corners turn more and are left to #324.
+pub(super) const FLATTENED_TURN_MAX_DEG: f64 = 30.0;
+
+/// #350: the edge speed, in multiples of the feed, above which a bend of
+/// straight cuts warns `last_pass_flattened_curve`. Above 1.5 the tool
+/// centre's radius is under `2r`: the path turns more than a radian
+/// within one bit diameter, which takes at least two counted vertices,
+/// so a lone kink never warns.
+pub(super) const FLATTENED_EDGE_RATIO_MAX: f64 = 1.5;
+
+/// #350: the tightest inside bend of a run of straight cuts, which
+/// [`EdgeFeed::apply`] does not slow down for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct FlattenedBend {
+    /// The estimated radius of the tool centre's path there, mm.
+    pub radius_mm: f64,
+    /// A vertex in the middle of the bend.
+    pub at: Point,
+    /// About how many times the feed the cutting edge moves at there,
+    /// `(ρ + r) / ρ`.
+    pub edge_ratio: f64,
+}
+
+impl EdgeFeed {
+    /// #350: the tightest inside bend along the runs of level straight
+    /// cuts of `cuts` (cut from `start`) at the cutting feed, where the
+    /// cutting edge moves more than [`FLATTENED_EDGE_RATIO_MAX`] times the
+    /// feed; `None` if there is none. A bend's radius is estimated from
+    /// how much the path turns per length over a window about one bit
+    /// diameter long: from the middle of its first segment to the middle
+    /// of its last, the fewest segments reaching a diameter (a shorter
+    /// run counts as a diameter long). Only vertices turning less than
+    /// [`FLATTENED_TURN_MAX_DEG`] count, round the wall positive and away
+    /// from it negative, so a sharp corner adds nothing and an S-bend
+    /// cancels.
+    pub(super) fn flattened_bend(&self, cuts: &[Move], start: Point3) -> Option<FlattenedBend> {
+        let mut tightest: Option<FlattenedBend> = None;
+        let mut run: Vec<Point> = vec![start.xy()];
+        let mut z_mm = start.z;
+        for mv in cuts {
+            let straight = matches!(mv.kind, MoveKind::Linear)
+                && (mv.to.z - z_mm).abs() <= EPS_MM
+                && mv
+                    .feed_mm_min
+                    .is_some_and(|f| (f - self.feed_mm_min).abs() <= EPS_MM);
+            if !straight {
+                self.tightest_in(&run, &mut tightest);
+                run.clear();
+            }
+            if run
+                .last()
+                .is_none_or(|p| p.distance_to(mv.to.xy()) > EPS_MM)
+            {
+                run.push(mv.to.xy());
+            }
+            z_mm = mv.to.z;
+        }
+        self.tightest_in(&run, &mut tightest);
+        tightest
+    }
+
+    /// [`EdgeFeed::flattened_bend`] over one run of straight cuts through
+    /// `points`, keeping the tightest bend in `tightest`.
+    fn tightest_in(&self, points: &[Point], tightest: &mut Option<FlattenedBend>) {
+        let toward = if self.wall_on_right { 1.0 } else { -1.0 };
+        let max_turn_rad = FLATTENED_TURN_MAX_DEG.to_radians();
+        // Each segment's length and the counted turn at its far end, into
+        // the next segment (none after the last).
+        let turns_rad = points.windows(3).map(|w| match w {
+            [a, b, c] => {
+                let (u, v) = (*b - *a, *c - *b);
+                let turn = (u.x * v.y - u.y * v.x).atan2(u.x * v.x + u.y * v.y);
+                if turn.abs() < max_turn_rad {
+                    toward * turn
+                } else {
+                    0.0
+                }
+            }
+            _ => 0.0,
+        });
+        let segments: Vec<(f64, f64)> = points
+            .windows(2)
+            .map(|w| match w {
+                [a, b] => a.distance_to(*b),
+                _ => 0.0,
+            })
+            .zip(turns_rad.chain(std::iter::once(0.0)))
+            .collect();
+        let diameter_mm = 2.0 * self.radius_mm;
+        for (j, &(first_mm, first_turn_rad)) in segments.iter().enumerate() {
+            // The window from segment `j` to segment `k`: its length from
+            // the middle of `j` to the middle of `k`, and the counted turn
+            // of the vertices between.
+            let mut inner_mm = 0.0;
+            let mut turned_rad = first_turn_rad;
+            let mut window = None;
+            for (k, &(length_mm, turn_rad)) in segments.iter().enumerate().skip(j + 1) {
+                let span_mm = (first_mm + length_mm) / 2.0 + inner_mm;
+                window = Some((k, span_mm, turned_rad));
+                if span_mm >= diameter_mm {
+                    break;
+                }
+                inner_mm += length_mm;
+                turned_rad += turn_rad;
+            }
+            let Some((k, span_mm, turned_rad)) = window else {
+                continue;
+            };
+            if turned_rad <= EPS_MM {
+                continue;
+            }
+            let rho_mm = span_mm.max(diameter_mm) / turned_rad;
+            let edge_ratio = (rho_mm + self.radius_mm) / rho_mm;
+            if edge_ratio > FLATTENED_EDGE_RATIO_MAX
+                && tightest.is_none_or(|t| edge_ratio > t.edge_ratio)
+                && let Some(&at) = points.get((j + k).div_ceil(2))
+            {
+                *tightest = Some(FlattenedBend {
+                    radius_mm: rho_mm,
+                    at,
+                    edge_ratio,
+                });
+            }
+        }
+    }
+}
+
 /// How far, mm, the last pass may step from its allowance path's kerf
 /// onto its own path (#339): the most it may take off anywhere
 /// ([`thickest_mm`]), which [`cuts_only_corners`] holds every point of its

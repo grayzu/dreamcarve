@@ -702,6 +702,8 @@ pub fn generate_profile(
     let mut block_paths = Vec::with_capacity(blocks.capacity());
     // #335: each shape's tightest inside arc held at the floor feed.
     let mut tight_arcs: Vec<(ShapeRef, f64)> = Vec::new();
+    // #350: each shape's tightest bend of straight cuts.
+    let mut bends: Vec<(ShapeRef, last_pass::FlattenedBend)> = Vec::new();
     let ctx = PassCtx {
         op,
         tabs: tabs.as_ref(),
@@ -761,6 +763,15 @@ pub fn generate_profile(
                             None => tight_arcs.push(((*shape).clone(), rho)),
                         }
                     }
+                    if let (Some(bend), Some((_, shape))) = (entered.bend, paths.get(i)) {
+                        match bends.iter_mut().find(|(s, _)| s == *shape) {
+                            Some((_, tightest)) if tightest.edge_ratio < bend.edge_ratio => {
+                                *tightest = bend;
+                            }
+                            Some(_) => {}
+                            None => bends.push(((*shape).clone(), bend)),
+                        }
+                    }
                     entered.block
                 }
                 // #284: every pass but the last cuts the allowance twin.
@@ -798,6 +809,18 @@ pub fn generate_profile(
             }
         }));
     }
+    warnings.extend(
+        bends
+            .into_iter()
+            .map(|(shape, bend)| Warning::LastPassFlattenedCurve {
+                op: op.id.clone(),
+                shape,
+                radius_mm: bend.radius_mm,
+                x_mm: bend.at.x,
+                y_mm: bend.at.y,
+                edge_ratio: bend.edge_ratio,
+            }),
+    );
     if let Some(lead) = lead {
         warnings.extend(lead_warnings.into_warnings(&op.id, lead));
     }
@@ -2108,6 +2131,9 @@ struct Entered {
     /// #335: the tightest inside arc whose feed is held at
     /// `EdgeFeed::floor_fraction`, where the edge moves faster than the feed.
     tight_mm: Option<f64>,
+    /// #350: the tightest bend of straight cuts whose edge moves more
+    /// than `last_pass::FLATTENED_EDGE_RATIO_MAX` times the feed.
+    bend: Option<last_pass::FlattenedBend>,
 }
 
 /// #339: the block of a part path's last pass, entered from its allowance
@@ -2181,10 +2207,11 @@ fn last_pass_block(
             block: None,
             lead_dropped: false,
             tight_mm: None,
+            bend: None,
         });
     };
     // #335: its lap runs round inside arcs at the feed its edge needs.
-    let tight_mm = own_edge_feeds(ctx, paths, &mut own_block, own_led);
+    let (tight_mm, bend) = own_edge_feeds(ctx, paths, &mut own_block, own_led);
     let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
     // #339 review: the step is held to what it sweeps: the parts, not
     // the entries' waste domain or tab keep-outs, and the tabs'
@@ -2232,6 +2259,7 @@ fn last_pass_block(
             block: Some(block),
             lead_dropped,
             tight_mm,
+            bend,
         }),
         Err(last_pass::StepRefused::OffWaste { from, to }) => {
             let space = paths.domain.map(|d| &d.plain);
@@ -2267,13 +2295,15 @@ fn last_pass_block(
 /// #335: lowers the feed of the last pass's lap, and its overcut, round
 /// inside arcs (`last_pass::EdgeFeed`), so its cutting edge moves at the
 /// feed there; its lead arcs, which take up and leave the cut, keep the
-/// feed. Returns the tightest arc held at the floor, if any.
+/// feed. Returns the tightest arc held at the floor, if any, and (#350)
+/// the tightest bend of straight cuts whose edge moves too fast
+/// (`last_pass::EdgeFeed::flattened_bend`), whose feed it leaves alone.
 fn own_edge_feeds(
     ctx: &PassCtx<'_>,
     paths: &LastPassPaths<'_>,
     block: &mut CutBlock,
     led: bool,
-) -> Option<f64> {
+) -> (Option<f64>, Option<last_pass::FlattenedBend>) {
     let edge = last_pass::EdgeFeed {
         wall_on_right: (ctx.op.direction == CutDirection::Climb) != paths.reverse,
         radius_mm: paths.own.tool.diameter_mm / 2.0,
@@ -2292,12 +2322,22 @@ fn own_edge_feeds(
         _ => n,
     };
     let begin = usize::from(led).min(end);
-    let start_z_mm = begin
+    let start = begin
         .checked_sub(1)
         .and_then(|k| block.cuts.get(k))
         .or(block.descent.last())
-        .map_or(block.z_mm, |m| m.to.z);
-    edge.apply(block.cuts.get_mut(begin..end)?, start_z_mm)
+        .map(|m| m.to);
+    let start_z_mm = start.map_or(block.z_mm, |p| p.z);
+    let Some(lap) = block.cuts.get_mut(begin..end) else {
+        return (None, None);
+    };
+    // #350: its straight cuts keep the feed; a tight bend of them warns.
+    let bend = match (start, lap.split_first()) {
+        (Some(start), _) => edge.flattened_bend(lap, start),
+        (None, Some((first, rest))) => edge.flattened_bend(rest, first.to),
+        (None, None) => None,
+    };
+    (edge.apply(lap, start_z_mm), bend)
 }
 
 /// A path's lead (`docs/specs/phase-2/design.md`, "Algorithms → Lead-in
@@ -6768,6 +6808,85 @@ mod tests {
             assert_approx_eq!(radius_mm, f - R_MM, 1e-6);
             assert_approx_eq!(feed, floor, 1e-9);
         }
+    }
+
+    /// An ellipse `width_mm` × `height_mm` centred on the origin, flattened
+    /// counter-clockwise to straight segments no farther than
+    /// `tolerance_mm` from the curve, as an importer flattens a DXF
+    /// `ELLIPSE` or SVG Bézier (#350): each chord's sagitta is
+    /// `tolerance_mm` at the curve's local radius of curvature.
+    fn flattened_ellipse(width_mm: f64, height_mm: f64, tolerance_mm: f64) -> Polyline {
+        let (a, b) = (width_mm / 2.0, height_mm / 2.0);
+        let mut vertices = Vec::new();
+        let mut t: f64 = 0.0;
+        while t < TAU - 1e-9 {
+            vertices.push(Vertex::line(a * t.cos(), b * t.sin()));
+            let speed = (a * a * t.sin().powi(2) + b * b * t.cos().powi(2)).sqrt();
+            let curvature_radius_mm = speed.powi(3) / (a * b);
+            let chord_mm = (8.0 * tolerance_mm * curvature_radius_mm).sqrt();
+            t += chord_mm / speed;
+        }
+        Polyline::new(vertices, true)
+    }
+
+    /// The `last_pass_flattened_curve` warnings of `warnings`.
+    fn flattened_curve_warnings(warnings: &[Warning]) -> Vec<&Warning> {
+        warnings
+            .iter()
+            .filter(|w| w.code().as_str() == "last_pass_flattened_curve")
+            .collect()
+    }
+
+    /// #350: a curve drawn as straight segments gets none of #335's
+    /// slowdown, so round its inside bends the last pass's cutting edge
+    /// moves faster than the feed. The last pass's feeds stay as they are,
+    /// and the result warns `last_pass_flattened_curve`, naming the shape:
+    /// a 12 × 8 mm ellipse flattened to 0.01 mm, cut Inside with a 6.35 mm
+    /// bit at 0.5 mm, climb and conventional. The 60 × 40 mm rectangle,
+    /// Inside and Outside, and a true-arc 10 mm hole carry no such warning.
+    #[test]
+    fn last_pass_flattened_hole_edge_feed() {
+        let ellipse = flattened_ellipse(12.0, 8.0, 0.01);
+        let outline = at_20_20().apply_polyline(&ellipse).unwrap();
+        let p = last_pass_project_of(vec![ellipse]);
+        for direction in [CutDirection::Climb, CutDirection::Conventional] {
+            let op = ProfileOp {
+                direction,
+                ..last_pass_op(&p, Side::Inside)
+            };
+            let (tp, warnings) = generate(&p, &op);
+            assert_safe(&tp, &p, &Operation::Profile(op.clone()));
+            let flagged = flattened_curve_warnings(&warnings);
+            assert_eq!(flagged.len(), 1, "{direction:?}: {warnings:?}");
+            let message = flagged[0].to_string();
+            assert!(message.contains("`Shape i1`"), "{message}");
+            assert!(message.contains("times the feed"), "{message}");
+            assert_eq!(flagged[0].op(), Some(&op.id));
+            // Feeds unchanged: every level cut of the last pass runs at
+            // the feed.
+            let split = last_pass_start(&tp, &outline, LAST_PASS_Z_MM[1], ALLOWANCE_MM);
+            let mut at = tp.moves[split].to;
+            for mv in &tp.moves[split + 1..] {
+                if !mv.is_rapid() && (mv.to.z - at.z).abs() <= EPS_MM {
+                    assert_eq!(mv.feed_mm_min, Some(FEED_MM_MIN), "{direction:?}: {mv:?}");
+                }
+                at = mv.to;
+            }
+        }
+        for side in [Side::Inside, Side::Outside] {
+            let p = last_pass_project();
+            let (_, warnings) = generate(&p, &last_pass_op(&p, side));
+            assert!(
+                flattened_curve_warnings(&warnings).is_empty(),
+                "rectangle {side:?}: {warnings:?}"
+            );
+        }
+        let p = last_pass_project_of(vec![round_hole(10.0)]);
+        let (_, warnings) = generate(&p, &last_pass_op(&p, Side::Inside));
+        assert!(
+            flattened_curve_warnings(&warnings).is_empty(),
+            "true-arc hole: {warnings:?}"
+        );
     }
 
     /// #310 review: a cut of one pass has no pass before the last to
