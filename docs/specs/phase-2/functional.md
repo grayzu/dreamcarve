@@ -572,7 +572,13 @@ footprint stays inside its region and outside its islands; an entry
 helix, ramp, lead arc or corner-relief notch stays in material the
 operation removes, never in the part. Checked on the toolpath by a
 footprint-containment test per operation, and by the existing overlap
-check between shapes.
+check between shapes. An inside or outside Profile removes only its
+trench, so its ramp or helix below the stock top also runs only on the
+bit's path round its targets (widened by a last pass's allowance) or
+along an earlier cut of the operation, unless the run of falling moves
+started at or above the stock top; checked on the parsed program
+(changed in #352: a ramp below the tab top into full-height stock
+passed, since it stayed in the waste).
 - **S10 Entry descent rate.** A ramp or helix descends with a vertical
 component no faster than the plunge rate: the move's feed is scaled so
 that `feed × sin(slope) ≤ plunge`. Checked on the parsed program by

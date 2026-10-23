@@ -120,6 +120,22 @@
 //!   (`dc_cam::placed_tabs::place`, the documented layout rule, not the
 //!   toolpath). So a lap that starts on a tab and plunges there, below
 //!   its top, is refused, wherever on the tab it starts.
+//! - **Trenches** (#352): an inside or outside Profile cuts only a trench,
+//!   its kerf, and the lines its entries ramp on; the waste beside them
+//!   stands full height. So a ramp below the stock top must run where
+//!   the operation's earlier cuts ran. A cut that falls while it runs in
+//!   XY (a ramp leg, a helix chord), in a run of such cuts that started
+//!   below the stock top, is refused at the first point below the stock
+//!   top, checked a tenth of the tool radius apart, that lies neither on
+//!   the ring the laps cut (within the tool radius, plus a last pass's
+//!   allowance and the slack, of a target outline) nor within twice the
+//!   slack of the tool-centre path of an earlier cut of the operation
+//!   below the stock top. A run that starts at or above the stock top (a
+//!   first pass's ramp or helix, a helix that starts again from above the
+//!   stock) clears its own way and is not held to it, and a straight
+//!   plunge is the tab rule's. A level move too short to fall a unit in
+//!   the last place does not end a run. Pockets clear their whole region
+//!   and are not held to it.
 //! - **Drill:** every cut stays inside one of the Drill's holes, the
 //!   closed targets that are circles ([`dc_geometry::as_circle`], as
 //!   `dc_cam::generate_drill` finds them): its ends and middle lie within
@@ -141,6 +157,7 @@
 //! for a move the plain rule rejects. A 20-part outside Profile with
 //! ramps, leads and tabs checks in a few milliseconds (#177).
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use dc_geometry::{
@@ -148,7 +165,9 @@ use dc_geometry::{
     as_circle, closest_points, inset_is_empty, meeting_points, nearest_point, nest, offset,
     offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
 };
-use dc_project::{CornerRelief, InstanceId, Operation, PostProcessor, Project, Side, TabShape};
+use dc_project::{
+    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape,
+};
 
 use crate::ExportError;
 use crate::parse::{Block, MachineMove, MotionKind};
@@ -171,6 +190,9 @@ pub(crate) enum Material {
         relief: bool,
         /// A Profile: the lap rule applies.
         laps: bool,
+        /// A Profile whose stock top is known: the trench rule applies
+        /// (#352).
+        trench: Option<TrenchRule>,
     },
     /// An outside Profile's parts: the tool centre stays outside every
     /// one, clear of its outlines.
@@ -179,6 +201,8 @@ pub(crate) enum Material {
         areas: Vec<Area>,
         /// Corner relief is on, so the notch rule applies.
         relief: bool,
+        /// The stock top is known: the trench rule applies (#352).
+        trench: Option<TrenchRule>,
     },
     /// A Drill's holes: centre and radius, mm.
     Drill {
@@ -597,6 +621,7 @@ impl Material {
                             allowance_mm: 0.0,
                             relief,
                             laps: true,
+                            trench: trench_rule(project, profile),
                         },
                         None => Self::Unresolved,
                     },
@@ -604,6 +629,7 @@ impl Material {
                         Some(regions) => Self::Outside {
                             areas: areas_of(regions, false),
                             relief,
+                            trench: trench_rule(project, profile),
                         },
                         None => Self::Unresolved,
                     },
@@ -620,6 +646,7 @@ impl Material {
                         allowance_mm,
                         relief: pocket.corner_relief != CornerRelief::None,
                         laps: false,
+                        trench: None,
                     },
                     None => Self::Unresolved,
                 }
@@ -943,6 +970,184 @@ fn keeps_tabs(
             .all(|tab| to.z >= tab.top_z_mm - slack_mm || !tab.cuts_into(to.xy(), to.z, slack_mm))
 }
 
+/// What S9's trench rule (#352) needs from the project for an inside or
+/// outside Profile.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TrenchRule {
+    /// The stock top, above its bottom, mm.
+    stock_top_mm: f64,
+    /// A last pass's allowance, mm; 0 without one.
+    allowance_mm: f64,
+}
+
+/// The trench rule's data for Profile `profile` of `project`; `None`
+/// when the stock thickness is not set.
+fn trench_rule(project: &Project, profile: &ProfileOp) -> Option<TrenchRule> {
+    project.stock.thickness_mm.map(|stock_top_mm| TrenchRule {
+        stock_top_mm,
+        allowance_mm: profile
+            .last_pass
+            .as_ref()
+            .map_or(0.0, |l| l.allowance_mm.max(0.0)),
+    })
+}
+
+/// The side of the square cells [`Trench`] indexes the cuts by, mm.
+const TRENCH_CELL_MM: f64 = 2.0;
+
+/// How far apart [`Trench`] checks the points of a ramping move, as a
+/// fraction of the tool radius.
+const TRENCH_STEP_FRACTION: f64 = 0.1;
+
+/// S9's trench rule (#352) over one operation's moves, in order (module
+/// docs, "Trenches").
+struct Trench<'a> {
+    rule: TrenchRule,
+    areas: &'a [Area],
+    radius_mm: f64,
+    /// The tool-centre path in XY, project space, of every cut so far
+    /// that went below the stock top.
+    cuts: Vec<Segment>,
+    /// For each cell, the cuts whose bounds, grown by the reach a point
+    /// is measured to, meet it.
+    cells: BTreeMap<(i64, i64), Vec<usize>>,
+    /// While a run of ramping moves lasts: whether it started at or
+    /// above the stock top.
+    fresh: Option<bool>,
+}
+
+impl<'a> Trench<'a> {
+    fn new(rule: TrenchRule, areas: &'a [Area], radius_mm: f64) -> Self {
+        Self {
+            rule,
+            areas,
+            radius_mm,
+            cuts: Vec::new(),
+            cells: BTreeMap::new(),
+            fresh: None,
+        }
+    }
+
+    /// A rapid: a run of ramping moves ends.
+    fn lift(&mut self) {
+        self.fresh = None;
+    }
+
+    /// The cell holding `(x, y)`, mm.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "cell indices of project coordinates, clamped far inside i64"
+    )]
+    fn cell(x: f64, y: f64) -> (i64, i64) {
+        let index = |v: f64| (v / TRENCH_CELL_MM).floor().clamp(-1e12, 1e12) as i64;
+        (index(x), index(y))
+    }
+
+    /// Whether cut `mv` keeps to the trench rule, `slack_mm` allowed, and
+    /// records it. It does not when it ramps (falls while it runs more
+    /// than the slack in XY) in a run of ramping moves that started below
+    /// the stock top, through a point below the stock top that lies
+    /// neither on the ring the laps cut (within the tool radius, plus a
+    /// last pass's allowance and the slack, of a target outline) nor
+    /// within twice the slack of the tool-centre path of an earlier cut
+    /// below the stock top. The points are checked a tenth of the radius
+    /// apart.
+    fn allows(&mut self, mv: &MachineMove, transform: &MachineTransform, slack_mm: f64) -> bool {
+        let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz), Some(path)) = (
+            mv.from.x,
+            mv.from.y,
+            mv.from.z,
+            mv.to.x,
+            mv.to.y,
+            mv.to.z,
+            project_path(mv, transform),
+        ) else {
+            self.fresh = None;
+            return true;
+        };
+        let from_z = transform.to_project(Point3::new(fx, fy, fz), mv.units).z;
+        let to_z = transform.to_project(Point3::new(tx, ty, tz), mv.units).z;
+        let top_mm = self.rule.stock_top_mm - slack_mm;
+        let length_mm = path.length_mm();
+        let step_mm = self.radius_mm * TRENCH_STEP_FRACTION;
+        let ramping = to_z < from_z - EPS_MM && length_mm > slack_mm;
+        // A move too short to fall a unit in the last place is written
+        // level: it neither ramps nor ends the run.
+        let sliver = (to_z - from_z).abs() <= EPS_MM && length_mm <= step_mm;
+        let fresh = if ramping {
+            *self.fresh.get_or_insert(from_z >= top_mm)
+        } else {
+            if !sliver {
+                self.fresh = None;
+            }
+            true
+        };
+        let mut allowed = true;
+        if !fresh && to_z < top_mm {
+            let ring_mm = self.radius_mm + self.rule.allowance_mm + slack_mm;
+            let near_mm = 2.0 * slack_mm;
+            let mut s_mm: f64 = 0.0;
+            loop {
+                let s = s_mm.min(length_mm);
+                let z = from_z + (to_z - from_z) * (s / length_mm);
+                let p = path.point_at(s).map_or(path.end, |(p, _)| p);
+                if z < top_mm && !self.on_ring(p, ring_mm) && !self.on_earlier(p, near_mm) {
+                    allowed = false;
+                    break;
+                }
+                if s >= length_mm || step_mm <= 0.0 {
+                    break;
+                }
+                s_mm += step_mm;
+            }
+        }
+        if from_z.min(to_z) < top_mm {
+            self.record(path, 2.0 * slack_mm);
+        }
+        allowed
+    }
+
+    /// Whether `p` lies within `reach_mm` of a target outline.
+    fn on_ring(&self, p: Point, reach_mm: f64) -> bool {
+        let at = Rect::from_point(p);
+        self.areas
+            .iter()
+            .filter(|a| near(at, a.bounds, reach_mm))
+            .any(|a| {
+                a.edges.iter().any(|e| {
+                    near(at, e.bounds, reach_mm)
+                        && point_segment_distance_mm(e.segment, p) <= reach_mm
+                })
+            })
+    }
+
+    /// Whether `p` lies within `reach_mm` of an earlier cut's path.
+    fn on_earlier(&self, p: Point, reach_mm: f64) -> bool {
+        self.cells.get(&Self::cell(p.x, p.y)).is_some_and(|cuts| {
+            cuts.iter().any(|&i| {
+                self.cuts
+                    .get(i)
+                    .is_some_and(|c| point_segment_distance_mm(*c, p) <= reach_mm)
+            })
+        })
+    }
+
+    /// Records the cut along `path`, indexed for the points within
+    /// `reach_mm` of it.
+    fn record(&mut self, path: Segment, reach_mm: f64) {
+        let index = self.cuts.len();
+        self.cuts.push(path);
+        let b = bounds_of(path);
+        let (x0, y0) = Self::cell(b.min.x - reach_mm, b.min.y - reach_mm);
+        let (x1, y1) = Self::cell(b.max.x + reach_mm, b.max.y + reach_mm);
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                self.cells.entry((x, y)).or_default().push(index);
+            }
+        }
+    }
+}
+
 /// S9 for `span`: every cutting move in its lines stays in its material.
 ///
 /// # Errors
@@ -975,6 +1180,19 @@ pub(crate) fn check(
     };
     // The region the last cut ended in, and where.
     let mut last: Option<(usize, Point)> = None;
+    let mut trench = match span.material {
+        Material::Inside {
+            areas,
+            trench: Some(rule),
+            ..
+        }
+        | Material::Outside {
+            areas,
+            trench: Some(rule),
+            ..
+        } => Some(Trench::new(*rule, areas, radius_mm)),
+        _ => None,
+    };
     let moves = blocks
         .iter()
         .filter(|b| span.lines.contains(&b.line))
@@ -982,10 +1200,16 @@ pub(crate) fn check(
     for mv in moves {
         if !mv.kind.is_cut() {
             last = None;
+            if let Some(trench) = trench.as_mut() {
+                trench.lift();
+            }
             continue;
         }
         let slack_mm = quantum_mm(post, mv.units) + departure_mm;
-        if !keeps_tabs(mv, transform, span, slack_mm) {
+        let in_trench = trench
+            .as_mut()
+            .is_none_or(|t| t.allows(mv, transform, slack_mm));
+        if !in_trench || !keeps_tabs(mv, transform, span, slack_mm) {
             return Err(ExportError::OffMaterial {
                 op: span.op.id().clone(),
                 line: mv.line,
@@ -1001,6 +1225,7 @@ pub(crate) fn check(
                 allowance_mm,
                 relief,
                 laps,
+                ..
             } => {
                 let clearance_mm = radius_mm + allowance_mm - slack_mm;
                 let notch = relief.then_some(Notch {
@@ -1011,7 +1236,7 @@ pub(crate) fn check(
                 in_regions(areas, path, clearance_mm, notch, &mut last)
                     || (*laps && is_lap(areas, path, clearance_mm, radius_mm + slack_mm, notch))
             }
-            Material::Outside { areas, relief } => {
+            Material::Outside { areas, relief, .. } => {
                 let clearance_mm = radius_mm - slack_mm;
                 let notch = relief.then_some(Notch {
                     radius_mm,

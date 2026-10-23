@@ -5124,6 +5124,44 @@ mod tests {
         );
     }
 
+    /// #352: S9 refuses a ramp into stock no earlier cut cleared. The
+    /// sample rectangle (X 10 to 60, Y 10 to 40) cut outside, no tabs: the
+    /// first pass ramps from the stock top out 18.8 mm into the waste from
+    /// the right edge's tool-centre path (X 63.175) and back, laps, and the
+    /// second ramps from its floor along the same line, which passes. The
+    /// second pass ramping from the same point 19 mm along a line no cut
+    /// ran on, into full-height stock, is refused at that line; so is one
+    /// that starts on the floor after a straight plunge from above the
+    /// stock. The first pass's ramp, from the stock top, is its own bore.
+    #[test]
+    fn s9_refuses_a_ramp_into_uncut_stock() {
+        let mut project = sample_project();
+        dc_project::test_support::profile_mut(&mut project).tabs = None;
+        let op = sample_profile_op_of(&project);
+        let program = |ramp: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nX63.175 Y25\nG1 Z0 F300\nX82 Z-1 F500\nX63.175 Z-2\n\
+                 Y40 F1000\nY25\n{ramp}\nX63.175 Y25 Z-4\nY40 F1000\nG0 Z5\n"
+            )
+        };
+        check_material_text(&program("X82 Z-3 F500"), &project, &op).unwrap();
+        let err = check_material_text(&program("X81.175 Y31 Z-3 F500"), &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line: 10 } if at == op.id()),
+            "{err:?}"
+        );
+        // A plunge from above the stock does not make the ramp after it
+        // one that starts above the stock.
+        let plunged = "G21 G90\nG54\nG0 Z5\nX63.175 Y25\nG1 Z0 F300\nX82 Z-1 F500\n\
+                       X63.175 Z-2\nY40 F1000\nY25\nG0 Z5\nG0 Z1\nG1 Z-2 F300\n\
+                       X81.175 Y31 Z-3 F500\nG0 Z5\n";
+        let err = check_material_text(plunged, &project, &op).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { line: 13, .. }),
+            "{err:?}"
+        );
+    }
+
     /// The Profile of `project`.
     fn sample_profile_op_of(project: &Project) -> Operation {
         project.operations[0].clone()

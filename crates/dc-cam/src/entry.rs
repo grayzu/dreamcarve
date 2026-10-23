@@ -189,7 +189,10 @@ pub enum FallbackReason {
     TooManyMoves,
     /// A helix whose descending moves the program cannot write: each
     /// would fall less than one unit in its last place, or run less than
-    /// √2 units in XY, so its ends round to one Z or one XY (#265).
+    /// √2 units in XY, so its ends round to one Z or one XY (#265). Also
+    /// a Profile's ramp after its first pass that would fall less than
+    /// [`RAMP_MIN_LAST_DROP_MM`]: its one run would run its whole line,
+    /// past where the passes above cut (#352).
     TooSmall,
 }
 

@@ -988,7 +988,20 @@ cut direction and cut side.
   each later pass starts its zigzag where the previous lap ended. A
   helix after the first pass rejoins the bore the previous pass's helix
   cut (target → helix end → helix start, flat), or descends from safe Z
-  if that pass cut none. A contour cut without a lead whose passes below
+  if that pass cut none. A ramp after the first pass keeps to the line
+  the previous pass ramped on, the only stock beside the kerf that pass
+  cut: below the tab top, after a pass that ramped on the plain plan,
+  it ramps along that line from the shared target as far as the domain
+  less the tab keep-outs holds it, stopped `safety` short
+  (`EntryPlan::following`); with no run left, a target the two plans do
+  not share, or a pass above that plunged, helixed or cut another path
+  (a last pass after its allowance passes), it plunges one step down at
+  its target with `EntryFallback`, `no_room`; and one that would fall
+  less than `RAMP_MIN_LAST_DROP_MM`, whose one run runs the whole line,
+  plunges with `too_small`. The tab re-seam below judges a candidate the
+  same way. (changed in #352: below the tab top the tabbed plan's own
+  chord was cut, a line no earlier pass had cleared, so the first such
+  pass ramped up to `3·D` into full-height stock at the feed.) A contour cut without a lead whose passes below
   the tab top would plunge at its start (the start under a tab span, or
   so near one that the entry has no room in the domain less the tab
   keep-outs, or, On line, before the first tab) is re-seamed: the

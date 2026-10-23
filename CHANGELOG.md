@@ -415,6 +415,18 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   plunge entry, and with an explicit start with every entry. Each pass now starts on the tab at its height and gets
   down past the tab's end, and the safety pass's S9 refuses a plunge into a
   tab ([#337]).
+- An Inside or Outside Profile with a ramp entry and tabs no longer ramps
+  into uncut stock on the passes below the tab top. Those passes placed
+  their ramp beside the tabs on a line of its own, which no earlier pass
+  had cut, so the first of them cut a slot up to a ramp's length (three
+  bit diameters) into full-height stock at the cutting feed: 19 mm, about
+  11 mm deep, for a 15 mm boss with a lead. Each pass now ramps along the
+  line the pass above ramped on, cut short of the tabs, or plunges one step
+  down at its start with `entry_fallback`. A last pass after its allowance
+  passes, and a pass after one that plunged or went down by helix, plunge
+  the same way, and so does a ramp that would go down less than 0.05 mm,
+  whose one leg ran the whole line. Four committed programs change by one
+  or two lines, each a ramp that left the trench ([#352]).
 - The CLI no longer panics when its output pipe closes, as in
   `dreamcarve check part.dcv | head`; it finishes its work and exits with its
   own status ([#216]).
@@ -444,7 +456,10 @@ it is written:
 
 - **S9:** every cut stays in material its own operation removes. A Pocket stays
   inside its region and off its islands; an entry, lead or corner notch never
-  enters the part.
+  enters the part. An Inside or Outside Profile's ramp or helix below the
+  stock top runs only on the bit's path round the part or along an earlier
+  cut of the operation, unless it started at or above the stock top
+  ([#352]).
 - **S10:** a ramp or helix never descends faster than the plunge rate.
   Every descending cut is checked from the written numbers, with nothing
   allowed for rounding ([#325]).
@@ -574,3 +589,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#342]: https://github.com/grayzu/dreamcarve/issues/342
 [#330]: https://github.com/grayzu/dreamcarve/issues/330
 [#336]: https://github.com/grayzu/dreamcarve/issues/336
+[#352]: https://github.com/grayzu/dreamcarve/issues/352

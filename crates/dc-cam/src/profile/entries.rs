@@ -18,7 +18,7 @@ use super::Wall;
 use super::waste::{self, WallPath};
 use crate::entry::{
     self, Descent, EntryDomain, EntryKind, EntryPlan, EntryTool, FallbackReason,
-    MIN_BOUNDARY_SAFETY_MM, boundary_safety_mm, plan_at_wall,
+    MIN_BOUNDARY_SAFETY_MM, RAMP_MIN_LAST_DROP_MM, boundary_safety_mm, plan_at_wall,
 };
 use crate::error::{CamError, ShapeRef};
 use crate::footprint::footprint_at;
@@ -96,10 +96,40 @@ pub(super) enum PathEntry {
     Along { angle_deg: f64, clear_mm: f64 },
     /// Inside or Outside: the entry placed in the waste domain, and, when
     /// some pass is below the tab top, in that domain less the tabs.
+    /// `after_plain` is how a pass below the tab top ramps after a pass
+    /// that ramped on `plain` ([`follow_plain`], #352); `None` plunges.
     Wall {
         plain: Box<EntryPlan>,
         tabbed: Option<Box<EntryPlan>>,
+        after_plain: Option<Box<EntryPlan>>,
     },
+}
+
+/// #352: the plan a pass below the tab top, placed as `tabbed` in
+/// `domain` (the waste domain less the tabs), ramps with after a pass that
+/// ramped on `plain`: the passes above cut only `plain`'s ramp line, so
+/// `tabbed` itself when it ramps on that line; else `tabbed` ramping
+/// along that line as far as `domain` holds it
+/// ([`EntryPlan::following`]), when both start at one point. `None` when
+/// neither: `plain` has no ramp, the two start apart, or the line meets
+/// the tabs too soon. Such a pass plunges, one step down, at its target.
+pub(super) fn follow_plain(
+    plain: &EntryPlan,
+    tabbed: &EntryPlan,
+    domain: &EntryDomain,
+) -> Option<Box<EntryPlan>> {
+    let (start, end) = plain.ramp_line()?;
+    let same = |a: Point, b: Point| a.distance_to(b) <= EPS_MM;
+    if tabbed
+        .ramp_line()
+        .is_some_and(|(s, e)| same(s, start) && same(e, end))
+    {
+        return Some(Box::new(tabbed.clone()));
+    }
+    if !same(start, tabbed.target()) {
+        return None;
+    }
+    tabbed.following(domain, end).map(Box::new)
 }
 
 /// One pass of one path, for [`PathEntry::descend`].
@@ -155,9 +185,18 @@ pub(super) fn path_entries(
                 let place = |space: &Space, at: Point| {
                     Box::new(plan_at_wall(&space.domain, &op.entry, at, &tool))
                 };
+                let plain = place(&domain.plain, target.plain);
+                let tabbed = domain
+                    .tabbed
+                    .as_ref()
+                    .map(|space| (space, place(space, target.tabbed)));
+                let after_plain = tabbed
+                    .as_ref()
+                    .and_then(|(space, t)| follow_plain(&plain, t, &space.domain));
                 Some(PathEntry::Wall {
-                    plain: place(&domain.plain, target.plain),
-                    tabbed: domain.tabbed.as_ref().map(|t| place(t, target.tabbed)),
+                    plain,
+                    tabbed: tabbed.map(|(_, t)| t),
+                    after_plain,
                 })
             })
             .collect(),
@@ -202,6 +241,7 @@ pub(super) fn tab_seams(
     if below.is_empty() || matches!(setup.op.entry, Entry::Plunge) {
         return none();
     }
+    let above = below.len() < setup.pass_z.len();
     let along = match (setup.op.side, &setup.op.entry) {
         (Side::OnLine | Side::Left | Side::Right, Entry::Ramp { angle_deg }) => Some(*angle_deg),
         (Side::OnLine | Side::Left | Side::Right, _) => return none(),
@@ -250,7 +290,21 @@ pub(super) fn tab_seams(
                         ) else {
                             return false;
                         };
-                        let plan = plan_at_wall(&space.domain, &setup.op.entry, at, &tool);
+                        let mut plan = plan_at_wall(&space.domain, &setup.op.entry, at, &tool);
+                        // #352: after passes above the tab top, a ramp
+                        // follows their line.
+                        if above && matches!(setup.op.entry, Entry::Ramp { .. }) {
+                            let Some(plain) = domains
+                                .get(i)
+                                .map(|d| plan_at_wall(&d.plain.domain, &setup.op.entry, at, &tool))
+                            else {
+                                return false;
+                            };
+                            match follow_plain(&plain, &plan, &space.domain) {
+                                Some(follow) => plan = *follow,
+                                None => return false,
+                            }
+                        }
                         below.iter().all(|&(from_z_mm, z_mm)| {
                             plan.descend(from_z_mm, z_mm).used != EntryKind::Plunge
                         })
@@ -358,7 +412,10 @@ impl PathEntry {
     /// (tabbed or not) and entry the path's previous pass cut, updated
     /// here: a helix after the first pass rejoins the bore its previous
     /// pass cut, or starts again from just above the stock when that pass
-    /// cut none.
+    /// cut none; a ramp after the first pass keeps to the line its
+    /// previous pass ramped on, or plunges ([`PathEntry::in_trench`],
+    /// #352). A pass that follows the plain plan's line records the plain
+    /// plan, whose line it cut.
     pub(super) fn descend(
         &self,
         pass: &PassEntry<'_>,
@@ -387,7 +444,11 @@ impl PathEntry {
                 *previous = Some((pass.below_tabs, d.used));
                 (d, from_z_mm)
             }
-            Self::Wall { plain, tabbed } => {
+            Self::Wall {
+                plain,
+                tabbed,
+                after_plain,
+            } => {
                 let (key, plan) = match tabbed {
                     Some(t) if pass.below_tabs => (true, t),
                     _ => (false, plain),
@@ -416,9 +477,68 @@ impl PathEntry {
                         }
                     }
                 }
-                *previous = Some((key, d.used));
+                let mut cut_key = key;
+                if pass.pass > 0 && d.used == EntryKind::Ramp {
+                    (d, cut_key) = Self::in_trench(
+                        d,
+                        plan,
+                        after_plain.as_deref(),
+                        pass,
+                        from_z,
+                        key,
+                        *previous,
+                    );
+                }
+                *previous = Some((cut_key, d.used));
                 (d, from_z)
             }
+        }
+    }
+
+    /// #352: ramp `d`, of a pass after the first planned on `plan` (`key`:
+    /// the tabbed plan), kept to the stock the pass above cut, and the
+    /// plan whose line it ramps on (`key`, or `false` for the plain plan's
+    /// line). The pass above cut only its own ramp line (`previous`), so:
+    ///
+    /// - a ramp on the line the pass above ramped on is kept;
+    /// - a pass below the tab top after one that ramped on the plain plan
+    ///   ramps along that line as far as the tabs leave it
+    ///   (`after_plain`, [`follow_plain`]);
+    /// - any other ramp (the pass above plunged, helixed, or cut another
+    ///   path: a last pass after its allowance passes, #284) plunges at
+    ///   the target, off the tabs, one step down, warned `no_room`;
+    /// - a ramp that would fall less than [`RAMP_MIN_LAST_DROP_MM`] cuts
+    ///   its one run the whole length of its line, farther than the passes
+    ///   above reached when each fell less than a run's drop, so it plunges
+    ///   that little instead, warned `too_small`.
+    fn in_trench(
+        d: Descent,
+        plan: &EntryPlan,
+        after_plain: Option<&EntryPlan>,
+        pass: &PassEntry<'_>,
+        from_z_mm: f64,
+        key: bool,
+        previous: Option<(bool, EntryKind)>,
+    ) -> (Descent, bool) {
+        let plunge = |reason| (plunged(plan.target(), d.requested, reason), key);
+        if from_z_mm - pass.z_mm < RAMP_MIN_LAST_DROP_MM {
+            return plunge(FallbackReason::TooSmall);
+        }
+        if previous == Some((key, EntryKind::Ramp)) {
+            return (d, key);
+        }
+        match after_plain.filter(|_| key && previous == Some((false, EntryKind::Ramp))) {
+            Some(follow) => {
+                let reason = d.reason.unwrap_or(FallbackReason::NoRoom);
+                let d = follow.descend_without_helix(from_z_mm, pass.z_mm, reason);
+                let cut_key = if d.used == EntryKind::Ramp {
+                    false
+                } else {
+                    key
+                };
+                (d, cut_key)
+            }
+            None => plunge(FallbackReason::NoRoom),
         }
     }
 
@@ -505,5 +625,144 @@ pub(super) fn plunged(at: Point, requested: EntryKind, reason: FallbackReason) -
         used: EntryKind::Plunge,
         reason: Some(reason),
         helix: None,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "tests")]
+mod tests {
+    use super::*;
+    use crate::entry::CutSide;
+    use dc_geometry::{Contour, FLATTEN_TOLERANCE_DEFAULT_MM, nest};
+
+    const D_MM: f64 = 4.0;
+
+    fn tool() -> EntryTool {
+        EntryTool {
+            diameter_mm: D_MM,
+            feed_mm_min: 800.0,
+            plunge_mm_min: 200.0,
+            direction: CutDirection::Conventional,
+            side: CutSide::Internal,
+            quantum_mm: 0.001,
+        }
+    }
+
+    /// The 20 mm wide rectangle `height_mm` tall at the origin, as a
+    /// domain.
+    fn rect_domain(height_mm: f64) -> EntryDomain {
+        let c = Contour::new(Polyline::rect(Point::new(0.0, 0.0), 20.0, height_mm)).unwrap();
+        let (regions, _) = nest(vec![c]).unwrap();
+        EntryDomain::new(&regions, D_MM, FLATTEN_TOLERANCE_DEFAULT_MM)
+    }
+
+    /// A 10° ramp entering at (10, 0): placed in the 20 mm square above
+    /// the tab top, and below it in the square cut down to `tabbed_mm`
+    /// tall, which stands in for the domain less the tabs.
+    fn entry(tabbed_mm: f64) -> PathEntry {
+        let target = Point::new(10.0, 0.0);
+        let ramp = Entry::Ramp { angle_deg: 10.0 };
+        let plain = Box::new(plan_at_wall(&rect_domain(20.0), &ramp, target, &tool()));
+        let tabbed = Box::new(plan_at_wall(
+            &rect_domain(tabbed_mm),
+            &ramp,
+            target,
+            &tool(),
+        ));
+        let after_plain = follow_plain(&plain, &tabbed, &rect_domain(tabbed_mm));
+        PathEntry::Wall {
+            plain,
+            tabbed: Some(tabbed),
+            after_plain,
+        }
+    }
+
+    /// Pass `pass` down to `z_mm`, below the tab top when `below_tabs`.
+    fn pass_entry(path: &Polyline, pass: usize, z_mm: f64, below_tabs: bool) -> PassEntry<'_> {
+        PassEntry {
+            path,
+            pass,
+            z_mm,
+            below_tabs,
+            start_z_mm: 13.0,
+            tool: tool(),
+            tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
+        }
+    }
+
+    /// Every XY a descent's moves reach.
+    fn reached(d: &Descent) -> Vec<Point> {
+        std::iter::once(d.from)
+            .chain(d.moves.iter().map(|m| m.to.xy()))
+            .collect()
+    }
+
+    /// #352: the passes above the tab top ramp on the plain plan's line;
+    /// the first below it, and every one after, ramps along that same
+    /// line, cut short of the tabs, though the tabbed plan placed its
+    /// ramp on another line. With the line blocked at its start, the pass
+    /// below the tab top plunges at the target, warned `no_room`, one
+    /// step down from the pass above.
+    #[test]
+    fn ramp_below_the_tab_top_follows_the_line_the_pass_above_cut() {
+        let path = Polyline::rect(Point::new(0.0, 0.0), 20.0, 20.0);
+        let wall = entry(7.0);
+        let PathEntry::Wall { plain, tabbed, .. } = &wall else {
+            unreachable!("a wall entry");
+        };
+        let (start, end) = plain.ramp_line().unwrap();
+        assert_ne!(tabbed.as_ref().unwrap().ramp_line(), Some((start, end)));
+        let along = (end - start) * (1.0 / start.distance_to(end));
+        let mut previous = None;
+        let mut from_z_mm = 13.0;
+        for (pass, z_mm, below_tabs) in [(0, 8.0, false), (1, 4.0, true), (2, 0.0, true)] {
+            let (d, _) = wall.descend(
+                &pass_entry(&path, pass, z_mm, below_tabs),
+                from_z_mm,
+                &mut previous,
+            );
+            assert_eq!(d.used, EntryKind::Ramp, "pass {pass}");
+            for p in reached(&d) {
+                assert!(along.cross(p - start).abs() <= 1e-9, "pass {pass}: {p:?}");
+                assert!(
+                    !below_tabs || p.y <= 7.0 - boundary_safety_mm(D_MM) * along.y + 1e-9,
+                    "pass {pass}: {p:?}"
+                );
+            }
+            from_z_mm = z_mm;
+        }
+
+        // The tabbed domain too thin for any run along the line.
+        let wall = entry(0.4);
+        let mut previous = None;
+        let (d, _) = wall.descend(&pass_entry(&path, 0, 8.0, false), 13.0, &mut previous);
+        assert_eq!(d.used, EntryKind::Ramp);
+        let (d, from_z_mm) = wall.descend(&pass_entry(&path, 1, 4.0, true), 8.0, &mut previous);
+        assert_eq!(d.used, EntryKind::Plunge);
+        assert_eq!(d.reason, Some(FallbackReason::NoRoom));
+        assert!(d.moves.is_empty());
+        assert!(d.from.distance_to(Point::new(10.0, 0.0)) <= EPS_MM);
+        assert!((from_z_mm - 8.0).abs() <= EPS_MM, "one step down");
+    }
+
+    /// #352: a ramp after the first pass that the pass above did not cut
+    /// (no pass above on this path, as on a last pass after its allowance
+    /// passes, or one that plunged) plunges; so does one that would fall
+    /// less than `RAMP_MIN_LAST_DROP_MM`, whose one run would run the
+    /// whole line.
+    #[test]
+    fn ramp_the_pass_above_did_not_cut_plunges() {
+        let path = Polyline::rect(Point::new(0.0, 0.0), 20.0, 20.0);
+        let wall = entry(7.0);
+        for previous in [None, Some((false, EntryKind::Plunge))] {
+            let mut previous = previous;
+            let (d, _) = wall.descend(&pass_entry(&path, 1, 4.0, false), 8.0, &mut previous);
+            assert_eq!(d.used, EntryKind::Plunge, "{previous:?}");
+            assert_eq!(d.reason, Some(FallbackReason::NoRoom));
+        }
+        let mut previous = Some((false, EntryKind::Ramp));
+        let (d, _) = wall.descend(&pass_entry(&path, 1, 7.97, false), 8.0, &mut previous);
+        assert_eq!(d.used, EntryKind::Plunge);
+        assert_eq!(d.reason, Some(FallbackReason::TooSmall));
     }
 }
