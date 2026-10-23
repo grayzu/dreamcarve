@@ -445,6 +445,17 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   the same way, and so does a ramp that would go down less than 0.05 mm,
   whose one leg ran the whole line. Four committed programs change by one
   or two lines, each a ramp that left the trench ([#352]).
+- An Inside or Outside Profile with a ramp entry no longer runs a later
+  pass's ramp past the trench the passes above cut. The first pass starts
+  its ramp 1 mm above the stock, so its first legs cut nothing, yet the
+  next pass ramped the whole line: on a 1.33° ramp with a 0.415 mm
+  step-down it ran 0.69 mm past the end of the first pass's trench, about
+  twice the step-down into uncut stock. Each ramp now runs only as far as
+  the one above it ran below the stock top, zigzagging within that, and
+  the safety pass's S9 counts an earlier cut as trench only where it ran
+  below the stock top. Before, S9 counted the whole cut, so the program
+  exported with arc fitting off and failed with it on. No committed
+  program changes ([#356]).
 - The CLI no longer panics when its output pipe closes, as in
   `dreamcarve check part.dcv | head`; it finishes its work and exits with its
   own status ([#216]).
@@ -488,8 +499,8 @@ it is written:
   inside its region and off its islands; an entry, lead or corner notch never
   enters the part. An Inside or Outside Profile's ramp or helix below the
   stock top runs only on the bit's path round the part or along an earlier
-  cut of the operation, unless it started at or above the stock top
-  ([#352]).
+  cut of the operation where that cut ran below the stock top, unless it
+  started at or above the stock top ([#352], [#356]).
 - **S3, changed:** a Profile's last pass may run a level cut slower than
   the tool's feed, down to the feed times the allowance over the allowance plus
   the bit's radius, the speed its inside arcs run at in the smallest hole it
@@ -627,3 +638,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#336]: https://github.com/grayzu/dreamcarve/issues/336
 [#352]: https://github.com/grayzu/dreamcarve/issues/352
 [#355]: https://github.com/grayzu/dreamcarve/issues/355
+[#356]: https://github.com/grayzu/dreamcarve/issues/356

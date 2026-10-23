@@ -248,7 +248,12 @@ as the tabs leave room. When there is no room at all, or the pass above
 did not ramp there (it plunged or went down by helix, or it cut another
 path, as the passes before a [last pass](#last-pass) do), the pass plunges
 at its start, off the tabs, one step down from the floor of the pass
-above, and `entry_fallback` says so (`no_room`). A pass that would go
+above, and `entry_fallback` says so (`no_room`). A ramp also runs no
+farther along its line than the pass above cut below the stock top. The
+first pass starts its ramp 1 mm above the stock, so its first legs cut
+air, and on a shallow ramp the trench it leaves can be shorter than the
+next pass needs; that pass then zigzags back and forth within the trench
+instead of running past its end into uncut stock. A pass that would go
 down less than 0.05 mm plunges that little instead of ramping, since its
 one leg would run the whole line (`too_small`). The export's safety
 check refuses a ramp that leaves the trench (rule 12 in

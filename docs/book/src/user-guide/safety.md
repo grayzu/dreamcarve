@@ -172,7 +172,8 @@ written. There are no safety warnings, only errors.
       top a ramp leg or helix move must run where the operation already
       cut: on the bit's path round the part (widened by a
       [last pass](profile.md#last-pass)'s allowance), or along an earlier
-      cut. A ramp that leaves them, into stock that stands full height,
+      cut where that cut ran below the stock top. A ramp that leaves them,
+      into stock that stands full height,
       stops the export. A ramp or helix that starts at or above the stock
       top clears its own way, and so passes.
 

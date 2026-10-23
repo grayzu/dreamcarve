@@ -168,6 +168,30 @@ impl EntryPlan {
         })
     }
 
+    /// #356: this plan with its ramp run cut short to `run_mm` from its
+    /// start, along the same line, and with no helix: a pass ramps only as
+    /// far along the line as the pass above cut it below the stock top.
+    /// The plan itself when its run is no longer; `None` when it places no
+    /// ramp, or when `run_mm` is no longer than a ramp run may be short
+    /// (`MIN_RAMP_RUN_FRACTION` of the diameter).
+    #[must_use]
+    pub fn cut_short(&self, run_mm: f64) -> Option<Self> {
+        let r = self.ramp?;
+        let length_mm = r.start.distance_to(r.end);
+        if length_mm <= run_mm {
+            return Some(self.clone());
+        }
+        let min_run_mm = ENTRY_EPS.max(self.tool.diameter_mm * MIN_RAMP_RUN_FRACTION);
+        (run_mm > min_run_mm).then(|| Self {
+            helix: None,
+            ramp: Some(RampPlacement {
+                start: r.start,
+                end: r.start + (r.end - r.start) * (run_mm / length_mm),
+            }),
+            ..self.clone()
+        })
+    }
+
     /// [`EntryPlan::descend`] without the helix: the chain from the ramp,
     /// a requested helix reported as not used for `reason`.
     #[must_use]
@@ -594,6 +618,26 @@ mod tests {
         );
         assert!(follow.helix.is_none());
         assert!(low.following(&low_domain(0.4), end).is_none());
+    }
+
+    /// #356: a plan cut short keeps its ramp line from its target, ends
+    /// it `run_mm` along, and drops its helix; one no longer than that is
+    /// kept whole, and a run no longer than a ramp run may be short leaves
+    /// none.
+    #[test]
+    fn cut_short_keeps_to_the_line_from_the_target() {
+        let target = Point::new(10.0, 0.0);
+        let entry = Entry::Ramp { angle_deg: 15.0 };
+        let plan = plan_at_wall(&square_domain(), &entry, target, &tool());
+        let (start, end) = plan.ramp_line().unwrap();
+        let length_mm = start.distance_to(end);
+        assert_eq!(plan.cut_short(length_mm + 1.0), Some(plan.clone()));
+        let short = plan.cut_short(length_mm / 2.0).unwrap();
+        let (s, e) = short.ramp_line().unwrap();
+        assert!(s.distance_to(start) <= EPS_MM);
+        assert!(e.distance_to(start + (end - start) * 0.5) <= 1e-9);
+        assert!(short.helix.is_none());
+        assert!(plan.cut_short(0.0).is_none());
     }
 
     /// The helix rejoin leaves the target at the start Z for the helix

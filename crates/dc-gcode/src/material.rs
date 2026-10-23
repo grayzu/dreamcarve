@@ -130,7 +130,9 @@
 //!   the ring the laps cut (within the tool radius, plus a last pass's
 //!   allowance and the slack, of a target outline) nor within twice the
 //!   slack of the tool-centre path of an earlier cut of the operation
-//!   below the stock top. A run that starts at or above the stock top (a
+//!   where it ran below the stock top: the stock top itself, with no
+//!   slack, so a ramp leg that dips below it only at its end cut a trench
+//!   only there (#356). A run that starts at or above the stock top (a
 //!   first pass's ramp or helix, a helix that starts again from above the
 //!   stock) clears its own way and is not held to it, and a straight
 //!   plunge is the tab rule's. A level move too short to fall a unit in
@@ -166,7 +168,7 @@ use dc_geometry::{
     offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
 };
 use dc_project::{
-    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape,
+    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape, Units,
 };
 
 use crate::ExportError;
@@ -999,14 +1001,36 @@ const TRENCH_CELL_MM: f64 = 2.0;
 /// fraction of the tool radius.
 const TRENCH_STEP_FRACTION: f64 = 0.1;
 
+/// The part of `path`, a cut falling or rising linearly from `from_z` to
+/// `to_z`, that runs below `top_mm`: the stock it cut. `None` when it runs
+/// wholly at or above it. (#356: the whole path was taken when any of it
+/// ran below the stock top less the slack, so a ramp leg that dipped below
+/// only at its end counted as trench along its whole length, or not at
+/// all, as the arc-fit tolerance in the slack fell.)
+fn below_top(path: Segment, from_z: f64, to_z: f64, top_mm: f64) -> Option<Segment> {
+    match (from_z < top_mm, to_z < top_mm) {
+        (true, true) => Some(path),
+        (false, false) => None,
+        _ if path.length_mm() <= EPS_MM => Some(path),
+        (from_below, _) => {
+            let t = (top_mm - from_z) / (to_z - from_z);
+            if from_below {
+                path.piece(0.0, t)
+            } else {
+                path.piece(t, 1.0)
+            }
+        }
+    }
+}
+
 /// S9's trench rule (#352) over one operation's moves, in order (module
 /// docs, "Trenches").
 struct Trench<'a> {
     rule: TrenchRule,
     areas: &'a [Area],
     radius_mm: f64,
-    /// The tool-centre path in XY, project space, of every cut so far
-    /// that went below the stock top.
+    /// The tool-centre path in XY, project space, of every cut so far,
+    /// where it ran below the stock top (#356).
     cuts: Vec<Segment>,
     /// For each cell, the cuts whose bounds, grown by the reach a point
     /// is measured to, meet it.
@@ -1049,9 +1073,10 @@ impl<'a> Trench<'a> {
     /// the stock top, through a point below the stock top that lies
     /// neither on the ring the laps cut (within the tool radius, plus a
     /// last pass's allowance and the slack, of a target outline) nor
-    /// within twice the slack of the tool-centre path of an earlier cut
+    /// within twice the slack of the tool-centre path an earlier cut ran
     /// below the stock top. The points are checked a tenth of the radius
-    /// apart.
+    /// apart. Only the part of `mv` below the stock top is recorded
+    /// ([`below_top`]).
     fn allows(&mut self, mv: &MachineMove, transform: &MachineTransform, slack_mm: f64) -> bool {
         let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz), Some(path)) = (
             mv.from.x,
@@ -1101,8 +1126,8 @@ impl<'a> Trench<'a> {
                 s_mm += step_mm;
             }
         }
-        if from_z.min(to_z) < top_mm {
-            self.record(path, 2.0 * slack_mm);
+        if let Some(cut) = below_top(path, from_z, to_z, self.rule.stock_top_mm) {
+            self.record(cut, 2.0 * slack_mm);
         }
         allowed
     }
@@ -1148,6 +1173,20 @@ impl<'a> Trench<'a> {
     }
 }
 
+/// How far a move may depart from where the toolpath put it, rounding
+/// aside (module docs): the flatten tolerance, and the arc-fit tolerance
+/// when arc fitting is on, mm.
+fn departure_mm(tolerances: Tolerances) -> f64 {
+    tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM
+}
+
+/// How far a move written in `units` may depart from where the toolpath
+/// put it (module docs): one unit in the last written place and
+/// [`departure_mm`], mm.
+fn slack_mm(post: &PostProcessor, units: Units, tolerances: Tolerances) -> f64 {
+    quantum_mm(post, units) + departure_mm(tolerances)
+}
+
 /// S9 for `span`: every cutting move in its lines stays in its material.
 ///
 /// # Errors
@@ -1167,7 +1206,7 @@ pub(crate) fn check(
     }
     let radius_mm = span.tool.diameter_mm / 2.0;
     // #221: each On line loop and held open path, measured against itself.
-    let departure_mm = tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM;
+    let departure_mm = departure_mm(tolerances);
     let selves = match span.material {
         Material::OnLineProfile { areas, open } => Some(SelfBands::new(
             areas,
@@ -1205,7 +1244,7 @@ pub(crate) fn check(
             }
             continue;
         }
-        let slack_mm = quantum_mm(post, mv.units) + departure_mm;
+        let slack_mm = slack_mm(post, mv.units, tolerances);
         let in_trench = trench
             .as_mut()
             .is_none_or(|t| t.allows(mv, transform, slack_mm));
@@ -1643,4 +1682,86 @@ pub(crate) fn project_path(mv: &MachineMove, transform: &MachineTransform) -> Op
         end,
         bulge: (sweep_rad / 4.0).tan(),
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "tests")]
+mod tests {
+    use super::*;
+    use crate::parse::{ArcWords, MachinePosition};
+    use dc_project::test_support::sample_project;
+
+    const TOP_MM: f64 = 20.0;
+    const RADIUS_MM: f64 = 3.6;
+
+    /// The cut from `from` to `to`, project space, written in mm on line
+    /// `line`.
+    fn cut(transform: &MachineTransform, line: usize, from: Point3, to: Point3) -> MachineMove {
+        let at = |p: Point3| {
+            let m = transform.to_machine(p);
+            MachinePosition {
+                x: Some(m.x),
+                y: Some(m.y),
+                z: Some(m.z),
+            }
+        };
+        MachineMove {
+            line,
+            kind: MotionKind::Linear,
+            from: at(from),
+            to: at(to),
+            feed: Some(1000.0),
+            units: Units::Mm,
+            arc: ArcWords::default(),
+        }
+    }
+
+    /// #356: a first pass's ramp leg from 0.5 mm above the stock top to
+    /// 0.015 mm below it, 20 mm along X, then a later pass's ramp leg back
+    /// from its end, from Z `TOP_MM` − 0.1 to X `back_to_x`: whether the
+    /// trench rule allows that later leg, with `arc_fit_mm`. Only the last
+    /// 0.58 mm of the first leg (X 19.42 to 20) is below the stock top.
+    fn later_leg_allowed(back_to_x: f64, arc_fit_mm: Option<f64>) -> bool {
+        let project = sample_project();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let tolerances = Tolerances {
+            flatten_mm: project.flatten_tolerance_mm,
+            arc_fit_mm,
+        };
+        let slack = slack_mm(&post, Units::Mm, tolerances);
+        let rule = TrenchRule {
+            stock_top_mm: TOP_MM,
+            allowance_mm: 0.0,
+        };
+        let mut trench = Trench::new(rule, &[], RADIUS_MM);
+        let first = cut(
+            &transform,
+            1,
+            Point3::new(0.0, 0.0, TOP_MM + 0.5),
+            Point3::new(20.0, 0.0, TOP_MM - 0.015),
+        );
+        assert!(trench.allows(&first, &transform, slack), "a fresh ramp");
+        trench.lift();
+        let later = cut(
+            &transform,
+            2,
+            Point3::new(20.0, 0.0, TOP_MM - 0.1),
+            Point3::new(back_to_x, 0.0, TOP_MM - 0.2),
+        );
+        trench.allows(&later, &transform, slack)
+    }
+
+    /// #356: a ramp leg above the stock top but for its last 0.015 mm is
+    /// trench only along that last part. A later ramp leg within that part
+    /// is allowed; one that runs past it, along the part above the top,
+    /// fails S9, with arc fitting off and on alike.
+    #[test]
+    fn only_the_part_of_a_cut_below_the_top_is_trench() {
+        for arc_fit_mm in [None, Some(0.01)] {
+            assert!(later_leg_allowed(19.6, arc_fit_mm), "{arc_fit_mm:?}");
+            assert!(!later_leg_allowed(10.0, arc_fit_mm), "{arc_fit_mm:?}");
+            assert!(!later_leg_allowed(19.2, arc_fit_mm), "{arc_fit_mm:?}");
+        }
+    }
 }

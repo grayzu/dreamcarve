@@ -1020,12 +1020,18 @@ fn t_bone_pocket_round_a_rect_island_exports() {
 /// The Profile property's `e577fed0` regression (#356): a 1 mm deep
 /// Outside Profile of a 33.77 mm circle with a 6.85 × 7.47 mm rectangular
 /// hole, ramped at 1.33°, by a 7.27 mm tool, in inch on grblHAL with arcs
-/// fitted at 0.01 mm. The second pass's ramp runs 0.69 mm past the trench
-/// the first cut below the stock top, and S9 refuses it (`OffMaterial`).
+/// fitted at 0.01 mm. The second pass's ramp ran 0.69 mm past the trench
+/// the first cut below the stock top, about twice the step-down into
+/// uncut stock. S9 refused it (`OffMaterial`) with arcs fitted, and let it
+/// through with arc fitting off. It exports either way, each later ramp
+/// kept to the part of the ramp above it that ran below the stock top.
 #[test]
-#[ignore = "#356"]
 fn shallow_ramp_round_a_circle_with_a_small_hole_exports() {
-    exports(&shallow_ramp_round_a_circle_with_a_small_hole());
+    for arc_fit_tolerance_mm in [Some(0.01), None] {
+        let mut project = shallow_ramp_round_a_circle_with_a_small_hole();
+        project.arc_fit_tolerance_mm = arc_fit_tolerance_mm;
+        exports(&project);
+    }
 }
 
 /// A closed polyline through `points`, straight edges.
