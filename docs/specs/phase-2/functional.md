@@ -968,7 +968,10 @@ built (design addendum, "Order and format versions").
     straight wall's last pass; never below `feed · a / (a + r)`, the
     smallest hole's, where a tighter arc warns `last_pass_edge_faster`.
     Straight cuts, outside corners, lead arcs and the earlier passes keep
-    the feed, and so does a curve drawn as straight segments, #350.)
+    the feed, and so does a curve drawn as straight segments. Changed
+    in #350: where such a curve bends so that the edge moves more than
+    1.5 times the feed, the operation warns `last_pass_flattened_curve`;
+    its feeds are unchanged.)
 
 ### A9. Tabs that avoid corners, and start-point control (#285)
 

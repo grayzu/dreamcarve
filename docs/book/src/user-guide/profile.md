@@ -637,7 +637,15 @@ corner rounded to less than the bit's radius plus the allowance (a 3.5 mm
 corner radius with a 6.35 mm bit at 0.5 mm) needs more, so there the
 edge moves faster than the feed, and `last_pass_edge_faster` says so.
 Only true arcs are slowed: a curve drawn as many short lines (an ellipse
-or spline from a DXF) runs at the feed
+or spline from a DXF, an SVG curve that is not a circle) runs at the feed.
+Where such a curve bends so tightly that the cutting edge moves more than
+1.5 times the feed, the operation warns `last_pass_flattened_curve`,
+naming the shape and about where: in a 12 × 8 mm ellipse cut Inside with
+a 6.35 mm bit at 0.5 mm, the edge moves about 1.9 times the feed. With a
+6.35 mm bit that is any round bend of the wall under about 9.5 mm radius.
+The feed is not changed. Lower the feed, use a smaller allowance, which
+leaves a thinner skin for the faster edge to take, or redraw the curve
+with arcs, which the last pass slows down for
 ([#350](https://github.com/grayzu/dreamcarve/issues/350)).
 
 **Sharp corners.** Where the bit's path turns a corner sharper than

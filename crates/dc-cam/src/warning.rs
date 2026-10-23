@@ -107,6 +107,11 @@ pub enum WarningCode {
     /// pass accepts, so its cutting edge moves faster than the feed
     /// (#335).
     LastPassEdgeFaster,
+    /// A Profile's last pass runs round an inside bend of a curve drawn
+    /// as straight segments, which it does not slow down for, so tightly
+    /// that its cutting edge there moves faster than the feed by more than
+    /// a set factor (#350).
+    LastPassFlattenedCurve,
     /// An Engrave target path has fewer than two distinct points, so there
     /// is nothing to trace; it was skipped.
     EngravePathDegenerate,
@@ -172,6 +177,7 @@ impl WarningCode {
             Self::ReliefCornerNotCut => "relief_corner_not_cut",
             Self::LastPassUnused => "last_pass_unused",
             Self::LastPassEdgeFaster => "last_pass_edge_faster",
+            Self::LastPassFlattenedCurve => "last_pass_flattened_curve",
             Self::EngravePathDegenerate => "engrave_path_degenerate",
             Self::CutInsideFreedPart => "cut_inside_freed_part",
             Self::CutInsideTabHeldPart => "cut_inside_tab_held_part",
@@ -562,6 +568,21 @@ pub enum Warning {
         /// How many times the feed the cutting edge moves at there.
         edge_ratio: f64,
     },
+    /// [`WarningCode::LastPassFlattenedCurve`].
+    LastPassFlattenedCurve {
+        /// The operation.
+        op: OperationId,
+        /// The shape.
+        shape: ShapeRef,
+        /// The tightest bend's estimated radius, the tool centre's, mm.
+        radius_mm: f64,
+        /// Where on the tool path that bend is, X, mm.
+        x_mm: f64,
+        /// Where on the tool path that bend is, Y, mm.
+        y_mm: f64,
+        /// About how many times the feed the cutting edge moves at there.
+        edge_ratio: f64,
+    },
     /// [`WarningCode::EngravePathDegenerate`].
     EngravePathDegenerate {
         /// The operation.
@@ -678,6 +699,7 @@ impl Warning {
             Self::ReliefCornerNotCut { .. } => WarningCode::ReliefCornerNotCut,
             Self::LastPassUnused { .. } => WarningCode::LastPassUnused,
             Self::LastPassEdgeFaster { .. } => WarningCode::LastPassEdgeFaster,
+            Self::LastPassFlattenedCurve { .. } => WarningCode::LastPassFlattenedCurve,
             Self::EngravePathDegenerate { .. } => WarningCode::EngravePathDegenerate,
             Self::CutInsideFreedPart { .. } => WarningCode::CutInsideFreedPart,
             Self::CutInsideTabHeldPart { .. } => WarningCode::CutInsideTabHeldPart,
@@ -710,6 +732,7 @@ impl Warning {
             | Self::ReliefCornerNotCut { op, .. }
             | Self::LastPassUnused { op }
             | Self::LastPassEdgeFaster { op, .. }
+            | Self::LastPassFlattenedCurve { op, .. }
             | Self::EngravePathDegenerate { op, .. }
             | Self::CutInsideFreedPart { op, .. }
             | Self::CutInsideTabHeldPart { op, .. }
@@ -1193,6 +1216,21 @@ impl fmt::Display for Warning {
                 mm(*allowance_mm),
                 mm(*feed_mm_min),
                 rounded(*edge_ratio, 2)
+            ),
+            Self::LastPassFlattenedCurve {
+                shape,
+                radius_mm,
+                x_mm,
+                y_mm,
+                edge_ratio,
+                ..
+            } => write!(
+                f,
+                "its last pass round {shape} follows a curve drawn as straight segments, which it does not slow down for, and near ({}, {}) mm its tool path bends on a radius of about {} mm, so its cutting edge there moves at about {} times the feed; lower the feed, use a smaller allowance or redraw the curve with arcs",
+                mm(*x_mm),
+                mm(*y_mm),
+                rounded(*radius_mm, 2),
+                rounded(*edge_ratio, 1)
             ),
             Self::EngravePathDegenerate { shape, .. } => write!(
                 f,
@@ -1741,6 +1779,17 @@ mod tests {
                 "its last pass round `Shape` (instance `i1`, profile 2) turns on an inside arc of 0.325 mm, tighter than the 0.5 mm allowance, where it runs at 136.05 mm/min, the least the safety pass allows, so its cutting edge there moves at 1.47 times the feed; use a smaller bit, larger inside radii or a smaller allowance",
             ),
             (
+                Warning::LastPassFlattenedCurve {
+                    op: op(),
+                    shape: shape(),
+                    radius_mm: 1.234_5,
+                    x_mm: 25.5,
+                    y_mm: 20.0,
+                    edge_ratio: 3.571_9,
+                },
+                "its last pass round `Shape` (instance `i1`, profile 2) follows a curve drawn as straight segments, which it does not slow down for, and near (25.5, 20) mm its tool path bends on a radius of about 1.23 mm, so its cutting edge there moves at about 3.6 times the feed; lower the feed, use a smaller allowance or redraw the curve with arcs",
+            ),
+            (
                 Warning::EngravePathDegenerate {
                     op: op(),
                     shape: shape(),
@@ -1859,7 +1908,8 @@ mod tests {
             C::ReliefCornerTooTight => C::ReliefCornerNotCut,
             C::ReliefCornerNotCut => C::LastPassUnused,
             C::LastPassUnused => C::LastPassEdgeFaster,
-            C::LastPassEdgeFaster => C::EngravePathDegenerate,
+            C::LastPassEdgeFaster => C::LastPassFlattenedCurve,
+            C::LastPassFlattenedCurve => C::EngravePathDegenerate,
             C::EngravePathDegenerate => C::CutInsideFreedPart,
             C::CutInsideFreedPart => C::CutInsideTabHeldPart,
             C::CutInsideTabHeldPart => C::ToolChangeAvoidable,
@@ -1905,7 +1955,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 32);
+        assert_eq!(count, 33);
     }
 
     #[test]
