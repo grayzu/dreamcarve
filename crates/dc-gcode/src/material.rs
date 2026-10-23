@@ -130,7 +130,9 @@
 //!   the ring the laps cut (within the tool radius, plus a last pass's
 //!   allowance and the slack, of a target outline) nor within twice the
 //!   slack of the tool-centre path of an earlier cut of the operation
-//!   below the stock top. A run that starts at or above the stock top (a
+//!   where it ran below the stock top: the stock top itself, with no
+//!   slack, so a ramp leg that dips below it only at its end cut a trench
+//!   only there (#356). A run that starts at or above the stock top (a
 //!   first pass's ramp or helix, a helix that starts again from above the
 //!   stock) clears its own way and is not held to it, and a straight
 //!   plunge is the tab rule's. A level move too short to fall a unit in
@@ -999,14 +1001,36 @@ const TRENCH_CELL_MM: f64 = 2.0;
 /// fraction of the tool radius.
 const TRENCH_STEP_FRACTION: f64 = 0.1;
 
+/// The part of `path`, a cut falling or rising linearly from `from_z` to
+/// `to_z`, that runs below `top_mm`: the stock it cut. `None` when it runs
+/// wholly at or above it. (#356: the whole path was taken when any of it
+/// ran below the stock top less the slack, so a ramp leg that dipped below
+/// only at its end counted as trench along its whole length, or not at
+/// all, as the arc-fit tolerance in the slack fell.)
+fn below_top(path: Segment, from_z: f64, to_z: f64, top_mm: f64) -> Option<Segment> {
+    match (from_z < top_mm, to_z < top_mm) {
+        (true, true) => Some(path),
+        (false, false) => None,
+        _ if path.length_mm() <= EPS_MM => Some(path),
+        (from_below, _) => {
+            let t = (top_mm - from_z) / (to_z - from_z);
+            if from_below {
+                path.piece(0.0, t)
+            } else {
+                path.piece(t, 1.0)
+            }
+        }
+    }
+}
+
 /// S9's trench rule (#352) over one operation's moves, in order (module
 /// docs, "Trenches").
 struct Trench<'a> {
     rule: TrenchRule,
     areas: &'a [Area],
     radius_mm: f64,
-    /// The tool-centre path in XY, project space, of every cut so far
-    /// that went below the stock top.
+    /// The tool-centre path in XY, project space, of every cut so far,
+    /// where it ran below the stock top (#356).
     cuts: Vec<Segment>,
     /// For each cell, the cuts whose bounds, grown by the reach a point
     /// is measured to, meet it.
@@ -1049,9 +1073,10 @@ impl<'a> Trench<'a> {
     /// the stock top, through a point below the stock top that lies
     /// neither on the ring the laps cut (within the tool radius, plus a
     /// last pass's allowance and the slack, of a target outline) nor
-    /// within twice the slack of the tool-centre path of an earlier cut
+    /// within twice the slack of the tool-centre path an earlier cut ran
     /// below the stock top. The points are checked a tenth of the radius
-    /// apart.
+    /// apart. Only the part of `mv` below the stock top is recorded
+    /// ([`below_top`]).
     fn allows(&mut self, mv: &MachineMove, transform: &MachineTransform, slack_mm: f64) -> bool {
         let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz), Some(path)) = (
             mv.from.x,
@@ -1101,8 +1126,8 @@ impl<'a> Trench<'a> {
                 s_mm += step_mm;
             }
         }
-        if from_z.min(to_z) < top_mm {
-            self.record(path, 2.0 * slack_mm);
+        if let Some(cut) = below_top(path, from_z, to_z, self.rule.stock_top_mm) {
+            self.record(cut, 2.0 * slack_mm);
         }
         allowed
     }

@@ -265,8 +265,11 @@ impl Segment {
         }
     }
 
-    /// The part of the segment from fraction `from` to `to` of its length.
-    pub(crate) fn piece(&self, from: f64, to: f64) -> Option<Segment> {
+    /// The part of the segment from fraction `from` to `to` of its length,
+    /// running the same way; an arc's part is an arc of the same circle.
+    /// `None` for a zero-length segment cut inside its ends.
+    #[must_use]
+    pub fn piece(&self, from: f64, to: f64) -> Option<Segment> {
         let length_mm = self.length_mm();
         let at = |f: f64| match f {
             f if f <= 0.0 => Some(self.start),
