@@ -917,6 +917,24 @@ too close beside its lines (see below). The program is still
 written as drawn. Move the
 shapes apart, or use a smaller bit.
 
+### Tabs on nested outlines
+
+When shapes in one Profile are that close, the cut round one shape can
+also reach into a [tab](tabs.md) of the other. Each cut then rises over
+every tab its bit reaches, not only the tabs on its own shape, at that
+tab's height and shape, so the tab stays standing. Take a ring whose
+hole has an island in it, cut outside with tabs on every outline and on
+the holes: with a band of 3.6 mm between the hole and the island and a
+7.27 mm bit, the cut round the hole runs along the island's edge and
+passes the island's tab. It rises over the stretch where its bit
+touches that tab, and comes back down past it as it does off its own
+tabs. A cut that comes nowhere near another
+shape's tab is cut as before. The [warning](#warnings) still says the
+shapes are too close; the tab is kept, but the bit still gouges the
+shape beside the cut everywhere else. (Changed in #362: the cut rose
+over its own shape's tabs only, cut the other shape's tab away, and
+export refused the program.)
+
 ### Bands narrower than the bit
 
 Cut **inside**, a part with an island in it (a ring, a frame around a

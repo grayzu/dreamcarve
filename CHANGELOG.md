@@ -418,6 +418,14 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   that starts low on a smooth tab's slope, where the earlier passes ran
   higher, now runs along its path to where the slope is as high and comes
   back down the slope, instead of dropping straight onto it ([#348]).
+- A Profile with tabs no longer cuts away one outline's tab with the cut
+  round another. Where two of its shapes are closer than the bit, such as a
+  hole round an island with a 3.6 mm band and a 7.27 mm bit, the hole's cut
+  ran along the island's edge, rose only over the hole's own tab, and came
+  back down inside the island's, so export failed. Each cut now rises over
+  every tab its bit reaches, at that tab's height and shape, merged with its
+  own tabs. Cuts that reach no other shape's tab are unchanged, and so is
+  every committed program ([#362]).
 - A Profile's last pass no longer overloads the bit in a small hole cut
   Inside. Its centre runs a much smaller circle than the wall, so at the feed
   its cutting edge moved up to 4.8 times as fast in an 8 mm hole with a
@@ -673,4 +681,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#353]: https://github.com/grayzu/dreamcarve/issues/353
 [#355]: https://github.com/grayzu/dreamcarve/issues/355
 [#356]: https://github.com/grayzu/dreamcarve/issues/356
+[#362]: https://github.com/grayzu/dreamcarve/issues/362
 [#366]: https://github.com/grayzu/dreamcarve/issues/366

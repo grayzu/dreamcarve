@@ -833,6 +833,45 @@ impl PathTabs {
         }
     }
 
+    /// These spans and `other`'s, laid on the same path, merged where they
+    /// overlap or touch (#362: a lap's own tabs and the tabs of other
+    /// outlines its cutter reaches). The tab count stays this layout's.
+    pub(crate) fn merged(&self, other: &PathTabs) -> Self {
+        let l = self.length_mm;
+        let raw: Vec<Raw> = self
+            .spans
+            .iter()
+            .chain(&other.spans)
+            .map(|s| Raw {
+                start_mm: s.start_mm,
+                end_mm: s.end_mm(),
+                top_z_mm: s.top_z_mm,
+                shape: s.shape,
+                ramp_in_mm: s.ramp_in_mm,
+                ramp_out_mm: s.ramp_out_mm,
+            })
+            .collect();
+        let merged = if self.closed {
+            merge_closed(raw, l).0
+        } else {
+            merge_open(raw)
+        };
+        let covers = if self.closed {
+            merged.iter().any(|s| s.end_mm - s.start_mm >= l - EPS_MM)
+        } else {
+            merged
+                .iter()
+                .any(|s| s.start_mm <= EPS_MM && s.end_mm >= l - EPS_MM)
+        };
+        Self {
+            length_mm: l,
+            spans: merged.iter().map(Raw::span).collect(),
+            full: self.full || other.full || covers,
+            closed: self.closed,
+            tab_count: self.tab_count,
+        }
+    }
+
     /// These spans, laid on an open path, measured from its other end:
     /// the layout of the path run backwards (#311, a reversed last pass),
     /// so the tabs stay where they are. Each span's ramps swap. A closed

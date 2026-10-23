@@ -361,8 +361,12 @@ the bit cannot reach into, does not cut round the tab, so it does not
 rise. A tab no enabled Profile crosses warns `tab_not_crossed`
 ([Warnings](#warnings)).
 
-Only the tab's own outline counts. A Pocket, an Engrave, or a Profile of
-another shape that passes over the spot does not rise.
+Only the tab's own outline counts. A Pocket, an Engrave, or a Profile
+that cuts only other shapes does not rise when it passes over the spot.
+Within a Profile that cuts the tab's outline, though, the cut round any
+of its other shapes rises where its bit would reach into the tab, so
+the tab is not cut away by the shape next to it: see
+[Profile: tabs on nested outlines](profile.md#tabs-on-nested-outlines).
 
 Tabs are cut where they are. A [lead](profile.md#leads) arrives away from
 corners, and a ramp or helix that has no room beside a tab moves the start
