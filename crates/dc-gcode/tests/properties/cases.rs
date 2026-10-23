@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The minimal cases the properties shrank their failures to, as named
-//! tests (#231, #232, #234, #235, #265, #272, #273, #322, #355): each project
+//! tests (#231, #232, #234, #235, #265, #272, #273, #322, #355, #356): each project
 //! validates, generates, and exports through the full safety pass. Every
 //! case is built from `dc_project::test_support::sample_project()` on
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
@@ -850,17 +850,24 @@ fn steep_ramp_on_circles() -> Project {
 fn offset_pocket_round_a_circle_island_exports() {
     let project = pocket_round_a_circle_island();
     exports(&project);
+    arcs_follow_the_toolpath(&project);
+}
+
+/// Every `G2`/`G3` `project`'s program writes lies, along its whole
+/// length, within the arc-fit tolerance plus the program's rounding of the
+/// toolpath at its Z; and there is at least one.
+fn arcs_follow_the_toolpath(project: &Project) {
     let tolerance_mm = project.arc_fit_tolerance_mm.expect("arc fitting is on");
-    let op = generate(&project).expect("generates");
+    let op = generate(project).expect("generates");
     let path = toolpath_segments(&op.toolpath.moves);
-    let (program, _) = emit(&project, &[op], DATE).expect("exports");
-    let post = project
-        .post_processor
-        .resolve()
-        .expect("LinuxCNC is bundled");
-    let transform = MachineTransform::new(&project, &post).expect("a machine transform");
+    let (program, _) = emit(project, &[op], DATE).expect("exports");
+    let post = project.post_processor.resolve().expect("a bundled post");
+    let transform = MachineTransform::new(project, &post).expect("a machine transform");
     // One unit in the last written place, mm, each side of a written word.
-    let rounding_mm = 25.4 * 0.0001;
+    let rounding_mm = match project.display_units {
+        Units::Inch => 25.4 * 0.0001,
+        Units::Mm => 0.001,
+    };
     let mut arcs = 0;
     for mv in parse_motion(&program.text).expect("parses") {
         let clockwise = match mv.kind {
@@ -993,5 +1000,142 @@ fn pocket_round_a_circle_island() -> Project {
     tool.rpm = Some(7014);
     tool.step_down_mm = Some(2.778_420_178_868_245_7);
     tool.step_over_fraction = Some(0.501_838_500_139_350_6);
+    project
+}
+
+/// The Pocket property's `2773e846` regression (#355): an Offset Pocket of
+/// a 32.47 × 36.44 mm rectangle round a 7.36 × 7.76 mm rectangular island,
+/// T-bone relief, ramp entry, pass first, by a 1.435 mm tool, in inch on
+/// GRBL with arcs fitted at 0.01 mm. S12 refused a fitted arc
+/// (`ArcFitViolation` at line 95).
+#[test]
+fn t_bone_pocket_round_a_rect_island_exports() {
+    let project = t_bone_pocket_round_a_rect_island();
+    exports(&project);
+    arcs_follow_the_toolpath(&project);
+}
+
+/// The Profile property's `e577fed0` regression (#356): a 1 mm deep
+/// Outside Profile of a 33.77 mm circle with a 6.85 × 7.47 mm rectangular
+/// hole, ramped at 1.33°, by a 7.27 mm tool, in inch on grblHAL with arcs
+/// fitted at 0.01 mm. The second pass's ramp runs 0.69 mm past the trench
+/// the first cut below the stock top, and S9 refuses it (`OffMaterial`).
+#[test]
+#[ignore = "#356"]
+fn shallow_ramp_round_a_circle_with_a_small_hole_exports() {
+    exports(&shallow_ramp_round_a_circle_with_a_small_hole());
+}
+
+/// A closed polyline through `points`, straight edges.
+fn straight(points: [(f64, f64); 4]) -> Polyline {
+    Polyline::new(
+        points
+            .into_iter()
+            .map(|(x, y)| Vertex::new(x, y, 0.0))
+            .collect(),
+        true,
+    )
+}
+
+fn t_bone_pocket_round_a_rect_island() -> Project {
+    let (hx, hy) = (16.236_790_976_329_89, 18.221_003_176_121_297);
+    let (ix, iy) = (3.678_388_676_087_469_6, 3.878_425_362_102_490_2);
+    let profiles = vec![
+        straight([(-hx, hy), (hx, hy), (hx, -hy), (-hx, -hy)]),
+        straight([(-ix, iy), (ix, iy), (ix, -iy), (-ix, -iy)]),
+    ];
+    let thickness_mm = 23.547_125_498_912_198;
+    let op = PocketOp {
+        strategy: ClearanceStrategy::Offset,
+        wall_pass: WallPass::Last,
+        depth_mm: Some(19.076_362_317_223_907),
+        step_down_mm: Some(0.767_061_048_153_407_7),
+        step_over_fraction: Some(0.892_292_758_843_146_3),
+        direction: dc_project::CutDirection::Conventional,
+        allowance_mm: 0.322_996_617_915_775_2,
+        entry: Entry::Ramp {
+            angle_deg: 2.064_141_769_483_755_6,
+        },
+        corner_relief: CornerRelief::TBone,
+        machining_order: dc_project::MachiningOrder::PassFirst,
+        through_cut_allowance_mm: 0.765_251_409_586_919_1,
+        safe_z_mm: 13.828_972_857_860_856,
+        ..sample_pocket()
+    };
+    let transform = Transform::from([
+        0.005_516_090_348_034_621_5,
+        0.999_984_786_257_907_2,
+        -0.999_984_786_257_907_2,
+        0.005_516_090_348_034_621_5,
+        40.0,
+        40.0,
+    ]);
+    let mut project = case(profiles, transform, thickness_mm, Operation::Pocket(op));
+    project.display_units = Units::Inch;
+    project.origin = MachineOrigin {
+        xy: OriginXy::TopLeft,
+        z: OriginZ::StockTop,
+    };
+    project.arc_fit_tolerance_mm = Some(0.01);
+    project.post_processor = PostProcessorRef::latest("grbl").expect("GRBL is bundled");
+    let tool = &mut project.tools[0];
+    tool.diameter_mm = 1.434_988_949_287_780_3;
+    tool.feed_mm_min = Some(4_623.749_764_726_896);
+    tool.plunge_mm_min = Some(573.194_943_425_836_5);
+    tool.rpm = Some(18_861);
+    tool.step_down_mm = Some(2.560_319_329_700_137_6);
+    tool.step_over_fraction = Some(0.832_159_140_181_261_5);
+    project
+}
+
+fn shallow_ramp_round_a_circle_with_a_small_hole() -> Project {
+    let r = 16.883_035_482_589_705;
+    let (hx, hy) = (3.422_910_926_112_843, 3.733_229_249_787_881);
+    let profiles = vec![
+        Polyline::new(
+            vec![Vertex::new(r, 0.0, 1.0), Vertex::new(-r, 0.0, 1.0)],
+            true,
+        ),
+        straight([(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)]),
+    ];
+    let Operation::Profile(op) = outside_profile(CornerRelief::None, 1.009_782_134_478_237_6)
+    else {
+        unreachable!("outside_profile is a Profile");
+    };
+    let op = ProfileOp {
+        safe_z_mm: 1.0,
+        entry: Entry::Ramp {
+            angle_deg: 1.334_494_957_255_164,
+        },
+        ..op
+    };
+    let transform = Transform::from([
+        0.737_167_684_917_281_9,
+        0.675_709_852_165_628_2,
+        -0.675_709_852_165_628_2,
+        0.737_167_684_917_281_9,
+        40.0,
+        40.0,
+    ]);
+    let mut project = case(
+        profiles,
+        transform,
+        20.195_642_689_564_75,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Inch;
+    project.origin = MachineOrigin {
+        xy: OriginXy::TopRight,
+        z: OriginZ::StockBottom,
+    };
+    project.arc_fit_tolerance_mm = Some(0.01);
+    project.post_processor = PostProcessorRef::latest("grblhal").expect("grblHAL is bundled");
+    let tool = &mut project.tools[0];
+    tool.diameter_mm = 7.269_778_836_713_369;
+    tool.feed_mm_min = Some(3_192.045_316_616_497);
+    tool.plunge_mm_min = Some(2_633.305_020_598_756_5);
+    tool.rpm = Some(15_272);
+    tool.step_down_mm = Some(0.415_478_759_066_539_8);
+    tool.step_over_fraction = Some(0.326_634_913_148_346_75);
     project
 }

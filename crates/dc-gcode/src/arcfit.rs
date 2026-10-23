@@ -871,9 +871,13 @@ fn run_survives_formatting(
         return false;
     };
     // The budget S12 gives a fitted arc: the tolerance plus one unit in
-    // the last written place, in output units.
-    let budget = if opts.mm_per_unit > 0.0 {
-        tolerance_mm / opts.mm_per_unit + opts.quantum
+    // the last written place, in output units; and how near, on each
+    // axis, it takes a vertex to be to the written end.
+    let (budget, reach) = if opts.mm_per_unit > 0.0 {
+        (
+            tolerance_mm / opts.mm_per_unit + opts.quantum,
+            opts.quantum + EPS_MM / opts.mm_per_unit,
+        )
     } else {
         return false;
     };
@@ -883,7 +887,7 @@ fn run_survives_formatting(
         &run.fallback,
         to_machine,
         tolerance_mm,
-        budget,
+        (budget, reach),
     )
 }
 
@@ -923,6 +927,8 @@ fn written_centre(
 /// written start, about its written centre, to its written end.
 #[derive(Debug, Clone, Copy)]
 struct WrittenArc {
+    start: Point,
+    end: Point,
     centre: Point,
     radius: f64,
     start_rad: f64,
@@ -941,6 +947,8 @@ impl WrittenArc {
         }
         .rem_euclid(TAU);
         Self {
+            start,
+            end,
             centre,
             radius: start.distance_to(centre),
             start_rad,
@@ -1016,15 +1024,28 @@ impl WrittenArc {
 /// quanta each way so the rounded ends agree on the radius, which in inch
 /// is 0.0072 mm, and the fit's chords may already be bowed by nearly the
 /// whole tolerance. `tolerance_mm` decides which corner arcs are shallow.
+///
+/// S12 also needs [`MIN_RUN_CHORDS`] moves under the arcs, and counts
+/// neither a first move that ends within `reach` (output units, each
+/// axis) of the written start, which it reads as a straight move written
+/// as nothing, nor any move after the first vertex within `reach` of the
+/// last sub-arc's written end, where the run ends. So a run that begins
+/// or ends with chords too short to write has fewer moves than the fit
+/// counted (#355).
 fn written_arcs_follow_moves(
     written: &[WrittenArc],
     start: Point,
     moves: &[Move],
     to_machine: &dyn Fn(Point) -> Point,
     tolerance_mm: f64,
-    budget: f64,
+    (budget, reach): (f64, f64),
 ) -> bool {
+    let (Some(first), Some(last)) = (written.first(), written.last()) else {
+        return false;
+    };
+    let near = |p: Point, q: Point| approx_eq(p.x, q.x, reach) && approx_eq(p.y, q.y, reach);
     let mut piece = 0;
+    let mut covered = 0;
     let mut from = start;
     let mut vertex = to_machine(start);
     for mv in moves {
@@ -1061,10 +1082,15 @@ fn written_arcs_follow_moves(
                 return false;
             }
         }
+        let counted = covered > 0 || !near(to, first.start);
+        if piece + 1 == written.len() && near(to, last.end) {
+            return covered + usize::from(counted) >= MIN_RUN_CHORDS;
+        }
+        covered += usize::from(counted);
         from = mv.to.xy();
         vertex = to;
     }
-    true
+    covered >= MIN_RUN_CHORDS
 }
 
 /// Resolves `fitted` into what can be emitted: every run the controller
@@ -1938,6 +1964,52 @@ mod tests {
         let (out, runs) = apply_fallback(fitted, &unrounded, None, &island_ring_to_machine, TOL);
         assert_eq!(runs, 0, "{out:?}");
         assert_eq!(runs_of(&out), 1);
+    }
+
+    /// A point at `deg` on a 2 mm circle about the origin.
+    fn on_2_mm_circle(deg: f64) -> Point3 {
+        let t = deg.to_radians();
+        pt(2.0 * t.cos(), 2.0 * t.sin(), 0.0)
+    }
+
+    /// The degrees 0.0002 mm, too short to write, turns on that circle.
+    fn sliver_deg() -> f64 {
+        (0.0002_f64 / 2.0).to_degrees()
+    }
+
+    /// `moves` fit one run, which falls back to its three moves.
+    fn three_moves_fall_back(moves: &[Move]) {
+        let fitted = fit(moves, TOL);
+        assert_eq!(runs_of(&fitted), 1, "{fitted:?}");
+        let (out, runs) = apply_fallback(fitted, &mm3_opts(ArcFormat::Ij), None, &identity, TOL);
+        assert_eq!(runs, 1, "{out:?}");
+        assert_eq!(lines_of(&out), 3);
+    }
+
+    /// #355: two 10° chords of a 2 mm circle and a third 0.0002 mm long,
+    /// too short to write. The fit takes all three, but S12 counts only the
+    /// moves up to the first vertex at the run's written end, two, so the
+    /// run is written as its moves.
+    #[test]
+    fn run_ending_in_a_sliver_falls_back() {
+        three_moves_fall_back(&[
+            Move::rapid(on_2_mm_circle(0.0)),
+            Move::linear(on_2_mm_circle(10.0), FEED),
+            Move::linear(on_2_mm_circle(20.0), FEED),
+            Move::linear(on_2_mm_circle(20.0 + sliver_deg()), FEED),
+        ]);
+    }
+
+    /// #355: the sliver first. S12 reads it as a straight move written as
+    /// nothing, before the arcs, and counts two moves under them.
+    #[test]
+    fn run_starting_with_a_sliver_falls_back() {
+        three_moves_fall_back(&[
+            Move::rapid(on_2_mm_circle(0.0)),
+            Move::linear(on_2_mm_circle(sliver_deg()), FEED),
+            Move::linear(on_2_mm_circle(10.0), FEED),
+            Move::linear(on_2_mm_circle(20.0), FEED),
+        ]);
     }
 
     #[test]

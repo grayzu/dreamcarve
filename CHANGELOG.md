@@ -459,8 +459,11 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   arc-fit tolerance, the arc as written came 0.0126 mm off a chord, past
   the 0.0125 mm S12 allows, and an Offset Pocket round a circular island
   failed export in inch. Export now checks each fitted run as written
-  against the moves it replaces, as S12 does, before it keeps it. No
-  committed program changes ([#355]).
+  against the moves it replaces, as S12 does, before it keeps it. That
+  check also counts the moves as S12 does: a move too short to write
+  (0.0002 mm in a T-bone Pocket round a rectangular island) at the start
+  or end of a run no longer makes up the three moves an arc must stand
+  for. No committed program changes ([#355]).
 - A T-bone or dogbone notch that would come nearer another wall than the bit's
   radius is no longer cut. A T-bone in a hole whose part is thinner past the
   hole's wall than the bit's radius cut through the part into the outside,
