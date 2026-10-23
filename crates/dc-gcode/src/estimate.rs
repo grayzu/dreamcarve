@@ -68,7 +68,7 @@ impl std::ops::Add for Estimate {
 /// [`ExportError::Unparseable`] if the program text cannot be read back,
 /// or has an arc from an unknown position or with no centre;
 /// [`ExportError::CutWithoutFeed`] for a feed move with no `F` in force.
-/// Neither happens to a program [`crate::emit`] returned, which passed the
+/// Neither happens to a program [`crate::emit`](fn@crate::emit) returned, which passed the
 /// safety pass.
 pub fn estimate(program: &Program, post: &PostProcessor) -> Result<Estimate, ExportError> {
     // As the safety pass reads it: a controller without units words

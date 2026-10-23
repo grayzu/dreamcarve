@@ -214,7 +214,7 @@ pub(super) fn twins(
 /// their order. Each ends square on the normals through the path's end
 /// vertices, as the last pass's do, so the earlier passes stop where the
 /// last pass stops: neither cuts past an end, and the last pass takes the
-/// allowance off right up to it. The narrowness rule is [`twins`']: where
+/// allowance off right up to it. The narrowness rule is [`twins`]'s: where
 /// `path` fits the bit but not the bit plus the allowance (an arc, a U or
 /// a hairpin on the cut side), the offset loses or gains pieces; and the
 /// last pass takes off what [`cuts_only_corners`] allows, a departure
@@ -602,32 +602,62 @@ pub(super) fn step_reach_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
 /// or its lead's staging point), of the points no higher than the height
 /// `own` starts at (a tab's, #337) if one is in reach, else of all; then,
 /// if lower, straight up to that height there; then one straight step at
-/// the feed across the allowance to `own`'s start, which `fits` (from, to,
-/// Z) must keep in the waste; then, if the step ran higher (over a tab
-/// the twin rises over and `own` starts on the slope of), straight down
-/// there to where `own` starts, no lower than its lap cuts there. That
+/// the feed across the allowance to `own`'s start, which `rules` keep in
+/// the waste and run above the tab material the last pass leaves (#339
+/// review); then, if the step ran higher (over a tab, or one the twin
+/// rises over and `own` starts on the slope of), straight down there to
+/// where `own` starts, no lower than its lap cuts there. That
 /// point is at most `reach_mm` away, or the step would cut more than the
 /// last pass may take off. When `own_led` and its staging point is
 /// farther, the lead-in arc is left off and the step goes to the lap's
-/// start: the second value is true. `None` when no step reaches or fits.
+/// start: the second value is true. [`StepRefused`] when no step reaches,
+/// or one would leave the waste.
 pub(super) fn enter_from_twin(
     twin: &CutBlock,
     own: CutBlock,
     own_led: bool,
     reach_mm: f64,
     rates: LapRates,
-    fits: &dyn Fn(Point, Point, f64) -> bool,
-) -> Option<(CutBlock, bool)> {
-    if let Some(block) = entered(twin, &own, reach_mm, rates, fits) {
-        return Some((block, false));
-    }
+    rules: &StepRules<'_>,
+) -> Result<(CutBlock, bool), StepRefused> {
+    let refused = match entered(twin, &own, reach_mm, rates, rules) {
+        Ok(block) => return Ok((block, false)),
+        Err(refused) => refused,
+    };
     if !own_led || own.cuts.is_empty() {
-        return None;
+        return Err(refused);
     }
     let mut plain = own;
     let arc = plain.cuts.remove(0);
     plain.entry = arc.to.xy();
-    entered(twin, &plain, reach_mm, rates, fits).map(|block| (block, true))
+    entered(twin, &plain, reach_mm, rates, rules).map(|block| (block, true))
+}
+
+/// What holds the last pass's step across the allowance (#339 review):
+/// what the cutter sweeps along it, never the entries' tab keep-outs.
+pub(super) struct StepRules<'a> {
+    /// The straight step from the first point to the second cuts no part:
+    /// it comes no nearer a line than the bit's radius, or than its ends.
+    pub fits: &'a dyn Fn(Point, Point) -> bool,
+    /// The lowest Z, mm, the step from the first point to the second may
+    /// run at and cut none of the tab material the last pass leaves
+    /// standing ([`tab_clear_z_mm`]).
+    pub clear_z_mm: &'a dyn Fn(Point, Point) -> f64,
+}
+
+/// Why the last pass cannot step across the allowance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum StepRefused {
+    /// No point of the earlier passes' cut is within reach of its start.
+    NoReach,
+    /// The step would cut into a part: a defect, as an entry that did
+    /// would be.
+    OffWaste {
+        /// Where the step starts.
+        from: Point3,
+        /// Where it ends.
+        to: Point3,
+    },
 }
 
 /// [`enter_from_twin`] onto `own` as it is.
@@ -636,8 +666,8 @@ fn entered(
     own: &CutBlock,
     reach_mm: f64,
     rates: LapRates,
-    fits: &dyn Fn(Point, Point, f64) -> bool,
-) -> Option<CutBlock> {
+    rules: &StepRules<'_>,
+) -> Result<CutBlock, StepRefused> {
     let start_z_mm = own.descent.last().map_or(own.z_mm, |m| m.to.z);
     let target = own.entry;
     let mut moves = twin.descent.clone();
@@ -687,9 +717,12 @@ fn entered(
     // in reach: the step runs at its height, and the tool comes down at
     // `own`'s start to where its lap starts there, a smooth tab's slope:
     // no lower than the lap cuts there, so into no tab.
-    let (gap_mm, k, q) = low.filter(|(gap_mm, _, _)| *gap_mm <= reach_mm).or(any)?;
+    let (gap_mm, k, q) = low
+        .filter(|(gap_mm, _, _)| *gap_mm <= reach_mm)
+        .or(any)
+        .ok_or(StepRefused::NoReach)?;
     if gap_mm > reach_mm {
-        return None;
+        return Err(StepRefused::NoReach);
     }
     let mut descent: Vec<Move> = moves.into_iter().take(k + 1).collect();
     if k + 1 > descended
@@ -698,7 +731,8 @@ fn entered(
         // The twin's cut, stopped at the point: an arc keeps its centre.
         last.to = q;
     }
-    let step_z_mm = q.z.max(start_z_mm);
+    // #339 review: over a tab the last pass leaves, the step runs above it.
+    let step_z_mm = q.z.max(start_z_mm).max((rules.clear_z_mm)(q.xy(), target));
     if q.z < step_z_mm - EPS_MM {
         descent.push(Move::linear(
             Point3::new(q.x, q.y, step_z_mm),
@@ -706,8 +740,11 @@ fn entered(
         ));
     }
     if gap_mm > EPS_MM {
-        if !fits(q.xy(), target, step_z_mm) {
-            return None;
+        if !(rules.fits)(q.xy(), target) {
+            return Err(StepRefused::OffWaste {
+                from: Point3::new(q.x, q.y, step_z_mm),
+                to: Point3::new(target.x, target.y, step_z_mm),
+            });
         }
         descent.push(Move::linear(
             Point3::new(target.x, target.y, step_z_mm),
@@ -720,7 +757,7 @@ fn entered(
             rates.plunge_mm_min,
         ));
     }
-    Some(CutBlock {
+    Ok(CutBlock {
         descent_from: twin.descent_from,
         descent_from_z_mm: twin.descent_from_z_mm,
         descent,
@@ -978,6 +1015,68 @@ pub(super) fn twin_tabs(
         .collect();
     let spans = raised_runs(&need, twin_mm, step_mm, floor_z_mm, closed);
     PathTabs::from_spans(twin_mm, layout.tab_count(), &spans, closed)
+}
+
+/// The lowest Z, mm, the last pass's straight step from `from` to `to`
+/// may run at and cut none of the tab material its lap leaves standing
+/// (#339 review): `floor_z_mm`, the lap's own Z, where no tab is in reach.
+/// The material is [`twin_tabs`]': a point within `radius_mm` of the lap
+/// on `path` (its tabs `layout`) stands as high as the lowest the lap cuts
+/// within the radius of it. Every lattice point of [`tab_step_mm`] within
+/// the radius of the step, plus a step for the lattice, is looked at, and
+/// the highest that stands above the floor is the answer.
+pub(super) fn tab_clear_z_mm(
+    path: &Polyline,
+    layout: &PathTabs,
+    floor_z_mm: f64,
+    radius_mm: f64,
+    (from, to): (Point, Point),
+) -> f64 {
+    if layout.is_untabbed() || path.length_mm() <= EPS_MM {
+        return floor_z_mm;
+    }
+    let step_mm = tab_step_mm(radius_mm);
+    let reach_mm = radius_mm + step_mm;
+    let segment = Polyline::new(
+        vec![Vertex::line(from.x, from.y), Vertex::line(to.x, to.y)],
+        false,
+    );
+    let gap = |p: Point| {
+        if from.distance_to(to) <= EPS_MM {
+            p.distance_to(from)
+        } else {
+            nearest_point(&segment, p).map_or(f64::INFINITY, |n| n.gap_mm)
+        }
+    };
+    // The lap near the step, every half lattice step, at its Z there.
+    let lap: Vec<(Point, f64)> = path_samples(path, step_mm / 2.0)
+        .into_iter()
+        .filter(|(_, p)| gap(*p) < reach_mm + radius_mm)
+        .map(|(d, p)| (p, layout.z_at_mm(d, floor_z_mm)))
+        .collect();
+    if lap.iter().all(|(_, z)| *z <= floor_z_mm + EPS_MM) {
+        return floor_z_mm;
+    }
+    let cuts = Buckets::new(radius_mm, lap);
+    let (lo, hi) = (
+        Point::new(from.x.min(to.x) - reach_mm, from.y.min(to.y) - reach_mm),
+        Point::new(from.x.max(to.x) + reach_mm, from.y.max(to.y) + reach_mm),
+    );
+    let (i0, j0) = lattice_index(lo, step_mm);
+    let (i1, j1) = lattice_index(hi, step_mm);
+    let mut clear_z_mm = floor_z_mm;
+    for i in i0..=i1 {
+        for j in j0..=j1 {
+            let p = lattice_point(i, j, step_mm);
+            if gap(p) >= reach_mm {
+                continue;
+            }
+            if let Some(height) = cuts.near(p, radius_mm).reduce(f64::min) {
+                clear_z_mm = clear_z_mm.max(height);
+            }
+        }
+    }
+    clear_z_mm
 }
 
 /// How far inside a raised cut's reach [`twin_tabs`] looks for a tab's

@@ -687,12 +687,7 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
             near,
             far,
             allowance_mm,
-            // The most the last pass may take off (dc-cam's
-            // `last_pass::step_reach_mm`): a third of the bit, or a square
-            // corner's, and the slack of its sampling.
-            step_mm: (2.0 * left_mm.abs() / 3.0)
-                .max(std::f64::consts::SQRT_2 * allowance_mm + 0.05)
-                + 0.05,
+            step_mm: dc_cam::last_pass_step_reach_mm(2.0 * left_mm.abs(), allowance_mm),
         });
     Material::SideProfile {
         centres,
@@ -717,15 +712,18 @@ pub(crate) struct AllowanceBand {
 }
 
 impl AllowanceBand {
-    /// True when `path` is a step across the band: at least the
-    /// allowance long and no longer than [`AllowanceBand::step_mm`], its
-    /// ends and middle between the two paths ([`AllowanceBand::holds`]).
-    /// A longer cut in the band, or a plunge in it, is no move the
-    /// generator makes.
-    fn allows(&self, path: Segment, slack_mm: f64) -> bool {
-        let length_mm = path.length_mm();
-        length_mm >= self.allowance_mm - slack_mm
-            && length_mm <= self.step_mm + slack_mm
+    /// True when `path`, a level cut, is a step across the band: from
+    /// the earlier passes' path to the last pass's, no longer than
+    /// [`AllowanceBand::step_mm`], its middle between the two
+    /// ([`AllowanceBand::holds`]). A cut along the band, several short ones
+    /// chained in it, or one that falls through it, is no move the
+    /// generator makes: each would start or end inside the band, or fall.
+    fn allows(&self, path: Segment, level: bool, slack_mm: f64) -> bool {
+        let on = |edges: &[Edge], p: Point| on_line(edges, p, slack_mm);
+        level
+            && path.length_mm() <= self.step_mm + slack_mm
+            && on(&self.far, path.start)
+            && on(&self.near, path.end)
             && points_of(path).iter().all(|&p| self.holds(p, slack_mm))
     }
 
@@ -1051,7 +1049,14 @@ pub(crate) fn check(
                 (points_of(path)
                     .iter()
                     .all(|&p| on_line(centres, p, slack_mm))
-                    || steps.as_ref().is_some_and(|s| s.allows(path, slack_mm)))
+                    || steps.as_ref().is_some_and(|s| {
+                        let level = mv
+                            .from
+                            .z
+                            .zip(mv.to.z)
+                            .is_some_and(|(a, b)| (a - b).abs() <= EPS_MM);
+                        s.allows(path, level, slack_mm)
+                    }))
                     && keep_clear
                         .iter()
                         .filter(|e| near(bounds, e.bounds, clearance_mm))

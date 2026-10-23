@@ -1063,7 +1063,7 @@ fn machine_lift_comment(post_id: &str) -> String {
 /// What the export note of a program that lifts with `G53` on the
 /// definition `post_id` adds after "home the machine" (#308): the
 /// controller's own condition for a lift outside the travel to stop before
-/// it moves, as in [`machine_lift_comment`]. `None` for a definition that
+/// it moves, as in `machine_lift_comment`. `None` for a definition that
 /// has no such check documented.
 #[must_use]
 pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
@@ -1088,7 +1088,7 @@ pub fn machine_lift_limits_note(post_id: &str) -> Option<&'static str> {
 const GRBLHAL_SCALING_NOTE: &str = "If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.";
 
 /// What `export` tells the user about axis scaling before a program for
-/// `post` runs (#320): [`GRBLHAL_SCALING_NOTE`] for a grblHAL definition
+/// `post` runs (#320): `GRBLHAL_SCALING_NOTE` for a grblHAL definition
 /// whose header writes `G50` (version 4 and later), so a user who trusts
 /// that `G50` still soft-resets after a `G51`. `None` for every other
 /// definition: GRBL and LinuxCNC have no scaling, Mach3's and UCCNC's

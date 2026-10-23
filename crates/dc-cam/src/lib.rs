@@ -5,7 +5,7 @@
 //! operation to a toolpath plus warnings (`docs/specs/phase-1/design.md`,
 //! "dc-cam"). Phase 1 adds Profile, with tabs. Phase 2 moves every
 //! generator onto cut blocks ([`CutBlock`]) that one shared step,
-//! [`sequence`], orders and links (`docs/specs/phase-2/design.md`,
+//! [`sequence`](fn@sequence), orders and links (`docs/specs/phase-2/design.md`,
 //! "Algorithms → Sequence"), and adds [`order::check`], which warns when the
 //! order of operations cuts inside a part an earlier one freed. Phase 2
 //! also adds Pocket ([`generate_pocket`]), Drill ([`generate_drill`]) and
@@ -45,7 +45,7 @@ pub use engrave::generate_engrave;
 pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use footprint::footprint;
 pub use pocket::generate_pocket;
-pub use profile::{Wall, generate_profile, traversal_is_ccw};
+pub use profile::{Wall, generate_profile, last_pass_step_reach_mm, traversal_is_ccw};
 pub use sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
 pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};

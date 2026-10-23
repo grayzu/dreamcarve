@@ -39,8 +39,8 @@ use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{OpenPathReason, TabOnCornerReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
-    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point, nest,
-    offset, offset_open, point_segment_distance_mm, strip_ends,
+    Vertex, distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point,
+    nest, offset, offset_open, point_segment_distance_mm, strip_ends,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, TabId, Tool,
@@ -135,6 +135,16 @@ fn placement(side: Side, role: Role) -> (Offset, Wall) {
     }
 }
 
+/// How far, mm, a Profile's last pass may step from the path its earlier
+/// passes cut onto its own (#339): the most it may take off anywhere, a
+/// third of the bit `diameter_mm` or a square corner's `√2 · a` plus
+/// 0.05 mm, and 0.05 mm for the sampling that holds it there. The safety
+/// pass's S9 holds a Left or Right last pass's step to the same bound.
+#[must_use]
+pub fn last_pass_step_reach_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
+    last_pass::step_reach_mm(diameter_mm, allowance_mm)
+}
+
 /// Which way a contour moves to become the tool-centre path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Offset {
@@ -217,7 +227,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 ///
 /// With `op.lead` (design spec, "Algorithms → Lead-in and lead-out"),
 /// Inside and Outside contours are re-seamed where an arc tangent to them
-/// fits in the waste domain away from corners ([`crate::lead`]): each
+/// fits in the waste domain away from corners (the `lead` module): each
 /// pass descends at the arc's far end, its staging point, cuts the arc,
 /// the lap from the arrival, the overcut and the exit arc at the feed
 /// rate, and retracts. Below the tab top the arcs keep off the tabs, and
@@ -258,7 +268,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// `last_pass_block`): it descends as one more earlier pass would, on
 /// the allowance path where the pass before ended, by the entry (a ramp
 /// along that path), and steps across the allowance onto its own path. The
-/// allowance paths must follow the line ([`last_pass::open_twins`],
+/// allowance paths must follow the line (`last_pass::open_twins`,
 /// [`CamError::ShapeNarrowerThanAllowance`]) and keep `r + a` from every
 /// other line and kept strip ([`CamError::AllowanceCutsIntoKeptSide`]).
 ///
@@ -292,7 +302,7 @@ pub(crate) fn rates_of(tool: &Tool) -> Result<LapRates, CamError> {
 /// regions whose tool paths cut into each other give
 /// [`Warning::ToolpathsOverlap`], in cut order; an open path cut On
 /// line is a shape of its own unless it lies in a region's material
-/// (#206, [`crate::overlap`]). Fails without a toolpath when a feed, plunge rate, or
+/// (#206, the `overlap` module). Fails without a toolpath when a feed, plunge rate, or
 /// step-down is missing, when the depth goes below the stock bottom plus
 /// allowance, when targets cross, when an id does not resolve, when the
 /// cutter would leave the stock ([`CamError::OffStock`]), when an entry's
@@ -700,6 +710,7 @@ pub fn generate_profile(
         start_z_mm,
         rates,
         tolerance_mm: project.flatten_tolerance_mm,
+        regions: &regions,
     };
     let path_at = |k: usize| {
         let ((path, shape), layout) = (paths.get(k)?, layouts.get(k)?);
@@ -1943,6 +1954,9 @@ struct PassCtx<'a> {
     start_z_mm: f64,
     rates: LapRates,
     tolerance_mm: f64,
+    /// The operation's regions: the lines no cut may come nearer than the
+    /// bit's radius (#339 review: the last pass's step).
+    regions: &'a [Region],
 }
 
 /// One tool-centre path, as [`pass_block`] cuts it.
@@ -2168,21 +2182,76 @@ fn last_pass_block(
     // #335: its lap runs round inside arcs at the feed its edge needs.
     let tight_mm = own_edge_feeds(ctx, paths, &mut own_block, own_led);
     let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
-    let fits = |from: Point, to: Point, at_z_mm: f64| {
-        paths.domain.is_none_or(|d| {
-            d.for_pass(PassPath::below_tabs(ctx, at_z_mm))
-                .domain
-                .segment_within(from, to, slack_mm)
+    // #339 review: the step is held to what it sweeps: the parts, not
+    // the entries' waste domain or tab keep-outs, and the tabs'
+    // material, which it runs above.
+    let radius_mm = own.tool.diameter_mm / 2.0;
+    // The step comes no nearer any line of the operation than the bit's
+    // radius, or than its ends already are (a lap D6 lets run nearer a
+    // neighbour): it adds no cut into a part to what the two paths cut.
+    let lines: Vec<&Polyline> = ctx
+        .regions
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .map(Contour::polyline)
+        .collect();
+    let fits = |from: Point, to: Point| {
+        if from.distance_to(to) <= EPS_MM {
+            return true;
+        }
+        let step = Polyline::new(
+            vec![Vertex::line(from.x, from.y), Vertex::line(to.x, to.y)],
+            false,
+        );
+        lines.iter().all(|line| {
+            let ends_mm = [from, to]
+                .iter()
+                .filter_map(|p| nearest_point(line, *p))
+                .map(|n| n.gap_mm)
+                .fold(f64::INFINITY, f64::min);
+            distance_mm(&step, line) >= ends_mm.min(radius_mm) - slack_mm
         })
     };
+    let clear_z_mm = |from: Point, to: Point| match (ctx.tabs, own.layout) {
+        (Some(_), Some((layout, _))) => {
+            last_pass::tab_clear_z_mm(own.path, layout, z_mm, radius_mm, (from, to))
+        }
+        _ => z_mm,
+    };
+    let rules = last_pass::StepRules {
+        fits: &fits,
+        clear_z_mm: &clear_z_mm,
+    };
     let reach_mm = last_pass::step_reach_mm(own.tool.diameter_mm, paths.allowance_mm);
-    match last_pass::enter_from_twin(&twin_block, own_block, own_led, reach_mm, ctx.rates, &fits) {
-        Some((block, lead_dropped)) => Ok(Entered {
+    match last_pass::enter_from_twin(&twin_block, own_block, own_led, reach_mm, ctx.rates, &rules) {
+        Ok((block, lead_dropped)) => Ok(Entered {
             block: Some(block),
             lead_dropped,
             tight_mm,
         }),
-        None => Err(CamError::ShapeNarrowerThanAllowance {
+        Err(last_pass::StepRefused::OffWaste { from, to }) => {
+            let space = paths.domain.map(|d| &d.plain);
+            Err(match space {
+                Some(space) => off_material(
+                    op,
+                    own.shape,
+                    from,
+                    Move::linear(to, ctx.rates.feed_mm_min),
+                    space,
+                    radius_mm,
+                    ctx.tolerance_mm,
+                ),
+                None => CamError::OffMaterial {
+                    op: op.id.clone(),
+                    shape: own.shape.clone(),
+                    area_mm2: 0.0,
+                },
+            })
+        }
+        // Never: every point of the part path lies within the reach of
+        // the allowance path (`cuts_only_corners`), and a lead-in out of
+        // reach is left off.
+        Err(last_pass::StepRefused::NoReach) => Err(CamError::ShapeNarrowerThanAllowance {
             op: op.id.clone(),
             shape: own.shape.clone(),
             diameter_mm: own.tool.diameter_mm,
@@ -7252,6 +7321,93 @@ mod tests {
                 assert!(ramped, "{case}: the last pass ramps below Z {floor_mm}");
             }
         }
+    }
+
+    /// #339 review, from the property test: the last pass's step is held
+    /// to the operation's lines, not to the entries' waste domain, which
+    /// leaves out every other region's kerf. A 28.9 mm disc cut Outside
+    /// with an 8.4 × 10 mm hole and a 2.4 × 2.3 mm part inside it, a
+    /// 2.1 mm bit, a ramp and a 0.25 mm allowance: the small part's
+    /// domain lies wholly beyond its own path, and its step was refused as
+    /// leaving the waste. It is cut, and safe.
+    #[test]
+    fn last_pass_steps_beside_a_neighbours_kerf() {
+        let (a, b) = (4.212_446_961_402_92, 4.982_479_348_614_591);
+        let (c, d) = (1.192_218_418_059_746, 1.166_751_264_510_846_2);
+        let square = |a: f64, b: f64| {
+            closed(&[
+                (-a + 40.0, -b + 40.0),
+                (a + 40.0, -b + 40.0),
+                (a + 40.0, b + 40.0),
+                (-a + 40.0, b + 40.0),
+            ])
+        };
+        let disc = Polyline::new(
+            vec![
+                Vertex::new(40.0 - 14.453_060_993_366_394, 40.0, -1.0),
+                Vertex::new(40.0 + 14.453_060_993_366_394, 40.0, -1.0),
+            ],
+            true,
+        );
+        let mut p = last_pass_project_of(vec![disc, square(a, b), square(c, d)]);
+        p.tools[0].diameter_mm = 2.103_135_519_226_597_2;
+        let op = ProfileOp {
+            entry: Entry::Ramp { angle_deg: 14.0 },
+            step_down_mm: Some(2.27),
+            last_pass: Some(allowance(0.247_470_115_596_678_34)),
+            ..last_pass_op(&p, Side::Outside)
+        };
+        let (tp, _) = generate(&p, &op);
+        assert!(!tp.moves.is_empty());
+    }
+
+    /// #339 review: the last pass's step across the allowance runs above
+    /// the tab material its lap leaves, and only there. A 60 mm path along
+    /// X raised to Z 3 from 20 to 34 mm (a rect tab over its bit's span),
+    /// floor 0, a 6.35 mm bit: a step across the allowance at X 27, over
+    /// the tab, must run at the tab's top; one at X 40 and one at X 37.5,
+    /// beside the tab's end, where every point in the cutter's reach is
+    /// cut to the floor by the lap, at the floor.
+    #[test]
+    fn last_pass_step_runs_over_tab_material_only() {
+        let path = open(&[(0.0, 0.0), (60.0, 0.0)]);
+        let layout = PathTabs::from_spans(
+            60.0,
+            1,
+            &[crate::tabs::RaisedSpan {
+                start_mm: 20.0,
+                length_mm: 14.0,
+                top_z_mm: 3.0,
+                shape: TabShape::Rect,
+                ramp_in_mm: 0.0,
+                ramp_out_mm: 0.0,
+            }],
+            false,
+        );
+        let step = |x: f64| {
+            last_pass::tab_clear_z_mm(
+                &path,
+                &layout,
+                0.0,
+                R_MM,
+                (Point::new(x, R_MM + 0.5), Point::new(x, R_MM)),
+            )
+        };
+        assert_approx_eq!(step(27.0), 3.0, TOL);
+        assert_approx_eq!(step(40.0), 0.0, TOL);
+        assert_approx_eq!(step(37.5), 0.0, TOL);
+        let untabbed = PathTabs::from_spans(60.0, 0, &[], false);
+        assert_approx_eq!(
+            last_pass::tab_clear_z_mm(
+                &path,
+                &untabbed,
+                0.0,
+                R_MM,
+                (Point::new(27.0, R_MM + 0.5), Point::new(27.0, R_MM))
+            ),
+            0.0,
+            TOL
+        );
     }
 
     /// #311: an open path's tabs are laid on its last pass's path and

@@ -3375,8 +3375,20 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    pass's lap starts at (a tab's height, #337), the allowance pass's cut
    on to its point nearest the last pass's start (its lap start, or its
    lead's staging point); straight up there to that Z if lower; and one
-   step at the feed to the last pass's start, which must lie in the part
-   path's domain (less the tabs below the tab top). That point is at most
+   step at the feed to the last pass's start. (Changed in the #339 review: below the tab top
+   that was the domain less the tabs' entry keep-outs, the allowance
+   path's widened stretches grown by `r`, which is right for a ramp or
+   helix but refused a 0.5 mm step on the far side of a hole from its tab:
+   318 projects main cut, every one with a ramp, helix or lead and tabs.
+   The step is now held to what it sweeps: no nearer any line of the
+   operation than the bit's radius, or than its ends already are (the
+   entries' waste domain also leaves out every other region's kerf, so
+   it refused a small part's step inside a hole), and above the tab
+   material the last pass leaves,
+   `last_pass::tab_clear_z_mm`, the highest that material stands within
+   the radius of the step on an `r/12` lattice, so a step beside a tab
+   rises over it. A step that leaves the waste would be a defect,
+   `OffMaterial`.) That point is at most
    `max(D/3, √2·a + 0.05) + 0.05` mm away, the bound
    `cuts_only_corners` holds every point of the part path to. A part
    path whose seam is free (no lead, no explicit start) is re-seamed at
@@ -3525,9 +3537,12 @@ bit against the part, so it takes a last pass as Inside and Outside do.
 8. **S9** (`Material::SideProfile`): with a last pass the open paths
    offset by `r + a` to the side are tool-centre paths too; every cut
    still keeps `r` from every open path and kept edge. (Changed in #339:
-   so is the band between the two offsets, `AllowanceBand`, a point
-   whose distances to them add up to `a`, where the last pass steps
-   across.)
+   so is the last pass's step across the band between the two offsets,
+   `AllowanceBand`: a level move from the `r + a` offset to the `r` one,
+   through points whose distances to them add up to `a`, no longer than
+   `dc_cam::last_pass_step_reach_mm`, the generator's own bound. A move
+   along the band, steps chained inside it, or one that falls through it
+   is refused.)
 
 Tests: `profile::last_pass_left_offsets_earlier_passes`,
 `profile::last_pass_left_right_tabs_cover_same_stretch` (the rise is

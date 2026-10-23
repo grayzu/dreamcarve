@@ -58,6 +58,7 @@ cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 cargo run -p check-headers
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
 cargo deny check licenses advisories
 mdbook build docs/book
 ```

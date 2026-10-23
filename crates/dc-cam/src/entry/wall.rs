@@ -153,17 +153,6 @@ impl EntryDomain {
             .fold(f64::NEG_INFINITY, f64::max)
     }
 
-    /// True when the straight move from `a` to `b` keeps its tool centre
-    /// in one region of the domain, within `slack_mm` (#339: the last
-    /// pass's step across the allowance).
-    pub(crate) fn segment_within(&self, a: Point, b: Point, slack_mm: f64) -> bool {
-        self.areas.iter().any(|area: &Area| {
-            area.contains_within(a, slack_mm)
-                && area.contains_within(b, slack_mm)
-                && area.segment_inside(a, b, slack_mm)
-        })
-    }
-
     /// S9 for one descent: the index in `moves`, cut from `from`, of the
     /// first descent move ([`is_descent_move`]) whose tool centre leaves
     /// every region of the domain by more than `slack_mm`.
@@ -269,10 +258,10 @@ impl Flat {
 /// L, max_run_mm)` and back, again and again, each leg descending at
 /// `angle_deg` until `z_mm`, the final leg cut short there, or sharing the
 /// depth with the leg before when it would fall less than
-/// [`RAMP_MIN_LAST_DROP_MM`] ([`plan_legs`]; #234, #273); arcs are split
+/// [`RAMP_MIN_LAST_DROP_MM`] (`plan_legs`; #234, #273); arcs are split
 /// into chords within `tolerance_mm` while Z changes, and a chord the
 /// program cannot write is merged into its neighbour
-/// ([`merge_unwritable`]), else the ramp falls back to a plunge with
+/// (`merge_unwritable`), else the ramp falls back to a plunge with
 /// [`FallbackReason::TooSmall`] (#273). The tool then
 /// returns along the path at `z_mm` to the start vertex, where the lap
 /// starts, so the ramped stretch is cut again at full depth; a piece of

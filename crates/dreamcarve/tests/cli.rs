@@ -997,10 +997,22 @@ fn machine_motion(text: &str, post: &str) -> Vec<String> {
 /// `G98`, then `G80`, and the program's motion, read back as LinuxCNC
 /// performs the cycles, is the plain-moves program's. With canned cycles
 /// off no cycle word appears (the header's `G80` only cancels one).
+///
+/// The canned program is pinned byte for byte in
+/// `expected/coaster-holes-linuxcnc-canned.ngc`, which the
+/// `gcode-conformance` CI job runs through LinuxCNC's `rs274` (#173).
 #[test]
 fn canned_cycles_linuxcnc_opt_in() {
     let canned = coaster_with_holes("canned_cycles_linuxcnc_on", "linuxcnc", true);
     let plain = coaster_with_holes("canned_cycles_linuxcnc_off", "linuxcnc", false);
+    let pinned = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/expected/coaster-holes-linuxcnc-canned.ngc");
+    let expected = std::fs::read_to_string(&pinned).expect("pinned canned program present");
+    assert!(
+        canned == expected,
+        "the canned program differs from {}:\n{canned}",
+        pinned.display()
+    );
     let lines: Vec<Vec<String>> = canned.lines().map(code_words).collect();
     let has = |line: &[String], word: &str| line.iter().any(|w| w == word);
     let g81: Vec<usize> = (0..lines.len())

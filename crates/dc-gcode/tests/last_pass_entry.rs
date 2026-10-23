@@ -619,6 +619,46 @@ fn last_pass_entry_keeps_the_tabs() {
     }
 }
 
+/// #339 review: the step across the allowance is held to what it sweeps,
+/// not to the waste less the tabs' entry keep-outs. The review's repro, a
+/// 15 mm hole cut Inside with one 6 × 3 mm rect tab at 0.5 mm, and the
+/// 24 × 16 mm rectangle cut Inside with two tabs at 1 mm and Outside with
+/// four at 2 mm, each with a ramp, a helix and a lead, rect and smooth:
+/// every one is cut, as before #339, and the checks of
+/// [`last_pass_entry_keeps_the_tabs`] hold.
+#[test]
+fn last_pass_entry_steps_clear_of_tabs() {
+    for (drawing, side, count, allowance_mm) in [
+        (hole("15 mm hole", 15.0), Side::Inside, 1, 0.5),
+        (rect(), Side::Inside, 2, 1.0),
+        (rect(), Side::Outside, 4, 2.0),
+    ] {
+        for entering in [
+            Entering::Ramp,
+            Entering::Helix,
+            Entering::LeadPlunge,
+            Entering::LeadRamp,
+        ] {
+            for shape in [TabShape::Rect, TabShape::Smooth] {
+                let case = Case {
+                    drawing: drawing.clone(),
+                    side,
+                    direction: CutDirection::Climb,
+                    entering,
+                    allowance_mm,
+                    thickness_mm: None,
+                    reverse: false,
+                    tabs: Some(TabSpec {
+                        placement: TabPlacement::Count { count },
+                        ..two_tabs(shape)
+                    }),
+                };
+                assert!(check(&case).is_some(), "{} is refused", case.name());
+            }
+        }
+    }
+}
+
 /// A 60 mm open line from (60, 50) along +X.
 fn line() -> Drawing {
     Drawing {

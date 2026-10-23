@@ -572,8 +572,8 @@ passes ended, it goes down into their floor with the operation's
   earlier passes' lead had to be made smaller), the last pass's lead-in
   is left off and `lead_dropped` warns; its lead-out is kept.
 
-- If the last pass's path starts on a tab, the step runs at the height
-  its lap starts at there, so it stays above the tab. On a smooth tab's
+- If the last pass's path starts on a tab, or its step would pass near
+  one, the step runs above the tab, at the height the lap leaves it. On a smooth tab's
   slope, where the earlier passes ran higher, it steps across at their
   height and comes down onto the slope.
 
