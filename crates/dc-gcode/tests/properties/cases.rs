@@ -9,7 +9,7 @@
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
 //! it.
 
-use super::{DATE, generate};
+use super::{DATE, generate, heightfield};
 use dc_cam::entry::EntryKind;
 use dc_cam::{MoveKind, ReliefCornerReason, Warning, WarningCode, generate_profile};
 use dc_gcode::emit;
@@ -1168,13 +1168,25 @@ fn left_open_path_last_pass_plunge_exports() {
 /// 1.44 mm steps, helixed, pass first, with a 1.00 mm last pass
 /// allowance, in inch on UCCNC. S9's tab rule refused each allowance
 /// pass below the tab top coming down at the end of its raised stretch
-/// (line 2576 first, `OffMaterial`), as #353's. Its last pass also comes
-/// down the tab's 10 mm height in one move at the tab's far end: #348,
-/// still open, which S9 does not catch, so this test passing does not
-/// prove #348 fixed.
+/// (line 2576 first, `OffMaterial`), as #353's. Its last pass also came
+/// down the tab's 10 mm height in one move at the tab's far end (#348),
+/// which S9 does not catch: on a heightfield of the program no straight
+/// plunge goes deeper into uncut material than the 1.44 mm step-down.
 #[test]
 fn inside_last_pass_helix_tabs_pass_first_exports() {
-    exports(&inside_last_pass_helix_tabs_pass_first());
+    let project = inside_last_pass_helix_tabs_pass_first();
+    exports(&project);
+    let (program, _) =
+        emit(&project, &[generate(&project).expect("generates")], DATE).expect("the safety pass");
+    let radius_mm = project.tools[0].diameter_mm / 2.0;
+    let step_down_mm = project.tools[0].step_down_mm.expect("a step-down");
+    let top_mm = project.stock.thickness_mm.expect("a thickness");
+    let cuts = heightfield::cuts(&project, &program.text, 0.1);
+    let (deepest_mm, at) = heightfield::deepest_plunge_mm(&cuts, radius_mm, 0.1, top_mm);
+    assert!(
+        deepest_mm <= step_down_mm + 0.01,
+        "cut {at:?} plunges {deepest_mm} mm into uncut material, more than the {step_down_mm} mm step-down"
+    );
 }
 
 /// #358's `201280a2` regression: the rectangle of case 2 cut Inside

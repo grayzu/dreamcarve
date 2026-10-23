@@ -1,8 +1,9 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! #339: how a Profile's last pass enters, checked on the emitted G-code
-//! with a material heightfield, independently of the generator. Each
+//! #339, #348: how a Profile's last pass enters and comes off its tabs,
+//! checked on the emitted G-code with a material heightfield
+//! (`support/heightfield.rs`), independently of the generator. Each
 //! program is parsed back into project space and its cuts are swept, in
 //! order, through 12 mm stock on a 0.1 mm lattice; before each straight
 //! plunge the lattice says how much uncut material lies under the cutter.
@@ -18,16 +19,18 @@
     reason = "test code reports failure by panicking; lattice indices of coordinates within the stock"
 )]
 
+#[path = "support/heightfield.rs"]
+mod heightfield;
+
 use dc_cam::{CamError, generate_profile};
 use dc_gcode::emit;
-use dc_gcode::parse::MotionKind;
-use dc_gcode::transform::MachineTransform;
-use dc_geometry::{Arc, Point, Point3, Polyline, Transform, Vec2, Vertex, nearest_point};
+use dc_geometry::{Point, Polyline, Transform, Vertex, nearest_point};
 use dc_project::test_support::sample_project;
 use dc_project::{
     CutDirection, Entry, LastPass, Lead, Operation, Project, Side, Stock, TabPlacement, TabShape,
     TabSpec,
 };
+use heightfield::{Cut, Heights};
 
 const STOCK_MM: f64 = 12.0;
 const STEP_DOWN_MM: f64 = 4.0;
@@ -212,26 +215,6 @@ fn two_tabs(shape: TabShape) -> TabSpec {
     }
 }
 
-/// One cutting move in project space, sampled at most a lattice step
-/// apart, Z interpolated, with its feed.
-struct Cut {
-    from: Point3,
-    to: Point3,
-    feed: f64,
-    /// An arc's radius, mm, as written.
-    radius_mm: Option<f64>,
-    /// An arc's centre, project space.
-    centre: Option<Point>,
-    samples: Vec<Point3>,
-}
-
-impl Cut {
-    /// Straight down: Z falls and XY stays.
-    fn is_plunge(&self) -> bool {
-        self.to.z < self.from.z - 1e-9 && self.from.xy().distance_to(self.to.xy()) <= 1e-6
-    }
-}
-
 /// The program `project` exports and its cutting moves in project space,
 /// in order; `None` when the generator refuses the drawing for the last
 /// pass (or a helix on an open path).
@@ -259,160 +242,14 @@ fn program(project: &Project) -> Option<(String, Vec<Cut>)> {
         "2026-10-22",
     )
     .unwrap_or_else(|e| panic!("the safety pass: {e}"));
-    let post = project.post_processor.resolve().expect("bundled");
-    let transform = MachineTransform::new(project, &post).expect("a valid mapping");
-    let mut cuts = Vec::new();
-    for mv in dc_gcode::parse_motion(&program.text).expect("the program parses") {
-        let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
-            (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
-        else {
-            continue;
-        };
-        if !mv.kind.is_cut() {
-            continue;
-        }
-        let from = transform.to_project(Point3::new(fx, fy, fz), mv.units);
-        let to = transform.to_project(Point3::new(tx, ty, tz), mv.units);
-        let arc = match (mv.kind, mv.arc.i, mv.arc.j) {
-            (MotionKind::ArcCw | MotionKind::ArcCcw, Some(i), Some(j)) => {
-                let centre = transform
-                    .to_project(Point3::new(fx + i, fy + j, fz), mv.units)
-                    .xy();
-                Some(Arc::from_ends(
-                    from.xy(),
-                    to.xy(),
-                    centre,
-                    mv.kind == MotionKind::ArcCcw,
-                ))
-            }
-            _ => None,
-        };
-        let length_mm = arc.as_ref().map_or_else(
-            || from.xy().distance_to(to.xy()),
-            |a| a.radius_mm * a.sweep_rad.abs(),
-        );
-        let steps = (length_mm / LATTICE_MM).ceil().max(1.0) as usize;
-        let samples = (0..=steps)
-            .map(|k| {
-                let f = k as f64 / steps as f64;
-                let xy = match &arc {
-                    Some(a) => {
-                        let angle = a.start_angle_rad + a.sweep_rad * f;
-                        a.centre + Vec2::new(angle.cos(), angle.sin()) * a.radius_mm
-                    }
-                    None => from.xy() + (to.xy() - from.xy()) * f,
-                };
-                Point3::new(xy.x, xy.y, from.z + (to.z - from.z) * f)
-            })
-            .collect();
-        cuts.push(Cut {
-            from,
-            to,
-            feed: mv.feed.expect("a cut has a feed"),
-            radius_mm: arc.as_ref().map(|a| a.radius_mm),
-            centre: arc.as_ref().map(|a| a.centre),
-            samples,
-        });
-    }
+    let cuts = heightfield::cuts(project, &program.text, LATTICE_MM);
     Some((program.text, cuts))
 }
 
-/// A heightfield over the drawing's neighbourhood: the lowest Z cut over
-/// each lattice point, the stock top where nothing is.
-#[derive(Clone)]
-struct Heights {
-    origin: Point,
-    nx: usize,
-    ny: usize,
-    /// The lattice step, mm.
-    step: f64,
-    z: Vec<f64>,
-}
-
-impl Heights {
-    fn new(outline: &Polyline) -> Self {
-        Self::with(outline, LATTICE_MM, MARGIN_MM)
-    }
-
-    /// Over the drawing `outline` and `margin_mm` round it, on a lattice
-    /// of `step_mm`.
-    fn with(outline: &Polyline, step_mm: f64, margin_mm: f64) -> Self {
-        let (mut lo, mut hi) = (
-            Point::new(f64::MAX, f64::MAX),
-            Point::new(f64::MIN, f64::MIN),
-        );
-        for v in outline.vertices() {
-            lo = Point::new(lo.x.min(v.x), lo.y.min(v.y));
-            hi = Point::new(hi.x.max(v.x), hi.y.max(v.y));
-        }
-        // A circle's two vertices span only one axis; pad by the span.
-        let pad = (hi.x - lo.x).max(hi.y - lo.y) / 2.0 + margin_mm;
-        let origin = Point::new(lo.x - pad, lo.y - pad);
-        let nx = ((hi.x - lo.x + 2.0 * pad) / step_mm).ceil() as usize + 1;
-        let ny = ((hi.y - lo.y + 2.0 * pad) / step_mm).ceil() as usize + 1;
-        Self {
-            origin,
-            nx,
-            ny,
-            step: step_mm,
-            z: vec![STOCK_MM; nx * ny],
-        }
-    }
-
-    fn point(&self, i: usize, j: usize) -> Point {
-        Point::new(
-            self.origin.x + i as f64 * self.step,
-            self.origin.y + j as f64 * self.step,
-        )
-    }
-
-    fn at(&self, i: usize, j: usize) -> f64 {
-        self.z[j * self.nx + i]
-    }
-
-    /// The index of every lattice point within `radius_mm` of `p`.
-    fn disc(&self, p: Point, radius_mm: f64) -> Vec<usize> {
-        let mut out = Vec::new();
-        let j0 = ((p.y - radius_mm - self.origin.y) / self.step)
-            .ceil()
-            .max(0.0) as usize;
-        let j1 =
-            (((p.y + radius_mm - self.origin.y) / self.step).floor() as usize).min(self.ny - 1);
-        for j in j0..=j1 {
-            let dy = self.origin.y + j as f64 * self.step - p.y;
-            let reach = radius_mm * radius_mm - dy * dy;
-            if reach < 0.0 {
-                continue;
-            }
-            let half = reach.sqrt();
-            let i0 = ((p.x - half - self.origin.x) / self.step).ceil().max(0.0) as usize;
-            let i1 = (((p.x + half - self.origin.x) / self.step).floor() as usize).min(self.nx - 1);
-            out.extend((i0..=i1).map(|i| j * self.nx + i));
-        }
-        out
-    }
-
-    /// The highest material within `radius_mm` of `p`.
-    fn highest(&self, p: Point, radius_mm: f64) -> f64 {
-        self.disc(p, radius_mm)
-            .into_iter()
-            .map(|k| self.z[k])
-            .fold(f64::MIN, f64::max)
-    }
-
-    /// Lowers every lattice point within `radius_mm` of each sample of
-    /// `cut` to the sample's Z.
-    fn sweep(&mut self, cut: &Cut, radius_mm: f64) {
-        for p in &cut.samples {
-            if p.z >= STOCK_MM {
-                continue;
-            }
-            for k in self.disc(p.xy(), radius_mm) {
-                let cell = &mut self.z[k];
-                *cell = cell.min(p.z);
-            }
-        }
-    }
+/// A heightfield over the drawing `outline` and [`MARGIN_MM`] round it,
+/// on the [`LATTICE_MM`] lattice, under the 12 mm stock.
+fn heights(outline: &Polyline) -> Heights {
+    Heights::with(outline, LATTICE_MM, MARGIN_MM, STOCK_MM)
 }
 
 /// What one program shows.
@@ -439,7 +276,7 @@ fn check(case: &Case) -> Option<Measured> {
     let tool = &project.tools[0];
     let (feed_mm_min, plunge_mm_min) = (tool.feed_mm_min.unwrap(), tool.plunge_mm_min.unwrap());
     let outline = case.drawing.placed();
-    let mut heights = Heights::new(&outline);
+    let mut heights = heights(&outline);
     let mut deepest_plunge_mm: f64 = 0.0;
     for cut in &cuts {
         assert!(cut.to.z >= -0.0005, "{name}: below the material bottom");
@@ -455,11 +292,7 @@ fn check(case: &Case) -> Option<Measured> {
             "{name}: feed {} is not the tool's",
             cut.feed
         );
-        if cut.is_plunge() {
-            let top = heights.highest(cut.from.xy(), RADIUS_MM).min(cut.from.z);
-            let depth_mm = (top - cut.to.z).max(0.0);
-            deepest_plunge_mm = deepest_plunge_mm.max(depth_mm);
-        }
+        deepest_plunge_mm = deepest_plunge_mm.max(heights.plunge_depth_mm(cut, RADIUS_MM));
         heights.sweep(cut, RADIUS_MM);
     }
     assert!(
@@ -481,8 +314,8 @@ fn check_tabs(name: &str, outline: &Polyline, cuts: &[Cut]) {
             nearest_point(outline, p.xy()).is_some_and(|n| (n.gap_mm - RADIUS_MM).abs() <= SLACK_MM)
         })
     };
-    let mut lap = Heights::new(outline);
-    let mut held = Heights::new(outline);
+    let mut lap = heights(outline);
+    let mut held = heights(outline);
     for cut in cuts {
         if on_lap(cut) {
             lap.sweep(cut, RADIUS_MM);
@@ -737,7 +570,7 @@ fn load(case: &Case) -> Option<Load> {
     };
     let first = cuts.iter().position(on_lap)?;
     let last = cuts.iter().rposition(on_lap)?;
-    let mut before = Heights::with(&outline, 0.05, 8.0);
+    let mut before = Heights::with(&outline, 0.05, 8.0, STOCK_MM);
     for cut in &cuts[..first] {
         before.sweep(cut, RADIUS_MM);
     }
@@ -868,3 +701,63 @@ fn no_last_pass_programs_are_unchanged() {
 /// The fingerprint of [`no_last_pass_programs_are_unchanged`]'s programs
 /// as the build before #339 wrote them.
 const NO_LAST_PASS_FINGERPRINT: u64 = 0x25c8_2b67_09e7_5e4a;
+
+/// #348: tabs taller than the step-down. The 60 mm line cut Left and Right
+/// with 8 × 6 mm tabs 3 mm from each end, and the 24 × 16 mm rectangle cut
+/// Inside and Outside with two 8 × 6 mm tabs, rect and smooth, plunged and
+/// ramped, with `reverse` off and on, at 0.5 mm. Before #348 the last pass
+/// came down a rect tab's whole 6 mm at its far end in one move, and a
+/// smooth tab's at the start of a lap that starts on its slope, into
+/// material no earlier pass cut. On the emitted G-code no straight plunge
+/// goes deeper into uncut material than the 4 mm step-down, and no tab
+/// material is lost ([`check`]); every case is cut.
+#[test]
+fn last_pass_entry_with_tall_tabs() {
+    let mut deepest_mm: f64 = 0.0;
+    for (drawing, side, placement) in [
+        (
+            line(),
+            Side::Left,
+            TabPlacement::AtDistances {
+                distances_mm: vec![3.0, 57.0],
+            },
+        ),
+        (
+            line(),
+            Side::Right,
+            TabPlacement::AtDistances {
+                distances_mm: vec![3.0, 57.0],
+            },
+        ),
+        (rect(), Side::Inside, TabPlacement::Count { count: 2 }),
+        (rect(), Side::Outside, TabPlacement::Count { count: 2 }),
+    ] {
+        for entering in [Entering::Plunge, Entering::Ramp] {
+            for shape in [TabShape::Rect, TabShape::Smooth] {
+                for reverse in [false, true] {
+                    let case = Case {
+                        drawing: drawing.clone(),
+                        side,
+                        direction: CutDirection::Climb,
+                        entering,
+                        allowance_mm: 0.5,
+                        thickness_mm: None,
+                        reverse,
+                        tabs: Some(TabSpec {
+                            placement: placement.clone(),
+                            width_mm: 8.0,
+                            height_mm: 6.0,
+                            ..two_tabs(shape)
+                        }),
+                    };
+                    let measured = check(&case);
+                    assert!(measured.is_some(), "{} is refused", case.name());
+                    if let Some(m) = measured {
+                        deepest_mm = deepest_mm.max(m.deepest_plunge_mm);
+                    }
+                }
+            }
+        }
+    }
+    println!("the deepest plunge into uncut material: {deepest_mm:.3} mm");
+}
