@@ -163,6 +163,13 @@ written. There are no safety warnings, only errors.
       over for that tab (its width plus the bit's diameter, along the path;
       under a smooth tab's slope, below the slope), stops the export. The
       tabs are the project's placed tabs and those a tab request places.
+      An Inside or Outside Profile cuts only a trench, so below the stock
+      top a ramp leg or helix move must run where the operation already
+      cut: on the bit's path round the part (widened by a
+      [last pass](profile.md#last-pass)'s allowance), or along an earlier
+      cut. A ramp that leaves them, into stock that stands full height,
+      stops the export. A ramp or helix that starts at or above the stock
+      top clears its own way, and so passes.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus
