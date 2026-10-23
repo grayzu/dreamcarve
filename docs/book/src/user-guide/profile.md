@@ -239,6 +239,21 @@ cannot move) does the bit plunge there, as without an entry, and
 `entry_fallback` says so. A Profile with a [lead](#leads) starts where
 the lead arrives instead, which is already off the tabs.
 
+**Every ramp stays in the trench.** An Inside or Outside Profile cuts
+only its own trench and the line its ramp runs on; the waste beside them
+stands full height. So each pass after the first ramps along the line
+the pass above ramped on, never a new one. When the tabs stand in the
+way of that line below the tab top, the ramp runs along it only as far
+as the tabs leave room. When there is no room at all, or the pass above
+did not ramp there (it plunged or went down by helix, or it cut another
+path, as the passes before a [last pass](#last-pass) do), the pass plunges
+at its start, off the tabs, one step down from the floor of the pass
+above, and `entry_fallback` says so (`no_room`). A pass that would go
+down less than 0.05 mm plunges that little instead of ramping, since its
+one leg would run the whole line (`too_small`). The export's safety
+check refuses a ramp that leaves the trench (rule 12 in
+[Safety](safety.md)).
+
 **Seeing where the path starts.** `dreamcarve check part.dcv --preview
 part-preview.svg` draws the toolpath ([Toolpath
 preview](overview.md#toolpath-preview)). Each pass starts at a circle the
