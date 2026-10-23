@@ -19,6 +19,7 @@ mod last_pass;
 mod start;
 #[cfg(test)]
 mod start_tests;
+mod tab_descent;
 mod waste;
 
 use crate::block::CutBlock;
@@ -708,6 +709,7 @@ pub fn generate_profile(
         op,
         tabs: tabs.as_ref(),
         pass_z: &pass_z,
+        step_down_mm,
         safe_z_mm,
         start_z_mm,
         top_z_mm: thickness_mm,
@@ -1973,6 +1975,9 @@ struct PassCtx<'a> {
     op: &'a ProfileOp,
     tabs: Option<&'a Tabs>,
     pass_z: &'a [f64],
+    /// The step-down in effect, the operation's or else the tool's, mm
+    /// (#348: no plunge goes deeper into uncut material).
+    step_down_mm: f64,
     safe_z_mm: f64,
     /// Where a descent starts with no pass above it (#214).
     start_z_mm: f64,
@@ -2212,11 +2217,21 @@ fn last_pass_block(
     };
     // #335: its lap runs round inside arcs at the feed its edge needs.
     let (tight_mm, bend) = own_edge_feeds(ctx, paths, &mut own_block, own_led);
+    let radius_mm = own.tool.diameter_mm / 2.0;
+    // #348: its lap comes off a rect tab taller than the step-down in
+    // stages, each a step-down at most, running a radius along the lap
+    // between them.
+    tab_descent::stage_tab_descents(
+        &mut own_block,
+        ctx.pass_z,
+        ctx.step_down_mm,
+        radius_mm,
+        ctx.rates.plunge_mm_min,
+    );
     let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
     // #339 review: the step is held to what it sweeps: the parts, not
     // the entries' waste domain or tab keep-outs, and the tabs'
     // material, which it runs above.
-    let radius_mm = own.tool.diameter_mm / 2.0;
     // The step comes no nearer any line of the operation than the bit's
     // radius, or than its ends already are (a lap D6 lets run nearer a
     // neighbour): it adds no cut into a part to what the two paths cut.

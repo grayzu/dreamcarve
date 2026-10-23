@@ -409,6 +409,15 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   first segment's two passes, in material the operation cuts. The check now
   accepts a step between one segment's two offsets as well; a step past an
   open end or on the kept side still fails ([#358]).
+- A Profile's last pass no longer comes down a tab taller than the step-down
+  in one move. The earlier passes never cut the allowance, so at a rect tab's
+  far end it dropped the tab's whole height into it: 6 mm for a 6 mm tab cut
+  in 4 mm passes, 10 mm in a 1.44 mm-step cut. It now comes down in stages,
+  first to the floor of the earlier pass beside it, then one pass level at a
+  time, running a bit radius along its own path between them. A last pass
+  that starts low on a smooth tab's slope, where the earlier passes ran
+  higher, now runs along its path to where the slope is as high and comes
+  back down the slope, instead of dropping straight onto it ([#348]).
 - A Profile's last pass no longer overloads the bit in a small hole cut
   Inside. Its centre runs a much smaller circle than the wall, so at the feed
   its cutting edge moved up to 4.8 times as fast in an 8 mm hole with a
@@ -648,6 +657,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#350]: https://github.com/grayzu/dreamcarve/issues/350
 [#339]: https://github.com/grayzu/dreamcarve/issues/339
 [#358]: https://github.com/grayzu/dreamcarve/issues/358
+[#348]: https://github.com/grayzu/dreamcarve/issues/348
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#302]: https://github.com/grayzu/dreamcarve/issues/302

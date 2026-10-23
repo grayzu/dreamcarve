@@ -25,6 +25,8 @@
 )]
 
 mod cases;
+#[path = "../support/heightfield.rs"]
+mod heightfield;
 mod projects;
 
 use dc_cam::test_support::assert_safe;

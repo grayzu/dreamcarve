@@ -3456,6 +3456,56 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    down at the start onto the slope, no lower than the lap cuts there.
    A tab taller than the step-down still has the last pass come down its
    height in one move there and at a rect tab's far end: #348.)
+   (Changed in #348, `profile::tab_descent`: the earlier passes never cut
+   the allowance strip, so wherever the last pass comes down it stands
+   under the cutter at the height the lap last cut it, and a straight drop
+   there goes its whole height into uncut material. Of the issue's
+   options this takes the staged descent: ending the allowance path's
+   raised stretches where the last pass's end cannot help, since in the
+   cases triage measured (#353, #358) those stretches are already the
+   shorter, and the strip is uncut whatever they do. Refusing or warning
+   would not fix it.
+   *A rect tab's far end* (`stage_tab_descents`): every straight drop of
+   the last pass's lap and overcut deeper than the step-down in effect
+   is cut in stages, as #339 holds every other plunge into uncut
+   material. It stops at each level of `pass_z` between the tab top and
+   the drop's foot, the floors the earlier passes cut (a gap wider than
+   the step-down, which the passes never leave, is split evenly), so the
+   first stage goes down to the floor of the pass before and each one
+   after a pass level at most. After each stage but the last the tool
+   runs level, at that stage's Z, along the lap's own moves after the
+   drop for one tool radius (less if the level run is shorter; an arc
+   keeps its centre and its feed), to that point or back to the drop, so
+   the stages alternate between the two; after the last it runs back to
+   the drop if it is not there, and the lap goes on as before. Every
+   stage then plunges at most a step-down below a layer just cut, and
+   every level move lies on the lap's path where the lap cuts at the
+   drop's foot, below it, so it touches no tab. Every entry gets the
+   same stages: a rect tab's lift and drop are straight moves whatever
+   the entry, as without a last pass. *A lap that starts on a smooth
+   tab's slope* (`onto_slope`, where the step runs higher than the lap
+   starts): of the issue's two options this enters at a point of the lap
+   at least as high as the step. An open path's lap must start at its
+   end (#311), so moving the start off the tab as #176 does is no option
+   there, and a closed lap starts there only by the user's start point.
+   From the step's end the tool runs level at the step's Z along the
+   lap's moves to where its slope rises to that height (on a closed lap
+   that starts on a tab's far slope, backwards along the lap's end), then
+   follows those moves back down to the lap's start, the descending ones
+   at the feed scaled to the plunge rate, as the lap cuts its own far
+   slopes. It never runs below the lap there, so into no tab. With one
+   tab height the slope always rises to the step's height, which is no
+   higher than the tab top; where it would not, the drop is kept.
+   Measured on the emitted G-code with a 0.1 mm heightfield
+   (`last_pass_entry::last_pass_entry_with_tall_tabs`: the 60 mm line
+   Left and Right and the 24 × 16 mm rectangle Inside and Outside, with
+   8 × 6 mm rect and smooth tabs, plunge and ramp, `reverse` off and on,
+   12 mm in 4 mm steps with a 6.35 mm bit): before, every rect case and
+   the line's smooth ones dropped 6 mm into uncut material; after, 4 mm,
+   the step-down, and no tab material is lost. The #358 case
+   (`properties::cases::inside_last_pass_helix_tabs_pass_first_exports`,
+   a 12.96 mm tab in 1.44 mm steps) dropped 10.02 mm; after, at most the
+   step-down.)
 5. **Relief** is planned on the final path, as now; its notches are in
    waste beyond the allowance. (changed in #284: every relief level is
    cut from the last pass, the only one whose lap opens the column at a
@@ -3693,7 +3743,10 @@ and the G-code heightfield checks (`dc-gcode`)
 `safety::s3_accepts_a_last_pass_edge_feed`,
 `emit::last_pass_edge_feed_is_written_rounded_down` and the heightfield check
 `last_pass_entry::last_pass_small_hole_load`; and (#350)
-`profile::last_pass_flattened_hole_edge_feed`.
+`profile::last_pass_flattened_hole_edge_feed`; and (#348)
+`profile::tab_descent::tests`, the heightfield check
+`last_pass_entry::last_pass_entry_with_tall_tabs` and the plunge depth of
+`properties::cases::inside_last_pass_helix_tabs_pass_first_exports`.
 
 ### A9. Tabs off corners and start point (format version 14)
 
