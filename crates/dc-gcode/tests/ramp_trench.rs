@@ -298,3 +298,90 @@ fn lead_ramp_below_tab_top_stays_in_the_trench() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// [`first_uncut`], checking only the ramps: the moves that fall while
+/// they move in XY. A last pass's lap takes the allowance standing to the
+/// stock top beside its path, which no pass above cut, so its level cuts
+/// are not held to the trench; its descent is.
+fn first_uncut_ramp(cuts: &[Vec<Point3>]) -> Option<Uncut> {
+    let mut heights = Heights::new();
+    for samples in cuts {
+        let ramp = match (samples.first(), samples.last()) {
+            (Some(a), Some(b)) => b.z < a.z - CUT_MM && a.xy().distance_to(b.xy()) > CUT_MM,
+            _ => false,
+        };
+        if ramp {
+            for p in samples.iter().filter(|p| p.z < STOCK_MM - CUT_MM) {
+                let (floor_mm, step_mm) = floor_above(p.z);
+                let limit_mm = floor_mm + step_mm - 0.05;
+                let mut worst: Option<f64> = None;
+                heights.each_within(*p, RADIUS_MM - REACH_MARGIN_MM, |cell| {
+                    if *cell > p.z + CUT_MM && *cell > limit_mm {
+                        worst = Some(worst.map_or(*cell, |w| w.max(*cell)));
+                    }
+                });
+                if let Some(stock_z_mm) = worst {
+                    return Some(Uncut {
+                        at: *p,
+                        stock_z_mm,
+                        floor_mm,
+                    });
+                }
+            }
+        }
+        for p in samples.iter().filter(|p| p.z < STOCK_MM) {
+            heights.each_within(*p, RADIUS_MM, |cell| *cell = cell.min(p.z));
+        }
+    }
+    None
+}
+
+/// #352 with #339: the issue's last-pass case. A 16/12 mm five-point star
+/// cut Inside, conventional, a 0.5 mm last pass allowance with `reverse`,
+/// the lead and a 10° ramp, three 6 × 3 mm rect tabs, requested and
+/// placed. On the emitted G-code every ramp, the allowance passes' and the
+/// last pass's, runs only through stock the moves before it cleared to
+/// within one step down of the floor of the pass above. Before #354 the
+/// last pass's ramp left the X 60.141 trench by 0.55 mm.
+#[test]
+fn last_pass_ramps_stay_in_the_trench() {
+    let star = Polyline::new(
+        (0..10)
+            .map(|k| {
+                let radius_mm = if k % 2 == 0 { 16.0 } else { 12.0 };
+                let angle_rad = f64::from(k) * std::f64::consts::PI / 5.0;
+                dc_geometry::Vertex::line(radius_mm * angle_rad.cos(), radius_mm * angle_rad.sin())
+            })
+            .collect(),
+        true,
+    );
+    for placed in [false, true] {
+        let mut p = project(
+            Side::Inside,
+            CutDirection::Conventional,
+            &Entry::Ramp { angle_deg: 10.0 },
+            3,
+            TabShape::Rect,
+            false,
+        );
+        if let Some(definition) = p.definitions.values_mut().next() {
+            definition.profiles = vec![star.clone()];
+        }
+        dc_project::test_support::profile_mut(&mut p).last_pass = Some(dc_project::LastPass {
+            allowance_mm: 0.5,
+            thickness_mm: None,
+            reverse: true,
+        });
+        if placed {
+            p = place_requests(&p).expect("the tabs place").0;
+        }
+        let cuts = cuts(&p);
+        assert!(
+            cuts.iter().flatten().any(|q| q.z.abs() <= 1e-6),
+            "placed {placed}: the last pass reaches the floor"
+        );
+        if let Some(uncut) = first_uncut_ramp(&cuts) {
+            panic!("placed {placed}: {uncut:?}");
+        }
+    }
+}
