@@ -39,8 +39,8 @@ use crate::toolpath::{Move, Toolpath};
 use crate::warning::{OpenPathReason, TabOnCornerReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
-    distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point, nest,
-    offset, offset_open, point_segment_distance_mm, strip_ends,
+    Vertex, distance_away_from_mm, distance_mm, inset_is_empty, meeting_points, nearest_point,
+    nest, offset, offset_open, point_segment_distance_mm, strip_ends,
 };
 use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, TabId, Tool,
@@ -708,6 +708,7 @@ pub fn generate_profile(
         start_z_mm,
         rates,
         tolerance_mm: project.flatten_tolerance_mm,
+        regions: &regions,
     };
     let path_at = |k: usize| {
         let ((path, shape), layout) = (paths.get(k)?, layouts.get(k)?);
@@ -1932,6 +1933,9 @@ struct PassCtx<'a> {
     start_z_mm: f64,
     rates: LapRates,
     tolerance_mm: f64,
+    /// The operation's regions: the lines no cut may come nearer than the
+    /// bit's radius (#339 review: the last pass's step).
+    regions: &'a [Region],
 }
 
 /// One tool-centre path, as [`pass_block`] cuts it.
@@ -2151,15 +2155,36 @@ fn last_pass_block(
         });
     };
     let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
-    // #339 review: the step is held to what it sweeps: the part, through
-    // the waste domain (not the entries' tab keep-outs), and the tabs'
+    // #339 review: the step is held to what it sweeps: the parts, not
+    // the entries' waste domain or tab keep-outs, and the tabs'
     // material, which it runs above.
-    let fits = |from: Point, to: Point| {
-        paths
-            .domain
-            .is_none_or(|d| d.plain.domain.segment_within(from, to, slack_mm))
-    };
     let radius_mm = own.tool.diameter_mm / 2.0;
+    // The step comes no nearer any line of the operation than the bit's
+    // radius, or than its ends already are (a lap D6 lets run nearer a
+    // neighbour): it adds no cut into a part to what the two paths cut.
+    let lines: Vec<&Polyline> = ctx
+        .regions
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .map(Contour::polyline)
+        .collect();
+    let fits = |from: Point, to: Point| {
+        if from.distance_to(to) <= EPS_MM {
+            return true;
+        }
+        let step = Polyline::new(
+            vec![Vertex::line(from.x, from.y), Vertex::line(to.x, to.y)],
+            false,
+        );
+        lines.iter().all(|line| {
+            let ends_mm = [from, to]
+                .iter()
+                .filter_map(|p| nearest_point(line, *p))
+                .map(|n| n.gap_mm)
+                .fold(f64::INFINITY, f64::min);
+            distance_mm(&step, line) >= ends_mm.min(radius_mm) - slack_mm
+        })
+    };
     let clear_z_mm = |from: Point, to: Point| match (ctx.tabs, own.layout) {
         (Some(_), Some((layout, _))) => {
             last_pass::tab_clear_z_mm(own.path, layout, z_mm, radius_mm, (from, to))
@@ -7101,6 +7126,44 @@ mod tests {
                 assert!(ramped, "{case}: the last pass ramps below Z {floor_mm}");
             }
         }
+    }
+
+    /// #339 review, from the property test: the last pass's step is held
+    /// to the operation's lines, not to the entries' waste domain, which
+    /// leaves out every other region's kerf. A 28.9 mm disc cut Outside
+    /// with an 8.4 × 10 mm hole and a 2.4 × 2.3 mm part inside it, a
+    /// 2.1 mm bit, a ramp and a 0.25 mm allowance: the small part's
+    /// domain lies wholly beyond its own path, and its step was refused as
+    /// leaving the waste. It is cut, and safe.
+    #[test]
+    fn last_pass_steps_beside_a_neighbours_kerf() {
+        let (a, b) = (4.212_446_961_402_92, 4.982_479_348_614_591);
+        let (c, d) = (1.192_218_418_059_746, 1.166_751_264_510_846_2);
+        let square = |a: f64, b: f64| {
+            closed(&[
+                (-a + 40.0, -b + 40.0),
+                (a + 40.0, -b + 40.0),
+                (a + 40.0, b + 40.0),
+                (-a + 40.0, b + 40.0),
+            ])
+        };
+        let disc = Polyline::new(
+            vec![
+                Vertex::new(40.0 - 14.453_060_993_366_394, 40.0, -1.0),
+                Vertex::new(40.0 + 14.453_060_993_366_394, 40.0, -1.0),
+            ],
+            true,
+        );
+        let mut p = last_pass_project_of(vec![disc, square(a, b), square(c, d)]);
+        p.tools[0].diameter_mm = 2.103_135_519_226_597_2;
+        let op = ProfileOp {
+            entry: Entry::Ramp { angle_deg: 14.0 },
+            step_down_mm: Some(2.27),
+            last_pass: Some(allowance(0.247_470_115_596_678_34)),
+            ..last_pass_op(&p, Side::Outside)
+        };
+        let (tp, _) = generate(&p, &op);
+        assert!(!tp.moves.is_empty());
     }
 
     /// #339 review: the last pass's step across the allowance runs above

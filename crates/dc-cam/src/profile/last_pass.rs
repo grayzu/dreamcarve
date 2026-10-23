@@ -567,9 +567,8 @@ pub(super) fn enter_from_twin(
 /// What holds the last pass's step across the allowance (#339 review):
 /// what the cutter sweeps along it, never the entries' tab keep-outs.
 pub(super) struct StepRules<'a> {
-    /// The straight step from the first point to the second keeps its
-    /// tool centre in the part path's waste, the bit's radius off the
-    /// part.
+    /// The straight step from the first point to the second cuts no part:
+    /// it comes no nearer a line than the bit's radius, or than its ends.
     pub fits: &'a dyn Fn(Point, Point) -> bool,
     /// The lowest Z, mm, the step from the first point to the second may
     /// run at and cut none of the tab material the last pass leaves
@@ -582,7 +581,8 @@ pub(super) struct StepRules<'a> {
 pub(super) enum StepRefused {
     /// No point of the earlier passes' cut is within reach of its start.
     NoReach,
-    /// The step would leave the waste: a defect, as an entry's would.
+    /// The step would cut into a part: a defect, as an entry that did
+    /// would be.
     OffWaste {
         /// Where the step starts.
         from: Point3,

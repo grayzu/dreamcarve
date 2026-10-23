@@ -3375,14 +3375,16 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    pass's lap starts at (a tab's height, #337), the allowance pass's cut
    on to its point nearest the last pass's start (its lap start, or its
    lead's staging point); straight up there to that Z if lower; and one
-   step at the feed to the last pass's start, which must lie in the part
-   path's waste domain. (Changed in the #339 review: below the tab top
+   step at the feed to the last pass's start. (Changed in the #339 review: below the tab top
    that was the domain less the tabs' entry keep-outs, the allowance
    path's widened stretches grown by `r`, which is right for a ramp or
    helix but refused a 0.5 mm step on the far side of a hole from its tab:
    318 projects main cut, every one with a ramp, helix or lead and tabs.
-   The step is now held to what it sweeps: its tool centre in the waste,
-   and above the tab material the last pass leaves,
+   The step is now held to what it sweeps: no nearer any line of the
+   operation than the bit's radius, or than its ends already are (the
+   entries' waste domain also leaves out every other region's kerf, so
+   it refused a small part's step inside a hole), and above the tab
+   material the last pass leaves,
    `last_pass::tab_clear_z_mm`, the highest that material stands within
    the radius of the step on an `r/12` lattice, so a step beside a tab
    rises over it. A step that leaves the waste would be a defect,
