@@ -283,7 +283,7 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
             )
         }
         ExportWarning::ArcFitFallback { op, runs } => format!(
-            "operation `{op}`: {runs} run(s) of straight moves kept as written because the controller would reject the arc fitted to them once rounded"
+            "operation `{op}`: {runs} run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them"
         ),
     }
 }

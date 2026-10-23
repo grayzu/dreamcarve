@@ -166,10 +166,15 @@ left as they are, and the post-processor must write arcs
 A fitted arc is checked twice. Before it is written, DreamCarve rounds its
 numbers as the post-processor will and runs the controller's own arc test
 on them (GRBL and grblHAL reject an arc whose start and end are not the
-same distance from its centre, beyond 0.005 mm); an arc that would fail is
-not written, and its whole run goes out as the original straight moves,
-with the warning `arc_fit_fallback` naming the operation and how many
-runs. After the program is written, the safety pass reads every arc back
+same distance from its centre, beyond 0.005 mm). To pass that test,
+DreamCarve may move the centre it writes by a unit or two in the last
+place, so it then checks the arc as written against the straight moves
+again, allowing the tolerance plus one unit in the last place, and checks
+that the arc still stands for at least three straight moves the program
+would write (a move too short to write doesn't count). An arc
+that fails any of these checks is not written, and its whole run goes out as the
+original straight moves, with the warning `arc_fit_fallback` naming the
+operation and how many runs. After the program is written, the safety pass reads every arc back
 and refuses the export unless it follows the toolpath's corners as above
 (rule 8 in [Safety](safety.md)).
 

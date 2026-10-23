@@ -41,6 +41,11 @@
 //!   lie on one circle.
 //! - A run with no known emitted start falls back to its moves instead of
 //!   being judged from its own start.
+//! - A run also falls back when its arcs as written, from their rounded
+//!   ends about the centre their snapped I and J (or R) give, stray from
+//!   the moves they replace by more than the tolerance plus one unit in
+//!   the last place, the budget S12 judges them by (#355). The snap moves
+//!   a centre up to two quanta each way, 0.0072 mm in inch.
 //! - The Kasa fit is `dc_geometry::fit_circle_kasa`.
 
 use std::cmp::Ordering;
@@ -828,42 +833,282 @@ fn snap_offsets(
     Some(best)
 }
 
-/// Whether every sub-arc of a run survives formatting, walking the
+/// Whether every sub-arc of `run` survives formatting, walking the
 /// formatted position from `start` (machine coordinates) through each
-/// sub-arc's end. `to_machine` maps project XY to machine XY.
+/// sub-arc's end: the controller accepts it, and as written it follows the
+/// moves it replaces ([`written_arcs_follow_moves`], #355). `to_machine`
+/// maps project XY to machine XY.
 fn run_survives_formatting(
-    arcs: &[SubArc],
+    run: &ArcRun,
     start: Point,
     opts: &EmitOptions<'_>,
     to_machine: &dyn Fn(Point) -> Point,
+    tolerance_mm: f64,
 ) -> bool {
+    let machine_mirrors = mirrors(to_machine);
+    let mut written = Vec::with_capacity(run.arcs.len());
     let mut position = start;
-    for arc in arcs {
+    for arc in &run.arcs {
         let end = to_machine(arc.end.xy());
         let centre = to_machine(arc.centre);
-        if !resolve_emitted_arc(end, centre, position, opts).accepted {
+        let emitted = resolve_emitted_arc(end, centre, position, opts);
+        if !emitted.accepted {
             return false;
         }
         let (Some(x), Some(y)) = ((opts.format)(end.x), (opts.format)(end.y)) else {
             return false;
         };
-        position = Point::new(x, y);
+        let target = Point::new(x, y);
+        let clockwise = arc.clockwise != machine_mirrors;
+        let Some(written_centre) = written_centre(position, target, &emitted, clockwise, opts)
+        else {
+            return false;
+        };
+        written.push(WrittenArc::new(position, target, written_centre, clockwise));
+        position = target;
     }
-    true
+    let Some(first) = run.arcs.first() else {
+        return false;
+    };
+    // The budget S12 gives a fitted arc: the tolerance plus one unit in
+    // the last written place, in output units; and how near, on each
+    // axis, it takes a vertex to be to the written end.
+    let (budget, reach) = if opts.mm_per_unit > 0.0 {
+        (
+            tolerance_mm / opts.mm_per_unit + opts.quantum,
+            opts.quantum + EPS_MM / opts.mm_per_unit,
+        )
+    } else {
+        return false;
+    };
+    written_arcs_follow_moves(
+        &written,
+        first.start.xy(),
+        &run.fallback,
+        to_machine,
+        tolerance_mm,
+        (budget, reach),
+    )
+}
+
+/// Whether `to_machine` mirrors the plane, so a clockwise arc in project
+/// space is counter-clockwise on the machine.
+fn mirrors(to_machine: &dyn Fn(Point) -> Point) -> bool {
+    let origin = to_machine(Point::new(0.0, 0.0));
+    let x = to_machine(Point::new(1.0, 0.0)) - origin;
+    let y = to_machine(Point::new(0.0, 1.0)) - origin;
+    x.cross(y) < 0.0
+}
+
+/// The centre the controller takes for an arc from `start` to `target`
+/// (formatted, machine coordinates) written with `emitted`'s words: the
+/// start plus the written I and J, or, with R, the centre on the
+/// `clockwise` side of the chord at the written radius.
+fn written_centre(
+    start: Point,
+    target: Point,
+    emitted: &EmittedArc,
+    clockwise: bool,
+    opts: &EmitOptions<'_>,
+) -> Option<Point> {
+    if opts.arc_format == ArcFormat::R {
+        let radius = (opts.format)(emitted.radius)?;
+        return Some(crate::safety::r_centre(
+            start.x, start.y, target.x, target.y, radius, clockwise,
+        ));
+    }
+    Some(Point::new(
+        start.x + (opts.format)(emitted.i)?,
+        start.y + (opts.format)(emitted.j)?,
+    ))
+}
+
+/// One sub-arc as the controller cuts it, machine coordinates: from its
+/// written start, about its written centre, to its written end.
+#[derive(Debug, Clone, Copy)]
+struct WrittenArc {
+    start: Point,
+    end: Point,
+    centre: Point,
+    radius: f64,
+    start_rad: f64,
+    sweep_rad: f64,
+    clockwise: bool,
+}
+
+impl WrittenArc {
+    fn new(start: Point, end: Point, centre: Point, clockwise: bool) -> Self {
+        let start_rad = (start.y - centre.y).atan2(start.x - centre.x);
+        let end_rad = (end.y - centre.y).atan2(end.x - centre.x);
+        let sweep_rad = if clockwise {
+            start_rad - end_rad
+        } else {
+            end_rad - start_rad
+        }
+        .rem_euclid(TAU);
+        Self {
+            start,
+            end,
+            centre,
+            radius: start.distance_to(centre),
+            start_rad,
+            sweep_rad,
+            clockwise,
+        }
+    }
+
+    /// The angle turned from the start, in the arc's direction, to `p`.
+    fn turn(&self, p: Point) -> f64 {
+        let angle = (p.y - self.centre.y).atan2(p.x - self.centre.x);
+        if self.clockwise {
+            self.start_rad - angle
+        } else {
+            angle - self.start_rad
+        }
+        .rem_euclid(TAU)
+    }
+
+    fn on_circle(&self, p: Point, budget: f64) -> bool {
+        (p.distance_to(self.centre) - self.radius).abs() <= budget
+    }
+
+    /// Whether `p` lies on the arc within `budget`, its ends included to
+    /// the angle `budget` makes at the radius.
+    fn holds(&self, p: Point, budget: f64) -> bool {
+        if !self.on_circle(p, budget) {
+            return false;
+        }
+        let slack = if self.radius > 0.0 {
+            budget / self.radius
+        } else {
+            TAU
+        };
+        let turn = self.turn(p);
+        turn <= self.sweep_rad + slack || turn >= TAU - slack
+    }
+
+    /// The turn to the point of the arc nearest `p` in angle: the start or
+    /// the end for `p` beyond them.
+    fn clamped_turn(&self, p: Point) -> f64 {
+        let turn = self.turn(p);
+        if turn <= self.sweep_rad {
+            turn
+        } else if turn - self.sweep_rad < TAU - turn {
+            self.sweep_rad
+        } else {
+            0.0
+        }
+    }
+
+    /// The farthest the arc between turns `from` and `to` lies from the
+    /// straight move `a` to `b`.
+    fn deviation(&self, from: f64, to: f64, a: Point, b: Point) -> f64 {
+        let sign = if self.clockwise { -1.0 } else { 1.0 };
+        arc_chord_deviation_mm(
+            self.centre,
+            self.radius,
+            self.start_rad + sign * from,
+            sign * (to - from),
+            a,
+            b,
+        )
+    }
+}
+
+/// Whether the `written` sub-arcs follow `moves`, the moves of the run
+/// they replace, from `start` (project space), as S12 judges them (#355):
+/// every vertex, and every shallow arc's midpoint, lies on a sub-arc in
+/// order, and over the part of every sub-arc between a move's ends the
+/// arc lies within `budget` (output units) of the move's chord. The
+/// written centre is not the fitted one: the I/J snap moves it up to two
+/// quanta each way so the rounded ends agree on the radius, which in inch
+/// is 0.0072 mm, and the fit's chords may already be bowed by nearly the
+/// whole tolerance. `tolerance_mm` decides which corner arcs are shallow.
+///
+/// S12 also needs [`MIN_RUN_CHORDS`] moves under the arcs, and counts
+/// neither a first move that ends within `reach` (output units, each
+/// axis) of the written start, which it reads as a straight move written
+/// as nothing, nor any move after the first vertex within `reach` of the
+/// last sub-arc's written end, where the run ends. So a run that begins
+/// or ends with chords too short to write has fewer moves than the fit
+/// counted (#355).
+fn written_arcs_follow_moves(
+    written: &[WrittenArc],
+    start: Point,
+    moves: &[Move],
+    to_machine: &dyn Fn(Point) -> Point,
+    tolerance_mm: f64,
+    (budget, reach): (f64, f64),
+) -> bool {
+    let (Some(first), Some(last)) = (written.first(), written.last()) else {
+        return false;
+    };
+    let near = |p: Point, q: Point| approx_eq(p.x, q.x, reach) && approx_eq(p.y, q.y, reach);
+    let mut piece = 0;
+    let mut covered = 0;
+    let mut from = start;
+    let mut vertex = to_machine(start);
+    for mv in moves {
+        let to = to_machine(mv.to.xy());
+        let midpoint = match mv.kind {
+            MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+                let cw = matches!(mv.kind, MoveKind::ArcCw { .. });
+                match shallow_arc_midpoint(from, mv.to.xy(), centre, cw, tolerance_mm) {
+                    Some(m) => Some(to_machine(m)),
+                    None => return false,
+                }
+            }
+            MoveKind::Linear => None,
+            MoveKind::Rapid | MoveKind::Dwell { .. } => return false,
+        };
+        let first_piece = piece;
+        for p in midpoint.into_iter().chain([to]) {
+            loop {
+                let Some(current) = written.get(piece) else {
+                    return false;
+                };
+                if current.holds(p, budget) {
+                    break;
+                }
+                if !current.on_circle(p, budget) || piece + 1 >= written.len() {
+                    return false;
+                }
+                piece += 1;
+            }
+        }
+        for arc in written.get(first_piece..=piece).unwrap_or_default() {
+            let (a, b) = (arc.clamped_turn(vertex), arc.clamped_turn(to));
+            if b > a && arc.deviation(a, b, vertex, to) > budget {
+                return false;
+            }
+        }
+        let counted = covered > 0 || !near(to, first.start);
+        if piece + 1 == written.len() && near(to, last.end) {
+            return covered + usize::from(counted) >= MIN_RUN_CHORDS;
+        }
+        covered += usize::from(counted);
+        from = mv.to.xy();
+        vertex = to;
+    }
+    covered >= MIN_RUN_CHORDS
 }
 
 /// Resolves `fitted` into what can be emitted: every run the controller
-/// would reject once formatted, or that has no known emitted start, is
-/// replaced by its original moves. `start` is the formatted machine XY
-/// the controller is at when the sequence begins, if known; `to_machine`
-/// maps project XY to machine XY. Returns the sequence and how many runs
-/// fell back. Ported from `applyEmittedArcFallback`.
+/// would reject once formatted, whose written arcs stray more than
+/// `tolerance_mm` plus one unit in the last place from the moves they
+/// replace (#355), or that has no known emitted start, is replaced by its
+/// original moves. `start` is the formatted machine XY the controller is
+/// at when the sequence begins, if known; `to_machine` maps project XY to
+/// machine XY; `tolerance_mm` is the one `fitted` was fitted with.
+/// Returns the sequence and how many runs fell back. Ported from
+/// `applyEmittedArcFallback`.
 #[must_use]
 pub fn apply_fallback(
     fitted: Vec<Fitted>,
     opts: &EmitOptions<'_>,
     start: Option<Point>,
     to_machine: &dyn Fn(Point) -> Point,
+    tolerance_mm: f64,
 ) -> (Vec<Fitted>, usize) {
     let formatted = |p: Point| -> Option<Point> {
         let m = to_machine(p);
@@ -879,8 +1124,9 @@ pub fn apply_fallback(
                 out.push(Fitted::Move(mv));
             }
             Fitted::Arc(run) => {
-                let survives = position
-                    .is_some_and(|p| run_survives_formatting(&run.arcs, p, opts, to_machine));
+                let survives = position.is_some_and(|p| {
+                    run_survives_formatting(&run, p, opts, to_machine, tolerance_mm)
+                });
                 if survives {
                     position = run.arcs.last().and_then(|a| formatted(a.end.xy()));
                     out.push(Fitted::Arc(run));
@@ -1602,7 +1848,7 @@ mod tests {
             Fitted::Move(Move::rapid(pt(10.0, 0.0, 0.0))),
             Fitted::Arc(inconsistent_run()),
         ];
-        let (out, runs) = apply_fallback(fitted, &mm3_opts(ArcFormat::Ij), None, &identity);
+        let (out, runs) = apply_fallback(fitted, &mm3_opts(ArcFormat::Ij), None, &identity, TOL);
         assert_eq!(runs, 1);
         assert_eq!(runs_of(&out), 0);
         assert_eq!(out.len(), 3, "the run's original moves, one for one");
@@ -1620,14 +1866,14 @@ mod tests {
         let good = arcs_of(&fitted).len();
         assert!(good > 0);
         let opts = mm3_opts(ArcFormat::Ij);
-        let (clean, runs) = apply_fallback(fitted.clone(), &opts, None, &identity);
+        let (clean, runs) = apply_fallback(fitted.clone(), &opts, None, &identity, TOL);
         assert_eq!(runs, 0, "well-formed spans do not fall back");
         assert!(worst_emitted_delta(&clean, &opts) <= ARC_RADIUS_CONSISTENCY_MM);
 
         let mut mixed = fitted;
         mixed.push(Fitted::Move(Move::rapid(pt(10.0, 0.0, 0.0))));
         mixed.push(Fitted::Arc(inconsistent_run()));
-        let (out, runs) = apply_fallback(mixed, &opts, None, &identity);
+        let (out, runs) = apply_fallback(mixed, &opts, None, &identity, TOL);
         assert_eq!(runs, 1, "only the offending run falls back");
         assert_eq!(arcs_of(&out).len(), good);
     }
@@ -1642,8 +1888,128 @@ mod tests {
         );
         assert!(!bad.accepted, "a chord longer than the diameter");
         let fitted = fit(&issue_447_moves(), TOL);
-        let (_, runs) = apply_fallback(fitted, &mm3_opts(ArcFormat::R), None, &identity);
+        let (_, runs) = apply_fallback(fitted, &mm3_opts(ArcFormat::R), None, &identity, TOL);
         assert_eq!(runs, 0, "the #447 span is representable in R format");
+    }
+
+    /// #355's run: 15 chords of a 9.2417 mm ring round a circular island,
+    /// each bowed 0.0099 mm by the arc through its ends, written in inch
+    /// from the work origin at (192.539, 119.461) mm.
+    fn island_ring_moves() -> Vec<Move> {
+        let z = 1.101_992_404_702_241_6;
+        let mut moves = vec![Move::rapid(pt(
+            198.036_678_761_243_82,
+            49.030_722_826_719_284,
+            z,
+        ))];
+        moves.extend(
+            [
+                (197.211_803_972_721_1, 48.811_046_928_167_34),
+                (196.410_717_070_102_7, 48.516_198_277_473_45),
+                (195.640_252_679_586_4, 48.148_692_429_065_704),
+                (194.906_984_120_607_38, 47.711_664_825_677_87),
+                (194.217_167_347_669_6, 47.208_844_006_061_554),
+                (193.576_687_693_595_9, 46.644_519_865_512_85),
+                (192.991_009_473_800_66, 46.023_507_028_818_13),
+                (192.465_129_464_864_73, 45.351_103_752_851_486),
+                (192.003_534_346_818_92, 44.633_046_746_253_97),
+                (191.610_162_228_345_87, 43.875_462_204_217_91),
+                (191.288_369_268_178_94, 43.084_813_594_818_115),
+                (191.040_900_856_256_48, 42.267_846_465_110_78),
+                (190.869_868_308_305_74, 41.431_530_833_244_324),
+                (190.776_730_835_437_77, 40.583_001_911_640_17),
+                (190.762_283_056_974_4, 39.729_499_012_231_83),
+            ]
+            .map(|(x, y)| Move::linear(pt(x, y, z), FEED)),
+        );
+        moves
+    }
+
+    fn island_ring_to_machine(p: Point) -> Point {
+        Point::new(
+            (p.x - 192.539_444_272_137_16) / 25.4,
+            (p.y - 119.461_040_582_034_09) / 25.4,
+        )
+    }
+
+    fn exact(value: f64) -> Option<f64> {
+        Some(value)
+    }
+
+    /// #355: the fitted arc lies within 0.0099 mm of every chord, but in
+    /// inch the I/J snap moves its centre two quanta each way (I 0.0773 →
+    /// 0.0771, J −0.3556 → −0.3554, 0.0072 mm) to agree on the radius to
+    /// 0.0002 mm instead of an already accepted 0.0013 mm. The arc as
+    /// written then bows 0.0126 mm off a chord, past the 0.0125 mm S12
+    /// allows, so the run is written as its moves. Unrounded, it is kept.
+    #[test]
+    fn snapped_arc_off_its_chords_falls_back() {
+        let fitted = fit(&island_ring_moves(), TOL);
+        assert_eq!(runs_of(&fitted), 1, "{fitted:?}");
+        let (out, runs) = apply_fallback(
+            fitted.clone(),
+            &inch4_opts(),
+            None,
+            &island_ring_to_machine,
+            TOL,
+        );
+        assert_eq!(runs, 1, "{out:?}");
+        assert_eq!(lines_of(&out), 15);
+        let unrounded = EmitOptions {
+            format: &exact,
+            arc_format: ArcFormat::Ij,
+            mm_per_unit: 25.4,
+            quantum: 0.0,
+        };
+        let (out, runs) = apply_fallback(fitted, &unrounded, None, &island_ring_to_machine, TOL);
+        assert_eq!(runs, 0, "{out:?}");
+        assert_eq!(runs_of(&out), 1);
+    }
+
+    /// A point at `deg` on a 2 mm circle about the origin.
+    fn on_2_mm_circle(deg: f64) -> Point3 {
+        let t = deg.to_radians();
+        pt(2.0 * t.cos(), 2.0 * t.sin(), 0.0)
+    }
+
+    /// The degrees 0.0002 mm, too short to write, turns on that circle.
+    fn sliver_deg() -> f64 {
+        (0.0002_f64 / 2.0).to_degrees()
+    }
+
+    /// `moves` fit one run, which falls back to its three moves.
+    fn three_moves_fall_back(moves: &[Move]) {
+        let fitted = fit(moves, TOL);
+        assert_eq!(runs_of(&fitted), 1, "{fitted:?}");
+        let (out, runs) = apply_fallback(fitted, &mm3_opts(ArcFormat::Ij), None, &identity, TOL);
+        assert_eq!(runs, 1, "{out:?}");
+        assert_eq!(lines_of(&out), 3);
+    }
+
+    /// #355: two 10° chords of a 2 mm circle and a third 0.0002 mm long,
+    /// too short to write. The fit takes all three, but S12 counts only the
+    /// moves up to the first vertex at the run's written end, two, so the
+    /// run is written as its moves.
+    #[test]
+    fn run_ending_in_a_sliver_falls_back() {
+        three_moves_fall_back(&[
+            Move::rapid(on_2_mm_circle(0.0)),
+            Move::linear(on_2_mm_circle(10.0), FEED),
+            Move::linear(on_2_mm_circle(20.0), FEED),
+            Move::linear(on_2_mm_circle(20.0 + sliver_deg()), FEED),
+        ]);
+    }
+
+    /// #355: the sliver first. S12 reads it as a straight move written as
+    /// nothing, before the arcs, and counts two moves under them.
+    #[test]
+    fn run_starting_with_a_sliver_falls_back() {
+        three_moves_fall_back(&[
+            Move::rapid(on_2_mm_circle(0.0)),
+            Move::linear(on_2_mm_circle(sliver_deg()), FEED),
+            Move::linear(on_2_mm_circle(10.0), FEED),
+            Move::linear(on_2_mm_circle(20.0), FEED),
+        ]);
     }
 
     #[test]
