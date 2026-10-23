@@ -401,6 +401,14 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   across the allowance onto its own path. No plunge goes deeper into uncut
   material than a step-down. A last pass lead-in that starts too far from
   the earlier passes' cut is left off with `lead_dropped` ([#339]).
+- A Left or Right Profile with a last pass no longer fails export when its
+  open path's end comes back beside its start. The two passes then start
+  where they come within their own distance of that end, on two circles round
+  it, so the last pass's step across the allowance runs a little off the
+  normal, and the safety check refused it although it stays between the
+  first segment's two passes, in material the operation cuts. The check now
+  accepts a step between one segment's two offsets as well; a step past an
+  open end or on the kept side still fails ([#358]).
 - A Profile's last pass no longer overloads the bit in a small hole cut
   Inside. Its centre runs a much smaller circle than the wall, so at the feed
   its cutting edge moved up to 4.8 times as fast in an 8 mm hole with a
@@ -636,6 +644,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#335]: https://github.com/grayzu/dreamcarve/issues/335
 [#350]: https://github.com/grayzu/dreamcarve/issues/350
 [#339]: https://github.com/grayzu/dreamcarve/issues/339
+[#358]: https://github.com/grayzu/dreamcarve/issues/358
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#302]: https://github.com/grayzu/dreamcarve/issues/302
