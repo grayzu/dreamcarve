@@ -473,8 +473,11 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   the one above it ran below the stock top, zigzagging within that, and
   the safety pass's S9 counts an earlier cut as trench only where it ran
   below the stock top. Before, S9 counted the whole cut, so the program
-  exported with arc fitting off and failed with it on. No committed
-  program changes ([#356]).
+  exported with arc fitting off and failed with it on. The same fix lets
+  an Inside Profile with a 16.7° ramp, a lead and a last pass export: its
+  second pass had ramped 0.41 mm past the trench, 8.05 mm deep into uncut
+  stock, and S9 refused it. No committed program changes ([#356],
+  [#366]).
 - The CLI no longer panics when its output pipe closes, as in
   `dreamcarve check part.dcv | head`; it finishes its work and exits with its
   own status ([#216]).
@@ -660,3 +663,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#353]: https://github.com/grayzu/dreamcarve/issues/353
 [#355]: https://github.com/grayzu/dreamcarve/issues/355
 [#356]: https://github.com/grayzu/dreamcarve/issues/356
+[#366]: https://github.com/grayzu/dreamcarve/issues/366
