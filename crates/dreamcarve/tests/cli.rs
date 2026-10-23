@@ -8459,7 +8459,10 @@ fn hand_edited_holds_slug_is_refused_with_its_place() {
 /// outline, which warn `tab_on_hole` on every export; tabs placed for the
 /// cut, then the bit changed, which warn too; and `--count --on-holes`
 /// tabs, off corners, on a Profile with a last pass and a start point,
-/// which sit on the path and do not.
+/// which sit on the path and do not. (Changed in #339: that last pass now
+/// enters from the allowance path, as one more earlier pass would, so its
+/// committed program is the one the build with #339 writes; the other
+/// programs, without a last pass, are unchanged.)
 #[test]
 fn version_14_projects_export_byte_identical_programs_and_warnings() {
     let dir = work_dir("version_14_projects_export_byte_identical_programs_and_warnings");

@@ -45,7 +45,7 @@ pub use engrave::generate_engrave;
 pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use footprint::footprint;
 pub use pocket::generate_pocket;
-pub use profile::{Wall, generate_profile, traversal_is_ccw};
+pub use profile::{Wall, generate_profile, last_pass_step_reach_mm, traversal_is_ccw};
 pub use sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
 pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};

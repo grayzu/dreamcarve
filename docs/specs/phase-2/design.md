@@ -3370,7 +3370,59 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    bore of the earlier passes to rejoin, helixes from 1 mm above the stock
    instead. S2 is unchanged. The allowance path's domain is the waste less
    the part grown by `r + a`; a reversed last pass's helix turns the other
-   way.)
+   way. Changed in #339, `profile::last_pass_block` and
+   `last_pass::enter_from_twin`: that plunge went through the allowance's
+   uncut strip, which stands to the stock top beside the part, so it ran
+   up to the full depth into material. Of the issue's two options this takes the
+   first, the configured entry from the earlier passes' floor: a staged
+   straight plunge at the last pass's own XY can never start in cleared
+   material, since the strip lies under the cutter there at every depth.
+   The last pass's block is built from the block one more pass of the
+   allowance path would be at the last depth, its descent by the entry
+   from the previous pass Z where that pass ended: a plunge one step-down
+   (or `t`) deep; a helix rejoining its bore; a ramp along the allowance
+   path itself (`PathEntry::Along`, its run cut short before a tab as On
+   line's), in the kerf every earlier pass cut, so it never leaves it (a
+   led allowance path keeps the entry planned at its staging point, which
+   its earlier passes descended at). Then, at or below the Z the last
+   pass's lap starts at (a tab's height, #337), the allowance pass's cut
+   on to its point nearest the last pass's start (its lap start, or its
+   lead's staging point); straight up there to that Z if lower; and one
+   step at the feed to the last pass's start. (Changed in the #339 review: below the tab top
+   that was the domain less the tabs' entry keep-outs, the allowance
+   path's widened stretches grown by `r`, which is right for a ramp or
+   helix but refused a 0.5 mm step on the far side of a hole from its tab:
+   318 projects main cut, every one with a ramp, helix or lead and tabs.
+   The step is now held to what it sweeps: no nearer any line of the
+   operation than the bit's radius, or than its ends already are (the
+   entries' waste domain also leaves out every other region's kerf, so
+   it refused a small part's step inside a hole), and above the tab
+   material the last pass leaves,
+   `last_pass::tab_clear_z_mm`, the highest that material stands within
+   the radius of the step on an `r/12` lattice, so a step beside a tab
+   rises over it. A step that leaves the waste would be a defect,
+   `OffMaterial`.) That point is at most
+   `max(D/3, √2·a + 0.05) + 0.05` mm away, the bound
+   `cuts_only_corners` holds every point of the part path to. A part
+   path whose seam is free (no lead, no explicit start) is re-seamed at
+   its point nearest the allowance path's start, so the step is the
+   allowance and nothing of the allowance pass is cut again; an
+   allowance path is led in at its point nearest the part path's lead
+   arrival (`lead_in_beside`), so with the same arc the step joins the
+   staging points `a` apart. A last pass lead-in whose staging point is
+   farther is left off with `lead_dropped` (`no_room`), the step going
+   to its lap start; no step that fits is `ShapeNarrowerThanAllowance`.
+   Measured on the emitted G-code with a 0.1 mm heightfield
+   (`last_pass_entry::last_pass_entry_never_plunges_deeper_than_step_down`,
+   12 mm in 4 mm steps with a 6.35 mm bit): before, the deepest plunge
+   into uncut material was 12 mm with a plunge entry, 8 mm with a ramp
+   (11 mm with `thickness_mm` 1); after, 4 mm, the step-down, in every
+   case. Where the last pass's lap starts on a tab (#337), the step runs
+   at the height the lap starts at; if the allowance path's cut is
+   higher there (a smooth tab's slope), at its height, and the tool comes
+   down at the start onto the slope, no lower than the lap cuts there.
+   A tab taller than the step-down still has the last pass come down its
+   height in one move there and at a rect tab's far end: #348.)
 5. **Relief** is planned on the final path, as now; its notches are in
    waste beyond the allowance. (changed in #284: every relief level is
    cut from the last pass, the only one whose lap opens the column at a
@@ -3448,13 +3500,24 @@ bit against the part, so it takes a last pass as Inside and Outside do.
    (`entry::along_path`); a helix stays `HelixNeedsWasteSide`. No lead
    and no relief, as without a last pass. The last pass plunges through
    the column the earlier passes cleared, as on an outline (step 4).
+   (Changed in #339: as on an outline, the last pass goes down on the
+   allowance path, ramping along it, and steps across on the end normal;
+   with `reverse` it goes down on the allowance path run backwards
+   (`Polyline::reversed`, `PathTabs::reversed_open`), at the end where
+   the earlier passes ended, so the tool does not retract.)
 7. **`reverse`** runs the last pass's path backwards (`Polyline::reversed`)
    from the other end, where the earlier passes end, with its layout
    measured from there (`PathTabs::reversed_open`), so the tabs stay put
    and the milling mode flips, as it does on an outline.
 8. **S9** (`Material::SideProfile`): with a last pass the open paths
    offset by `r + a` to the side are tool-centre paths too; every cut
-   still keeps `r` from every open path and kept edge.
+   still keeps `r` from every open path and kept edge. (Changed in #339:
+   so is the last pass's step across the band between the two offsets,
+   `AllowanceBand`: a level move from the `r + a` offset to the `r` one,
+   through points whose distances to them add up to `a`, no longer than
+   `dc_cam::last_pass_step_reach_mm`, the generator's own bound. A move
+   along the band, steps chained inside it, or one that falls through it
+   is refused.)
 
 Tests: `profile::last_pass_left_offsets_earlier_passes`,
 `profile::last_pass_left_right_tabs_cover_same_stretch` (the rise is
@@ -3481,7 +3544,11 @@ Tests: `migrate::v12_to_v13_adds_null_last_pass`,
 `profile::last_pass_tabs_cover_same_stretch`,
 `profile::last_pass_band_too_narrow_for_allowance`,
 `profile::last_pass_inside_rectangle`, `profile::no_last_pass_is_byte_identical`,
-`safety::last_pass_program_passes_s9`.
+`safety::last_pass_program_passes_s9`; and (#339) `profile::last_pass_uses_the_configured_entry`
+and the G-code heightfield checks (`dc-gcode`)
+`last_pass_entry::last_pass_entry_never_plunges_deeper_than_step_down`,
+`last_pass_entry::last_pass_entry_keeps_the_tabs` and
+`last_pass_entry::no_last_pass_programs_are_unchanged`.
 
 ### A9. Tabs off corners and start point (format version 14)
 

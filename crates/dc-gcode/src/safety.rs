@@ -6240,6 +6240,24 @@ mod tests {
             matches!(&err, ExportError::OffMaterial { line: 5, .. }),
             "half the allowance off: {err:?}"
         );
+        // #339: the last pass's step across the allowance, from the
+        // earlier passes' path to its own, level, passes; the same step in
+        // two halves, or falling as it crosses, fails at the move that
+        // starts or falls inside the band.
+        let step = |moves: &str| {
+            format!("G21 G90\nG54\nG0 Z5\nX10 Y63.675\nG1 Z-1 F300\n{moves}X70 F1000\nG0 Z5\n")
+        };
+        check_material_text(&step("Y63.175 F1000\n"), &project, &op).unwrap();
+        for (case, moves, line) in [
+            ("in halves", "Y63.425 F1000\nY63.175\n", 6),
+            ("falling", "G1 Z-0.5 F300\nY63.175 Z-1\n", 7),
+        ] {
+            let err = check_material_text(&step(moves), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { line: l, .. } if *l == line),
+                "{case}: {err:?}"
+            );
+        }
     }
 
     /// #105: programs cut round placed tabs pass the safety pass (S1–S7,

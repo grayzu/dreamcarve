@@ -230,6 +230,9 @@ pub(crate) enum Material {
         /// and of its strip's two ends (#342): what the cut keeps the
         /// tool radius from.
         keep_clear: Vec<Edge>,
+        /// With a last pass (#339): where its step across the allowance,
+        /// from the earlier passes' path to its own, may run.
+        steps: Option<AllowanceBand>,
     },
     /// An Engrave's target paths, as segments.
     OnLine {
@@ -683,17 +686,15 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
     let allowance_left_mm = allowance_mm
         .filter(|a| a.is_finite() && *a > 0.0)
         .map(|a| (left_mm.abs() + a).copysign(left_mm));
-    let centres = open
-        .iter()
-        .flat_map(|p| {
-            let mut paths = offset_open(p, left_mm);
-            if let Some(far_mm) = allowance_left_mm {
-                paths.extend(offset_open(p, far_mm));
-            }
-            paths
-        })
-        .flat_map(|c| edges_of(&c).collect::<Vec<_>>())
-        .collect();
+    let offsets = |by_mm: f64| -> Vec<Edge> {
+        open.iter()
+            .flat_map(|p| offset_open(p, by_mm))
+            .flat_map(|c| edges_of(&c).collect::<Vec<_>>())
+            .collect()
+    };
+    let near = offsets(left_mm);
+    let far = allowance_left_mm.map(offsets);
+    let centres = near.iter().chain(far.iter().flatten()).copied().collect();
     // #342: the strip closed at each end by the normal through the end
     // vertex, cut short at the first line it meets, so a cutter that
     // reaches past an end into the strip fails however the offset runs.
@@ -707,9 +708,65 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
         .flat_map(|p| edges_of(p))
         .chain(kept.flat_map(|k| edges_of(&k).collect::<Vec<_>>()))
         .collect();
+    let steps = far
+        .zip(allowance_mm)
+        .map(|(far, allowance_mm)| AllowanceBand {
+            near,
+            far,
+            allowance_mm,
+            step_mm: dc_cam::last_pass_step_reach_mm(2.0 * left_mm.abs(), allowance_mm),
+        });
     Material::SideProfile {
         centres,
         keep_clear,
+        steps,
+    }
+}
+
+/// The band between a Left or Right Profile's last pass path and the
+/// path its earlier passes cut, `allowance_mm` farther to the side
+/// (#339): the last pass steps across it at its start, from the earlier
+/// passes' kerf onto its own path.
+#[derive(Debug, Clone)]
+pub(crate) struct AllowanceBand {
+    /// The last pass's paths' segments.
+    near: Vec<Edge>,
+    /// The earlier passes' paths' segments.
+    far: Vec<Edge>,
+    allowance_mm: f64,
+    /// The longest step, mm.
+    step_mm: f64,
+}
+
+impl AllowanceBand {
+    /// True when `path`, a level cut, is a step across the band: from
+    /// the earlier passes' path to the last pass's, no longer than
+    /// [`AllowanceBand::step_mm`], its middle between the two
+    /// ([`AllowanceBand::holds`]). A cut along the band, several short ones
+    /// chained in it, or one that falls through it, is no move the
+    /// generator makes: each would start or end inside the band, or fall.
+    fn allows(&self, path: Segment, level: bool, slack_mm: f64) -> bool {
+        let on = |edges: &[Edge], p: Point| on_line(edges, p, slack_mm);
+        level
+            && path.length_mm() <= self.step_mm + slack_mm
+            && on(&self.far, path.start)
+            && on(&self.near, path.end)
+            && points_of(path).iter().all(|&p| self.holds(p, slack_mm))
+    }
+
+    /// True when `p` lies between the two paths: its distances to them
+    /// add up to the allowance, within `slack_mm` each.
+    fn holds(&self, p: Point, slack_mm: f64) -> bool {
+        let reach_mm = self.allowance_mm + slack_mm;
+        let gap = |edges: &[Edge]| {
+            let at = Rect::from_point(p);
+            edges
+                .iter()
+                .filter(|e| near(at, e.bounds, reach_mm))
+                .map(|e| point_segment_distance_mm(e.segment, p))
+                .fold(f64::INFINITY, f64::min)
+        };
+        gap(&self.near) + gap(&self.far) <= self.allowance_mm + 2.0 * slack_mm
     }
 }
 
@@ -1210,12 +1267,21 @@ pub(crate) fn check(
             Material::SideProfile {
                 centres,
                 keep_clear,
+                steps,
             } => {
                 let clearance_mm = radius_mm - slack_mm;
                 let bounds = bounds_of(path);
-                points_of(path)
+                (points_of(path)
                     .iter()
                     .all(|&p| on_line(centres, p, slack_mm))
+                    || steps.as_ref().is_some_and(|s| {
+                        let level = mv
+                            .from
+                            .z
+                            .zip(mv.to.z)
+                            .is_some_and(|(a, b)| (a - b).abs() <= EPS_MM);
+                        s.allows(path, level, slack_mm)
+                    }))
                     && keep_clear
                         .iter()
                         .filter(|e| near(bounds, e.bounds, clearance_mm))

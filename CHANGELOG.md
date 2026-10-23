@@ -382,6 +382,16 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
 
 ### Fixed
 
+- A Profile's last pass no longer plunges through its allowance. It went
+  straight down at its own start, where the allowance stands uncut to the
+  stock top, as far as the earlier passes' floor before its ramp, or to the
+  full depth with a plunge entry: up to 12 mm into material on a 12 mm cut in
+  4 mm passes. It now goes down where the earlier passes ended, into their
+  floor, with the operation's entry (a plunge one step-down deep, a ramp
+  along their path inside their slot, a helix in their bore), then steps
+  across the allowance onto its own path. No plunge goes deeper into uncut
+  material than a step-down. A last pass lead-in that starts too far from
+  the earlier passes' cut is left off with `lead_dropped` ([#339]).
 - The post-processors chapter no longer says that on LinuxCNC a `G53` lift
   outside the soft limits stops the program before the machine moves.
   LinuxCNC refuses the lift when it reads ahead to it, so the job can stop
@@ -567,6 +577,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#324]: https://github.com/grayzu/dreamcarve/issues/324
 [#311]: https://github.com/grayzu/dreamcarve/issues/311
 [#337]: https://github.com/grayzu/dreamcarve/issues/337
+[#339]: https://github.com/grayzu/dreamcarve/issues/339
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
 [#302]: https://github.com/grayzu/dreamcarve/issues/302
