@@ -6766,6 +6766,85 @@ mod tests {
         }
     }
 
+    /// An ellipse `width_mm` × `height_mm` centred on the origin, flattened
+    /// counter-clockwise to straight segments no farther than
+    /// `tolerance_mm` from the curve, as an importer flattens a DXF
+    /// `ELLIPSE` or SVG Bézier (#350): each chord's sagitta is
+    /// `tolerance_mm` at the curve's local radius of curvature.
+    fn flattened_ellipse(width_mm: f64, height_mm: f64, tolerance_mm: f64) -> Polyline {
+        let (a, b) = (width_mm / 2.0, height_mm / 2.0);
+        let mut vertices = Vec::new();
+        let mut t: f64 = 0.0;
+        while t < TAU - 1e-9 {
+            vertices.push(Vertex::line(a * t.cos(), b * t.sin()));
+            let speed = (a * a * t.sin().powi(2) + b * b * t.cos().powi(2)).sqrt();
+            let curvature_radius_mm = speed.powi(3) / (a * b);
+            let chord_mm = (8.0 * tolerance_mm * curvature_radius_mm).sqrt();
+            t += chord_mm / speed;
+        }
+        Polyline::new(vertices, true)
+    }
+
+    /// The codes of `warnings` that are `last_pass_flattened_curve`.
+    fn flattened_curve_warnings(warnings: &[Warning]) -> Vec<&Warning> {
+        warnings
+            .iter()
+            .filter(|w| w.code().as_str() == "last_pass_flattened_curve")
+            .collect()
+    }
+
+    /// #350: a curve drawn as straight segments gets none of #335's
+    /// slowdown, so round its inside bends the last pass's cutting edge
+    /// moves faster than the feed. The last pass's feeds stay as they are,
+    /// and the result warns `last_pass_flattened_curve`, naming the shape:
+    /// a 12 × 8 mm ellipse flattened to 0.01 mm, cut Inside with a 6.35 mm
+    /// bit at 0.5 mm, climb and conventional. The 60 × 40 mm rectangle,
+    /// Inside and Outside, and a true-arc 10 mm hole carry no such warning.
+    #[test]
+    fn last_pass_flattened_hole_edge_feed() {
+        let ellipse = flattened_ellipse(12.0, 8.0, 0.01);
+        let outline = at_20_20().apply_polyline(&ellipse).unwrap();
+        let p = last_pass_project_of(vec![ellipse]);
+        for direction in [CutDirection::Climb, CutDirection::Conventional] {
+            let op = ProfileOp {
+                direction,
+                ..last_pass_op(&p, Side::Inside)
+            };
+            let (tp, warnings) = generate(&p, &op);
+            assert_safe(&tp, &p, &Operation::Profile(op.clone()));
+            let flagged = flattened_curve_warnings(&warnings);
+            assert_eq!(flagged.len(), 1, "{direction:?}: {warnings:?}");
+            let message = flagged[0].to_string();
+            assert!(message.contains("`Shape`"), "{message}");
+            assert!(message.contains("times the feed"), "{message}");
+            assert_eq!(flagged[0].op(), Some(&op.id));
+            // Feeds unchanged: every level cut of the last pass runs at
+            // the feed.
+            let split = last_pass_start(&tp, &outline, LAST_PASS_Z_MM[1], ALLOWANCE_MM);
+            let mut at = tp.moves[split].to;
+            for mv in &tp.moves[split + 1..] {
+                if !mv.is_rapid() && (mv.to.z - at.z).abs() <= EPS_MM {
+                    assert_eq!(mv.feed_mm_min, Some(FEED_MM_MIN), "{direction:?}: {mv:?}");
+                }
+                at = mv.to;
+            }
+        }
+        for side in [Side::Inside, Side::Outside] {
+            let p = last_pass_project();
+            let (_, warnings) = generate(&p, &last_pass_op(&p, side));
+            assert!(
+                flattened_curve_warnings(&warnings).is_empty(),
+                "rectangle {side:?}: {warnings:?}"
+            );
+        }
+        let p = last_pass_project_of(vec![round_hole(10.0)]);
+        let (_, warnings) = generate(&p, &last_pass_op(&p, Side::Inside));
+        assert!(
+            flattened_curve_warnings(&warnings).is_empty(),
+            "true-arc hole: {warnings:?}"
+        );
+    }
+
     /// #310 review: a cut of one pass has no pass before the last to
     /// leave the allowance, so it cuts as without a last pass and warns
     /// `last_pass_unused`.
