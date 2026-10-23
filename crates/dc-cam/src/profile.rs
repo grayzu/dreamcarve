@@ -785,15 +785,15 @@ pub fn generate_profile(
     }
     warnings.extend(entry_warnings.into_warnings(&op.id));
     if let Some(allowance_mm) = allowance_mm {
-        let floor = allowance_mm / (allowance_mm + radius_mm);
-        warnings.extend(tight_arcs.into_iter().map(|(shape, radius_mm_of)| {
+        let floor_fraction = allowance_mm / (allowance_mm + radius_mm);
+        warnings.extend(tight_arcs.into_iter().map(|(shape, arc_radius_mm)| {
             Warning::LastPassEdgeFaster {
                 op: op.id.clone(),
                 shape,
-                radius_mm: radius_mm_of,
+                radius_mm: arc_radius_mm,
                 allowance_mm,
-                feed_mm_min: rates.feed_mm_min * floor,
-                edge_ratio: floor * (radius_mm_of + radius_mm) / radius_mm_of,
+                feed_mm_min: rates.feed_mm_min * floor_fraction,
+                edge_ratio: floor_fraction * (arc_radius_mm + radius_mm) / arc_radius_mm,
             }
         }));
     }
@@ -2102,7 +2102,7 @@ struct Entered {
     /// from the twin's kerf to step to.
     lead_dropped: bool,
     /// #335: the tightest inside arc whose feed is held at
-    /// `EdgeFeed::floor`, where the edge moves faster than the feed.
+    /// `EdgeFeed::floor_fraction`, where the edge moves faster than the feed.
     tight_mm: Option<f64>,
 }
 

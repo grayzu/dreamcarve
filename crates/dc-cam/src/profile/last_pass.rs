@@ -539,20 +539,22 @@ impl EdgeFeed {
     /// smallest hole the last pass cuts (`D + 2a` across, its tool centre
     /// on a circle of `a`). The safety pass's S3 accepts no lower level
     /// feed, so the generator cannot invent one.
-    pub(super) fn floor(&self) -> f64 {
+    pub(super) fn floor_fraction(&self) -> f64 {
         self.allowance_mm / (self.allowance_mm + self.radius_mm)
     }
 
     /// Lowers the feed of every level arc of `cuts` (cut from a point at
     /// `start_z_mm`) that turns round the wall at the cutting feed to
     /// `feed · ρ / (ρ + r)`, `ρ` its radius, and no lower than
-    /// [`EdgeFeed::floor`]. Arcs round the part's outside corners, where
-    /// the edge moves slower than the centre, straight cuts and the moves
-    /// over tabs keep their feeds. Returns the tightest radius held at the
+    /// [`EdgeFeed::floor_fraction`]. Arcs round the part's outside corners,
+    /// where the edge moves slower than the centre, straight cuts, and the
+    /// ramps and lifts over tabs keep their feeds; a level arc over a
+    /// tab's top is lowered too, since it still cuts the allowance above
+    /// the tab. Returns the tightest radius held at the
     /// floor, under the allowance, whose edge moves faster than the feed.
     pub(super) fn apply(&self, cuts: &mut [Move], start_z_mm: f64) -> Option<f64> {
         let mut z_mm = start_z_mm;
-        let mut tight: Option<f64> = None;
+        let mut tightest_mm: Option<f64> = None;
         for mv in cuts.iter_mut() {
             let level = (mv.to.z - z_mm).abs() <= EPS_MM;
             z_mm = mv.to.z;
@@ -566,20 +568,20 @@ impl EdgeFeed {
             if !level || ccw != self.wall_on_right {
                 continue;
             }
-            let Some(feed) = mv
+            let Some(feed_mm_min) = mv
                 .feed_mm_min
                 .filter(|f| (f - self.feed_mm_min).abs() <= EPS_MM)
             else {
                 continue;
             };
-            let rho = mv.to.xy().distance_to(centre);
-            let scale = rho / (rho + self.radius_mm);
-            if scale < self.floor() - EPS_MM {
-                tight = Some(tight.map_or(rho, |t: f64| t.min(rho)));
+            let rho_mm = mv.to.xy().distance_to(centre);
+            let scale_fraction = rho_mm / (rho_mm + self.radius_mm);
+            if scale_fraction < self.floor_fraction() - EPS_MM {
+                tightest_mm = Some(tightest_mm.map_or(rho_mm, |t_mm: f64| t_mm.min(rho_mm)));
             }
-            mv.feed_mm_min = Some(feed * scale.max(self.floor()));
+            mv.feed_mm_min = Some(feed_mm_min * scale_fraction.max(self.floor_fraction()));
         }
-        tight
+        tightest_mm
     }
 }
 

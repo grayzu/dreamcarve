@@ -3432,9 +3432,12 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    removed per minute per mm of depth to `feed · (a − a² / 2(ρ + r))`,
    under a straight wall's `feed · a`, where the removal's own scale,
    `ρ / (ρ + r − a/2)`, would leave the edge faster. Lead arcs, straight
-   cuts, outside arcs (where the edge is slower than the centre), moves
-   over tabs and the earlier passes, which cut a full slot as without a
-   last pass, keep the feed. The scale is never below `a / (a + r)`, the
+   cuts, outside arcs (where the edge is slower than the centre), the
+   ramps and lifts over tabs, and the earlier passes, which cut a full
+   slot as without a last pass, keep the feed. A level arc over a tab's
+   top is slowed like the rest of the lap: it still cuts the allowance
+   above the tab. (Changed in the #335 review: this said every move over
+   a tab kept the feed, which the code never did.) The scale is never below `a / (a + r)`, the
    edge's in the smallest hole the last pass cuts (`D + 2a`, its centre
    on a circle of `a`): S3 accepts a last pass's level cut down to
    `feed · a / (a + r)` and no slower, so the generator cannot invent a
