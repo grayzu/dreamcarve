@@ -511,6 +511,15 @@ relief notch that runs within `r` of its outline counts as that lap
 here too: a T-bone in a hole's corner beside an island part closer than
 the tool starts at the lap's corner and runs away from the island, so
 it comes no nearer the island than the lap does (#231).
+An Inside or Outside Profile's ramp or helix below the stock top, in a
+run of falling moves that started below it, runs only on the bit's path
+round its targets or along an earlier cut of the operation (#352). An
+earlier cut counts only where it ran below the stock top itself, no
+slack taken: the part of each cut below the top is recorded, not the
+whole cut. (changed in #356: a whole cut was recorded once any of it ran
+below the top less the slack, which includes the arc-fit tolerance, so a
+ramp leg that dipped 0.015 mm below the top at its end counted as trench
+along its whole length with arc fitting off, and not at all with it on.)
 (changed in #192: the exception covered every other outline, so an
 Inside island's lap in a band narrower than the tool passed although
 `ToolpathsOverlap` never compares one region's lines; dc-cam now refuses
@@ -1001,7 +1010,18 @@ cut direction and cut side.
   plunges with `too_small`. The tab re-seam below judges a candidate the
   same way. (changed in #352: below the tab top the tabbed plan's own
   chord was cut, a line no earlier pass had cleared, so the first such
-  pass ramped up to `3·D` into full-height stock at the feed.) A contour cut without a lead whose passes below
+  pass ramped up to `3·D` into full-height stock at the feed.) Either
+  ramp runs only as far from the target as the previous pass's ramp ran
+  at least one unit in the last written place below the stock top
+  (`CutEntry::reach_mm`; one unit, so the program's rounding of each Z by
+  half a unit keeps that stretch below the top): when its zigzag would
+  run farther, it zigzags on its line cut short there
+  (`EntryPlan::cut_short`), and with no run left it plunges with
+  `no_room`. (changed in #356: a first pass's ramp starts at the entry
+  clearance above the stock, so its first runs cut nothing, yet a later
+  pass's ramp ran its whole line; on a shallow ramp it ran 0.69 mm past
+  the first pass's trench, about twice the step-down into uncut stock.)
+  A contour cut without a lead whose passes below
   the tab top would plunge at its start (the start under a tab span, or
   so near one that the entry has no room in the domain less the tab
   keep-outs, or, On line, before the first tab) is re-seamed: the

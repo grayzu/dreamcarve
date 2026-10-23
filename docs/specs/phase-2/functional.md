@@ -575,10 +575,13 @@ footprint-containment test per operation, and by the existing overlap
 check between shapes. An inside or outside Profile removes only its
 trench, so its ramp or helix below the stock top also runs only on the
 bit's path round its targets (widened by a last pass's allowance) or
-along an earlier cut of the operation, unless the run of falling moves
-started at or above the stock top; checked on the parsed program
-(changed in #352: a ramp below the tab top into full-height stock
-passed, since it stayed in the waste).
+along an earlier cut of the operation where that cut ran below the stock
+top, unless the run of falling moves started at or above the stock top;
+checked on the parsed program (changed in #352: a ramp below the tab top
+into full-height stock passed, since it stayed in the waste; changed in
+#356: an earlier cut counted along its whole length once any of it ran
+below the stock top, so a later ramp past a first pass's trench passed
+with arc fitting off).
 - **S10 Entry descent rate.** A ramp or helix descends with a vertical
 component no faster than the plunge rate: the move's feed is scaled so
 that `feed × sin(slope) ≤ plunge`. Checked on the parsed program by
