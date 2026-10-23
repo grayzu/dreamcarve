@@ -5245,6 +5245,99 @@ mod tests {
         );
     }
 
+    /// The sample project cut by its Profile on `side` with a 1 mm last
+    /// pass allowance, no tab request, and one placed 2 × 2 mm rect tab at
+    /// (`x_mm`, `y_mm`) on its outline, drawn `width_mm` wide: the 6.35 mm
+    /// tool's tab spans 4.175 mm either way along the lap.
+    fn last_pass_tab_project(side: dc_project::Side, width_mm: f64, at: (f64, f64)) -> Project {
+        let mut project = sample_project();
+        if let Some(definition) = project.definitions.values_mut().next() {
+            definition.profiles = vec![dc_geometry::Polyline::rect(
+                Point::new(0.0, 0.0),
+                width_mm,
+                30.0,
+            )];
+        }
+        let profile = dc_project::test_support::profile_mut(&mut project);
+        profile.side = side;
+        profile.tabs = None;
+        profile.last_pass = Some(dc_project::LastPass {
+            allowance_mm: 1.0,
+            thickness_mm: None,
+            reverse: false,
+        });
+        project.tabs = vec![dc_project::PlacedTab {
+            width_mm: 2.0,
+            ..dc_project::test_support::sample_tab("tab1", at.0, at.1)
+        }];
+        project
+    }
+
+    /// A plunge from Z 5 to Z -5 at (`x`, `y`), below a 2 mm tab's top
+    /// (program Z -4).
+    fn plunge_at(x: f64, y: f64) -> String {
+        format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG1 Z-5 F300\nG0 Z5\n")
+    }
+
+    /// #353: S9 holds an allowance pass off a tab only as far as the tab
+    /// material the last pass's lap leaves standing, not the lap's span.
+    /// An inside Profile of an 8.5 mm wide slot (X 10 to 18.5, Y 10 to 40)
+    /// with a tab on its left wall at Y 25: the lap on the right wall (X
+    /// 15.325) cuts the far side of the left lap's kerf down to its floor,
+    /// so the tab the left lap leaves ends within 3.62 mm of the tab along
+    /// the left allowance path (X 14.175). A plunge there 3.75 mm along,
+    /// inside the lap's span less a tenth of the radius (3.86 mm), cuts
+    /// none of it and passes.
+    #[test]
+    fn allowance_pass_leaves_a_tab_at_its_stretch_end() {
+        let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
+        let op = sample_profile_op_of(&project);
+        check_material_text(&plunge_at(14.175, 28.75), &project, &op).unwrap();
+        check_material_text(&plunge_at(14.175, 21.25), &project, &op).unwrap();
+    }
+
+    /// #353: an allowance pass that comes down onto the tab material the
+    /// lap leaves still fails S9. In the slot of
+    /// [`allowance_pass_leaves_a_tab_at_its_stretch_end`], a plunge 3.3 mm
+    /// along the left allowance path from the tab, short of where the tab
+    /// ends, is refused.
+    #[test]
+    fn allowance_pass_dropping_onto_a_tab_fails_s9() {
+        let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
+        let op = sample_profile_op_of(&project);
+        for y in [28.3, 21.7, 25.0] {
+            let err = check_material_text(&plunge_at(14.175, y), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+                "Y{y}: {err:?}"
+            );
+        }
+    }
+
+    /// #353: on a straight wall the lap's kerf keeps its far side, where
+    /// the tab stands the lap's whole span (4.175 mm) either side of the
+    /// tab, and the allowance cutter reaches it until it is
+    /// `√(2ar − a²)` = 2.31 mm farther along: 6.49 mm in all. The sample
+    /// rectangle cut outside with a tab on its bottom edge at X 35: a
+    /// plunge on the allowance path (Y 5.825) 5 mm along, past the lap's
+    /// span, is refused; one 6.7 mm along passes.
+    #[test]
+    fn allowance_pass_past_the_span_onto_a_tab_fails_s9() {
+        let project = last_pass_tab_project(dc_project::Side::Outside, 50.0, (25.0, 0.0));
+        let op = sample_profile_op_of(&project);
+        for x in [40.0, 30.0] {
+            let err = check_material_text(&plunge_at(x, 5.825), &project, &op).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { line: 5, .. }),
+                "X{x}: {err:?}"
+            );
+        }
+        for x in [41.7, 28.3] {
+            check_material_text(&plunge_at(x, 5.825), &project, &op)
+                .unwrap_or_else(|e| panic!("X{x}: {e:?}"));
+        }
+    }
+
     /// #352: S9 refuses a ramp into stock no earlier cut cleared. The
     /// sample rectangle (X 10 to 60, Y 10 to 40) cut outside, no tabs: the
     /// first pass ramps from the stock top out 18.8 mm into the waste from
