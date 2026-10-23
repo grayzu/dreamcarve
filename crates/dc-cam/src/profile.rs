@@ -16,6 +16,7 @@
 
 mod entries;
 mod last_pass;
+mod reached;
 mod start;
 #[cfg(test)]
 mod start_tests;

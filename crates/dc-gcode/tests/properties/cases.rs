@@ -3,7 +3,7 @@
 
 //! The minimal cases the properties shrank their failures to, as named
 //! tests (#231, #232, #234, #235, #265, #272, #273, #322, #353, #355,
-//! #356, #358, #366): each project
+//! #356, #358, #362, #366): each project
 //! validates, generates, and exports through the full safety pass. Every
 //! case is built from `dc_project::test_support::sample_project()` on
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
@@ -1288,6 +1288,64 @@ fn inside_last_pass_ramp_lead_exports() {
     assert!(deepest_mm > 0.0, "a descent into stock is measured");
 }
 
+/// #362 (the Profile property, `e577fed0`): an Outside Profile through
+/// 20.20 mm stock of a 16.88 mm circle with a 13.39 × 16.49 mm
+/// rectangular hole and a 6.12 × 5.08 mm rectangular island in it, by a
+/// 7.27 mm tool in 0.415 mm steps, plunged, with one 1.0 × 1.01 mm rect
+/// tab on each outline, holes too, in inch on grblHAL. The band between
+/// the hole and the island is narrower than the bit, so the hole's lap
+/// runs on the island's edge and its cutter reaches the island's tab.
+/// It rose only over its own outline's tab and came down onto the
+/// island's: S9 refused the drop (`OffMaterial`). A lap now rises over
+/// every tab its bit reaches. On a heightfield of the emitted G-code
+/// every tab stands to its top, and no straight plunge goes deeper than
+/// the step-down into uncut material.
+#[test]
+fn hole_lap_round_an_island_tab_exports() {
+    let project = hole_lap_round_an_island_tab();
+    exports(&project);
+
+    let Operation::Profile(profile) = &project.operations[0] else {
+        unreachable!("the case is a Profile");
+    };
+    let spec = profile.tabs.as_ref().expect("the case has tabs");
+    let placed = dc_cam::placed_tabs::place(&project, &profile.id, spec).expect("tabs place");
+    assert_eq!(placed.tabs.len(), 3, "one tab on each outline");
+    let (program, _) =
+        emit(&project, &[generate(&project).expect("generates")], DATE).expect("the safety pass");
+    let radius_mm = project.tools[0].diameter_mm / 2.0;
+    let step_down_mm = project.tools[0].step_down_mm.expect("a step-down");
+    let top_mm = project.stock.thickness_mm.expect("a thickness");
+    let step_mm = 0.1;
+    let cuts = heightfield::cuts(&project, &program.text, step_mm);
+    let (deepest_mm, at) = heightfield::deepest_plunge_mm(&cuts, radius_mm, step_mm, top_mm);
+    assert!(
+        deepest_mm <= step_down_mm + 0.01,
+        "cut {at:?} plunges {deepest_mm} mm into uncut material, more than the {step_down_mm} mm step-down"
+    );
+    let mut heights = heightfield::Heights::round(&cuts, radius_mm, step_mm, top_mm);
+    for cut in &cuts {
+        heights.sweep(cut, radius_mm);
+    }
+    // Each tab's material round its point, less two lattice steps: a
+    // rect tab's raised stretch ends where the cutter's edge meets it.
+    for tab in &placed.tabs {
+        let point = dc_cam::placed_tabs::tab_point(&project, tab).expect("the tab is placed");
+        let lowest = heights
+            .disc(point, tab.width_mm / 2.0 - 2.0 * step_mm)
+            .into_iter()
+            .map(|k| heights.z[k])
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            lowest >= tab.height_mm - 0.01,
+            "tab {} on outline {} is cut down to {lowest:.4} mm, below its {:.4} mm top",
+            tab.id,
+            tab.profile,
+            tab.height_mm
+        );
+    }
+}
+
 /// The cutting moves of `project`'s emitted program in project space, in
 /// order, each with its line: a line, or an arc as chords of at most
 /// 0.05 mm, each its own `(line, from, to)`.
@@ -1746,6 +1804,75 @@ fn inside_last_pass_ramp_lead() -> Project {
         (3_511.208_596_937_322, 1_973.617_877_533_400_6, 13_320),
         3.692_432_801_988_285,
         0.888_842_317_033_553,
+    );
+    project
+}
+
+fn hole_lap_round_an_island_tab() -> Project {
+    let r = 16.883_035_482_589_705;
+    let (hx, hy) = (6.696_105_605_193_791, 8.244_620_007_891_884);
+    let (ix, iy) = (3.058_312_597_890_538, 2.539_417_069_656_006);
+    let profiles = vec![
+        Polyline::new(
+            vec![Vertex::new(r, 0.0, 1.0), Vertex::new(-r, 0.0, 1.0)],
+            true,
+        ),
+        straight([(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)]),
+        straight([(-ix, -iy), (ix, -iy), (ix, iy), (-ix, iy)]),
+    ];
+    let thickness_mm = 20.195_642_689_564_75;
+    let Operation::Profile(op) = sample_project().operations[0].clone() else {
+        unreachable!("the sample's operation is a Profile");
+    };
+    let op = ProfileOp {
+        side: Side::Outside,
+        depth_mm: Some(thickness_mm),
+        step_down_mm: None,
+        direction: CutDirection::Conventional,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 1.0,
+        tabs: Some(TabSpec {
+            placement: TabPlacement::Count { count: 1 },
+            width_mm: 1.0,
+            height_mm: 1.009_782_134_478_237_6,
+            shape: TabShape::Rect,
+            on_holes: true,
+            avoid_corners: false,
+        }),
+        machining_order: MachiningOrder::FullDepthFirst,
+        entry: Entry::Plunge,
+        lead: None,
+        corner_relief: CornerRelief::None,
+        last_pass: None,
+        start: StartAt::FirstVertex,
+        ..op
+    };
+    let mut project = case(
+        profiles,
+        Transform::from([
+            0.737_167_684_917_281_9,
+            0.675_709_852_165_628_1,
+            -0.675_709_852_165_628_1,
+            0.737_167_684_917_281_9,
+            120.0,
+            40.0,
+        ]),
+        thickness_mm,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Inch;
+    project.origin = MachineOrigin {
+        xy: OriginXy::TopRight,
+        z: OriginZ::StockBottom,
+    };
+    project.arc_fit_tolerance_mm = Some(0.01);
+    project.post_processor = PostProcessorRef::latest("grblhal").expect("grblHAL is bundled");
+    set_tool(
+        &mut project,
+        7.269_778_836_713_369,
+        (3_192.045_316_616_497, 2_633.305_020_598_756_5, 15_272),
+        0.415_478_759_066_539_8,
+        0.326_634_913_148_346_75,
     );
     project
 }
