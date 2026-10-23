@@ -142,8 +142,70 @@ pub(super) struct PassEntry<'a> {
     /// The Z a descent starts at where no pass before cut: the entry
     /// clearance above the stock top (#214).
     pub start_z_mm: f64,
+    /// The stock top, mm (#356).
+    pub top_z_mm: f64,
     pub tool: EntryTool,
     pub tolerance_mm: f64,
+}
+
+/// The entry one pass of a path cut, which the next pass's follows
+/// ([`PathEntry::descend`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct CutEntry {
+    /// The pass cut on the tabbed plan, or along its line.
+    pub tabbed: bool,
+    /// The entry it cut.
+    pub used: EntryKind,
+    /// #356: how far from its start a ramp ran below the stock top, by
+    /// at least one unit in the last written place, mm ([`reach_below_mm`]);
+    /// 0 for any other entry.
+    pub reach_mm: f64,
+}
+
+impl CutEntry {
+    /// A pass that cut `used` on the tabbed plan (`tabbed`) or the plain
+    /// one, and ran no ramp.
+    pub(super) const fn new(tabbed: bool, used: EntryKind) -> Self {
+        Self {
+            tabbed,
+            used,
+            reach_mm: 0.0,
+        }
+    }
+
+    /// Whether the pass cut `used` on the tabbed plan (`tabbed`) or the
+    /// plain one.
+    fn was(previous: Option<Self>, tabbed: bool, used: EntryKind) -> bool {
+        previous.is_some_and(|p| p.tabbed == tabbed && p.used == used)
+    }
+}
+
+/// #356: how far from `d`'s start XY its moves ran at least `quantum_mm`
+/// below `top_z_mm`, mm, the descent starting at `from_z_mm`: the stretch
+/// of its ramp line it cut a trench along, even once the program rounds
+/// each Z by half that unit. 0 when none ran so low. A first pass's ramp
+/// starts above the stock, so its first runs cut nothing.
+pub(super) fn reach_below_mm(d: &Descent, from_z_mm: f64, top_z_mm: f64, quantum_mm: f64) -> f64 {
+    let floor_mm = top_z_mm - quantum_mm;
+    let start = d.from;
+    let mut at = Point3::new(start.x, start.y, from_z_mm);
+    let mut reach_mm: f64 = 0.0;
+    for mv in &d.moves {
+        let (a, b) = (at, mv.to);
+        at = b;
+        let point = match (a.z < floor_mm, b.z < floor_mm) {
+            (false, false) => continue,
+            (true, true) => a.xy().distance_to(start).max(b.xy().distance_to(start)),
+            (a_below, _) => {
+                let t = (floor_mm - a.z) / (b.z - a.z);
+                let cross = a.xy() + (b.xy() - a.xy()) * t;
+                let below = if a_below { a } else { b };
+                below.xy().distance_to(start).max(cross.distance_to(start))
+            }
+        };
+        reach_mm = reach_mm.max(point);
+    }
+    reach_mm
 }
 
 /// The entry of each path of `setup`, in order: `None` for a plunge, which
@@ -412,15 +474,15 @@ impl PathEntry {
     /// (tabbed or not) and entry the path's previous pass cut, updated
     /// here: a helix after the first pass rejoins the bore its previous
     /// pass cut, or starts again from just above the stock when that pass
-    /// cut none; a ramp after the first pass keeps to the line its
-    /// previous pass ramped on, or plunges ([`PathEntry::in_trench`],
-    /// #352). A pass that follows the plain plan's line records the plain
+    /// cut none; a ramp after the first pass keeps to the stretch of the
+    /// line its previous pass ramped on below the stock top, or plunges
+    /// ([`PathEntry::in_trench`], #352, #356). A pass that follows the plain plan's line records the plain
     /// plan, whose line it cut.
     pub(super) fn descend(
         &self,
         pass: &PassEntry<'_>,
         from_z_mm: f64,
-        previous: &mut Option<(bool, EntryKind)>,
+        previous: &mut Option<CutEntry>,
     ) -> (Descent, f64) {
         match self {
             Self::Along {
@@ -441,7 +503,7 @@ impl PathEntry {
                     &pass.tool,
                     pass.tolerance_mm,
                 );
-                *previous = Some((pass.below_tabs, d.used));
+                *previous = Some(CutEntry::new(pass.below_tabs, d.used));
                 (d, from_z_mm)
             }
             Self::Wall {
@@ -456,7 +518,7 @@ impl PathEntry {
                 let mut from_z = from_z_mm;
                 let mut d = plan.descend(from_z, pass.z_mm);
                 if pass.pass > 0 && d.used == EntryKind::Helix {
-                    if *previous == Some((key, EntryKind::Helix)) {
+                    if CutEntry::was(*previous, key, EntryKind::Helix) {
                         d = plan.rejoin(d, from_z);
                     } else {
                         // The previous pass cut no bore here: helix from
@@ -489,7 +551,16 @@ impl PathEntry {
                         *previous,
                     );
                 }
-                *previous = Some((cut_key, d.used));
+                let reach_mm = if d.used == EntryKind::Ramp {
+                    reach_below_mm(&d, from_z, pass.top_z_mm, pass.tool.quantum_mm)
+                } else {
+                    0.0
+                };
+                *previous = Some(CutEntry {
+                    tabbed: cut_key,
+                    used: d.used,
+                    reach_mm,
+                });
                 (d, from_z)
             }
         }
@@ -504,6 +575,11 @@ impl PathEntry {
     /// - a pass below the tab top after one that ramped on the plain plan
     ///   ramps along that line as far as the tabs leave it
     ///   (`after_plain`, [`follow_plain`]);
+    /// - either ramp runs only as far along its line as the pass above's
+    ///   ran below the stock top (`CutEntry::reach_mm`), zigzagging on its
+    ///   line cut short there ([`EntryPlan::cut_short`]), or plunges, warned
+    ///   `no_room`, when that leaves no run (#356: a first pass's ramp
+    ///   starts above the stock, and its first runs cut nothing);
     /// - any other ramp (the pass above plunged, helixed, or cut another
     ///   path: a last pass after its allowance passes, #284) plunges at
     ///   the target, off the tabs, one step down, warned `no_room`;
@@ -518,19 +594,37 @@ impl PathEntry {
         pass: &PassEntry<'_>,
         from_z_mm: f64,
         key: bool,
-        previous: Option<(bool, EntryKind)>,
+        previous: Option<CutEntry>,
     ) -> (Descent, bool) {
         let plunge = |reason| (plunged(plan.target(), d.requested, reason), key);
         if from_z_mm - pass.z_mm < RAMP_MIN_LAST_DROP_MM {
             return plunge(FallbackReason::TooSmall);
         }
-        if previous == Some((key, EntryKind::Ramp)) {
-            return (d, key);
+        let reach_mm = previous.map_or(0.0, |p| p.reach_mm);
+        let reason = d.reason.unwrap_or(FallbackReason::NoRoom);
+        // #356: only as far along the line as the pass above cut it below
+        // the stock top.
+        let within = |plan: &EntryPlan, d: Descent| {
+            let ran_mm = d
+                .moves
+                .iter()
+                .map(|m| m.to.xy().distance_to(d.from))
+                .fold(0.0, f64::max);
+            if d.used != EntryKind::Ramp || ran_mm <= reach_mm + EPS_MM {
+                return d;
+            }
+            match plan.cut_short(reach_mm) {
+                Some(short) => short.descend_without_helix(from_z_mm, pass.z_mm, reason),
+                None => plunged(plan.target(), d.requested, FallbackReason::NoRoom),
+            }
+        };
+        if CutEntry::was(previous, key, EntryKind::Ramp) {
+            return (within(plan, d), key);
         }
-        match after_plain.filter(|_| key && previous == Some((false, EntryKind::Ramp))) {
+        match after_plain.filter(|_| key && CutEntry::was(previous, false, EntryKind::Ramp)) {
             Some(follow) => {
-                let reason = d.reason.unwrap_or(FallbackReason::NoRoom);
                 let d = follow.descend_without_helix(from_z_mm, pass.z_mm, reason);
+                let d = within(follow, d);
                 let cut_key = if d.used == EntryKind::Ramp {
                     false
                 } else {
@@ -685,6 +779,7 @@ mod tests {
             z_mm,
             below_tabs,
             start_z_mm: 13.0,
+            top_z_mm: 12.0,
             tool: tool(),
             tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
         }
@@ -754,13 +849,13 @@ mod tests {
     fn ramp_the_pass_above_did_not_cut_plunges() {
         let path = Polyline::rect(Point::new(0.0, 0.0), 20.0, 20.0);
         let wall = entry(7.0);
-        for previous in [None, Some((false, EntryKind::Plunge))] {
+        for previous in [None, Some(CutEntry::new(false, EntryKind::Plunge))] {
             let mut previous = previous;
             let (d, _) = wall.descend(&pass_entry(&path, 1, 4.0, false), 8.0, &mut previous);
             assert_eq!(d.used, EntryKind::Plunge, "{previous:?}");
             assert_eq!(d.reason, Some(FallbackReason::NoRoom));
         }
-        let mut previous = Some((false, EntryKind::Ramp));
+        let mut previous = Some(CutEntry::new(false, EntryKind::Ramp));
         let (d, _) = wall.descend(&pass_entry(&path, 1, 7.97, false), 8.0, &mut previous);
         assert_eq!(d.used, EntryKind::Plunge);
         assert_eq!(d.reason, Some(FallbackReason::TooSmall));

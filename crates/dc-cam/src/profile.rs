@@ -46,8 +46,8 @@ use dc_project::{
     CutDirection, Entry, InstanceId, Lead, OperationId, ProfileOp, Project, Side, TabId, Tool,
 };
 use entries::{
-    EntrySetup, PassEntry, PathDomain, PathEntry, Space, Targets, off_material, path_entries,
-    plunged, tab_seams, wall_domains,
+    CutEntry, EntrySetup, PassEntry, PathDomain, PathEntry, Space, Targets, off_material,
+    path_entries, plunged, tab_seams, wall_domains,
 };
 
 /// One path's tab layout, and whether its spans overlapped; `None`
@@ -708,6 +708,7 @@ pub fn generate_profile(
         pass_z: &pass_z,
         safe_z_mm,
         start_z_mm,
+        top_z_mm: thickness_mm,
         rates,
         tolerance_mm: project.flatten_tolerance_mm,
         regions: &regions,
@@ -726,7 +727,7 @@ pub fn generate_profile(
     };
     for i in 0..n {
         // The entry the previous pass cut, which this pass's follows.
-        let mut previous: Option<(bool, EntryKind)> = None;
+        let mut previous: Option<CutEntry> = None;
         let twin = twin_of.get(i).copied().flatten();
         for (pass, &z_mm) in pass_z.iter().enumerate() {
             let block = match (twin, path_at(i)) {
@@ -1952,6 +1953,8 @@ struct PassCtx<'a> {
     safe_z_mm: f64,
     /// Where a descent starts with no pass above it (#214).
     start_z_mm: f64,
+    /// The stock top, mm (#356).
+    top_z_mm: f64,
     rates: LapRates,
     tolerance_mm: f64,
     /// The operation's regions: the lines no cut may come nearer than the
@@ -1988,7 +1991,7 @@ fn pass_block(
     p: &PassPath<'_>,
     pass: usize,
     z_mm: f64,
-    previous: &mut Option<(bool, EntryKind)>,
+    previous: &mut Option<CutEntry>,
     entry_warnings: &mut EntryWarnings,
 ) -> Result<Option<(CutBlock, bool)>, CamError> {
     let (op, shape, path) = (ctx.op, p.shape, p.path);
@@ -2048,6 +2051,7 @@ fn pass_block(
             z_mm,
             below_tabs,
             start_z_mm: ctx.start_z_mm,
+            top_z_mm: ctx.top_z_mm,
             tool: p.tool,
             tolerance_mm: ctx.tolerance_mm,
         };
@@ -2061,7 +2065,7 @@ fn pass_block(
                     &plunged(start, EntryKind::of(&op.entry), FallbackReason::NoRoom),
                 );
             }
-            *previous = Some((false, EntryKind::Plunge));
+            *previous = Some(CutEntry::new(false, EntryKind::Plunge));
         } else {
             // #214: the first pass's ramp or helix starts just above the
             // stock, not at safe Z.
@@ -2120,7 +2124,7 @@ fn last_pass_block(
     paths: &LastPassPaths<'_>,
     pass: usize,
     z_mm: f64,
-    previous: &mut Option<(bool, EntryKind)>,
+    previous: &mut Option<CutEntry>,
     entry_warnings: &mut EntryWarnings,
 ) -> Result<Entered, CamError> {
     let op = ctx.op;
