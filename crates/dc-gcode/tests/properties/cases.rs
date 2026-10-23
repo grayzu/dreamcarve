@@ -1205,10 +1205,196 @@ fn outside_last_pass_small_tab_on_a_hole_exports() {
 /// 5.53 mm steps, ramped at 16.7°, with a 0.5 mm lead over 173° and a
 /// 0.085 mm last pass allowance (5.46 mm thick), untabbed, full depth
 /// first, in mm on Mach3 with arc fitting off. S9 refused line 32
-/// (`OffMaterial`).
+/// (`OffMaterial`): pass 2's ramp ran 0.41 mm past the trench pass 1's
+/// ramp cut below the stock top, ending 8.05 mm deep in uncut stock, as
+/// #356's did. #363 keeps it to that trench. On a heightfield of the
+/// emitted G-code no descending cut goes deeper than the step-down into
+/// material no earlier cut removed, no cut brings the cutter into the
+/// material the Profile keeps, and nothing is below the final depth.
 #[test]
 fn inside_last_pass_ramp_lead_exports() {
-    exports(&inside_last_pass_ramp_lead());
+    let project = inside_last_pass_ramp_lead();
+    exports(&project);
+
+    let Operation::Profile(profile) = &project.operations[0] else {
+        unreachable!("the case is a Profile");
+    };
+    let top_mm = project.stock.thickness_mm.expect("the stock is sized");
+    let final_z_mm = top_mm - profile.depth_mm.expect("the depth is set");
+    let step_down_mm = profile.step_down_mm.expect("the step-down is set");
+    let radius_mm = project.tools[0].diameter_mm / 2.0;
+    let to_local = project.instances[0]
+        .transform
+        .inverse()
+        .expect("a rotation inverts");
+    let (outer_x, outer_y) = (19.807_767_211_790_523, 17.335_221_274_116_42);
+    let (hole_x, hole_y) = (7.979_439_739_067_024, 8.560_834_672_441_597);
+    // How far the cutter's centre at `p` (project XY) is from the material
+    // an Inside cut keeps: outside the outer rectangle, and the hole with
+    // the circle in it.
+    let clearance_mm = |p: Point| {
+        let local = to_local.apply(p);
+        let (x, y) = (local.x.abs(), local.y.abs());
+        if x >= outer_x || y >= outer_y || (x <= hole_x && y <= hole_y) {
+            0.0
+        } else {
+            let to_outer = (outer_x - x).min(outer_y - y);
+            let to_hole = (x - hole_x).max(0.0).hypot((y - hole_y).max(0.0));
+            to_outer.min(to_hole)
+        }
+    };
+    // One unit in the last place and the flatten tolerance.
+    let slack_mm = 0.001 + project.flatten_tolerance_mm;
+
+    let mut stock = Heightfield::new(Point::new(40.0, 40.0), 28.0, 0.1, top_mm);
+    let mut deepest_mm: f64 = 0.0;
+    let cuts = program_cuts(&project);
+    assert!(!cuts.is_empty(), "the program cuts");
+    for (line, a, b) in cuts {
+        assert!(
+            b.z >= final_z_mm - 0.0005,
+            "line {line}: below the final depth"
+        );
+        let into_mm = stock.cut(a, b, radius_mm);
+        if b.z < a.z - 1e-9 {
+            assert!(
+                into_mm <= step_down_mm + 0.001,
+                "line {line}: descends {into_mm:.4} mm into uncut stock, past the {step_down_mm:.4} mm step-down"
+            );
+            deepest_mm = deepest_mm.max(into_mm);
+        }
+        for p in [a.xy(), b.xy()] {
+            let c = clearance_mm(p);
+            assert!(
+                c >= radius_mm - slack_mm,
+                "line {line}: the cutter reaches {:.4} mm into kept material",
+                radius_mm - c
+            );
+        }
+    }
+    assert!(deepest_mm > 0.0, "a descent into stock is measured");
+}
+
+/// The cutting moves of `project`'s emitted program in project space, in
+/// order, each with its line: a line, or an arc as chords of at most
+/// 0.05 mm, each its own `(line, from, to)`.
+fn program_cuts(project: &Project) -> Vec<(usize, Point3, Point3)> {
+    let post = project.post_processor.resolve().expect("bundled");
+    let transform = MachineTransform::new(project, &post).expect("a valid mapping");
+    let op = generate(project).expect("generates");
+    let (program, _) = emit(project, &[op], DATE).expect("exports");
+    let mut out = Vec::new();
+    for mv in parse_motion(&program.text).expect("the program parses") {
+        let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+            (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
+        else {
+            continue;
+        };
+        if !mv.kind.is_cut() {
+            continue;
+        }
+        let from = transform.to_project(Point3::new(fx, fy, fz), mv.units);
+        let to = transform.to_project(Point3::new(tx, ty, tz), mv.units);
+        match (mv.kind, mv.arc.i, mv.arc.j) {
+            (MotionKind::ArcCw | MotionKind::ArcCcw, Some(i), Some(j)) => {
+                let centre = transform
+                    .to_project(Point3::new(fx + i, fy + j, fz), mv.units)
+                    .xy();
+                let ccw = mv.kind == MotionKind::ArcCcw;
+                let arc = dc_geometry::Arc::from_ends(from.xy(), to.xy(), centre, ccw);
+                let chords = (arc.radius_mm * arc.sweep_rad.abs() / 0.05).ceil().max(1.0);
+                let mut p = from;
+                let mut k = 1.0;
+                while k <= chords {
+                    let f = k / chords;
+                    let t = arc.start_angle_rad + arc.sweep_rad * f;
+                    let q = Point3::new(
+                        centre.x + arc.radius_mm * t.cos(),
+                        centre.y + arc.radius_mm * t.sin(),
+                        from.z + (to.z - from.z) * f,
+                    );
+                    out.push((mv.line, p, q));
+                    p = q;
+                    k += 1.0;
+                }
+            }
+            _ => out.push((mv.line, from, to)),
+        }
+    }
+    out
+}
+
+/// The stock as a heightfield: on a lattice over a square in project XY,
+/// the lowest Z the cutter has swept each point to, the stock top where
+/// it has not been.
+struct Heightfield {
+    origin: Point,
+    n: usize,
+    step_mm: f64,
+    z: Vec<f64>,
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "lattice indices, non-negative and a few hundred at most"
+)]
+impl Heightfield {
+    /// `centre` ± `half_mm` on a `step_mm` lattice, all at `top_mm`.
+    fn new(centre: Point, half_mm: f64, step_mm: f64, top_mm: f64) -> Self {
+        let n = (2.0 * half_mm / step_mm).ceil() as usize + 1;
+        Self {
+            origin: Point::new(centre.x - half_mm, centre.y - half_mm),
+            n,
+            step_mm,
+            z: vec![top_mm; n * n],
+        }
+    }
+
+    /// The index of every lattice point within `radius_mm` of `p`.
+    fn disc(&self, p: Point, radius_mm: f64) -> Vec<usize> {
+        // The lattice indices from `lo` to `hi` along an axis from `o`.
+        let span = |lo: f64, hi: f64, o: f64| {
+            let first = ((lo - o) / self.step_mm).ceil().max(0.0);
+            let last = ((hi - o) / self.step_mm).floor().min(self.n as f64 - 1.0);
+            (first as usize)..=(last as usize)
+        };
+        let mut out = Vec::new();
+        for j in span(p.y - radius_mm, p.y + radius_mm, self.origin.y) {
+            let y = self.origin.y + self.step_mm * j as f64;
+            for i in span(p.x - radius_mm, p.x + radius_mm, self.origin.x) {
+                let x = self.origin.x + self.step_mm * i as f64;
+                if (x - p.x).hypot(y - p.y) <= radius_mm {
+                    out.push(j * self.n + i);
+                }
+            }
+        }
+        out
+    }
+
+    /// Sweeps a cutter of `radius_mm` from `a` to `b`, sampled every half
+    /// lattice step; how deep it goes into material no earlier sample
+    /// removed, mm: the most, over the samples, that the highest material
+    /// under the cutter stands above the cutter's tip.
+    fn cut(&mut self, a: Point3, b: Point3, radius_mm: f64) -> f64 {
+        let samples = (a.xy().distance_to(b.xy()) / (self.step_mm / 2.0))
+            .ceil()
+            .max(1.0);
+        let mut deepest_mm: f64 = 0.0;
+        let mut k = 0.0;
+        while k <= samples {
+            let f = k / samples;
+            let z = a.z + (b.z - a.z) * f;
+            for cell in self.disc(a.xy() + (b.xy() - a.xy()) * f, radius_mm) {
+                let h = &mut self.z[cell];
+                deepest_mm = deepest_mm.max(*h - z);
+                *h = h.min(z);
+            }
+            k += 1.0;
+        }
+        deepest_mm
+    }
 }
 
 /// The sample's Profile with `side`, cut `depth_mm` deep by `entry`, with
