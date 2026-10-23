@@ -7869,4 +7869,112 @@ mod tests {
         let p = project(lines(x + 0.2), &[("i1", at_20_20())]);
         generate(&p, &profile_op(&p, Side::Left, CutDirection::Climb));
     }
+
+    // ── #356: a later pass's ramp keeps to the trench cut below the top ──
+
+    /// The farthest point from `start` of the part of `legs` (each from
+    /// its first point to its second) below `top_mm`, mm.
+    fn reach_below_mm(start: Point, legs: &[(Point3, Point3)], top_mm: f64) -> f64 {
+        let at = |p: Point| start.distance_to(p);
+        legs.iter()
+            .filter_map(|&(a, b)| match (a.z < top_mm, b.z < top_mm) {
+                (true, true) => Some(at(a.xy()).max(at(b.xy()))),
+                (false, false) => None,
+                (a_below, _) => {
+                    let t = (top_mm - a.z) / (b.z - a.z);
+                    let cross = a.xy() + (b.xy() - a.xy()) * t;
+                    let below = if a_below { a } else { b };
+                    Some(at(below.xy()).max(at(cross)))
+                }
+            })
+            .fold(0.0, f64::max)
+    }
+
+    /// The Profile property's `e577fed0` regression (#356): a 1 mm deep
+    /// Outside Profile of a 33.77 mm circle with a small hole, ramped at
+    /// 1.33° by a 7.27 mm tool stepping down 0.415 mm. The first pass
+    /// starts its ramp 1 mm above the stock, so it cuts only 17.1 mm of
+    /// its 21.8 mm line below the stock top, and the second's ramp needs
+    /// 17.8 mm. No ramp leg of a pass runs farther from the target than
+    /// the part of the pass above's ramp below the stock top.
+    #[test]
+    fn later_ramp_keeps_to_the_trench_the_pass_above_cut_below_the_top() {
+        let r = 16.883_035_482_589_705;
+        let (hx, hy) = (3.422_910_926_112_843, 3.733_229_249_787_881);
+        let top_mm = 20.195_642_689_564_75;
+        let hole = [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)]
+            .into_iter()
+            .map(|(x, y)| Vertex::new(x, y, 0.0))
+            .collect();
+        let mut p = project(
+            vec![
+                Polyline::new(
+                    vec![Vertex::new(r, 0.0, 1.0), Vertex::new(-r, 0.0, 1.0)],
+                    true,
+                ),
+                Polyline::new(hole, true),
+            ],
+            &[(
+                "i1",
+                Transform::from([
+                    0.737_167_684_917_281_9,
+                    0.675_709_852_165_628_2,
+                    -0.675_709_852_165_628_2,
+                    0.737_167_684_917_281_9,
+                    40.0,
+                    40.0,
+                ]),
+            )],
+        );
+        p.stock.thickness_mm = Some(top_mm);
+        p.instances[0].z_top_mm = Some(top_mm);
+        let tool = &mut p.tools[0];
+        tool.diameter_mm = 7.269_778_836_713_369;
+        tool.feed_mm_min = Some(3_192.045_316_616_497);
+        tool.plunge_mm_min = Some(2_633.305_020_598_756_5);
+        tool.step_down_mm = Some(0.415_478_759_066_539_8);
+        let op = ProfileOp {
+            depth_mm: Some(1.009_782_134_478_237_6),
+            safe_z_mm: 1.0,
+            entry: Entry::Ramp {
+                angle_deg: 1.334_494_957_255_164,
+            },
+            ..profile_op(&p, Side::Outside, CutDirection::Climb)
+        };
+        let (tp, _) = generate(&p, &op);
+        // Each pass's ramp: its start and its falling legs.
+        let mut ramps: Vec<(Point, Vec<(Point3, Point3)>)> = Vec::new();
+        let mut in_ramp = false;
+        for w in tp.moves.windows(2) {
+            let (from, mv) = (w[0].to, w[1]);
+            let leg = !mv.is_rapid()
+                && mv.to.z < from.z - EPS_MM
+                && from.xy().distance_to(mv.to.xy()) > EPS_MM;
+            if leg {
+                if !in_ramp {
+                    ramps.push((from.xy(), Vec::new()));
+                }
+                if let Some((_, legs)) = ramps.last_mut() {
+                    legs.push((from, mv.to));
+                }
+            }
+            in_ramp = leg;
+        }
+        assert!(ramps.len() >= 3, "a ramp per pass: {ramps:?}");
+        for pair in ramps.windows(2) {
+            let ((above_start, above), (start, legs)) = (&pair[0], &pair[1]);
+            assert!(above_start.distance_to(*start) <= EPS_MM, "one target");
+            let reach_mm = reach_below_mm(*start, above, top_mm);
+            for &(a, b) in legs {
+                for q in [a, b] {
+                    let d = start.distance_to(q.xy());
+                    assert!(
+                        d <= reach_mm + 1e-6,
+                        "a leg runs {d} mm out, past the {reach_mm} mm the pass above cut \
+                         below the top"
+                    );
+                }
+            }
+        }
+    }
 }
