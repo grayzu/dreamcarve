@@ -910,6 +910,7 @@ mod tests {
             floor_z_mm: 0.0,
             feed_mm_min: FEED_MM_MIN,
             plunge_mm_min: PLUNGE_MM_MIN,
+            level_floor_mm_min: FEED_MM_MIN,
         }
     }
 

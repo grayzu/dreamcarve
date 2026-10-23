@@ -514,6 +514,77 @@ fn cuts_only_corners(
     true
 }
 
+/// #335: how the last pass's feed is lowered round an inside arc. The
+/// tool centre runs an arc of `ρ` round a wall of `ρ + r`, so the cutting
+/// edge at the wall moves `(ρ + r) / ρ` times as fast as the centre, and
+/// in a small hole the last pass, which should take a thin skin, takes
+/// several times what a straight wall's takes in a minute. At
+/// `feed · ρ / (ρ + r)` the edge moves at the feed, as on a straight
+/// wall, and removes `feed · (a − a² / 2(ρ + r))` mm² per minute per mm
+/// of depth, less than a straight wall's `feed · a`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct EdgeFeed {
+    /// The wall is on the right of travel: climb (the part on the right,
+    /// #287), unless the last pass is reversed.
+    pub wall_on_right: bool,
+    /// The tool's radius, mm.
+    pub radius_mm: f64,
+    pub allowance_mm: f64,
+    /// The tool's cutting feed, mm/min.
+    pub feed_mm_min: f64,
+}
+
+impl EdgeFeed {
+    /// The least the feed is scaled by: `a / (a + r)`, the edge's in the
+    /// smallest hole the last pass cuts (`D + 2a` across, its tool centre
+    /// on a circle of `a`). The safety pass's S3 accepts no lower level
+    /// feed, so the generator cannot invent one.
+    pub(super) fn floor_fraction(&self) -> f64 {
+        self.allowance_mm / (self.allowance_mm + self.radius_mm)
+    }
+
+    /// Lowers the feed of every level arc of `cuts` (cut from a point at
+    /// `start_z_mm`) that turns round the wall at the cutting feed to
+    /// `feed · ρ / (ρ + r)`, `ρ` its radius, and no lower than
+    /// [`EdgeFeed::floor_fraction`]. Arcs round the part's outside corners,
+    /// where the edge moves slower than the centre, straight cuts, and the
+    /// ramps and lifts over tabs keep their feeds; a level arc over a
+    /// tab's top is lowered too, since it still cuts the allowance above
+    /// the tab. Returns the tightest radius held at the
+    /// floor, under the allowance, whose edge moves faster than the feed.
+    pub(super) fn apply(&self, cuts: &mut [Move], start_z_mm: f64) -> Option<f64> {
+        let mut z_mm = start_z_mm;
+        let mut tightest_mm: Option<f64> = None;
+        for mv in cuts.iter_mut() {
+            let level = (mv.to.z - z_mm).abs() <= EPS_MM;
+            z_mm = mv.to.z;
+            let (centre, ccw) = match mv.kind {
+                MoveKind::ArcCcw { centre } => (centre, true),
+                MoveKind::ArcCw { centre } => (centre, false),
+                _ => continue,
+            };
+            // Round the wall: the centre on the left of travel with the
+            // wall on the right, or the other way about.
+            if !level || ccw != self.wall_on_right {
+                continue;
+            }
+            let Some(feed_mm_min) = mv
+                .feed_mm_min
+                .filter(|f| (f - self.feed_mm_min).abs() <= EPS_MM)
+            else {
+                continue;
+            };
+            let rho_mm = mv.to.xy().distance_to(centre);
+            let scale_fraction = rho_mm / (rho_mm + self.radius_mm);
+            if scale_fraction < self.floor_fraction() - EPS_MM {
+                tightest_mm = Some(tightest_mm.map_or(rho_mm, |t_mm: f64| t_mm.min(rho_mm)));
+            }
+            mv.feed_mm_min = Some(feed_mm_min * scale_fraction.max(self.floor_fraction()));
+        }
+        tightest_mm
+    }
+}
+
 /// How far, mm, the last pass may step from its allowance path's kerf
 /// onto its own path (#339): the most it may take off anywhere
 /// ([`thickest_mm`]), which [`cuts_only_corners`] holds every point of its

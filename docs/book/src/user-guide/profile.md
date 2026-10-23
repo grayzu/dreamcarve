@@ -617,6 +617,29 @@ notches are cut from the last pass only, the one that cuts the corner:
 an earlier pass does not reach it, so a notch after it would plunge into
 the skin.
 
+**Round holes and inside curves.** Cutting inside a curve, the bit's
+centre runs a smaller circle than the wall it cuts, so its cutting edge
+moves faster than its centre: in an 8 mm hole with a 6.35 mm bit the
+centre runs a circle of 0.825 mm round a wall of 4 mm, and the edge
+moves 4.8 times as fast. The earlier passes cut a full slot there, as
+any Profile does, but the last pass is meant to take a thin skin, and at
+the feed it would take nearly five times the skin a straight wall's last
+pass takes in a minute. So the last pass runs each inside arc of its path
+slower, at the feed times the arc's radius over the wall's,
+`feed × ρ / (ρ + r)`: 206.25 mm/min at a 1000 mm/min feed in the 8 mm
+hole, 577 mm/min in a 15 mm one. Its cutting edge then moves at the feed,
+and it removes a little less per minute than a straight wall's last pass.
+Straight walls, outside corners and the earlier passes keep the feed, and
+the lowered feed is written rounded down, never up. The feed is lowered
+no further than the smallest hole the last pass cuts needs,
+`feed × a / (a + r)` (136 mm/min at 0.5 mm with a 6.35 mm bit). An inside
+corner rounded to less than the bit's radius plus the allowance (a 3.5 mm
+corner radius with a 6.35 mm bit at 0.5 mm) needs more, so there the
+edge moves faster than the feed, and `last_pass_edge_faster` says so.
+Only true arcs are slowed: a curve drawn as many short lines (an ellipse
+or spline from a DXF) runs at the feed
+([#350](https://github.com/grayzu/dreamcarve/issues/350)).
+
 **Sharp corners.** Where the bit's path turns a corner sharper than
 90° (the points of a triangle or star cut inside, an inward V notch cut
 outside, the corners of letters such as A, V, W, M and K), the earlier

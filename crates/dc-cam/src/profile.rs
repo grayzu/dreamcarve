@@ -35,7 +35,7 @@ use crate::tabs::{
     LapRates, Least, PathEnds, PathTabs, Reduced, Request, TabCut, Tabs, check_size,
     coverage_warning, cut_range_warnings, lap_cuts, overlap_warning,
 };
-use crate::toolpath::{Move, Toolpath};
+use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::{OpenPathReason, TabOnCornerReason, Warning};
 use dc_geometry::{
     Contour, EPS_MM, GeometryError, GeometryWarning, Point, Point3, Polyline, Region, SelfBand,
@@ -700,6 +700,8 @@ pub fn generate_profile(
     let mut blocks = Vec::with_capacity(n * pass_z.len());
     // The part's path each block cuts, for naming contours in cut order.
     let mut block_paths = Vec::with_capacity(blocks.capacity());
+    // #335: each shape's tightest inside arc held at the floor feed.
+    let mut tight_arcs: Vec<(ShapeRef, f64)> = Vec::new();
     let ctx = PassCtx {
         op,
         tabs: tabs.as_ref(),
@@ -752,6 +754,12 @@ pub fn generate_profile(
                     {
                         lead_warnings.record_dropped(shape, DropReason::NoRoom);
                     }
+                    if let (Some(rho), Some((_, shape))) = (entered.tight_mm, paths.get(i)) {
+                        match tight_arcs.iter_mut().find(|(s, _)| s == *shape) {
+                            Some((_, tightest)) => *tightest = tightest.min(rho),
+                            None => tight_arcs.push(((*shape).clone(), rho)),
+                        }
+                    }
                     entered.block
                 }
                 // #284: every pass but the last cuts the allowance twin.
@@ -776,6 +784,19 @@ pub fn generate_profile(
         }
     }
     warnings.extend(entry_warnings.into_warnings(&op.id));
+    if let Some(allowance_mm) = allowance_mm {
+        let floor_fraction = allowance_mm / (allowance_mm + radius_mm);
+        warnings.extend(tight_arcs.into_iter().map(|(shape, arc_radius_mm)| {
+            Warning::LastPassEdgeFaster {
+                op: op.id.clone(),
+                shape,
+                radius_mm: arc_radius_mm,
+                allowance_mm,
+                feed_mm_min: rates.feed_mm_min * floor_fraction,
+                edge_ratio: floor_fraction * (arc_radius_mm + radius_mm) / arc_radius_mm,
+            }
+        }));
+    }
     if let Some(lead) = lead {
         warnings.extend(lead_warnings.into_warnings(&op.id, lead));
     }
@@ -2080,6 +2101,9 @@ struct Entered {
     /// The last pass's lead-in was left off: its staging point lies too far
     /// from the twin's kerf to step to.
     lead_dropped: bool,
+    /// #335: the tightest inside arc whose feed is held at
+    /// `EdgeFeed::floor_fraction`, where the edge moves faster than the feed.
+    tight_mm: Option<f64>,
 }
 
 /// #339: the block of a part path's last pass, entered from its allowance
@@ -2148,12 +2172,15 @@ fn last_pass_block(
     };
     let twin_block = pass_block(ctx, &twin_pass, pass, z_mm, previous, entry_warnings)?;
     let own_block = pass_block(ctx, &own, pass, z_mm, &mut None, entry_warnings)?;
-    let (Some((twin_block, _)), Some((own_block, own_led))) = (twin_block, own_block) else {
+    let (Some((twin_block, _)), Some((mut own_block, own_led))) = (twin_block, own_block) else {
         return Ok(Entered {
             block: None,
             lead_dropped: false,
+            tight_mm: None,
         });
     };
+    // #335: its lap runs round inside arcs at the feed its edge needs.
+    let tight_mm = own_edge_feeds(ctx, paths, &mut own_block, own_led);
     let slack_mm = ctx.tolerance_mm + MIN_BOUNDARY_SAFETY_MM;
     // #339 review: the step is held to what it sweeps: the parts, not
     // the entries' waste domain or tab keep-outs, and the tabs'
@@ -2200,6 +2227,7 @@ fn last_pass_block(
         Ok((block, lead_dropped)) => Ok(Entered {
             block: Some(block),
             lead_dropped,
+            tight_mm,
         }),
         Err(last_pass::StepRefused::OffWaste { from, to }) => {
             let space = paths.domain.map(|d| &d.plain);
@@ -2230,6 +2258,42 @@ fn last_pass_block(
             allowance_mm: paths.allowance_mm,
         }),
     }
+}
+
+/// #335: lowers the feed of the last pass's lap, and its overcut, round
+/// inside arcs (`last_pass::EdgeFeed`), so its cutting edge moves at the
+/// feed there; its lead arcs, which take up and leave the cut, keep the
+/// feed. Returns the tightest arc held at the floor, if any.
+fn own_edge_feeds(
+    ctx: &PassCtx<'_>,
+    paths: &LastPassPaths<'_>,
+    block: &mut CutBlock,
+    led: bool,
+) -> Option<f64> {
+    let edge = last_pass::EdgeFeed {
+        wall_on_right: (ctx.op.direction == CutDirection::Climb) != paths.reverse,
+        radius_mm: paths.own.tool.diameter_mm / 2.0,
+        allowance_mm: paths.allowance_mm,
+        feed_mm_min: ctx.rates.feed_mm_min,
+    };
+    let n = block.cuts.len();
+    let lead_out = paths.own.lead.and_then(|l| l.lead_out.arc.as_ref());
+    let end = match (led, lead_out, block.cuts.last()) {
+        (true, Some(arc), Some(last))
+            if last.to.xy().distance_to(arc.to) <= EPS_MM
+                && matches!(last.kind, MoveKind::ArcCw { .. } | MoveKind::ArcCcw { .. }) =>
+        {
+            n - 1
+        }
+        _ => n,
+    };
+    let begin = usize::from(led).min(end);
+    let start_z_mm = begin
+        .checked_sub(1)
+        .and_then(|k| block.cuts.get(k))
+        .or(block.descent.last())
+        .map_or(block.z_mm, |m| m.to.z);
+    edge.apply(block.cuts.get_mut(begin..end)?, start_z_mm)
 }
 
 /// A path's lead (`docs/specs/phase-2/design.md`, "Algorithms → Lead-in
@@ -6568,6 +6632,137 @@ mod tests {
                     bound_mm(a)
                 );
             }
+        }
+    }
+
+    /// A round hole `diameter_mm` across, centred on the origin: two half
+    /// arcs, counter-clockwise (#335).
+    fn round_hole(diameter_mm: f64) -> Polyline {
+        let r = diameter_mm / 2.0;
+        Polyline::new(
+            vec![Vertex::new(r, 0.0, 1.0), Vertex::new(-r, 0.0, 1.0)],
+            true,
+        )
+    }
+
+    /// The tool-centre arcs of the last pass of a one-shape toolpath
+    /// (#335): every level arc after [`last_pass_start`], with its radius
+    /// and feed.
+    fn last_pass_arcs(tp: &Toolpath, outline: &Polyline, allowance_mm: f64) -> Vec<(f64, f64)> {
+        let split = last_pass_start(tp, outline, LAST_PASS_Z_MM[1], allowance_mm);
+        let mut at = tp.moves[split].to;
+        let mut arcs = Vec::new();
+        for mv in &tp.moves[split + 1..] {
+            if let MoveKind::ArcCcw { centre } | MoveKind::ArcCw { centre } = mv.kind
+                && (mv.to.z - at.z).abs() <= EPS_MM
+            {
+                arcs.push((mv.to.xy().distance_to(centre), mv.feed_mm_min.unwrap()));
+            }
+            at = mv.to;
+        }
+        arcs
+    }
+
+    /// #335: in a round hole cut Inside, the tool centre runs a circle of
+    /// `ρ − r` round a wall of `ρ`, so its cutting edge moves `ρ / (ρ − r)`
+    /// times as fast as the centre. The last pass runs those arcs at
+    /// `feed · (ρ − r) / ρ` (the spec's `k` is 1), so its edge moves at the
+    /// feed: the 8, 10 and 15 mm holes with a 6.35 mm bit, at 0.2, 0.5 and
+    /// 2 mm where they fit, climb and conventional, with no warning. The
+    /// earlier passes keep the feed. A 60 × 40 mm rectangle's last pass,
+    /// Inside and Outside, is unchanged: every level cut at the feed.
+    #[test]
+    fn last_pass_small_hole_edge_feed() {
+        const FEED_MM_MIN: f64 = 1000.0;
+        for diameter_mm in [8.0, 10.0, 15.0] {
+            let p = last_pass_project_of(vec![round_hole(diameter_mm)]);
+            let hole = at_20_20().apply_polyline(&round_hole(diameter_mm)).unwrap();
+            for a in [0.2, 0.5, 2.0] {
+                if diameter_mm < 6.35 + 2.0 * a {
+                    continue;
+                }
+                for direction in [CutDirection::Climb, CutDirection::Conventional] {
+                    let case = format!("{diameter_mm} mm hole at {a} mm {direction:?}");
+                    let op = ProfileOp {
+                        direction,
+                        last_pass: Some(allowance(a)),
+                        ..last_pass_op(&p, Side::Inside)
+                    };
+                    let (tp, warnings) = generate(&p, &op);
+                    assert!(warnings.is_empty(), "{case}: {warnings:?}");
+                    let rho = diameter_mm / 2.0;
+                    let expected = FEED_MM_MIN * (rho - R_MM) / rho;
+                    let arcs = last_pass_arcs(&tp, &hole, a);
+                    assert!(arcs.len() >= 2, "{case}: {arcs:?}");
+                    for (radius_mm, feed) in arcs {
+                        assert_approx_eq!(radius_mm, rho - R_MM, 1e-6);
+                        assert_approx_eq!(feed, expected, 1e-9);
+                    }
+                    let split = last_pass_start(&tp, &hole, LAST_PASS_Z_MM[1], a);
+                    assert!(
+                        tp.moves[..split]
+                            .iter()
+                            .all(|m| m.is_rapid() || m.feed_mm_min.unwrap() >= 300.0 - 1e-9),
+                        "{case}: an earlier pass slows down"
+                    );
+                }
+            }
+        }
+        let outline = placed_rect();
+        for side in [Side::Inside, Side::Outside] {
+            let p = last_pass_project();
+            let (tp, _) = generate(&p, &last_pass_op(&p, side));
+            let split = last_pass_start(&tp, &outline, LAST_PASS_Z_MM[1], ALLOWANCE_MM);
+            let mut at = tp.moves[split].to;
+            for mv in &tp.moves[split + 1..] {
+                if !mv.is_rapid() && (mv.to.z - at.z).abs() <= EPS_MM {
+                    assert_eq!(mv.feed_mm_min, Some(FEED_MM_MIN), "{side:?}: {mv:?}");
+                }
+                at = mv.to;
+            }
+        }
+    }
+
+    /// #335: where the last pass's inside arc is tighter than the
+    /// allowance (`ρ − r < a`), its feed is lowered only as far as the
+    /// smallest hole the last pass cuts needs, `feed · a / (a + r)`, the
+    /// least the safety pass's S3 accepts, and the edge there moves faster
+    /// than the feed: `last_pass_edge_faster` says so, naming the shape
+    /// and the arc. A 40 × 30 mm hole with 3.5 mm corner radii, cut Inside
+    /// with a 6.35 mm bit at 0.5 mm: its last pass turns its corners on
+    /// arcs of 0.325 mm.
+    #[test]
+    fn last_pass_tight_inside_arc_warns() {
+        let b = (PI / 8.0).tan();
+        let (w, h, f) = (40.0, 30.0, 3.5);
+        let rounded = Polyline::new(
+            vec![
+                Vertex::line(f, 0.0),
+                Vertex::new(w - f, 0.0, b),
+                Vertex::line(w, f),
+                Vertex::new(w, h - f, b),
+                Vertex::line(w - f, h),
+                Vertex::new(f, h, b),
+                Vertex::line(0.0, h - f),
+                Vertex::new(0.0, f, b),
+            ],
+            true,
+        );
+        let p = last_pass_project_of(vec![rounded.clone()]);
+        let op = last_pass_op(&p, Side::Inside);
+        let (tp, warnings) = generate(&p, &op);
+        let edge: Vec<&Warning> = warnings
+            .iter()
+            .filter(|w| w.code().as_str() == "last_pass_edge_faster")
+            .collect();
+        assert_eq!(edge.len(), 1, "{warnings:?}");
+        let message = edge[0].to_string();
+        assert!(message.contains("0.325 mm"), "{message}");
+        let outline = at_20_20().apply_polyline(&rounded).unwrap();
+        let floor = 1000.0 * ALLOWANCE_MM / (ALLOWANCE_MM + R_MM);
+        for (radius_mm, feed) in last_pass_arcs(&tp, &outline, ALLOWANCE_MM) {
+            assert_approx_eq!(radius_mm, f - R_MM, 1e-6);
+            assert_approx_eq!(feed, floor, 1e-9);
         }
     }
 

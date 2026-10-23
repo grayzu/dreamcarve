@@ -392,6 +392,15 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   across the allowance onto its own path. No plunge goes deeper into uncut
   material than a step-down. A last pass lead-in that starts too far from
   the earlier passes' cut is left off with `lead_dropped` ([#339]).
+- A Profile's last pass no longer overloads the bit in a small hole cut
+  Inside. Its centre runs a much smaller circle than the wall, so at the feed
+  its cutting edge moved up to 4.8 times as fast in an 8 mm hole with a
+  6.35 mm bit, and took 3.6 to 4.1 times what a straight wall's last pass
+  takes in a minute. Its inside arcs now run at the feed times the arc's
+  radius over the wall's, rounded down, so the edge moves at the feed and
+  the last pass removes at most a straight wall's share. The feed is never
+  lowered below what the smallest hole the last pass cuts needs; an inside
+  corner tighter than that warns `last_pass_edge_faster` ([#335]).
 - The post-processors chapter no longer says that on LinuxCNC a `G53` lift
   outside the soft limits stops the program before the machine moves.
   LinuxCNC refuses the lift when it reads ahead to it, so the job can stop
@@ -460,6 +469,10 @@ it is written:
   stock top runs only on the bit's path round the part or along an earlier
   cut of the operation, unless it started at or above the stock top
   ([#352]).
+- **S3, changed:** a Profile's last pass may run a level cut slower than
+  the tool's feed, down to the feed times the allowance over the allowance plus
+  the bit's radius, the speed its inside arcs run at in the smallest hole it
+  cuts ([#335]).
 - **S10:** a ramp or helix never descends faster than the plunge rate.
   Every descending cut is checked from the written numbers, with nothing
   allowed for rounding ([#325]).
@@ -577,6 +590,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#324]: https://github.com/grayzu/dreamcarve/issues/324
 [#311]: https://github.com/grayzu/dreamcarve/issues/311
 [#337]: https://github.com/grayzu/dreamcarve/issues/337
+[#335]: https://github.com/grayzu/dreamcarve/issues/335
 [#339]: https://github.com/grayzu/dreamcarve/issues/339
 [#293]: https://github.com/grayzu/dreamcarve/issues/293
 [#300]: https://github.com/grayzu/dreamcarve/issues/300
