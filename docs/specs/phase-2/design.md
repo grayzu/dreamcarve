@@ -3640,7 +3640,20 @@ bit against the part, so it takes a last pass as Inside and Outside do.
    through points whose distances to them add up to `a`, no longer than
    `dc_cam::last_pass_step_reach_mm`, the generator's own bound. A move
    along the band, steps chained inside it, or one that falls through it
-   is refused.)
+   is refused.) (Changed in #358: a point of the step may also lie
+   between one segment's two offsets taken whole, untrimmed, its
+   distances to them adding up to `a`. Where an open path's end vertex
+   comes back within `r + a` of another of its segments, `offset_open`
+   trims each offset of that segment where it comes within its own
+   distance of the vertex, so the two passes start on circles of `r`
+   and `r + a` round it, not on one normal, and the step's end lies
+   farther than `a` from the trimmed `r + a` path. Between one segment's
+   whole offsets a point is abreast of that segment on its cut side,
+   `r` to `r + a` from it: the strip its passes cut, not past an open
+   end and not on the kept side; the `r` S9 keeps from every line holds
+   it off the vertex. The generator is unchanged, so the last pass still
+   cuts all of its own path; starting both passes on one normal would
+   leave the start of its path uncut.)
 
 Tests: `profile::last_pass_left_offsets_earlier_passes`,
 `profile::last_pass_left_right_tabs_cover_same_stretch` (the rise is
@@ -3657,6 +3670,10 @@ Tests: `profile::last_pass_left_offsets_earlier_passes`,
 and `cli::left_right_last_pass_exports_and_without_is_byte_identical`,
 whose projects without a last pass export the programs the build before
 #311 wrote. The Left and Right property projects get random last passes.
+#358 adds
+`material::allowance_band_tests::last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed`,
+`material::allowance_band_tests::last_pass_step_past_an_open_end_or_on_the_kept_side_fails`
+and the property case `left_open_path_last_pass_plunge_exports`.
 
 Tests: `migrate::v12_to_v13_adds_null_last_pass`,
 `validate::last_pass_allowance_limit`, `validate::last_pass_on_line_is_error`,
