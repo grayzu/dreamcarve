@@ -4273,10 +4273,10 @@ lengths), or more than its tool's step-down
 (`Problem::BorePitchOverStepDown { operation, pitch_mm, step_down_mm }`);
 a Bore with no `pitch_mm` whose tool has no step-down
 (`Problem::ToolValueUnset` on `step_down_mm`, as Pocket's); a negative or
-non-finite `allowance_mm` (`OutOfRange`). As a warning: a Bore
-whose tool is not an `EndMill` (`Problem::BoreCutterUnusual`): a twist
-drill, V-bit or engraver does not cut a straight wall sideways (Fusion's
-help names flat and bull-nose end mills for Bore). The CLI writes no
+non-finite `allowance_mm` (`OutOfRange`); a Bore whose tool is not a
+flat end mill (`Problem::CutterNotFlat`, as a Pocket's): it cuts the wall
+with the side of the bit, which a twist drill, V-bit or engraver does not
+do to size (Fusion's help names flat and bull-nose end mills for Bore). The CLI writes no
 Bore fields; a user adds a Bore in the `.dcv`, as every operation.
 
 **CLI.** `check` and `export` print the new warnings like the others;
@@ -4319,7 +4319,7 @@ Tests:
   `validate::bore_pitch_over_step_down_is_error`,
   `validate::bore_without_pitch_or_step_down_is_error`,
   `validate::bore_negative_allowance_is_error`,
-  `validate::bore_cutter_unusual_warns`.
+  `validate::bore_needs_flat_end_mill`.
 - dc-gcode: `material::bore_inside_hole_passes`,
   `material::bore_doctored_outside_hole_fails` (S9 refuses a program whose
   circle runs 0.1 mm wider), `bore::five_mm_through_hole_program`
