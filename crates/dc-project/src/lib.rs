@@ -40,4 +40,5 @@ pub use post_processor::{
     latest_definitions, switch_post,
 };
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
+pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
 pub use validate::{MAX_RATE_MM_MIN, MAX_RPM, MAX_TOOL_DIAMETER_MM, Problem, Severity, validate};

@@ -821,6 +821,13 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 16 {
+            for tool in root["tools"].as_array_mut().unwrap() {
+                let tool = tool.as_object_mut().unwrap();
+                tool.shift_remove("vendor");
+                tool.shift_remove("product_id");
+            }
+        }
         if version < 15 {
             for tab in root["tabs"].as_array_mut().unwrap() {
                 tab.as_object_mut().unwrap().shift_remove("holds_slug");
@@ -2027,6 +2034,91 @@ mod tests {
         assert_eq!(loaded.project.heights, crate::Heights::unset());
         assert_eq!(loaded.project, sample_project());
         assert_eq!(loaded.problems, vec![]);
+    }
+
+    // Version 15 → 16 (maintainer decision 2026-10-24): a tool's vendor
+    // and product id.
+
+    const V15_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v15/sample.dcv");
+
+    #[test]
+    fn version_15_fixture_loads() {
+        let loaded = load(V15_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+        for tool in &loaded.project.tools {
+            assert_eq!((&tool.vendor, &tool.product_id), (&None, &None));
+        }
+    }
+
+    /// Every tool of a version 15 file gains `vendor: null` and
+    /// `product_id: null` right after its `name`, and nothing else
+    /// changes; a tool that already has either key is not a version 15
+    /// tool, and the step says which.
+    #[test]
+    fn v15_tools_gain_no_vendor() {
+        let mut before = sample_root_at(15);
+        let second = before["tools"][0].clone();
+        before["tools"].as_array_mut().unwrap().push(second);
+        before["tools"][1]["id"] = json!("t2");
+        let migrated = migrate(before.clone(), 15).unwrap();
+        assert_eq!(migrated["version"], json!(CURRENT_VERSION));
+        let tools = migrated["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        for (i, tool) in tools.iter().enumerate() {
+            let fields = tool.as_object().unwrap();
+            let keys: Vec<&str> = fields.keys().map(String::as_str).collect();
+            assert_eq!(
+                keys.get(1..4),
+                Some(&["name", "vendor", "product_id"][..]),
+                "{keys:?}"
+            );
+            assert_eq!(fields["vendor"], Value::Null);
+            assert_eq!(fields["product_id"], Value::Null);
+            let mut rest = fields.clone();
+            rest.shift_remove("vendor");
+            rest.shift_remove("product_id");
+            assert_eq!(Value::Object(rest), before["tools"][i], "tool {i}");
+        }
+        // Only the tools change.
+        let mut others = migrated.clone();
+        others["tools"] = before["tools"].clone();
+        others["version"] = json!(15);
+        assert_eq!(others, before);
+        assert_eq!(
+            migrate(sample_root_at(15), 15).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+
+        for key in ["vendor", "product_id"] {
+            let mut root = before.clone();
+            root["tools"][1][key] = json!("x");
+            let err = migrate(root, 15).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Migration { from: 15, to: 16, message, .. }
+                    if message.contains(&format!("`tools[1].{key}`"))),
+                "{key}: {err:?}"
+            );
+        }
+    }
+
+    /// A vendor and product id save after the name and load back.
+    #[test]
+    fn vendor_and_product_id_round_trip() {
+        let mut project = sample_project();
+        project.tools[0].vendor = Some("IDC Woodcraft".into());
+        project.tools[0].product_id = Some("DC-14".into());
+        let text = crate::save(&project).unwrap();
+        assert!(
+            text.contains(
+                "\"name\": \"6.35 mm upcut\",\n      \"vendor\": \"IDC Woodcraft\",\n      \"product_id\": \"DC-14\",\n"
+            ),
+            "{text}"
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, project);
+        assert_eq!(crate::save(&loaded.project).unwrap(), text);
     }
 
     #[test]

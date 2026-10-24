@@ -455,6 +455,8 @@ fn project_of(shapes: &[(&str, Vec<Polyline>)]) -> Project {
     p.tools = vec![Tool {
         id: ToolId::new("t1"),
         name: "t1".into(),
+        vendor: None,
+        product_id: None,
         number: None,
         cutter: ToolKind::EndMill,
         diameter_mm: TOOL_MM,

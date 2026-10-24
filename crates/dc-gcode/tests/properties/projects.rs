@@ -260,6 +260,8 @@ fn tool(kind: impl Strategy<Value = ToolKind>) -> impl Strategy<Value = Tool> {
             |(cutter, diameter_mm, feed, plunge, rpm, step_down, step_over)| Tool {
                 id: ToolId::new("t1"),
                 name: "random".into(),
+                vendor: None,
+                product_id: None,
                 number: None,
                 cutter,
                 diameter_mm,

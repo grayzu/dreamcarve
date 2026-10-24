@@ -266,6 +266,8 @@ fn default_project(
     let tool = Tool {
         id: ToolId::new(TOOL_ID),
         name: TOOL_NAME.into(),
+        vendor: None,
+        product_id: None,
         number: None,
         cutter: ToolKind::EndMill,
         diameter_mm: TOOL_DIAMETER_MM,

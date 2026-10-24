@@ -28,6 +28,14 @@ statement and are reference only; they are not committed
   file: one deflated entry, `tools.json`, byte-identical to `sample.json`.
   `fusion::zip_and_plain_json_both_read` checks that the two agree.
 
+- `vendors.json` is a Fusion `.json` library of made-up vendors' tools
+  (maintainer decision 2026-10-24, `docs/specs/phase-2/functional.md`,
+  capabilities 22a and 22b): two vendors with a same-description tool
+  each, a same-description pair from one vendor with different product
+  ids, a description that already starts with its vendor, a tool with no
+  description, one with an empty vendor, and inch tools whose converted
+  values carry floating-point noise unless rounded (3/16", 60 in/min).
+
 To regenerate `sample.tools` after editing `sample.json`:
 
 ```sh

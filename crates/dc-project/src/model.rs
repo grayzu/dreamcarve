@@ -258,6 +258,16 @@ pub struct Tool {
     pub id: ToolId,
     /// Display name.
     pub name: String,
+    /// Who makes the tool, such as `IDC Woodcraft` (format 16). `None`
+    /// when unknown; Fusion import copies the file's `vendor`. No program
+    /// reads it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub vendor: Option<String>,
+    /// The vendor's part number, such as `DC-14` (format 16). `None` when
+    /// unknown; Fusion import copies the file's `product-id`, and the
+    /// library uses it to tell two tools of one name apart.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub product_id: Option<String>,
     /// Tool number, the `<n>` of `T<n>` in programs and of `-T<n>` in
     /// file names (functional spec, capability 21a). `None` means the
     /// tool's 1-based position in [`Project::tools`]. Never 0; validation

@@ -40,6 +40,17 @@ pub enum LibraryError {
         /// The newest version this build reads.
         supported: u32,
     },
+    /// An older library file could not be brought up to this version: it
+    /// holds something its version never wrote.
+    #[error("library version {from} cannot be migrated to version {to}: {message}")]
+    Migration {
+        /// The version being migrated from.
+        from: u32,
+        /// The version being migrated to.
+        to: u32,
+        /// What is wrong, naming the place, such as `tools[1].tool.vendor`.
+        message: String,
+    },
     /// The JSON does not match the library schema (unknown or missing
     /// field, wrong type).
     #[error("library does not match the tool library format at `{path}`: {message}")]

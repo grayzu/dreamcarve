@@ -454,6 +454,8 @@ mod tests {
         Tool {
             id: ToolId::new("t1"),
             name: "90° V-bit".into(),
+            vendor: Some("Acme Router Bits".into()),
+            product_id: Some("AC-V90".into()),
             number: Some(5),
             cutter: ToolKind::VBit {
                 included_angle_deg: 90.0,
@@ -473,6 +475,8 @@ mod tests {
         Tool {
             id: ToolId::new("t1"),
             name: "3 mm ball".into(),
+            vendor: None,
+            product_id: None,
             number: None,
             cutter: ToolKind::BallNose,
             diameter_mm: 3.0,
@@ -503,12 +507,25 @@ mod tests {
         let lib = sample_library();
         let text = save(&lib).unwrap();
         assert!(
-            text.starts_with("{\n  \"version\": 1,\n  \"tools\": [\n"),
+            text.starts_with("{\n  \"version\": 2,\n  \"tools\": [\n"),
             "{text}"
         );
         assert!(text.ends_with("}\n"), "{text}");
         assert!(text.contains("\"source\": null"), "{text}");
         assert!(text.contains("\"step_down_mm\": null"), "{text}");
+        // A tool's vendor and product id follow its name, set or unset.
+        assert!(
+            text.contains(
+                "\"name\": \"90° V-bit\",\n        \"vendor\": \"Acme Router Bits\",\n        \"product_id\": \"AC-V90\",\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "\"name\": \"3 mm ball\",\n        \"vendor\": null,\n        \"product_id\": null,\n"
+            ),
+            "{text}"
+        );
         let loaded = load(text.as_bytes()).unwrap();
         assert_eq!(loaded, lib);
         assert_eq!(save(&loaded).unwrap(), text);
@@ -591,6 +608,175 @@ mod tests {
             "Other",
             "unique: no suffix"
         );
+    }
+
+    /// A library file as version 1 wrote it: `lib` saved, then each tool's
+    /// `vendor` and `product_id` taken out and the version set to 1.
+    fn as_version_1(lib: &Library) -> String {
+        let mut root: Value = serde_json::from_str(&save(lib).unwrap()).unwrap();
+        root["version"] = 1.into();
+        for entry in root["tools"].as_array_mut().unwrap() {
+            let tool = entry["tool"].as_object_mut().unwrap();
+            tool.shift_remove("vendor");
+            tool.shift_remove("product_id");
+        }
+        let mut text = serde_json::to_string_pretty(&root).unwrap();
+        text.push('\n');
+        text
+    }
+
+    /// Maintainer decision 2026-10-24: a version 1 library, which has no
+    /// vendor or product id, loads with both unset and saves as version
+    /// 2 with them after each name. A version 1 tool that has either key
+    /// is not a version 1 tool.
+    #[test]
+    fn version_1_file_migrates() {
+        let mut lib = sample_library();
+        for entry in &mut lib.tools {
+            entry.tool.vendor = None;
+            entry.tool.product_id = None;
+        }
+        let v1 = as_version_1(&lib);
+        assert!(v1.starts_with("{\n  \"version\": 1,"), "{v1}");
+        assert!(!v1.contains("vendor") && !v1.contains("product_id"), "{v1}");
+        let loaded = load(v1.as_bytes()).unwrap();
+        assert_eq!(loaded, lib);
+        assert_eq!(loaded.version, LIBRARY_VERSION);
+        let saved = save(&loaded).unwrap();
+        assert!(saved.starts_with("{\n  \"version\": 2,"), "{saved}");
+        assert_eq!(saved.matches("\"vendor\": null,").count(), 3, "{saved}");
+        assert_eq!(saved.matches("\"product_id\": null,").count(), 3, "{saved}");
+        assert_eq!(saved, save(&lib).unwrap());
+
+        for key in ["vendor", "product_id"] {
+            let bad = v1.replacen(
+                "\"name\": \"90° V-bit\",",
+                &format!("\"name\": \"90° V-bit\", \"{key}\": null,"),
+                1,
+            );
+            assert_ne!(bad, v1);
+            let err = load(bad.as_bytes()).unwrap_err();
+            assert!(
+                matches!(&err, LibraryError::Migration { message, .. }
+                    if message.contains(&format!("tools[1].tool.{key}"))),
+                "{key}: {err:?}"
+            );
+        }
+        // A version 2 tool missing them is a schema error, as any missing
+        // field is.
+        let missing = save(&lib)
+            .unwrap()
+            .replacen("        \"vendor\": null,\n", "", 1);
+        assert!(matches!(load(missing.as_bytes()).unwrap_err(),
+                LibraryError::Schema { message, .. } if message.contains("vendor")),);
+    }
+
+    /// Maintainer decision 2026-10-24: a clashing name takes the tool's
+    /// product id before ` (2)`, and the same tool under either suffix is
+    /// already present.
+    #[test]
+    fn name_clash_takes_product_id_first() {
+        let engraver = |diameter_mm: f64, product_id: Option<&str>| Tool {
+            name: "Acme Diamond Engraver".into(),
+            vendor: Some("Acme".into()),
+            product_id: product_id.map(str::to_owned),
+            diameter_mm,
+            ..vbit_90()
+        };
+        let mut lib = Library::default();
+        add(&mut lib, engraver(12.7, Some("ED-12")), None).unwrap();
+        add(&mut lib, engraver(6.35, Some("ED-14")), None).unwrap();
+        let names: Vec<&str> = lib.tools.iter().map(|t| t.tool.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Acme Diamond Engraver", "Acme Diamond Engraver (ED-14)"]
+        );
+        // Again: already present, whatever the stored suffix.
+        for (diameter_mm, id, expected) in [(12.7, "ED-12", "lt1"), (6.35, "ED-14", "lt2")] {
+            assert_eq!(
+                add(&mut lib, engraver(diameter_mm, Some(id)), None).unwrap(),
+                AddOutcome::AlreadyPresent {
+                    id: LibraryToolId::new(expected)
+                }
+            );
+        }
+        // No product id: ` (2)`.
+        add(&mut lib, engraver(3.0, None), None).unwrap();
+        assert_eq!(lib.tools[2].tool.name, "Acme Diamond Engraver (2)");
+        // A product id whose name is taken: the next free ` (n)`.
+        add(&mut lib, engraver(4.0, Some("ED-14")), None).unwrap();
+        assert_eq!(lib.tools[3].tool.name, "Acme Diamond Engraver (3)");
+        // A name that already ends with the product id gets ` (n)`, not
+        // the id twice.
+        let mut by_id = engraver(5.0, Some("ED-14"));
+        by_id.name = "Acme Diamond Engraver (ED-14)".into();
+        add(&mut lib, by_id, None).unwrap();
+        assert_eq!(lib.tools[4].tool.name, "Acme Diamond Engraver (ED-14) (2)");
+        // `find` takes the new names.
+        assert_eq!(
+            find(&lib, "Acme Diamond Engraver (ED-14)").unwrap().id,
+            LibraryToolId::new("lt2")
+        );
+        // `replace` settles a clash the same way.
+        let mut replacing = Library::default();
+        add(
+            &mut replacing,
+            engraver(12.7, Some("ED-12")),
+            Some("s1".into()),
+        )
+        .unwrap();
+        add(
+            &mut replacing,
+            engraver(6.0, Some("ED-14")),
+            Some("s2".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            replacing.tools[1].tool.name,
+            "Acme Diamond Engraver (ED-14)"
+        );
+        assert_eq!(
+            replace(
+                &mut replacing,
+                engraver(6.35, Some("ED-14")),
+                Some("s2".into())
+            )
+            .unwrap(),
+            AddOutcome::Replaced {
+                id: LibraryToolId::new("lt2")
+            }
+        );
+        assert_eq!(
+            replacing.tools[1].tool.name,
+            "Acme Diamond Engraver (ED-14)"
+        );
+    }
+
+    /// Maintainer decision 2026-10-24: load never rounds. A stored value
+    /// may be one the user typed, and the file round-trips byte for byte.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn load_keeps_stored_values() {
+        let mut lib = Library::default();
+        let mut noisy = tool_6_35_upcut();
+        noisy.diameter_mm = 4.762_499_999_999_999;
+        noisy.feed_mm_min = Some(1_524.000_000_000_000_5);
+        add(&mut lib, noisy, None).unwrap();
+        let text = save(&lib).unwrap();
+        assert!(
+            text.contains("\"diameter_mm\": 4.762499999999999,"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"feed_mm_min\": 1524.0000000000005,"),
+            "{text}"
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert!(loaded.tools[0].tool.diameter_mm == 4.762_499_999_999_999);
+        assert_eq!(save(&loaded).unwrap(), text);
     }
 
     /// An id match wins over a name match, a unique name finds its tool,
@@ -764,9 +950,9 @@ mod tests {
     #[test]
     fn newer_version_is_rejected() {
         assert_eq!(
-            load(b"{\"version\": 2, \"tools\": []}").unwrap_err(),
+            load(b"{\"version\": 3, \"tools\": []}").unwrap_err(),
             LibraryError::NewerVersion {
-                found: 2,
+                found: 3,
                 supported: LIBRARY_VERSION
             }
         );
@@ -789,16 +975,17 @@ mod tests {
             load(b"{").unwrap_err(),
             LibraryError::Json { line: 1, .. }
         ));
-        let err = load(b"{\"version\": 1, \"tools\": [], \"name\": \"x\"}").unwrap_err();
+        let err = load(b"{\"version\": 2, \"tools\": [], \"name\": \"x\"}").unwrap_err();
         assert!(
             matches!(&err, LibraryError::Schema { message, .. } if message.contains("name")),
             "{err:?}"
         );
-        // The current version with no tools is the empty library.
-        assert_eq!(
-            load(b"{\"version\": 1, \"tools\": []}").unwrap(),
-            Library::default()
-        );
+        // The current version with no tools is the empty library, and so
+        // is version 1 with none.
+        for version in [1, 2] {
+            let text = format!("{{\"version\": {version}, \"tools\": []}}");
+            assert_eq!(load(text.as_bytes()).unwrap(), Library::default());
+        }
 
         // A tool block missing an optional, or with an unknown key, names
         // its path; a repeated id is an error too.

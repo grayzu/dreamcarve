@@ -5522,6 +5522,8 @@ fn quarter_inch_end_mill() -> dc_project::Tool {
     dc_project::Tool {
         id: ToolId::new("t1"),
         name: "1/4 end mill".into(),
+        vendor: None,
+        product_id: None,
         number: Some(3),
         cutter: dc_project::ToolKind::EndMill,
         diameter_mm: 6.35,
@@ -5539,6 +5541,8 @@ fn vbit_60() -> dc_project::Tool {
     dc_project::Tool {
         id: ToolId::new("t1"),
         name: "60° V-bit".into(),
+        vendor: None,
+        product_id: None,
         number: None,
         cutter: dc_project::ToolKind::VBit {
             included_angle_deg: 60.0,
@@ -5816,7 +5820,7 @@ fn tools_remove() {
 
 /// The tools `tests/fixtures/fusion/sample.json` imports as, in order.
 const FUSION_IMPORTED: [&str; 13] = [
-    "6 mm Flat End Mill",
+    "DreamCarve fixtures 6 mm Flat End Mill",
     "3 mm Ball End Mill",
     "8 mm Bull Nose End Mill (bull nose r1)",
     "20 mm Slot Mill",
@@ -5901,7 +5905,7 @@ fn tools_import_fusion_reports_each_tool() {
         "the drill's unset feed is noted:\n{text}"
     );
     assert!(
-        lines.contains(&"`6 mm Flat End Mill`: imported (lt1)"),
+        lines.contains(&"`DreamCarve fixtures 6 mm Flat End Mill`: imported (lt1)"),
         "a complete preset has no note:\n{text}"
     );
     assert!(
@@ -5913,7 +5917,7 @@ fn tools_import_fusion_reports_each_tool() {
 
     let lib = read_library(&dir);
     assert_eq!(lib.tools.len(), 13);
-    let flat = library_tool(&lib, "6 mm Flat End Mill");
+    let flat = library_tool(&lib, "DreamCarve fixtures 6 mm Flat End Mill");
     assert_eq!(
         flat.source.as_deref(),
         Some("fusion:dc000001-0000-4000-8000-000000000001:dc0000p1-0000-4000-8000-000000000001")
@@ -5923,6 +5927,8 @@ fn tools_import_fusion_reports_each_tool() {
     assert_approx_eq!(tool.diameter_mm, 6.0, 1e-9);
     assert_eq!(tool.flutes, 2);
     assert_eq!(tool.number, Some(5));
+    assert_eq!(tool.vendor.as_deref(), Some("DreamCarve fixtures"));
+    assert_eq!(tool.product_id.as_deref(), Some("DC-FEM-6"));
     assert_eq!(tool.rpm, Some(18000));
     assert_eq!(tool.feed_mm_min, Some(1200.0));
     assert_eq!(tool.plunge_mm_min, Some(400.0));
@@ -5993,6 +5999,200 @@ fn tools_import_twice_is_already_present() {
         std::fs::read(library_file(&dir)).expect("library readable"),
         first
     );
+}
+
+// ── Tool vendor and rounding (maintainer decision 2026-10-24; ──────────
+// ── functional spec, capabilities 22a and 22b) ───────────────────────────
+
+/// `tools list` has VENDOR and PRODUCT columns, `-` when unset, and `tools
+/// add` finds a tool by its vendor name, suffix included, copying its
+/// vendor and product id into the project.
+#[test]
+fn tools_list_shows_vendor() {
+    let dir = work_dir("tools_list_shows_vendor");
+    copy_fixture(&dir, "fusion/vendors.json", "vendors.json");
+    let out = run(&dir, &["tools", "import", "vendors.json"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "`Acme Router Bits Diamond Engraver`: imported as `Acme Router Bits Diamond Engraver (AC-ED14)` (lt4)"
+        ),
+        "{text}"
+    );
+
+    let out = run(&dir, &["tools", "list"]);
+    assert_eq!(out.status.code(), Some(0), "list: {}", stderr(&out));
+    let text = stdout(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    let header: Vec<&str> = lines[0].split_whitespace().collect();
+    assert_eq!(
+        header,
+        [
+            "ID",
+            "NAME",
+            "VENDOR",
+            "PRODUCT",
+            "CUTTER",
+            "DIAMETER_MM",
+            "FEED_MM_MIN",
+            "PLUNGE_MM_MIN",
+            "RPM",
+            "NUMBER",
+            "SOURCE"
+        ],
+        "{text}"
+    );
+    assert_eq!(lines.len(), 9, "{text}");
+    // The columns line up: each row's vendor starts under VENDOR.
+    let vendor_at = lines[0].find("VENDOR").expect("VENDOR");
+    let product_at = lines[0].find("PRODUCT").expect("PRODUCT");
+    let row = |id: &str| {
+        *lines
+            .iter()
+            .find(|l| l.starts_with(&format!("{id} ")))
+            .unwrap_or_else(|| panic!("no row {id}:\n{text}"))
+    };
+    let engraver = row("lt4");
+    assert!(
+        engraver.starts_with("lt4   Acme Router Bits Diamond Engraver (AC-ED14) "),
+        "{text}"
+    );
+    assert_eq!(
+        &engraver[vendor_at..product_at].trim_end(),
+        &"Acme Router Bits"
+    );
+    assert!(engraver[product_at..].starts_with("AC-ED14 "), "{text}");
+    let unbranded = row("lt7");
+    assert_eq!(unbranded[vendor_at..product_at].trim_end(), "-", "{text}");
+    assert!(unbranded[product_at..].starts_with("NV-3 "), "{text}");
+    assert!(row("lt8").contains(" 4.7625 "), "rounded:\n{text}");
+
+    // `tools add` by the new name.
+    let dcv = init_coaster(&dir);
+    let out = run(
+        &dir,
+        &[
+            "tools",
+            "add",
+            "coaster.dcv",
+            "Acme Router Bits Diamond Engraver (AC-ED14)",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "add: {}", stderr(&out));
+    let project = load_file(&dcv).project;
+    let added = project.tools.last().expect("a tool");
+    assert_eq!(added.name, "Acme Router Bits Diamond Engraver (AC-ED14)");
+    assert_eq!(added.vendor.as_deref(), Some("Acme Router Bits"));
+    assert_eq!(added.product_id.as_deref(), Some("AC-ED14"));
+    let text = std::fs::read_to_string(&dcv).expect("dcv readable");
+    assert!(
+        text.contains("\"vendor\": \"Acme Router Bits\",\n      \"product_id\": \"AC-ED14\","),
+        "{text}"
+    );
+}
+
+/// Importing the vendors fixture again, with or without `--replace`,
+/// finds every tool already present under its vendor name and suffix and
+/// leaves the library byte-identical.
+#[test]
+fn tools_import_vendors_twice_is_already_present() {
+    let dir = work_dir("tools_import_vendors_twice_is_already_present");
+    copy_fixture(&dir, "fusion/vendors.json", "vendors.json");
+    let out = run(&dir, &["tools", "import", "vendors.json"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    assert!(stdout(&out).contains("8 imported"), "{}", stdout(&out));
+    let first = std::fs::read(library_file(&dir)).expect("library readable");
+    for args in [
+        &["tools", "import", "vendors.json"][..],
+        &["tools", "import", "vendors.json", "--replace"][..],
+    ] {
+        let out = run(&dir, args);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", stderr(&out));
+        let text = stdout(&out);
+        assert!(
+            text.contains("0 imported, 8 already present, 0 replaced, 0 skipped"),
+            "{args:?}: {text}"
+        );
+        assert_eq!(
+            std::fs::read(library_file(&dir)).expect("library readable"),
+            first,
+            "{args:?} changed the library"
+        );
+    }
+}
+
+/// A Fusion inch tool imports with exact millimetre values, and
+/// importing it again is already present. A library written before the
+/// change, with noisy values and no vendor, is updated in place by
+/// `--replace`, keeping its ids.
+#[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "a stored value must load exactly as written"
+)]
+fn tools_reimport_of_rounded_inch_tool_is_already_present() {
+    let dir = work_dir("tools_reimport_of_rounded_inch_tool_is_already_present");
+    copy_fixture(&dir, "fusion/vendors.json", "vendors.json");
+    let out = run(&dir, &["tools", "import", "vendors.json"]);
+    assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
+    let text = std::fs::read_to_string(library_file(&dir)).expect("library readable");
+    assert!(text.contains("\"diameter_mm\": 4.7625,"), "{text}");
+    assert!(text.contains("\"feed_mm_min\": 1524.0,"), "{text}");
+    assert!(text.contains("\"plunge_mm_min\": 381.0,"), "{text}");
+    assert!(text.contains("\"step_down_mm\": 1.5875,"), "{text}");
+    assert!(!text.contains("0000000"), "no float noise:\n{text}");
+    let rounded = read_library(&dir);
+    let out = run(&dir, &["tools", "import", "vendors.json"]);
+    assert!(
+        stdout(&out).contains("8 already present"),
+        "{}",
+        stdout(&out)
+    );
+
+    // The library as the build before the change wrote it: version 1, no
+    // vendor fields, names without the vendor, and the 3/16" tool noisy.
+    let mut root: serde_json::Value = serde_json::from_str(&text).expect("json");
+    root["version"] = 1.into();
+    for entry in root["tools"].as_array_mut().expect("tools") {
+        let tool = entry["tool"].as_object_mut().expect("tool");
+        tool.shift_remove("vendor");
+        tool.shift_remove("product_id");
+        let name = tool["name"].as_str().expect("name").to_owned();
+        let bare = name
+            .trim_start_matches("Acme Router Bits ")
+            .trim_start_matches("Birch Tooling ");
+        tool.insert("name".into(), bare.into());
+        if tool["diameter_mm"] == serde_json::json!(4.7625) {
+            tool.insert(
+                "diameter_mm".into(),
+                serde_json::json!(4.762_499_999_999_999),
+            );
+        }
+    }
+    std::fs::write(
+        library_file(&dir),
+        serde_json::to_string_pretty(&root).expect("json") + "\n",
+    )
+    .expect("written");
+    let old = read_library(&dir);
+    assert_eq!(old.tools.len(), 8);
+    assert!(old.tools.iter().all(|t| t.tool.vendor.is_none()));
+    assert!(
+        old.tools
+            .iter()
+            .any(|t| t.tool.diameter_mm == 4.762_499_999_999_999),
+        "loading does not round"
+    );
+
+    let out = run(&dir, &["tools", "import", "vendors.json", "--replace"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("0 imported, 0 already present, 8 replaced"),
+        "every tool gains its vendor or product id:\n{}",
+        stdout(&out)
+    );
+    assert_eq!(read_library(&dir), rounded, "the same tools, ids and names");
 }
 
 // ── #105: placed tabs ──

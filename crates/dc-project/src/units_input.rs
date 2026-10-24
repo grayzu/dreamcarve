@@ -26,6 +26,24 @@ use std::fmt;
 /// Millimetres per inch, exactly.
 const MM_PER_INCH: f64 = 25.4;
 
+/// Decimal places of a millimetre a length converted from inches keeps.
+pub const LENGTH_DECIMALS: i32 = 6;
+
+/// Decimal places of a mm/min a feed rate converted from in/min keeps.
+pub const RATE_DECIMALS: i32 = 3;
+
+/// `value_mm` rounded to [`LENGTH_DECIMALS`] places.
+#[must_use]
+pub fn round_length_mm(value_mm: f64) -> f64 {
+    value_mm
+}
+
+/// `value_mm_min` rounded to [`RATE_DECIMALS`] places.
+#[must_use]
+pub fn round_rate_mm_min(value_mm_min: f64) -> f64 {
+    value_mm_min
+}
+
 /// What a field holds, which decides the units it takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Quantity {
@@ -309,6 +327,68 @@ mod tests {
         let mut tool = serde_json::to_value(tool_6_35_upcut()).unwrap();
         tool["feed_mm_min"] = value;
         serde_json::from_value(tool)
+    }
+
+    /// Maintainer decision 2026-10-24: a converted value is the decimal it
+    /// should be, not the `f64` product's noise.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn round_keeps_inch_fractions_exact() {
+        use super::{round_length_mm, round_rate_mm_min};
+        for (inches, mm, text) in [
+            (0.0625, 1.5875, "1.5875"),
+            (0.1875, 4.7625, "4.7625"),
+            (1.0 / 64.0, 0.396875, "0.396875"),
+            (1.5, 38.1, "38.1"),
+            (0.25, 6.35, "6.35"),
+        ] {
+            let rounded = round_length_mm(inches * 25.4);
+            assert!(rounded == mm, "{inches} in: {rounded} != {mm}");
+            assert_eq!(rounded.to_string(), text);
+        }
+        for (in_min, mm_min, text) in [
+            (60.0, 1524.0, "1524"),
+            (15.0, 381.0, "381"),
+            (30.0, 762.0, "762"),
+            (7.0, 177.8, "177.8"),
+        ] {
+            let rounded = round_rate_mm_min(in_min * 25.4);
+            assert!(rounded == mm_min, "{in_min} in/min: {rounded} != {mm_min}");
+            assert_eq!(rounded.to_string(), text);
+        }
+        // Sixth and third places are kept, the seventh and fourth go.
+        assert!(round_length_mm(1.234_567_4) == 1.234_567);
+        assert!(round_rate_mm_min(1.234_6) == 1.235);
+        assert!(round_length_mm(-6.350_000_000_000_001) == -6.35);
+        assert!(round_length_mm(f64::NAN).is_nan());
+        assert!(round_length_mm(f64::INFINITY) == f64::INFINITY);
+        assert!(round_rate_mm_min(f64::NEG_INFINITY) == f64::NEG_INFINITY);
+    }
+
+    /// Inch strings round as Fusion import does; millimetre strings and
+    /// bare numbers are kept as written.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn inch_strings_round() {
+        assert!(load_depth(json!("3/16 in")).unwrap() == 4.7625);
+        assert!(load_depth(json!("1/64 in")).unwrap() == 0.396875);
+        assert!(load_depth(json!("1 1/2 in")).unwrap() == 38.1);
+        assert!(tool_with_feed(json!("60 in/min")).unwrap().feed_mm_min == Some(1524.0));
+        assert!(tool_with_feed(json!("15 in/min")).unwrap().feed_mm_min == Some(381.0));
+        assert!(load_depth(json!("4.76249999 mm")).unwrap() == 4.762_499_99);
+        assert!(load_depth(json!(4.762_499_999_999_999)).unwrap() == 4.762_499_999_999_999);
+        assert!(
+            tool_with_feed(json!("1234.56789 mm/min"))
+                .unwrap()
+                .feed_mm_min
+                == Some(1_234.567_89)
+        );
     }
 
     #[test]
