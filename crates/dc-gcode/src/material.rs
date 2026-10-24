@@ -153,6 +153,13 @@
 //!   `dc_cam::generate_drill` finds them): its ends and middle lie within
 //!   the hole's radius of its centre. A Drill only plunges, so that is the
 //!   hole it drills.
+//! - **Bore** (format 18; maintainer decision 2026-10-24): every cut stays
+//!   in one of the Bore's holes, the closed targets that are circles, as
+//!   for a Drill: its ends and middle lie within `ρ − r − allowance` of the
+//!   hole's centre (radius `ρ`, tool radius `r`), all three in the same
+//!   hole. That is the helix's own circle, so a helix, circle or move to
+//!   the centre that reaches wider would cut the wall beyond its drawn
+//!   size; a hole narrower than the tool allows no cut at all.
 //! - **Engrave:** the tool centre stays on the line: every cut's ends and
 //!   middle lie on one of the Engrave's target paths.
 //!
@@ -220,6 +227,14 @@ pub(crate) enum Material {
     Drill {
         /// Each hole.
         holes: Vec<(Point, f64)>,
+    },
+    /// A Bore's holes (format 18): centre and radius, mm, and the radial
+    /// allowance it leaves on their walls.
+    Bore {
+        /// Each hole.
+        holes: Vec<(Point, f64)>,
+        /// The allowance, mm, 0 or more.
+        allowance_mm: f64,
     },
     /// An On line Profile's regions: the tool centre stays on one of
     /// their lines, at least the tool's diameter from the region's other
@@ -673,6 +688,23 @@ impl Material {
                 },
                 None => Self::Unresolved,
             },
+            Operation::Bore(bore) => {
+                let allowance_mm = bore.allowance_mm;
+                if !(allowance_mm.is_finite() && allowance_mm >= 0.0) {
+                    return Self::Unresolved;
+                }
+                match placed(project, &bore.targets) {
+                    Some(paths) => Self::Bore {
+                        holes: paths
+                            .iter()
+                            .filter(|p| p.is_closed())
+                            .filter_map(|p| as_circle(p, project.flatten_tolerance_mm))
+                            .collect(),
+                        allowance_mm,
+                    },
+                    None => Self::Unresolved,
+                }
+            }
             Operation::Engrave(engrave) => match placed(project, &engrave.targets) {
                 Some(paths) => Self::OnLine {
                     edges: paths.iter().flat_map(edges_of).collect(),
@@ -1685,6 +1717,12 @@ pub(crate) fn check(
                     .iter()
                     .any(|(centre, r)| p.distance_to(*centre) <= r + slack_mm)
             }),
+            Material::Bore {
+                holes,
+                allowance_mm,
+            } => holes.iter().any(|(centre, r)| {
+                farthest_mm(path, *centre) <= r - radius_mm - allowance_mm + slack_mm
+            }),
             Material::OnLineProfile { areas, open } => {
                 let band = Band {
                     band_mm: 2.0 * radius_mm - slack_mm,
@@ -2040,6 +2078,33 @@ fn on_line(edges: &[Edge], p: Point, slack_mm: f64) -> bool {
 }
 
 /// The ends and the middle of `path`.
+/// The farthest any point of `path` comes from `centre`, mm: an end of a
+/// line, or of an arc, or the arc's point straight away from `centre`
+/// when its sweep passes there. A Bore's helix, circle and move to the
+/// centre must all stay within its hole's helix radius (format 18), so an
+/// arc that bulges out between its ends and middle is caught too.
+fn farthest_mm(path: Segment, centre: Point) -> f64 {
+    let ends = path
+        .start
+        .distance_to(centre)
+        .max(path.end.distance_to(centre));
+    let Some(arc) = path.arc() else {
+        return ends;
+    };
+    let away = arc.centre - centre;
+    let offset_mm = away.length();
+    if offset_mm <= EPS_MM {
+        return ends.max(arc.radius_mm);
+    }
+    let angle = away.y.atan2(away.x);
+    let along = (angle - arc.start_angle_rad) * arc.sweep_rad.signum();
+    if along.rem_euclid(std::f64::consts::TAU) <= arc.sweep_rad.abs() {
+        ends.max(offset_mm + arc.radius_mm)
+    } else {
+        ends
+    }
+}
+
 fn points_of(path: Segment) -> [Point; 3] {
     let middle = path
         .point_at(path.length_mm() / 2.0)
@@ -2085,6 +2150,43 @@ mod tests {
     use super::*;
     use crate::parse::{ArcWords, MachinePosition};
     use dc_project::test_support::sample_project;
+
+    /// Format 18: the farthest a cut comes from a Bore hole's centre is an
+    /// end of a line, or the arc's point straight away from the centre when
+    /// the arc passes it, so an arc that bulges between its ends and middle
+    /// is measured there.
+    #[test]
+    fn farthest_point_of_an_arc_is_where_it_bulges() {
+        let centre = Point::new(0.0, 0.0);
+        let line = Segment {
+            start: Point::new(1.0, 0.0),
+            end: Point::new(0.0, 2.0),
+            bulge: 0.0,
+        };
+        assert!((farthest_mm(line, centre) - 2.0).abs() < 1e-12);
+        // A counter-clockwise half circle about (1, 0), radius 1, from
+        // (1, −1) to (1, 1): it passes (2, 0), 2 mm out.
+        let half = Segment {
+            start: Point::new(1.0, -1.0),
+            end: Point::new(1.0, 1.0),
+            bulge: 1.0,
+        };
+        assert!((farthest_mm(half, centre) - 2.0).abs() < 1e-9);
+        // The other way round it passes (0, 0) and its ends are farthest.
+        let back = Segment {
+            start: Point::new(1.0, 1.0),
+            end: Point::new(1.0, -1.0),
+            bulge: 1.0,
+        };
+        assert!((farthest_mm(back, centre) - 2.0_f64.sqrt()).abs() < 1e-9);
+        // About the centre itself an arc is its radius out everywhere.
+        let round = Segment {
+            start: Point::new(1.5, 0.0),
+            end: Point::new(0.0, 1.5),
+            bulge: (std::f64::consts::FRAC_PI_2 / 4.0).tan(),
+        };
+        assert!((farthest_mm(round, centre) - 1.5).abs() < 1e-9);
+    }
 
     const TOP_MM: f64 = 20.0;
     const RADIUS_MM: f64 = 3.6;

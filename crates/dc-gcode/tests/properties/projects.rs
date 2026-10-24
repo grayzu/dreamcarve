@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Strategies for random valid projects: one operation of each kind over
-//! rectangles and circles, with holes and islands, and for Engrave open
+//! rectangles and circles (for a Bore, circles sized to the tool), with holes and islands, and for Engrave open
 //! paths, on 240 × 160 mm stock, with a random tool, depths, entries, tabs
 //! and post-processor.
 //!
@@ -17,11 +17,11 @@
 use dc_geometry::{Point, Polyline, Transform, Vertex};
 use dc_project::test_support::sample_project;
 use dc_project::{
-    ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, DrillCycle, DrillOp, EngraveOp,
-    Entry, FeatureDefinition, FeatureInstance, InstanceId, LastPass, Lead, MachineOrigin,
-    MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PeckRetract, PocketOp, ProfileOp,
-    Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units,
-    WallPass, latest_definitions,
+    BoreOp, ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, DrillCycle, DrillOp,
+    EngraveOp, Entry, FeatureDefinition, FeatureInstance, InstanceId, LastPass, Lead,
+    MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PeckRetract,
+    PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool,
+    ToolId, ToolKind, Units, WallPass, latest_definitions,
 };
 use proptest::prelude::*;
 use std::collections::BTreeMap;
@@ -670,6 +670,70 @@ pub fn drill_project() -> impl Strategy<Value = Project> {
                         through_cut_allowance_mm: depth.allowance_mm,
                         safe_z_mm,
                         allow_tool_wider_than_hole: allow_wider,
+                    })
+                })
+            },
+        )
+}
+
+/// A random valid Bore project (format 18): each cell holds one to three
+/// circles 0.9 to 2.3 times the end mill's diameter, 20 mm apart, so some
+/// are bored and some skipped as too small or as leaving a core, and
+/// sometimes a rectangle, skipped as not a circle; any pitch from a
+/// quarter of the step-down (at least 0.2 mm) to the step-down, either
+/// direction, an allowance, any depth.
+pub fn bore_project() -> impl Strategy<Value = Project> {
+    setup(end_mill(), false)
+        .prop_flat_map(|setup| {
+            let diameter_mm = setup.tool.diameter_mm;
+            let circle = prop_oneof![Just(1.0), Just(2.0), 0.9..2.3_f64,];
+            let cell = (prop::collection::vec(circle, 1..=3), any::<bool>()).prop_map(
+                move |(factors, rect)| {
+                    let mut profiles: Vec<Polyline> = factors
+                        .iter()
+                        .enumerate()
+                        .map(|(k, f)| {
+                            let x = 20.0 * (k as f64 - 1.0);
+                            Polyline::circle(Point::new(x, 0.0), f * diameter_mm / 2.0)
+                        })
+                        .collect();
+                    if rect {
+                        profiles.push(Polyline::rect(Point::new(-5.0, 15.0), 10.0, 6.0));
+                    }
+                    profiles
+                },
+            );
+            let count = setup.cells.len();
+            (
+                Just(setup),
+                prop::collection::vec(cell, count),
+                prop::option::of(0.25..1.0_f64),
+                direction(),
+                prop_oneof![Just(0.0), 0.0..0.5_f64],
+                depth(),
+                1.0..15.0_f64,
+            )
+        })
+        .prop_map(
+            |(mut setup, drawings, pitch, direction, allowance_mm, depth, safe_z_mm)| {
+                for ((_, cell), profiles) in setup.cells.iter_mut().zip(drawings) {
+                    cell.profiles = profiles;
+                }
+                let step_down_mm = setup.tool.step_down_mm.unwrap_or(1.0);
+                let pitch_mm = pitch.map(|f| (f * step_down_mm).max(0.2).min(step_down_mm));
+                project(setup, |s, targets| {
+                    Operation::Bore(BoreOp {
+                        id: OperationId::new("o1"),
+                        name: "Bore".into(),
+                        enabled: true,
+                        targets,
+                        tool: s.tool.id.clone(),
+                        depth_mm: Some(depth.depth_mm(s.thickness_mm)),
+                        pitch_mm,
+                        direction,
+                        allowance_mm,
+                        through_cut_allowance_mm: depth.allowance_mm,
+                        safe_z_mm,
                     })
                 })
             },

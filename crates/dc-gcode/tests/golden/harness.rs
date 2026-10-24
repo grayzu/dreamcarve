@@ -362,6 +362,10 @@ fn emit_program_as_is(name: &str, project: &Project) -> String {
                 let (d, w) = generate_drill(project, p).expect("the drill generates");
                 (EmitOp::drill(op.clone(), tool, d), w)
             }
+            Operation::Bore(p) => {
+                let (t, w) = dc_cam::generate_bore(project, p).expect("the bore generates");
+                (EmitOp::from((op.clone(), tool, t)), w)
+            }
         };
         assert!(
             warnings.is_empty(),

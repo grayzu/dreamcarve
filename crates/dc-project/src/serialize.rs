@@ -20,7 +20,7 @@
 use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::migrate;
-use crate::model::{DrillOp, EngraveOp, PocketOp, ProfileOp, Project};
+use crate::model::{BoreOp, DrillOp, EngraveOp, PocketOp, ProfileOp, Project};
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
 use serde::Serialize;
@@ -299,6 +299,7 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
         "profile" => serde_path_to_error::deserialize::<_, ProfileOp>(&fields).err(),
         "pocket" => serde_path_to_error::deserialize::<_, PocketOp>(&fields).err(),
         "drill" => serde_path_to_error::deserialize::<_, DrillOp>(&fields).err(),
+        "bore" => serde_path_to_error::deserialize::<_, BoreOp>(&fields).err(),
         "engrave" => serde_path_to_error::deserialize::<_, EngraveOp>(&fields).err(),
         _ => None,
     }
@@ -388,7 +389,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v17/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v18/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1025,6 +1026,55 @@ mod tests {
 
     /// Design spec, "Data model → dc-project": the four operation kinds
     /// are one internally tagged list, each tagged by `kind`.
+    #[test]
+    fn bore_round_trips() {
+        let mut p = sample_project();
+        let mut bore = crate::test_support::sample_bore();
+        bore.pitch_mm = Some(1.5);
+        bore.direction = crate::model::CutDirection::Conventional;
+        bore.allowance_mm = 0.1;
+        p.operations.push(Operation::Bore(bore));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let fields: Vec<&str> = value["operations"][1]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                "kind",
+                "id",
+                "name",
+                "enabled",
+                "targets",
+                "tool",
+                "depth_mm",
+                "pitch_mm",
+                "direction",
+                "allowance_mm",
+                "through_cut_allowance_mm",
+                "safe_z_mm"
+            ]
+        );
+        assert_eq!(value["operations"][1]["kind"], json!("bore"));
+        assert_eq!(value["operations"][1]["direction"], json!("conventional"));
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+    }
+
+    /// Format 18: an unknown field in a Bore is named, as in any operation.
+    #[test]
+    fn bore_unknown_field_is_named() {
+        let mut p = sample_project();
+        p.operations
+            .push(Operation::Bore(crate::test_support::sample_bore()));
+        let text = save(&p).unwrap().replacen("\"pitch_mm\"", "\"pitch\"", 1);
+        let err = load(text.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("pitch"), "{err}");
+    }
+
     #[test]
     fn pocket_drill_engrave_round_trip() {
         let mut p = sample_project();

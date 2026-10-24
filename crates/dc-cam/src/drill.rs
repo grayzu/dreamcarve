@@ -20,8 +20,9 @@
 //! retract plane, as a controller's `G83`/`G73` counts them from `R`,
 //! not from the stock top (#153); holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
-//! origin, by [`crate::sequence`](fn@crate::sequence); there is no helical bore, countersink or
-//! clamp check. Nothing here depends on Y-up or Y-down: a drill moves only
+//! origin, by [`crate::sequence`](fn@crate::sequence); there is no countersink or
+//! clamp check, and helical boring is its own operation ([`crate::bore`]).
+//! Nothing here depends on Y-up or Y-down: a drill moves only
 //! in Z at each centre, and distances are symmetric under the flip.
 
 use crate::block::CutBlock;
@@ -32,7 +33,9 @@ use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
 use dc_geometry::{Point, Point3, as_circle};
-use dc_project::{DrillCycle, DrillOp, MachiningOrder, PeckRetract, Project, Tool};
+use dc_project::{
+    DrillCycle, DrillOp, InstanceId, MachiningOrder, OperationId, PeckRetract, Project, Tool,
+};
 
 /// How far above the depth already drilled a full-retract peck re-enters
 /// the hole by rapid, mm. The tool re-enters only through air it has
@@ -385,26 +388,27 @@ impl Cycle {
     }
 }
 
-/// The holes of `op`, in drawing order (target order, then profile order):
-/// each circular closed profile, placed by its instance's transform, with
-/// its centre. Other profiles warn and are skipped. A hole narrower than
-/// the tool by more than the flatten tolerance warns and is skipped
-/// (maintainer decision 2026-10-24), unless the operation allows it, when
-/// it is drilled at the tool's size and warns. No hole left warns once.
-fn resolve_holes(
+/// A target profile and its circle, centre and radius, if it is one.
+pub(crate) type TargetCircle = (ShapeRef, Option<(Point, f64)>);
+
+/// Every profile of every target of `op_id`, in drawing order (target
+/// order, then profile order), with its circle: the centre and radius of
+/// a closed profile whose outline, placed by its instance's transform, is
+/// a circle within the project's flatten tolerance, and `None` for any
+/// other profile. Drill and Bore find their holes this way.
+pub(crate) fn circles_of(
     project: &Project,
-    op: &DrillOp,
-    tool_diameter_mm: f64,
-    warnings: &mut Vec<Warning>,
-) -> Result<Vec<(ShapeRef, Point)>, CamError> {
-    let mut holes = Vec::new();
-    for instance_id in &op.targets {
+    op_id: &OperationId,
+    targets: &[InstanceId],
+) -> Result<Vec<TargetCircle>, CamError> {
+    let mut out = Vec::new();
+    for instance_id in targets {
         let instance = project
             .instances
             .iter()
             .find(|i| &i.id == instance_id)
             .ok_or_else(|| CamError::UnknownInstance {
-                op: op.id.clone(),
+                op: op_id.clone(),
                 instance: instance_id.clone(),
             })?;
         let definition = project
@@ -432,36 +436,55 @@ fn resolve_holes(
             } else {
                 None
             };
-            let Some((centre, radius_mm)) = circle else {
-                warnings.push(Warning::DrillTargetNotCircle {
+            out.push((shape, circle));
+        }
+    }
+    Ok(out)
+}
+
+/// The holes of `op`, in drawing order (target order, then profile order):
+/// each circular closed profile, placed by its instance's transform, with
+/// its centre. Other profiles warn and are skipped. A hole narrower than
+/// the tool by more than the flatten tolerance warns and is skipped
+/// (maintainer decision 2026-10-24), unless the operation allows it, when
+/// it is drilled at the tool's size and warns. No hole left warns once.
+fn resolve_holes(
+    project: &Project,
+    op: &DrillOp,
+    tool_diameter_mm: f64,
+    warnings: &mut Vec<Warning>,
+) -> Result<Vec<(ShapeRef, Point)>, CamError> {
+    let mut holes = Vec::new();
+    for (shape, circle) in circles_of(project, &op.id, &op.targets)? {
+        let Some((centre, radius_mm)) = circle else {
+            warnings.push(Warning::DrillTargetNotCircle {
+                op: op.id.clone(),
+                shape,
+            });
+            continue;
+        };
+        let hole_mm = 2.0 * radius_mm;
+        // The outline was taken for a circle within the flatten
+        // tolerance, so its diameter is known no closer than that: a
+        // hole drawn at the tool's size is drilled.
+        if tool_diameter_mm > hole_mm + project.flatten_tolerance_mm {
+            if !op.allow_tool_wider_than_hole {
+                warnings.push(Warning::DrillHoleTooSmall {
                     op: op.id.clone(),
                     shape,
-                });
-                continue;
-            };
-            let hole_mm = 2.0 * radius_mm;
-            // The outline was taken for a circle within the flatten
-            // tolerance, so its diameter is known no closer than that: a
-            // hole drawn at the tool's size is drilled.
-            if tool_diameter_mm > hole_mm + project.flatten_tolerance_mm {
-                if !op.allow_tool_wider_than_hole {
-                    warnings.push(Warning::DrillHoleTooSmall {
-                        op: op.id.clone(),
-                        shape,
-                        hole_mm,
-                        tool_mm: tool_diameter_mm,
-                    });
-                    continue;
-                }
-                warnings.push(Warning::DrillToolWiderThanHole {
-                    op: op.id.clone(),
-                    shape: shape.clone(),
                     hole_mm,
                     tool_mm: tool_diameter_mm,
                 });
+                continue;
             }
-            holes.push((shape, centre));
+            warnings.push(Warning::DrillToolWiderThanHole {
+                op: op.id.clone(),
+                shape: shape.clone(),
+                hole_mm,
+                tool_mm: tool_diameter_mm,
+            });
         }
+        holes.push((shape, centre));
     }
     if holes.is_empty() {
         warnings.push(Warning::DrillNoHoles { op: op.id.clone() });
@@ -1083,6 +1106,26 @@ mod tests {
         assert_eq!(drilled.holes.len(), 2);
         assert_eq!(codes(&warnings), [WarningCode::DrillTargetNotCircle]);
         assert_eq!(shape_of(&warnings[0]).0, "slot");
+    }
+
+    /// Maintainer decision 2026-10-24 (format 18): the warning for a hole
+    /// narrower than the drill tells the user a Bore cuts holes bigger
+    /// than its bit.
+    #[test]
+    fn hole_too_small_message_points_to_bore() {
+        let mut p = project(&[("small", circle(30.0, 50.0, 5.0))]);
+        p.tools[0].diameter_mm = 6.35;
+        let (_, warnings) = generate(&p, &drill_op(&p));
+        let text = warnings[0].to_string();
+        assert_eq!(warnings[0].code(), WarningCode::DrillHoleTooSmall);
+        assert!(
+            text.contains("cut it to size with a Bore and an end mill smaller than the hole"),
+            "{text}"
+        );
+        assert!(
+            text.contains("a Bore cuts holes bigger than its bit"),
+            "{text}"
+        );
     }
 
     /// Maintainer decision 2026-10-24: a 5 mm hole with a 6.35 mm tool

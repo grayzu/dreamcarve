@@ -1020,7 +1020,10 @@ does.
 3. **Helix**, per hole about centre `c`. Sense `entry::helix_is_ccw(direction,
    CutSide::Internal)`: climb is counter-clockwise. Chords per turn `n =
    max(48, ⌈π / acos(1 − tol/R)⌉)` so a chord bows in at most the flatten
-   tolerance `tol`. Turns `T = (start − bottom) / p`; chords `N = ⌈T·n⌉`,
+   tolerance `tol`, but no more than `⌊π / asin(√2·quantum / 2R)⌋`, so a
+   chord still runs √2 units of the last place in XY (#265's rule; added
+   in #387: a tiny tolerance on a large helix asked for chords too short
+   to write). Turns `T = (start − bottom) / p`; chords `N = ⌈T·n⌉`,
    at least 1. `N > entry::MAX_DESCENT_MOVES`, or a chord that falls less
    than one unit of the program's last place (`(start − bottom)/N <
    quantum`, the S3 rule `entry`'s helix keeps, #265), is
@@ -4320,17 +4323,22 @@ Tests:
   `validate::bore_without_pitch_or_step_down_is_error`,
   `validate::bore_negative_allowance_is_error`,
   `validate::bore_needs_flat_end_mill`.
-- dc-gcode: `material::bore_inside_hole_passes`,
-  `material::bore_doctored_outside_hole_fails` (S9 refuses a program whose
-  circle runs 0.1 mm wider), `bore::five_mm_through_hole_program`
-  (acceptance 23a: helix radius, pitch, full circle, the swept hole 5 mm
-  ±0.01 through the stock), `bore::exports_on_every_post` (every bundled
-  definition; the safety pass accepts it), the property
+- dc-gcode: `safety::bore_inside_hole_passes_s9`,
+  `safety::bore_doctored_outside_hole_fails_s9` (S9 refuses a program
+  whose circle runs 0.1 mm wider), `material::farthest_point_of_an_arc_is_where_it_bulges`
+  (an arc is measured where it bulges, not only at its ends and middle),
+  and in `tests/bore.rs`: `five_mm_through_hole_program` (acceptance 23a:
+  helix radius, pitch, full circle, the swept hole 5 mm ±0.01 through
+  the stock), `climb_writes_g3_conventional_g2`, `exports_on_every_post`
+  (every bundled definition, mm and inch; the safety pass accepts it),
+  `plaque_screw_holes_are_cut_to_their_drawn_size`; the property
   `random_valid_bores_never_panic_and_pass_safety` (as the Pocket and
-  Profile properties), `plaque_holes::plaque_screw_holes_are_cut_to_their_drawn_size`.
+  Profile properties).
 - CLI: `cli::check_reports_bore_no_room_and_leaves_core`,
   `cli::plaque_dxf_exports_same_programs_as_svg` (the new names),
-  `quick_start`, and the LinuxCNC `rs274` conformance run of the plaque.
+  `quick_start`, and the plaque in the `rs274`, LinuxCNC and GRBL
+  simulator corpora (their canned-cycle variants drill the holes as the
+  plaque did before).
 
 ### Documentation (every item)
 

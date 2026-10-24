@@ -249,12 +249,14 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
     let cuts_open = match op {
         Operation::Engrave(_) => true,
         Operation::Profile(profile) => profile.side.cuts_open_paths(),
-        Operation::Pocket(_) | Operation::Drill(_) => false,
+        Operation::Pocket(_) | Operation::Drill(_) | Operation::Bore(_) => false,
     };
     // #207: Left and Right skip closed outlines.
     let cuts_closed = match op {
         Operation::Profile(profile) => !profile.side.is_open_path_side(),
-        Operation::Pocket(_) | Operation::Drill(_) | Operation::Engrave(_) => true,
+        Operation::Pocket(_) | Operation::Drill(_) | Operation::Bore(_) | Operation::Engrave(_) => {
+            true
+        }
     };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
@@ -426,6 +428,7 @@ mod tests {
                     Operation::Profile(profile) => generate_profile(project, profile),
                     Operation::Engrave(engrave) => generate_engrave(project, engrave),
                     Operation::Pocket(pocket) => generate_pocket(project, pocket),
+                    Operation::Bore(bore) => crate::bore::generate_bore(project, bore),
                     Operation::Drill(_) => panic!("these tests use no Drill operations"),
                 };
                 let (toolpath, _) =
@@ -605,6 +608,41 @@ mod tests {
         assert!(
             text.contains("`Recess`"),
             "names the pocketed shape: {text}"
+        );
+    }
+
+    /// Format 18: a Bore is an inside cut that frees nothing, so a Bore of
+    /// a hole after the Profile that freed its part warns as a Pocket does,
+    /// and before it is quiet.
+    #[test]
+    fn bore_after_cut_out_warns_cut_inside_freed_part() {
+        let bore = || {
+            Operation::Bore(dc_project::BoreOp {
+                id: OperationId::new("o2"),
+                targets: vec![InstanceId::new("i2")],
+                ..dc_project::test_support::sample_bore()
+            })
+        };
+        let mut project = part_and_hole();
+        project.operations = vec![
+            Operation::Profile(profile("o1", "i1", Side::Outside, 6.0)),
+            bore(),
+        ];
+        let warnings = check_all(&project);
+        let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
+        assert_eq!(found.len(), 1, "one warning: {warnings:?}");
+        let (op, earlier_op, shape, _) = freed_of(found[0]);
+        assert_eq!((op, earlier_op), ("o2", "o1"));
+        assert_eq!(shape.instance.as_str(), "i2");
+        // The Bore through the stock frees nothing itself.
+        project.operations = vec![
+            bore(),
+            Operation::Profile(profile("o1", "i1", Side::Outside, 6.0)),
+        ];
+        let warnings = check_all(&project);
+        assert!(
+            with_code(&warnings, WarningCode::CutInsideFreedPart).is_empty(),
+            "quiet: {warnings:?}"
         );
     }
 

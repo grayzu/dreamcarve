@@ -33,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dc_cam::{
-    Toolpath, generate_drill, generate_engrave, generate_pocket, generate_profile, order,
-    placed_tabs,
+    Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket, generate_profile,
+    order, placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
@@ -188,6 +188,7 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             Operation::Profile(op) => generate_profile(project, op).map(|(t, w)| (plain(t), w)),
             Operation::Pocket(op) => generate_pocket(project, op).map(|(t, w)| (plain(t), w)),
             Operation::Engrave(op) => generate_engrave(project, op).map(|(t, w)| (plain(t), w)),
+            Operation::Bore(op) => generate_bore(project, op).map(|(t, w)| (plain(t), w)),
             // The hole records go to the emitter, which writes them as
             // canned cycles when the project asks and the controller's
             // motion for them is the toolpath.

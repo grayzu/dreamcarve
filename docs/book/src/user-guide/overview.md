@@ -6,8 +6,9 @@ part out or a hole through ([Profile](profile.md)); **Pocket** clears the
 material inside a closed outline to a depth ([Pocket](pocket.md));
 **Engrave** follows lines, open or closed, with the bit's centre on the
 line ([Engrave](engrave.md)); **Drill** plunges at the centre of circles
-([Drill](drill.md)). A project holds any number of them, cut in the order
-listed.
+([Drill](drill.md)); **Bore** cuts circles bigger than the bit to size,
+spiralling down inside them ([Bore](bore.md)). A project holds any number
+of them, cut in the order listed.
 
 ## The workflow
 
@@ -244,6 +245,8 @@ output: …`.
 - [Engrave operation](engrave.md): following lines at a fixed depth.
 - [Drill operation](drill.md): simple, peck and dwell cycles, canned
   cycles.
+- [Bore operation](bore.md): holes bigger than the bit, cut to size along
+  a helix.
 - [Machining order and operation order](machining-order.md): the order
   shapes and operations are cut in.
 - [Post-processors](post-processors.md): the six controllers, more than

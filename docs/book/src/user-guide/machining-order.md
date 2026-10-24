@@ -61,7 +61,9 @@ passes tend to visit the shapes in opposite order.
 An operation with one shape cuts exactly the same under both.
 
 A Drill has no `machining_order`: each hole is one plunge or one set of
-pecks, drilled to depth before the tool moves on.
+pecks, drilled to depth before the tool moves on. Neither has a
+[Bore](bore.md): each hole is one helix and one circle, cut to depth
+before the tool moves on.
 
 ## Which shape comes next
 
@@ -99,8 +101,8 @@ One rule overrides nearness:
   cut after the pocket around the island.
 - In an Engrave, a closed path inside another closed path is cut first.
   Open paths are visited nearest first wherever they lie.
-- A Drill visits its holes nearest first from the first hole in drawing
-  order.
+- A Drill or a Bore visits its holes nearest first from the first hole in
+  drawing order.
 
 ## Links between cuts
 
@@ -158,9 +160,13 @@ The messages and what to do are under [Warnings](warnings.md#operation-order).
 
 ## The plaque
 
-The [plaque quick start](../quick-start/plaque.md) lists a raster Pocket,
-an offset Pocket, a Drill and an outside Profile with the 6.35 mm end mill,
-then an Engrave with the 3.175 mm end mill. That is two tool runs, so two
-programs in that order. The Profile has tabs, so the Engrave after it
-cuts in a part that is still held. It is a 1 mm groove in 11.8 mm
-plywood, a light cut, so neither check warns.
+The [plaque quick start](../quick-start/plaque.md) lists a Bore of the
+screw holes and an Engrave with the 3.175 mm end mill, then a raster
+Pocket, an offset Pocket and an outside Profile with the 6.35 mm end mill.
+That is two tool runs, so two programs in that order, and one bit change.
+The holes and the pockets come before the Profile that cuts the plaque
+out, which is last, so every cut is made while the plaque is still part
+of the board and neither check warns. (Changed before v0.2.0: the holes
+were a Drill with the 6.35 mm bit, cut after the pockets, and the Engrave
+came last, after the tabbed cut-out: a light 1 mm groove, which is quiet
+too.)

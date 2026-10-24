@@ -26,7 +26,7 @@ pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
-    ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
+    BoreOp, ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
     FeatureDefinition, FeatureInstance, Heights, LastPass, Lead, MachineOrigin, MachiningOrder,
     Operation, OriginXy, OriginZ, ParkXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project,
     Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, WallPass,

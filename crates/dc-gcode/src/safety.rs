@@ -6727,6 +6727,109 @@ mod tests {
         );
     }
 
+    /// The sample project with a Bore of one 10 mm hole at (50, 50), its
+    /// 6.35 mm tool's helix 1.825 mm round the centre (format 18).
+    fn bore_hole_project() -> (Project, dc_project::BoreOp) {
+        let mut project = sample_project();
+        let hole = dc_project::FeatureDefinition {
+            id: dc_project::DefinitionId::new("d2"),
+            name: "Hole".into(),
+            profiles: vec![dc_geometry::Polyline::circle(Point::new(0.0, 0.0), 5.0)],
+        };
+        project.definitions.insert(hole.id.clone(), hole);
+        let mut instance = project.instances[0].clone();
+        instance.id = dc_project::InstanceId::new("h1");
+        instance.definition = dc_project::DefinitionId::new("d2");
+        instance.transform = dc_geometry::Transform::translate(50.0, 50.0);
+        project.instances.push(instance);
+        let op = dc_project::BoreOp {
+            targets: vec![dc_project::InstanceId::new("h1")],
+            ..dc_project::test_support::sample_bore()
+        };
+        project.operations = vec![Operation::Bore(op.clone())];
+        (project, op)
+    }
+
+    /// A hand-written bore of the hole at (50, 50): down at `radius_mm`
+    /// east of the centre, one circle there at Z 3 in four quarter arcs,
+    /// to the centre, out.
+    fn bore_circle_at(radius_mm: f64) -> Toolpath {
+        let at = |angle: f64, z: f64| {
+            Point3::new(
+                50.0 + radius_mm * angle.cos(),
+                50.0 + radius_mm * angle.sin(),
+                z,
+            )
+        };
+        let mut moves = vec![
+            Move::rapid(at(0.0, 11.0)),
+            Move::rapid(at(0.0, 7.0)),
+            Move::linear(at(0.0, 3.0), 300.0),
+        ];
+        for quarter in 1..=4 {
+            moves.push(Move {
+                kind: MoveKind::ArcCcw {
+                    centre: Point::new(50.0, 50.0),
+                },
+                to: at(FRAC_PI_2 * f64::from(quarter), 3.0),
+                feed_mm_min: Some(1000.0),
+            });
+        }
+        moves.push(Move::linear(Point3::new(50.0, 50.0, 3.0), 1000.0));
+        moves.push(Move::rapid(Point3::new(50.0, 50.0, 11.0)));
+        Toolpath { moves }
+    }
+
+    /// S9 for a Bore (format 18): the generated helix and circle, within
+    /// the hole's radius less the tool's of its centre, pass, and so does
+    /// a hand-written circle on that radius.
+    #[test]
+    fn bore_inside_hole_passes_s9() {
+        let (project, op) = bore_hole_project();
+        let (toolpath, warnings) = dc_cam::generate_bore(&project, &op).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let operation = Operation::Bore(op);
+        for tp in [toolpath, bore_circle_at(1.825)] {
+            let text = emit(
+                &project,
+                &[(operation.clone(), project.tools[0].clone(), tp).into()],
+                "2026-10-21",
+            )
+            .map(|(p, _)| p.text)
+            .unwrap();
+            check_material_text(&text, &project, &operation).unwrap();
+        }
+    }
+
+    /// S9 for a Bore refuses a doctored program whose circle runs 0.1 mm
+    /// wider than the helix radius, at its first cut there: that would cut
+    /// the hole 0.2 mm oversize. With a 0.1 mm allowance even the helix
+    /// radius of the hole as drawn is too wide.
+    #[test]
+    fn bore_doctored_outside_hole_fails_s9() {
+        let (mut project, mut op) = bore_hole_project();
+        let emit_bore = |project: &Project, op: &dc_project::BoreOp, tp: Toolpath| {
+            emit(
+                project,
+                &[(Operation::Bore(op.clone()), project.tools[0].clone(), tp).into()],
+                "2026-10-21",
+            )
+            .map(|(p, _)| p.text)
+        };
+        let text = emit_bore(&project, &op, bore_circle_at(1.825)).unwrap();
+        let plunge_line = line_with(&text, "Z-3");
+        let err = emit_bore(&project, &op, bore_circle_at(1.925)).unwrap_err();
+        assert!(
+            matches!(&err, ExportError::OffMaterial { op: at, line }
+                if at == &op.id && *line == plunge_line),
+            "{err:?}"
+        );
+        op.allowance_mm = 0.1;
+        project.operations = vec![Operation::Bore(op.clone())];
+        let err = emit_bore(&project, &op, bore_circle_at(1.825)).unwrap_err();
+        assert!(matches!(&err, ExportError::OffMaterial { .. }), "{err:?}");
+    }
+
     /// S9 for an Engrave: every cut stays on its lines. The sample
     /// rectangle's bottom and right edges pass; an end 2 mm off the corner
     /// fails, and so does a diagonal between two corners, whose ends are on

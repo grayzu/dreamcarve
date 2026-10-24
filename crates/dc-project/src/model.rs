@@ -344,7 +344,7 @@ impl ToolKind {
     }
 }
 
-/// A machining operation: Profile, Pocket, Drill or Engrave. Tagged by
+/// A machining operation: Profile, Pocket, Drill, Bore or Engrave. Tagged by
 /// `kind` in the file, so each one reads as a flat object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -355,6 +355,9 @@ pub enum Operation {
     Pocket(PocketOp),
     /// Plunge at the centre of circular outlines.
     Drill(DrillOp),
+    /// Cut circular outlines bigger than the tool to size along a helix
+    /// (format 18).
+    Bore(BoreOp),
     /// Trace open or closed paths with the tool centre on the line.
     Engrave(EngraveOp),
 }
@@ -366,6 +369,7 @@ impl Operation {
             Self::Profile(op) => &op.id,
             Self::Pocket(op) => &op.id,
             Self::Drill(op) => &op.id,
+            Self::Bore(op) => &op.id,
             Self::Engrave(op) => &op.id,
         }
     }
@@ -376,6 +380,7 @@ impl Operation {
             Self::Profile(op) => &op.name,
             Self::Pocket(op) => &op.name,
             Self::Drill(op) => &op.name,
+            Self::Bore(op) => &op.name,
             Self::Engrave(op) => &op.name,
         }
     }
@@ -386,6 +391,7 @@ impl Operation {
             Self::Profile(op) => op.enabled,
             Self::Pocket(op) => op.enabled,
             Self::Drill(op) => op.enabled,
+            Self::Bore(op) => op.enabled,
             Self::Engrave(op) => op.enabled,
         }
     }
@@ -396,6 +402,7 @@ impl Operation {
             Self::Profile(op) => &op.tool,
             Self::Pocket(op) => &op.tool,
             Self::Drill(op) => &op.tool,
+            Self::Bore(op) => &op.tool,
             Self::Engrave(op) => &op.tool,
         }
     }
@@ -406,6 +413,7 @@ impl Operation {
             Self::Profile(op) => &op.targets,
             Self::Pocket(op) => &op.targets,
             Self::Drill(op) => &op.targets,
+            Self::Bore(op) => &op.targets,
             Self::Engrave(op) => &op.targets,
         }
     }
@@ -416,6 +424,7 @@ impl Operation {
             Self::Profile(op) => op.safe_z_mm,
             Self::Pocket(op) => op.safe_z_mm,
             Self::Drill(op) => op.safe_z_mm,
+            Self::Bore(op) => op.safe_z_mm,
             Self::Engrave(op) => op.safe_z_mm,
         }
     }
@@ -426,6 +435,7 @@ impl Operation {
             Self::Profile(op) => op.depth_mm,
             Self::Pocket(op) => op.depth_mm,
             Self::Drill(op) => op.depth_mm,
+            Self::Bore(op) => op.depth_mm,
             Self::Engrave(op) => op.depth_mm,
         }
     }
@@ -436,18 +446,20 @@ impl Operation {
             Self::Profile(op) => op.through_cut_allowance_mm,
             Self::Pocket(op) => op.through_cut_allowance_mm,
             Self::Drill(op) => op.through_cut_allowance_mm,
+            Self::Bore(op) => op.through_cut_allowance_mm,
             Self::Engrave(op) => op.through_cut_allowance_mm,
         }
     }
 
     /// The operation's kind as the file tags it: `profile`, `pocket`,
-    /// `drill` or `engrave`.
+    /// `drill`, `bore` or `engrave`.
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Profile(_) => "profile",
             Self::Pocket(_) => "pocket",
             Self::Drill(_) => "drill",
+            Self::Bore(_) => "bore",
             Self::Engrave(_) => "engrave",
         }
     }
@@ -788,6 +800,46 @@ pub struct DrillOp {
     /// it would come out larger than drawn. `true` suits a clearance hole
     /// drawn at the screw's size.
     pub allow_tool_wider_than_hole: bool,
+}
+
+/// A bore operation (format 18; maintainer decision 2026-10-24;
+/// functional spec, capability 14a): cuts each circular target bigger than
+/// the tool to its drawn size, spiralling down a helix inside the hole to
+/// the depth and cutting one full circle there, as Fusion's "2D Bore".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoreOp {
+    /// This operation's id.
+    pub id: OperationId,
+    /// Display name.
+    pub name: String,
+    /// Whether the operation is included in export.
+    pub enabled: bool,
+    /// Instances to bore. A target that is not a circle is skipped with a
+    /// warning at export.
+    pub targets: Vec<InstanceId>,
+    /// The tool to bore with: an end mill.
+    pub tool: ToolId,
+    /// Final depth below the stock top, millimetres. `None` until set.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub depth_mm: Option<f64>,
+    /// How far the helix falls per turn, millimetres, more than 0 and at
+    /// most the tool's step-down; `None` is the tool's step-down.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub pitch_mm: Option<f64>,
+    /// Climb (counter-clockwise from above) or conventional, on the helix
+    /// and the circle.
+    pub direction: CutDirection,
+    /// Material left on the wall, millimetres, 0 or more: the hole comes
+    /// out this much smaller all round.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub allowance_mm: f64,
+    /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub through_cut_allowance_mm: f64,
+    /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub safe_z_mm: f64,
 }
 
 /// An engrave operation: follows each target path, open or closed, with

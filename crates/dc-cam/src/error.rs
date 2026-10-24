@@ -593,6 +593,22 @@ pub enum CamError {
         /// The value as set.
         value: f64,
     },
+    /// A Bore setting the generator cannot cut (format 18): a pitch that is
+    /// not positive, above the tool's step-down, or too fine for the
+    /// program's decimal places or for [`crate::entry::MAX_DESCENT_MOVES`],
+    /// or an allowance that is negative. Validation reports the first two
+    /// before export.
+    #[error("operation `{op}` has {field} {value}; {expected}")]
+    InvalidBoreSetting {
+        /// The operation.
+        op: OperationId,
+        /// Which setting: `pitch_mm` or `allowance_mm`.
+        field: &'static str,
+        /// The value in effect.
+        value: f64,
+        /// What it must be, in words.
+        expected: &'static str,
+    },
     /// A generator produced a cut block the sequencer cannot trust. This
     /// is a defect in the generator, never in the user's project.
     #[error("shape {shape}, pass {pass}: {problem}")]

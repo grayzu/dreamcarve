@@ -14,11 +14,11 @@ plaque.dxf ──dc-import──▶ definitions + instances ─┐
 tools.json ──dc-library──▶ Tool ──tools add (dreamcarve)──▶ a copy in the project
 
 plaque.dcv ──load + validate (dc-project)──▶ Project
-           ──generate_profile / _pocket / _drill / _engrave (dc-cam)──▶ cut blocks
+           ──generate_profile / _pocket / _drill / _bore / _engrave (dc-cam)──▶ cut blocks
            ──sequence (dc-cam)──▶ Toolpath per operation (project space, mm, Y-up)
            ──order::check (dc-cam)──▶ operation-order warnings
            ──emit_programs (dc-gcode): arc fitting, canned cycles, one program per tool run or M6
-           ──parse + safety pass (dc-gcode)──▶ plaque-1-T1.nc, plaque-2-T2.nc
+           ──parse + safety pass (dc-gcode)──▶ plaque-1-T2.nc, plaque-2-T1.nc
 ```
 
 Dependencies point one way, down this table. `dc-gcode` depends on
@@ -103,6 +103,7 @@ dev-dependencies only.
 | `pocket/rings.rs` | `inset_region` and `RingTree`: the offset ring tree and its inner-first walk. |
 | `pocket/raster.rs` | `raster_lines` and `order_nearest_first`: the raster strategy. |
 | `pocket/rest.rs` | Rest machining: the leftover of an earlier Pocket, from its tool and allowance only (S14). |
+| `bore.rs` | `generate_bore` (format 18): circle targets, a helix of the hole's radius less the tool's at `pitch_mm` a turn, one circle at the depth, the holes it skips (too small, or leaving a core). |
 | `drill.rs` | `generate_drill`: circle targets, simple, peck and chip-break cycles, dwell, retract height, `DrillHole` records for canned cycles (S15). |
 | `engrave.rs` | `generate_engrave`: every path traced with the tool centre on the line; `alternate_direction`. |
 | `entry.rs` | Helix and zigzag ramp placement and descent in a pass's clearance regions, the helix → ramp → plunge fallback, and the plunge-rate feed scale (S10); `helix_is_ccw`. |
