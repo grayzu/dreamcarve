@@ -15,16 +15,61 @@
 //! - the unit is `mm` or `in` on a length, `mm/min` or `in/min` on a feed
 //!   rate.
 //!
-//! An inch value is `n × 25.4`, one `f64` product, so a load is
-//! deterministic. Any other string is a serde error, which
-//! [`crate::load`] reports at the field's line and column. The model keeps
-//! millimetres (ADR-0001), so [`crate::save`] writes numbers back.
+//! An inch value is `n × 25.4`, one `f64` product, rounded to
+//! [`LENGTH_DECIMALS`] or [`RATE_DECIMALS`] places ([`round_length_mm`],
+//! [`round_rate_mm_min`]; maintainer decision 2026-10-24), so a load is
+//! deterministic and `"3/16 in"` is `4.7625`, not `4.762499999999999`. A
+//! value in millimetres is kept as written. Any other string is a serde
+//! error, which [`crate::load`] reports at the field's line and column.
+//! The model keeps millimetres (ADR-0001), so [`crate::save`] writes
+//! numbers back.
 
 use serde::de::{Deserialize, Deserializer, Visitor};
 use std::fmt;
 
 /// Millimetres per inch, exactly.
 const MM_PER_INCH: f64 = 25.4;
+
+/// Decimal places of a millimetre a length converted from inches keeps.
+pub const LENGTH_DECIMALS: i32 = 6;
+
+/// Decimal places of a mm/min a feed rate converted from in/min keeps.
+pub const RATE_DECIMALS: i32 = 3;
+
+/// `value_mm` rounded to [`LENGTH_DECIMALS`] places, so a value converted
+/// from inches is the decimal it stands for: `0.1875 × 25.4` is
+/// `4.762499999999999` as an `f64` product and `4.7625` rounded. Six
+/// places keep every binary fraction of an inch to 1/64" (0.396875 mm)
+/// and every inch value with up to four decimals exact. NaN and the
+/// infinities pass through.
+#[must_use]
+pub fn round_length_mm(value_mm: f64) -> f64 {
+    round_to(value_mm, LENGTH_DECIMALS)
+}
+
+/// `value_mm_min` rounded to [`RATE_DECIMALS`] places: `60 × 25.4` is
+/// `1524.0000000000002` as a product and `1524` rounded. Three places keep
+/// every feed of up to two decimals in in/min exact. NaN and the
+/// infinities pass through.
+#[must_use]
+pub fn round_rate_mm_min(value_mm_min: f64) -> f64 {
+    round_to(value_mm_min, RATE_DECIMALS)
+}
+
+/// `value` rounded half away from zero to `decimals` places. The scaled
+/// integer divided by the power of ten is one correctly rounded `f64`
+/// division, so the result is the `f64` nearest the decimal and prints as
+/// it. A value too large to scale is returned as is: it has no fraction
+/// left to round.
+fn round_to(value: f64, decimals: i32) -> f64 {
+    let scale = 10_f64.powi(decimals);
+    let scaled = value * scale;
+    if scaled.is_finite() && scaled.abs() < 2_f64.powi(52) {
+        scaled.round() / scale
+    } else {
+        value
+    }
+}
 
 /// What a field holds, which decides the units it takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,7 +263,18 @@ fn parse(text: &str, quantity: Quantity) -> Result<f64, String> {
         }
         return Err(not_valid());
     };
-    let value = parse_number(number).ok_or_else(not_valid)? * factor;
+    let number = parse_number(number).ok_or_else(not_valid)?;
+    // A value in the field's unit is kept as written; one converted from
+    // inches is rounded to the decimal it stands for (capability 22b).
+    #[allow(clippy::float_cmp, reason = "the factor is the exact constant 1.0")]
+    let value = if factor == 1.0 {
+        number
+    } else {
+        match quantity {
+            Quantity::Length => round_length_mm(number * factor),
+            Quantity::Rate => round_rate_mm_min(number * factor),
+        }
+    };
     if value.is_finite() {
         Ok(value)
     } else {
@@ -311,9 +367,71 @@ mod tests {
         serde_json::from_value(tool)
     }
 
+    /// Maintainer decision 2026-10-24: a converted value is the decimal it
+    /// should be, not the `f64` product's noise.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn round_keeps_inch_fractions_exact() {
+        use super::{round_length_mm, round_rate_mm_min};
+        for (inches, mm, text) in [
+            (0.0625, 1.5875, "1.5875"),
+            (0.1875, 4.7625, "4.7625"),
+            (1.0 / 64.0, 0.396875, "0.396875"),
+            (1.5, 38.1, "38.1"),
+            (0.25, 6.35, "6.35"),
+        ] {
+            let rounded = round_length_mm(inches * 25.4);
+            assert!(rounded == mm, "{inches} in: {rounded} != {mm}");
+            assert_eq!(rounded.to_string(), text);
+        }
+        for (in_min, mm_min, text) in [
+            (60.0, 1524.0, "1524"),
+            (15.0, 381.0, "381"),
+            (30.0, 762.0, "762"),
+            (7.0, 177.8, "177.8"),
+        ] {
+            let rounded = round_rate_mm_min(in_min * 25.4);
+            assert!(rounded == mm_min, "{in_min} in/min: {rounded} != {mm_min}");
+            assert_eq!(rounded.to_string(), text);
+        }
+        // Sixth and third places are kept, the seventh and fourth go.
+        assert!(round_length_mm(1.234_567_4) == 1.234_567);
+        assert!(round_rate_mm_min(1.234_6) == 1.235);
+        assert!(round_length_mm(-6.350_000_000_000_001) == -6.35);
+        assert!(round_length_mm(f64::NAN).is_nan());
+        assert!(round_length_mm(f64::INFINITY) == f64::INFINITY);
+        assert!(round_rate_mm_min(f64::NEG_INFINITY) == f64::NEG_INFINITY);
+    }
+
+    /// Inch strings round as Fusion import does; millimetre strings and
+    /// bare numbers are kept as written.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn inch_strings_round() {
+        assert!(load_depth(json!("3/16 in")).unwrap() == 4.7625);
+        assert!(load_depth(json!("1/64 in")).unwrap() == 0.396875);
+        assert!(load_depth(json!("1 1/2 in")).unwrap() == 38.1);
+        assert!(tool_with_feed(json!("60 in/min")).unwrap().feed_mm_min == Some(1524.0));
+        assert!(tool_with_feed(json!("15 in/min")).unwrap().feed_mm_min == Some(381.0));
+        assert!(load_depth(json!("4.76249999 mm")).unwrap() == 4.762_499_99);
+        assert!(load_depth(json!(4.762_499_999_999_999)).unwrap() == 4.762_499_999_999_999);
+        assert!(
+            tool_with_feed(json!("1234.56789 mm/min"))
+                .unwrap()
+                .feed_mm_min
+                == Some(1_234.567_89)
+        );
+    }
+
     #[test]
     fn inch_string_converts_exactly() {
-        assert_approx_eq!(load_depth(json!("0.5 in")).unwrap(), 0.5 * 25.4, 0.0);
+        assert_approx_eq!(load_depth(json!("0.5 in")).unwrap(), 12.7, 0.0);
         assert_approx_eq!(load_depth(json!("0.5 in")).unwrap(), 12.7, 0.0);
         assert_approx_eq!(load_depth(json!("0.5in")).unwrap(), 12.7, 0.0);
         assert_approx_eq!(load_depth(json!(" 0.5  in ")).unwrap(), 12.7, 0.0);
@@ -339,11 +457,11 @@ mod tests {
 
     #[test]
     fn fraction_and_mixed_number() {
-        assert_approx_eq!(load_depth(json!("1/4 in")).unwrap(), 0.25 * 25.4, 0.0);
+        assert_approx_eq!(load_depth(json!("1/4 in")).unwrap(), 6.35, 0.0);
         assert_approx_eq!(load_depth(json!("1/4 in")).unwrap(), 6.35, 1e-12);
-        assert_approx_eq!(load_depth(json!("1 1/4 in")).unwrap(), 1.25 * 25.4, 0.0);
+        assert_approx_eq!(load_depth(json!("1 1/4 in")).unwrap(), 31.75, 0.0);
         assert_approx_eq!(load_depth(json!("1 1/4 in")).unwrap(), 31.75, 1e-12);
-        assert_approx_eq!(load_depth(json!("3/8in")).unwrap(), 0.375 * 25.4, 0.0);
+        assert_approx_eq!(load_depth(json!("3/8in")).unwrap(), 9.525, 0.0);
         for bad in [
             "1/0 in",
             "1 / 4 in",
@@ -360,7 +478,7 @@ mod tests {
     fn rate_in_per_min() {
         let tool = tool_with_feed(json!("60 in/min")).unwrap();
         assert_approx_eq!(tool.feed_mm_min.unwrap(), 1524.0, 1e-9);
-        assert_approx_eq!(tool.feed_mm_min.unwrap(), 60.0 * 25.4, 0.0);
+        assert_approx_eq!(tool.feed_mm_min.unwrap(), 1524.0, 0.0);
         let tool = tool_with_feed(json!("1500 mm/min")).unwrap();
         assert_approx_eq!(tool.feed_mm_min.unwrap(), 1500.0, 0.0);
         assert_eq!(tool_with_feed(Value::Null).unwrap().feed_mm_min, None);

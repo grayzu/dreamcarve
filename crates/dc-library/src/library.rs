@@ -8,12 +8,21 @@
 //! The library and its file (`docs/specs/phase-2/design.md`, "Data model →
 //! dc-library"; "Algorithms → Tool library CLI").
 //!
-//! The file is JSON: `{ "version": 1, "tools": [ … ] }`, each tool a block
+//! The file is JSON: `{ "version": 2, "tools": [ … ] }`, each tool a block
 //! with its library `id`, its `source` and the `tool` itself, saved exactly
 //! as a `.dcv` saves a tool (every optional value written, `null` when
 //! unset). The `id` inside `tool` is written for completeness and ignored
 //! on load: the library id is the one outside it, and `tools add` replaces
 //! it with a project id anyway.
+//!
+//! Versions: **1**, the first; **2** (maintainer decision 2026-10-24) adds
+//! each tool's `vendor` and `product_id` after its `name`, as format 16
+//! of a `.dcv` does. [`load`] migrates a version 1 file in memory, giving
+//! every tool `null` for both, and [`save`] writes version 2.
+//!
+//! Names stay unique ([`add`]): a tool whose name is taken is stored as
+//! `<name> (<product id>)` when it has a product id and that name is
+//! free, else as `<name> (2)`, `(3)`, ….
 //!
 //! Validation rules are ported from PureCutCNC's `parseToolLibraryFile`
 //! (`src/toolLibrary.ts`): a positive diameter, flutes of 1 or more, a
@@ -33,7 +42,7 @@ use std::fmt;
 use crate::LibraryError;
 
 /// The library file format version this build reads and writes.
-pub const LIBRARY_VERSION: u32 = 1;
+pub const LIBRARY_VERSION: u32 = 2;
 
 /// Identifies a [`LibraryTool`]. `lt<n>`, so it can never be mistaken for
 /// a project's `t<n>`.
@@ -108,13 +117,14 @@ pub struct LibraryTool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddOutcome {
     /// The tool was added under this id. Its name may have gained a
-    /// ` (2)` suffix to stay unique; read it from the library.
+    /// ` (<product id>)` or ` (2)` suffix to stay unique; read it from the
+    /// library.
     Added {
         /// The new tool's id.
         id: LibraryToolId,
     },
-    /// A tool with the same fields (ignoring ids, and a ` (n)` suffix
-    /// [`add`] gave its name) is already in the library; nothing changed.
+    /// A tool with the same fields (ignoring ids, and a suffix [`add`]
+    /// gave its name) is already in the library; nothing changed.
     AlreadyPresent {
         /// The id of the existing tool.
         id: LibraryToolId,
@@ -127,7 +137,8 @@ pub enum AddOutcome {
 }
 
 /// Parses library bytes: JSON, `version` read and checked against
-/// [`LIBRARY_VERSION`], then deserialized strictly (unknown fields and
+/// [`LIBRARY_VERSION`], a version 1 file migrated (module docs), then
+/// deserialized strictly (unknown fields and
 /// missing fields both fail), then ids checked for duplicates and every
 /// tool validated ([`validate_tool`]). Each tool's own `id` is set to its
 /// library id.
@@ -152,6 +163,7 @@ pub fn load(bytes: &[u8]) -> Result<Library, LibraryError> {
             supported: LIBRARY_VERSION,
         });
     }
+    let root = if version < 2 { v1_to_v2(root)? } else { root };
     let mut lib: Library = serde_path_to_error::deserialize(&root).map_err(|e| {
         let path = e.path().to_string();
         LibraryError::Schema {
@@ -171,6 +183,55 @@ pub fn load(bytes: &[u8]) -> Result<Library, LibraryError> {
         validate_tool(&entry.id, &entry.tool)?;
     }
     Ok(lib)
+}
+
+/// Version 1 → 2: `vendor: null` and `product_id: null` right after each
+/// `tools[].tool.name`, and `version` 2. A block that is not shaped as a
+/// tool is left for the schema check to report; a tool that already has
+/// either key is not a version 1 tool.
+fn v1_to_v2(mut root: Value) -> Result<Value, LibraryError> {
+    let migration = |message: String| LibraryError::Migration {
+        from: 1,
+        to: 2,
+        message,
+    };
+    if let Some(tools) = root.get_mut("tools").and_then(Value::as_array_mut) {
+        for (i, entry) in tools.iter_mut().enumerate() {
+            let Some(tool) = entry.get_mut("tool") else {
+                continue;
+            };
+            let Value::Object(fields) = std::mem::take(tool) else {
+                continue;
+            };
+            for key in ["vendor", "product_id"] {
+                if fields.contains_key(key) {
+                    return Err(migration(format!(
+                        "a version 1 library has no `tools[{i}].tool.{key}`, but this one does"
+                    )));
+                }
+            }
+            let mut out = serde_json::Map::with_capacity(fields.len() + 2);
+            let mut inserted = false;
+            for (key, value) in fields {
+                let after_this = key == "name";
+                out.insert(key, value);
+                if after_this {
+                    out.insert("vendor".into(), Value::Null);
+                    out.insert("product_id".into(), Value::Null);
+                    inserted = true;
+                }
+            }
+            if !inserted {
+                out.insert("vendor".into(), Value::Null);
+                out.insert("product_id".into(), Value::Null);
+            }
+            *tool = Value::Object(out);
+        }
+    }
+    if let Some(obj) = root.as_object_mut() {
+        obj.insert("version".into(), Value::from(2));
+    }
+    Ok(root)
 }
 
 /// Serializes the library as its file text: pretty JSON, keys in
@@ -301,10 +362,12 @@ fn next_id(lib: &Library) -> LibraryToolId {
     LibraryToolId::new(format!("{ID_PREFIX}{}", highest.saturating_add(1)))
 }
 
-/// Whether `stored`, a name in the library, is `name` or `name` with the
-/// ` (n)` suffix [`add`] gives a name already taken.
-fn is_name_or_suffixed(stored: &str, name: &str) -> bool {
+/// Whether `stored`, a name in the library, is `name` or `name` with a
+/// suffix [`add`] gives a name already taken: ` (<product id>)` or
+/// ` (n)`.
+fn is_name_or_suffixed(stored: &str, name: &str, product_id: Option<&str>) -> bool {
     stored == name
+        || product_name(name, product_id).is_some_and(|with_id| stored == with_id)
         || stored
             .strip_prefix(name)
             .and_then(|rest| rest.strip_prefix(" ("))
@@ -312,10 +375,19 @@ fn is_name_or_suffixed(stored: &str, name: &str) -> bool {
             .is_some_and(|n| n.parse::<u32>().is_ok_and(|n| n >= 2))
 }
 
+/// `<name> (<product id>)`, the first name [`add`] tries when `name` is
+/// taken; `None` without a product id, or when `name` already ends with
+/// it in brackets.
+fn product_name(name: &str, product_id: Option<&str>) -> Option<String> {
+    let id = product_id?;
+    let with_id = format!("{name} ({id})");
+    (!name.ends_with(&format!(" ({id})"))).then_some(with_id)
+}
+
 /// Whether `existing` is `tool`: equal in every field but the id, and in
-/// the name up to a ` (n)` suffix.
+/// the name up to a suffix [`add`] gives.
 fn same_tool(existing: &Tool, tool: &Tool) -> bool {
-    is_name_or_suffixed(&existing.name, &tool.name)
+    is_name_or_suffixed(&existing.name, &tool.name, tool.product_id.as_deref())
         && Tool {
             id: existing.id.clone(),
             name: existing.name.clone(),
@@ -323,9 +395,14 @@ fn same_tool(existing: &Tool, tool: &Tool) -> bool {
         } == *existing
 }
 
-/// `name`, or the first `name (n)` from 2 up that no tool other than
-/// `except` has.
-fn unique_name(lib: &Library, name: &str, except: Option<&LibraryToolId>) -> String {
+/// `name`, else `name (<product id>)`, else the first `name (n)` from 2
+/// up, whichever no tool other than `except` has.
+fn unique_name(
+    lib: &Library,
+    name: &str,
+    product_id: Option<&str>,
+    except: Option<&LibraryToolId>,
+) -> String {
     let taken = |candidate: &str| {
         lib.tools
             .iter()
@@ -333,6 +410,9 @@ fn unique_name(lib: &Library, name: &str, except: Option<&LibraryToolId>) -> Str
     };
     if !taken(name) {
         return name.to_owned();
+    }
+    if let Some(with_id) = product_name(name, product_id).filter(|n| !taken(n)) {
+        return with_id;
     }
     (2_u32..)
         .map(|n| format!("{name} ({n})"))
@@ -345,8 +425,9 @@ fn unique_name(lib: &Library, name: &str, except: Option<&LibraryToolId>) -> Str
 /// same tool (ids aside, and up to a ` (n)` name suffix) is already
 /// there, whatever its source, nothing changes and the outcome names it.
 /// When a different tool already has the same name, the new one is stored
-/// as `<name> (2)` (then ` (3)`, …), so [`find`] by name stays
-/// unambiguous. A tool that fails [`validate_tool`] is an error and is
+/// as `<name> (<product id>)` when it has a product id and no tool has
+/// that name, else as `<name> (2)` (then ` (3)`, …), so [`find`] by name
+/// stays unambiguous. A tool that fails [`validate_tool`] is an error and is
 /// not added.
 pub fn add(
     lib: &mut Library,
@@ -360,7 +441,7 @@ pub fn add(
             id: existing.id.clone(),
         });
     }
-    let name = unique_name(lib, &tool.name, None);
+    let name = unique_name(lib, &tool.name, tool.product_id.as_deref(), None);
     lib.tools.push(LibraryTool {
         id: id.clone(),
         source,
@@ -393,7 +474,7 @@ pub fn replace(
     if same_tool(&existing.tool, &tool) {
         return Ok(AddOutcome::AlreadyPresent { id });
     }
-    let name = unique_name(lib, &tool.name, Some(&id));
+    let name = unique_name(lib, &tool.name, tool.product_id.as_deref(), Some(&id));
     if let Some(slot) = index.and_then(|index| lib.tools.get_mut(index)) {
         slot.tool = Tool {
             id: ToolId::new(id.as_str()),
@@ -454,6 +535,8 @@ mod tests {
         Tool {
             id: ToolId::new("t1"),
             name: "90° V-bit".into(),
+            vendor: Some("Acme Router Bits".into()),
+            product_id: Some("AC-V90".into()),
             number: Some(5),
             cutter: ToolKind::VBit {
                 included_angle_deg: 90.0,
@@ -473,6 +556,8 @@ mod tests {
         Tool {
             id: ToolId::new("t1"),
             name: "3 mm ball".into(),
+            vendor: None,
+            product_id: None,
             number: None,
             cutter: ToolKind::BallNose,
             diameter_mm: 3.0,
@@ -503,12 +588,25 @@ mod tests {
         let lib = sample_library();
         let text = save(&lib).unwrap();
         assert!(
-            text.starts_with("{\n  \"version\": 1,\n  \"tools\": [\n"),
+            text.starts_with("{\n  \"version\": 2,\n  \"tools\": [\n"),
             "{text}"
         );
         assert!(text.ends_with("}\n"), "{text}");
         assert!(text.contains("\"source\": null"), "{text}");
         assert!(text.contains("\"step_down_mm\": null"), "{text}");
+        // A tool's vendor and product id follow its name, set or unset.
+        assert!(
+            text.contains(
+                "\"name\": \"90° V-bit\",\n        \"vendor\": \"Acme Router Bits\",\n        \"product_id\": \"AC-V90\",\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "\"name\": \"3 mm ball\",\n        \"vendor\": null,\n        \"product_id\": null,\n"
+            ),
+            "{text}"
+        );
         let loaded = load(text.as_bytes()).unwrap();
         assert_eq!(loaded, lib);
         assert_eq!(save(&loaded).unwrap(), text);
@@ -591,6 +689,175 @@ mod tests {
             "Other",
             "unique: no suffix"
         );
+    }
+
+    /// A library file as version 1 wrote it: `lib` saved, then each tool's
+    /// `vendor` and `product_id` taken out and the version set to 1.
+    fn as_version_1(lib: &Library) -> String {
+        let mut root: Value = serde_json::from_str(&save(lib).unwrap()).unwrap();
+        root["version"] = 1.into();
+        for entry in root["tools"].as_array_mut().unwrap() {
+            let tool = entry["tool"].as_object_mut().unwrap();
+            tool.shift_remove("vendor");
+            tool.shift_remove("product_id");
+        }
+        let mut text = serde_json::to_string_pretty(&root).unwrap();
+        text.push('\n');
+        text
+    }
+
+    /// Maintainer decision 2026-10-24: a version 1 library, which has no
+    /// vendor or product id, loads with both unset and saves as version
+    /// 2 with them after each name. A version 1 tool that has either key
+    /// is not a version 1 tool.
+    #[test]
+    fn version_1_file_migrates() {
+        let mut lib = sample_library();
+        for entry in &mut lib.tools {
+            entry.tool.vendor = None;
+            entry.tool.product_id = None;
+        }
+        let v1 = as_version_1(&lib);
+        assert!(v1.starts_with("{\n  \"version\": 1,"), "{v1}");
+        assert!(!v1.contains("vendor") && !v1.contains("product_id"), "{v1}");
+        let loaded = load(v1.as_bytes()).unwrap();
+        assert_eq!(loaded, lib);
+        assert_eq!(loaded.version, LIBRARY_VERSION);
+        let saved = save(&loaded).unwrap();
+        assert!(saved.starts_with("{\n  \"version\": 2,"), "{saved}");
+        assert_eq!(saved.matches("\"vendor\": null,").count(), 3, "{saved}");
+        assert_eq!(saved.matches("\"product_id\": null,").count(), 3, "{saved}");
+        assert_eq!(saved, save(&lib).unwrap());
+
+        for key in ["vendor", "product_id"] {
+            let bad = v1.replacen(
+                "\"name\": \"90° V-bit\",",
+                &format!("\"name\": \"90° V-bit\", \"{key}\": null,"),
+                1,
+            );
+            assert_ne!(bad, v1);
+            let err = load(bad.as_bytes()).unwrap_err();
+            assert!(
+                matches!(&err, LibraryError::Migration { message, .. }
+                    if message.contains(&format!("tools[1].tool.{key}"))),
+                "{key}: {err:?}"
+            );
+        }
+        // A version 2 tool missing them is a schema error, as any missing
+        // field is.
+        let missing = save(&lib)
+            .unwrap()
+            .replacen("        \"vendor\": null,\n", "", 1);
+        assert!(matches!(load(missing.as_bytes()).unwrap_err(),
+                LibraryError::Schema { message, .. } if message.contains("vendor")),);
+    }
+
+    /// Maintainer decision 2026-10-24: a clashing name takes the tool's
+    /// product id before ` (2)`, and the same tool under either suffix is
+    /// already present.
+    #[test]
+    fn name_clash_takes_product_id_first() {
+        let engraver = |diameter_mm: f64, product_id: Option<&str>| Tool {
+            name: "Acme Diamond Engraver".into(),
+            vendor: Some("Acme".into()),
+            product_id: product_id.map(str::to_owned),
+            diameter_mm,
+            ..vbit_90()
+        };
+        let mut lib = Library::default();
+        add(&mut lib, engraver(12.7, Some("ED-12")), None).unwrap();
+        add(&mut lib, engraver(6.35, Some("ED-14")), None).unwrap();
+        let names: Vec<&str> = lib.tools.iter().map(|t| t.tool.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Acme Diamond Engraver", "Acme Diamond Engraver (ED-14)"]
+        );
+        // Again: already present, whatever the stored suffix.
+        for (diameter_mm, id, expected) in [(12.7, "ED-12", "lt1"), (6.35, "ED-14", "lt2")] {
+            assert_eq!(
+                add(&mut lib, engraver(diameter_mm, Some(id)), None).unwrap(),
+                AddOutcome::AlreadyPresent {
+                    id: LibraryToolId::new(expected)
+                }
+            );
+        }
+        // No product id: ` (2)`.
+        add(&mut lib, engraver(3.0, None), None).unwrap();
+        assert_eq!(lib.tools[2].tool.name, "Acme Diamond Engraver (2)");
+        // A product id whose name is taken: the next free ` (n)`.
+        add(&mut lib, engraver(4.0, Some("ED-14")), None).unwrap();
+        assert_eq!(lib.tools[3].tool.name, "Acme Diamond Engraver (3)");
+        // A name that already ends with the product id gets ` (n)`, not
+        // the id twice.
+        let mut by_id = engraver(5.0, Some("ED-14"));
+        by_id.name = "Acme Diamond Engraver (ED-14)".into();
+        add(&mut lib, by_id, None).unwrap();
+        assert_eq!(lib.tools[4].tool.name, "Acme Diamond Engraver (ED-14) (2)");
+        // `find` takes the new names.
+        assert_eq!(
+            find(&lib, "Acme Diamond Engraver (ED-14)").unwrap().id,
+            LibraryToolId::new("lt2")
+        );
+        // `replace` settles a clash the same way.
+        let mut replacing = Library::default();
+        add(
+            &mut replacing,
+            engraver(12.7, Some("ED-12")),
+            Some("s1".into()),
+        )
+        .unwrap();
+        add(
+            &mut replacing,
+            engraver(6.0, Some("ED-14")),
+            Some("s2".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            replacing.tools[1].tool.name,
+            "Acme Diamond Engraver (ED-14)"
+        );
+        assert_eq!(
+            replace(
+                &mut replacing,
+                engraver(6.35, Some("ED-14")),
+                Some("s2".into())
+            )
+            .unwrap(),
+            AddOutcome::Replaced {
+                id: LibraryToolId::new("lt2")
+            }
+        );
+        assert_eq!(
+            replacing.tools[1].tool.name,
+            "Acme Diamond Engraver (ED-14)"
+        );
+    }
+
+    /// Maintainer decision 2026-10-24: load never rounds. A stored value
+    /// may be one the user typed, and the file round-trips byte for byte.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn load_keeps_stored_values() {
+        let mut lib = Library::default();
+        let mut noisy = tool_6_35_upcut();
+        noisy.diameter_mm = 4.762_499_999_999_999;
+        noisy.feed_mm_min = Some(1_524.000_000_000_000_5);
+        add(&mut lib, noisy, None).unwrap();
+        let text = save(&lib).unwrap();
+        assert!(
+            text.contains("\"diameter_mm\": 4.762499999999999,"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"feed_mm_min\": 1524.0000000000005,"),
+            "{text}"
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert!(loaded.tools[0].tool.diameter_mm == 4.762_499_999_999_999);
+        assert_eq!(save(&loaded).unwrap(), text);
     }
 
     /// An id match wins over a name match, a unique name finds its tool,
@@ -764,9 +1031,9 @@ mod tests {
     #[test]
     fn newer_version_is_rejected() {
         assert_eq!(
-            load(b"{\"version\": 2, \"tools\": []}").unwrap_err(),
+            load(b"{\"version\": 3, \"tools\": []}").unwrap_err(),
             LibraryError::NewerVersion {
-                found: 2,
+                found: 3,
                 supported: LIBRARY_VERSION
             }
         );
@@ -789,16 +1056,17 @@ mod tests {
             load(b"{").unwrap_err(),
             LibraryError::Json { line: 1, .. }
         ));
-        let err = load(b"{\"version\": 1, \"tools\": [], \"name\": \"x\"}").unwrap_err();
+        let err = load(b"{\"version\": 2, \"tools\": [], \"name\": \"x\"}").unwrap_err();
         assert!(
             matches!(&err, LibraryError::Schema { message, .. } if message.contains("name")),
             "{err:?}"
         );
-        // The current version with no tools is the empty library.
-        assert_eq!(
-            load(b"{\"version\": 1, \"tools\": []}").unwrap(),
-            Library::default()
-        );
+        // The current version with no tools is the empty library, and so
+        // is version 1 with none.
+        for version in [1, 2] {
+            let text = format!("{{\"version\": {version}, \"tools\": []}}");
+            assert_eq!(load(text.as_bytes()).unwrap(), Library::default());
+        }
 
         // A tool block missing an optional, or with an unknown key, names
         // its path; a repeated id is an error too.

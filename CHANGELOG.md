@@ -88,6 +88,14 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   `.json` libraries, following Autodesk's published schema, and reports each
   tool as imported, skipped (with the reason) or already present. Projects keep
   their own copy of each tool, so editing the library never changes a project.
+- **Tool vendor and product id; project format version 16, tool library
+  version 2.** A tool can carry its `vendor` and `product_id`, which Fusion
+  import fills in from the library. Imported tools are named `<vendor>
+  <description>` (`IDC Woodcraft 1/4" Downcut`), without repeating a vendor
+  the description already starts with, and when two tools would share a name
+  the second gets its product id (`… Diamond Engraver (ED-14)`) before
+  falling back to ` (2)`. `tools list` shows VENDOR and PRODUCT columns.
+  Older projects and libraries open with both unset ([#379]).
 - **DXF import.** `dreamcarve init part.dxf` reads LINE, ARC, CIRCLE,
   LWPOLYLINE, POLYLINE (with bulges), SPLINE, ELLIPSE, INSERT and MINSERT,
   ASCII or binary, with older files' code pages. Arcs stay arcs. Units come from
@@ -168,7 +176,8 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 - **Inch input.** Any length or feed in a project or tool library file may be
   written with its unit: `"depth_mm": "0.5 in"`, `"1 1/4 in"`,
   `"feed_mm_min": "60 in/min"`, `"safe_z_mm": "5 mm"`. Inches are converted to
-  millimetres exactly when the file is read, so the program is the one the
+  millimetres when the file is read, rounded to the exact decimal (6 places
+  for a length, 3 for a feed, [#380]), so the program is the one the
   millimetre numbers give; a bad unit is an error at its line and column. A
   command that saves the file writes millimetre numbers back ([#282]).
 - **Profile last pass allowance; project format version 13.** A Profile's
@@ -256,6 +265,14 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 ### Changed
 
 These change what a project from 0.1 exports, or how DreamCarve behaves.
+
+- **Inch tools import with exact millimetre values.** Fusion import rounds
+  every value it converts from inches, lengths to 6 decimal places and feeds
+  to 3, so 3/16" is 4.7625 mm and 60 in/min 1524 mm/min instead of
+  `4.762499999999999` and `1524.0000000000005`; the computed stepover
+  fraction is rounded to 6 places. Values in millimetres are kept as written.
+  A library is not rounded when it opens: re-import with `tools import
+  --replace` to update tools imported by an earlier build ([#380]).
 
 - **Shapes in one operation are cut nearest-first.** Shapes that are not nested
   are visited nearest-neighbour, starting from the first shape drawn, instead of
@@ -688,3 +705,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#362]: https://github.com/grayzu/dreamcarve/issues/362
 [#366]: https://github.com/grayzu/dreamcarve/issues/366
 [#373]: https://github.com/grayzu/dreamcarve/issues/373
+[#379]: https://github.com/grayzu/dreamcarve/issues/379
+[#380]: https://github.com/grayzu/dreamcarve/issues/380

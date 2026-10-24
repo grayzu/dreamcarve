@@ -474,6 +474,8 @@ mod tests {
         Tool {
             id: ToolId::new("t1"),
             name: "3 mm drill".into(),
+            vendor: None,
+            product_id: None,
             number: None,
             cutter: ToolKind::Drill,
             diameter_mm: 3.0,

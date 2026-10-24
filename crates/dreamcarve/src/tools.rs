@@ -107,6 +107,8 @@ fn list(paths: &Paths, json: bool) -> Result<(), Failure> {
     let header = [
         "ID",
         "NAME",
+        "VENDOR",
+        "PRODUCT",
         "CUTTER",
         "DIAMETER_MM",
         "FEED_MM_MIN",
@@ -116,7 +118,7 @@ fn list(paths: &Paths, json: bool) -> Result<(), Failure> {
         "SOURCE",
     ]
     .map(str::to_owned);
-    let rows: Vec<[String; 9]> = lib.tools.iter().map(row).collect();
+    let rows: Vec<[String; 11]> = lib.tools.iter().map(row).collect();
     let mut widths = header.clone().map(|h| h.chars().count());
     for row in &rows {
         for (width, cell) in widths.iter_mut().zip(row) {
@@ -135,12 +137,14 @@ fn list(paths: &Paths, json: bool) -> Result<(), Failure> {
 }
 
 /// One `tools list` row: `-` for a value not set.
-fn row(entry: &LibraryTool) -> [String; 9] {
+fn row(entry: &LibraryTool) -> [String; 11] {
     let tool = &entry.tool;
     let or_dash = |value: Option<String>| value.unwrap_or_else(|| "-".into());
     [
         entry.id.to_string(),
         tool.name.clone(),
+        or_dash(tool.vendor.clone()),
+        or_dash(tool.product_id.clone()),
         describe_cutter(&tool.cutter),
         tool.diameter_mm.to_string(),
         or_dash(tool.feed_mm_min.map(|v| v.to_string())),

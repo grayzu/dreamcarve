@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -22,6 +22,8 @@
     {
       "id": "t1",
       "name": "Set me",
+      "vendor": null,
+      "product_id": null,
       "number": null,
       "cutter": "end_mill",
       "diameter_mm": 6.35,
@@ -35,6 +37,8 @@
     {
       "id": "t2",
       "name": "1/4 end mill",
+      "vendor": null,
+      "product_id": null,
       "number": 1,
       "cutter": "end_mill",
       "diameter_mm": 6.35,
@@ -48,6 +52,8 @@
     {
       "id": "t3",
       "name": "1/8 end mill",
+      "vendor": null,
+      "product_id": null,
       "number": 2,
       "cutter": "end_mill",
       "diameter_mm": 3.175,

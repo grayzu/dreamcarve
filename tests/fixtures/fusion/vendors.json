@@ -1,0 +1,93 @@
+{
+  "version": 36,
+  "x-fixture-note": "Hand-written for DreamCarve tests in the structure of Autodesk's published Fusion tool library schema. Not Autodesk data; the vendors and product ids are made up.",
+  "data": [
+    {
+      "type": "flat end mill",
+      "unit": "inches",
+      "description": "1/4\" Downcut ",
+      "guid": "dc000101-0000-4000-8000-000000000001",
+      "vendor": "Acme Router Bits",
+      "product-id": "AC-14D",
+      "geometry": { "DC": 0.25, "NOF": 2 },
+      "post-process": { "number": 1 },
+      "start-values": { "presets": [ { "name": "Hardwood", "guid": "dc0001p1-0000-4000-8000-000000000001", "n": 18000, "v_f": 60, "v_f_plunge": 15, "stepdown": 0.125, "stepover": 0.1 } ] }
+    },
+    {
+      "type": "flat end mill",
+      "unit": "inches",
+      "description": "1/4\" Downcut",
+      "guid": "dc000102-0000-4000-8000-000000000002",
+      "vendor": "Birch Tooling",
+      "product-id": "BT-250",
+      "geometry": { "DC": 0.25, "NOF": 2 },
+      "post-process": { "number": 2 },
+      "start-values": { "presets": [ { "name": "Hardwood", "guid": "dc0001p2-0000-4000-8000-000000000002", "n": 16000, "v_f": 50, "v_f_plunge": 20 } ] }
+    },
+    {
+      "type": "chamfer mill",
+      "unit": "inches",
+      "description": "Diamond Engraver",
+      "guid": "dc000103-0000-4000-8000-000000000003",
+      "vendor": "Acme Router Bits",
+      "product-id": "AC-ED12",
+      "geometry": { "DC": 0.5, "NOF": 1, "TA": 60 },
+      "post-process": { "number": 3 },
+      "start-values": { "presets": [ { "name": "Brass", "guid": "dc0001p3-0000-4000-8000-000000000003", "n": 1, "v_f": 30, "v_f_plunge": 30 } ] }
+    },
+    {
+      "type": "chamfer mill",
+      "unit": "inches",
+      "description": "Diamond Engraver",
+      "guid": "dc000104-0000-4000-8000-000000000004",
+      "vendor": "Acme Router Bits",
+      "product-id": "AC-ED14",
+      "geometry": { "DC": 0.25, "NOF": 1, "TA": 60 },
+      "post-process": { "number": 4 },
+      "start-values": { "presets": [ { "name": "Brass", "guid": "dc0001p4-0000-4000-8000-000000000004", "n": 1, "v_f": 30, "v_f_plunge": 30 } ] }
+    },
+    {
+      "type": "ball end mill",
+      "unit": "inches",
+      "description": "ACME Router Bits 1/8\" Ball Nose",
+      "guid": "dc000105-0000-4000-8000-000000000005",
+      "vendor": "Acme Router Bits",
+      "product-id": "AC-18B",
+      "geometry": { "DC": 0.125, "NOF": 2 },
+      "post-process": { "number": 5 },
+      "start-values": { "presets": [ { "name": "Hardwood", "guid": "dc0001p5-0000-4000-8000-000000000005", "n": 20000, "v_f": 40, "v_f_plunge": 10 } ] }
+    },
+    {
+      "type": "drill",
+      "unit": "millimeters",
+      "guid": "dc000106-0000-4000-8000-000000000006",
+      "vendor": "Birch Tooling",
+      "product-id": "BT-DR5",
+      "geometry": { "DC": 5, "NOF": 2 },
+      "post-process": { "number": 6 },
+      "start-values": { "presets": [ { "name": "Hardwood", "guid": "dc0001p6-0000-4000-8000-000000000006", "n": 12000, "v_f_plunge": 300 } ] }
+    },
+    {
+      "type": "flat end mill",
+      "unit": "millimeters",
+      "description": "3 mm Upcut",
+      "guid": "dc000107-0000-4000-8000-000000000007",
+      "vendor": "",
+      "product-id": "NV-3",
+      "geometry": { "DC": 3, "NOF": 2 },
+      "post-process": { "number": 7 },
+      "start-values": { "presets": [ { "name": "Hardwood", "guid": "dc0001p7-0000-4000-8000-000000000007", "n": 18000, "v_f": 900, "v_f_plunge": 300 } ] }
+    },
+    {
+      "type": "flat end mill",
+      "unit": "inches",
+      "description": "3/16\" Compression",
+      "guid": "dc000108-0000-4000-8000-000000000008",
+      "vendor": "Acme Router Bits",
+      "product-id": "AC-316C",
+      "geometry": { "DC": 0.1875, "NOF": 2 },
+      "post-process": { "number": 8 },
+      "start-values": { "presets": [ { "name": "Plywood", "guid": "dc0001p8-0000-4000-8000-000000000008", "n": 18000, "v_f": 60, "v_f_plunge": 15, "stepdown": 0.0625, "stepover": 0.075 } ] }
+    }
+  ]
+}

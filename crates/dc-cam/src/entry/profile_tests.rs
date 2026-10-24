@@ -55,6 +55,8 @@ fn tool(diameter_mm: f64, feed: f64, plunge: f64) -> Tool {
     Tool {
         id: ToolId::new("t1"),
         name: "t1".into(),
+        vendor: None,
+        product_id: None,
         number: None,
         cutter: ToolKind::EndMill,
         diameter_mm,

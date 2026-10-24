@@ -78,6 +78,10 @@
 //!   format 14 did not record. Telling needs the Profile's tool paths, so
 //!   the migration leaves it unset, and an unset tab warns `tab_on_hole`
 //!   as format 14 did; cuts never depend on it.
+//! - **16**: adds `vendor: null` and `product_id: null` right after each
+//!   tool's `name` (maintainer decision 2026-10-24): who makes the tool
+//!   and the maker's part number, which Fusion import fills in. No
+//!   program reads them, so the file exports what it did.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -88,7 +92,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 15;
+pub const CURRENT_VERSION: u32 = 16;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -112,6 +116,7 @@ fn step(from: u32) -> Option<Step> {
         12 => Some(v12_to_v13),
         13 => Some(v13_to_v14),
         14 => Some(v14_to_v15),
+        15 => Some(v15_to_v16),
         _ => None,
     }
 }
@@ -661,6 +666,44 @@ fn v14_to_v15(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
     Ok(root)
 }
 
+/// Version 15 → 16 (maintainer decision 2026-10-24): `vendor: null` and
+/// `product_id: null` right after each tool's `name`. Fails if a tool
+/// already has either key: that is not a version 15 file.
+fn v15_to_v16(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(tools) = root.get_mut("tools").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, tool) in tools.iter_mut().enumerate() {
+        let Value::Object(fields) = std::mem::take(tool) else {
+            return Err(format!("`tools[{i}]` is not an object"));
+        };
+        for key in ["vendor", "product_id"] {
+            if fields.contains_key(key) {
+                return Err(format!(
+                    "a version 15 file has no `tools[{i}].{key}`, but this one does"
+                ));
+            }
+        }
+        let mut out = Map::with_capacity(fields.len() + 2);
+        let mut inserted = false;
+        for (key, value) in fields {
+            let after_this = key == "name";
+            out.insert(key, value);
+            if after_this {
+                out.insert("vendor".into(), Value::Null);
+                out.insert("product_id".into(), Value::Null);
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("vendor".into(), Value::Null);
+            out.insert("product_id".into(), Value::Null);
+        }
+        *tool = Value::Object(out);
+    }
+    Ok(root)
+}
+
 /// `map` with `key: value` inserted right after `after`, or at the end
 /// when `after` is absent. Fails if `key` is already there, naming it
 /// under `at` (a path prefix such as `tools[0].`).
@@ -821,6 +864,13 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 16 {
+            for tool in root["tools"].as_array_mut().unwrap() {
+                let tool = tool.as_object_mut().unwrap();
+                tool.shift_remove("vendor");
+                tool.shift_remove("product_id");
+            }
+        }
         if version < 15 {
             for tab in root["tabs"].as_array_mut().unwrap() {
                 tab.as_object_mut().unwrap().shift_remove("holds_slug");
@@ -2027,6 +2077,91 @@ mod tests {
         assert_eq!(loaded.project.heights, crate::Heights::unset());
         assert_eq!(loaded.project, sample_project());
         assert_eq!(loaded.problems, vec![]);
+    }
+
+    // Version 15 → 16 (maintainer decision 2026-10-24): a tool's vendor
+    // and product id.
+
+    const V15_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v15/sample.dcv");
+
+    #[test]
+    fn version_15_fixture_loads() {
+        let loaded = load(V15_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+        for tool in &loaded.project.tools {
+            assert_eq!((&tool.vendor, &tool.product_id), (&None, &None));
+        }
+    }
+
+    /// Every tool of a version 15 file gains `vendor: null` and
+    /// `product_id: null` right after its `name`, and nothing else
+    /// changes; a tool that already has either key is not a version 15
+    /// tool, and the step says which.
+    #[test]
+    fn v15_tools_gain_no_vendor() {
+        let mut before = sample_root_at(15);
+        let second = before["tools"][0].clone();
+        before["tools"].as_array_mut().unwrap().push(second);
+        before["tools"][1]["id"] = json!("t2");
+        let migrated = migrate(before.clone(), 15).unwrap();
+        assert_eq!(migrated["version"], json!(CURRENT_VERSION));
+        let tools = migrated["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        for (i, tool) in tools.iter().enumerate() {
+            let fields = tool.as_object().unwrap();
+            let keys: Vec<&str> = fields.keys().map(String::as_str).collect();
+            assert_eq!(
+                keys.get(1..4),
+                Some(&["name", "vendor", "product_id"][..]),
+                "{keys:?}"
+            );
+            assert_eq!(fields["vendor"], Value::Null);
+            assert_eq!(fields["product_id"], Value::Null);
+            let mut rest = fields.clone();
+            rest.shift_remove("vendor");
+            rest.shift_remove("product_id");
+            assert_eq!(Value::Object(rest), before["tools"][i], "tool {i}");
+        }
+        // Only the tools change.
+        let mut others = migrated.clone();
+        others["tools"] = before["tools"].clone();
+        others["version"] = json!(15);
+        assert_eq!(others, before);
+        assert_eq!(
+            migrate(sample_root_at(15), 15).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+
+        for key in ["vendor", "product_id"] {
+            let mut root = before.clone();
+            root["tools"][1][key] = json!("x");
+            let err = migrate(root, 15).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Migration { from: 15, to: 16, message, .. }
+                    if message.contains(&format!("`tools[1].{key}`"))),
+                "{key}: {err:?}"
+            );
+        }
+    }
+
+    /// A vendor and product id save after the name and load back.
+    #[test]
+    fn vendor_and_product_id_round_trip() {
+        let mut project = sample_project();
+        project.tools[0].vendor = Some("IDC Woodcraft".into());
+        project.tools[0].product_id = Some("DC-14".into());
+        let text = crate::save(&project).unwrap();
+        assert!(
+            text.contains(
+                "\"name\": \"6.35 mm upcut\",\n      \"vendor\": \"IDC Woodcraft\",\n      \"product_id\": \"DC-14\",\n"
+            ),
+            "{text}"
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, project);
+        assert_eq!(crate::save(&loaded.project).unwrap(), text);
     }
 
     #[test]

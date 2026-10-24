@@ -34,6 +34,8 @@ pub fn tool_6_35_upcut() -> Tool {
     Tool {
         id: ToolId::new("t1"),
         name: "6.35 mm upcut".into(),
+        vendor: None,
+        product_id: None,
         number: None,
         cutter: ToolKind::EndMill,
         diameter_mm: 6.35,
@@ -49,7 +51,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v15/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v16/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),

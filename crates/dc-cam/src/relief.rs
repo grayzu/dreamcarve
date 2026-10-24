@@ -1471,6 +1471,8 @@ mod tests {
         Tool {
             id: ToolId::new(id),
             name: format!("{diameter_mm} mm end mill"),
+            vendor: None,
+            product_id: None,
             number: None,
             cutter: ToolKind::EndMill,
             diameter_mm,

@@ -39,12 +39,26 @@
 //!   schema's wording.
 //! - `unit` `"millimeters"` or `"inches"`; every length (`DC`, `stepdown`,
 //!   `stepover`) and feed (`v_f`, `v_f_plunge`) is in that unit and is
-//!   converted to mm or mm/min. `n` is RPM in either unit.
+//!   converted to mm or mm/min. `n` is RPM in either unit. A value
+//!   converted from inches is rounded, lengths to 6 decimal places and
+//!   feeds to 3 ([`dc_project::round_length_mm`],
+//!   [`dc_project::round_rate_mm_min`]), so 3/16" is `4.7625` and 60 in/min
+//!   is `1524`, not the `f64` product's `4.762499999999999` and
+//!   `1524.0000000000002`; a millimetre value is kept as written. The
+//!   computed `step_over_fraction` is rounded to 6 places in either unit
+//!   (maintainer decision 2026-10-24).
 //! - `geometry.DC` → `diameter_mm`; absent or not positive is
 //!   [`SkipReason::NoDiameter`]. `geometry.NOF` → `flutes`; 0 or absent is
 //!   1 with [`ImportNote::FlutesUnset`].
 //! - `post-process.number` above 0 → [`Tool::number`]; 0 or absent → `None`.
 //!   Every preset of one Fusion tool shares it.
+//! - `vendor` → [`Tool::vendor`] and `product-id` → [`Tool::product_id`],
+//!   trimmed, absent or empty → `None`. With a vendor, the name below
+//!   starts `<vendor> ` unless it already starts with the vendor (any
+//!   case, ending at a word boundary): `IDC Woodcraft 1/4" Downcut`. A
+//!   clash with another tool's name is settled by [`crate::add`], which
+//!   tries ` (<product id>)` before ` (2)` (maintainer decision
+//!   2026-10-24).
 //! - `start-values.presets[]`: one library tool per preset, named
 //!   `description` when there is one preset and `<description> (<preset
 //!   name>)` when there are several (a tool without a `description` takes
@@ -69,7 +83,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::io::Read;
 
-use dc_project::{Tool, ToolId, ToolKind};
+use dc_project::{Tool, ToolId, ToolKind, round_length_mm, round_rate_mm_min};
 use serde_json::{Map, Value};
 
 use crate::{LibraryError, LibraryToolId};
@@ -422,6 +436,27 @@ fn text<'a>(obj: Option<&'a Map<String, Value>>, key: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
+/// `base`, prefixed with `vendor` and a space unless it already starts
+/// with the vendor, ignoring case, followed by the end of the name or a
+/// character that is not a letter or digit.
+fn with_vendor(vendor: Option<&str>, base: String) -> String {
+    let Some(vendor) = vendor else {
+        return base;
+    };
+    let starts_with_vendor = base
+        .get(..vendor.len())
+        .is_some_and(|head| head.to_lowercase() == vendor.to_lowercase())
+        && base
+            .get(vendor.len()..)
+            .and_then(|rest| rest.chars().next())
+            .is_none_or(|c| !c.is_alphanumeric());
+    if starts_with_vendor {
+        base
+    } else {
+        format!("{vendor} {base}")
+    }
+}
+
 /// The tools one `data` item imports as, or why it is skipped.
 fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped> {
     let obj = item.as_object();
@@ -442,12 +477,28 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
         Class::Unsupported => return Err(skip(SkipReason::UnsupportedType(kind.into()))),
         Class::Unknown => return Err(skip(SkipReason::UnknownType(kind.into()))),
     };
-    let (mm_per_unit, unit_label) = match obj.and_then(|o| o.get("unit")) {
+    let (inches, unit_label) = match obj.and_then(|o| o.get("unit")) {
         None => return Err(skip(SkipReason::UnknownUnit(None))),
-        Some(Value::String(unit)) if unit == "millimeters" => (1.0, "mm"),
-        Some(Value::String(unit)) if unit == "inches" => (MM_PER_INCH, "in"),
+        Some(Value::String(unit)) if unit == "millimeters" => (false, "mm"),
+        Some(Value::String(unit)) if unit == "inches" => (true, "in"),
         Some(Value::String(unit)) => return Err(skip(SkipReason::UnknownUnit(Some(unit.clone())))),
         Some(other) => return Err(skip(SkipReason::UnknownUnit(Some(other.to_string())))),
+    };
+    // A length or feed in millimetres: as written in a millimetre file,
+    // converted and rounded from an inch one.
+    let length_mm = |value: f64| {
+        if inches {
+            round_length_mm(value * MM_PER_INCH)
+        } else {
+            value
+        }
+    };
+    let rate_mm_min = |value: f64| {
+        if inches {
+            round_rate_mm_min(value * MM_PER_INCH)
+        } else {
+            value
+        }
     };
     let geometry = obj
         .and_then(|o| o.get("geometry"))
@@ -487,8 +538,12 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
     let number = positive(post, "number").and_then(whole_positive);
     // Fusion leaves `description` empty on many tools (Autodesk's metric
     // sample has 179 such drills); the diameter and type tell them apart.
-    let mut base_name =
-        label.map_or_else(|| format!("{diameter} {unit_label} {kind}"), str::to_owned);
+    let vendor = text(obj, "vendor");
+    let product_id = text(obj, "product-id");
+    let mut base_name = with_vendor(
+        vendor,
+        label.map_or_else(|| format!("{diameter} {unit_label} {kind}"), str::to_owned),
+    );
     if family == Family::BullNose
         && let Some(corner_radius) = positive(geometry, "RE")
     {
@@ -498,9 +553,11 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
     let template = Tool {
         id: ToolId::new("t1"),
         name: base_name.clone(),
+        vendor: vendor.map(str::to_owned),
+        product_id: product_id.map(str::to_owned),
         number,
         cutter,
-        diameter_mm: diameter * mm_per_unit,
+        diameter_mm: length_mm(diameter),
         flutes,
         feed_mm_min: None,
         plunge_mm_min: None,
@@ -548,8 +605,8 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
             base_name.clone()
         };
         let preset_id = text(preset, "guid").map_or_else(|| k.to_string(), str::to_owned);
-        let feed_mm_min = positive(preset, "v_f").map(|v| v * mm_per_unit);
-        let plunge_mm_min = positive(preset, "v_f_plunge").map(|v| v * mm_per_unit);
+        let feed_mm_min = positive(preset, "v_f").map(rate_mm_min);
+        let plunge_mm_min = positive(preset, "v_f_plunge").map(rate_mm_min);
         let rpm = positive(preset, "n").and_then(whole_positive);
         for (unset, note) in [
             (feed_mm_min.is_none(), ImportNote::FeedUnset),
@@ -570,16 +627,16 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
         let step_down_mm = applies("use-stepdown")
             .then(|| positive(preset, "stepdown"))
             .flatten()
-            .map(|v| v * mm_per_unit);
+            .map(length_mm);
         let step_over_fraction = applies("use-stepover")
             .then(|| positive(preset, "stepover"))
             .flatten()
             .map(|step_over| {
-                let fraction = step_over / diameter;
+                let fraction = round_length_mm(step_over / diameter);
                 if fraction > 1.0 {
                     notes.push(ImportNote::StepOverClamped {
-                        step_over_mm: step_over * mm_per_unit,
-                        diameter_mm: diameter * mm_per_unit,
+                        step_over_mm: length_mm(step_over),
+                        diameter_mm: length_mm(diameter),
                     });
                     1.0
                 } else {
@@ -1222,7 +1279,7 @@ mod tests {
         assert_eq!(
             summary,
             [
-                ("6 mm Flat End Mill", &ToolKind::EndMill),
+                ("DreamCarve fixtures 6 mm Flat End Mill", &ToolKind::EndMill),
                 ("3 mm Ball End Mill", &ToolKind::BallNose),
                 ("8 mm Bull Nose End Mill (bull nose r1)", &ToolKind::EndMill),
                 ("20 mm Slot Mill", &ToolKind::EndMill),
@@ -1277,7 +1334,10 @@ mod tests {
                 .find(|t| t.tool.name == name)
                 .unwrap_or_else(|| panic!("no {name}"))
         };
-        assert_eq!(by_name("6 mm Flat End Mill").tool.number, Some(5));
+        let vendor = &by_name("DreamCarve fixtures 6 mm Flat End Mill").tool;
+        assert_eq!(vendor.number, Some(5));
+        assert_eq!(vendor.vendor.as_deref(), Some("DreamCarve fixtures"));
+        assert_eq!(vendor.product_id.as_deref(), Some("DC-FEM-6"));
         assert_eq!(by_name("3 mm Ball End Mill").tool.number, None);
         assert_eq!(
             by_name("3.175 mm Flat End Mill (Plywood)").tool.number,
@@ -1304,5 +1364,198 @@ mod tests {
         sources.sort_unstable();
         sources.dedup();
         assert_eq!(sources.len(), imported.tools.len());
+    }
+    /// `tests/fixtures/fusion/vendors.json`.
+    const VENDORS_JSON: &[u8] = include_bytes!("../../../tests/fixtures/fusion/vendors.json");
+
+    /// Maintainer decision 2026-10-24: the vendor leads the name, once,
+    /// and the vendor and product id are kept.
+    #[test]
+    fn vendor_prefixes_the_name() {
+        let with = |vendor: Value, description: Option<&str>| {
+            let mut item = flat_end_mill();
+            let obj = item.as_object_mut().expect("object");
+            obj.insert("vendor".into(), vendor);
+            obj.insert("product-id".into(), json!(" AC-14D "));
+            match description {
+                Some(d) => obj.insert("description".into(), json!(d)),
+                None => obj.remove("description"),
+            };
+            only_tool(item).tool
+        };
+        let tool = with(json!("Acme"), Some("1/4\" Downcut"));
+        assert_eq!(tool.name, "Acme 1/4\" Downcut");
+        assert_eq!(tool.vendor.as_deref(), Some("Acme"));
+        assert_eq!(tool.product_id.as_deref(), Some("AC-14D"), "trimmed");
+        // Already there, in any case: not doubled.
+        assert_eq!(
+            with(json!("Acme"), Some("ACME 1/4\" Downcut")).name,
+            "ACME 1/4\" Downcut"
+        );
+        assert_eq!(with(json!("Acme"), Some("Acme")).name, "Acme");
+        // A word that only starts with the vendor is not the vendor.
+        assert_eq!(
+            with(json!("Acme"), Some("Acmeline 1/4\" Downcut")).name,
+            "Acme Acmeline 1/4\" Downcut"
+        );
+        // No description: the product id, after the vendor.
+        assert_eq!(with(json!("Acme"), None).name, "Acme AC-14D");
+        // No vendor, or an empty one: the name as before.
+        for vendor in [Value::Null, json!(""), json!("   "), json!(7)] {
+            let tool = with(vendor.clone(), Some("1/4\" Downcut"));
+            assert_eq!(tool.name, "1/4\" Downcut", "{vendor}");
+            assert_eq!(tool.vendor, None, "{vendor}");
+        }
+        let mut item = flat_end_mill();
+        item.as_object_mut().expect("object").remove("product-id");
+        let tool = only_tool(item).tool;
+        assert_eq!((tool.vendor, tool.product_id), (None, None));
+        // The vendor comes before the bull nose and preset suffixes.
+        let mut item = of_type("bull nose end mill");
+        let obj = item.as_object_mut().expect("object");
+        obj.insert("vendor".into(), json!("Acme"));
+        set(
+            &mut item,
+            &["geometry"],
+            json!({ "DC": 8, "NOF": 2, "RE": 1 }),
+        );
+        assert_eq!(
+            only_tool(item).tool.name,
+            "Acme a bull nose end mill (bull nose r1)"
+        );
+    }
+
+    /// Maintainer decision 2026-10-24: the vendors fixture, added to an
+    /// empty library, gives each tool its vendor's name, and the second of
+    /// two same-named tools from one vendor its product id.
+    #[test]
+    fn vendors_fixture_imports_with_expected_names() {
+        let imported = import(VENDORS_JSON).expect("imports");
+        assert_eq!(imported.skipped, []);
+        let mut lib = crate::Library::default();
+        for t in imported.tools {
+            crate::add(&mut lib, t.tool, Some(t.source)).expect("valid");
+        }
+        let rows: Vec<(&str, Option<&str>, Option<&str>)> = lib
+            .tools
+            .iter()
+            .map(|t| {
+                (
+                    t.tool.name.as_str(),
+                    t.tool.vendor.as_deref(),
+                    t.tool.product_id.as_deref(),
+                )
+            })
+            .collect();
+        let acme = Some("Acme Router Bits");
+        let birch = Some("Birch Tooling");
+        assert_eq!(
+            rows,
+            [
+                ("Acme Router Bits 1/4\" Downcut", acme, Some("AC-14D")),
+                ("Birch Tooling 1/4\" Downcut", birch, Some("BT-250")),
+                ("Acme Router Bits Diamond Engraver", acme, Some("AC-ED12")),
+                (
+                    "Acme Router Bits Diamond Engraver (AC-ED14)",
+                    acme,
+                    Some("AC-ED14")
+                ),
+                ("ACME Router Bits 1/8\" Ball Nose", acme, Some("AC-18B")),
+                ("Birch Tooling BT-DR5", birch, Some("BT-DR5")),
+                ("3 mm Upcut", None, Some("NV-3")),
+                ("Acme Router Bits 3/16\" Compression", acme, Some("AC-316C")),
+            ]
+        );
+        // A second import is already present, tool by tool.
+        let before = lib.clone();
+        for t in import(VENDORS_JSON).expect("imports").tools {
+            assert!(matches!(
+                crate::add(&mut lib, t.tool, Some(t.source)).expect("valid"),
+                crate::AddOutcome::AlreadyPresent { .. }
+            ));
+        }
+        assert_eq!(lib, before);
+    }
+
+    /// Maintainer decision 2026-10-24: inch values convert to the exact
+    /// decimal, 6 places for lengths and 3 for feeds.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn inch_values_round_exactly() {
+        let mut item = flat_end_mill();
+        set(&mut item, &["unit"], json!("inches"));
+        set(&mut item, &["geometry", "DC"], json!(0.1875));
+        let p = preset(&mut item);
+        p.insert("v_f".into(), json!(60));
+        p.insert("v_f_plunge".into(), json!(15));
+        p.insert("stepdown".into(), json!(0.0625));
+        p.insert("stepover".into(), json!(0.075));
+        let tool = only_tool(item).tool;
+        assert!(tool.diameter_mm == 4.7625, "{}", tool.diameter_mm);
+        assert_eq!(tool.step_down_mm, Some(1.5875));
+        assert_eq!(tool.feed_mm_min, Some(1524.0));
+        assert_eq!(tool.plunge_mm_min, Some(381.0));
+        assert_eq!(tool.step_over_fraction, Some(0.4));
+        let mut lib = crate::Library::default();
+        crate::add(&mut lib, tool, None).expect("valid");
+        let text = crate::save(&lib).expect("saves");
+        assert!(text.contains("\"diameter_mm\": 4.7625,"), "{text}");
+        assert!(text.contains("\"feed_mm_min\": 1524.0,"), "{text}");
+        assert!(
+            !text.contains("4.76249") && !text.contains("1524.000"),
+            "{text}"
+        );
+
+        // 1/64" is the finest fraction 6 places keep.
+        let mut item = flat_end_mill();
+        set(&mut item, &["unit"], json!("inches"));
+        set(&mut item, &["geometry", "DC"], json!(0.015625));
+        preset(&mut item).remove("stepover");
+        let tool = only_tool(item).tool;
+        assert!(tool.diameter_mm == 0.396875, "{}", tool.diameter_mm);
+        // 1.5" and 7 in/min, both noisy as plain products.
+        let mut item = flat_end_mill();
+        set(&mut item, &["unit"], json!("inches"));
+        set(&mut item, &["geometry", "DC"], json!(1.5));
+        preset(&mut item).insert("v_f_plunge".into(), json!(7));
+        let tool = only_tool(item).tool;
+        assert!(tool.diameter_mm == 38.1, "{}", tool.diameter_mm);
+        assert_eq!(tool.plunge_mm_min, Some(177.8));
+
+        // A clamped stepover's note states rounded millimetres.
+        let mut item = flat_end_mill();
+        set(&mut item, &["unit"], json!("inches"));
+        set(&mut item, &["geometry", "DC"], json!(0.1875));
+        preset(&mut item).insert("stepover".into(), json!(0.25));
+        assert_eq!(
+            only_tool(item).notes,
+            [ImportNote::StepOverClamped {
+                step_over_mm: 6.35,
+                diameter_mm: 4.7625
+            }]
+        );
+    }
+
+    /// Maintainer decision 2026-10-24: a millimetre file's values are not
+    /// converted, so they are kept as written.
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a rounded value must be exactly the decimal"
+    )]
+    fn millimetre_values_are_kept() {
+        let mut item = flat_end_mill();
+        set(&mut item, &["geometry", "DC"], json!(6.000_000_1));
+        let p = preset(&mut item);
+        p.insert("v_f".into(), json!(1_234.567_89));
+        p.insert("stepdown".into(), json!(2.000_000_01));
+        p.remove("stepover");
+        let tool = only_tool(item).tool;
+        assert!(tool.diameter_mm == 6.000_000_1);
+        assert_eq!(tool.feed_mm_min, Some(1_234.567_89));
+        assert_eq!(tool.step_down_mm, Some(2.000_000_01));
     }
 }
