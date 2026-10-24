@@ -59,7 +59,8 @@ or running the CLI; there is no GUI in this phase.
 ### Operations
 
 10. **Several operations.** A project holds any number of Profile, Pocket,
-Drill and Engrave operations. Export cuts the enabled ones in list
+Drill, Bore and Engrave operations (Bore added: maintainer decision
+2026-10-24). Export cuts the enabled ones in list
 order, never reordered or regrouped by tool (research decision D7).
 `check` warns `cut_inside_freed_part` when an operation cuts inside a
 shape an earlier operation has already cut free,
@@ -72,8 +73,9 @@ that are not adjacent.
     **Shapes the tool cannot fit are skipped.** No operation cuts a shape
     larger than drawn because the bit is too big for it: a Pocket the bit
     fits nowhere (`pocket_no_room`), an Inside Profile, or a hole of an
-    Outside one, the bit does not fit (`tool_too_large`), and a Drill hole
-    narrower than the bit (`drill_hole_too_small`) are skipped with a
+    Outside one, the bit does not fit (`tool_too_large`), a Drill hole
+    narrower than the bit (`drill_hole_too_small`), and a Bore hole the bit
+    has no room to spiral in (`bore_no_room`) are skipped with a
     warning that `check` and `export` print, and the rest of the program
     still exports. A Drill's `allow_tool_wider_than_hole` overrides this
     for its holes; it is saved in the project, not a CLI flag. On line
@@ -86,8 +88,9 @@ that are not adjacent.
 pass). It changes the order of cuts, never which cuts are made (D3, D4).
 Within an operation the shapes are visited nearest-neighbour from the
 first shape in drawing order, with the fixed rule that a shape is cut
-before any shape that encloses it (D1, D5). Drill ignores the setting:
-every hole is one plunge sequence, visited nearest-first.
+before any shape that encloses it (D1, D5). Drill and Bore ignore the
+setting: every hole is one plunge or helix sequence, visited
+nearest-first (Bore: changed: maintainer decision 2026-10-24).
 12. **Pocket** clears all material inside a closed shape to `depth_mm`, in
 passes of `step_down_mm`. Shapes nested inside a pocket are islands;
 shapes inside an island are pockets again. Two **clearance
@@ -129,7 +132,9 @@ at the tool's diameter, warning `drill_tool_wider_than_hole` as before,
 for a clearance hole drawn at the screw's size. A Drill that drills no
 hole at all, every target skipped, warns `drill_no_holes`. (changed:
 maintainer decision 2026-10-24; such a hole was drilled at the tool's
-size with `drill_tool_wider_than_hole`.) Cycles (VCarve "Drilling
+size with `drill_tool_wider_than_hole`.) The `drill_hole_too_small`
+message tells the user to cut a hole bigger than the bit with a Bore
+(capability 14a; changed: maintainer decision 2026-10-24). Cycles (VCarve "Drilling
 Toolpath"; Fusion "Drill", cycle types):
     - **simple**: one plunge at the plunge rate, then a retract;
     - **peck**: plunges of `peck_depth_mm` (the tool's step-down by
@@ -157,6 +162,51 @@ Toolpath"; Fusion "Drill", cycle types):
       0); no bundled definition has them,
       so peck and chip-break Drills are plain moves on all six (changed in
       slice 17, #172).
+14a. **Bore** cuts each circular target bigger than the end mill to its
+drawn size by helical interpolation, as Fusion's "2D Bore" does (Autodesk
+Fusion help, "Bore reference" and "Generate a Bore toolpath"; VCarve has
+no bore toolpath, and PureCutCNC's `helical` drill type is the algorithm
+reference). A target is circular by Drill's test (capability 14). For each
+hole the tool spirals down a helix centred on the hole, whose radius is
+the hole's radius less the tool's radius and less `allowance_mm`, so the
+bit's edge runs on the wall. The helix starts 1 mm above the stock top,
+straight over its start, which the bit reaches by a rapid down from safe
+Z as before any ramp or helix (S2), so the bit never plunges into
+material. It falls `pitch_mm` per turn (Fusion's "Pitch": the distance
+fed down per 360° revolution) to `depth_mm`, which obeys S1 with the
+operation's through-cut allowance. `pitch_mm` defaults to the tool's
+step-down and may not be more than it: one turn takes at most one pass's
+depth. At the depth the bit cuts one full circle, so the wall is round
+and to size and the floor flat, then moves to the hole's centre (Fusion's
+"Lead To Center") and lifts straight up to safe Z, so it does not drag up
+the finished wall. `direction` is `climb` (default; counter-clockwise
+seen from above) or `conventional`, as on Pocket and Profile; the helix
+and the circle turn the same way. `allowance_mm` (default 0, at least 0)
+is Fusion's radial stock to leave: the hole comes out that much smaller
+all round, for a second Bore to finish. The helix's descent never
+exceeds the plunge rate in Z (S10). Holes are visited nearest-first from
+the first in drawing order and linked at safe Z, as a Drill's are.
+Fusion's finishing passes, multiple passes, repeat (spring) passes, ramp
+angle and tapered walls are not in phase 2: one helix and one circle cut
+the hole, and a second Bore with a smaller allowance is the finishing
+pass. A hole a Bore cannot cut as drawn is skipped with a warning that
+`check` and `export` print, and the other holes are cut:
+    - **`bore_no_room`**: the helix radius would be under 0.05 mm, so the
+     bit (with the allowance) does not fit the hole, or fits it so
+     closely there is no room to spiral. A hole the bit's size is a
+     Drill's, and the message says so.
+    - **`bore_leaves_core`**: the hole is wider than twice the bit's
+     diameter plus twice the allowance (beyond the flatten tolerance). A
+     helix whose edge runs on the wall then misses the middle, and leaves
+     a core standing; in a through hole the core comes loose at the last
+     turn and spins against the bit, which can throw it. Bore never cuts
+     such a hole, and the message names the core's size and says to clear
+     the hole with a Pocket, which clears the middle in rings. A hole
+     exactly twice the bit's diameter is bored: the bit's edge passes the
+     centre.
+    - **`bore_target_not_circle`** for a target that is not a circle, and
+     **`bore_no_holes`** once when every target is skipped, as Drill's.
+      (added: maintainer decision 2026-10-24)
 15. **Engrave** follows each target path, open or closed, with the tool
 centre on the line, to `depth_mm` in passes of `step_down_mm`
 (VCarve "Quick Engraving", Outline strategy; Fusion "2D Trace"). Any
@@ -424,8 +474,9 @@ capability 34.)
 
 ## Out of scope
 
-V-Carve and V-bit countersinking (phase 3). Helical boring of holes wider
-than the tool (a Pocket on the circle does it). Trochoidal clearance,
+V-Carve and V-bit countersinking (phase 3). A Bore's finishing passes,
+spring passes, ramp angle and tapered walls (capability 14a; changed:
+maintainer decision 2026-10-24: helical boring was out of scope). Trochoidal clearance,
 seeded offset, engagement-based feed reduction, slot feed reduction,
 corner rounding of toolpaths, wall corner clean-up (PureCutCNC features not
 in VCarve's pocket form; post-1.0 or phase 8). Pocket fill patterns for
@@ -444,10 +495,13 @@ CLI.)
 
 Numbering continues from phase 1's seventeen.
 
-18. **Four operations, two programs.** The plaque `.dcv` (see Test part)
-exports two programs, `plaque-1-T1.nc` (Profile, Pocket, Drill with the
-6.35 mm end mill) and `plaque-2-T2.nc` (Engrave with the 3.175 mm end
-mill), and lists them in that order. Each passes S1–S8 on its own.
+18. **Five operations, two programs.** The plaque `.dcv` (see Test part)
+exports two programs, `plaque-1-T2.nc` (Bore, Engrave with the 3.175 mm
+end mill) and `plaque-2-T1.nc` (Pocket, Pocket, Profile with the 6.35 mm
+end mill), and lists them in that order. Each passes S1–S8 on its own.
+(changed: maintainer decision 2026-10-24: the holes were a Drill with the
+6.35 mm bit, in `plaque-1-T1.nc` with the pockets and the cut-out, and
+the Engrave was `plaque-2-T2.nc`.)
 19. **Offset pocket.** A 100×50 mm rectangle pocketed 6 mm deep in 3 mm
 passes with a 6.35 mm tool at 40 % stepover: every cutting move's tool
 footprint lies inside the rectangle; the union of footprints at each
@@ -484,6 +538,23 @@ warns `drill_hole_too_small` with both diameters, in `check` and
 `export`; a 6.35 mm circle with it is drilled; with
 `allow_tool_wider_than_hole: true` the 5 mm circle is drilled and warns
 `drill_tool_wider_than_hole`. (changed: maintainer decision 2026-10-24)
+23a. **Bore.** A 5 mm circle bored through 11.8 mm stock, `depth_mm` 12
+with a 0.2 mm through-cut allowance, with a 3.175 mm end mill whose
+step-down is 2 mm: in the exported program every move of the operation
+below safe Z stays within 0.9125 mm (2.5 − 1.5875) of the hole's centre,
+plus one unit in the last place; the helix starts 1 mm above the stock
+top, reached by a rapid straight down, and falls at most 2 mm (the
+pitch, from the step-down) in each turn; at Z −0.2 it cuts one full
+circle and moves to the centre before it lifts. The tool swept through
+the stock along the program cuts a hole 5 mm across (±0.01 mm) through
+the stock and nothing outside it. `climb` writes the circle as `G3` and
+`conventional` as `G2`. A `pitch_mm` above the step-down is a validation
+error. With the 3.175 mm bit, a 3 mm circle is skipped with
+`bore_no_room`, and so is a 3.175 mm one, whose message says to drill it;
+a 6.35 mm circle is bored, and a 10 mm one is skipped with
+`bore_leaves_core`, naming the 3.65 mm core. Each bundled post-processor
+exports the 5 mm bore and its safety pass accepts it, and LinuxCNC's
+`rs274` runs it. (added: maintainer decision 2026-10-24)
 24. **Canned cycles.** The simple case on LinuxCNC with canned cycles on
 writes one `G81` line per hole after `G98`, ends with `G80`, and the
 program's parsed motion is identical to the plain-moves program's
@@ -554,10 +625,12 @@ Pocket inside that outline warns `cut_inside_freed_part` naming both
 operations; the reverse order is quiet. Operations using T1, T2, T1
 hint `tool_change_avoidable`.
 33. **One program with tool changes.** The plaque exported with
-`--one-program` on grblHAL yields one file with `T2 M6` between the
-Profile and the Engrave (changed in #252: it said the Drill, but the
-plaque's operations are Pocket, Pocket, Drill, Profile, Engrave, so the
-only tool change follows the Profile); on GRBL the flag is an error naming the
+`--one-program` on grblHAL yields one file with `T1 M6` between the
+Engrave and the first Pocket (changed in #252: it said the Drill, but the
+plaque's operations were Pocket, Pocket, Drill, Profile, Engrave, so the
+only tool change followed the Profile; changed: maintainer decision
+2026-10-24: the operations are now Bore, Engrave, Pocket, Pocket,
+Profile, so it follows the Engrave); on GRBL the flag is an error naming the
 post-processor. With `--programs-per-tool` on a project whose mode is
 `"m6"`, two files are written and the project file is unchanged. A
 user config setting `tool_change_mode = "m6"` makes `init` write that
@@ -632,7 +705,11 @@ of the same operation has already reached through that XY. New in this
 phase:
 
 - **S9 Every operation's cuts stay in its own material.** A Pocket's
-footprint stays inside its region and outside its islands; an entry
+footprint stays inside its region and outside its islands; a Bore's tool
+centre stays within its hole's radius, less the tool's radius and the
+allowance, of the hole's centre, on every move of the helix, the circle
+and the move to the centre, and S1 keeps it above the allowed bottom
+(changed: maintainer decision 2026-10-24); an entry
 helix, ramp, lead arc or corner-relief notch stays in material the
 operation removes, never in the part. Checked on the toolpath by a
 footprint-containment test per operation, and by the existing overlap
@@ -702,7 +779,7 @@ below the retract height.
 ## Test part
 
 **Plaque.** 150 × 100 mm, outside Profile with tabs, one raster pocket with
-an island, one offset pocket with dogbones, four drilled holes, an engraved
+an island, one offset pocket with dogbones, four bored holes, an engraved
 border and squiggle. Drawn once as `fixtures/plaque.svg` and once as
 `fixtures/plaque.dxf`; either imports to the same project.
 
@@ -715,16 +792,18 @@ border and squiggle. Drawn once as `fixtures/plaque.svg` and once as
 | T2               | 3.175 mm two-flute upcut end mill: 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm                                |
 | op1 Pocket (T1)  | 100 × 50 mm rounded rectangle, `raster` at 0°, 4 mm deep, wall pass last, `entry: helix`, with a 20 mm circle island |
 | op2 Pocket (T1)  | 30 × 30 mm square, `offset`, 6 mm deep, `corner_relief: dogbone`, `entry: ramp`                                      |
-| op3 Drill (T1)   | four 5 mm circles at the corners, 12 mm deep, `peck` 4 mm, `retract: full`, through-cut allowance 0.2 mm, `allow_tool_wider_than_hole: true` (M5 clearance; changed: maintainer decision 2026-10-24) |
+| op3 Bore (T2)    | four 5 mm circles at the corners, cut to 5 mm, 12 mm deep, through-cut allowance 0.2 mm, climb, `pitch_mm` unset (the tool's 2 mm step-down), no allowance (changed: maintainer decision 2026-10-24: a Drill with T1 and `allow_tool_wider_than_hole: true`, so the holes came out 6.35 mm) |
 | op4 Profile (T1) | outside, 12 mm deep, 4 tabs 8 × 3 mm, climb, `entry: ramp`, `lead` 3 mm radius, through-cut allowance 0.2 mm         |
 | op5 Engrave (T2) | closed border 5 mm inside the outline and an open squiggle, 1 mm deep in one pass                                    |
+| Order            | op3, op5, op1, op2, op4: the two T2 operations first, then the three T1 ones, so one bit change, and the holes before the cut-out, which stays last; op3 before op5 as before (changed: maintainer decision 2026-10-24: op1 to op5 in id order) |
 | Safe Z           | 15 mm                                                                                                                |
 | Controller       | grblHAL, two programs                                                                                                |
 
 
 **Success:** the plaque releases after the tabs are cut; the raster pocket
 floor is flat with no ridge at the island; a 30 mm square block fits the
-dogboned pocket; the four holes take an M5 screw; the engraved line is
+dogboned pocket; the four holes measure 5 mm across (changed:
+maintainer decision 2026-10-24: they took an M5 screw at 6.35 mm); the engraved line is
 continuous with no plunge marks at the start of each pass; the ramp and
 lead leave no dwell mark on the outside wall. Record the date, outcome and
 deviations below.
@@ -735,6 +814,8 @@ deviations below.
 
 - User Guide: Pocket operation (both strategies, islands, allowance, rest
 machining); Drill operation (cycles, canned cycles per controller);
+Bore operation (pitch, direction, allowance, the holes it skips; added:
+maintainer decision 2026-10-24);
 Engrave operation; Profile operation updated (entry, leads, corner
 relief); Machining order and cut order (the fixed rules and the one
 setting); Multi-tool export updated (the user default and the flags);
