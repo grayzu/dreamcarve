@@ -108,6 +108,12 @@ pub struct PlacedTab {
 
 pub struct Tool {
     // phase 1 fields unchanged; `step_over_fraction` now read by Pocket.
+    /// Who makes the tool and the maker's part number (format 16,
+    /// maintainer decision 2026-10-24), saved right after `name`. Set by
+    /// Fusion import from `vendor` and `product-id`; nothing in a program
+    /// reads them. Migration: null.
+    pub vendor: Option<String>,
+    pub product_id: Option<String>,
     /// Tool number for `T<n>` in programs and file names. `None` means
     /// the tool's position in `Project::tools`. Migration: null.
     pub number: Option<u32>,
@@ -283,6 +289,17 @@ saved their tabs as placed tabs (`cli::version_9_tab_settings_export_byte_identi
 the golden harness). One change is intended: once placed, two Profiles
 that cut one outline both rise over the tabs of both. (changed in #105:
 tabs were an operation setting.)
+
+**Migration v15 → v16** (`migrate::v15_to_v16`): add `vendor: null` and
+`product_id: null` right after each tool's `name`, and change nothing
+else; the migration fails if either key is already there. A tool
+without them is a tool as it was, and no program reads them, so every
+file exports the same G-code. The fixture
+`crates/dc-project/tests/fixtures/dcv/v15/sample.dcv` loads as the sample
+project (`migrate::version_15_fixture_loads`,
+`migrate::v15_tools_gain_no_vendor`). (changed: maintainer decision
+2026-10-24. A tool had no vendor or product id. If another change takes
+16 first, this is the next free version, rebased on top.)
 
 `DwellUnits` and `reentry_gap_mm` are definition fields, and every
 definition field is required, so the bundled `v1.json` files were edited
@@ -535,7 +552,7 @@ per export).
 ### dc-library
 
 ```rust
-pub const LIBRARY_VERSION: u32 = 1;
+pub const LIBRARY_VERSION: u32 = 2;   // 2: tools carry `vendor` and `product_id`
 pub struct Library { pub version: u32, pub tools: Vec<LibraryTool> }
 pub struct LibraryTool { pub id: LibraryToolId, pub tool: Tool /* id ignored */, pub source: Option<String> }  // source: "fusion:<guid>:<preset>" or None
 pub fn load(bytes: &[u8]) -> Result<Library, LibraryError>;
@@ -567,6 +584,16 @@ pub mod fusion {
 because an invalid tool is refused. Changed in slice 21, #152:
 `ImportedTool` carries the notes the report prints, and more skip
 reasons, so one bad item never fails the whole file.)
+
+**Library migration v1 → v2** (`library::load`): the library file stores
+`Tool` as a `.dcv` does, so it gains `vendor` and `product_id` too. A
+version 1 file is rewritten in memory, before strict deserializing, with
+`vendor: null` and `product_id: null` after each `tools[].tool.name`
+(failing if either is there already), so an old library loads with both
+`None`; the next write saves version 2. A version 1 file passed to `tools
+import` migrates the same way. Tests: `library::version_1_file_migrates`,
+`library::round_trip_is_byte_identical` (with the fields set and unset).
+(changed: maintainer decision 2026-10-24. The library was version 1.)
 
 ### User config (CLI only)
 
@@ -2509,12 +2536,53 @@ Mapping:
    `stepover` becomes `stepover / DC` (a fraction, clamped to (0, 1] with
    a report note when above 1); `stepdown` → `step_down_mm`. Both only
    when their `use-*` flag is true or absent.
+   - **Rounding** (changed: maintainer decision 2026-10-24; values were
+     the raw `f64` product, such as `1524.0000000000005` for 60 in/min
+     and `4.762499999999999` for 3/16"). A value converted from inches is
+     rounded: lengths (`diameter_mm`, `step_down_mm`) to 6 decimal places
+     of a millimetre, feeds (`feed_mm_min`, `plunge_mm_min`) to 3 decimal
+     places of mm/min. `step_over_fraction`, which the import computes in
+     either unit, is rounded to 6 decimal places, as are the millimetre
+     values a `StepOverClamped` note states. A value in a `millimeters`
+     file is not converted and is kept as written. Why 6 and 3: 1/64" is
+     0.396875 mm, so 6 decimals keep every binary fraction of an inch to
+     1/64" and every inch value with up to 4 decimals (0.0001" =
+     0.00254 mm) exact, and a nanometre is far below any machine's
+     resolution; a feed in in/min with up to 2 decimals (0.01 in/min =
+     0.254 mm/min) is exact at 3, and programs write `F` with fewer.
+     Rounding is `(v × 10^d).round() / 10^d` in `f64`
+     (`dc_project::units_input::round_length_mm`, `round_rate_mm_min`):
+     deterministic, and the result is the `f64` nearest the decimal, so
+     the file saves `4.7625`, not `4.762499999999999`.
+   - **Stored tools are not rounded on load.** A library or project
+     number may be one the user typed in millimetres, which a load cannot
+     tell from a converted one; rounding on load would also break the
+     byte-identical round trip and silently change projects, which embed
+     their copies (ADR-0002). A tool imported before the change keeps its
+     values until it is re-imported with `tools import --replace <file>`,
+     which overwrites it in place (same `source`, same id) with the
+     rounded values and the vendor name. Re-importing a rounded tool is
+     `already present`: rounding is deterministic.
 4. **Presets:** one `Tool` per preset: name `description` for one preset,
    `"<description> (<preset name>)"` for several. A tool with no
    `description` takes its `product-id`, else `<DC> <mm|in> <type>` (for
    example `6.7 mm drill`; Autodesk's metric sample has 179 drills with
    no description). In the bull nose suffix, `RE` is written in the
-   file's unit. `source = "fusion:<tool guid>:<preset guid or index>"` so
+   file's unit.
+   - **Vendor** (changed: maintainer decision 2026-10-24; the name was
+     the description alone, so two vendors' `1/4" Downcut` collided and
+     IDC Woodcraft's ED-12 and ED-14 engravers imported as `Widget Works
+     Diamond Engraver` and `… (2)`). `vendor` → `Tool::vendor` and
+     `product-id` → `Tool::product_id`, each trimmed, absent or empty →
+     `None`. With a vendor, the name before the bull nose and preset
+     suffixes is `<vendor> <description>` (`IDC Woodcraft 1/4"
+     Downcut`), or `<vendor> <product-id>` and `<vendor> <DC> <mm|in>
+     <type>` in the fallbacks; when that part already starts with the
+     vendor (compared ignoring case, and ending at a word boundary) it is
+     not prefixed again. Without a vendor the name is as before.
+     Clashes are settled when the tool is added to the library (see
+     "Tool library CLI"), so a clash with a tool already there is
+     handled the same way as one inside the file. `source = "fusion:<tool guid>:<preset guid or index>"` so
    a re-import recognises it; a tool with no presets gets
    `fusion:<guid>:no-preset`, and a tool with no guid uses
    `data[<index>]` in place of the guid. No presets → one tool with feeds
@@ -2535,8 +2603,8 @@ Mapping:
    with the same number; `tools add` copies the number, and validation
    reports the clash only when two such tools are used in one project.
 6. **Report:** `tools import` prints one line per imported tool
-   (`imported`, `imported as <name> (2)`, `replaced` or `already
-   present`, then its notes, for example `` `5 mm Drill`: imported (lt6);
+   (`imported`, `imported as <name> (<product id>)` or `imported as
+   <name> (2)`, `replaced` or `already present`, then its notes, for example `` `5 mm Drill`: imported (lt6);
    feed unset ``), then one line per skipped item with its reason, then
    the counts. For a Fusion import the counts gain `, N skipped`: `N
    imported, N already present, N replaced, N skipped; library: <file>`.
@@ -2553,7 +2621,25 @@ second migration.
 
 ### Tool library CLI
 
-- `tools list [--json]`: id, name, cutter, diameter, feeds, source.
+- `tools list [--json]`: id, name, vendor, product id, cutter, diameter,
+  feeds, RPM, number, source. Columns `ID NAME VENDOR PRODUCT CUTTER
+  DIAMETER_MM FEED_MM_MIN PLUNGE_MM_MIN RPM NUMBER SOURCE`, `-` when
+  unset. PRODUCT fits: product ids are short (IDC Woodcraft's longest is
+  `8675309-125DJ`, 13 characters), far narrower than SOURCE, and it is
+  the part number a user reorders by and the suffix that tells clashing
+  names apart. (changed: maintainer decision 2026-10-24: no VENDOR or
+  PRODUCT column.)
+- **Name clashes** (`dc_library::add` and `replace`; changed: maintainer
+  decision 2026-10-24, the suffix was always ` (2)`): a tool whose name a
+  different library tool already has is stored as `<name> (<product
+  id>)` when it has a product id, the name does not already end with
+  ` (<product id>)`, and no other tool has that name; else as `<name>
+  (2)`, then ` (3)`, … as before. So ED-12 imports as `IDC Woodcraft
+  Widget Works Diamond Engraver` and ED-14 as `IDC Woodcraft Widget Works
+  Diamond Engraver (ED-14)`. "The same tool" ignores either suffix on the
+  stored name, so importing the file again is `already present`. Lookups
+  by name (`tools add`, `tools remove`) match the stored name exactly, so
+  they take the new names.
 - `tools add <project.dcv> <id-or-name>`: copies the tool into
   `project.tools` with a fresh `ToolId` (`t<n>`), saving the project
   through `dc-project::save`; ambiguous names list the matches.
@@ -2927,6 +3013,7 @@ updated in the same PR. The other six change no persisted field.
 | A8 Profile last pass | #284 | `ProfileOp::last_pass` | 13 | A7 |
 | A9 Tab corners, start point | #285 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
 | (follow-up) Hole tabs hold their slugs | #302 | `PlacedTab::holds_slug` | 15 | A9 |
+| (follow-up) Tool vendor and product id | maintainer decision 2026-10-24 | `Tool::vendor`, `Tool::product_id`; library version 2 | 16 (or the next free one) | #302 |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only
@@ -3140,7 +3227,12 @@ A serde helper for every persisted length and rate: `#[serde(deserialize_with
 <unit>`, whitespace optional: `<number>` is a decimal (optional sign),
 `a/b`, or `w a/b`; length units `mm`, `in`; rate units `mm/min`,
 `in/min`. The value is `n × 25.4` (`in`) or `n`, an `f64` product, so
-loading is deterministic. Any other string is a serde error, which the
+loading is deterministic. An `in` or `in/min` value is then rounded to 6
+decimal places (lengths) or 3 (rates), as Fusion import rounds ("Fusion
+import", step 3), so `"3/16 in"` is `4.7625`; an `mm` string and a bare
+number are kept as written. (changed: maintainer decision 2026-10-24:
+the product was not rounded. No program changes: programs write fewer
+decimals.) Any other string is a serde error, which the
 existing locator reports with the field, line and column. Validation
 then runs on the millimetre value as before. `save` is unchanged, so a
 saved file has numbers. Fields with other units (`angle_deg`,

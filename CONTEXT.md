@@ -225,7 +225,8 @@ _Avoid_: Tab spec, tab setting (in prose), auto tabs
 
 **Tool**:
 A cutter with geometry (diameter, type, angle, flutes) and feeds for a given
-material. A project embeds copies of the tools it uses.
+material, optionally with its vendor and the vendor's product id. A project
+embeds copies of the tools it uses.
 _Avoid_: Bit, cutter, end mill (that is one tool type)
 
 **Tool Library**:
