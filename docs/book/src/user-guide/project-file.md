@@ -51,10 +51,12 @@ as a string with its unit, whatever the project's `display_units`:
 - A bare number is still in the field's unit: `"depth_mm": 12.7` and
   `"depth_mm": "12.7 mm"` are the same. A string without a unit is an
   error.
-- Inches are converted to millimetres when the file is read, exactly
-  (`× 25.4`): `"0.5 in"` is 12.7 mm, `"1 1/4 in"` 31.75 mm, and
-  `"60 in/min"` 1524 mm/min. Every check and every program is the same as
-  with those numbers.
+- Inches are converted to millimetres when the file is read (`× 25.4`),
+  then rounded to 6 decimal places for a length and 3 for a feed, so the
+  value is the exact decimal: `"0.5 in"` is 12.7 mm, `"3/16 in"` 4.7625 mm
+  (not 4.762499999999999), `"1/64 in"` 0.396875 mm, and `"60 in/min"` 1524
+  mm/min. Every check and every program is the same as with those
+  numbers. A value in `mm` is kept exactly as you wrote it.
 - Fields in other units take numbers only: `angle_deg`,
   `step_over_fraction`, `rpm`, `dwell_s`, and the vertices of the shapes.
 - A tool library file takes units in its tools' fields too.
@@ -73,7 +75,7 @@ file, the line and the column of that value:
 
 ```text
 coaster.dcv:10:21: error: stock.thickness_mm is not set (mm)
-coaster.dcv:29:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+coaster.dcv:31:22: error: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
 ```
 
 Line 10, column 21 is where the value starts, here the `null` to replace.
@@ -127,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `15`. |
+| `version` | Format version. This build writes `16`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -310,6 +312,8 @@ To move a shape on the stock, change `e` and `f`.
 {
   "id": "t1",
   "name": "Set me",
+  "vendor": null,
+  "product_id": null,
   "number": null,
   "cutter": "end_mill",
   "diameter_mm": 6.35,
@@ -326,6 +330,8 @@ To move a shape on the stock, change `e` and `f`.
 | --- | --- |
 | `id` | The id operations use. |
 | `name` | Your name for it, shown in messages and the program. `init` names it "Set me". |
+| `vendor` | Who makes the tool, such as `"IDC Woodcraft"`, or `null`. [Fusion import](tool-library.md#fusion-360-tool-libraries) fills it in; `init` writes `null`. No program uses it. |
+| `product_id` | The vendor's part number for it, such as `"DC-14"`, or `null`. Fusion import fills it in; `init` writes `null`. No program uses it. |
 | `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. Set it to match your machine's tool table: with `5`, programs write `T5` (`M61 Q5`, `T5 M6`, the `( Tool 5: … )` comment, `Fit T5`) and, with one program per tool run, name its programs `<stem>-<k>-T5.nc`. |
 | `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside, Inside, Left or Right Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
 | `diameter_mm` | Cutting diameter. Profile and Pocket offset the path by half of it. Above 50 mm is a warning. |
@@ -515,6 +521,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 13 | Adds each Profile's `last_pass`, `null` on upgrade (#284), so every pass cuts on the part's path as before. See [Last pass](profile.md#last-pass). |
 | 14 | Adds `avoid_corners` to each Profile's tab request, `false` on upgrade, and each Profile's `start`, `"auto"` on upgrade (#285), so the tabs are laid and each cut starts where it did. See [Tabs: tabs off corners](tabs.md#tabs-off-corners) and [Profile: start point](profile.md#start-point). |
 | 15 | Adds `holds_slug` to each placed tab, `null` on upgrade (#302): whether a tab on a hole is meant to hold its slug. A version 14 file did not record it, so `null` keeps the warnings it gave, and the program does not change. See [`tabs`](#tabs). |
+| 16 | Adds each tool's `vendor` and `product_id` after its `name`, `null` on upgrade: who makes the tool and the maker's part number, which Fusion import fills in. No program uses them, so the project exports as before. See [`tools`](#tools). |
 
 ## What `check` reports
 

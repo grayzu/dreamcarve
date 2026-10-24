@@ -7,7 +7,7 @@ warning: <code>: <message>
 ```
 
 and, when the warning is about one value in the project file, after that
-value's position, as in `coaster.dcv:31:14: warning: spindle_speed_high: …`.
+value's position, as in `coaster.dcv:33:14: warning: spindle_speed_high: …`.
 The code is a stable `snake_case` word you can search for here; the
 message names the operation, shape or tool concerned and says what to do.
 A warning never stops export: the program is still written and still

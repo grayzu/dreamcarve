@@ -78,6 +78,10 @@
 //!   format 14 did not record. Telling needs the Profile's tool paths, so
 //!   the migration leaves it unset, and an unset tab warns `tab_on_hole`
 //!   as format 14 did; cuts never depend on it.
+//! - **16**: adds `vendor: null` and `product_id: null` right after each
+//!   tool's `name` (maintainer decision 2026-10-24): who makes the tool
+//!   and the maker's part number, which Fusion import fills in. No
+//!   program reads them, so the file exports what it did.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -88,7 +92,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 15;
+pub const CURRENT_VERSION: u32 = 16;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -112,6 +116,7 @@ fn step(from: u32) -> Option<Step> {
         12 => Some(v12_to_v13),
         13 => Some(v13_to_v14),
         14 => Some(v14_to_v15),
+        15 => Some(v15_to_v16),
         _ => None,
     }
 }
@@ -657,6 +662,44 @@ fn v14_to_v15(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
             ));
         }
         fields.insert("holds_slug".into(), Value::Null);
+    }
+    Ok(root)
+}
+
+/// Version 15 → 16 (maintainer decision 2026-10-24): `vendor: null` and
+/// `product_id: null` right after each tool's `name`. Fails if a tool
+/// already has either key: that is not a version 15 file.
+fn v15_to_v16(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(tools) = root.get_mut("tools").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, tool) in tools.iter_mut().enumerate() {
+        let Value::Object(fields) = std::mem::take(tool) else {
+            return Err(format!("`tools[{i}]` is not an object"));
+        };
+        for key in ["vendor", "product_id"] {
+            if fields.contains_key(key) {
+                return Err(format!(
+                    "a version 15 file has no `tools[{i}].{key}`, but this one does"
+                ));
+            }
+        }
+        let mut out = Map::with_capacity(fields.len() + 2);
+        let mut inserted = false;
+        for (key, value) in fields {
+            let after_this = key == "name";
+            out.insert(key, value);
+            if after_this {
+                out.insert("vendor".into(), Value::Null);
+                out.insert("product_id".into(), Value::Null);
+                inserted = true;
+            }
+        }
+        if !inserted {
+            out.insert("vendor".into(), Value::Null);
+            out.insert("product_id".into(), Value::Null);
+        }
+        *tool = Value::Object(out);
     }
     Ok(root)
 }

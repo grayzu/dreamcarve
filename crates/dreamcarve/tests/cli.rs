@@ -689,11 +689,11 @@ fn export_refuses_feed_above_limit_with_location() {
     assert_eq!(out.status.code(), Some(1), "an error exits 1");
     let stderr = stderr(&out);
     assert!(
-        stderr.contains("coaster.dcv:29:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
+        stderr.contains("coaster.dcv:31:22: error: tool `Set me` (`t1`): feed_mm_min is 1000000000, expected a value greater than 0 and at most 20000 mm/min"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("coaster.dcv:31:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
+        stderr.contains("coaster.dcv:33:14: warning: spindle_speed_high: tool `Set me` (`t1`) is set to 1000000 RPM"),
         "{stderr}"
     );
     assert!(!dir.join("coaster.nc").exists(), "no program is written");
@@ -6055,7 +6055,7 @@ fn tools_list_shows_vendor() {
     };
     let engraver = row("lt4");
     assert!(
-        engraver.starts_with("lt4   Acme Router Bits Diamond Engraver (AC-ED14) "),
+        engraver.starts_with("lt4  Acme Router Bits Diamond Engraver (AC-ED14) "),
         "{text}"
     );
     assert_eq!(
@@ -6141,7 +6141,10 @@ fn tools_reimport_of_rounded_inch_tool_is_already_present() {
     assert!(text.contains("\"feed_mm_min\": 1524.0,"), "{text}");
     assert!(text.contains("\"plunge_mm_min\": 381.0,"), "{text}");
     assert!(text.contains("\"step_down_mm\": 1.5875,"), "{text}");
-    assert!(!text.contains("0000000"), "no float noise:\n{text}");
+    assert!(
+        !text.contains(".00000") && !text.contains("99999"),
+        "no float noise:\n{text}"
+    );
     let rounded = read_library(&dir);
     let out = run(&dir, &["tools", "import", "vendors.json"]);
     assert!(

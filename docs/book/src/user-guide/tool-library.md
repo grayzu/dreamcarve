@@ -29,7 +29,7 @@ somewhere else.
 
 | Command | What it does |
 | --- | --- |
-| `dreamcarve tools list` | Lists every tool: its library id, name, cutter, diameter, feed, plunge rate, RPM, tool number and source. A value not set shows as `-`. |
+| `dreamcarve tools list` | Lists every tool: its library id, name, vendor, product id, cutter, diameter, feed, plunge rate, RPM, tool number and source. A value not set shows as `-`. |
 | `dreamcarve tools list --json` | Prints the library as JSON, exactly as the file holds it. |
 | `dreamcarve tools import <file>` | Adds the tools of a DreamCarve tool library file or a [Fusion 360 library](#fusion-360-tool-libraries) and reports, for each, `imported`, `imported as <new name>`, `already present`, or for a Fusion tool DreamCarve has no cutter for, `skipped` with the reason. |
 | `dreamcarve tools import <file> --replace` | The same, except that a tool with the same `source` as one already in the library overwrites it (keeping its id) instead of being added beside it. |
@@ -46,9 +46,9 @@ so you can pick one.
 
 ```text
 $ dreamcarve tools list
-ID   NAME          CUTTER     DIAMETER_MM  FEED_MM_MIN  PLUNGE_MM_MIN  RPM    NUMBER  SOURCE
-lt1  1/4 end mill  end mill   6.35         1500         500            18000  3       -
-lt2  60° V-bit     V-bit 60°  12.7         800          200            16000  -       fusion:0000-guid:preset-1
+ID   NAME                           VENDOR            PRODUCT  CUTTER     DIAMETER_MM  FEED_MM_MIN  PLUNGE_MM_MIN  RPM    NUMBER  SOURCE
+lt1  1/4 end mill                   -                 -        end mill   6.35         1500         500            18000  3       -
+lt2  Acme Router Bits 60° V-bit     Acme Router Bits  AC-V60   V-bit 60°  12.7         800          200            16000  -       fusion:0000-guid:preset-1
 ```
 
 ### Copying a tool into a project
@@ -79,14 +79,19 @@ same. Use this to move a library to another computer, or to share one.
 
 A tool counts as already present when all its values match a library tool,
 whatever its id or source. A tool whose name is taken by a different tool
-is added under the name with ` (2)` after it (then ` (3)`, and so on), so
-names stay unique:
+is added under the name with its product id after it, when it has one and
+no tool has that name yet, and otherwise with ` (2)` after it (then ` (3)`,
+and so on), so names stay unique:
 
 ```text
 $ dreamcarve tools import changed.json
-`60° V-bit`: imported as `60° V-bit (2)` (lt3)
-1 imported, 0 already present, 0 replaced; library: /Users/you/.../tools.json
+`Acme Router Bits Diamond Engraver`: imported as `Acme Router Bits Diamond Engraver (AC-ED14)` (lt3)
+`1/4 end mill`: imported as `1/4 end mill (2)` (lt4)
+2 imported, 0 already present, 0 replaced; library: /Users/you/.../tools.json
 ```
+
+`tools add` and `tools remove` take the name as stored, suffix included:
+`"Acme Router Bits Diamond Engraver (AC-ED14)"`.
 
 A file that is not a valid tool library, or that holds a tool breaking a
 rule below, is refused whole, naming the tool and the value; nothing is
@@ -100,7 +105,7 @@ when not set):
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "tools": [
     {
       "id": "lt1",
@@ -108,6 +113,8 @@ when not set):
       "tool": {
         "id": "lt1",
         "name": "1/4 end mill",
+        "vendor": null,
+        "product_id": null,
         "number": 3,
         "cutter": "end_mill",
         "diameter_mm": 6.35,
@@ -125,7 +132,7 @@ when not set):
 
 | Field | Meaning |
 | --- | --- |
-| `version` | The file format version, `1`. A file from a newer DreamCarve is refused rather than misread. |
+| `version` | The file format version, `2`. Version 2 adds each tool's `vendor` and `product_id`; a version 1 file is read with both `null` and saved as version 2 the next time a command changes the library. A file from a newer DreamCarve is refused rather than misread. |
 | `id` | The library id, `lt<n>`. New tools get the number after the highest one in the file. |
 | `source` | Where the tool came from: `"fusion:<guid>:<preset>"` for a tool imported from Fusion 360, `null` otherwise. `--replace` matches on it. |
 | `tool` | The tool, with the fields described in [The project file](project-file.md#tools). Its `id` repeats the library id and is ignored when the file is read. |
@@ -134,7 +141,9 @@ You can edit the file by hand. As with a project, a length or feed may be
 written with its unit (`"diameter_mm": "1/4 in"`, `"feed_mm_min": "60
 in/min"`; see [Values with units](project-file.md#values-with-units)), and
 the library is saved with millimetre numbers the next time a command
-changes it. A field DreamCarve does
+changes it. Inch values are rounded to the exact decimal (6 places for a
+length, 3 for a feed), as Fusion import rounds them; a value in millimetres
+is kept as you wrote it. A field DreamCarve does
 not know, or a missing one, is an error naming where it is, never silently
 ignored. Each tool must also follow these rules, which come from
 PureCutCNC's tool library:
@@ -181,7 +190,7 @@ Then come the counts:
 
 ```text
 $ dreamcarve tools import sample.tools
-`6 mm Flat End Mill`: imported (lt1)
+`DreamCarve fixtures 6 mm Flat End Mill`: imported (lt1)
 `12 mm 90-Degree Chamfer Mill`: imported (lt2)
 `5 mm Drill`: imported (lt3); feed unset
 `3.175 mm Flat End Mill (Plywood)`: imported (lt4)
@@ -208,7 +217,9 @@ new ones beside them.
 
 | Fusion value | DreamCarve value |
 | --- | --- |
-| `description` | `name` (a tool without one takes its product id, else `<diameter> <unit> <type>`) |
+| `description` | `name`, after the vendor (a tool without one takes its product id, else `<diameter> <unit> <type>`) |
+| `vendor` | `vendor`, and the start of the name: `IDC Woodcraft 1/4" Downcut`. A description that already starts with the vendor is not given it twice. |
+| `product-id` | `product_id`; also added to the name, as `(<product id>)`, when another tool already has the name |
 | `geometry.DC` (cutting diameter) | `diameter_mm` |
 | `geometry.NOF` (flutes) | `flutes`; 0 or missing becomes 1, noted |
 | `post-process.number` (tool number) | `number` when above 0; 0 means not set |
@@ -219,7 +230,10 @@ new ones beside them.
 | preset `stepover` | `step_over_fraction`, the stepover divided by the diameter (at most 1, noted when Fusion's is wider), unless **use stepover** is off |
 
 Lengths and feeds in an inch library are converted to millimetres and
-mm/min; spindle speed has no unit. Values Fusion keeps that DreamCarve does
+mm/min, then rounded to 6 decimal places for a length and 3 for a feed, so
+3/16" is 4.7625 mm and 60 in/min is 1524 mm/min exactly; spindle speed has
+no unit. The stepover fraction is rounded to 6 places too. A millimetre
+library's values are kept as written. Values Fusion keeps that DreamCarve does
 not use (holder, shaft, lengths, coolant, materials, cutting speed, feed
 per tooth) are ignored.
 
@@ -230,6 +244,34 @@ with one preset keeps its description as the name. A tool with no presets
 imports once with no feeds. All the tools made from one Fusion tool share
 its tool number; that is fine in the library, and `dreamcarve check`
 reports it only if one project uses two of them.
+
+### Vendors and product ids
+
+Each tool keeps the vendor and product id the library gives it, and its
+name starts with the vendor, so two vendors' `1/4" Downcut` bits stay
+apart in `tools list` and in `tools add`:
+
+```text
+$ dreamcarve tools import IDCWoodcraftFusion360Library.json
+`IDC Woodcraft 1/8" Acrylic O Flute`: imported (lt1)
+…
+`IDC Woodcraft Widget Works Diamond Engraver`: imported (lt14)
+…
+`IDC Woodcraft Widget Works Diamond Engraver`: imported as `IDC Woodcraft Widget Works Diamond Engraver (ED-14)` (lt49)
+```
+
+A library without vendors imports with the names it always had.
+
+### Libraries imported by an earlier build
+
+Tools imported by an earlier build keep the names and values they were
+saved with: DreamCarve does not round a library or project when it opens
+it, since it cannot tell a value you typed in millimetres from one
+converted from inches. Import the Fusion library again with `--replace`
+to bring them up to date: each tool is overwritten in place, keeping its
+library id, with the vendor name and rounded values. Without `--replace`,
+the import adds the new tools beside the old ones. Projects keep the
+copies they already have.
 
 ### Unset feeds
 
