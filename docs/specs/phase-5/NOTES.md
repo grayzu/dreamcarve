@@ -37,3 +37,27 @@ Carry these across in the same slice family as Slot, since they share the
 click-placement and dimension-entry machinery: regular polygon (`ngon`),
 gear, rounded rectangle, chamfered rectangle. Each keeps its defining
 parameters editable after creation.
+
+## Graphite is the secondary reference for vector-editing tools
+
+PureCutCNC stays the primary reference for drawing and editing. For the
+vector-editing tools (pen, node and handle editing, snapping, transform
+handles, measurement), also read
+[Graphite](https://github.com/GraphiteEditor/Graphite) (MIT OR Apache-2.0,
+Rust, `kurbo` 0.13), and say in the spec where its behaviour is taken over
+PureCutCNC's and why.
+
+- Port tool behaviour and geometry, not UI code: Graphite's UI is a Svelte
+  web frontend, and its documents are a node graph rather than feature
+  definitions and instances.
+- Booleans stay on `i_overlay`, not Graphite's `linesweeper`.
+- A file ported from Graphite takes the ported-file header from AGENTS.md
+  with Graphite's copyright line, and Graphite is added to `NOTICE`.
+
+Graphite sources: `editor/src/messages/tool/tool_messages/` (`pen_tool.rs`,
+`path_tool.rs`, `shape_tool.rs`, `spline_tool.rs`, `select_tool.rs`,
+`text_tool.rs`), `editor/src/messages/tool/common_functionality/`
+(`snap_session.rs`, `transformation_cage.rs`, `measure.rs`, `pivot.rs`,
+`shape_editor.rs`), `libraries/snapping`. The survey behind this choice,
+including the CAD projects ruled out by licence, is
+`docs/research/cad-reference-survey.md`.
