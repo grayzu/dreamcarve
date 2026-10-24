@@ -557,6 +557,7 @@ mod tests {
             retract_mm: 1.0,
             through_cut_allowance_mm: 0.0,
             safe_z_mm: 5.0,
+            allow_tool_wider_than_hole: false,
         }
     }
 
@@ -651,6 +652,7 @@ mod tests {
     /// The instance and profile a drill shape warning names.
     fn shape_of(warning: &Warning) -> (&str, usize) {
         let (Warning::DrillTargetNotCircle { shape, .. }
+        | Warning::DrillHoleTooSmall { shape, .. }
         | Warning::DrillToolWiderThanHole { shape, .. }) = warning
         else {
             panic!("{warning:?}");
@@ -1061,13 +1063,68 @@ mod tests {
         assert_eq!(shape_of(&warnings[0]).0, "slot");
     }
 
-    /// A tool wider than the hole still drills it, with a warning giving
-    /// both sizes: the hole comes out the tool's size.
+    /// Maintainer decision 2026-10-24: a 5 mm hole with a 6.35 mm tool
+    /// is skipped, with a warning giving the hole and both sizes, and no
+    /// plunge at its centre; the 10 mm hole beside it is drilled.
     #[test]
-    fn tool_wider_than_hole_warns() {
-        let mut p = circles(&[(50.0, 50.0)]);
+    fn hole_narrower_than_tool_is_skipped() {
+        let mut p = project(&[
+            ("small", circle(30.0, 50.0, 5.0)),
+            ("large", circle(70.0, 50.0, 10.0)),
+        ]);
         p.tools[0].diameter_mm = 6.35;
         let (drilled, warnings) = generate(&p, &drill_op(&p));
+        assert_xs(&hole_xs(&drilled.toolpath), &[70.0]);
+        assert!(
+            drilled
+                .toolpath
+                .moves
+                .iter()
+                .filter(|m| m.to.z < THICKNESS_MM)
+                .all(|m| m.to.xy().distance_to(Point::new(30.0, 50.0)) > 1.0),
+            "a move goes into the stock at the skipped hole"
+        );
+        assert_eq!(drilled.holes.len(), 1);
+        assert_eq!(codes(&warnings), [WarningCode::DrillHoleTooSmall]);
+        let Warning::DrillHoleTooSmall {
+            hole_mm, tool_mm, ..
+        } = warnings[0]
+        else {
+            panic!("{:?}", warnings[0]);
+        };
+        assert_approx_eq!(hole_mm, 5.0, 1e-6);
+        assert_approx_eq!(tool_mm, 6.35, 1e-9);
+        assert_eq!(shape_of(&warnings[0]), ("small", 0));
+    }
+
+    /// A hole the tool's size is drilled: within the project's flatten
+    /// tolerance (0.01 mm), the tolerance its outline was accepted as a
+    /// circle at, a hole is as wide as the tool. 6.3 mm is not.
+    #[test]
+    fn hole_equal_to_tool_within_tolerance_is_drilled() {
+        let mut p = project(&[
+            ("exact", circle(20.0, 50.0, 6.35)),
+            ("near", circle(50.0, 50.0, 6.345)),
+            ("under", circle(80.0, 50.0, 6.3)),
+        ]);
+        p.tools[0].diameter_mm = 6.35;
+        assert_approx_eq!(p.flatten_tolerance_mm, 0.01, 1e-12);
+        let (drilled, warnings) = generate(&p, &drill_op(&p));
+        assert_xs(&hole_xs(&drilled.toolpath), &[20.0, 50.0]);
+        assert_eq!(codes(&warnings), [WarningCode::DrillHoleTooSmall]);
+        assert_eq!(shape_of(&warnings[0]).0, "under");
+    }
+
+    /// With `allow_tool_wider_than_hole` the 5 mm hole is drilled at the
+    /// tool's size, warning as before the decision: the hole comes out
+    /// the tool's size.
+    #[test]
+    fn allow_tool_wider_than_hole_drills_and_warns() {
+        let mut p = circles(&[(50.0, 50.0)]);
+        p.tools[0].diameter_mm = 6.35;
+        let mut op = drill_op(&p);
+        op.allow_tool_wider_than_hole = true;
+        let (drilled, warnings) = generate(&p, &op);
         assert_eq!(plunges(&drilled.toolpath).len(), 1);
         assert_eq!(codes(&warnings), [WarningCode::DrillToolWiderThanHole]);
         let Warning::DrillToolWiderThanHole {
@@ -1079,6 +1136,25 @@ mod tests {
         assert_approx_eq!(hole_mm, 5.0, 1e-6);
         assert_approx_eq!(tool_mm, 6.35, 1e-9);
         assert_eq!(shape_of(&warnings[0]).0, "c1");
+    }
+
+    /// Every hole skipped: no toolpath motion, a warning per hole, and
+    /// one saying the operation drills nothing.
+    #[test]
+    fn every_hole_skipped_warns_no_holes() {
+        let mut p = circles(&[(30.0, 50.0), (60.0, 50.0)]);
+        p.tools[0].diameter_mm = 6.35;
+        let (drilled, warnings) = generate(&p, &drill_op(&p));
+        assert!(drilled.toolpath.moves.is_empty(), "{:?}", drilled.toolpath);
+        assert!(drilled.holes.is_empty());
+        assert_eq!(
+            codes(&warnings),
+            [
+                WarningCode::DrillHoleTooSmall,
+                WarningCode::DrillHoleTooSmall,
+                WarningCode::DrillNoHoles,
+            ]
+        );
     }
 
     /// Port of `drillingRetract.test.ts` "retract height above the

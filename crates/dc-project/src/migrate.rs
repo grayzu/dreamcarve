@@ -847,8 +847,8 @@ fn untag(value: Value, path: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::sample_project;
-    use crate::{OriginXy, Side, SpindleControl, ToolChangeMode, ToolKind, load, save};
+    use crate::test_support::{sample_drill, sample_project};
+    use crate::{Operation, OriginXy, Side, SpindleControl, ToolChangeMode, ToolKind, load, save};
     use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
     use serde_json::json;
 
@@ -864,6 +864,13 @@ mod tests {
     /// definition that `grbl/v1.json` was made from.
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 17 {
+            for op in root["operations"].as_array_mut().unwrap() {
+                op.as_object_mut()
+                    .unwrap()
+                    .shift_remove("allow_tool_wider_than_hole");
+            }
+        }
         if version < 16 {
             for tool in root["tools"].as_array_mut().unwrap() {
                 let tool = tool.as_object_mut().unwrap();
@@ -2162,6 +2169,100 @@ mod tests {
         let loaded = load(text.as_bytes()).unwrap();
         assert_eq!(loaded.project, project);
         assert_eq!(crate::save(&loaded.project).unwrap(), text);
+    }
+
+    // Version 16 → 17 (maintainer decision 2026-10-24): a Drill's
+    // `allow_tool_wider_than_hole`.
+
+    const V16_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v16/sample.dcv");
+
+    #[test]
+    fn version_16_fixture_loads() {
+        let loaded = load(V16_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// The sample at version 16 with the sample Drill after its Profile.
+    fn v16_root_with_drill() -> Value {
+        let mut root = sample_root_at(16);
+        let mut drill = serde_json::to_value(Operation::Drill(sample_drill())).unwrap();
+        drill
+            .as_object_mut()
+            .unwrap()
+            .shift_remove("allow_tool_wider_than_hole");
+        root["operations"].as_array_mut().unwrap().push(drill);
+        root
+    }
+
+    /// Every Drill of a version 16 file gains `allow_tool_wider_than_hole:
+    /// false` at its end, and nothing else changes: the decision is that a
+    /// hole the tool is too big for is not drilled unless the user says
+    /// so, so such a hole in an old project is now skipped with a warning.
+    #[test]
+    fn v16_drill_migrates_with_allow_tool_wider_than_hole_false() {
+        let before = v16_root_with_drill();
+        let migrated = migrate(before.clone(), 16).unwrap();
+        assert_eq!(migrated["version"], json!(CURRENT_VERSION));
+        let ops = migrated["operations"].as_array().unwrap();
+        assert_eq!(ops.len(), 2);
+        // The Profile is unchanged.
+        assert_eq!(ops[0], before["operations"][0]);
+        let fields = ops[1].as_object().unwrap();
+        assert_eq!(fields["allow_tool_wider_than_hole"], json!(false));
+        assert_eq!(
+            fields.keys().next_back().map(String::as_str),
+            Some("allow_tool_wider_than_hole")
+        );
+        let mut rest = fields.clone();
+        rest.shift_remove("allow_tool_wider_than_hole");
+        assert_eq!(Value::Object(rest), before["operations"][1]);
+
+        let text = serde_json::to_string_pretty(&before).unwrap();
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.problems, vec![]);
+        let Some(Operation::Drill(drill)) = loaded.project.operations.get(1) else {
+            panic!("{:?}", loaded.project.operations);
+        };
+        assert!(!drill.allow_tool_wider_than_hole);
+        assert_eq!(drill, &sample_drill());
+
+        // A file with no Drill changes only its version.
+        let migrated = migrate(sample_root_at(16), 16).unwrap();
+        assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
+    }
+
+    #[test]
+    fn v16_with_allow_tool_wider_than_hole_already_present_fails() {
+        let mut root = v16_root_with_drill();
+        root["operations"][1]["allow_tool_wider_than_hole"] = json!(true);
+        let err = migrate(root, 16).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Migration { from: 16, to: 17, message, .. }
+                if message.contains("`operations[1].allow_tool_wider_than_hole`")),
+            "{err:?}"
+        );
+    }
+
+    /// Both values save as written, at the end of the Drill, and load
+    /// back.
+    #[test]
+    fn allow_tool_wider_than_hole_round_trips() {
+        for allow in [false, true] {
+            let mut project = sample_project();
+            let mut drill = sample_drill();
+            drill.allow_tool_wider_than_hole = allow;
+            project.operations.push(Operation::Drill(drill));
+            let saved = save(&project).unwrap();
+            assert!(
+                saved.contains(&format!(
+                    "\"safe_z_mm\": 5.0,\n      \"allow_tool_wider_than_hole\": {allow}\n"
+                )),
+                "{saved}"
+            );
+            assert_eq!(load(saved.as_bytes()).unwrap().project, project);
+        }
     }
 
     #[test]

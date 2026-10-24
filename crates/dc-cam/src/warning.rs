@@ -133,8 +133,13 @@ pub enum WarningCode {
     /// A Drill target is not a circle (or is an open path), so it was
     /// skipped.
     DrillTargetNotCircle,
-    /// The drilling tool is wider than the hole it drills; the hole comes
-    /// out the tool's size.
+    /// A Drill hole is narrower than the tool, so it was skipped: a Drill
+    /// never moves sideways, so it would come out the tool's size
+    /// (maintainer decision 2026-10-24).
+    DrillHoleTooSmall,
+    /// The drilling tool is wider than the hole it drills, and the
+    /// operation's `allow_tool_wider_than_hole` is set, so the hole was
+    /// drilled anyway and comes out the tool's size.
     DrillToolWiderThanHole,
     /// The peck depth is at least the depth of the operation's holes, so
     /// each is drilled in one plunge. Reported once per operation: every
@@ -143,6 +148,9 @@ pub enum WarningCode {
     /// The retract height is below the stock top, so it was raised to the
     /// top: the tool must never rapid into material.
     DrillRetractBelowStockTop,
+    /// Every target of a Drill was skipped (not a circle, or narrower than
+    /// the tool), so it drills nothing.
+    DrillNoHoles,
     /// A rest Pocket's tool reaches nothing the Pocket it rests on left
     /// (`docs/specs/phase-2/design.md`, "Algorithms → Pocket", step 3), so
     /// it emits no toolpath.
@@ -183,9 +191,11 @@ impl WarningCode {
             Self::CutInsideTabHeldPart => "cut_inside_tab_held_part",
             Self::ToolChangeAvoidable => "tool_change_avoidable",
             Self::DrillTargetNotCircle => "drill_target_not_circle",
+            Self::DrillHoleTooSmall => "drill_hole_too_small",
             Self::DrillToolWiderThanHole => "drill_tool_wider_than_hole",
             Self::DrillPeckDeeperThanHole => "drill_peck_deeper_than_hole",
             Self::DrillRetractBelowStockTop => "drill_retract_below_stock_top",
+            Self::DrillNoHoles => "drill_no_holes",
             Self::RestOfClearsNothing => "rest_of_clears_nothing",
         }
     }
@@ -629,6 +639,17 @@ pub enum Warning {
         /// The shape skipped.
         shape: ShapeRef,
     },
+    /// [`WarningCode::DrillHoleTooSmall`].
+    DrillHoleTooSmall {
+        /// The operation.
+        op: OperationId,
+        /// The hole skipped.
+        shape: ShapeRef,
+        /// The hole's diameter.
+        hole_mm: f64,
+        /// The tool's diameter.
+        tool_mm: f64,
+    },
     /// [`WarningCode::DrillToolWiderThanHole`].
     DrillToolWiderThanHole {
         /// The operation.
@@ -657,6 +678,11 @@ pub enum Warning {
         requested_mm: f64,
         /// The height used: 0.
         used_mm: f64,
+    },
+    /// [`WarningCode::DrillNoHoles`].
+    DrillNoHoles {
+        /// The operation.
+        op: OperationId,
     },
     /// [`WarningCode::RestOfClearsNothing`].
     RestOfClearsNothing {
@@ -705,9 +731,11 @@ impl Warning {
             Self::CutInsideTabHeldPart { .. } => WarningCode::CutInsideTabHeldPart,
             Self::ToolChangeAvoidable { .. } => WarningCode::ToolChangeAvoidable,
             Self::DrillTargetNotCircle { .. } => WarningCode::DrillTargetNotCircle,
+            Self::DrillHoleTooSmall { .. } => WarningCode::DrillHoleTooSmall,
             Self::DrillToolWiderThanHole { .. } => WarningCode::DrillToolWiderThanHole,
             Self::DrillPeckDeeperThanHole { .. } => WarningCode::DrillPeckDeeperThanHole,
             Self::DrillRetractBelowStockTop { .. } => WarningCode::DrillRetractBelowStockTop,
+            Self::DrillNoHoles { .. } => WarningCode::DrillNoHoles,
             Self::RestOfClearsNothing { .. } => WarningCode::RestOfClearsNothing,
         }
     }
@@ -737,9 +765,11 @@ impl Warning {
             | Self::CutInsideFreedPart { op, .. }
             | Self::CutInsideTabHeldPart { op, .. }
             | Self::DrillTargetNotCircle { op, .. }
+            | Self::DrillHoleTooSmall { op, .. }
             | Self::DrillToolWiderThanHole { op, .. }
             | Self::DrillPeckDeeperThanHole { op, .. }
             | Self::DrillRetractBelowStockTop { op, .. }
+            | Self::DrillNoHoles { op }
             | Self::RestOfClearsNothing { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
@@ -1269,6 +1299,17 @@ impl fmt::Display for Warning {
                 f,
                 "{shape} is not a circle; Drill plunges only at the centre of circles, so it is not drilled"
             ),
+            Self::DrillHoleTooSmall {
+                shape,
+                hole_mm,
+                tool_mm,
+                ..
+            } => write!(
+                f,
+                "the {} mm hole {shape} is narrower than the {} mm tool, so it is not drilled: a Drill never moves sideways, so the hole would come out the tool's size; use a smaller tool, or set allow_tool_wider_than_hole to drill it at that size",
+                diameter(*hole_mm),
+                diameter(*tool_mm)
+            ),
             Self::DrillToolWiderThanHole {
                 shape,
                 hole_mm,
@@ -1292,6 +1333,10 @@ impl fmt::Display for Warning {
                 f,
                 "retract_mm is {} mm, below the stock top; the tool retracts to the stock top instead, because it must never rapid into material",
                 mm(*requested_mm)
+            ),
+            Self::DrillNoHoles { .. } => write!(
+                f,
+                "none of its targets is a circle it can drill, so it drills nothing"
             ),
             Self::RestOfClearsNothing { rest_of, tool, .. } => write!(
                 f,
@@ -1838,6 +1883,15 @@ mod tests {
                 "`Shape` (instance `i1`, profile 2) is not a circle; Drill plunges only at the centre of circles, so it is not drilled",
             ),
             (
+                Warning::DrillHoleTooSmall {
+                    op: op(),
+                    shape: shape(),
+                    hole_mm: 4.999_999_9,
+                    tool_mm: 6.35,
+                },
+                "the 5 mm hole `Shape` (instance `i1`, profile 2) is narrower than the 6.35 mm tool, so it is not drilled: a Drill never moves sideways, so the hole would come out the tool's size; use a smaller tool, or set allow_tool_wider_than_hole to drill it at that size",
+            ),
+            (
                 Warning::DrillToolWiderThanHole {
                     op: op(),
                     shape: shape(),
@@ -1861,6 +1915,10 @@ mod tests {
                     used_mm: 0.0,
                 },
                 "retract_mm is -2.5 mm, below the stock top; the tool retracts to the stock top instead, because it must never rapid into material",
+            ),
+            (
+                Warning::DrillNoHoles { op: op() },
+                "none of its targets is a circle it can drill, so it drills nothing",
             ),
             (
                 Warning::RestOfClearsNothing {
@@ -1914,10 +1972,12 @@ mod tests {
             C::CutInsideFreedPart => C::CutInsideTabHeldPart,
             C::CutInsideTabHeldPart => C::ToolChangeAvoidable,
             C::ToolChangeAvoidable => C::DrillTargetNotCircle,
-            C::DrillTargetNotCircle => C::DrillToolWiderThanHole,
+            C::DrillTargetNotCircle => C::DrillHoleTooSmall,
+            C::DrillHoleTooSmall => C::DrillToolWiderThanHole,
             C::DrillToolWiderThanHole => C::DrillPeckDeeperThanHole,
             C::DrillPeckDeeperThanHole => C::DrillRetractBelowStockTop,
-            C::DrillRetractBelowStockTop => C::RestOfClearsNothing,
+            C::DrillRetractBelowStockTop => C::DrillNoHoles,
+            C::DrillNoHoles => C::RestOfClearsNothing,
             C::RestOfClearsNothing => return None,
         })
     }
@@ -1955,7 +2015,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 33);
+        assert_eq!(count, 35);
     }
 
     #[test]
