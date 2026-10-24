@@ -613,6 +613,33 @@ impl Relief {
         self.cut(corners, toolpath, warnings)
     }
 
+    /// A Pocket's notches cut inline (design "Corner relief", steps 5 and
+    /// 6): the corners of `sites` spliced into the rings of `blocks`, and
+    /// those left for the separate pass. Not yet implemented: every corner
+    /// is left for the separate pass.
+    pub(crate) fn inline_pocket(
+        &self,
+        sites: &[Site],
+        pass_z: &[f64],
+        blocks: &mut [CutBlock],
+        warnings: &mut Vec<Warning>,
+    ) -> (Vec<ReliefCorner>, Vec<ReliefCorner>) {
+        let _ = (pass_z, blocks);
+        let mut corners = Vec::new();
+        for site in sites {
+            let (found, rejected) = collect(
+                &self.op,
+                self.style,
+                self.radius_mm,
+                site,
+                self.tolerance_mm,
+            );
+            corners.extend(found);
+            warnings.extend(rejected);
+        }
+        (Vec::new(), corners)
+    }
+
     /// The pass itself (upstream `generateCornerReliefPass`): each corner
     /// whose descend point the main path cut at the deepest level, else
     /// [`Warning::ReliefCornerNotCut`]; nearest-neighbour from where
@@ -1515,7 +1542,13 @@ mod tests {
         };
         let (without, _) = generate_pocket(project, &none).unwrap();
         assert_safe(&with, project, &Operation::Pocket(op.clone()));
-        let relief = relief_cuts(&with, &without);
+        // Inline (maintainer decision 2026-10-24) or in the separate pass
+        // after the main path, the main path's cuts stay in order.
+        let relief = interleaved_relief(&with, &without)
+            .into_iter()
+            .map(|(_, cut)| cut)
+            .filter(|(s, _, _)| s.start.distance_to(s.end) > EPS_MM)
+            .collect();
         (with, warnings, relief)
     }
 
@@ -2890,10 +2923,14 @@ mod tests {
             ..op.clone()
         };
         let (without, _) = generate_pocket(&p, &none).unwrap();
-        let notches = Toolpath {
-            moves: with.moves[without.moves.len() - 1..].to_vec(),
-        };
-        let swept = footprint(&notches, R);
+        // The notches are cut inline (maintainer decision 2026-10-24): what
+        // the relief sweeps is what the Pocket with it sweeps beyond the
+        // one without.
+        let swept = difference(
+            &footprint(&with, R),
+            &footprint(&without, R),
+            FLATTEN_TOLERANCE_DEFAULT_MM,
+        );
         assert!(!swept.is_empty());
         let (pocket, _) = nest(vec![Contour::new(rect(40.0, 30.0)).unwrap()]).unwrap();
         let outside = difference(&swept, &pocket, FLATTEN_TOLERANCE_DEFAULT_MM);
@@ -2915,5 +2952,381 @@ mod tests {
                 assert!(past <= depth + tol, "{q:?} is {past} past a wall");
             }
         }
+    }
+
+    // ── 8. Inline on the final wall (maintainer decision 2026-10-24) ────
+
+    /// The dogbone end points of a `w` × `h` rectangle at (`O`, `O`).
+    fn dogbone_ends(w: f64, h: f64) -> Vec<Point> {
+        rect_corners(w, h)
+            .iter()
+            .map(|g| excursion_end(g, Style::Dogbone, R))
+            .collect()
+    }
+
+    fn rapids(toolpath: &Toolpath) -> usize {
+        toolpath.moves.iter().filter(|m| m.is_rapid()).count()
+    }
+
+    /// The indices of the cutting moves of `toolpath` that end at `end`
+    /// at `z`.
+    fn moves_to(toolpath: &Toolpath, end: Point, z: f64) -> Vec<usize> {
+        toolpath
+            .moves
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                m.is_cut() && m.to.xy().distance_to(end) <= 1e-6 && approx(m.to.z, z, 1e-6)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Asserts each pass of `passes` of `with` (relief on) cuts every
+    /// end of `ends` at its Z, once, with no rapid and nothing above the
+    /// pass between its first and last notch, and that relief added no
+    /// rapid to `without`: no lift, no separate notch pass.
+    fn assert_inline(with: &Toolpath, without: &Toolpath, ends: &[Point], passes: &[f64]) {
+        assert_eq!(rapids(with), rapids(without), "relief adds no lift");
+        for &z in passes {
+            let at: Vec<usize> = ends
+                .iter()
+                .map(|&e| {
+                    let hits = moves_to(with, e, z);
+                    assert_eq!(hits.len(), 1, "notch at {e:?} at Z {z}: {hits:?}");
+                    hits[0]
+                })
+                .collect();
+            let (first, last) = (
+                at.iter().copied().min().unwrap(),
+                at.iter().copied().max().unwrap(),
+            );
+            for mv in &with.moves[first..=last] {
+                assert!(!mv.is_rapid(), "a rapid between notches at Z {z}: {mv:?}");
+                assert!(
+                    mv.to.z <= z + 1e-6,
+                    "a rise between notches at Z {z}: {mv:?}"
+                );
+            }
+        }
+    }
+
+    /// A 40 × 30 mm Pocket cut 4 mm deep in two 2 mm passes, with `wall`.
+    fn two_pass_pocket(wall_pass: WallPass) -> PocketOp {
+        PocketOp {
+            depth_mm: Some(4.0),
+            wall_pass,
+            ..pocket_op(CornerRelief::Dogbone)
+        }
+    }
+
+    /// Spec step 5: with `wall_pass: last` each pass's wall ring cuts the
+    /// four notches as it turns each corner, with no lift between them
+    /// and no separate notch pass after the main path.
+    #[test]
+    fn pocket_notches_are_cut_inline_on_each_wall_ring() {
+        let p = one_tool(vec![rect(40.0, 30.0)]);
+        let op = two_pass_pocket(WallPass::Last);
+        let (with, warnings, _) = pocket_run(&p, &op);
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        let (without, _) = generate_pocket(
+            &p,
+            &PocketOp {
+                corner_relief: CornerRelief::None,
+                ..op
+            },
+        )
+        .unwrap();
+        assert_inline(&with, &without, &dogbone_ends(40.0, 30.0), &[4.0, 2.0]);
+    }
+
+    /// The same with `wall_pass: first`: the wall ring is cut first in
+    /// each pass and carries the notches.
+    #[test]
+    fn pocket_wall_first_cuts_notches_inline() {
+        let p = one_tool(vec![rect(40.0, 30.0)]);
+        let op = two_pass_pocket(WallPass::First);
+        let (with, warnings, _) = pocket_run(&p, &op);
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        let (without, _) = generate_pocket(
+            &p,
+            &PocketOp {
+                corner_relief: CornerRelief::None,
+                ..op
+            },
+        )
+        .unwrap();
+        assert_inline(&with, &without, &dogbone_ends(40.0, 30.0), &[4.0, 2.0]);
+    }
+
+    /// Spec step 5 on a Profile: an inside Profile of the rectangle cut 4
+    /// mm deep in two passes, not through, carries the four notches on
+    /// each lap, with no notch block of its own.
+    #[test]
+    fn profile_notches_are_cut_inline_on_every_lap() {
+        let p = one_tool(vec![rect(40.0, 30.0)]);
+        let op = ProfileOp {
+            depth_mm: Some(4.0),
+            ..profile_op(Side::Inside, CornerRelief::Dogbone)
+        };
+        let (with, warnings, _) = profile_run(&p, &op);
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        let (without, _) = generate_profile(
+            &p,
+            &ProfileOp {
+                corner_relief: CornerRelief::None,
+                ..op
+            },
+        )
+        .unwrap();
+        assert_inline(&with, &without, &dogbone_ends(40.0, 30.0), &[4.0, 2.0]);
+    }
+
+    /// Spec step 5, no step-down fallback: a Pocket cut in one 4 mm pass
+    /// by a tool that steps 1 mm cuts each notch in one detour from its
+    /// wall ring, at the tool's four levels, top first, stepping down at
+    /// the descend point by at most the tool's step-down, the deepest at
+    /// the pass's Z.
+    #[test]
+    fn inline_notch_steps_down_at_the_tool_step() {
+        let p = project(vec![rect(40.0, 30.0)], vec![tool("t1", 4.0, Some(1.0))]);
+        let op = PocketOp {
+            depth_mm: Some(4.0),
+            step_down_mm: Some(4.0),
+            ..pocket_op(CornerRelief::Dogbone)
+        };
+        let (with, warnings, _) = pocket_run(&p, &op);
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        let (without, _) = generate_pocket(
+            &p,
+            &PocketOp {
+                corner_relief: CornerRelief::None,
+                ..op
+            },
+        )
+        .unwrap();
+        assert_eq!(rapids(&with), rapids(&without), "relief adds no lift");
+        for (corner, end) in rect_corners(40.0, 30.0)
+            .iter()
+            .zip(dogbone_ends(40.0, 30.0))
+        {
+            let levels: Vec<usize> = [5.0, 4.0, 3.0, 2.0]
+                .iter()
+                .map(|&z| {
+                    let hits = moves_to(&with, end, z);
+                    assert_eq!(hits.len(), 1, "{end:?} at Z {z}: {hits:?}");
+                    hits[0]
+                })
+                .collect();
+            assert!(levels.windows(2).all(|w| w[0] < w[1]), "top first");
+            // Between the levels the tool only steps down at the descend
+            // point, never more than the tool's step-down at a time.
+            let descend = corner.corner + corner.bisector * (R / (PI / 4.0).sin());
+            let (first, last) = (levels[0], levels[3]);
+            for k in first..last {
+                let (a, b) = (with.moves[k].to, with.moves[k + 1].to);
+                assert!(!with.moves[k + 1].is_rapid(), "{:?}", with.moves[k + 1]);
+                if a.xy().distance_to(b.xy()) <= EPS_MM {
+                    assert!(a.xy().distance_to(descend) <= 1e-6, "Z changes off P");
+                    assert!(a.z - b.z <= 1.0 + 1e-6, "steps {} mm", a.z - b.z);
+                }
+            }
+        }
+    }
+
+    /// Spec step 6: a Pocket with an allowance has no final-wall ring, so
+    /// its notches are the separate pass after the main path, as before.
+    #[test]
+    fn pocket_with_allowance_falls_back_to_the_separate_pass() {
+        let p = one_tool(vec![rect(40.0, 30.0)]);
+        let op = PocketOp {
+            allowance_mm: 0.5,
+            ..two_pass_pocket(WallPass::Last)
+        };
+        let (with, warnings) = generate_pocket(&p, &op).unwrap();
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        let (without, _) = generate_pocket(
+            &p,
+            &PocketOp {
+                corner_relief: CornerRelief::None,
+                ..op
+            },
+        )
+        .unwrap();
+        // `relief_cuts` holds the main path to be the prefix.
+        let relief = relief_cuts(&with, &without);
+        assert_eq!(
+            relief.len(),
+            4 * 2 * 2,
+            "four corners, two levels, out and back"
+        );
+    }
+
+    /// Spec step 6: with `wall_pass: none` no ring reaches a descend
+    /// point, so every corner falls back and is skipped as before.
+    #[test]
+    fn pocket_wall_pass_none_falls_back() {
+        let p = one_tool(vec![rect(40.0, 30.0)]);
+        let op = two_pass_pocket(WallPass::None);
+        let (with, warnings) = generate_pocket(&p, &op).unwrap();
+        assert_eq!(
+            relief_codes(&warnings),
+            vec![WarningCode::ReliefCornerNotCut; 4]
+        );
+        let (without, _) = generate_pocket(
+            &p,
+            &PocketOp {
+                corner_relief: CornerRelief::None,
+                ..op
+            },
+        )
+        .unwrap();
+        assert_eq!(with.moves, without.moves);
+    }
+
+    /// A ring block of `site`'s square wall at pass `pass`, Z `z_mm`.
+    fn square_ring(pass: usize, z_mm: f64) -> CutBlock {
+        let ring = [
+            (2.0, 2.0),
+            (38.0, 2.0),
+            (38.0, 38.0),
+            (2.0, 38.0),
+            (2.0, 2.0),
+        ];
+        let start = at(ring[0].0, ring[0].1);
+        CutBlock {
+            shape: shape(),
+            pass,
+            z_mm,
+            descent_from: start,
+            descent_from_z_mm: z_mm + 2.0,
+            descent: Vec::new(),
+            entry: start,
+            cuts: ring[1..]
+                .iter()
+                .map(|&(x, y)| Move::linear(Point3::new(x + O, y + O, z_mm), 800.0))
+                .collect(),
+            exit: start,
+            frees: false,
+            cleared: None,
+            group: pass,
+        }
+    }
+
+    /// Spec step 6: a Pocket corner that some pass with levels for it has
+    /// no ring to reach (a rest Pocket that skips the wall ring there,
+    /// #167) goes to the separate pass whole, all its levels; a corner
+    /// every such pass reaches is cut inline. Here pass 1 cuts only the
+    /// square's lower edge, so the two upper corners fall back.
+    #[test]
+    fn rest_pocket_without_a_wall_ring_falls_back_per_corner() {
+        let relief = relief_for(vec![4.0, 2.0]);
+        let lower = {
+            let mut b = square_ring(1, 2.0);
+            b.cuts.truncate(1);
+            b.exit = at(38.0, 2.0);
+            b
+        };
+        let mut blocks = vec![square_ring(0, 4.0), lower];
+        let mut warnings = Vec::new();
+        let (inline, fallback) =
+            relief.inline_pocket(&[square_site()], &[4.0, 2.0], &mut blocks, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let ys = |corners: &[ReliefCorner]| {
+            let mut ys: Vec<f64> = corners.iter().map(|c| c.geometry.corner.y).collect();
+            ys.sort_by(f64::total_cmp);
+            ys
+        };
+        assert_eq!(ys(&inline), vec![O, O], "the lower corners are inline");
+        assert_eq!(ys(&fallback), vec![O + 40.0, O + 40.0]);
+        // The lower corners' detours are in both passes' rings; the upper
+        // corners' in none.
+        for (block, z) in blocks.iter().zip([4.0, 2.0]) {
+            let ends: Vec<Point> = block
+                .cuts
+                .iter()
+                .filter(|m| approx(m.to.z, z, 1e-9))
+                .map(|m| m.to.xy())
+                .collect();
+            for c in &inline {
+                assert!(ends.iter().any(|e| e.distance_to(c.end) <= 1e-9), "{z}");
+            }
+            for c in &fallback {
+                assert!(ends.iter().all(|e| e.distance_to(c.end) > 1e-9), "{z}");
+            }
+        }
+    }
+
+    /// Spec step 5: a Profile with a last pass cuts its notches from the
+    /// last pass's lap only, every level, and the allowance passes before
+    /// it carry none.
+    #[test]
+    fn profile_last_pass_allowance_paths_have_no_notches() {
+        let p = one_tool(vec![rect(40.0, 30.0)]);
+        let op = ProfileOp {
+            depth_mm: Some(4.0),
+            last_pass: Some(dc_project::LastPass {
+                allowance_mm: 0.5,
+                thickness_mm: None,
+                reverse: false,
+            }),
+            ..profile_op(Side::Inside, CornerRelief::Dogbone)
+        };
+        let (with, warnings, _) = profile_run(&p, &op);
+        assert!(relief_codes(&warnings).is_empty(), "{warnings:?}");
+        let (without, _) = generate_profile(
+            &p,
+            &ProfileOp {
+                corner_relief: CornerRelief::None,
+                ..op
+            },
+        )
+        .unwrap();
+        assert_eq!(rapids(&with), rapids(&without), "relief adds no lift");
+        // The last pass starts at its first move at its floor, Z 2.
+        let last_lap = with
+            .moves
+            .iter()
+            .position(|m| m.is_cut() && approx(m.to.z, 2.0, 1e-9))
+            .expect("a last pass at Z 2");
+        for end in dogbone_ends(40.0, 30.0) {
+            for z in [4.0, 2.0] {
+                let hits = moves_to(&with, end, z);
+                assert_eq!(hits.len(), 1, "{end:?} at Z {z}: {hits:?}");
+                assert!(hits[0] > last_lap, "{end:?} at Z {z} before the last pass");
+            }
+        }
+    }
+
+    /// A corner under a tab stays skipped when the notches are inline: it
+    /// warns, and no lap carries its notch, on any pass.
+    #[test]
+    fn corner_under_a_tab_stays_skipped_inline() {
+        let p = one_tool(vec![poly(&L_PART)]);
+        let plain = ProfileOp {
+            depth_mm: Some(4.0),
+            ..profile_op(Side::Outside, CornerRelief::Dogbone)
+        };
+        let (untabbed, _) = generate_profile(&p, &plain).unwrap();
+        let d = distance_along_lap(&untabbed, 2.0, at(28.0, 32.0));
+        let op = ProfileOp {
+            tabs: Some(TabSpec {
+                placement: TabPlacement::AtDistances {
+                    distances_mm: vec![d],
+                },
+                width_mm: 6.0,
+                height_mm: 5.0,
+                shape: TabShape::Rect,
+                on_holes: false,
+                avoid_corners: false,
+            }),
+            ..plain
+        };
+        let (_, warnings, cut) = profile_run(&p, &op);
+        assert!(cut.is_empty(), "{cut:?}");
+        assert_eq!(
+            relief_codes(&warnings),
+            vec![WarningCode::ReliefCornerNotCut]
+        );
     }
 }

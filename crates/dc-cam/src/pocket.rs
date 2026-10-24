@@ -2008,10 +2008,12 @@ mod tests {
     }
 
     /// Corner relief (slice 12) with a ramp entry: no warning, and the
-    /// notches follow the main passes, which are those of the same Pocket
-    /// without relief ([`crate::relief`] has the relief tests).
+    /// notches are cut from the wall rings (maintainer decision
+    /// 2026-10-24): the Pocket has every move of the same Pocket without
+    /// relief, in order, more moves, and no more rapids
+    /// ([`crate::relief`] has the relief tests).
     #[test]
-    fn corner_relief_follows_the_main_passes() {
+    fn corner_relief_is_cut_with_the_wall_rings() {
         let p = rect_project();
         let mut op = pocket_op(&p, CutDirection::Climb);
         op.entry = Entry::Ramp { angle_deg: 15.0 };
@@ -2019,11 +2021,13 @@ mod tests {
         op.corner_relief = CornerRelief::Dogbone;
         let (tp, warnings) = generate(&p, &op);
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(
-            tp.moves.get(..plain.moves.len()),
-            Some(plain.moves.as_slice())
-        );
+        let mut rest = tp.moves.iter();
+        for mv in &plain.moves {
+            assert!(rest.any(|m| m == mv), "{mv:?} is missing or out of order");
+        }
         assert!(tp.moves.len() > plain.moves.len());
+        let rapids = |t: &Toolpath| t.moves.iter().filter(|m| m.is_rapid()).count();
+        assert_eq!(rapids(&tp), rapids(&plain));
     }
 
     /// The bounds of `regions`, outers only.
