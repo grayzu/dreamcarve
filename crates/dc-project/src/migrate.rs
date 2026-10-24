@@ -82,6 +82,11 @@
 //!   tool's `name` (maintainer decision 2026-10-24): who makes the tool
 //!   and the maker's part number, which Fusion import fills in. No
 //!   program reads them, so the file exports what it did.
+//! - **17**: adds `allow_tool_wider_than_hole: false` at the end of each
+//!   Drill operation (maintainer decision 2026-10-24): a Drill now skips a
+//!   hole narrower than its tool unless the setting is `true`. An earlier
+//!   file drilled such a hole at the tool's size; migrated, it skips it
+//!   with a warning, the behaviour change the decision asks for.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -92,7 +97,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 16;
+pub const CURRENT_VERSION: u32 = 17;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -117,6 +122,7 @@ fn step(from: u32) -> Option<Step> {
         13 => Some(v13_to_v14),
         14 => Some(v14_to_v15),
         15 => Some(v15_to_v16),
+        16 => Some(v16_to_v17),
         _ => None,
     }
 }
@@ -700,6 +706,32 @@ fn v15_to_v16(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
             out.insert("product_id".into(), Value::Null);
         }
         *tool = Value::Object(out);
+    }
+    Ok(root)
+}
+
+/// Version 16 → 17 (maintainer decision 2026-10-24):
+/// `allow_tool_wider_than_hole: false` at the end of each Drill, so a hole
+/// narrower than the tool is skipped with a warning rather than drilled
+/// larger than drawn. Other operations are unchanged. Fails if a Drill
+/// already has the key: that is not a version 16 file.
+fn v16_to_v17(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("drill") {
+            continue;
+        }
+        let Value::Object(fields) = op else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("allow_tool_wider_than_hole") {
+            return Err(format!(
+                "a version 16 file has no `operations[{i}].allow_tool_wider_than_hole`, but this one does"
+            ));
+        }
+        fields.insert("allow_tool_wider_than_hole".into(), Value::Bool(false));
     }
     Ok(root)
 }

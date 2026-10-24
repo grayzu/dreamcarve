@@ -6363,6 +6363,10 @@ fn assert_corpus_programs(dir: &Path, name: &str, case: &str) {
 /// feeds of six of them since rounded down so no cut falls faster than the
 /// plunge rate as written (#325), and the three with corner relief since
 /// re-exported with the notches cut inline (#373).
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_9_tab_settings_export_byte_identical_programs() {
     let dir = work_dir("version_9_tab_settings_export_byte_identical_programs");
@@ -6418,6 +6422,10 @@ fn version_9_tab_settings_export_byte_identical_programs() {
 /// wrote, committed under `tests/expected/last-pass-migration/`, with the
 /// feeds #325 rounds down and the notches #373 cuts inline in the four
 /// with corner relief.
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_12_projects_export_byte_identical_programs() {
     let dir = work_dir("version_12_projects_export_byte_identical_programs");
@@ -8223,6 +8231,10 @@ fn heights_migration_corpus() -> Vec<(String, PathBuf)> {
 /// byte the programs the build before #283 exported (the tabs-migration
 /// expected programs, which that build reproduced), as loaded and after
 /// it is saved at version 12.
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_11_projects_export_byte_identical_programs() {
     let dir = work_dir("version_11_projects_export_byte_identical_programs");
@@ -8265,6 +8277,10 @@ fn version_11_projects_export_byte_identical_programs() {
 /// programs the build before #285 wrote. Those are the #284 corpus's
 /// programs, committed under `tests/expected/last-pass-migration/`: the
 /// build before #285 exported the format 13 files to the same bytes.
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_13_projects_export_byte_identical_programs() {
     let dir = work_dir("version_13_projects_export_byte_identical_programs");
@@ -8772,6 +8788,12 @@ fn hand_edited_holds_slug_is_refused_with_its_place() {
 /// enters from the allowance path, as one more earlier pass would, so its
 /// committed program is the one the build with #339 writes; the other
 /// programs, without a last pass, are unchanged.)
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
+/// Its committed warnings now say so: `drill_hole_too_small` for each hole
+/// and `drill_no_holes`, where they said `drill_tool_wider_than_hole`.
 #[test]
 fn version_14_projects_export_byte_identical_programs_and_warnings() {
     let dir = work_dir("version_14_projects_export_byte_identical_programs_and_warnings");

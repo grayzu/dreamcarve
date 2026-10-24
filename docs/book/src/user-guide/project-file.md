@@ -129,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `16`. |
+| `version` | Format version. This build writes `17`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -428,7 +428,7 @@ same meaning, plus its own fields:
 | Kind | Own fields |
 | --- | --- |
 | `"pocket"` | `strategy`: `"offset"` or `{ "raster": { "angle_deg": 45.0 } }` (0 or more, less than 180); `wall_pass`: `"last"`, `"first"` or `"none"`; `step_down_mm` and `step_over_fraction` (`null` for the tool's); `direction`; `allowance_mm` (0 or more, material left on the walls); `rest_of` (`null`, or the id of an earlier enabled Pocket with the same `targets`, whose leftovers this one clears); `entry`; `corner_relief`; `machining_order`. The tool must be an `"end_mill"`. |
-| `"drill"` | `cycle`: `"simple"` or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`, where `peck_depth_mm` may be `null` for the tool's `step_down_mm` and `retract` is `"full"` or `{ "chip_break": { "gap_mm": 0.5 } }` (greater than 0); `dwell_s` (0 or more; 0 is none); `retract_mm` (0 or more, above the hole top). A cutter other than `"drill"` or `"end_mill"` is a warning. |
+| `"drill"` | `cycle`: `"simple"` or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`, where `peck_depth_mm` may be `null` for the tool's `step_down_mm` and `retract` is `"full"` or `{ "chip_break": { "gap_mm": 0.5 } }` (greater than 0); `dwell_s` (0 or more; 0 is none); `retract_mm` (0 or more, above the hole top); `allow_tool_wider_than_hole` (`false` skips a circle smaller than the bit, with a warning; `true` drills it at the bit's size; from format version 17, `false` on upgrade). A cutter other than `"drill"` or `"end_mill"` is a warning. See [Drill: holes smaller than the bit](drill.md#holes-smaller-than-the-bit). |
 | `"engrave"` | `step_down_mm` (`null` for the tool's); `alternate_direction` (`true` or `false`); `machining_order`. Any cutter; a V-bit deeper than its cone is tall is a warning. |
 
 Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md)
@@ -522,6 +522,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 14 | Adds `avoid_corners` to each Profile's tab request, `false` on upgrade, and each Profile's `start`, `"auto"` on upgrade (#285), so the tabs are laid and each cut starts where it did. See [Tabs: tabs off corners](tabs.md#tabs-off-corners) and [Profile: start point](profile.md#start-point). |
 | 15 | Adds `holds_slug` to each placed tab, `null` on upgrade (#302): whether a tab on a hole is meant to hold its slug. A version 14 file did not record it, so `null` keeps the warnings it gave, and the program does not change. See [`tabs`](#tabs). |
 | 16 | Adds each tool's `vendor` and `product_id` after its `name`, `null` on upgrade: who makes the tool and the maker's part number, which Fusion import fills in. No program uses them, so the project exports as before. See [`tools`](#tools). |
+| 17 | Adds `allow_tool_wider_than_hole` to each Drill, `false` on upgrade. A Drill now skips a circle smaller than its bit, with the warning `drill_hole_too_small`, where an older build drilled it at the bit's size: an upgraded project with such holes gives a different program. Set it to `true` to drill them as before. See [Drill: holes smaller than the bit](drill.md#holes-smaller-than-the-bit). |
 
 ## What `check` reports
 

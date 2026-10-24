@@ -31,7 +31,7 @@ use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
-use dc_geometry::{EPS_MM, Point, Point3, as_circle};
+use dc_geometry::{Point, Point3, as_circle};
 use dc_project::{DrillCycle, DrillOp, MachiningOrder, PeckRetract, Project, Tool};
 
 /// How far above the depth already drilled a full-retract peck re-enters
@@ -92,8 +92,13 @@ pub struct DrillToolpath {
 /// Every closed profile of every target instance, placed by its
 /// transform, whose outline is a circle within the project's flatten
 /// tolerance is a hole; anything else warns
-/// [`Warning::DrillTargetNotCircle`] and is skipped, and a tool wider
-/// than a hole warns [`Warning::DrillToolWiderThanHole`]. Each hole is
+/// [`Warning::DrillTargetNotCircle`] and is skipped. A hole narrower than
+/// the tool by more than the flatten tolerance is skipped with
+/// [`Warning::DrillHoleTooSmall`], since a Drill never moves sideways and
+/// the hole would come out the tool's size (maintainer decision
+/// 2026-10-24); with `op.allow_tool_wider_than_hole` it is drilled anyway
+/// and warns [`Warning::DrillToolWiderThanHole`]. With no hole left the
+/// toolpath is empty and [`Warning::DrillNoHoles`] says so. Each hole is
 /// drilled from the stock top to `depth_mm` (S1 with the operation's
 /// through-cut allowance):
 ///
@@ -382,8 +387,10 @@ impl Cycle {
 
 /// The holes of `op`, in drawing order (target order, then profile order):
 /// each circular closed profile, placed by its instance's transform, with
-/// its centre. Other profiles warn and are skipped; a tool wider than a
-/// hole warns.
+/// its centre. Other profiles warn and are skipped. A hole narrower than
+/// the tool by more than the flatten tolerance warns and is skipped
+/// (maintainer decision 2026-10-24), unless the operation allows it, when
+/// it is drilled at the tool's size and warns. No hole left warns once.
 fn resolve_holes(
     project: &Project,
     op: &DrillOp,
@@ -433,7 +440,19 @@ fn resolve_holes(
                 continue;
             };
             let hole_mm = 2.0 * radius_mm;
-            if tool_diameter_mm > hole_mm + EPS_MM {
+            // The outline was taken for a circle within the flatten
+            // tolerance, so its diameter is known no closer than that: a
+            // hole drawn at the tool's size is drilled.
+            if tool_diameter_mm > hole_mm + project.flatten_tolerance_mm {
+                if !op.allow_tool_wider_than_hole {
+                    warnings.push(Warning::DrillHoleTooSmall {
+                        op: op.id.clone(),
+                        shape,
+                        hole_mm,
+                        tool_mm: tool_diameter_mm,
+                    });
+                    continue;
+                }
                 warnings.push(Warning::DrillToolWiderThanHole {
                     op: op.id.clone(),
                     shape: shape.clone(),
@@ -443,6 +462,9 @@ fn resolve_holes(
             }
             holes.push((shape, centre));
         }
+    }
+    if holes.is_empty() {
+        warnings.push(Warning::DrillNoHoles { op: op.id.clone() });
     }
     Ok(holes)
 }
