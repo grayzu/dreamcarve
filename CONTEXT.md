@@ -127,6 +127,8 @@ _Avoid_: Step-over distance, overlap, pass width
 
 **Drill**:
 An operation that plunges a tool at one or more points, optionally pecking.
+It skips a circle smaller than the tool, unless its
+`allow_tool_wider_than_hole` is set, since the hole is always the tool's size.
 _Avoid_: Hole, bore
 _PureCutCNC_: Drilling
 

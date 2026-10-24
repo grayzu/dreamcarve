@@ -1,5 +1,5 @@
 {
-  "version": 16,
+  "version": 17,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -120,7 +120,8 @@
       "depth_mm": 12.0,
       "retract_mm": 1.0,
       "through_cut_allowance_mm": 0.2,
-      "safe_z_mm": 15.0
+      "safe_z_mm": 15.0,
+      "allow_tool_wider_than_hole": true
     },
     {
       "kind": "profile",

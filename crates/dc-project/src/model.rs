@@ -782,6 +782,12 @@ pub struct DrillOp {
     /// Retract height above the stock top, millimetres.
     #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
+    /// Drill a hole narrower than the tool anyway, at the tool's diameter
+    /// (format 16; maintainer decision 2026-10-24). `false`, the default,
+    /// skips such a hole with a warning: a Drill never moves sideways, so
+    /// it would come out larger than drawn. `true` suits a clearance hole
+    /// drawn at the screw's size.
+    pub allow_tool_wider_than_hole: bool,
 }
 
 /// An engrave operation: follows each target path, open or closed, with

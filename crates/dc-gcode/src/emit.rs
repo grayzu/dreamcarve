@@ -5973,7 +5973,9 @@ mod tests {
     /// project migrates, the version 11 plaque exports the programs it did
     /// before #283, byte for byte. The expected programs are the tabs-migration
     /// corpus's, exported by the build before #105 and checked unchanged
-    /// since by `cli::version_9_tab_settings_export_byte_identical_programs`.
+    /// since by `cli::version_9_tab_settings_export_byte_identical_programs`,
+    /// the T1 program since without the plaque's four holes, which its Drill
+    /// now skips (#377).
     #[test]
     fn unset_heights_are_byte_identical() {
         // The plaque as the build before #283 saved it, at version 11 on

@@ -2,8 +2,9 @@
 
 A **Drill** plunges the bit straight down at the centre of each circle:
 dowel holes, screw holes, pilot holes. The bit never moves sideways in the
-material, so the hole comes out the size of the bit, whatever size you drew
-the circle. VCarve calls this a "Drilling Toolpath"; Fusion calls it
+material, so the hole comes out the size of the bit. A circle smaller than
+the bit is not drilled unless you say so ([Holes smaller than the
+bit](#holes-smaller-than-the-bit)). VCarve calls this a "Drilling Toolpath"; Fusion calls it
 "Drill".
 
 Add it to the project's `operations` list by hand; `init` writes only a
@@ -23,7 +24,8 @@ a short pause at the bottom of each peck:
   "depth_mm": 12.2,
   "retract_mm": 1.0,
   "through_cut_allowance_mm": 0.2,
-  "safe_z_mm": 5.0
+  "safe_z_mm": 5.0,
+  "allow_tool_wider_than_hole": false
 }
 ```
 
@@ -42,6 +44,7 @@ a short pause at the bottom of each peck:
 | `retract_mm` | How far above the stock top the bit lifts between pecks, and where it starts each hole from, 0 or more. Usually 1. See [Retract height](#retract-height). |
 | `through_cut_allowance_mm` | How far below the stock bottom the hole may go, as for [Profile](profile.md#cutting-through). 0 by default. |
 | `safe_z_mm` | The height above the stock top for moves between holes. Must be more than 0. |
+| `allow_tool_wider_than_hole` | `false`, the default, skips a circle smaller than the bit, with a warning. `true` drills it anyway, at the bit's size. See [Holes smaller than the bit](#holes-smaller-than-the-bit). |
 
 The tool needs a `plunge_mm_min`: every move a Drill cuts is a plunge.
 Export still needs the tool's `feed_mm_min` and `rpm` set, as for every
@@ -59,10 +62,38 @@ Anything else, a rectangle, a slot, an ellipse or an open path, is skipped
 and `check` warns `drill_target_not_circle`, naming it. The circles of the
 same operation are still drilled.
 
-The circle's size is not the hole's size: the bit is. A circle smaller
-than the bit warns `drill_tool_wider_than_hole` and is still drilled, the
-bit's size. Draw each hole the size of the bit you will drill it with, so
-the drawing shows what you will get.
+The circle's size is not the hole's size: the bit is. Draw each hole the
+size of the bit you will drill it with, so the drawing shows what you will
+get.
+
+## Holes smaller than the bit
+
+A Drill never cuts a hole larger than you drew it. A circle smaller than
+the bit, by more than the project's `flatten_tolerance_mm` (0.01 mm
+unless you changed it), is skipped: `check` and `export` warn
+`drill_hole_too_small`, naming the circle and both sizes, and the
+operation's other holes are still drilled. A 5 mm circle is not drilled
+with a 6.35 mm bit; a 6.35 mm circle is, and so is one drawn 6.345 mm,
+which is the bit's size as closely as the drawing is read.
+
+```text
+warning: drill_hole_too_small: operation `op3`: the 5 mm hole `holes-1` (instance `i5`, profile 0) is narrower than the 6.35 mm tool, so it is not drilled: a Drill never moves sideways, so the hole would come out the tool's size; use a smaller tool, or set allow_tool_wider_than_hole to drill it at that size
+```
+
+Sometimes a hole the bit's size is what you want: a clearance hole drawn
+at the screw's size, say. Set `"allow_tool_wider_than_hole": true` on
+that Drill and it drills every such circle at the bit's size, warning
+`drill_tool_wider_than_hole` for each so the program still tells you. The
+setting is saved in the project, per operation.
+
+If every target is skipped, for this reason or because none is a circle,
+the operation drills nothing and warns `drill_no_holes`. The program is
+still written with the other operations.
+
+**Changed before v0.2.0.** Earlier builds drilled a circle smaller than
+the bit at the bit's size, with `drill_tool_wider_than_hole`. A project
+saved by them loads with `allow_tool_wider_than_hole: false`, so such
+holes are now skipped. Set it to `true` to drill them as before.
 
 ## Cycles
 
@@ -280,7 +311,9 @@ controller does, so the cycle and the plain moves are the same pecks.
 | Code | Meaning |
 | --- | --- |
 | `drill_target_not_circle` | A target outline is not a circle, or is open, so it is not drilled. Draw a circle, or remove the target. |
-| `drill_tool_wider_than_hole` | The bit is wider than the circle drawn. The hole comes out the bit's size. Use a smaller bit, or draw the circle the bit's size. |
+| `drill_hole_too_small` | The circle is smaller than the bit, so it is not drilled. Use a smaller bit, draw the circle the bit's size, or set `allow_tool_wider_than_hole`. See [Holes smaller than the bit](#holes-smaller-than-the-bit). |
+| `drill_tool_wider_than_hole` | `allow_tool_wider_than_hole` is `true` and the bit is wider than the circle drawn, so the hole comes out the bit's size. |
+| `drill_no_holes` | Every target was skipped, so the operation drills nothing. |
 | `drill_peck_deeper_than_hole` | `peck_depth_mm` (or the tool's step-down) reaches the hole's bottom from the retract height, so it is drilled in one plunge. Use a smaller peck, or the `"simple"` cycle. |
 | `drill_retract_below_stock_top` | `retract_mm` is below the stock top; the bit retracts to the stock top instead. |
 | `drill_cutter_unusual` | The tool is not a drill or an end mill, so the hole's bottom is a cone. |

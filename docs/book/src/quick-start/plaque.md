@@ -281,7 +281,8 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
     "depth_mm": 12.0,
     "retract_mm": 1.0,
     "through_cut_allowance_mm": 0.2,
-    "safe_z_mm": 15.0
+    "safe_z_mm": 15.0,
+    "allow_tool_wider_than_hole": true
   },
   {
     "kind": "profile",
@@ -335,7 +336,7 @@ matter here:
 | --- | --- | --- |
 | `op1` Pocket "Panel" | Clears the panel 4 mm deep, round the circle | `targets` names the panel and the circle: a shape inside a Pocket's shape is an island and is left standing. `raster` at 0° clears in straight lines along X; the wall pass (`"last"`) then runs round the wall and the island to clean up the line ends. The bit spirals down (`helix`) instead of plunging. See [Pocket operation](../user-guide/pocket.md). |
 | `op2` Pocket "Square recess" | Clears the square 6 mm deep | `offset` clears in rings stepping in from the wall. `dogbone` notches each corner so a square block fits; a round bit alone leaves a 3.175 mm radius there. A 15° ramp takes the bit down. |
-| `op3` Drill "Screw holes" | Drills the four circles through | 12 mm deep in pecks of 4 mm, lifting fully out of the hole between pecks (`retract: "full"`) to clear the chips. Each hole starts at the retract height, 1 mm above the plywood. See [Drill operation](../user-guide/drill.md). |
+| `op3` Drill "Screw holes" | Drills the four circles through | 12 mm deep in pecks of 4 mm, lifting fully out of the hole between pecks (`retract: "full"`) to clear the chips. Each hole starts at the retract height, 1 mm above the plywood. The circles are drawn 5 mm, smaller than the 6.35 mm bit, so `allow_tool_wider_than_hole` says to drill them at the bit's size anyway; without it they would be skipped. See [Drill operation](../user-guide/drill.md). |
 | `op4` Profile "Cut out" | Cuts the plaque out, outside its outline | Through the plywood into the spoilboard, held by four tabs. A 15° ramp in the waste takes the bit down, and a 3 mm arc (`lead`) brings it onto the outline and off it, so the edge has no mark where each pass started. See [Profile operation](../user-guide/profile.md). |
 | `op5` Engrave "Border and squiggle" | Grooves along the border and the squiggle, 1 mm deep | The bit's centre follows the line, open or closed, in one pass. It uses `t3`, the 3.175 mm bit. See [Engrave operation](../user-guide/engrave.md). |
 
@@ -382,6 +383,9 @@ No errors: the project exports. Each warning names what it is about:
 - `drill_tool_wider_than_hole`: the drawing's circles are 5 mm across and
   the bit is 6.35 mm, so each hole comes out 6.35 mm: clearance for an M5
   screw. A Drill never moves sideways, so a hole is always the bit's size.
+  It drills them only because `op3` sets `allow_tool_wider_than_hole`;
+  without it each circle would be skipped with `drill_hole_too_small`
+  ([Drill: holes smaller than the bit](../user-guide/drill.md#holes-smaller-than-the-bit)).
 
 `check` gives the extents of each program separately, because you fit a
 different bit for each.

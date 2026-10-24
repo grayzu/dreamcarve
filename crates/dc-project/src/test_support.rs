@@ -51,7 +51,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v16/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v17/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -193,6 +193,7 @@ pub fn sample_drill() -> DrillOp {
         retract_mm: 1.0,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,
+        allow_tool_wider_than_hole: false,
     }
 }
 

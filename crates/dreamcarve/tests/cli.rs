@@ -1952,6 +1952,110 @@ fn drill_exports_and_passes_safety() {
     }
 }
 
+/// Maintainer decision 2026-10-24: the coaster with a 5 mm hole at
+/// (40, 55) and an 8 mm one at (70, 55), drilled through with the
+/// 6.35 mm end mill `init`'s coaster cuts with, before the cut-out.
+/// Returns the project file.
+fn coaster_with_small_hole(dir: &Path) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let tool = project
+        .operations
+        .first()
+        .expect("the coaster profile")
+        .tool()
+        .clone();
+    for (id, x, diameter_mm) in [("small", 40.0, 5.0), ("large", 70.0, 8.0)] {
+        let hole = FeatureDefinition {
+            id: DefinitionId::new(id),
+            name: format!("Hole {id}"),
+            profiles: vec![Polyline::circle(Point::new(0.0, 0.0), diameter_mm / 2.0)],
+        };
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new(id),
+            definition: hole.id.clone(),
+            transform: Transform::translate(x, 55.0),
+            name: id.into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(MEASURED_THICKNESS_MM),
+            z_bottom_mm: Some(0.0),
+        });
+        project.definitions.insert(hole.id.clone(), hole);
+    }
+    assert_approx_eq!(
+        project
+            .tools
+            .iter()
+            .find(|t| t.id == tool)
+            .expect("the coaster's tool")
+            .diameter_mm,
+        6.35,
+        1e-9
+    );
+    let mut drill = sample_drill();
+    drill.id = OperationId::new("o2");
+    drill.targets = vec![InstanceId::new("small"), InstanceId::new("large")];
+    drill.tool = tool;
+    drill.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
+    drill.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
+    project.operations.insert(0, Operation::Drill(drill));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// The warning `check` and `export` print for the coaster's 5 mm hole.
+const SMALL_HOLE_WARNING: &str = "warning: drill_hole_too_small: operation `o2`: the 5 mm hole `small` (instance `small`, profile 0) is narrower than the 6.35 mm tool, so it is not drilled";
+
+/// `check` reports the hole the tool is too big for, and the project
+/// still checks clean of errors.
+#[test]
+fn check_reports_drill_hole_too_small() {
+    let dir = work_dir("check_reports_drill_hole_too_small");
+    coaster_with_small_hole(&dir);
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(SMALL_HOLE_WARNING), "{report}");
+    assert!(report.contains("0 error(s), 1 warning(s)"), "{report}");
+}
+
+/// `export` prints the same warning and writes the program, which drills
+/// the 8 mm hole and never goes below the stock top at the 5 mm one.
+#[test]
+fn export_reports_drill_hole_too_small_and_writes_no_plunge_there() {
+    let dir = work_dir("export_reports_drill_hole_too_small_and_writes_no_plunge_there");
+    coaster_with_small_hole(&dir);
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains(SMALL_HOLE_WARNING),
+        "{}",
+        stderr(&out)
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    // Work zero is the stock's bottom-left corner at its top.
+    let near = |m: &MachineMove, x: f64| {
+        let (Some(mx), Some(my)) = (m.to.x, m.to.y) else {
+            return false;
+        };
+        (mx - x).hypot(my - 55.0) < 1.0
+    };
+    let below_top = |m: &MachineMove| m.to.z.is_some_and(|z| z < 0.0);
+    assert!(
+        !moves.iter().any(|m| near(m, 40.0) && below_top(m)),
+        "a move goes into the stock at the skipped hole:\n{program}"
+    );
+    assert!(
+        moves
+            .iter()
+            .any(|m| m.kind.is_cut() && near(m, 70.0) && below_top(m)),
+        "the 8 mm hole is not drilled:\n{program}"
+    );
+}
+
 /// The output extension is a setting in the `.dcv`, so a shared project
 /// chooses it. An extension that is a path (`../x`) or names the
 /// project file itself (`dcv`) must not let `export` write outside the
@@ -6259,6 +6363,10 @@ fn assert_corpus_programs(dir: &Path, name: &str, case: &str) {
 /// feeds of six of them since rounded down so no cut falls faster than the
 /// plunge rate as written (#325), and the three with corner relief since
 /// re-exported with the notches cut inline (#373).
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_9_tab_settings_export_byte_identical_programs() {
     let dir = work_dir("version_9_tab_settings_export_byte_identical_programs");
@@ -6314,6 +6422,10 @@ fn version_9_tab_settings_export_byte_identical_programs() {
 /// wrote, committed under `tests/expected/last-pass-migration/`, with the
 /// feeds #325 rounds down and the notches #373 cuts inline in the four
 /// with corner relief.
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_12_projects_export_byte_identical_programs() {
     let dir = work_dir("version_12_projects_export_byte_identical_programs");
@@ -8119,6 +8231,10 @@ fn heights_migration_corpus() -> Vec<(String, PathBuf)> {
 /// byte the programs the build before #283 exported (the tabs-migration
 /// expected programs, which that build reproduced), as loaded and after
 /// it is saved at version 12.
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_11_projects_export_byte_identical_programs() {
     let dir = work_dir("version_11_projects_export_byte_identical_programs");
@@ -8161,6 +8277,10 @@ fn version_11_projects_export_byte_identical_programs() {
 /// programs the build before #285 wrote. Those are the #284 corpus's
 /// programs, committed under `tests/expected/last-pass-migration/`: the
 /// build before #285 exported the format 13 files to the same bytes.
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
 #[test]
 fn version_13_projects_export_byte_identical_programs() {
     let dir = work_dir("version_13_projects_export_byte_identical_programs");
@@ -8668,6 +8788,12 @@ fn hand_edited_holds_slug_is_refused_with_its_place() {
 /// enters from the allowance path, as one more earlier pass would, so its
 /// committed program is the one the build with #339 writes; the other
 /// programs, without a last pass, are unchanged.)
+/// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
+/// Drill, 5 mm holes and a 6.35 mm bit, now skips its four holes: its
+/// committed T1 programs were re-exported without them, and nothing else
+/// in them changed.
+/// Its committed warnings now say so: `drill_hole_too_small` for each hole
+/// and `drill_no_holes`, where they said `drill_tool_wider_than_hole`.
 #[test]
 fn version_14_projects_export_byte_identical_programs_and_warnings() {
     let dir = work_dir("version_14_projects_export_byte_identical_programs_and_warnings");

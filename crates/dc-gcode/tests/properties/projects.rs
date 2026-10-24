@@ -652,24 +652,28 @@ pub fn drill_project() -> impl Strategy<Value = Project> {
         depth(),
         prop_oneof![Just(0.0), 0.0..5.0_f64],
         1.0..15.0_f64,
+        any::<bool>(),
     )
-        .prop_map(|(setup, cycle, dwell_s, depth, retract_mm, safe_z_mm)| {
-            project(setup, |s, targets| {
-                Operation::Drill(DrillOp {
-                    id: OperationId::new("o1"),
-                    name: "Drill".into(),
-                    enabled: true,
-                    targets,
-                    tool: s.tool.id.clone(),
-                    cycle,
-                    dwell_s,
-                    depth_mm: Some(depth.depth_mm(s.thickness_mm)),
-                    retract_mm,
-                    through_cut_allowance_mm: depth.allowance_mm,
-                    safe_z_mm,
+        .prop_map(
+            |(setup, cycle, dwell_s, depth, retract_mm, safe_z_mm, allow_wider)| {
+                project(setup, |s, targets| {
+                    Operation::Drill(DrillOp {
+                        id: OperationId::new("o1"),
+                        name: "Drill".into(),
+                        enabled: true,
+                        targets,
+                        tool: s.tool.id.clone(),
+                        cycle,
+                        dwell_s,
+                        depth_mm: Some(depth.depth_mm(s.thickness_mm)),
+                        retract_mm,
+                        through_cut_allowance_mm: depth.allowance_mm,
+                        safe_z_mm,
+                        allow_tool_wider_than_hole: allow_wider,
+                    })
                 })
-            })
-        })
+            },
+        )
 }
 
 /// A random valid Engrave project, of closed and open paths.

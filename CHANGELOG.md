@@ -409,6 +409,18 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   has none) is reset, and `export` names it, both values and why. Your
   configured `tool_change_mode` applies only to a reset mode. `--reset-settings`
   gives the old behaviour.
+- **A Drill skips a circle smaller than its bit** ([#377]). A Drill never moves
+  sideways, so such a hole came out the bit's size, larger than drawn, with
+  only the warning `drill_tool_wider_than_hole`. It is now left out with
+  `drill_hole_too_small`, naming the circle and both sizes, and the
+  operation's other holes are still drilled; a circle within the project's
+  `flatten_tolerance_mm` of the bit's size still counts as the bit's size. A
+  Drill with every target skipped warns `drill_no_holes`. The new Drill field
+  `allow_tool_wider_than_hole` (format version 17) drills such holes at the
+  bit's size as before. **Behaviour change:** a project saved by an earlier
+  build loads with it `false`, so its Drill skips those holes and the program
+  changes; set it to `true` to keep them. The plaque quick start sets it for
+  its M5 clearance holes.
 
 ### Fixed
 
@@ -707,3 +719,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#373]: https://github.com/grayzu/dreamcarve/issues/373
 [#379]: https://github.com/grayzu/dreamcarve/issues/379
 [#380]: https://github.com/grayzu/dreamcarve/issues/380
+[#377]: https://github.com/grayzu/dreamcarve/issues/377
