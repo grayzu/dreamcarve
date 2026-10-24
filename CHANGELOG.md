@@ -32,6 +32,21 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   part with several holes, so it crosses at both the clearance height and
   safe Z, is written as one series per part from safe Z, each ended by
   `G80`, with the rise to the clearance height between them ([#314]).
+- **Bore operation** ([#387]). Cuts each circle bigger than the end mill
+  to the size you drew, as Fusion's "2D Bore": the bit spirals down a helix
+  inside the hole, `pitch_mm` a turn (the tool's step-down by default, never
+  more), from 1 mm above the stock top to the depth, then cuts one full circle
+  there and moves to the centre before it lifts. `direction` is climb or
+  conventional, and `allowance_mm` leaves material on the wall for a second,
+  finishing Bore. A hole the bit has no room to spiral in is skipped with
+  `bore_no_room` (one the bit's size is a Drill's, and the warning says so),
+  and one wider than twice the bit with `bore_leaves_core`, since the helix
+  would leave a core that comes loose in a through hole; clear that with a
+  Pocket. The helix is written as short `G1` moves and the circle as four
+  `G2`/`G3` arcs, which every bundled post-processor writes. The export
+  safety pass holds every move of a Bore within the helix radius of its
+  hole's centre. Format version 18; an older DreamCarve refuses a version 18
+  file.
 - **Engrave operation.** Cuts along open and closed lines with the bit centred
   on the line, at a fixed depth, in passes. `alternate_direction` cuts an open
   line back and forth instead of retracting between passes.
@@ -258,7 +273,7 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   are unchanged. Lower the feed, use a smaller allowance, or redraw the curve
   with arcs ([#350]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
-  for Pocket, Drill, Engrave, machining order, importing DXF, the tool library,
+  for Pocket, Drill, Bore, Engrave, machining order, importing DXF, the tool library,
   configuration and warnings. The Profile, post-processor, project file and
   safety chapters cover the new settings.
 
@@ -419,8 +434,15 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   `allow_tool_wider_than_hole` (format version 17) drills such holes at the
   bit's size as before. **Behaviour change:** a project saved by an earlier
   build loads with it `false`, so its Drill skips those holes and the program
-  changes; set it to `true` to keep them. The plaque quick start sets it for
-  its M5 clearance holes.
+  changes; set it to `true` to keep them. Its warning now says that a Bore
+  cuts a hole bigger than its bit to size ([#387]).
+- **The plaque quick start bores its screw holes** ([#387]). Its four 5 mm
+  holes were a Drill with the 6.35 mm bit and `allow_tool_wider_than_hole`, so
+  they came out 6.35 mm; they are now a Bore with the 3.175 mm bit and come
+  out 5 mm, as drawn. The operations run Bore and Engrave with the small bit,
+  then the two Pockets and the cut-out with the large one, so there is still
+  one bit change and the cut-out is still last. The programs are now
+  `plaque-1-T2.nc` and `plaque-2-T1.nc`.
 
 ### Fixed
 
@@ -728,3 +750,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#380]: https://github.com/grayzu/dreamcarve/issues/380
 [#377]: https://github.com/grayzu/dreamcarve/issues/377
 [#384]: https://github.com/grayzu/dreamcarve/issues/384
+[#387]: https://github.com/grayzu/dreamcarve/issues/387

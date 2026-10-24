@@ -139,6 +139,10 @@ written. There are no safety warnings, only errors.
       way.
     - a [Drill](drill.md): the bit stays inside one of the circles it
       drills.
+    - a [Bore](bore.md): the centre of the bit stays within the helix
+      radius of one of its circles' centres, the circle's radius less the
+      bit's and the allowance, on the helix, the circle at the bottom and
+      the move to the centre, so the hole is never cut wider than drawn.
     - an [Engrave](engrave.md): the centre of the bit stays on the line.
     - a [Profile](profile.md): the whole width of the bit stays in the
       waste. Cut **outside**, that means outside every part, and cut

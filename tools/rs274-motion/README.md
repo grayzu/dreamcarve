@@ -89,8 +89,10 @@ inches. With no offset, a `G53` move looks like any other move.
 - The expected programs that earlier definition versions must still
   write.
 - The quick-start plaque, exported in-process for each controller. It
-  goes out plain, with `G81` and with `G82` canned cycles (LinuxCNC and
-  Mach3), with a `G53` lift (LinuxCNC), with the lift and manual spindle
+  goes out plain (its screw holes a Bore: a helix of `G1` moves and a
+  circle of `G3` arcs), with `G81` and with `G82` canned cycles (LinuxCNC
+  and Mach3; the holes drilled with the 6.35 mm bit, as the plaque did
+  before its Bore), with a `G53` lift (LinuxCNC), with the lift and manual spindle
   control, whose `M0` pauses `tools/linuxcnc-sim` resumes (LinuxCNC), and
   in inches (LinuxCNC and UCCNC).
 

@@ -1,5 +1,5 @@
 {
-  "version": 17,
+  "version": 18,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -67,6 +67,34 @@
   ],
   "operations": [
     {
+      "kind": "bore",
+      "id": "op3",
+      "name": "Screw holes",
+      "enabled": true,
+      "targets": [ "i5", "i6", "i7", "i8" ],
+      "tool": "t3",
+      "depth_mm": 12.0,
+      "pitch_mm": null,
+      "direction": "climb",
+      "allowance_mm": 0.0,
+      "through_cut_allowance_mm": 0.2,
+      "safe_z_mm": 15.0
+    },
+    {
+      "kind": "engrave",
+      "id": "op5",
+      "name": "Border and squiggle",
+      "enabled": true,
+      "targets": [ "i9", "i10" ],
+      "tool": "t3",
+      "depth_mm": 1.0,
+      "step_down_mm": 1.0,
+      "alternate_direction": false,
+      "machining_order": "full_depth_first",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 15.0
+    },
+    {
       "kind": "pocket",
       "id": "op1",
       "name": "Panel",
@@ -109,21 +137,6 @@
       "safe_z_mm": 15.0
     },
     {
-      "kind": "drill",
-      "id": "op3",
-      "name": "Screw holes",
-      "enabled": true,
-      "targets": [ "i5", "i6", "i7", "i8" ],
-      "tool": "t2",
-      "cycle": { "peck": { "peck_depth_mm": 4.0, "retract": "full" } },
-      "dwell_s": 0.0,
-      "depth_mm": 12.0,
-      "retract_mm": 1.0,
-      "through_cut_allowance_mm": 0.2,
-      "safe_z_mm": 15.0,
-      "allow_tool_wider_than_hole": true
-    },
-    {
       "kind": "profile",
       "id": "op4",
       "name": "Cut out",
@@ -150,20 +163,6 @@
       "corner_relief": "none",
       "last_pass": null,
       "start": "auto"
-    },
-    {
-      "kind": "engrave",
-      "id": "op5",
-      "name": "Border and squiggle",
-      "enabled": true,
-      "targets": [ "i9", "i10" ],
-      "tool": "t3",
-      "depth_mm": 1.0,
-      "step_down_mm": 1.0,
-      "alternate_direction": false,
-      "machining_order": "full_depth_first",
-      "through_cut_allowance_mm": 0.0,
-      "safe_z_mm": 15.0
     }
   ],
   "tabs": [],

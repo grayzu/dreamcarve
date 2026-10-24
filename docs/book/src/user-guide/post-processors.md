@@ -492,9 +492,9 @@ G0 Z15.000
 Z20.000
 G53 G0 Z-5.000
 M5
-( Operation 5: Border and squiggle )
-( Tool 2: 1/8 end mill )
-T2 M6 (MSG, Fit T2 1/8 end mill. Set Z zero, then resume.)
+( Operation 3: Panel )
+( Tool 1: 1/4 end mill )
+T1 M6 (MSG, Fit T1 1/4 end mill. Set Z zero, then resume.)
 ```
 
 and its end:

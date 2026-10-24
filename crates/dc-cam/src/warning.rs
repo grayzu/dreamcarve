@@ -1375,7 +1375,7 @@ impl fmt::Display for Warning {
                 ..
             } => write!(
                 f,
-                "the {} mm hole {shape} is narrower than the {} mm tool, so it is not drilled: a Drill never moves sideways, so the hole would come out the tool's size; use a smaller tool, or set allow_tool_wider_than_hole to drill it at that size",
+                "the {} mm hole {shape} is narrower than the {} mm tool, so it is not drilled: a Drill never moves sideways, so the hole would come out the tool's size; cut it to size with a Bore and an end mill smaller than the hole (a Bore cuts holes bigger than its bit), drill it with a smaller drill, or set allow_tool_wider_than_hole to drill it at the tool's size",
                 diameter(*hole_mm),
                 diameter(*tool_mm)
             ),

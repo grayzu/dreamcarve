@@ -8,9 +8,9 @@ plywood sold as 12 mm, with five operations:
   left standing in it;
 - a 30 mm **square recess**, 6 mm deep, with square corners so a square
   block fits it;
-- four **screw holes**, drilled through;
-- the **outline**, cut out with four tabs;
-- an engraved **border** and **squiggle**, with a smaller bit.
+- four 5 mm **screw holes**, bored through with a smaller bit;
+- an engraved **border** and **squiggle**, with the smaller bit too;
+- the **outline**, cut out with four tabs.
 
 You will take two tools from a tool library, paste the operations into
 the project, and run two programs, one per bit. If you have not cut
@@ -213,7 +213,7 @@ stock's `thickness_mm` line to:
 "thickness_mm": 11.8,
 ```
 
-The Drill and the cut-out in the next step go 12 mm deep: 11.8 mm plus
+The Bore and the cut-out in the next step go 12 mm deep: 11.8 mm plus
 0.2 mm into the spoilboard, so the holes and the outline go right
 through. If your measurement differs, set both `depth_mm` values of 12.0
 to it plus 0.2 after you paste them.
@@ -227,6 +227,34 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
 <!-- doc-test: paste plaque.dcv operations -->
 ```json
 "operations": [
+  {
+    "kind": "bore",
+    "id": "op3",
+    "name": "Screw holes",
+    "enabled": true,
+    "targets": [ "i5", "i6", "i7", "i8" ],
+    "tool": "t3",
+    "depth_mm": 12.0,
+    "pitch_mm": null,
+    "direction": "climb",
+    "allowance_mm": 0.0,
+    "through_cut_allowance_mm": 0.2,
+    "safe_z_mm": 15.0
+  },
+  {
+    "kind": "engrave",
+    "id": "op5",
+    "name": "Border and squiggle",
+    "enabled": true,
+    "targets": [ "i9", "i10" ],
+    "tool": "t3",
+    "depth_mm": 1.0,
+    "step_down_mm": 1.0,
+    "alternate_direction": false,
+    "machining_order": "full_depth_first",
+    "through_cut_allowance_mm": 0.0,
+    "safe_z_mm": 15.0
+  },
   {
     "kind": "pocket",
     "id": "op1",
@@ -270,21 +298,6 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
     "safe_z_mm": 15.0
   },
   {
-    "kind": "drill",
-    "id": "op3",
-    "name": "Screw holes",
-    "enabled": true,
-    "targets": [ "i5", "i6", "i7", "i8" ],
-    "tool": "t2",
-    "cycle": { "peck": { "peck_depth_mm": 4.0, "retract": "full" } },
-    "dwell_s": 0.0,
-    "depth_mm": 12.0,
-    "retract_mm": 1.0,
-    "through_cut_allowance_mm": 0.2,
-    "safe_z_mm": 15.0,
-    "allow_tool_wider_than_hole": true
-  },
-  {
     "kind": "profile",
     "id": "op4",
     "name": "Cut out",
@@ -311,20 +324,6 @@ In `plaque.dcv`, select the whole `"operations"` block: from the line
     "corner_relief": "none",
     "last_pass": null,
     "start": "auto"
-  },
-  {
-    "kind": "engrave",
-    "id": "op5",
-    "name": "Border and squiggle",
-    "enabled": true,
-    "targets": [ "i9", "i10" ],
-    "tool": "t3",
-    "depth_mm": 1.0,
-    "step_down_mm": 1.0,
-    "alternate_direction": false,
-    "machining_order": "full_depth_first",
-    "through_cut_allowance_mm": 0.0,
-    "safe_z_mm": 15.0
   }
 ],
 ```
@@ -334,20 +333,22 @@ matter here:
 
 | Operation | What it cuts | Settings worth knowing |
 | --- | --- | --- |
+| `op3` Bore "Screw holes" | Cuts the four circles through, 5 mm across, as drawn | The 3.175 mm bit (`t3`) spirals down inside each circle to 12 mm deep, 2 mm a turn (`pitch_mm: null` takes the bit's `step_down_mm`), then goes once round at the bottom so the hole is round and 5 mm. A Drill only plunges, so its hole is always the bit's size; a Bore cuts a hole bigger than the bit to the size you drew. See [Bore operation](../user-guide/bore.md). |
+| `op5` Engrave "Border and squiggle" | Grooves along the border and the squiggle, 1 mm deep | The bit's centre follows the line, open or closed, in one pass. It uses `t3`, the 3.175 mm bit, as the Bore does. See [Engrave operation](../user-guide/engrave.md). |
 | `op1` Pocket "Panel" | Clears the panel 4 mm deep, round the circle | `targets` names the panel and the circle: a shape inside a Pocket's shape is an island and is left standing. `raster` at 0° clears in straight lines along X; the wall pass (`"last"`) then runs round the wall and the island to clean up the line ends. The bit spirals down (`helix`) instead of plunging. See [Pocket operation](../user-guide/pocket.md). |
 | `op2` Pocket "Square recess" | Clears the square 6 mm deep | `offset` clears in rings stepping in from the wall. `dogbone` notches each corner so a square block fits; a round bit alone leaves a 3.175 mm radius there. A 15° ramp takes the bit down. |
-| `op3` Drill "Screw holes" | Drills the four circles through | 12 mm deep in pecks of 4 mm, lifting fully out of the hole between pecks (`retract: "full"`) to clear the chips. Each hole starts at the retract height, 1 mm above the plywood. The circles are drawn 5 mm, smaller than the 6.35 mm bit, so `allow_tool_wider_than_hole` says to drill them at the bit's size anyway; without it they would be skipped. See [Drill operation](../user-guide/drill.md). |
 | `op4` Profile "Cut out" | Cuts the plaque out, outside its outline | Through the plywood into the spoilboard, held by four tabs. A 15° ramp in the waste takes the bit down, and a 3 mm arc (`lead`) brings it onto the outline and off it, so the edge has no mark where each pass started. See [Profile operation](../user-guide/profile.md). |
-| `op5` Engrave "Border and squiggle" | Grooves along the border and the squiggle, 1 mm deep | The bit's centre follows the line, open or closed, in one pass. It uses `t3`, the 3.175 mm bit. See [Engrave operation](../user-guide/engrave.md). |
 
 Every operation uses safe Z 15 mm: the bit travels 15 mm above the
-plywood between cuts. The first four use `t2`, the last `t3`.
+plywood between cuts. The first two use `t3`, the 3.175 mm bit; the other
+three `t2`, the 6.35 mm bit.
 
 **The order matters.** Export cuts the operations in the order they are
-listed, never regrouped. The pockets and holes come before the outline:
-they are cut while the plaque is still part of the board. The Engrave
-comes last because it is the only cut with the small bit, so you change
-bits once. See [Machining order and cut
+listed, never regrouped, so they are listed out of id order on purpose.
+The two cuts with the small bit come first, then the three with the
+large one, so you change bits once. The holes and the pockets come before
+the outline, which is last: they are cut while the plaque is still part
+of the board. See [Machining order and cut
 order](../user-guide/machining-order.md).
 
 ## 6. Check the project
@@ -359,33 +360,21 @@ dreamcarve check plaque.dcv
 
 ```text
 plaque.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-4` (instance `i8`, profile 0), so the hole comes out the tool's size
-Program 1 (T1):
+Program 1 (T2):
+  Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -12.000..15.000
+    The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 46 s (cutting 43 s, dwells 3 s); 737 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Program 2 (T1):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
-  Estimated time: 3 min 1 s (cutting 2 min 58 s, dwells 3 s); 1.2 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Program 2 (T2):
-  Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
-    The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
-  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 3 min 34 s (cutting 3 min 28 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-plaque.dcv: 0 error(s), 5 warning(s)
+  Estimated time: 2 min 54 s (cutting 2 min 51 s, dwells 3 s); 529 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 39 s (cutting 3 min 33 s, dwells 6 s); 1.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+plaque.dcv: 0 error(s), 1 warning(s)
 ```
 
-No errors: the project exports. Each warning names what it is about:
-
-- `unused_tool`: the "Set me" tool `init` made is not used by any
-  operation. It does no harm; delete its block from `"tools"` if you like
-  (and the warning goes away).
-- `drill_tool_wider_than_hole`: the drawing's circles are 5 mm across and
-  the bit is 6.35 mm, so each hole comes out 6.35 mm: clearance for an M5
-  screw. A Drill never moves sideways, so a hole is always the bit's size.
-  It drills them only because `op3` sets `allow_tool_wider_than_hole`;
-  without it each circle would be skipped with `drill_hole_too_small`
-  ([Drill: holes smaller than the bit](../user-guide/drill.md#holes-smaller-than-the-bit)).
+No errors: the project exports. The one warning, `unused_tool`, says the
+"Set me" tool `init` made is not used by any operation. It does no harm;
+delete its block from `"tools"` if you like (and the warning goes away).
 
 `check` gives the extents of each program separately, because you fit a
 different bit for each.
@@ -399,52 +388,48 @@ dreamcarve export plaque.dcv
 
 ```text
 plaque.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-1` (instance `i5`, profile 0), so the hole comes out the tool's size
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-2` (instance `i6`, profile 0), so the hole comes out the tool's size
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-3` (instance `i7`, profile 0), so the hole comes out the tool's size
-warning: drill_tool_wider_than_hole: operation `op3`: the 6.35 mm tool is wider than the 5 mm hole `holes-4` (instance `i8`, profile 0), so the hole comes out the tool's size
 Wrote 2 programs; run them in this order:
-  1. plaque-1-T1.nc  Before you start: fit T1 1/4 end mill and set work zero (X, Y and Z) with it.
-  2. plaque-2-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
+  1. plaque-1-T2.nc  Before you start: fit T2 1/8 end mill and set work zero (X, Y and Z) with it.
+  2. plaque-2-T1.nc  Before you start: fit T1 1/4 end mill and set Z zero with it. Keep X and Y zero.
 This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
 If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.
 Post-processor grblhal.
+  op3 `Screw holes`: tool `t3` (1/8 end mill), 4 target(s), 12.000 mm deep
+  op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1.000 mm deep
   op1 `Panel`: tool `t2` (1/4 end mill), 2 target(s), 4.000 mm deep
   op2 `Square recess`: tool `t2` (1/4 end mill), 1 target(s), 6.000 mm deep
-  op3 `Screw holes`: tool `t2` (1/4 end mill), 4 target(s), 12.000 mm deep
   op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12.000 mm deep
-  op5 `Border and squiggle`: tool `t3` (1/8 end mill), 2 target(s), 1.000 mm deep
-plaque-1-T1.nc (502 lines):
+plaque-1-T2.nc (1334 lines):
+  Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -12.000..15.000
+    The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
+  Estimated time: 46 s (cutting 43 s, dwells 3 s); 737 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+plaque-2-T1.nc (448 lines):
   Extents (machine coordinates, mm, tool centre): X 6.825..163.175, Y 6.825..116.175, Z -12.000..15.000
     The cutter's edge reaches X 3.650..166.350, Y 3.650..119.350; keep clamps outside that.
-  Estimated time: 3 min 1 s (cutting 2 min 58 s, dwells 3 s); 1.2 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-plaque-2-T2.nc (52 lines):
-  Extents (machine coordinates, mm, tool centre): X 15.000..155.000, Y 15.000..105.000, Z -1.000..15.000
-    The cutter's edge reaches X 13.412..156.588, Y 13.412..106.588; keep clamps outside that.
-  Estimated time: 34 s (cutting 31 s, dwells 3 s); 179 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 3 min 34 s (cutting 3 min 28 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 2 min 54 s (cutting 2 min 51 s, dwells 3 s); 529 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 39 s (cutting 3 min 33 s, dwells 6 s); 1.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 ```
 
 The project uses two bits, so export writes two programs, one per bit,
-numbered in the order to run them: `plaque-1-T1.nc` with the 6.35 mm bit
-(the two pockets, the holes and the cut-out), then `plaque-2-T2.nc` with
-the 3.175 mm bit (the engraving). `T1` and `T2` are the tools' numbers.
-Each program's estimated time, and the total, leave out the rapids and
-the bit change between programs; see
+numbered in the order to run them: `plaque-1-T2.nc` with the 3.175 mm
+bit (the holes and the engraving), then `plaque-2-T1.nc` with the
+6.35 mm bit (the two pockets and the cut-out). `T1` and `T2` are the
+tools' numbers. Each program's estimated time, and the total, leave out
+the rapids and the bit change between programs; see
 [Estimated run time](../user-guide/configuration.md#estimated-run-time).
 
 The **Before you start** line of each program says what to do before you
 press start:
 
-- **Program 1:** "fit T1 1/4 end mill and set work zero (X, Y and Z) with
+- **Program 1:** "fit T2 1/8 end mill and set work zero (X, Y and Z) with
   it". Set X and Y at the front-left corner of the stock, and Z on the
   top of the plywood, with that bit in the collet. The program does not
   stop for this; it starts cutting from the zero you set.
-- **Program 2:** "fit T2 1/8 end mill and set Z zero with it. Keep X and
+- **Program 2:** "fit T1 1/4 end mill and set Z zero with it. Keep X and
   Y zero." The second bit is a different length, so Z must be set again,
   on the top of the plywood, with the new bit. X and Y stay where they
-  were: moving them would put the engraving in the wrong place. Do not
-  set Z on the panel or the recess; they are lower than the top.
+  were: moving them would put the pockets and the outline in the wrong
+  place. Set Z on the top away from the holes and the engraving.
 
 On grblHAL you can have one program instead, which stops at `M6` for you
 to change the bit:
@@ -455,12 +440,68 @@ which work with any sender.
 
 ## 8. Read the programs
 
-`plaque-1-T1.nc` starts like this (your date will differ):
+`plaque-1-T2.nc` starts like this (your date will differ):
 
-<!-- doc-test: excerpt plaque-1-T1.nc -->
+<!-- doc-test: excerpt plaque-1-T2.nc -->
 ```text
 ( Project: plaque )
-( Generated by DreamCarve on 2026-10-21 )
+( Generated by DreamCarve on 2026-10-24 )
+G90
+G17
+G94
+G80
+G40
+G50
+G21
+G54
+( Operation 1: Screw holes )
+( Tool 2: 1/8 end mill )
+G0 Z15.000
+M3 S18000
+G4 P3.000
+X27.913 Y27.000
+Z1.000
+G1 X27.905 Y27.119 Z0.958 F903.197
+X27.881 Y27.236 Z0.917 F910.255
+X27.843 Y27.349 Z0.875 F902.858
+X27.790 Y27.456 Z0.833 F904.128
+```
+
+The first lines set up the controller and start the spindle, as in the
+coaster's program. The first hole is centred at (27, 27). The bit rapids
+at safe Z to a point 0.913 mm east of the centre, on the helix, then
+straight down to 1 mm above the plywood (`Z1.000`), where the helix
+begins: each line goes a little further round a circle 0.9125 mm from
+the centre (2.5 mm, the hole's radius, less 1.5875 mm, the bit's) and a
+little lower, 2 mm a turn. A ramp or helix always starts 1 mm above the
+wood, so the bit never plunges into it and does not spiral down through
+air. The feed is a little under 1000 mm/min, slowed so the bit goes down
+no faster than its 300 mm/min plunge rate.
+
+At the bottom of the hole:
+
+<!-- doc-test: contains plaque-1-T2.nc -->
+```text
+X26.087 Y27.000 Z-12.000 F903.197
+G3 X27.000 Y26.087 I0.913 J0.000 F1000.000
+X27.913 Y27.000 I0.000 J0.913
+X27.000 Y27.913 I-0.913 J0.000
+X26.087 Y27.000 I0.000 J-0.913
+G1 X27.000
+G0 Z15.000
+```
+
+The helix ends at Z −12, 0.2 mm into the spoilboard. The bit then goes
+once round at that depth, in four quarter arcs (`G3`, counter-clockwise),
+so the wall is round and the hole 5 mm across, moves to the centre
+(`G1 X27.000`), off the wall, and rises to safe Z for the next hole.
+
+`plaque-2-T1.nc` starts with the panel:
+
+<!-- doc-test: excerpt plaque-2-T1.nc -->
+```text
+( Project: plaque )
+( Generated by DreamCarve on 2026-10-24 )
 G90
 G17
 G94
@@ -479,86 +520,15 @@ Z1.000
 G1 X41.425 Y97.950 Z0.912 F1500.000
 X41.101 Y97.908 Z0.825
 X40.784 Y97.825 Z0.737
-X40.481 Y97.702 Z0.649
-X40.196 Y97.541 Z0.561
-X39.934 Y97.345 Z0.474
-X39.700 Y97.117 Z0.386
-X39.497 Y96.861 Z0.298
-X39.328 Y96.580 Z0.211
-X39.197 Y96.281 Z0.123
-```
-
-The first lines set up the controller and start the spindle, as in the
-coaster's program. The bit rapids above the panel's helix at safe Z, then
-straight down to 1 mm above the plywood (`Z1.000`), where the helix
-begins: each line goes a little further round a 5.08 mm circle (0.8 of
-the bit's diameter) and a little lower, 15° down from the horizontal, at
-the feed rate. A ramp or helix always starts 1 mm above the wood, or 1 mm
-above the floor the pass before cut, so the bit does not spiral down
-through air. The bit comes down three times in the panel, once on each
-side of the circle and once for the ring round the circle; it follows
-the last line into the ring round the panel without lifting.
-
-The holes are drilled like this, the first of the four:
-
-<!-- doc-test: contains plaque-1-T1.nc -->
-```text
-( Operation 3: Screw holes )
-( Tool 1: 1/4 end mill )
-X27.000 Y27.000
-Z1.000
-G1 Z-3.000 F500.000
-G0 Z1.000
-Z-2.500
-G1 Z-7.000
-G0 Z1.000
-Z-6.500
-G1 Z-11.000
-G0 Z1.000
-Z-10.500
-G1 Z-12.000
-G0 Z15.000
-```
-
-The bit rapids to the retract height, 1 mm above the plywood, and drills
-the first peck at the plunge rate, 500 mm/min: 4 mm below the retract
-height, 3 mm into the wood. It lifts back to the retract height to clear
-the chips, drops quickly to 0.5 mm above where it stopped, and drills the
-next peck, and so on to 12 mm below the top: 0.2 mm into the spoilboard.
-Then it rises to safe Z for the next hole.
-
-`plaque-2-T2.nc` starts like this:
-
-<!-- doc-test: excerpt plaque-2-T2.nc -->
-```text
-( Project: plaque )
-( Generated by DreamCarve on 2026-10-21 )
-G90
-G17
-G94
-G80
-G40
-G50
-G21
-G54
-( Operation 1: Border and squiggle )
-( Tool 2: 1/8 end mill )
-G0 Z15.000
-M3 S18000
-G4 P3.000
-X20.000 Y105.000
-Z1.000
-G1 Z-1.000 F300.000
-X150.000 F1000.000
-G2 X155.000 Y100.000 I0.000 J-5.000
-G1 Y20.000
-G2 X150.000 Y15.000 I-5.000 J0.000
 ```
 
 It has the same header and starts the spindle again: a program never
-assumes another ran before it. The engraving plunges straight down, so
-the bit rapids to 1 mm above the plywood (`Z1.000`) and plunges at the
-plunge rate only from there, as it does before a ramp or helix.
+assumes another ran before it. The panel's helix is the same kind of
+descent, round a 5.08 mm circle (0.8 of the bit's diameter) at 15° from
+the horizontal, before the bit clears the panel. The bit comes down three
+times in the panel, once on each side of the circle and once for the
+ring round the circle; it follows the last line into the ring round the
+panel without lifting.
 
 ## 9. Before you cut
 
@@ -583,20 +553,21 @@ this plaque:
 
 ## 10. Cut
 
-1. Fit the 6.35 mm bit and set work zero with it: X and Y at the
+1. Fit the 3.175 mm bit and set work zero with it: X and Y at the
    front-left corner of the stock, Z on the top of the plywood.
-2. Load `plaque-1-T1.nc` and start it. It clears the panel and the
-   square, drills the four holes, and cuts the outline. It does not stop
-   until the end. Stay at the machine with the stop button in reach.
-3. When it ends, fit the 3.175 mm bit. Set Z zero with it on the top of
-   the plywood (not on the panel). Leave X and Y alone.
-4. Load `plaque-2-T2.nc` and start it.
+2. Load `plaque-1-T2.nc` and start it. It bores the four holes and
+   engraves the border and the squiggle. It does not stop until the end.
+   Stay at the machine with the stop button in reach.
+3. When it ends, fit the 6.35 mm bit. Set Z zero with it on the top of
+   the plywood (not in a hole or a groove). Leave X and Y alone.
+4. Load `plaque-2-T1.nc` and start it. It clears the panel and the
+   square, and cuts the outline.
 5. When it ends, cut the four tabs with a knife or a flush-cut saw, and
    sand the stubs.
 
 The plaque should release after the tabs are cut; the panel floor should
 be flat with no ridge round the island; a 30 mm square block should fit
-the square recess; the holes should take an M5 screw; the engraved line
+the square recess; the holes should measure 5 mm across; the engraved line
 should be continuous; and the outside edge should show no mark where the
 passes started.
 

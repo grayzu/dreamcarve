@@ -21,6 +21,7 @@
 - [Pocket operation](user-guide/pocket.md)
 - [Engrave operation](user-guide/engrave.md)
 - [Drill operation](user-guide/drill.md)
+- [Bore operation](user-guide/bore.md)
 - [Machining order and cut order](user-guide/machining-order.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)

@@ -167,7 +167,7 @@ codes. A `dreamcarve check` command that reports warnings without exporting.
 **Exit:** parity with PureCutCNC's pocket/drill/carving test suites for the
 ported behaviours; phase 2 test part cut; `v0.2.0`.
 
-**Real cut:** yes (a pocketed, drilled, engraved plaque).
+**Real cut:** yes (a pocketed, bored, engraved plaque).
 
 **Read first:** `src/engine/toolpaths/pocket.ts`, `pocketPatterns.ts`,
 `drilling.ts`, `carving.ts`, `entry.ts`, `regions.ts`, `regionDomain.ts`,

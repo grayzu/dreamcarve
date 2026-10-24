@@ -688,8 +688,23 @@ impl Material {
                 },
                 None => Self::Unresolved,
             },
-            // Format 18: not built yet.
-            Operation::Bore(_) => Self::Unresolved,
+            Operation::Bore(bore) => {
+                let allowance_mm = bore.allowance_mm;
+                if !(allowance_mm.is_finite() && allowance_mm >= 0.0) {
+                    return Self::Unresolved;
+                }
+                match placed(project, &bore.targets) {
+                    Some(paths) => Self::Bore {
+                        holes: paths
+                            .iter()
+                            .filter(|p| p.is_closed())
+                            .filter_map(|p| as_circle(p, project.flatten_tolerance_mm))
+                            .collect(),
+                        allowance_mm,
+                    },
+                    None => Self::Unresolved,
+                }
+            }
             Operation::Engrave(engrave) => match placed(project, &engrave.targets) {
                 Some(paths) => Self::OnLine {
                     edges: paths.iter().flat_map(edges_of).collect(),
