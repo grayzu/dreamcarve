@@ -171,12 +171,14 @@ pub enum Difference {
     /// deeper pass), each pass as a set; DreamCarve's walk within a pass is
     /// checked against D5.
     PassOrderWithinLayer,
-    /// A Profile's relief notch whose descend point is where the lap ended
-    /// starts from there (#240): DreamCarve moves straight up, at the
+    /// A Profile's relief notches are cut from the lap (#240; inline on
+    /// every lap since the maintainer decision of 2026-10-24, #373): where
+    /// the lap passes a descend point, DreamCarve moves straight up, at the
     /// plunge rate, in the column the lap just cut, to the notch's first
-    /// level, where PureCutCNC retracts to safe Z and plunges. DreamCarve's
-    /// lifts are not compared with PureCutCNC's (it has none); each must
-    /// run at the tool's plunge rate.
+    /// level, where PureCutCNC cuts its notches after the laps, retracting
+    /// to safe Z and plunging at each. DreamCarve's lifts are not compared
+    /// with PureCutCNC's (it has none); each must run at the tool's plunge
+    /// rate.
     NotchRisesFromLapEnd,
 }
 

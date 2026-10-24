@@ -412,8 +412,9 @@ fn profile_lead() {
 /// Inside Profile of a 40 × 30 mm rectangle at (55, 35), 6 mm deep in
 /// 3 mm passes, with dogbones: four notches along the corner bisectors,
 /// cut out and back at the tool's 4 mm step-down levels, Z −4 and −6.
-/// The notch at the lap's start and end rises from the lap at Z −6 to
-/// Z −4 rather than retracting ([`Difference::NotchRisesFromLapEnd`]).
+/// DreamCarve cuts each from the Z −6 lap as it passes the corner, rising
+/// in the lap's column to Z −4 rather than retracting (#373,
+/// [`Difference::NotchRisesFromLapEnd`]).
 #[test]
 fn profile_dogbone() {
     harness::check(&case(

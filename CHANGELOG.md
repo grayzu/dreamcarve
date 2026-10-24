@@ -52,7 +52,11 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   that would cut into the part or another shape is shrunk (`lead_shrunk`) or
   dropped (`lead_dropped`).
 - **Corner relief** on Pocket and Profile: dogbone or T-bone notches in the
-  inside corners a round bit cannot reach, so square parts fit.
+  inside corners a round bit cannot reach, so square parts fit. The notches
+  are cut as part of the wall pass: on every pass, the Pocket's wall ring or
+  the Profile's lap goes out to each corner and back as it turns it, with no
+  lift, stepping down at the tool's step-down. A Pocket with an allowance
+  still cuts its notches in a separate pass after the pocket ([#373]).
 - **On line Profile of open paths.** An open path can now be cut On line, with
   ramps and tabs, as VCarve's Profile "On" does ([#175]). Inside and Outside still
   skip open paths.
@@ -683,3 +687,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#356]: https://github.com/grayzu/dreamcarve/issues/356
 [#362]: https://github.com/grayzu/dreamcarve/issues/362
 [#366]: https://github.com/grayzu/dreamcarve/issues/366
+[#373]: https://github.com/grayzu/dreamcarve/issues/373

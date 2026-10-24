@@ -145,8 +145,11 @@ pub fn ring_is_ccw(wall: RingWall, direction: CutDirection) -> bool {
 /// With `op.corner_relief` a dogbone or T-bone notch is cut in every
 /// corner the round tool cannot reach, the pocket's corners and the
 /// concave corners of its islands, sized to the wall the allowance
-/// leaves, after the main passes and stepping down at the tool's
-/// step-down (the `relief` module); S9 then allows each notch its corner's lobe.
+/// leaves, stepping down at the tool's step-down (the `relief` module):
+/// from the wall or island ring of each pass as it turns the corner,
+/// with no lift, or with an allowance (or for a corner some pass has no
+/// ring for) in a separate pass after the main passes; S9 then allows
+/// each notch its corner's lobe.
 /// A tool with no step-down skips it ([`Warning::ReliefSkipped`]);
 /// corners it cannot relieve warn [`Warning::ReliefCornerTooTight`]
 /// or [`Warning::ReliefCornerNotCut`].
@@ -461,6 +464,20 @@ pub fn generate_pocket(
         }
     }
     warnings.extend(entry_warnings.into_warnings(&op.id));
+    // Design step 10 (maintainer decision 2026-10-24): each corner's
+    // notch is cut from the wall or island ring of every pass that turns
+    // it; an allowance leaves no final wall, and a corner some pass has
+    // no ring for is left for the separate pass after the main passes.
+    let (inline, fallback) = match &relief {
+        Some(relief) => relief.inline_pocket(
+            &sites,
+            &pass_z,
+            op.allowance_mm <= 0.0,
+            &mut blocks,
+            &mut warnings,
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
     let containment = nested_pockets(&regions, &shapes);
     let input = SequenceInput {
         blocks,
@@ -476,10 +493,12 @@ pub fn generate_pocket(
         cut_before: &[],
     };
     let mut toolpath = sequence(&input)?;
-    // Design step 10: the relief pass after all the passes; S9 allows each
-    // notch the lobe its corner may lose.
+    // Design step 10: the separate relief pass after all the passes, for
+    // the corners not cut inline; S9 allows each notch the lobe its corner
+    // may lose.
     if let Some(relief) = &relief {
-        let cut = relief.append(&sites, &mut toolpath, &mut warnings)?;
+        let mut cut = inline;
+        cut.extend(relief.cut(fallback, &mut toolpath, &mut warnings)?);
         let lobes: Vec<Region> = cut
             .iter()
             .flat_map(|c| relief::lobe(c, radius_mm, tolerance_mm))

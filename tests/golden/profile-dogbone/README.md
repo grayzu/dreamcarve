@@ -18,15 +18,16 @@ Captured from PureCutCNC commit `2ebab10e5e17c48281ff96805d5e936af135cb58` with
   3 mm passes, climb, `corner_relief: dogbone`. In the `.camj`: a
   `subtract` rectangle from Z 12 to 6, `edge_route_inside`,
   `cornerRelief: dogbone`.
-- Both programs cut the four notches after the laps, along each corner's
-  bisector to one tool radius past the corner (#181), at the tool's own
-  step-down levels (4 mm: Z −4 and −6), not the operation's.
-- Intentional differences: the corners are visited in a different order
-  (DreamCarve nearest-first from the last exit), which a set comparison
-  does not see. The notch at the lap's start and end is reached from the
-  lap (#240): DreamCarve moves up from Z −6 to Z −4 at the plunge rate in
-  the column the lap cut, where PureCutCNC retracts to safe Z and plunges
-  (`NotchRisesFromLapEnd`).
+- Both programs cut the four notches along each corner's bisector to one
+  tool radius past the corner (#181), at the tool's own step-down levels
+  (4 mm: Z −4 and −6), not the operation's.
+- Intentional differences: PureCutCNC cuts the notches after the laps.
+  DreamCarve cuts them inline (#373, maintainer decision 2026-10-24): the
+  Z −6 lap, as it passes each corner, moves up from Z −6 to Z −4 at the
+  plunge rate in the column it cut, cuts the notch out and back at Z −4
+  and Z −6, and carries on, where PureCutCNC retracts to safe Z and
+  plunges at each corner (`NotchRisesFromLapEnd`). The order of the
+  notches differs too, which a set comparison does not see.
 
 Files: `program.nc` is the emitted G-code; `toolpath.json` is the
 key-sorted toolpath per operation in PureCutCNC's internal (Y-down) frame.
