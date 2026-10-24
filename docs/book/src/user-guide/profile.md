@@ -503,14 +503,18 @@ Profile has no waste side to put a notch in: it skips the relief with
 `relief_skipped`. So does a `"left"` or `"right"` Profile: an open path
 has no inside or outside corner.
 
-Each notch plunges where the outline's path turned that corner and steps
-down by the **tool's** `step_down_mm` to the operation's depth. The
-notches are cut among the outline's own passes, nearest corner first: a
-notch level comes right after the pass that cut down to it, so the bit
-plunges into the slot that pass opened. When that pass ended on the
-corner's plunge point, as it often does on a rectangle, the bit goes
-straight on into the notch from where it is, up or down in the slot it
-has just cut, without lifting to safe Z first. A corner under a [tab](tabs.md)
+The notches are part of the laps. On every pass, as the lap turns a
+corner, the bit goes out to the corner and back and carries on along the
+lap, with no lift. Each notch steps down by the **tool's** `step_down_mm`
+to the operation's depth: a lap that is deeper than the last notch level
+by more than that cuts the levels in between at the corner, stepping
+down in the slot it has just cut. With a [last pass](#last-pass) the
+notches are cut from the last pass's lap only, every level, and never
+from the passes before it, which run the allowance off the wall.
+(Changed before 0.2.0: each notch level was cut after its pass's lap,
+lifting to safe Z and plunging at each corner.) In the rare case that a
+lap does not pass a corner at its depth, that pass's notch is cut right
+after the lap as before. A corner under a [tab](tabs.md)
 is skipped with `relief_corner_not_cut`: the path rises over the tab
 there, so the notch would plunge into uncut material. Edges shorter than
 the bit is wide skip their corner with `relief_corner_too_tight`, and a
@@ -521,14 +525,16 @@ past its wall, so in a hole whose part is thinner than that beyond the
 wall it would cut through the part.
 
 On a through cut the last pass frees the part (or the slug of a hole),
-so its notch levels are cut from inside that last lap instead, never
-after it. When the lap reaches a corner at full depth, the bit rises in
-the slot it has just cut to the first of those levels, cuts the notch out
-and back, steps down in the same slot to the next level, and carries on
-along the lap. It never plunges into uncut material, so a ramp or helix
-[entry](#entry) is honoured, and the rest of the lap still holds the
-piece while each notch is cut, so tabs are not needed for the notches.
-Tabs still hold the part through the last pass itself, as without relief.
+and its notches are cut from inside that last lap like every other
+pass's, never after it. When the lap reaches a corner at full depth, the
+bit rises in the slot it has just cut to the first of that pass's notch
+levels, cuts the notch out and back, steps down in the same slot to the
+next level, and carries on along the lap. It never plunges into uncut
+material, so a ramp or helix [entry](#entry) or a [lead](#leads) is
+honoured: the notch is cut on the lap itself, after the entry. The rest
+of the lap still holds the piece while each notch is cut, so tabs are
+not needed for the notches. Tabs still hold the part through the last
+pass itself, as without relief.
 
 An inside Profile of a 40 × 30 mm rectangle with a 6.35 mm bit and
 `"dogbone"` gets four notches, each ending 3.175 mm from its corner along

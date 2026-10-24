@@ -6054,7 +6054,8 @@ fn assert_corpus_programs(dir: &Path, name: &str, case: &str) {
 /// `tabs place` has written them as placed tabs and saved the file. The
 /// expected programs were exported by the build before #105, with the
 /// feeds of six of them since rounded down so no cut falls faster than the
-/// plunge rate as written (#325).
+/// plunge rate as written (#325), and the three with corner relief since
+/// re-exported with the notches cut inline (#373).
 #[test]
 fn version_9_tab_settings_export_byte_identical_programs() {
     let dir = work_dir("version_9_tab_settings_export_byte_identical_programs");
@@ -6108,7 +6109,8 @@ fn version_9_tab_settings_export_byte_identical_programs() {
 /// sample fixture) migrates to format 13 with `last_pass: null` on every
 /// Profile and exports byte for byte the programs the build before #284
 /// wrote, committed under `tests/expected/last-pass-migration/`, with the
-/// feeds #325 rounds down.
+/// feeds #325 rounds down and the notches #373 cuts inline in the four
+/// with corner relief.
 #[test]
 fn version_12_projects_export_byte_identical_programs() {
     let dir = work_dir("version_12_projects_export_byte_identical_programs");

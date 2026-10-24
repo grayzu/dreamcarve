@@ -342,8 +342,8 @@ the notch, under a tenth of the length a full 3.175 mm Pocket would cut.
 
 A round bit leaves a radius in every inside corner of a pocket, so a
 square part, a hinge leaf or the tenon of a box joint does not sit flat in
-it. `corner_relief` cuts a short notch into each such corner after the
-pocket is cleared, so the square part fits. The names are VCarve's ("Create
+it. `corner_relief` cuts a short notch into each such corner as the wall
+pass goes round it, so the square part fits. The names are VCarve's ("Create
 Fillets": Dog-Bone and T-Bone):
 
 - `"dogbone"`: the notch runs along the corner's bisector, the line that
@@ -369,21 +369,32 @@ is skipped with `relief_corner_too_tight`. So is a corner whose notch
 would come nearer another wall, such as an island's, than the bit's
 radius, since it would cut into that wall too.
 
-**How it is cut.** After all the pocket's passes, the bit visits the
-corners, nearest first from where it finished. At each it plunges where
-the wall pass turned the corner (material the pocket already cut to full
-depth), cuts out to the corner and back, and steps down by the **tool's**
-`step_down_mm` until it reaches the pocket's depth; then it lifts to safe Z
-and moves to the next corner. The operation's own `step_down_mm` is not
-used. A tool with no `step_down_mm` skips the relief with `relief_skipped`
+**How it is cut.** The notches are part of the wall pass. On every pass,
+as the wall ring (or an island's ring) turns a corner, the bit goes out
+to the corner and back and carries on round the ring, with no lift and
+no extra plunge. The notch steps down by the **tool's** `step_down_mm`,
+not the operation's. When the operation steps deeper than its tool, the
+ring cuts the levels in between at that corner, stepping down in the slot
+it has just cut, so a notch never takes more than the tool's step-down
+at once. (Changed before 0.2.0: the bit used to finish the whole pocket,
+then visit each corner, plunging and lifting at each one like a drill.)
+A tool with no `step_down_mm` skips the relief with `relief_skipped`
 (`check` warns `relief_needs_step_down` first).
+
+Two cases still cut the notches as a separate pass after the pocket,
+nearest corner first, lifting between corners:
+
+- A Pocket with an `allowance_mm` leaves its walls for a later finishing
+  cut, so its rings are not the final wall. Its notches are sized to the
+  wall the pocket leaves, the allowance in from the drawn one.
+- A [rest machining](#rest-machining) Pocket whose rings miss a corner on
+  some pass cuts that corner after the pocket instead.
 
 A corner whose wall the pocket did not cut to full depth is skipped with
 `relief_corner_not_cut`, rather than plunged into: with `wall_pass:
-"none"` every corner is. With an allowance the notches are sized to the
-wall the pocket leaves, the allowance in from the drawn one; a [rest
-machining](#rest-machining) Pocket with corner relief is the usual way to
-finish a roughed pocket with square corners.
+"none"` every corner is, since there is no wall ring. A rest machining
+Pocket with corner relief is the usual way to finish a roughed pocket
+with square corners.
 
 A 40 × 30 mm pocket with a 6.35 mm bit and `"dogbone"` gets four notches,
 each ending 3.175 mm from its corner along the bisector, so a 40 × 30 mm
