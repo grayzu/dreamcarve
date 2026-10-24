@@ -240,6 +240,28 @@ tool has more than one. Tool types DreamCarve has no cutter for
 (thread mills, face mills, taps, turning tools) are skipped by name.
 A preset without a feed or plunge rate imports with that value unset,
 so export still refuses it until the user supplies one.
+22a. **Vendor and product id.** Each imported tool keeps the file's
+    vendor and product id (`vendor`, `product_id`; `null` when the file
+    has none, and in every older project and library file), and its name
+    starts with the vendor: `IDC Woodcraft 1/4" Downcut`, never `IDC
+    Woodcraft IDC Woodcraft …` when the description already starts with
+    it. When two tools would take one name, the second gets its product
+    id, `IDC Woodcraft Widget Works Diamond Engraver (ED-14)`, and ` (2)`
+    only when it has none or that name is taken too. `tools list` shows
+    VENDOR and PRODUCT columns; `tools add` and `tools remove` find tools
+    by the new names. Re-importing the file still recognises each tool.
+    (changed: maintainer decision 2026-10-24. Tools were named by
+    description alone, so IDC Woodcraft's ED-12 and ED-14 imported as
+    `Widget Works Diamond Engraver` and `… (2)`.)
+22b. **Exact inch values.** Values converted from inches are rounded,
+    lengths to 6 decimal places of a millimetre and feeds to 3 of mm/min,
+    so 3/16" is 4.7625 mm and 60 in/min is 1524 mm/min, not
+    `4.762499999999999` and `1524.0000000000005`. This covers Fusion
+    import and inch strings in project and library files (capability
+    32); values in millimetres are kept as written. Tools already in the
+    library are not rounded when it loads: `tools import --replace
+    <file>` updates them. (changed: maintainer decision 2026-10-24.
+    Converted values carried floating-point noise.)
 
 ### Output
 
@@ -866,8 +888,10 @@ built (design addendum, "Order and format versions").
     <https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/fusion_Parameter_expression.htm>):
     `"depth_mm": "0.5 in"`, `"depth_mm": "1 1/4 in"`, `"feed_mm_min": "60
     in/min"`, `"safe_z_mm": "5 mm"`. A bare number is in the field's unit,
-    as before. DreamCarve converts on load (×25.4, exactly), so the model,
-    every check and every program are unchanged; a command that saves the
+    as before. DreamCarve converts on load (×25.4, then rounded to 6
+    decimal places for a length and 3 for a feed, capability 22b; changed:
+    maintainer decision 2026-10-24), so the model, every check and every
+    program are unchanged; a command that saves the
     project (`export --post`, `tools add`) writes millimetre numbers back.
     The CLI's own lines that state a length (export's per-operation `…
     deep`, the program extents) use the project's `display_units`, as
