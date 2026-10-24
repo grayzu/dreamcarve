@@ -68,6 +68,18 @@ inside a part an earlier Profile through the stock holds only by its tabs
 (changed in #269), and hints
 `tool_change_avoidable` when the same tool is used in two operations
 that are not adjacent.
+
+    **Shapes the tool cannot fit are skipped.** No operation cuts a shape
+    larger than drawn because the bit is too big for it: a Pocket the bit
+    fits nowhere (`pocket_no_room`), an Inside Profile, or a hole of an
+    Outside one, the bit does not fit (`tool_too_large`), and a Drill hole
+    narrower than the bit (`drill_hole_too_small`) are skipped with a
+    warning that `check` and `export` print, and the rest of the program
+    still exports. A Drill's `allow_tool_wider_than_hole` overrides this
+    for its holes; it is saved in the project, not a CLI flag. On line
+    Profiles, Left and Right Profiles and Engraves cut along a line, not
+    inside a shape, so a slot as wide as the bit is what they cut by
+    definition. (changed: maintainer decision 2026-10-24)
 11. **Machining order** (`machining_order`) on Profile, Pocket and Engrave:
 `full_depth_first` (default; each shape is finished before the next) or
 `pass_first` (each pass across every shape before the next, deeper
@@ -107,8 +119,18 @@ reach, which is what the coverage test checks.
 14. **Drill** plunges a tool at the centre of each circular target to
 `depth_mm`. A target is circular when its outline lies on one circle
 within the project's flatten tolerance; other targets are skipped with
-a warning. Cycles (VCarve "Drilling Toolpath"; Fusion "Drill",
-cycle types):
+a warning. A Drill never moves sideways, so a hole always comes out the
+tool's diameter: a hole narrower than the tool by more than the flatten
+tolerance is skipped with `drill_hole_too_small`, naming the hole and
+both diameters, and the other holes are drilled (a 5 mm circle is not
+drilled with a 6.35 mm bit; a 6.35 mm circle is). The operation setting
+`allow_tool_wider_than_hole` (default `false`) drills such a hole anyway,
+at the tool's diameter, warning `drill_tool_wider_than_hole` as before,
+for a clearance hole drawn at the screw's size. A Drill that drills no
+hole at all, every target skipped, warns `drill_no_holes`. (changed:
+maintainer decision 2026-10-24; such a hole was drilled at the tool's
+size with `drill_tool_wider_than_hole`.) Cycles (VCarve "Drilling
+Toolpath"; Fusion "Drill", cycle types):
     - **simple**: one plunge at the plunge rate, then a retract;
     - **peck**: plunges of `peck_depth_mm` (the tool's step-down by
      default, as VCarve uses the tool's pass depth, counted from the
@@ -456,7 +478,12 @@ retract height; changed in #153), each retracting to the retract height; `chip_b
 0.5 mm between pecks; `dwell_s: 0.5` writes a 0.5 s `G4` (`G4 P0.500` on grblHAL) at the bottom of
 each plunge. Holes are visited nearest-first from the first in drawing
 order. The two 5 mm circles and a 5×8 mm slot targeted together drill
-two holes and warn `drill_target_not_circle` naming the slot.
+two holes and warn `drill_target_not_circle` naming the slot. A 5 mm
+circle with a 6.35 mm tool is not drilled (no plunge at its centre) and
+warns `drill_hole_too_small` with both diameters, in `check` and
+`export`; a 6.35 mm circle with it is drilled; with
+`allow_tool_wider_than_hole: true` the 5 mm circle is drilled and warns
+`drill_tool_wider_than_hole`. (changed: maintainer decision 2026-10-24)
 24. **Canned cycles.** The simple case on LinuxCNC with canned cycles on
 writes one `G81` line per hole after `G98`, ends with `G80`, and the
 program's parsed motion is identical to the plain-moves program's
@@ -688,7 +715,7 @@ border and squiggle. Drawn once as `fixtures/plaque.svg` and once as
 | T2               | 3.175 mm two-flute upcut end mill: 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm                                |
 | op1 Pocket (T1)  | 100 × 50 mm rounded rectangle, `raster` at 0°, 4 mm deep, wall pass last, `entry: helix`, with a 20 mm circle island |
 | op2 Pocket (T1)  | 30 × 30 mm square, `offset`, 6 mm deep, `corner_relief: dogbone`, `entry: ramp`                                      |
-| op3 Drill (T1)   | four 5 mm circles at the corners, 12 mm deep, `peck` 4 mm, `retract: full`, through-cut allowance 0.2 mm             |
+| op3 Drill (T1)   | four 5 mm circles at the corners, 12 mm deep, `peck` 4 mm, `retract: full`, through-cut allowance 0.2 mm, `allow_tool_wider_than_hole: true` (M5 clearance; changed: maintainer decision 2026-10-24) |
 | op4 Profile (T1) | outside, 12 mm deep, 4 tabs 8 × 3 mm, climb, `entry: ramp`, `lead` 3 mm radius, through-cut allowance 0.2 mm         |
 | op5 Engrave (T2) | closed border 5 mm inside the outline and an open squiggle, 1 mm deep in one pass                                    |
 | Safe Z           | 15 mm                                                                                                                |

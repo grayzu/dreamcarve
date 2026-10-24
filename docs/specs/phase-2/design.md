@@ -204,6 +204,9 @@ pub struct DrillOp {
     pub retract_mm: f64,                      // above the hole top; init 1.0; ≥ 0
     pub through_cut_allowance_mm: f64,
     pub safe_z_mm: f64,
+    pub allow_tool_wider_than_hole: bool,     // format 17: drill a hole narrower than the tool
+                                              // at the tool's size; false skips it (changed:
+                                              // maintainer decision 2026-10-24)
 }
 
 pub struct EngraveOp {
@@ -437,8 +440,12 @@ not depend on the pass, so there is no `pass`), `PocketIslandTooClose
 diameter_mm)` (once per island-wall or island-island pair closer than
 `needed_mm = diameter + 2 × allowance_mm`; `other` is `wall` or a profile
 index; changed in #168: the allowance was ignored),
-`DrillTargetNotCircle (op, instance, profile)`, `DrillToolWiderThanHole
-(op, instance, hole_mm, tool_mm)`, `DrillPeckDeeperThanHole (op, peck_mm,
+`DrillTargetNotCircle (op, instance, profile)`, `DrillHoleTooSmall (op,
+instance, hole_mm, tool_mm)` (the hole is skipped), `DrillToolWiderThanHole
+(op, instance, hole_mm, tool_mm)` (drilled anyway at the tool's size,
+under `allow_tool_wider_than_hole`), `DrillNoHoles (op)` (every target
+skipped, so the operation drills nothing; changed: maintainer decision
+2026-10-24), `DrillPeckDeeperThanHole (op, peck_mm,
 depth_mm)` (once per operation: every hole has the same depth),
 `DrillRetractBelowStockTop (op, requested_mm, used_mm)` (a negative
 `retract_mm` is raised to the stock top), `EngravePathDegenerate (op,
@@ -871,8 +878,21 @@ tolerance.
    circle of radius `mean(|v − c|)` about `c`, and (for polylines with
    arcs) every arc's centre is within the tolerance of `c`. Non-circular
    or open profiles warn `DrillTargetNotCircle` and are skipped. Hole
-   diameter `2 × mean radius` is kept for warnings: tool wider than the
-   hole warns `DrillToolWiderThanHole`.
+   diameter `d = 2 × mean radius`. A hole the tool does not fit, `tool >
+   d + flatten_tolerance_mm`, is skipped with `DrillHoleTooSmall` naming
+   the hole, `d` and the tool diameter, unless the operation's
+   `allow_tool_wider_than_hole` is set, when it is drilled and warns
+   `DrillToolWiderThanHole`. The tolerance is the one the circle test
+   accepted the outline at: the drawing gives the hole's size no closer
+   than that, so a hole drawn at the bit's size (a 0.25 in DXF circle and
+   a 6.35 mm bit, a circle flattened to facets) is drilled, and one
+   visibly smaller (6.3 mm at the default 0.01 mm) is not. If no hole is
+   left, every target having been skipped for either reason, the
+   operation warns `DrillNoHoles` once and its toolpath is empty: export
+   still writes the other operations, and the warning says why this one
+   cuts nothing. (changed: maintainer decision 2026-10-24; a hole the tool
+   was wider than was drilled with `DrillToolWiderThanHole`, compared
+   within `EPS_MM`.)
 2. `top = thickness`, `bottom = thickness − depth` (S1 with allowance),
    `retract_z = min(safe_z, top + max(retract_mm, 0))` (a negative
    `retract_mm` warns `DrillRetractBelowStockTop`; validation already
@@ -3014,6 +3034,7 @@ updated in the same PR. The other six change no persisted field.
 | A9 Tab corners, start point | #285 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
 | (follow-up) Hole tabs hold their slugs | #302 | `PlacedTab::holds_slug` | 15 | A9 |
 | (follow-up) Tool vendor and product id | maintainer decision 2026-10-24 | `Tool::vendor`, `Tool::product_id`; library version 2 | 16 (or the next free one) | #302 |
+| (follow-up) Skip Drill holes narrower than the tool | maintainer decision 2026-10-24 | `DrillOp::allow_tool_wider_than_hole` | 17 | tool vendor (16) |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only
@@ -4065,6 +4086,48 @@ for #337, `profile::start_under_a_tab_never_plunges_into_it`,
 property cases `inside_last_pass_helix_tabs_pass_first_exports`,
 `inside_last_pass_plunge_short_tab_exports` and
 `outside_last_pass_small_tab_on_a_hole_exports`.
+
+### Drill holes narrower than the tool (format version 17)
+
+(changed: maintainer decision 2026-10-24.) "Cuts that are too small for
+the tool should be skipped, with a warning in the check and export
+commands. This is the default, but it can be overridden." Pocket
+(`pocket_no_room`) and Inside Profile (`tool_too_large`) already skip
+such a shape; Drill drilled it at the tool's size. "Algorithms → Drill",
+step 1, now skips it.
+
+`DrillOp` gains `allow_tool_wider_than_hole: bool` after `safe_z_mm`,
+written by every save. `false` (the default for a new operation) skips
+a hole the tool does not fit with `drill_hole_too_small`; `true` drills
+it at the tool's diameter with `drill_tool_wider_than_hole`, as before.
+The setting is the project's, not a CLI flag: the CLI writes no Drill
+fields, so a user sets it in the `.dcv` as every other Drill field.
+
+**Migration v16 → v17** (`migrate::v16_to_v17`): `allow_tool_wider_than_hole:
+false` at the end of each Drill operation; other operations unchanged.
+Fails if a Drill already has the key. `false`, not `true`: the decision
+is that a hole the bit is too big for is not cut unless the user says
+so, so an old project whose Drill was drilling such holes now skips them
+and warns. CHANGELOG lists this under "Changed" as a behaviour change.
+Version 16 is the tool vendor and product id (#381), which merged first.
+
+Other operations checked: Engrave and On line Profile put the tool
+centre on the line by definition, so the groove is the bit's width
+whatever the drawing; Left and Right Profiles cut beside an open path
+and already skip one whose offset vanishes (`tool_too_large`); Outside
+Profile cuts outside the part, and its holes are Inside cuts. None cuts a
+drawn shape larger than drawn because the bit is too big, so only Drill
+changes.
+
+Tests: `drill::hole_narrower_than_tool_is_skipped` (5 mm, 6.35 mm tool:
+no plunge, `DrillHoleTooSmall` with both sizes),
+`drill::hole_equal_to_tool_within_tolerance_is_drilled`,
+`drill::allow_tool_wider_than_hole_drills_and_warns`,
+`drill::every_hole_skipped_warns_no_holes`,
+`migrate::v16_drill_migrates_with_allow_tool_wider_than_hole_false`,
+`migrate::v16_with_allow_tool_wider_than_hole_already_present_fails`,
+`cli::check_reports_drill_hole_too_small`,
+`cli::export_reports_drill_hole_too_small_and_writes_no_plunge_there`.
 
 ### Documentation (every item)
 
