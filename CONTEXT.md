@@ -57,7 +57,7 @@ simulation's internal grid)
 
 **Operation**:
 A machining strategy applied to one or more feature instances, with a tool,
-depth and feeds. The kinds are Profile, Pocket, Drill, V-Carve and Engrave,
+depth and feeds. The kinds are Profile, Pocket, Drill, Bore, V-Carve and Engrave,
 with Surface Rough and Surface Finish from phase 7.
 _Avoid_: Job, cut, pass (a pass is one depth step inside an operation)
 
@@ -129,8 +129,19 @@ _Avoid_: Step-over distance, overlap, pass width
 An operation that plunges a tool at one or more points, optionally pecking.
 It skips a circle smaller than the tool, unless its
 `allow_tool_wider_than_hole` is set, since the hole is always the tool's size.
-_Avoid_: Hole, bore
+A hole bigger than the bit is a Bore's.
+_Avoid_: Hole, bore (a Bore is its own operation)
 _PureCutCNC_: Drilling
+
+**Bore**:
+An operation that cuts each circular shape bigger than its end mill to the
+drawn size: the bit spirals down a helix inside the hole, `pitch_mm` per
+turn, to the depth, then cuts one full circle there so the wall is round
+and to size. It skips a hole the bit has no room to spiral in, and one
+wider than twice the bit, which would leave a core standing (a Pocket
+clears that). Fusion's "2D Bore". (changed: maintainer decision 2026-10-24)
+_Avoid_: Helical drill, helix (a helix is also an Entry), counterbore, ream
+_PureCutCNC_: Drilling, `helical` drill type
 
 **V-Carve**:
 An operation that drives a V-bit along the medial lines of a shape so the cut

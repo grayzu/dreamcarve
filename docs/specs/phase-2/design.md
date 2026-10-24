@@ -57,6 +57,7 @@ tabs needed two operations in the right order.)
 | `dc-cam::pocket` | `src/engine/toolpaths/pocket.ts` (`buildInsetRegions`, `buildOffsetRegionTree`, `cutOffsetRegionNode` inner-first, `buildPocketParallelSegments`, `transitionToCutEntry`, `generateStepLevels`, `orderClosedContoursGreedy`, `rotateContourToNearestEntry`), `pocketPatterns.ts` (`OPERATION_PATTERN_SUPPORT`, `areaCoverage`) | Only `offset` and `parallel` (named `raster`). No seeded offset, trochoidal, slot feed, engagement feed, corner rounding, wall cleanup, model sections, clamps. Clipper integer paths become `dc-geometry` offsets with cavalier_contours and booleans with i_overlay. Direction rule re-derived (see Pocket algorithm). `pocketAngle` sign re-derived. Islands come from `nest`, not the band resolver. |
 | `dc-cam::pocket::rest` | `src/engine/toolpaths/restRegions.ts`, `finishFloorCoverage.ts` (`regionAreaPaths`, `floorCoverage`, `restrictFloorRoot` noise rule) | Rest region = region minus the earlier tool's reachable area. The coverage test is ported; the island-face floor restriction is not (no multi-depth instances in phase 2). |
 | `dc-cam::drill` | `src/engine/toolpaths/drilling.ts` (`generateDrillingToolpath`, `emitDrillCycle`, `sortTargetsByNearestNeighbor`, `DrillCycle`), `drillingRetract.test.ts`, `camOperationSmoke.test.ts` drill cases, `toolpaths.test.ts` drill ordering | Circle detection on polylines, not a `circle` feature kind. Chip-break gap is a mm field, not a constant in project units. Dwell is emitted as `G4` when expanded (upstream loses it). Pecks count from the retract plane `R`, as controllers count `G83`/`G73`, not from the stock top (#153). No helical bore, no countersink (phase 3), no clamps. Nearest neighbour starts from the first target in drawing order (D5), not the origin. |
+| `dc-cam::bore` | `src/engine/toolpaths/drilling.ts` (the `helical` drill type: `HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO`, its too-small and too-large checks), `src/engine/toolpaths/entry.ts` (`emitCenterLockedCircularBore` in finish-bore mode) | Its own operation, not a Drill cycle (maintainer decision 2026-10-24). Pitch per turn (Fusion's "Pitch"), not a ramp angle. Starts 1 mm above the stock top (#214), not at a retract height reached through the hole's centre. Chords per turn from the flatten tolerance, at least 48. The bottom revolution is four exact arcs, not 48 chords, and is followed by a move to the centre (Fusion's "Lead To Center") before the lift. Radial allowance added. The too-small limit is a 0.05 mm helix radius, not `hole ≤ tool`. Helix sense from `entry::helix_is_ccw` (Y-up), not `helixAngularDirection`. |
 | `dc-cam::engrave` | `src/engine/toolpaths/carving.ts` (`generateFollowLineToolpath`, `buildCarveLevels`), `carving.test.ts` direct-mode cases | Direct mode only; no trochoidal carve, no region masks. Depth is from the stock top and clamped by S1, not to absolute 0. Direction alternation added (D9). |
 | `dc-cam::entry` | `src/engine/toolpaths/entry.ts` (`synthesizeEntry`, `findHelixPlacement`, `findLargestClearanceCircle`, `findRampPlacement`, `emitHelix`, `emitRamp`, `pitchFromRampAngle`, `plungeLimitedFeedScale`, `helixAngularDirection`), `entry.test.ts` | Helix sense re-derived for Y-up. Search caps kept (`MAX_HELIX_RADIUS_ATTEMPTS`, 72 angles, 12 endpoint candidates, 20 000 cells). Profile ramp (along the path) is DreamCarve's; PureCutCNC's zigzag ramp serves Pocket. |
 | `dc-cam::lead` | `src/engine/toolpaths/xyLead.ts` (`planXyLeadIn`, `planXyLeadOut`, `contourArrivals` corner scoring, `validateLead`, radius and sweep ladders), `xyLead.test.ts`, `xyLeadEdge.test.ts` | The user sets the radius (VCarve); the ladder shrinks from it. Sweep ladder kept. Overcut is DreamCarve's (VCarve). Feed is the cut feed, not the plunge-scaled feed, because the descent is finished before the lead. |
@@ -126,7 +127,7 @@ pub enum ToolKind {
     Drill,
 }
 
-pub enum Operation { Profile(ProfileOp), Pocket(PocketOp), Drill(DrillOp), Engrave(EngraveOp) }
+pub enum Operation { Profile(ProfileOp), Pocket(PocketOp), Drill(DrillOp), Bore(BoreOp), Engrave(EngraveOp) }  // Bore: format 18
 
 pub enum MachiningOrder { FullDepthFirst, PassFirst }   // "full_depth_first" | "pass_first"
 
@@ -207,6 +208,20 @@ pub struct DrillOp {
     pub allow_tool_wider_than_hole: bool,     // format 17: drill a hole narrower than the tool
                                               // at the tool's size; false skips it (changed:
                                               // maintainer decision 2026-10-24)
+}
+
+/// Format 18 (maintainer decision 2026-10-24): helical bore of each
+/// circular target to its drawn size, as Fusion's "2D Bore". `"kind":
+/// "bore"`, fields saved in this order.
+pub struct BoreOp {
+    pub id: OperationId, pub name: String, pub enabled: bool,
+    pub targets: Vec<InstanceId>, pub tool: ToolId,
+    pub depth_mm: Option<f64>,                // from stock top; None until set
+    pub pitch_mm: Option<f64>,                // Z per helix turn; None: tool.step_down_mm; (0, step-down]
+    pub direction: CutDirection,              // init climb (counter-clockwise)
+    pub allowance_mm: f64,                    // radial stock to leave; init 0; ≥ 0
+    pub through_cut_allowance_mm: f64,
+    pub safe_z_mm: f64,
 }
 
 pub struct EngraveOp {
@@ -376,6 +391,7 @@ pub fn sequence(input: &SequenceInput) -> Result<Toolpath, CamError>;
 pub fn generate_profile(project: &Project, op: &ProfileOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 pub fn generate_pocket(project: &Project, op: &PocketOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 pub fn generate_drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>), CamError>;
+pub fn generate_bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Warning>), CamError>;   // format 18
 pub fn generate_engrave(project: &Project, op: &EngraveOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 pub fn generate(project: &Project, op: &Operation) -> Result<(Generated, Vec<Warning>), CamError>;
 
@@ -448,7 +464,12 @@ skipped, so the operation drills nothing; changed: maintainer decision
 2026-10-24), `DrillPeckDeeperThanHole (op, peck_mm,
 depth_mm)` (once per operation: every hole has the same depth),
 `DrillRetractBelowStockTop (op, requested_mm, used_mm)` (a negative
-`retract_mm` is raised to the stock top), `EngravePathDegenerate (op,
+`retract_mm` is raised to the stock top), `BoreTargetNotCircle (op,
+instance, profile)`, `BoreNoRoom (op, instance, hole_mm, tool_mm,
+allowance_mm)` (the helix radius is under `BORE_MIN_HELIX_RADIUS_MM`; the
+hole is skipped), `BoreLeavesCore (op, instance, hole_mm, tool_mm,
+allowance_mm, core_mm)` (the hole is skipped), `BoreNoHoles (op)` (format
+18; maintainer decision 2026-10-24), `EngravePathDegenerate (op,
 instance, profile)`, `CutInsideFreedPart (op, earlier_op, instance)`,
 `CutInsideTabHeldPart (op, earlier_op, instance, held)` (#269),
 `ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of,
@@ -494,6 +515,9 @@ operation's material from the project, never from the generator. A
 Pocket's tool centre stays in its regions, `r + allowance` from their
 walls. A Drill's stays in its holes, and an Engrave's on its lines. A
 Pocket's corner-relief notches may cut into their corners' relief zones.
+A Bore's stays within `ρ − r − allowance` of the centre of one of its
+holes (radius `ρ`, Drill's circle test), the same hole for a move's ends
+and middle (changed: maintainer decision 2026-10-24).
 A Profile is held to its waste (#177). Inside, the tool centre stays in a
 target region, `r` from its walls, as a Pocket with no allowance. Outside,
 it stays outside every target region, `r` from every outline. Which side
@@ -948,6 +972,89 @@ tolerance.
    fails with `ExportError::RapidIntoUncut`. Every other operation has
    S2, which since #214 also lets a rapid straight down from safe Z stop
    over a ramp or helix's start, and since #227 over a straight plunge.
+
+### Bore (dc-cam::bore)
+
+(added: maintainer decision 2026-10-24; functional capability 14a.) The
+algorithm is PureCutCNC's `helical` drill type ("PureCutCNC sources"),
+with the changes listed there. Fusion's "2D Bore" names the settings
+(Autodesk Fusion help, "Bore reference": Pitch, Direction, radial Stock
+to Leave, Lead To Center; "Generate a Bore toolpath"). Fusion documents no
+default pitch, so DreamCarve takes the tool's step-down, as Drill's peck
+does.
+
+1. **Resolve holes.** Every closed profile of every target, placed by its
+   transform, through Drill's circle test (`dc_geometry::as_circle` at
+   the flatten tolerance); anything else warns `BoreTargetNotCircle` and
+   is skipped. With hole radius `ρ`, tool radius `r` and allowance `a`,
+   the helix radius is `R = ρ − r − a`.
+   - `R < BORE_MIN_HELIX_RADIUS_MM` (0.05 mm): skipped with `BoreNoRoom`.
+     At 48 chords a turn a helix that small has chords 2·0.05·sin(3.75°) =
+     0.0065 mm long, more than √2 units of the coarsest place a
+     post-processor writes in inches (0.0001 in), so every chord's ends
+     round apart (the rule `entry` applies to its helix, #265); below it
+     the bit is within 0.1 mm of the hole, which is a Drill's job, and
+     the message says so when `2ρ ≥ tool − flatten_tolerance_mm`.
+   - `R − r > flatten_tolerance_mm`: skipped with `BoreLeavesCore`, `core_mm
+     = 2(R − r)`. The bit's swept ring is `[R − r, R + r]` about the centre,
+     so beyond `2ρ = 2·d + 2a` it leaves a core. **Refused, not warned or
+     cleared:** a through bore frees the core at its last turn, and a loose
+     core spins against the bit and can be thrown; a blind one leaves a
+     pin, which is not the hole drawn. Clearing the core with more helices
+     or rings is a Pocket, which already clears a circle with tested
+     coverage and a helix entry, so Bore stays one helix and one circle
+     and the message points to Pocket. PureCutCNC refuses the same
+     holes (`HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO = 2`). Within the
+     tolerance the bit's edge passes the centre and leaves at most a pin
+     of that radius, no larger than the drawing's own error.
+   - No hole left: `BoreNoHoles` once, and the toolpath is empty.
+2. **Heights and settings.** `top = thickness`, `bottom` the last of
+   `passes::pass_z_mm(top, depth, depth, through_cut_allowance)` (S1),
+   `safe = top + safe_z_mm`, `start = entry::descent_start_z_mm(top,
+   safe)` (1 mm above the top, #214). Pitch `p = pitch_mm.or(tool
+   step-down)`, else `CamError::MissingStepDown`. `p` finite and more than
+   0, at most the tool's step-down (plus `EPS_MM`) when it has one, and
+   `a` finite and at least 0, else `CamError::InvalidBoreSetting { op,
+   field, value }`. The tool's feed and plunge rate are required
+   (`MissingFeed`). Validation reports the same problems first.
+3. **Helix**, per hole about centre `c`. Sense `entry::helix_is_ccw(direction,
+   CutSide::Internal)`: climb is counter-clockwise. Chords per turn `n =
+   max(48, ⌈π / acos(1 − tol/R)⌉)` so a chord bows in at most the flatten
+   tolerance `tol`. Turns `T = (start − bottom) / p`; chords `N = ⌈T·n⌉`,
+   at least 1. `N > entry::MAX_DESCENT_MOVES`, or a chord that falls less
+   than one unit of the program's last place (`(start − bottom)/N <
+   quantum`, the S3 rule `entry`'s helix keeps, #265), is
+   `InvalidBoreSetting` on `pitch_mm`. Point `k` is at angle `θ_k = sense ·
+   2π·T·k/N` from +X, radius `R`, `z_k = start − (start − bottom)·k/N`:
+   Z is linear in the angle, so each turn falls exactly `p` and the last
+   less. The helix starts at `c + (R, 0)` at `start`. Each chord's feed is
+   `entry::plunge_limited_feed_mm_min` (S10).
+4. **Finish.** From the helix end, at `bottom`: one full circle of radius
+   `R` as four 90° arcs in the helix's sense (`ArcCcw` for climb) at the
+   cutting feed, back to the helix end; then a `Linear` to `c` at the
+   feed. No core is left (step 1), so the centre is cut and the move is in
+   air; the bit leaves the wall before the lift, as Fusion's "Lead To
+   Center", rather than dragging up it.
+5. **Blocks.** One per hole: `pass` 0, `z_mm = bottom`, `descent_from` the
+   helix start at `descent_from_z_mm = start`, `descent` the helix chords,
+   `entry` the helix end, `cuts` the circle and the move to `c`, `exit =
+   c`, `frees: false` (nothing comes loose), `cleared: None`. Sequenced as
+   Drill's (`full_depth_first`, no containment, links at safe Z, at the
+   clearance Z between instances, a rapid to safe Z at the end): the
+   sequencer rapids straight down to `start` (S2 as changed in #214).
+6. Off-stock check as every generator (#62).
+
+Arc output: the helix is straight `G1` chords, each changing Z, as an
+entry helix's are; the bottom circle is four planar arcs. No helical
+`G2`/`G3` is written. The toolpath's arcs are planar (`MoveKind`), and a
+helical arc would need S6, S9, S12, the footprint, the estimate and the
+`rs274`, GRBL and LinuxCNC simulators to follow Z along an arc; the chords
+cut the same wall within the flatten tolerance, and the circle at the
+bottom is exact. Arc fitting leaves the descending chords as lines
+("Arc fitting"), and every bundled definition writes the planar arcs as
+`G2`/`G3` (`arc_interpolation: true`, IJ or R format) or as chords where
+the definition or the controller's radius check says so, as it writes a
+lead arc. So no definition changes.
 
 ### Engrave (dc-cam::engrave)
 
@@ -2128,9 +2235,14 @@ first use, with `ops` listing every operation that uses it. A disabled
 operation does not split a run. (changed in slice 13, #134: tabs hold
 the part, and `nest` is stricter than a centroid test.)
 
+A Bore frees nothing (it leaves no core, "Bore" step 1) and its targets
+are closed outlines, so as `j` it warns as a Pocket does: a Bore after a
+cut-out of its part warns `CutInsideFreedPart`, and after a tabbed one
+`CutInsideTabHeldPart` (changed: maintainer decision 2026-10-24).
+
 The targets of `j` include the open paths it cuts: every open path of an
-Engrave and of an On line Profile (Inside and Outside Profile, Pocket and
-Drill skip them; one of no length is skipped). An open path is inside a
+Engrave and of an On line Profile (Inside and Outside Profile, Pocket,
+Bore and Drill skip them; one of no length is skipped). An open path is inside a
 freed outline when all of it is inside or on it (every vertex and every
 segment's middle, `Region::contains_point` on the outline's region), so
 one that crosses the outline does not count, as crossing outlines do not.
@@ -2146,9 +2258,9 @@ yields, when `j` cuts deep, `CutInsideTabHeldPart (op: j, earlier_op: i,
 instance, held)`. `j` cuts deep when its `depth_mm` is more than half the
 stock thickness (plus `EPS_MM`), which takes in every cut that reaches
 the stock bottom, through-cut allowance and all; with either value unset
-it does not (validation reports them). A lighter cut, such as the
-plaque's 1 mm Engrave after its tabbed cut-out, is normal practice and
-quiet. `held` is
+it does not (validation reports them). A lighter cut, such as a 1 mm
+Engrave after a tabbed cut-out (the plaque's before maintainer decision
+2026-10-24 moved its Engrave first), is normal practice and quiet. `held` is
 the innermost such outline (the smallest by area: outlines round
 one target are nested). It comes in the same order as
 `CutInsideFreedPart` and is skipped for a pair `(target, i)` that already
@@ -2754,7 +2866,7 @@ it and the warnings per operation, each as `<code>: <message>`.
 ```
 crates/dc-geometry/src/{..., boolean.rs (i_overlay union/difference/intersection on Regions), circle.rs (circle test, Kasa fit), self_band.rs (a line against itself, #221)}
 crates/dc-project/src/{model.rs (+ PocketOp, DrillOp, EngraveOp, Entry, Lead, CornerRelief, MachiningOrder, PlacedTab), ids.rs (+ TabId), migrate.rs (v7_to_v8, v8_to_v9, v10_to_v11), validate.rs (+ rules above), post_processor.rs (+ use_canned_cycles, SpindleDwell::units, CannedCycles::reentry_gap_mm), definitions/{README.md, grblhal, grbl, linuxcnc, mach3, uccnc, generic}/v1.json}
-crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, placed_tabs.rs (#105), overlap.rs, stock.rs, warning.rs}
+crates/dc-cam/src/{lib.rs, toolpath.rs (+ Dwell), block.rs (CutBlock), sequence.rs, order.rs, profile.rs (blocks; entry, lead, relief hooks), pocket.rs, pocket/{rings.rs, raster.rs, rest.rs}, drill.rs, bore.rs (format 18), engrave.rs, entry.rs, lead.rs, relief.rs, footprint.rs, passes.rs, tabs.rs, placed_tabs.rs (#105), overlap.rs, stock.rs, warning.rs}
 crates/dc-gcode/src/{emit.rs (+ canned cycles, split modes), arcfit.rs, canned.rs (controller model of G81–G83/G73), safety.rs (+ S9–S15), parse.rs (+ G2/G3 fitted, G8x expansion, G4, `%`), post.rs (definition checks)}
 crates/dc-import/src/{svg.rs, dxf.rs, dxf/{groups.rs, document.rs, entities.rs, spline.rs, stitch.rs}}
 crates/dc-library/src/{lib.rs, library.rs, fusion.rs, error.rs}
@@ -3035,6 +3147,7 @@ updated in the same PR. The other six change no persisted field.
 | (follow-up) Hole tabs hold their slugs | #302 | `PlacedTab::holds_slug` | 15 | A9 |
 | (follow-up) Tool vendor and product id | maintainer decision 2026-10-24 | `Tool::vendor`, `Tool::product_id`; library version 2 | 16 (or the next free one) | #302 |
 | (follow-up) Skip Drill holes narrower than the tool | maintainer decision 2026-10-24 | `DrillOp::allow_tool_wider_than_hole` | 17 | tool vendor (16) |
+| (follow-up) Bore operation | maintainer decision 2026-10-24 | `Operation::Bore(BoreOp)` | 18 (or the next free one) | Drill holes (17) |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only
@@ -4128,6 +4241,96 @@ no plunge, `DrillHoleTooSmall` with both sizes),
 `migrate::v16_with_allow_tool_wider_than_hole_already_present_fails`,
 `cli::check_reports_drill_hole_too_small`,
 `cli::export_reports_drill_hole_too_small_and_writes_no_plunge_there`.
+
+### Bore operation (format version 18)
+
+(changed: maintainer decision 2026-10-24.) "Keep Drill. It's for drill
+bits and holes the bit's own size. Add Bore: for each circular target
+bigger than the end mill, it spirals down a helix inside the hole at a
+set pitch to the depth, then cuts a full circle at the bottom so the
+wall is round and to size." Functional capability 14a, acceptance 23a;
+the algorithm is "Algorithms → Bore". Drill is unchanged but for its
+`drill_hole_too_small` message, which now ends "…; cut it to size with a
+Bore and a bit smaller than the hole, use a smaller drill, or set
+allow_tool_wider_than_hole to drill it at the tool's size".
+
+**Model.** `Operation::Bore(BoreOp)` (`"kind": "bore"`), between Drill and
+Engrave in the enum; the `Operation` accessors cover it. `BoreOp`'s
+fields are saved in the order of "Data model". No other type changes.
+
+**Migration v17 → v18** (`migrate::v17_to_v18`): no version 17 file holds
+a `"bore"` operation, so the step is the identity and only `version`
+changes, as `v9_to_v10` did for the Left and Right sides: the bump is
+what ADR-0002 asks for, so a version 17 reader refuses a file with a
+Bore with `NewerVersion` instead of a schema error on an unknown kind.
+The fixture `crates/dc-project/tests/fixtures/dcv/v17/sample.dcv` loads as
+the sample project. If another change takes 18 first, this is the next
+free version, rebased on top.
+
+**Validation** (`validate.rs`), as errors: a Bore's `pitch_mm` that is
+set and not finite or not more than 0 (`Problem::OutOfRange`, as other
+lengths), or more than its tool's step-down
+(`Problem::BorePitchOverStepDown { operation, pitch_mm, step_down_mm }`);
+a Bore with no `pitch_mm` whose tool has no step-down
+(`Problem::ToolValueUnset` on `step_down_mm`, as Pocket's); a negative or
+non-finite `allowance_mm` (`OutOfRange`). As a warning: a Bore
+whose tool is not an `EndMill` (`Problem::BoreCutterUnusual`): a twist
+drill, V-bit or engraver does not cut a straight wall sideways (Fusion's
+help names flat and bull-nose end mills for Bore). The CLI writes no
+Bore fields; a user adds a Bore in the `.dcv`, as every operation.
+
+**CLI.** `check` and `export` print the new warnings like the others;
+`export`'s per-operation summary and the program comments name a Bore
+like any operation; `preview` draws it as a cut, not a drill point.
+
+**Plaque.** op3 "Screw holes" becomes a Bore with T2 (`t3`, the 3.175 mm
+end mill), `depth_mm` 12, through-cut allowance 0.2, `pitch_mm` null,
+`direction` climb, `allowance_mm` 0: the holes come out 5 mm, as drawn.
+The operations run op3, op5, op1, op2, op4: one bit change, the holes
+before the cut-out, which stays last, op3 before op5 as before. The
+programs become `plaque-1-T2.nc` (Bore, Engrave) and `plaque-2-T1.nc`
+(Pocket, Pocket, Profile). Every committed plaque program, `.warnings`
+file and quick-start excerpt is re-exported in the same PR, each diff
+explained in it. The migration corpora's plaque copies are older
+versions with a Drill and keep their expected programs.
+
+Tests:
+- dc-cam: `bore::five_mm_hole_helix_radius_is_0_9125`,
+  `bore::each_turn_falls_at_most_the_pitch`,
+  `bore::ends_with_full_circle_at_depth_then_centre`,
+  `bore::starts_one_mm_above_stock_top`,
+  `bore::climb_is_ccw_conventional_is_cw`,
+  `bore::pitch_defaults_to_tool_step_down`,
+  `bore::pitch_over_step_down_is_error`, `bore::allowance_shrinks_helix`,
+  `bore::descent_feed_is_plunge_limited` (S10),
+  `bore::hole_too_small_is_skipped_no_room`,
+  `bore::hole_bit_size_is_skipped_pointing_to_drill`,
+  `bore::hole_twice_tool_is_bored`,
+  `bore::hole_over_twice_tool_is_skipped_leaves_core`,
+  `bore::non_circle_is_skipped`, `bore::every_hole_skipped_warns_no_holes`,
+  `bore::holes_nearest_first_linked_at_safe_z`,
+  `bore::depth_beyond_bottom_needs_allowance` (S1),
+  `bore::missing_feed_is_error`,
+  `drill::hole_too_small_message_points_to_bore`,
+  `order::bore_after_cut_out_warns_cut_inside_freed_part`.
+- dc-project: `migrate::version_17_fixture_loads`,
+  `migrate::v17_to_v18_changes_only_the_version`,
+  `serialize::bore_round_trips`,
+  `validate::bore_pitch_over_step_down_is_error`,
+  `validate::bore_without_pitch_or_step_down_is_error`,
+  `validate::bore_negative_allowance_is_error`,
+  `validate::bore_cutter_unusual_warns`.
+- dc-gcode: `material::bore_inside_hole_passes`,
+  `material::bore_doctored_outside_hole_fails` (S9 refuses a program whose
+  circle runs 0.1 mm wider), `bore::five_mm_through_hole_program`
+  (acceptance 23a: helix radius, pitch, full circle, the swept hole 5 mm
+  ±0.01 through the stock), `bore::exports_on_every_post` (every bundled
+  definition; the safety pass accepts it), the property
+  `random_valid_bores_never_panic_and_pass_safety` (as the Pocket and
+  Profile properties), `plaque_holes::plaque_screw_holes_are_cut_to_their_drawn_size`.
+- CLI: `cli::check_reports_bore_no_room_and_leaves_core`,
+  `cli::plaque_dxf_exports_same_programs_as_svg` (the new names),
+  `quick_start`, and the LinuxCNC `rs274` conformance run of the plaque.
 
 ### Documentation (every item)
 
