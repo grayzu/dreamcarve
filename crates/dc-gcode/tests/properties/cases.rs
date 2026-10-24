@@ -3,7 +3,7 @@
 
 //! The minimal cases the properties shrank their failures to, as named
 //! tests (#231, #232, #234, #235, #265, #272, #273, #322, #353, #355,
-//! #356, #358, #362, #366): each project
+//! #356, #358, #362, #366, #384): each project
 //! validates, generates, and exports through the full safety pass. Every
 //! case is built from `dc_project::test_support::sample_project()` on
 //! 240 × 160 mm stock, its instances placed as in the issue that reports
@@ -1880,5 +1880,111 @@ fn hole_lap_round_an_island_tab() -> Project {
         0.415_478_759_066_539_8,
         0.326_634_913_148_346_75,
     );
+    project
+}
+
+/// #384 (the Pocket property, `PROPTEST_RNG_SEED=11`): an Offset Pocket of
+/// a 20 mm circle round an 11.87 × 6.80 mm rectangular island, dogbone
+/// relief, ramp entry, pass first, by a 1.206 mm tool, the part rotated
+/// 149°. In a debug build cavalier_contours asserted
+/// (`UpdatedStartNotOnSegment`, `EndPointNotOnSegment`) while building
+/// a polyline view for a swept band's offset (`dc_cam::footprint`). On a
+/// heightfield of the emitted G-code the circle round the island is cut
+/// to the Pocket floor and the island and the stock outside stand to the
+/// top, bar two lattice steps round each wall.
+#[test]
+fn dogbone_pocket_round_a_rotated_rect_island_exports() {
+    let project = dogbone_pocket_round_a_rotated_rect_island();
+    exports(&project);
+    let (program, _) =
+        emit(&project, &[generate(&project).expect("generates")], DATE).expect("the safety pass");
+    let radius_mm = project.tools[0].diameter_mm / 2.0;
+    let top_mm = project.stock.thickness_mm.expect("a thickness");
+    let Operation::Pocket(pocket) = &project.operations[0] else {
+        unreachable!("the case is a Pocket");
+    };
+    let floor_mm = top_mm - pocket.depth_mm.expect("a depth");
+    let step_mm = 0.05;
+    let cuts = heightfield::cuts(&project, &program.text, step_mm);
+    let mut heights = heightfield::Heights::round(&cuts, radius_mm, step_mm, top_mm);
+    for cut in &cuts {
+        heights.sweep(cut, radius_mm);
+    }
+    let to_part = project.instances[0]
+        .transform
+        .inverse()
+        .expect("a rotation inverts");
+    let (hx, hy) = (5.936_916_845_606_714, 3.399_251_975_172_542_3);
+    let margin_mm = 2.0 * step_mm;
+    for j in 0..heights.ny {
+        for i in 0..heights.nx {
+            let p = to_part.apply(heights.point(i, j));
+            let from_circle_mm = p.distance_to(Point::new(0.0, 0.0)) - 10.0;
+            let into_island_mm = (hx - p.x.abs()).min(hy - p.y.abs());
+            let z = heights.at(i, j);
+            if from_circle_mm < -margin_mm && into_island_mm < -margin_mm {
+                assert!(z <= floor_mm + 0.01, "{p:?} (part) is left at {z} mm");
+            } else if from_circle_mm > margin_mm || into_island_mm > margin_mm {
+                assert!(z >= top_mm - 1e-9, "{p:?} (part) is cut to {z} mm");
+            }
+        }
+    }
+}
+
+fn dogbone_pocket_round_a_rotated_rect_island() -> Project {
+    let (hx, hy) = (5.936_916_845_606_714, 3.399_251_975_172_542_3);
+    let profiles = vec![
+        Polyline::new(
+            vec![Vertex::new(-10.0, 0.0, -1.0), Vertex::new(10.0, 0.0, -1.0)],
+            true,
+        ),
+        Polyline::new(
+            vec![
+                Vertex::new(-hx, hy, 0.0),
+                Vertex::new(hx, hy, 0.0),
+                Vertex::new(hx, -hy, 0.0),
+                Vertex::new(-hx, -hy, 0.0),
+            ],
+            true,
+        ),
+    ];
+    let thickness_mm = 14.902_890_418_291_346;
+    let op = PocketOp {
+        strategy: ClearanceStrategy::Offset,
+        wall_pass: WallPass::First,
+        depth_mm: Some(15.835_786_552_770_474),
+        step_down_mm: Some(1.087_466_566_135_988_1),
+        step_over_fraction: Some(0.966_991_767_091_759_3),
+        direction: CutDirection::Climb,
+        entry: Entry::Ramp {
+            angle_deg: 4.189_628_242_550_701,
+        },
+        corner_relief: CornerRelief::Dogbone,
+        through_cut_allowance_mm: 0.932_896_134_479_128_2,
+        safe_z_mm: 10.569_444_068_936_939,
+        ..sample_pocket()
+    };
+    let transform = Transform::from([
+        -0.856_529_403_993_004,
+        0.516_098_227_177_142_5,
+        -0.516_098_227_177_142_5,
+        -0.856_529_403_993_004,
+        40.0,
+        40.0,
+    ]);
+    let mut project = case(profiles, transform, thickness_mm, Operation::Pocket(op));
+    project.arc_fit_tolerance_mm = None;
+    project.origin = MachineOrigin {
+        xy: OriginXy::Centre,
+        z: OriginZ::StockBottom,
+    };
+    project.post_processor = PostProcessorRef::latest("generic").expect("Generic is bundled");
+    let tool = &mut project.tools[0];
+    tool.diameter_mm = 1.206_480_636_389_623_2;
+    tool.feed_mm_min = Some(4_174.730_052_104_726);
+    tool.plunge_mm_min = Some(2_017.583_240_987_899_2);
+    tool.rpm = Some(19_460);
+    tool.step_down_mm = Some(1.966_932_363_821_013);
+    tool.step_over_fraction = Some(0.658_471_849_221_687_6);
     project
 }

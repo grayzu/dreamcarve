@@ -426,4 +426,69 @@ mod tests {
         let r = 45.0 + TOOL_RADIUS_MM;
         assert_approx_eq!(out[0].signed_area_mm2(), std::f64::consts::PI * r * r, 1e-6);
     }
+
+    /// #384: a Pocket's swept toolpath loop (`dc_cam::footprint::band`),
+    /// grown by the tool radius. Its raw offset has sub-micron segments
+    /// round the concave chords, and cavalier_contours 0.9.0 gives one
+    /// dissected slice an end point on the segment after the one it names,
+    /// 4.2 µm off it, which its debug build asserts on
+    /// (`EndPointNotOnSegment`). The offset is right all the same: every
+    /// point of a 10 µm grid is in it exactly when it is in the loop or
+    /// within the radius of it, bar points within 1 µm of that boundary.
+    #[test]
+    fn offset_of_a_loop_with_sub_micron_raw_offset_segments_is_the_buffer() {
+        let points = [
+            (36.730_799_198_150_635, 47.185_787_320_137_024),
+            (36.578_314_304_351_81, 47.337_913_334_369_66),
+            (36.487_584_143_877_03, 47.536_300_778_388_98),
+            (36.472_042_560_577_39, 47.753_896_743_059_16),
+            (36.533_656_269_311_905, 47.963_165_193_796_16),
+            (36.641_338_974_237_44, 48.106_601_804_494_86),
+            (36.121_772_110_462_19, 47.880_961_924_791_336),
+            (35.390_199_989_080_43, 47.476_627_320_051_19),
+            (34.713_660_866_022_11, 47.013_674_765_825_27),
+            (34.884_462_267_160_416, 47.041_286_617_517_47),
+            (35.094_031_214_714_05, 47.001_096_695_661_545),
+            (35.277_141_183_614_73, 46.891_528_844_833_374),
+            (35.411_620_944_738_39, 46.725_849_747_657_776),
+            (35.481_187_492_609_024, 46.524_120_032_787_32),
+            (35.478_218_138_217_926, 46.356_073_677_539_825),
+            (35.627_252_638_339_996, 46.603_415_012_359_62),
+            (35.793_080_419_301_99, 46.819_530_189_037_32),
+            (36.002_840_667_963_03, 46.993_326_753_377_914),
+            (36.246_015_191_078_186, 47.116_089_791_059_494),
+            (36.510_410_159_826_28, 47.181_663_513_183_594),
+        ];
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        let contour = Contour::new(Polyline::new(vertices, true)).unwrap();
+        let radius_mm = 0.603_240_318_194_811_6;
+        let out = offset(&contour, radius_mm);
+        assert_eq!(out.len(), 1, "{out:?}");
+        let (grown, _) = crate::nest(out).unwrap();
+        let (source, _) = crate::nest(vec![contour.clone()]).unwrap();
+        let edges: Vec<Segment> = contour.polyline().segments().collect();
+        let distance_mm = |p: Point| {
+            edges
+                .iter()
+                .map(|e| {
+                    let along = e.end - e.start;
+                    let t = ((p - e.start).dot(along) / along.dot(along)).clamp(0.0, 1.0);
+                    p.distance_to(e.start + along * t)
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let step_mm = 0.01;
+        for i in 0..450 {
+            for j in 0..450 {
+                let p = Point::new(33.5 + f64::from(i) * step_mm, 45.0 + f64::from(j) * step_mm);
+                let d = distance_mm(p);
+                let inside_source = source[0].contains_point(p);
+                if !inside_source && (d - radius_mm).abs() <= 1e-3 {
+                    continue;
+                }
+                let expected = inside_source || d < radius_mm;
+                assert_eq!(grown[0].contains_point(p), expected, "{p:?} at {d} mm");
+            }
+        }
+    }
 }
