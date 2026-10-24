@@ -204,7 +204,7 @@ pub struct DrillOp {
     pub retract_mm: f64,                      // above the hole top; init 1.0; ≥ 0
     pub through_cut_allowance_mm: f64,
     pub safe_z_mm: f64,
-    pub allow_tool_wider_than_hole: bool,     // format 16: drill a hole narrower than the tool
+    pub allow_tool_wider_than_hole: bool,     // format 17: drill a hole narrower than the tool
                                               // at the tool's size; false skips it (changed:
                                               // maintainer decision 2026-10-24)
 }
@@ -3034,7 +3034,7 @@ updated in the same PR. The other six change no persisted field.
 | A9 Tab corners, start point | #285 | `TabSpec::avoid_corners`, `ProfileOp::start` | 14 | A8; A5 helps check it |
 | (follow-up) Hole tabs hold their slugs | #302 | `PlacedTab::holds_slug` | 15 | A9 |
 | (follow-up) Tool vendor and product id | maintainer decision 2026-10-24 | `Tool::vendor`, `Tool::product_id`; library version 2 | 16 (or the next free one) | #302 |
-| (follow-up) Skip Drill holes narrower than the tool | maintainer decision 2026-10-24 | `DrillOp::allow_tool_wider_than_hole` | 16 or 17, whichever is free when it merges | #302 |
+| (follow-up) Skip Drill holes narrower than the tool | maintainer decision 2026-10-24 | `DrillOp::allow_tool_wider_than_hole` | 17 | tool vendor (16) |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only
@@ -4087,7 +4087,7 @@ property cases `inside_last_pass_helix_tabs_pass_first_exports`,
 `inside_last_pass_plunge_short_tab_exports` and
 `outside_last_pass_small_tab_on_a_hole_exports`.
 
-### Drill holes narrower than the tool (format version 16)
+### Drill holes narrower than the tool (format version 17)
 
 (changed: maintainer decision 2026-10-24.) "Cuts that are too small for
 the tool should be skipped, with a warning in the check and export
@@ -4103,14 +4103,13 @@ it at the tool's diameter with `drill_tool_wider_than_hole`, as before.
 The setting is the project's, not a CLI flag: the CLI writes no Drill
 fields, so a user sets it in the `.dcv` as every other Drill field.
 
-**Migration v15 → v16** (`migrate::v15_to_v16`): `allow_tool_wider_than_hole:
+**Migration v16 → v17** (`migrate::v16_to_v17`): `allow_tool_wider_than_hole:
 false` at the end of each Drill operation; other operations unchanged.
 Fails if a Drill already has the key. `false`, not `true`: the decision
 is that a hole the bit is too big for is not cut unless the user says
 so, so an old project whose Drill was drilling such holes now skips them
 and warns. CHANGELOG lists this under "Changed" as a behaviour change.
-If another change takes version 16 first, this one takes the next and
-adds its step after that one.
+Version 16 is the tool vendor and product id (#381), which merged first.
 
 Other operations checked: Engrave and On line Profile put the tool
 centre on the line by definition, so the groove is the bit's width
@@ -4125,8 +4124,8 @@ no plunge, `DrillHoleTooSmall` with both sizes),
 `drill::hole_equal_to_tool_within_tolerance_is_drilled`,
 `drill::allow_tool_wider_than_hole_drills_and_warns`,
 `drill::every_hole_skipped_warns_no_holes`,
-`migrate::v15_drill_migrates_with_allow_tool_wider_than_hole_false`,
-`migrate::v15_with_allow_tool_wider_than_hole_already_present_fails`,
+`migrate::v16_drill_migrates_with_allow_tool_wider_than_hole_false`,
+`migrate::v16_with_allow_tool_wider_than_hole_already_present_fails`,
 `cli::check_reports_drill_hole_too_small`,
 `cli::export_reports_drill_hole_too_small_and_writes_no_plunge_there`.
 
