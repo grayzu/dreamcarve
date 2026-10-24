@@ -174,8 +174,21 @@ fits the recess (VCarve "Create Fillets": Dog-Bone, T-Bone; T-bone on
 the longer edge, as VCarve places it). On a Pocket the notches are in
 the pocket's corners and the concave corners of islands; on an inside
 Profile in the hole's corners; on an outside Profile in the part's
-concave corners. The notch pass runs after the main passes, stepping
-down at the tool's step-down.
+concave corners. Notches are cut inline, on the pass that cuts the
+final wall: the Pocket's wall and island rings, or the Profile's lap
+at final size. At every level that path reaches a corner, it goes out
+to the corner and back and carries on, with no lift. The notch still
+steps down at the tool's step-down: a wall level deeper than one tool
+step below the last notch level cuts the levels between in the same
+column, stepping down at the corner. Where there is no final-wall path
+to cut from, the notches fall back to the separate notch pass: on a
+Pocket with an allowance (its rings are not the final wall), and for
+any corner whose final-wall path does not reach it at depth. Allowance
+paths (a Pocket's allowance, a Profile's passes before its last pass)
+never get notches. Corners under tabs stay skipped, and S9's notch rule
+is unchanged. (changed: maintainer decision 2026-10-24. The notch pass
+ran after the main passes, or among a Profile's passes, lifting and
+plunging at every corner, as PureCutCNC cuts it.)
 19. **Multi-tool export.** A project whose enabled operations use more
 than one tool exports either one program per tool run (phase 1,
 default) or one program with tool changes (`tool_change.mode: "m6"`,
@@ -469,7 +482,9 @@ along a tangent arc after overcutting `overcut_mm`, and the start
 point is more than one tool diameter from every corner. With a 30 mm
 radius the lead is shrunk and `lead_shrunk` is warned; in a 7 mm hole
 with a 6.35 mm tool it is dropped and `lead_dropped` is warned.
-29. **Dogbone and T-bone.** A 40×30 mm pocket with `corner_relief:  dogbone`: after the main passes, four notches along the corner
+29. **Dogbone and T-bone.** A 40×30 mm pocket with `corner_relief:  dogbone`: four notches, cut from the wall ring of each pass as it
+turns each corner, with no lift between them (changed: maintainer
+decision 2026-10-24: they followed the main passes), along the corner
 bisectors each end exactly one tool radius past the corner, so a
 40×30 mm square test block fits; `t_bone` puts each notch along the
 longer (40 mm) edge; an inside Profile of the same rectangle gets the

@@ -810,10 +810,15 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    pass clears the whole tool-centre region, so the pass before emptied
    it down to its Z). (changed in #214: pass 0 started at safe Z, later
    passes at the previous pass Z.)
-10. **Corner relief** (`relief` module): after all passes, with
-    `cleared = region inset by allowance` and `walls = tool-centre
-    region's root rings`, collect corners and emit the notch blocks in
-    their own group at the end, stepping down at the tool's step-down.
+10. **Corner relief** (`relief` module): with `cleared = region inset by
+    allowance` and `walls = tool-centre region's root rings`, collect
+    corners, then splice each corner's levels into the wall or island
+    ring of each pass that reaches its descend point, before the blocks
+    are sequenced ("Corner relief", step 5). Corners with no such ring,
+    and every corner of a Pocket with an allowance, get notch blocks in
+    their own group at the end, stepping down at the tool's step-down
+    (step 6). (changed: maintainer decision 2026-10-24: every notch was
+    in that group at the end.)
 11. **Blocks → `sequence`** with containment pairs from `nest` depth.
 12. **Footprint check** (S9): `footprint(toolpath, r)` must lie inside
     `region` inset by `allowance_mm` (offset by `+EPS_MM`) and outside
@@ -1808,12 +1813,17 @@ Ported from `cornerRelief.ts`.
    `ReliefCornerTooTight` (`NearOtherWall`, #322): nearer, the notch
    cuts past that wall too, through a part thinner there than the notch
    is deep or into an island, which S9's notch rule refuses.
-4. **Pass:** the levels are `generateStepLevels(top, bottom,
-   tool.step_down)`; per corner and level: plunge at the descend point,
-   cut to the end, cut back. Only corners whose descend point the main
-   path has cut at the deepest level are cut (else `ReliefCornerNotCut`);
-   links between corners retract. A tool with no step-down skips the pass
-   with `ReliefSkipped`.
+4. **Levels and the separate pass:** the levels are
+   `generateStepLevels(top, bottom, tool.step_down)`; per corner and
+   level the notch cuts from the descend point to the end and back. Only
+   corners whose descend point the main path has cut at the deepest level
+   are cut (else `ReliefCornerNotCut`). A tool with no step-down skips
+   relief with `ReliefSkipped`. Since the maintainer decision of
+   2026-10-24 the notches are cut inline (step 5). The separate pass
+   below is the fallback (step 6): per corner and level, plunge at the
+   descend point, cut to the end, cut back, with a retract between
+   corners. (changed: maintainer decision 2026-10-24. The separate pass
+   was the only way notches were cut.)
    - **Pocket:** after the main blocks, corners ordered nearest-neighbour
      from the last exit, one block per level; the blocks share one group.
      Two corners whose descend points are equally near, within
@@ -1844,6 +1854,83 @@ Ported from `cornerRelief.ts`.
      levels ran as blocks before its lap and plunged through the skin, up
      to one step-down, whatever the Profile's entry; cut from the lap,
      every Z change at a descend point is in an open column.)
+5. **Inline on the final wall (default).** Each level `ℓ` of a corner
+   goes to the operation's first pass whose Z is at or below
+   `ℓ + RELIEF_Z_TOLERANCE_MM` (the last pass if none). That pass's path
+   has opened the column at the descend point `P` down to `ℓ` by the time
+   it reaches `P`. A pass gets the levels between it and the pass above:
+   one when the two step-downs are equal, several when the operation
+   steps deeper than the tool, none when it steps finer.
+   - **The final-wall path** of a corner at a pass is the block of the
+     corner's shape at that pass that cuts the final wall, and that
+     reaches `P` at the pass's Z within the guard (`RELIEF_POSITION_
+     TOLERANCE_MM` plus the flatten tolerance):
+     - Pocket: a closed ring of the corner's region, the wall ring or an
+       island ring (`wall_pass: first` or `last`, and `allowance_mm` 0).
+       Inner rings never reach `P`, and open raster lines never count.
+     - Profile: the shape's lap. With a last pass (#284) that is the
+       last pass's lap only. The allowance passes run on the allowance
+       paths, which never get a notch.
+   - **The detour** is #193's splice, on every pass with levels, not
+     only the freeing one. Where the final-wall path first reaches `P` at
+     its Z (a lap move that passes `P` in its middle is split there), the
+     tool rises in the open column to the first of the pass's levels. At
+     each level it cuts out to the end and back at the feed rate,
+     stepping down at `P` at the plunge rate between levels. Then it
+     returns to the pass's Z at `P` and carries on along the path. No
+     lift, rapid or link is added. A corner's notch is cut where the path
+     passes it, so the corners of one path follow the path's own order.
+     A pass with no levels for the corner gets no detour.
+   - **Step-down: no fallback.** The notch never steps deeper than the
+     tool's step-down, whatever the operation's step-down. Every level is
+     one tool step below the level before, and the material above each
+     level in the lobe was cut by an earlier level. An operation that
+     steps deeper than its tool cuts several levels in one detour, in the
+     column its pass has just opened, as #193's freeing lap does. So a
+     coarse step-down (a finishing Pocket or Profile cut in one full-depth
+     pass) never cuts a notch as a full-depth slot, and needs no separate
+     pass. That slot was PureCutCNC's reason to keep relief out of the
+     wall path.
+   - **Entries and leads.** The detour goes only into the block's cuts,
+     after its descent. The plunge, ramp or helix descent never carries a
+     detour, nor does a ramp along the wall that passes `P` on its way
+     down (it is not at the pass's Z there). A lead-in or lead-out runs in
+     the waste and meets the wall only at its join, so the first place a
+     led lap reaches `P` at depth is on the lap. When the join is at `P`,
+     the detour runs there. A path that starts at `P` runs the detour
+     right after its descent. #348's staged descent moves are part of the
+     lap, and a stage that passes `P` at the pass's Z counts.
+   - **Tabs:** a corner under a tab fails the guard at the deepest level,
+     since the tab lifts the lap over `P`, so it stays skipped with
+     `ReliefCornerNotCut`. Tabs sit at the same place on every pass, so
+     a corner that passes the guard is reached at depth on every pass.
+   - **S9:** the detour's moves are the separate pass's moves (vertical
+     at `P`, level from `P` to the end and back). They sweep the same
+     lobe, so the notch rule and the generators' footprint lobes are
+     unchanged.
+   (changed: maintainer decision 2026-10-24. Every notch was cut by the
+   separate pass of step 4: a Pocket's after all its passes, a Profile's
+   after each pass's lap but the freeing one, lifting to safe Z and
+   plunging at every corner and level.)
+6. **Fallback to the separate pass** (step 4), only where there is no
+   final-wall path to cut from:
+   - A Pocket with `allowance_mm` above 0: its rings are allowance paths,
+     not the final wall. Every corner is cut by the separate pass after
+     the main passes, sized to the wall the allowance leaves, as before.
+   - A Pocket corner where some pass that has levels for it has no
+     final-wall path reaching `P` at its Z, for example a rest Pocket
+     that skips the wall ring (#167): that corner, all its levels, goes
+     to the separate pass after the main passes, so its levels are still
+     cut top first. With `wall_pass: none` no ring reaches `P`. Every
+     corner falls back, and the guard skips it with `ReliefCornerNotCut`
+     unless a raster line happens to cut its descend point at depth, as
+     before.
+   - A Profile pass whose lap does not reach `P` at its Z: that pass's
+     levels are the separate notch block in that pass's unit, after the
+     lap (#189), as before.
+   `ReliefSkipped`, `ReliefCornerTooTight` and `ReliefCornerNotCut`
+   are given as before. Inline or not, a corner's notch is the same.
+   (changed: maintainer decision 2026-10-24.)
 
 ### Sequence (dc-cam::sequence)
 
