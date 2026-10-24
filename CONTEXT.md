@@ -103,9 +103,12 @@ _PureCutCNC_: none (a separate operation with stockToLeaveRadial)
 
 **Corner Relief**:
 A short out-and-back notch a Pocket or Profile cuts into each inside corner
-its round tool cannot reach, after its main passes, so a square part fits:
-a **dogbone** along the corner's bisector, or a **T-bone** along its longer
-edge (`corner_relief`). VCarve's "Create Fillets".
+its round tool cannot reach, so a square part fits: a **dogbone** along the
+corner's bisector, or a **T-bone** along its longer edge (`corner_relief`).
+The pass that cuts the final wall cuts the notches as it goes round, at
+every level; a separate notch pass cuts only what that pass cannot reach,
+such as a Pocket's corners when it leaves a Pocket Allowance. VCarve's
+"Create Fillets".
 _Avoid_: Fillet (a fillet is the rounded corner relief removes), overcut
 _PureCutCNC_: cornerRelief
 
