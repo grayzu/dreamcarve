@@ -5844,6 +5844,9 @@ mod tests {
                         tool,
                         dc_cam::generate_drill(project, p).unwrap().0,
                     ),
+                    Operation::Bore(p) => {
+                        (op_owned, tool, dc_cam::generate_bore(project, p).unwrap().0).into()
+                    }
                 }
             })
             .collect()
@@ -5891,12 +5894,14 @@ mod tests {
     fn tool_change_lifts_to_machine_z_before_m6() {
         let text = heights_plaque();
         let lines = code_lines(&text);
-        let change = lines.iter().position(|l| l.starts_with("T2 M6")).unwrap();
+        // The plaque cuts with T2 first since its Bore (maintainer
+        // decision 2026-10-24), so the one change is to T1.
+        let change = lines.iter().position(|l| l.starts_with("T1 M6")).unwrap();
         let before: Vec<&str> = lines[change - 3..=change]
             .iter()
             .map(String::as_str)
             .collect();
-        assert_eq!(before[1..], ["G53 G0 Z-5.000", "M5", "T2 M6"], "{text}");
+        assert_eq!(before[1..], ["G53 G0 Z-5.000", "M5", "T1 M6"], "{text}");
         assert!(
             ["Z20.000", "G0 Z20.000"].contains(&before[0]),
             "the rise to the clearance height comes first: {before:?}"
@@ -6754,17 +6759,32 @@ mod tests {
             .collect()
     }
 
-    /// The plaque's Drill alone, on LinuxCNC with canned cycles on and a
-    /// 20 mm clearance height, as a simple cycle with `dwell_s`.
+    /// The plaque's screw holes drilled, as the plaque drilled them before
+    /// its Bore (maintainer decision 2026-10-24): a Drill of the four 5 mm
+    /// circles with the 6.35 mm bit at the bit's size, alone, on LinuxCNC
+    /// with canned cycles on and a 20 mm clearance height, as a simple
+    /// cycle with `dwell_s`.
     fn plaque_drill_on_linuxcnc(dwell_s: f64) -> (Project, Vec<EmitOp>) {
         let mut project = plaque();
         project.post_processor = PostProcessorRef::latest("linuxcnc").unwrap();
         project.post_processor.use_canned_cycles = true;
         project.heights.clearance_mm = Some(20.0);
         for op in &mut project.operations {
-            if let Operation::Drill(drill) = op {
-                drill.cycle = dc_project::DrillCycle::Simple;
-                drill.dwell_s = dwell_s;
+            if let Operation::Bore(bore) = op {
+                *op = Operation::Drill(dc_project::DrillOp {
+                    id: bore.id.clone(),
+                    name: bore.name.clone(),
+                    enabled: true,
+                    targets: bore.targets.clone(),
+                    tool: dc_project::ToolId::new("t2"),
+                    cycle: dc_project::DrillCycle::Simple,
+                    dwell_s,
+                    depth_mm: bore.depth_mm,
+                    retract_mm: 1.0,
+                    through_cut_allowance_mm: bore.through_cut_allowance_mm,
+                    safe_z_mm: bore.safe_z_mm,
+                    allow_tool_wider_than_hole: true,
+                });
             }
         }
         let ops = generated_ops(&project)

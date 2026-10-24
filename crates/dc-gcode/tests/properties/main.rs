@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Property tests for generation and emission (issue #72): a random valid
-//! project with one Profile, Pocket, Drill or Engrave either fails to
+//! project with one Profile, Pocket, Drill, Bore or Engrave either fails to
 //! generate with a typed error that names a problem of the drawing, or
 //! generates a toolpath that passes `assert_safe` and emits through the
 //! full safety pass (S1–S12); nothing panics. And sequencing is a
@@ -31,7 +31,7 @@ mod projects;
 
 use dc_cam::test_support::assert_safe;
 use dc_cam::{
-    CamError, MoveKind, Toolpath, generate_drill, generate_engrave, generate_pocket,
+    CamError, MoveKind, Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket,
     generate_profile,
 };
 use dc_gcode::{EmitOp, emit};
@@ -101,6 +101,10 @@ fn generate(project: &Project) -> Result<EmitOp, CamError> {
             let (toolpath, _) = generate_engrave(project, e)?;
             EmitOp::from((op, tool, toolpath))
         }
+        Operation::Bore(b) => {
+            let (toolpath, _) = generate_bore(project, b)?;
+            EmitOp::from((op, tool, toolpath))
+        }
     })
 }
 
@@ -163,6 +167,14 @@ proptest! {
     /// them; rectangles in the targets are skipped with a warning.
     #[test]
     fn random_valid_drills_never_panic_and_pass_safety(project in projects::drill_project()) {
+        exports_safely(&project)?;
+    }
+
+    /// Bore (format 18): circles from under the tool's size to more than
+    /// twice it, any pitch up to the step-down, either direction, an
+    /// allowance; holes it cannot cut are skipped with a warning.
+    #[test]
+    fn random_valid_bores_never_panic_and_pass_safety(project in projects::bore_project()) {
         exports_safely(&project)?;
     }
 

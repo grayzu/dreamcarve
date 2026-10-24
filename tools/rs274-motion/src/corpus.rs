@@ -12,11 +12,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use dc_cam::{generate_drill, generate_engrave, generate_pocket, generate_profile};
+use dc_cam::{generate_bore, generate_drill, generate_engrave, generate_pocket, generate_profile};
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
 use dc_project::{
-    DrillCycle, Heights, Operation, ParkXy, PostProcessor, PostProcessorRef, Project,
-    SpindleControl, Units, bundled_definition, latest_definition, load,
+    DrillCycle, DrillOp, Heights, Operation, ParkXy, PostProcessor, PostProcessorRef, Project,
+    SpindleControl, ToolId, Units, bundled_definition, latest_definition, load,
 };
 
 /// The definitions whose programs `rs274` can read, with the bridge.
@@ -191,16 +191,28 @@ fn variants(plaque: &Project, id: &str) -> Result<Vec<(&'static str, Project)>, 
     let mut out = vec![("plain", base.clone())];
 
     if post.canned_cycles.is_some() {
-        // The plaque's holes are pecked; no bundled definition has a
-        // documented `G83` re-entry, so they would stay plain moves. A
-        // simple Drill is `G81`, and one with a dwell `G82`.
+        // The plaque bores its holes (maintainer decision 2026-10-24), so
+        // these variants drill them as it did before: a simple Drill with
+        // the 6.35 mm bit is `G81`, and one with a dwell `G82`.
         for (variant, dwell_s) in [("canned-g81", 0.0), ("canned-g82", 0.5)] {
             let mut p = base.clone();
             p.post_processor.use_canned_cycles = true;
             for op in &mut p.operations {
-                if let Operation::Drill(drill) = op {
-                    drill.cycle = DrillCycle::Simple;
-                    drill.dwell_s = dwell_s;
+                if let Operation::Bore(bore) = op {
+                    *op = Operation::Drill(DrillOp {
+                        id: bore.id.clone(),
+                        name: bore.name.clone(),
+                        enabled: bore.enabled,
+                        targets: bore.targets.clone(),
+                        tool: ToolId::new("t2"),
+                        cycle: DrillCycle::Simple,
+                        dwell_s,
+                        depth_mm: bore.depth_mm,
+                        retract_mm: 1.0,
+                        through_cut_allowance_mm: bore.through_cut_allowance_mm,
+                        safe_z_mm: bore.safe_z_mm,
+                        allow_tool_wider_than_hole: true,
+                    });
                 }
             }
             out.push((variant, p));
@@ -254,6 +266,7 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
             Operation::Profile(op) => (generate_profile(project, op).map_err(err)?.0, None),
             Operation::Pocket(op) => (generate_pocket(project, op).map_err(err)?.0, None),
             Operation::Engrave(op) => (generate_engrave(project, op).map_err(err)?.0, None),
+            Operation::Bore(op) => (generate_bore(project, op).map_err(err)?.0, None),
             Operation::Drill(op) => {
                 let (drilled, _) = generate_drill(project, op).map_err(err)?;
                 (drilled.toolpath, Some(drilled.holes))

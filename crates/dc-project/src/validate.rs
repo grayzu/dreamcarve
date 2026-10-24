@@ -48,7 +48,7 @@
 
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
-    ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, LastPass, Lead,
+    BoreOp, ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, LastPass, Lead,
     Operation, OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement,
     Tool, ToolKind,
 };
@@ -462,6 +462,19 @@ pub enum Problem {
         /// `tools[t1].step_down_mm`.
         step_down_field: String,
     },
+    /// An enabled Bore's `pitch_mm` is more than its tool's step-down
+    /// (format 18; maintainer decision 2026-10-24): one turn of the helix
+    /// would cut deeper than a pass. An error.
+    BorePitchOverStepDown {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The pitch asked for, mm.
+        pitch_mm: f64,
+        /// The tool's step-down, mm.
+        step_down_mm: f64,
+    },
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min (#67).
@@ -519,6 +532,7 @@ impl Problem {
             Self::LastPassAllowance { .. } => "last_pass_allowance",
             Self::LastPassNeedsSide { .. } => "last_pass_needs_side",
             Self::LastPassThickerThanStepDown { .. } => "last_pass_thicker_than_step_down",
+            Self::BorePitchOverStepDown { .. } => "bore_pitch_over_step_down",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
             Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
@@ -547,6 +561,7 @@ impl Problem {
             | Self::LastPassAllowance { .. }
             | Self::LastPassNeedsSide { .. }
             | Self::LastPassThickerThanStepDown { .. }
+            | Self::BorePitchOverStepDown { .. }
             | Self::ClearanceBelowSafeZ { .. }
             | Self::MachineZNotBelowHome { .. }
             | Self::MachineZNeedsG53 { .. } => Severity::Error,
@@ -665,6 +680,9 @@ impl Problem {
             }
             Self::LastPassThickerThanStepDown { operation, .. } => {
                 Some(format!("operations[{operation}].last_pass.thickness_mm"))
+            }
+            Self::BorePitchOverStepDown { operation, .. } => {
+                Some(format!("operations[{operation}].pitch_mm"))
             }
             Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
             Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
@@ -886,6 +904,15 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) has last_pass.thickness_mm {thickness_mm} mm, more than its {step_down_mm} mm step-down ({step_down_field}); the last pass would cut that deep in one go. Make it at most the step-down, or set it to null for the usual last pass"
             ),
+            Self::BorePitchOverStepDown {
+                operation,
+                name,
+                pitch_mm,
+                step_down_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has pitch_mm {pitch_mm} mm, more than its tool's {step_down_mm} mm step-down; each turn of the helix would cut deeper than a pass. Make it at most the step-down, or set it to null to use the step-down"
+            ),
             Self::HelixNeedsWasteSide { operation, name } => write!(
                 f,
                 "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
@@ -1010,6 +1037,7 @@ impl Validator {
                 Operation::Profile(op) => op.step_down_mm.is_none(),
                 Operation::Pocket(op) => op.step_down_mm.is_none(),
                 Operation::Engrave(op) => op.step_down_mm.is_none(),
+                Operation::Bore(op) => op.pitch_mm.is_none(),
                 Operation::Drill(op) => matches!(
                     op.cycle,
                     DrillCycle::Peck {
@@ -1190,6 +1218,7 @@ impl Validator {
                 Operation::Profile(op) => self.profile(op, &at),
                 Operation::Pocket(op) => self.pocket(op, index, &p.operations, &at),
                 Operation::Drill(op) => self.drill(op, &at),
+                Operation::Bore(op) => self.bore(op, &at),
                 Operation::Engrave(op) => self.engrave(op, &at),
             }
         }
@@ -1360,8 +1389,9 @@ impl Validator {
     }
 
     /// The sanity checks of an enabled operation `op` at `at`, cutting
-    /// with `tool` when it exists (#67, #117): it has targets; a Pocket or
-    /// an Inside or Outside Profile cuts with a flat end mill; a Drill
+    /// with `tool` when it exists (#67, #117): it has targets; a Pocket, a
+    /// Bore or an Inside or Outside Profile cuts with a flat end mill; a
+    /// Bore's pitch is at most the tool's step-down; a Drill
     /// cuts with a drill or end mill (a warning otherwise); the step-down
     /// in effect is at most the tool's diameter; corner relief has a tool
     /// step-down to step at; a V-bit engraves no deeper than its cone.
@@ -1377,7 +1407,7 @@ impl Validator {
         };
         let offsets_by_radius = match op {
             Operation::Profile(op) => op.side != Side::OnLine,
-            Operation::Pocket(_) => true,
+            Operation::Pocket(_) | Operation::Bore(_) => true,
             Operation::Drill(_) | Operation::Engrave(_) => false,
         };
         if offsets_by_radius && !tool.cutter.is_flat() {
@@ -1400,8 +1430,23 @@ impl Validator {
                 cutter: tool.cutter.describe(),
             });
         }
+        // A Bore's pitch is held to the tool's step-down (format 18).
+        if let Operation::Bore(bore) = op
+            && let (Some(pitch_mm), Some(step_down_mm)) = (bore.pitch_mm, tool.step_down_mm)
+            && pitch_mm.is_finite()
+            && step_down_mm.is_finite()
+            && pitch_mm > step_down_mm
+        {
+            self.problems.push(Problem::BorePitchOverStepDown {
+                operation: op.id().clone(),
+                name: op.name().to_owned(),
+                pitch_mm,
+                step_down_mm,
+            });
+        }
         let own_step_down = match op {
             Operation::Profile(op) => op.step_down_mm,
+            Operation::Bore(_) => None,
             Operation::Pocket(op) => op.step_down_mm,
             Operation::Engrave(op) => op.step_down_mm,
             Operation::Drill(op) => match op.cycle {
@@ -1456,7 +1501,7 @@ impl Validator {
         let relief = match op {
             Operation::Profile(op) => op.corner_relief,
             Operation::Pocket(op) => op.corner_relief,
-            Operation::Drill(_) | Operation::Engrave(_) => CornerRelief::None,
+            Operation::Drill(_) | Operation::Bore(_) | Operation::Engrave(_) => CornerRelief::None,
         };
         if relief != CornerRelief::None && tool.step_down_mm.is_none() && own_step_down.is_some() {
             self.problems.push(Problem::ReliefNeedsStepDown {
@@ -1644,6 +1689,19 @@ impl Validator {
         }
         self.non_negative(&format!("{at}.dwell_s"), op.dwell_s);
         self.non_negative(&format!("{at}.retract_mm"), op.retract_mm);
+        self.non_negative(
+            &format!("{at}.through_cut_allowance_mm"),
+            op.through_cut_allowance_mm,
+        );
+        self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+    }
+
+    /// A Bore's own fields, in file order (format 18).
+    fn bore(&mut self, op: &BoreOp, at: &str) {
+        if let Some(pitch_mm) = op.pitch_mm {
+            self.positive(&format!("{at}.pitch_mm"), pitch_mm);
+        }
+        self.non_negative(&format!("{at}.allowance_mm"), op.allowance_mm);
         self.non_negative(
             &format!("{at}.through_cut_allowance_mm"),
             op.through_cut_allowance_mm,
@@ -1899,7 +1957,7 @@ mod tests {
         ToolKind,
     };
     use crate::test_support::{
-        profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
+        profile_mut, sample_bore, sample_drill, sample_engrave, sample_pocket, sample_project,
     };
     use dc_geometry::{MAX_COORDINATE_MM, Polyline, Transform, Vertex, approx_eq};
 
@@ -4124,6 +4182,108 @@ mod tests {
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);
+    }
+
+    /// Format 18: a Bore's pitch is at most its tool's step-down, which
+    /// is an error; at the step-down it is fine.
+    #[test]
+    fn bore_pitch_over_step_down_is_error() {
+        let mut bore = sample_bore();
+        bore.pitch_mm = Some(2.5);
+        let p = with_ops(vec![Operation::Bore(bore)]);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::BorePitchOverStepDown {
+                operation: OperationId::new("o5"),
+                name: "Bore".into(),
+                pitch_mm: 2.5,
+                step_down_mm: 2.0,
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "bore_pitch_over_step_down");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o5].pitch_mm")
+        );
+        let mut bore = sample_bore();
+        bore.pitch_mm = Some(2.0);
+        assert_eq!(validate(&with_ops(vec![Operation::Bore(bore)])), vec![]);
+        let mut bore = sample_bore();
+        bore.pitch_mm = Some(0.0);
+        assert_eq!(
+            validate(&with_ops(vec![Operation::Bore(bore)])),
+            vec![Problem::OutOfRange {
+                field: "operations[o5].pitch_mm".into(),
+                value: 0.0,
+                expected: POSITIVE,
+            }]
+        );
+    }
+
+    /// Format 18: with no pitch a Bore takes the tool's step-down, so one
+    /// of the two must be set, as for a Pocket.
+    #[test]
+    fn bore_without_pitch_or_step_down_is_error() {
+        let mut p = with_ops(vec![Operation::Bore(sample_bore())]);
+        p.tools[0].step_down_mm = None;
+        profile_mut(&mut p).step_down_mm = Some(2.0);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::ToolValueUnset {
+                tool: ToolId::new("t1"),
+                name: "6.35 mm upcut".into(),
+                field: "step_down_mm",
+            }]
+        );
+        if let Some(Operation::Bore(bore)) = p.operations.get_mut(1) {
+            bore.pitch_mm = Some(1.0);
+        }
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// Format 18: the allowance is a distance of 0 or more.
+    #[test]
+    fn bore_negative_allowance_is_error() {
+        let mut bore = sample_bore();
+        bore.allowance_mm = -0.1;
+        assert_eq!(
+            validate(&with_ops(vec![Operation::Bore(bore)])),
+            vec![Problem::OutOfRange {
+                field: "operations[o5].allowance_mm".into(),
+                value: -0.1,
+                expected: NON_NEGATIVE,
+            }]
+        );
+    }
+
+    /// Format 18: a Bore cuts its wall with the side of the bit, so it
+    /// needs a flat end mill, as a Pocket does.
+    #[test]
+    fn bore_needs_flat_end_mill() {
+        for cutter in [ToolKind::Drill, ToolKind::BallNose] {
+            let mut p = with_ops(vec![Operation::Bore(sample_bore())]);
+            let mut t2 = tool("t2");
+            t2.cutter = cutter.clone();
+            p.tools.push(t2);
+            if let Some(Operation::Bore(bore)) = p.operations.get_mut(1) {
+                bore.tool = ToolId::new("t2");
+            }
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::CutterNotFlat {
+                    operation: OperationId::new("o5"),
+                    name: "Bore".into(),
+                    tool: ToolId::new("t2"),
+                    tool_name: "tool t2".into(),
+                    cutter: cutter.describe(),
+                }],
+                "{cutter:?}"
+            );
+            assert_eq!(problems[0].severity(), Severity::Error);
+        }
     }
 
     /// Functional spec, capability 14: the dwell and retract are

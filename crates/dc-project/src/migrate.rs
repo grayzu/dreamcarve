@@ -97,7 +97,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 17;
+pub const CURRENT_VERSION: u32 = 18;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -123,6 +123,7 @@ fn step(from: u32) -> Option<Step> {
         14 => Some(v14_to_v15),
         15 => Some(v15_to_v16),
         16 => Some(v16_to_v17),
+        17 => Some(v17_to_v18),
         _ => None,
     }
 }
@@ -733,6 +734,15 @@ fn v16_to_v17(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
         }
         fields.insert("allow_tool_wider_than_hole".into(), Value::Bool(false));
     }
+    Ok(root)
+}
+
+/// Version 17 → 18 (maintainer decision 2026-10-24): the Bore operation,
+/// `"kind": "bore"`, which no version 17 file holds, so a version 17 file
+/// is already a version 18 one. The bump makes a version 17 reader refuse
+/// a file with a Bore as newer instead of failing on an unknown kind
+/// (ADR-0002).
+fn v17_to_v18(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
@@ -2295,6 +2305,45 @@ mod tests {
             );
             assert_eq!(load(saved.as_bytes()).unwrap().project, project);
         }
+    }
+
+    const V17_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v17/sample.dcv");
+
+    #[test]
+    fn version_17_fixture_loads() {
+        let loaded = load(V17_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// Format 18 (maintainer decision 2026-10-24): the Bore is a new
+    /// operation kind no version 17 file holds, so the step changes only
+    /// the version, with a Drill too.
+    #[test]
+    fn v17_to_v18_changes_only_the_version() {
+        let root: Value = serde_json::from_slice(V17_FIXTURE).unwrap();
+        let stepped = v17_to_v18(root.as_object().unwrap().clone()).unwrap();
+        assert_eq!(Value::Object(stepped), root);
+        let mut root = sample_root_at(17);
+        let drill = serde_json::to_value(Operation::Drill(sample_drill())).unwrap();
+        root["operations"].as_array_mut().unwrap().push(drill);
+        let mut expected = root.clone();
+        expected["version"] = json!(CURRENT_VERSION);
+        assert_eq!(migrate(root, 17).unwrap(), expected);
+        assert_eq!(
+            migrate(sample_root_at(17), 17).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+    }
+
+    /// A version 17 reader refuses a file with a Bore as newer, which is
+    /// what the bump is for (ADR-0002).
+    #[test]
+    fn version_18_is_newer_than_17() {
+        assert_eq!(CURRENT_VERSION, 18);
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }
 
     #[test]

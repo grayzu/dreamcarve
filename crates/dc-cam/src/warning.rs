@@ -151,6 +151,20 @@ pub enum WarningCode {
     /// Every target of a Drill was skipped (not a circle, or narrower than
     /// the tool), so it drills nothing.
     DrillNoHoles,
+    /// A Bore target is not a circle (or is an open path), so it was
+    /// skipped (format 18; maintainer decision 2026-10-24).
+    BoreTargetNotCircle,
+    /// A Bore hole leaves the helix less than
+    /// [`crate::BORE_MIN_HELIX_RADIUS_MM`] of radius: the tool, with
+    /// the allowance, does not fit it or fits it too closely to spiral, so
+    /// it was skipped.
+    BoreNoRoom,
+    /// A Bore hole is wider than twice the tool plus twice the allowance:
+    /// the helix would leave a core standing in the middle, loose in a
+    /// through hole, so it was skipped.
+    BoreLeavesCore,
+    /// Every target of a Bore was skipped, so it cuts nothing.
+    BoreNoHoles,
     /// A rest Pocket's tool reaches nothing the Pocket it rests on left
     /// (`docs/specs/phase-2/design.md`, "Algorithms → Pocket", step 3), so
     /// it emits no toolpath.
@@ -196,6 +210,10 @@ impl WarningCode {
             Self::DrillPeckDeeperThanHole => "drill_peck_deeper_than_hole",
             Self::DrillRetractBelowStockTop => "drill_retract_below_stock_top",
             Self::DrillNoHoles => "drill_no_holes",
+            Self::BoreTargetNotCircle => "bore_target_not_circle",
+            Self::BoreNoRoom => "bore_no_room",
+            Self::BoreLeavesCore => "bore_leaves_core",
+            Self::BoreNoHoles => "bore_no_holes",
             Self::RestOfClearsNothing => "rest_of_clears_nothing",
         }
     }
@@ -684,6 +702,49 @@ pub enum Warning {
         /// The operation.
         op: OperationId,
     },
+    /// [`WarningCode::BoreTargetNotCircle`].
+    BoreTargetNotCircle {
+        /// The operation.
+        op: OperationId,
+        /// The shape skipped.
+        shape: ShapeRef,
+    },
+    /// [`WarningCode::BoreNoRoom`].
+    BoreNoRoom {
+        /// The operation.
+        op: OperationId,
+        /// The hole skipped.
+        shape: ShapeRef,
+        /// The hole's diameter.
+        hole_mm: f64,
+        /// The tool's diameter.
+        tool_mm: f64,
+        /// The operation's radial allowance.
+        allowance_mm: f64,
+        /// The hole is the tool's size within the flatten tolerance or
+        /// wider, so a Drill cuts it.
+        drill_fits: bool,
+    },
+    /// [`WarningCode::BoreLeavesCore`].
+    BoreLeavesCore {
+        /// The operation.
+        op: OperationId,
+        /// The hole skipped.
+        shape: ShapeRef,
+        /// The hole's diameter.
+        hole_mm: f64,
+        /// The tool's diameter.
+        tool_mm: f64,
+        /// The operation's radial allowance.
+        allowance_mm: f64,
+        /// The diameter of the core the helix would leave.
+        core_mm: f64,
+    },
+    /// [`WarningCode::BoreNoHoles`].
+    BoreNoHoles {
+        /// The operation.
+        op: OperationId,
+    },
     /// [`WarningCode::RestOfClearsNothing`].
     RestOfClearsNothing {
         /// The operation.
@@ -736,6 +797,10 @@ impl Warning {
             Self::DrillPeckDeeperThanHole { .. } => WarningCode::DrillPeckDeeperThanHole,
             Self::DrillRetractBelowStockTop { .. } => WarningCode::DrillRetractBelowStockTop,
             Self::DrillNoHoles { .. } => WarningCode::DrillNoHoles,
+            Self::BoreTargetNotCircle { .. } => WarningCode::BoreTargetNotCircle,
+            Self::BoreNoRoom { .. } => WarningCode::BoreNoRoom,
+            Self::BoreLeavesCore { .. } => WarningCode::BoreLeavesCore,
+            Self::BoreNoHoles { .. } => WarningCode::BoreNoHoles,
             Self::RestOfClearsNothing { .. } => WarningCode::RestOfClearsNothing,
         }
     }
@@ -770,6 +835,10 @@ impl Warning {
             | Self::DrillPeckDeeperThanHole { op, .. }
             | Self::DrillRetractBelowStockTop { op, .. }
             | Self::DrillNoHoles { op }
+            | Self::BoreTargetNotCircle { op, .. }
+            | Self::BoreNoRoom { op, .. }
+            | Self::BoreLeavesCore { op, .. }
+            | Self::BoreNoHoles { op }
             | Self::RestOfClearsNothing { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
@@ -1338,6 +1407,56 @@ impl fmt::Display for Warning {
                 f,
                 "none of its targets is a circle it can drill, so it drills nothing"
             ),
+            Self::BoreTargetNotCircle { shape, .. } => write!(
+                f,
+                "{shape} is not a circle; Bore cuts only circles, so it is not bored"
+            ),
+            Self::BoreNoRoom {
+                shape,
+                hole_mm,
+                tool_mm,
+                allowance_mm,
+                drill_fits,
+                ..
+            } => {
+                write!(
+                    f,
+                    "the {} mm hole {shape} leaves the {} mm tool",
+                    diameter(*hole_mm),
+                    diameter(*tool_mm)
+                )?;
+                if *allowance_mm > 0.0 {
+                    write!(f, " and its {} mm allowance", mm(*allowance_mm))?;
+                }
+                if *drill_fits {
+                    write!(
+                        f,
+                        " no room to spiral, so it is not bored; a hole the bit's size is a Drill's: drill it with a Drill"
+                    )
+                } else {
+                    write!(
+                        f,
+                        " no room: the tool does not fit, so it is not bored; use a smaller end mill"
+                    )
+                }
+            }
+            Self::BoreLeavesCore {
+                shape,
+                hole_mm,
+                tool_mm,
+                core_mm,
+                ..
+            } => write!(
+                f,
+                "the {} mm hole {shape} is more than twice the {} mm tool: a helix along its wall would leave a {} mm core standing, which comes loose in a through hole, so it is not bored; clear it with a Pocket, or use a bigger end mill",
+                diameter(*hole_mm),
+                diameter(*tool_mm),
+                diameter(*core_mm)
+            ),
+            Self::BoreNoHoles { .. } => write!(
+                f,
+                "none of its targets is a circle it can bore, so it cuts nothing"
+            ),
             Self::RestOfClearsNothing { rest_of, tool, .. } => write!(
                 f,
                 "operation `{rest_of}`, which this one rests on, already reaches everything tool `{tool}` can, so this operation cuts nothing; use a smaller tool, or remove it"
@@ -1889,7 +2008,7 @@ mod tests {
                     hole_mm: 4.999_999_9,
                     tool_mm: 6.35,
                 },
-                "the 5 mm hole `Shape` (instance `i1`, profile 2) is narrower than the 6.35 mm tool, so it is not drilled: a Drill never moves sideways, so the hole would come out the tool's size; use a smaller tool, or set allow_tool_wider_than_hole to drill it at that size",
+                "the 5 mm hole `Shape` (instance `i1`, profile 2) is narrower than the 6.35 mm tool, so it is not drilled: a Drill never moves sideways, so the hole would come out the tool's size; cut it to size with a Bore and an end mill smaller than the hole (a Bore cuts holes bigger than its bit), drill it with a smaller drill, or set allow_tool_wider_than_hole to drill it at the tool's size",
             ),
             (
                 Warning::DrillToolWiderThanHole {
@@ -1919,6 +2038,50 @@ mod tests {
             (
                 Warning::DrillNoHoles { op: op() },
                 "none of its targets is a circle it can drill, so it drills nothing",
+            ),
+            (
+                Warning::BoreTargetNotCircle {
+                    op: op(),
+                    shape: shape(),
+                },
+                "`Shape` (instance `i1`, profile 2) is not a circle; Bore cuts only circles, so it is not bored",
+            ),
+            (
+                Warning::BoreNoRoom {
+                    op: op(),
+                    shape: shape(),
+                    hole_mm: 3.0,
+                    tool_mm: 3.175,
+                    allowance_mm: 0.0,
+                    drill_fits: false,
+                },
+                "the 3 mm hole `Shape` (instance `i1`, profile 2) leaves the 3.175 mm tool no room: the tool does not fit, so it is not bored; use a smaller end mill",
+            ),
+            (
+                Warning::BoreNoRoom {
+                    op: op(),
+                    shape: shape(),
+                    hole_mm: 3.175,
+                    tool_mm: 3.175,
+                    allowance_mm: 0.02,
+                    drill_fits: true,
+                },
+                "the 3.175 mm hole `Shape` (instance `i1`, profile 2) leaves the 3.175 mm tool and its 0.02 mm allowance no room to spiral, so it is not bored; a hole the bit's size is a Drill's: drill it with a Drill",
+            ),
+            (
+                Warning::BoreLeavesCore {
+                    op: op(),
+                    shape: shape(),
+                    hole_mm: 10.0,
+                    tool_mm: 3.175,
+                    allowance_mm: 0.0,
+                    core_mm: 3.65,
+                },
+                "the 10 mm hole `Shape` (instance `i1`, profile 2) is more than twice the 3.175 mm tool: a helix along its wall would leave a 3.65 mm core standing, which comes loose in a through hole, so it is not bored; clear it with a Pocket, or use a bigger end mill",
+            ),
+            (
+                Warning::BoreNoHoles { op: op() },
+                "none of its targets is a circle it can bore, so it cuts nothing",
             ),
             (
                 Warning::RestOfClearsNothing {
@@ -1977,7 +2140,11 @@ mod tests {
             C::DrillToolWiderThanHole => C::DrillPeckDeeperThanHole,
             C::DrillPeckDeeperThanHole => C::DrillRetractBelowStockTop,
             C::DrillRetractBelowStockTop => C::DrillNoHoles,
-            C::DrillNoHoles => C::RestOfClearsNothing,
+            C::DrillNoHoles => C::BoreTargetNotCircle,
+            C::BoreTargetNotCircle => C::BoreNoRoom,
+            C::BoreNoRoom => C::BoreLeavesCore,
+            C::BoreLeavesCore => C::BoreNoHoles,
+            C::BoreNoHoles => C::RestOfClearsNothing,
             C::RestOfClearsNothing => return None,
         })
     }
@@ -2015,7 +2182,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 35);
+        assert_eq!(count, 39);
     }
 
     #[test]

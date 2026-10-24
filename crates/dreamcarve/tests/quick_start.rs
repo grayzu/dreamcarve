@@ -758,10 +758,11 @@ fn assert_same_project(built: &str, committed: &str, fixture: &str, dir: &Path) 
 /// as the chapter says, the hand edits and pasted blocks apply, every
 /// excerpt is in the program it names, and the finished project is the
 /// committed `tests/fixtures/plaque.dcv`. Acceptance test 18: export
-/// writes `plaque-1-T1.nc` (both Pockets, the Drill and the Profile, with
-/// the 6.35 mm end mill) and `plaque-2-T2.nc` (the Engrave, with the
-/// 3.175 mm end mill), lists them in that order, and each passes the
-/// safety rules on its own.
+/// writes `plaque-1-T2.nc` (the Bore and the Engrave, with the 3.175 mm
+/// end mill) and `plaque-2-T1.nc` (both Pockets and the Profile, with the
+/// 6.35 mm end mill), lists them in that order, and each passes the
+/// safety rules on its own (maintainer decision 2026-10-24: the holes
+/// were a Drill with the 6.35 mm bit, and the Engrave came last).
 ///
 /// The same chapter run on `plaque.svg` instead builds the committed
 /// `tests/fixtures/plaque-svg.dcv`, which
@@ -805,7 +806,7 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
         .filter(|n| n.ends_with(".nc"))
         .collect();
     programs.sort();
-    assert_eq!(programs, ["plaque-1-T1.nc", "plaque-2-T2.nc"]);
+    assert_eq!(programs, ["plaque-1-T2.nc", "plaque-2-T1.nc"]);
 
     let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
         .current_dir(&dir)
@@ -815,15 +816,15 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
         .expect("binary runs");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let first = stdout
-        .find("1. plaque-1-T1.nc")
+        .find("1. plaque-1-T2.nc")
         .expect("program 1 listed first");
     let second = stdout
-        .find("2. plaque-2-T2.nc")
+        .find("2. plaque-2-T1.nc")
         .expect("program 2 listed second");
     assert!(first < second, "{stdout}");
 
     let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
-    let (one, two) = (read("plaque-1-T1.nc"), read("plaque-2-T2.nc"));
+    let (one, two) = (read("plaque-1-T2.nc"), read("plaque-2-T1.nc"));
     let operations = |program: &str| -> Vec<String> {
         program
             .lines()
@@ -834,13 +835,18 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
     assert_eq!(
         operations(&one),
         [
-            "( Operation 1: Panel )",
-            "( Operation 2: Square recess )",
-            "( Operation 3: Screw holes )",
-            "( Operation 4: Cut out )",
+            "( Operation 1: Screw holes )",
+            "( Operation 2: Border and squiggle )",
         ]
     );
-    assert_eq!(operations(&two), ["( Operation 1: Border and squiggle )"]);
+    assert_eq!(
+        operations(&two),
+        [
+            "( Operation 1: Panel )",
+            "( Operation 2: Square recess )",
+            "( Operation 3: Cut out )",
+        ]
+    );
 
     let stock = |plunge_mm_min, feed_mm_min, radius_mm| Limits {
         safe_z_mm: 15.0,
@@ -851,8 +857,8 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
         plunge_mm_min,
         spindle: "M3 S18000",
     };
-    assert_program_safe("plaque-1-T1.nc", &one, &stock(500.0, 1500.0, 3.175));
-    assert_program_safe("plaque-2-T2.nc", &two, &stock(300.0, 1000.0, 1.5875));
+    assert_program_safe("plaque-1-T2.nc", &one, &stock(300.0, 1000.0, 1.5875));
+    assert_program_safe("plaque-2-T1.nc", &two, &stock(500.0, 1500.0, 3.175));
 }
 
 /// The same chapter on `plaque.svg`, the DXF's twin, builds the committed

@@ -2056,6 +2056,103 @@ fn export_reports_drill_hole_too_small_and_writes_no_plunge_there() {
     );
 }
 
+/// Format 18: the coaster with a 5 mm hole at (40, 55), a 10 mm one at
+/// (70, 55) and a 20 mm one at (55, 80), bored through with the 6.35 mm
+/// end mill before the cut-out. Returns the project file.
+fn coaster_with_bore_holes(dir: &Path) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let tool = project
+        .operations
+        .first()
+        .expect("the coaster profile")
+        .tool()
+        .clone();
+    for (id, x, y, diameter_mm) in [
+        ("small", 40.0, 55.0, 5.0),
+        ("good", 70.0, 55.0, 10.0),
+        ("big", 55.0, 80.0, 20.0),
+    ] {
+        let hole = FeatureDefinition {
+            id: DefinitionId::new(id),
+            name: format!("Hole {id}"),
+            profiles: vec![Polyline::circle(Point::new(0.0, 0.0), diameter_mm / 2.0)],
+        };
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new(id),
+            definition: hole.id.clone(),
+            transform: Transform::translate(x, y),
+            name: id.into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(MEASURED_THICKNESS_MM),
+            z_bottom_mm: Some(0.0),
+        });
+        project.definitions.insert(hole.id.clone(), hole);
+    }
+    let mut bore = dc_project::test_support::sample_bore();
+    bore.id = OperationId::new("o2");
+    bore.targets = vec![
+        InstanceId::new("small"),
+        InstanceId::new("good"),
+        InstanceId::new("big"),
+    ];
+    bore.tool = tool;
+    bore.depth_mm = Some(MEASURED_THICKNESS_MM + THROUGH_CUT_ALLOWANCE_MM);
+    bore.through_cut_allowance_mm = THROUGH_CUT_ALLOWANCE_MM;
+    project.operations.insert(0, Operation::Bore(bore));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// Format 18: `check` and `export` report the Bore holes they skip, the
+/// 5 mm one the bit does not fit and the 20 mm one that would leave a
+/// core, and `export` bores the 10 mm hole and goes below the stock top
+/// nowhere else inside the coaster.
+#[test]
+fn check_reports_bore_no_room_and_leaves_core() {
+    let dir = work_dir("check_reports_bore_no_room_and_leaves_core");
+    coaster_with_bore_holes(&dir);
+    let no_room = "warning: bore_no_room: operation `o2`: the 5 mm hole `small` (instance `small`, profile 0) leaves the 6.35 mm tool no room";
+    let core = "warning: bore_leaves_core: operation `o2`: the 20 mm hole `big` (instance `big`, profile 0) is more than twice the 6.35 mm tool: a helix along its wall would leave a 7.3 mm core standing";
+    let check = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&check), stderr(&check));
+    assert_eq!(check.status.code(), Some(0), "{report}");
+    assert!(report.contains(no_room), "{report}");
+    assert!(report.contains(core), "{report}");
+    assert!(report.contains("0 error(s), 2 warning(s)"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stderr(&out).contains(no_room), "{}", stderr(&out));
+    assert!(stderr(&out).contains(core), "{}", stderr(&out));
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let near = |m: &MachineMove, x: f64, y: f64, r: f64| {
+        let (Some(mx), Some(my)) = (m.to.x, m.to.y) else {
+            return false;
+        };
+        (mx - x).hypot(my - y) <= r
+    };
+    let below_top = |m: &MachineMove| m.to.z.is_some_and(|z| z < 0.0);
+    for (x, y) in [(40.0, 55.0), (55.0, 80.0)] {
+        assert!(
+            !moves.iter().any(|m| near(m, x, y, 10.0) && below_top(m)),
+            "a move goes into the stock at the skipped hole at ({x}, {y}):\n{program}"
+        );
+    }
+    let bored: Vec<&MachineMove> = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && near(m, 70.0, 55.0, 2.0) && below_top(m))
+        .collect();
+    assert!(bored.len() > 50, "the 10 mm hole is not bored:\n{program}");
+    // The 10 mm hole's helix is 5 − 3.175 = 1.825 mm round its centre.
+    for m in bored {
+        assert!(near(m, 70.0, 55.0, 1.825 + 0.001), "{m:?}");
+    }
+}
+
 /// The output extension is a setting in the `.dcv`, so a shared project
 /// chooses it. An extension that is a path (`../x`) or names the
 /// project file itself (`dcv`) must not let `export` write outside the
@@ -4374,27 +4471,27 @@ fn cutting_lines(program: &str) -> Vec<usize> {
     out
 }
 
-/// Acceptance 33 (#252): the plaque (operations Pocket, Pocket, Drill,
-/// Profile "Cut out" with T1, then Engrave with T2) exported with
-/// `--one-program --post grblhal` is one program with exactly one
-/// `T2 M6`, after the Profile's last cutting move and before the
-/// Engrave's first. The project file is unchanged (it is saved first in
-/// the canonical layout, which `--post` writes back: the committed
-/// fixture is hand-formatted).
+/// Acceptance 33 (#252): the plaque (Bore "Screw holes" and Engrave with
+/// T2, then Pocket, Pocket and Profile "Cut out" with T1; maintainer
+/// decision 2026-10-24) exported with `--one-program --post grblhal` is
+/// one program with exactly one `T1 M6`, after the Engrave's last cutting
+/// move and before the first Pocket's first. The project file is
+/// unchanged (it is saved first in the canonical layout, which `--post`
+/// writes back: the committed fixture is hand-formatted).
 #[test]
-fn plaque_one_program_changes_tool_before_the_engrave() {
-    let dir = work_dir("plaque_one_program_changes_tool_before_the_engrave");
+fn plaque_one_program_changes_tool_after_the_engrave() {
+    let dir = work_dir("plaque_one_program_changes_tool_after_the_engrave");
     let dcv = copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
     let project = load_file(&dcv).project;
     let names: Vec<&str> = project.operations.iter().map(Operation::name).collect();
     assert_eq!(
         names,
         [
+            "Screw holes",
+            "Border and squiggle",
             "Panel",
             "Square recess",
-            "Screw holes",
-            "Cut out",
-            "Border and squiggle"
+            "Cut out"
         ]
     );
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
@@ -4426,9 +4523,9 @@ fn plaque_one_program_changes_tool_before_the_engrave() {
     let program = std::fs::read_to_string(dir.join("plaque.nc")).expect("plaque.nc written");
     let lines: Vec<&str> = program.lines().collect();
     let changes: Vec<usize> = (0..lines.len())
-        .filter(|&i| code_words(lines[i]).starts_with(&["T2".to_owned(), "M6".to_owned()]))
+        .filter(|&i| code_words(lines[i]).starts_with(&["T1".to_owned(), "M6".to_owned()]))
         .collect();
-    assert_eq!(changes.len(), 1, "one T2 M6: {changes:?}\n{program}");
+    assert_eq!(changes.len(), 1, "one T1 M6: {changes:?}\n{program}");
     let change = changes[0];
     let header = |name: &str| {
         lines
@@ -4436,26 +4533,26 @@ fn plaque_one_program_changes_tool_before_the_engrave() {
             .position(|l| l.starts_with("( Operation ") && l.ends_with(&format!(": {name} )")))
             .unwrap_or_else(|| panic!("no operation comment for {name}:\n{program}"))
     };
-    let (profile, engrave) = (header("Cut out"), header("Border and squiggle"));
-    assert!(profile < engrave, "the Profile comes before the Engrave");
+    let (engrave, panel) = (header("Border and squiggle"), header("Panel"));
+    assert!(engrave < panel, "the Engrave comes before the Panel");
     let cuts = cutting_lines(&program);
-    let last_profile_cut = cuts
+    let last_engrave_cut = cuts
         .iter()
         .copied()
-        .filter(|&i| profile < i && i < engrave)
+        .filter(|&i| engrave < i && i < panel)
         .max()
-        .unwrap_or_else(|| panic!("the Profile cuts:\n{program}"));
-    let first_engrave_cut = cuts
+        .unwrap_or_else(|| panic!("the Engrave cuts:\n{program}"));
+    let first_panel_cut = cuts
         .iter()
         .copied()
-        .find(|&i| i > engrave)
-        .unwrap_or_else(|| panic!("the Engrave cuts:\n{program}"));
+        .find(|&i| i > panel)
+        .unwrap_or_else(|| panic!("the Panel cuts:\n{program}"));
     assert!(
-        last_profile_cut < change && change < first_engrave_cut,
-        "T2 M6 at line {} lies between the Profile's last cut (line {}) and the Engrave's first (line {})",
+        last_engrave_cut < change && change < first_panel_cut,
+        "T1 M6 at line {} lies between the Engrave's last cut (line {}) and the Panel's first (line {})",
         change + 1,
-        last_profile_cut + 1,
-        first_engrave_cut + 1
+        last_engrave_cut + 1,
+        first_panel_cut + 1
     );
     assert_eq!(
         std::fs::read(&dcv).expect("dcv readable"),
@@ -5071,7 +5168,7 @@ fn plaque_dxf_exports_same_programs_as_svg() {
     assert_eq!(exported.len(), 2);
     let (from_dxf, from_svg) = (&exported[0], &exported[1]);
     let names = |p: &[(String, String)]| p.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
-    assert_eq!(names(from_dxf), ["plaque-1-T1.nc", "plaque-2-T2.nc"]);
+    assert_eq!(names(from_dxf), ["plaque-1-T2.nc", "plaque-2-T1.nc"]);
     assert_eq!(names(from_dxf), names(from_svg));
 
     for ((name, dxf), (_, svg)) in from_dxf.iter().zip(from_svg) {
@@ -5097,12 +5194,17 @@ fn plaque_dxf_exports_same_programs_as_svg() {
                     path[0],
                     other[0]
                 );
+                // A descending chord's feed is set from its written ends
+                // so it falls no faster than the plunge rate (#325): the
+                // SVG's noise moves an end by a unit in the last place,
+                // and the Bore's helix chords (format 18) are short, so
+                // such a feed may differ by up to 0.1 %.
                 assert!(
                     feeds.len() == other_feeds.len()
                         && feeds
                             .iter()
                             .zip(other_feeds)
-                            .all(|(u, v)| (u - v).abs() <= 0.01),
+                            .all(|(u, v)| (u - v).abs() <= 0.01_f64.max(1e-3 * u.max(*v))),
                     "{at}: run {i} at feeds {feeds:?} from the DXF, {other_feeds:?} from the SVG"
                 );
                 let apart_mm = runs_apart(path, other);
@@ -5418,14 +5520,26 @@ fn check_reports_order_warnings() {
     }
 }
 
-/// #269: the plaque engraves 1 mm deep after its tabbed cut-out, a light
-/// cut on a tab-held part that is normal practice, so `check` gives it no
-/// order warning: its five warnings are the unused tool and the four
-/// drilled holes, as the quick start shows.
+/// #269: a 1 mm Engrave after the plaque's tabbed cut-out is a light cut
+/// on a tab-held part, normal practice, so `check` gives it no order
+/// warning. Since its Bore (maintainer decision 2026-10-24) the plaque
+/// engraves first, so the copy here moves the Engrave after the cut-out
+/// and leaves out the Bore, which would come back to T2: its one warning
+/// is the unused tool. The plaque as committed warns of that alone too.
 #[test]
 fn plaque_engrave_after_tabbed_cut_out_is_quiet() {
     let dir = work_dir("plaque_engrave_after_tabbed_cut_out_is_quiet");
-    copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
+    let dcv = copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
+    let out = run(&dir, &["check", "plaque.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    assert!(report.contains("0 error(s), 1 warning(s)"), "{report}");
+    let mut project = load_file(&dcv).project;
+    project.operations.retain(|op| op.name() != "Screw holes");
+    let engrave = project.operations.remove(0);
+    assert_eq!(engrave.name(), "Border and squiggle");
+    project.operations.push(engrave);
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
     let out = run(&dir, &["check", "plaque.dcv"]);
     let report = stdout(&out);
     assert_eq!(out.status.code(), Some(0), "{report}");
@@ -5433,7 +5547,7 @@ fn plaque_engrave_after_tabbed_cut_out_is_quiet() {
         !report.contains("cut_inside_tab_held_part"),
         "the engrave is light: {report}"
     );
-    assert!(report.contains("0 error(s), 5 warning(s)"), "{report}");
+    assert!(report.contains("0 error(s), 1 warning(s)"), "{report}");
 }
 
 /// #269: the maintainer's two-operation star from before format v9
@@ -7914,20 +8028,27 @@ fn heights_plaque_one_program() {
             "into operation {op}: {first:?}"
         );
     }
-    // Drill: four holes, four parts, each reached at 20.
-    let drill: Vec<f64> = xy_rapids
+    // Bore (maintainer decision 2026-10-24, first since): four holes,
+    // four parts, each reached at 20.
+    let bore: Vec<f64> = xy_rapids
         .iter()
-        .filter(|(_, o, _)| *o == Some(3))
+        .filter(|(_, o, _)| *o == Some(1))
         .map(|r| r.2)
         .collect();
     assert!(
-        drill.len() == 4 && drill.iter().all(|z| (z - 20.0).abs() < 1e-9),
+        bore.len() == 4 && bore.iter().all(|z| (z - 20.0).abs() < 1e-9),
         "{xy_rapids:?}"
     );
-    // Cut out: one part, its passes linked at 15.
+    // Cut out, last: one part, its passes linked at 15, then the park
+    // move at the clearance height.
+    let park = op_of
+        .iter()
+        .find(|(_, _, c)| c == "X0.000 Y0.000")
+        .map(|(l, ..)| *l)
+        .expect("the park move");
     let cut_out: Vec<f64> = xy_rapids
         .iter()
-        .filter(|(_, o, _)| *o == Some(4))
+        .filter(|(l, o, _)| *o == Some(5) && *l < park)
         .map(|r| r.2)
         .skip(1)
         .collect();
@@ -7939,14 +8060,14 @@ fn heights_plaque_one_program() {
     let code: Vec<&str> = op_of.iter().map(|(_, _, c)| c.as_str()).collect();
     let change = code
         .iter()
-        .position(|c| c.starts_with("T2 M6"))
+        .position(|c| c.starts_with("T1 M6"))
         .expect("a tool change");
     assert!(
         ["Z20.000", "G0 Z20.000"].contains(&code[change - 3]),
         "{:?}",
         &code[change - 3..=change]
     );
-    assert_eq!(code[change - 2..=change], ["G53 G0 Z-5.000", "M5", "T2 M6"]);
+    assert_eq!(code[change - 2..=change], ["G53 G0 Z-5.000", "M5", "T1 M6"]);
     let n = code.len();
     assert_eq!(
         code[n - 5..],
