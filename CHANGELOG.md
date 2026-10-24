@@ -561,6 +561,13 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   hole's wall than the bit's radius cut through the part into the outside,
   and export failed S9. Such a corner is now skipped with
   `relief_corner_too_tight` and keeps the bit's radius ([#322]).
+- A debug build no longer panics inside `cavalier_contours` 0.9.0 while it
+  offsets a Pocket's swept band. Its offset names the wrong segment for one
+  slice end, a few µm off, and its own debug check asserted on it
+  (`UpdatedStartNotOnSegment`). The offset it returns was already right and
+  release builds were unaffected. That crate is now built without its debug
+  assertions in debug builds too, so both give the same results. No
+  committed program changes ([#384]).
 
 ### Safety
 
@@ -720,3 +727,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#379]: https://github.com/grayzu/dreamcarve/issues/379
 [#380]: https://github.com/grayzu/dreamcarve/issues/380
 [#377]: https://github.com/grayzu/dreamcarve/issues/377
+[#384]: https://github.com/grayzu/dreamcarve/issues/384

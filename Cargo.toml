@@ -92,6 +92,17 @@ indexing_slicing = "warn"
 cast_possible_truncation = "warn"
 float_cmp = "deny"
 
+# cavalier_contours 0.9.0 is built without its debug assertions in debug
+# builds (#384), as in release. Its offset can hand one dissected slice an
+# end point on the segment after the one it names, a few µm off, and its
+# view check asserts on that (`pline_view.rs:353`), though the offset it
+# returns is right. Only checks hang on `debug_assertions` there, so debug
+# and release results are the same. Remove once upstream fixes it; the
+# regression tests are dc-geometry's `offset_of_a_loop_with_sub_micron_*`
+# and the properties case `dogbone_pocket_round_a_rotated_rect_island_*`.
+[profile.dev.package.cavalier_contours]
+debug-assertions = false
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
