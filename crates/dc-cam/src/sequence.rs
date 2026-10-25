@@ -48,15 +48,36 @@ pub(crate) const NEAREST_TIE_MM: f64 = 1e-3;
 /// a number.
 pub(crate) fn nearest_of<T>(candidates: impl IntoIterator<Item = (T, f64)>) -> Option<T> {
     let candidates: Vec<(T, f64)> = candidates.into_iter().collect();
+    let pick = nearest_index(&candidates);
+    candidates.into_iter().nth(pick).map(|(t, _)| t)
+}
+
+/// All of `candidates` nearest first, each next one chosen by
+/// [`nearest_of`]'s rule from those left: so distances within
+/// [`NEAREST_TIE_MM`] keep the order given (#392: a raster Pocket's
+/// stay-down links, where the lines one step-over above and below are a
+/// tie that float noise in the scan lines' Y used to settle).
+pub(crate) fn nearest_first_order<T>(candidates: Vec<(T, f64)>) -> Vec<T> {
+    let mut left = candidates;
+    let mut out = Vec::with_capacity(left.len());
+    while !left.is_empty() {
+        let pick = nearest_index(&left);
+        out.push(left.remove(pick).0);
+    }
+    out
+}
+
+/// The index [`nearest_of`] takes: the first whose distance is within
+/// [`NEAREST_TIE_MM`] of the nearest; 0 when none is a number.
+fn nearest_index<T>(candidates: &[(T, f64)]) -> usize {
     let nearest_mm = candidates
         .iter()
         .map(|(_, d)| *d)
         .fold(f64::INFINITY, f64::min);
-    let pick = candidates
+    candidates
         .iter()
         .position(|(_, d)| *d <= nearest_mm + NEAREST_TIE_MM)
-        .unwrap_or(0);
-    candidates.into_iter().nth(pick).map(|(t, _)| t)
+        .unwrap_or(0)
 }
 
 /// Everything [`sequence`] needs, in project space (mm, Y-up, Z-up).

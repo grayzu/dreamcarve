@@ -45,7 +45,7 @@
 use super::rings::{Ring, RingNode, RingTree, WallRings, closest_point, inset_region, shorter_way};
 use super::{MAX_RINGS, ring_path};
 use crate::footprint::capsule;
-use crate::sequence::{link_inside_cleared, nearest_of};
+use crate::sequence::{link_inside_cleared, nearest_first_order, nearest_of};
 use dc_geometry::{
     EPS_MM, Point, Polyline, Region, Vertex, area_mm2, difference, intersection, union,
 };
@@ -352,7 +352,8 @@ pub(super) fn order_nearest_first(
 }
 
 /// For every end of every piece, the ends of other pieces a stay-down link
-/// reaches from it, nearest first, ties by index: a straight link at most
+/// reaches from it, nearest first, ties by index (lengths within
+/// [`crate::sequence::NEAREST_TIE_MM`] are a tie, #392): a straight link at most
 /// `link_max_mm` long and inside both strips, else an edge link along a
 /// ring of `edges` no longer than that, measured along it, and
 /// returned from each end to the other. A link is the same either way, so
@@ -414,8 +415,10 @@ fn stay_down_links(
         .into_iter()
         .map(|lists| {
             lists.map(|mut list| {
-                list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-                list.into_iter().map(|(_, end)| end).collect()
+                // By index, then nearest first with ties (#215) kept in
+                // that order (#392).
+                list.sort_by_key(|&(_, end)| end);
+                nearest_first_order(list.into_iter().map(|(d, end)| (end, d)).collect())
             })
         })
         .collect();
